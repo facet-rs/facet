@@ -158,6 +158,7 @@ pub const ARRAY_POP_HOST: u32 = 45;
 pub const ARRAY_SET_HOST: u32 = 46;
 pub const FLESH_DUP_HOST: u32 = 47;
 pub const RECORD_UPDATE_HOST: u32 = 48;
+pub const CRATE_ARCHIVE_HOST: u32 = 49;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -461,6 +462,12 @@ struct FetchRequest {
 struct DocParseRequest {
     input_slot: usize,
     kind: DocParseKind,
+    input: i64,
+}
+
+#[derive(Clone, Debug)]
+struct CrateArchiveRequest {
+    input_slot: usize,
     input: i64,
 }
 
@@ -1576,6 +1583,7 @@ pub struct Driver {
     ast_roots: HashMap<i64, i64>,
     ast_parse_memo: HashMap<ContentHash, Arc<ast::SourceFile>>,
     ast_projection_memo: HashMap<(ContentHash, super::ast_probe::Projection, String), i64>,
+    crate_archive_memo: HashMap<ContentHash, i64>,
     oci_projection_memo: HashMap<(ContentHash, super::oci::Projection), i64>,
     oci_file_memo: HashMap<(ContentHash, String), Option<i64>>,
     runs: BTreeMap<u64, PendingExecRun>,
@@ -1626,6 +1634,7 @@ impl Driver {
             ast_roots: HashMap::new(),
             ast_parse_memo: HashMap::new(),
             ast_projection_memo: HashMap::new(),
+            crate_archive_memo: HashMap::new(),
             oci_projection_memo: HashMap::new(),
             oci_file_memo: HashMap::new(),
             runs: BTreeMap::new(),
@@ -2101,6 +2110,7 @@ impl Driver {
                     exec_requests,
                     fetch_requests,
                     doc_parse_requests,
+                    crate_archive_requests,
                     option_unwraps,
                     pending_coercions,
                     pending_invokes,
@@ -2149,6 +2159,25 @@ impl Driver {
                             &mut exec.read_set,
                         );
                         match self.doc_parse_request(req) {
+                            Ok((input_slot, value)) => {
+                                if exec.ready.len() <= input_slot {
+                                    exec.ready.resize(input_slot + 1, false);
+                                    exec.awaited.resize(input_slot + 1, 0);
+                                }
+                                exec.ready[input_slot] = true;
+                                exec.awaited[input_slot] = value;
+                            }
+                            Err(err) => return Err(err),
+                        }
+                    }
+                    for req in crate_archive_requests {
+                        self.record_whole_arg_if_projectable(
+                            exec.fn_ref,
+                            &exec.args,
+                            req.input,
+                            &mut exec.read_set,
+                        );
+                        match self.crate_archive_request(req) {
                             Ok((input_slot, value)) => {
                                 if exec.ready.len() <= input_slot {
                                     exec.ready.resize(input_slot + 1, false);
@@ -2368,6 +2397,7 @@ impl Driver {
             let mut exec_requests: Vec<ExecRequest> = Vec::new();
             let mut fetch_requests: Vec<FetchRequest> = Vec::new();
             let mut doc_parse_requests: Vec<DocParseRequest> = Vec::new();
+            let mut crate_archive_requests: Vec<CrateArchiveRequest> = Vec::new();
             let mut option_unwraps: Vec<OptionUnwrapRequest> = Vec::new();
             let mut pending_coercions: Vec<PendingCoerceRequest> = Vec::new();
             let mut pending_invokes: Vec<PendingInvokeRequest> = Vec::new();
@@ -3146,6 +3176,12 @@ impl Driver {
                     kind,
                     input,
                 });
+            };
+
+            let mut crate_archive_host = |frame: &mut [u8]| {
+                let input_slot = read_frame_word(frame, primitive_region) as usize;
+                let input = read_frame_word(frame, primitive_region + 8);
+                crate_archive_requests.push(CrateArchiveRequest { input_slot, input });
             };
 
             let mut doc_get_host = |frame: &mut [u8]| {
@@ -4374,7 +4410,7 @@ impl Driver {
                 }
             };
 
-            let mut hosts: [HostFn<'_>; 49] = [
+            let mut hosts: [HostFn<'_>; 50] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -4424,6 +4460,7 @@ impl Driver {
                 &mut array_set,
                 &mut flesh_dup,
                 &mut record_update,
+                &mut crate_archive_host,
             ];
             let step = exec
                 .task
@@ -4460,6 +4497,7 @@ impl Driver {
                         exec_requests,
                         fetch_requests,
                         doc_parse_requests,
+                        crate_archive_requests,
                         option_unwraps,
                         pending_coercions,
                         pending_invokes,
@@ -5360,6 +5398,78 @@ impl Driver {
         Ok((req.input_slot, handle))
     }
 
+    fn crate_archive_request(&mut self, req: CrateArchiveRequest) -> Result<(usize, i64), String> {
+        let input_hash = self
+            .store
+            .borrow()
+            .entry(req.input)
+            .ok_or_else(|| format!("store handle {}", req.input))?
+            .content_hash;
+        if let Some(&handle) = self.crate_archive_memo.get(&input_hash) {
+            let timestamp_us = self.next_timestamp();
+            self.emit(DriveEvent::ArtifactProbe {
+                format: "crate_archive".to_string(),
+                projection: "tree".to_string(),
+                input: hash_u64(input_hash),
+                cache_hit: true,
+                timestamp_us,
+            });
+            return Ok((req.input_slot, handle));
+        }
+
+        let bytes = self.crate_archive_input_bytes(req.input)?;
+        let tree = super::crate_archive::archive_to_tree(&bytes)?;
+        let handle = self.store.borrow_mut().alloc_tree_concrete(tree).0;
+        self.crate_archive_memo.insert(input_hash, handle);
+        let timestamp_us = self.next_timestamp();
+        self.emit(DriveEvent::ArtifactProbe {
+            format: "crate_archive".to_string(),
+            projection: "tree".to_string(),
+            input: hash_u64(input_hash),
+            cache_hit: false,
+            timestamp_us,
+        });
+        Ok((req.input_slot, handle))
+    }
+
+    fn crate_archive_input_bytes(&mut self, handle: i64) -> Result<Vec<u8>, String> {
+        let entry = self
+            .store
+            .borrow()
+            .entry(handle)
+            .cloned()
+            .ok_or_else(|| format!("store handle {handle}"))?;
+        match entry.schema.as_str() {
+            "Blob" | "String" => Ok(entry.bytes),
+            "Tree" => {
+                let forced = self.force_tree_handle(handle)?;
+                let TreeEntry::Concrete(tree) = self.store.borrow().tree_entry(forced)? else {
+                    return Err("crate archive input tree stayed pending".into());
+                };
+                let count = tree.entries.len() + tree.blobs.len();
+                if count != 1 {
+                    return Err(format!(
+                        "crate archive input tree must contain exactly one .crate file, got {count}"
+                    ));
+                }
+                let (path, contents) = tree
+                    .entries
+                    .into_iter()
+                    .map(|(path, contents)| (path, contents.into_bytes()))
+                    .chain(tree.blobs)
+                    .next()
+                    .expect("one tree entry");
+                if contents.is_empty() {
+                    return Err(format!("crate archive input `{path}` is empty"));
+                }
+                Ok(contents)
+            }
+            other => Err(format!(
+                "crate_archive input must be Blob, String, or single-file Tree, got {other}"
+            )),
+        }
+    }
+
     fn document_input_value(&mut self, handle: i64) -> Result<Value, String> {
         let entry = self
             .store
@@ -5673,6 +5783,7 @@ enum Burst {
         exec_requests: Vec<ExecRequest>,
         fetch_requests: Vec<FetchRequest>,
         doc_parse_requests: Vec<DocParseRequest>,
+        crate_archive_requests: Vec<CrateArchiveRequest>,
         option_unwraps: Vec<OptionUnwrapRequest>,
         pending_coercions: Vec<PendingCoerceRequest>,
         pending_invokes: Vec<PendingInvokeRequest>,
