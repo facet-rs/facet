@@ -462,6 +462,7 @@ struct DocParseRequest {
 enum DocParseKind {
     Toml,
     Json,
+    BuildDirectives,
 }
 
 #[derive(Clone, Debug)]
@@ -2644,6 +2645,7 @@ impl Driver {
                     0 => "cc",
                     1 => "ar",
                     2 => "rustc",
+                    3 => "build_script",
                     other => {
                         *host_error.borrow_mut() = Some(format!("unknown command kind {other}"));
                         return;
@@ -2707,6 +2709,7 @@ impl Driver {
                 let kind = match read_frame_word(frame, primitive_region + 8) {
                     0 => DocParseKind::Toml,
                     1 => DocParseKind::Json,
+                    2 => DocParseKind::BuildDirectives,
                     other => {
                         *host_error.borrow_mut() =
                             Some(format!("unknown document parser kind {other}"));
@@ -4165,8 +4168,11 @@ impl Driver {
                     append_command_token(token, &mut argv)?;
                 }
                 CommandRequestPart::Splice(word) => {
-                    let prefer_tree_root =
-                        argv.last().is_some_and(|arg| arg.ends_with("dependency="));
+                    let prefer_tree_root = argv.last().is_some_and(|arg| {
+                        arg.ends_with("dependency=")
+                            || arg.ends_with("OUT_DIR=")
+                            || arg.ends_with("CARGO_MANIFEST_DIR=")
+                    });
                     let args =
                         self.splice_word_to_command_args(word, &mut mounts, prefer_tree_root)?;
                     append_spliced_command_args(args, &mut argv)?;
@@ -4486,6 +4492,7 @@ impl Driver {
         let value = match req.kind {
             DocParseKind::Toml => crate::data::parse_toml(input)?,
             DocParseKind::Json => crate::data::parse_json(input)?,
+            DocParseKind::BuildDirectives => crate::data::parse_build_directives(input)?,
         };
         let handle =
             alloc_doc_from_value(&self.store, &self.descriptors, &self.schema_refs, value)?;
@@ -7913,6 +7920,7 @@ fn cap_schema(command: &str) -> String {
         "cc" => "Cc",
         "ar" => "Ar",
         "rustc" => "Rustc",
+        "build_script" => "String",
         _ => "Cc",
     }
     .to_string()

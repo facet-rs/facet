@@ -258,3 +258,109 @@ pub fn crate_lock_root_version(graph: Tree) -> String {
     let lock = lock_doc(graph);
     lock_package_version(lock, "mini_app")
 }
+
+fn build_script_compile(manifest: Tree) -> Tree {
+    let rustc = Rustc::acquire(Target::host());
+    let edition = doc_string(package_doc(manifest), "edition");
+
+    rustc! {
+        --crate-name build_script_build
+        --edition {edition}
+        --crate-type bin
+        --emit=link={p"build_script"}
+        {manifest / p"build.rs"}
+    }
+}
+
+fn build_script_run(manifest: Tree, binary: Tree) -> Tree {
+    let build_script = "build-script-runner";
+    let package = package_doc(manifest);
+    let name = doc_string(package, "name");
+    let version = doc_string(package, "version");
+
+    build_script! {
+        --executable {binary / p"build_script"}
+        --stdout {p"build.stdout"}
+        --out-dir {p"out"}
+        --env OUT_DIR={p"out"}
+        --env CARGO_MANIFEST_DIR={manifest}
+        --env CARGO_PKG_NAME={name}
+        --env CARGO_PKG_VERSION={version}
+        --env CARGO_PKG_VERSION_MAJOR=0
+        --env CARGO_PKG_VERSION_MINOR=1
+        --env CARGO_PKG_VERSION_PATCH=0
+        --env CARGO_PKG_VERSION_PRE=
+        --env TARGET=x86_64-unknown-linux-gnu
+        --env HOST=x86_64-unknown-linux-gnu
+        --env OPT_LEVEL=0
+        --env PROFILE=debug
+    }
+}
+
+fn build_script_directives(run: Tree) -> Doc {
+    build_directives(run / p"build.stdout")
+}
+
+fn build_script_out_dir(run: Tree) -> Tree {
+    run / p"out"
+}
+
+fn build_script_lib(target: Target, manifest: Tree, directives: Doc, out_dir: Tree) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let package = package_doc(manifest);
+    let name = doc_string(package, "name");
+    let edition = doc_string(package, "edition");
+    let cfg = directives.get("rustc_cfg").unwrap().join(" ");
+    let check_cfg = directives.get("rustc_check_cfg").unwrap().join(" ");
+
+    rustc! {
+        --crate-name {name}
+        --edition {edition}
+        --crate-type lib
+        --cfg {cfg}
+        --check-cfg {check_cfg}
+        --env OUT_DIR={out_dir}
+        --emit=metadata={p"libbuild_script_app.rmeta"},link={p"libbuild_script_app.rlib"}
+        {manifest / p"src/lib.rs"}
+    }
+}
+
+fn build_script_bin_link(target: Target, manifest: Tree, lib: Tree) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let edition = doc_string(package_doc(manifest), "edition");
+
+    rustc! {
+        --crate-name build_script_runner
+        --edition {edition}
+        --crate-type bin
+        --emit=link={p"build_script_runner"}
+        --extern build_script_app={lib / p"libbuild_script_app.rlib"}
+        -L dependency={lib}
+        {manifest / p"src/main.rs"}
+    }
+}
+
+pub fn crate_build_script_directive_cfg(graph: Tree) -> String {
+    let manifest = graph / p"app";
+    let binary = build_script_compile(manifest);
+    let run = build_script_run(manifest, binary);
+    let directives = build_script_directives(run);
+    directives.get("rustc_cfg").unwrap().join(" ")
+}
+
+pub fn crate_build_script_out_dir(graph: Tree) -> Tree {
+    let manifest = graph / p"app";
+    let binary = build_script_compile(manifest);
+    let run = build_script_run(manifest, binary);
+    build_script_out_dir(run)
+}
+
+pub fn crate_build_script_bin(target: Target, graph: Tree) -> Tree {
+    let manifest = graph / p"app";
+    let binary = build_script_compile(manifest);
+    let run = build_script_run(manifest, binary);
+    let directives = build_script_directives(run);
+    let out_dir = build_script_out_dir(run);
+    let lib = build_script_lib(target, manifest, directives, out_dir);
+    build_script_bin_link(target, manifest, lib) / p"build_script_runner"
+}

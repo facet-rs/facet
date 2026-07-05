@@ -3097,6 +3097,7 @@ impl<'a> FnLowerer<'a> {
             "extract" => return self.extract_call(call),
             "toml" => return self.doc_parse_call(call, 0),
             "json" => return self.doc_parse_call(call, 1),
+            "build_directives" => return self.doc_parse_call(call, 2),
             "version" => return self.version_call(call),
             "render" => return self.render_call(call),
             "elf" => return self.elf_call(call),
@@ -5380,7 +5381,10 @@ impl<'a> FnLowerer<'a> {
     }
 
     fn command_block(&mut self, command: &ast::CommandBlock) -> Result<ValueSlot, String> {
-        if !matches!(command.command.value.as_str(), "cc" | "ar" | "rustc") {
+        if !matches!(
+            command.command.value.as_str(),
+            "cc" | "ar" | "rustc" | "build_script"
+        ) {
             return Err(format!(
                 "command {} is outside the machine exec subset",
                 command.command.value
@@ -6025,6 +6029,7 @@ fn command_kind(command: &str) -> Result<i64, String> {
         "cc" => Ok(0),
         "ar" => Ok(1),
         "rustc" => Ok(2),
+        "build_script" => Ok(3),
         other => Err(format!(
             "command {other} is outside the machine exec subset"
         )),

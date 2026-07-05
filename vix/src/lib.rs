@@ -371,10 +371,25 @@ pub mod support {
                         Some("-L") => Role::Flag,
                         Some("--extern") if arg.contains("/m/") => Role::InputFlag,
                         Some("--extern") => Role::Flag,
+                        Some("--env") => Role::Env,
                         _ if arg.starts_with("/m/") => Role::Input,
                         _ if arg.starts_with("--emit=") && arg.contains('=') => Role::OutputFlag,
                         _ if arg.starts_with("-L") && arg.contains("/m/") => Role::SearchDirFlag,
                         _ if arg.starts_with("--extern") && arg.contains("/m/") => Role::InputFlag,
+                        _ => Role::Flag,
+                    };
+                    out.push((arg.clone(), role));
+                    prev = Some(arg.as_str());
+                }
+            }
+            "build_script" => {
+                let mut prev: Option<&str> = None;
+                for arg in argv {
+                    let role = match prev {
+                        Some("--executable") => Role::Executable,
+                        Some("--stdout") => Role::Stdout,
+                        Some("--out-dir") => Role::OutputDir,
+                        Some("--env") => Role::Env,
                         _ => Role::Flag,
                     };
                     out.push((arg.clone(), role));
@@ -391,6 +406,7 @@ pub mod support {
             "cc" => Ok(&crate::exec::FakeCc),
             "ar" => Ok(&crate::exec::FakeAr),
             "rustc" => Ok(&crate::exec::FakeRustc),
+            "build_script" => Ok(&crate::exec::FakeBuildScript),
             other => Err(format!("no tool for `{other}`")),
         }
     }

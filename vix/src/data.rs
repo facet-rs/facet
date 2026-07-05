@@ -19,6 +19,83 @@ pub(crate) fn parse_json(input: Value) -> Result<Value, String> {
     from_facet_value(&value)
 }
 
+#[derive(Default)]
+struct BuildScriptDirectives {
+    rustc_cfg: Vec<String>,
+    rustc_link_lib: Vec<String>,
+    rustc_link_search: Vec<String>,
+    rustc_env: Vec<String>,
+    rustc_check_cfg: Vec<String>,
+    warning: Vec<String>,
+    rerun_if_changed: Vec<String>,
+    rerun_if_env_changed: Vec<String>,
+}
+
+pub(crate) fn parse_build_directives(input: Value) -> Result<Value, String> {
+    let text = input_text(input)?;
+    let mut directives = BuildScriptDirectives::default();
+    for line in text.lines() {
+        let Some(rest) = line
+            .strip_prefix("cargo::")
+            .or_else(|| line.strip_prefix("cargo:"))
+        else {
+            continue;
+        };
+        let Some((key, value)) = rest.split_once('=') else {
+            continue;
+        };
+        match key {
+            "rustc-cfg" => directives.rustc_cfg.push(value.to_string()),
+            "rustc-link-lib" => directives.rustc_link_lib.push(value.to_string()),
+            "rustc-link-search" => directives.rustc_link_search.push(value.to_string()),
+            "rustc-env" => directives.rustc_env.push(value.to_string()),
+            "rustc-check-cfg" => directives.rustc_check_cfg.push(value.to_string()),
+            "warning" => directives.warning.push(value.to_string()),
+            "rerun-if-changed" => directives.rerun_if_changed.push(value.to_string()),
+            "rerun-if-env-changed" => directives.rerun_if_env_changed.push(value.to_string()),
+            _ => {}
+        }
+    }
+    Ok(Value::Map(BTreeMap::from([
+        (
+            Value::Str("rustc_cfg".to_string()),
+            string_array(directives.rustc_cfg),
+        ),
+        (
+            Value::Str("rustc_link_lib".to_string()),
+            string_array(directives.rustc_link_lib),
+        ),
+        (
+            Value::Str("rustc_link_search".to_string()),
+            string_array(directives.rustc_link_search),
+        ),
+        (
+            Value::Str("rustc_env".to_string()),
+            string_array(directives.rustc_env),
+        ),
+        (
+            Value::Str("rustc_check_cfg".to_string()),
+            string_array(directives.rustc_check_cfg),
+        ),
+        (
+            Value::Str("warning".to_string()),
+            string_array(directives.warning),
+        ),
+        (
+            Value::Str("rerun_if_changed".to_string()),
+            string_array(directives.rerun_if_changed),
+        ),
+        (
+            Value::Str("rerun_if_env_changed".to_string()),
+            string_array(directives.rerun_if_env_changed),
+        ),
+    ])))
+}
+
+fn string_array(values: Vec<String>) -> Value {
+    Value::Array(values.into_iter().map(Value::Str).collect())
+}
+
 fn input_text(input: Value) -> Result<String, String> {
     match input {
         Value::Str(text) => Ok(text),

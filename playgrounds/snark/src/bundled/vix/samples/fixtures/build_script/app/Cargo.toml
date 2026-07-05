@@ -1,0 +1,12 @@
+[package]
+name = "build_script_app"
+version = "0.1.0"
+edition = "2021"
+build = "build.rs"
+
+[lib]
+path = "src/lib.rs"
+
+[[bin]]
+name = "build_script_runner"
+path = "src/main.rs"

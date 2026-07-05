@@ -142,6 +142,26 @@ with `--features real-process` it can additionally compile trivial host
 artifacts through `cc!`. The end-to-end real `cargo build` artifact comparison
 still waits for slice 2's real `rustc` plan graph.
 
+## Build Scripts
+
+Slice 3a models build scripts as three machine nodes:
+
+- compile `build.rs` with the ordinary `rustc!` path against `Target::host()`;
+- run the produced executable with `build_script!`, a real-process-capable exec
+  command whose roles include the staged executable, captured stdout, `OUT_DIR`
+  as an output directory, and explicit `KEY=VALUE` environment bindings;
+- parse captured stdout with `build_directives(...)`, a pure document probe.
+
+The implemented build-script environment subset is the one used by the open
+fixture and common build scripts: `OUT_DIR`, `CARGO_MANIFEST_DIR`,
+`CARGO_PKG_NAME`, `CARGO_PKG_VERSION`, `CARGO_PKG_VERSION_MAJOR`,
+`CARGO_PKG_VERSION_MINOR`, `CARGO_PKG_VERSION_PATCH`,
+`CARGO_PKG_VERSION_PRE`, `TARGET`, `HOST`, `OPT_LEVEL`, and `PROFILE`.
+The native backend still starts from the scrubbed process allowlist documented
+above, then overlays those explicit bindings. `OUT_DIR` deletion/staleness is
+left to the existing two-tier behavior: each real run gets a fresh staged
+directory, and harvested files are the files present when the run exits.
+
 ## Later Slices
 
 Slice 2 should add a real `rustc` oracle on top of the same real-process

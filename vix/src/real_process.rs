@@ -17,7 +17,8 @@ use sha2::{Digest, Sha256};
 
 use crate::exec::{
     ExecCache, ExecEvent, ExecPlan, MountedWorld, ObservedWorld, Outcome, Role, Tool, Tree,
-    role_embedded_paths, role_input_paths, role_output_paths, role_search_dir_paths,
+    role_embedded_paths, role_env_paths, role_input_paths, role_output_dir_paths,
+    role_output_paths, role_search_dir_paths, role_stdout_paths,
 };
 use crate::machine::{
     MachineExecBackend, MachineExecRequest, MachinePathDemand, MachinePendingRun,
@@ -193,12 +194,32 @@ impl Tool for RealProcessTool {
         stage_declared_inputs(&plan, world, root)?;
         prepare_output_dirs(&plan, root)?;
 
-        let argv = map_argv(&self.command, &plan, world, root)?;
-        let output = Command::new(&self.command)
+        let env = command_env(&plan, root)?;
+        let (program, argv) = if self.command == "build_script" {
+            let mut executable = None;
+            for (arg, role) in &plan.argv {
+                if *role == Role::Executable {
+                    executable = Some(physical_path(arg, root)?);
+                    break;
+                }
+            }
+            let executable = executable
+                .ok_or_else(|| "build_script command missing --executable".to_string())?;
+            make_executable(&executable)?;
+            let argv = process_argv(&plan, root)?;
+            (executable.into_os_string(), argv)
+        } else {
+            (
+                OsString::from(&self.command),
+                map_argv(&self.command, &plan, world, root)?,
+            )
+        };
+
+        let output = Command::new(&program)
             .args(argv)
             .current_dir(root)
             .env_clear()
-            .envs(scrubbed_env(root))
+            .envs(env)
             .output()
             .map_err(|err| format!("real-process {} spawn failed: {err}", self.command))?;
         if !output.status.success() {
@@ -210,7 +231,7 @@ impl Tool for RealProcessTool {
             ));
         }
 
-        harvest_outputs(&plan, root).or_else(|err| {
+        harvest_outputs(&plan, root, &output.stdout).or_else(|err| {
             if self.output.is_empty() {
                 Err(err)
             } else {
@@ -233,7 +254,7 @@ fn stage_declared_inputs(
 ) -> Result<(), String> {
     for (arg, role) in &plan.argv {
         match role {
-            Role::Input | Role::InputFlag => {
+            Role::Executable | Role::Input | Role::InputFlag => {
                 for input in role_input_paths(arg, *role) {
                     stage_declared_input(&input, world, root)?;
                 }
@@ -253,7 +274,31 @@ fn stage_declared_inputs(
                     }
                 }
             }
-            Role::Output | Role::OutputFlag | Role::Flag => {}
+            Role::Env => {
+                for path in role_env_paths(arg, *role) {
+                    stage_env_path(root, &path, world)?;
+                }
+            }
+            Role::Output | Role::OutputFlag | Role::OutputDir | Role::Stdout | Role::Flag => {}
+        }
+    }
+    Ok(())
+}
+
+fn stage_env_path(root: &Path, path: &str, world: &ObservedWorld<'_>) -> Result<(), String> {
+    if world.peek_bytes(path).is_some() {
+        if let Some(bytes) = world.peek_bytes(path) {
+            stage_file(root, path, &bytes)?;
+        }
+        return Ok(());
+    }
+    let Some(names) = world.peek_list(path) else {
+        return Ok(());
+    };
+    for name in names {
+        let logical = listed_logical_path(path, &name, world);
+        if let Some(bytes) = world.peek_bytes(&logical) {
+            stage_file(root, &logical, &bytes)?;
         }
     }
     Ok(())
@@ -316,11 +361,16 @@ fn prepare_output_dirs(plan: &ExecPlan, root: &Path) -> Result<(), String> {
                     .map_err(|err| format!("real-process create output dir `{output}`: {err}"))?;
             }
         }
+        for output in role_output_dir_paths(arg, *role) {
+            let path = physical_path(&output, root)?;
+            fs::create_dir_all(&path)
+                .map_err(|err| format!("real-process create output dir `{output}`: {err}"))?;
+        }
     }
     Ok(())
 }
 
-fn harvest_outputs(plan: &ExecPlan, root: &Path) -> Result<Tree, String> {
+fn harvest_outputs(plan: &ExecPlan, root: &Path, stdout: &[u8]) -> Result<Tree, String> {
     let mut tree = Tree::default();
     for (arg, role) in &plan.argv {
         for output in role_output_paths(arg, *role) {
@@ -329,11 +379,57 @@ fn harvest_outputs(plan: &ExecPlan, root: &Path) -> Result<Tree, String> {
                 .map_err(|err| format!("real-process output `{output}` was not produced: {err}"))?;
             tree.insert_bytes(output, bytes);
         }
+        for stdout_path in role_stdout_paths(arg, *role) {
+            tree.insert_bytes(stdout_path, stdout.to_vec());
+        }
+        for output_dir in role_output_dir_paths(arg, *role) {
+            harvest_output_dir(root, &output_dir, &mut tree)?;
+        }
     }
     if tree.entries.is_empty() && tree.blobs.is_empty() {
         return Err("real-process plan declared no outputs".to_string());
     }
     Ok(tree)
+}
+
+fn harvest_output_dir(root: &Path, logical_dir: &str, tree: &mut Tree) -> Result<(), String> {
+    let physical = physical_path(logical_dir, root)?;
+    if !physical.exists() {
+        return Ok(());
+    }
+    let mut stack = vec![physical];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir)
+            .map_err(|err| format!("real-process read output dir `{}`: {err}", dir.display()))?
+        {
+            let entry = entry.map_err(|err| {
+                format!(
+                    "real-process read output dir entry `{}`: {err}",
+                    dir.display()
+                )
+            })?;
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if path.is_file() {
+                let relative = path
+                    .strip_prefix(root)
+                    .map_err(|err| format!("real-process output path escaped root: {err}"))?
+                    .to_string_lossy()
+                    .replace('\\', "/");
+                let bytes = fs::read(&path).map_err(|err| {
+                    format!(
+                        "real-process output `{}` was not readable: {err}",
+                        path.display()
+                    )
+                })?;
+                tree.insert_bytes(relative, bytes);
+            }
+        }
+    }
+    Ok(())
 }
 
 fn stage_file(root: &Path, logical: &str, bytes: &[u8]) -> Result<(), String> {
@@ -354,12 +450,30 @@ fn stage_file(root: &Path, logical: &str, bytes: &[u8]) -> Result<(), String> {
         .map_err(|err| format!("real-process stage `{logical}`: {err}"))
 }
 
+fn process_argv(plan: &ExecPlan, root: &Path) -> Result<Vec<OsString>, String> {
+    plan.argv
+        .iter()
+        .filter(|(arg, role)| !is_control_arg(arg, *role))
+        .map(|(arg, role)| map_arg(arg, *role, root))
+        .collect()
+}
+
+fn is_control_arg(arg: &str, role: Role) -> bool {
+    matches!(
+        role,
+        Role::Executable | Role::OutputDir | Role::Stdout | Role::Env
+    ) || matches!(arg, "--executable" | "--stdout" | "--out-dir" | "--env")
+}
+
 fn map_arg(arg: &str, role: Role, root: &Path) -> Result<OsString, String> {
     match role {
-        Role::Input | Role::Output | Role::SearchDir => {
-            Ok(physical_path(arg, root)?.into_os_string())
-        }
-        Role::InputFlag | Role::OutputFlag | Role::SearchDirFlag => {
+        Role::Executable
+        | Role::Input
+        | Role::Output
+        | Role::OutputDir
+        | Role::Stdout
+        | Role::SearchDir => Ok(physical_path(arg, root)?.into_os_string()),
+        Role::InputFlag | Role::OutputFlag | Role::Env | Role::SearchDirFlag => {
             let mut mapped = arg.to_string();
             let mut paths = role_embedded_paths(arg, role);
             paths.sort_by_key(|path| std::cmp::Reverse(path.len()));
@@ -371,6 +485,26 @@ fn map_arg(arg: &str, role: Role, root: &Path) -> Result<OsString, String> {
         }
         Role::Flag => Ok(OsString::from(arg)),
     }
+}
+
+fn command_env(plan: &ExecPlan, root: &Path) -> Result<Vec<(OsString, OsString)>, String> {
+    let mut env = scrubbed_env(root);
+    for (arg, role) in &plan.argv {
+        if *role != Role::Env {
+            continue;
+        }
+        let (key, value) = arg
+            .split_once('=')
+            .ok_or_else(|| format!("env role expected KEY=VALUE, got `{arg}`"))?;
+        let value = if value.starts_with('/') {
+            physical_path(value, root)?.into_os_string()
+        } else {
+            OsString::from(value)
+        };
+        env.retain(|(existing, _)| existing.to_str() != Some(key));
+        env.push((OsString::from(key), value));
+    }
+    Ok(env)
 }
 
 fn physical_path(logical: &str, root: &Path) -> Result<PathBuf, String> {
@@ -395,6 +529,9 @@ fn map_argv(
 ) -> Result<Vec<OsString>, String> {
     let mut argv = Vec::new();
     for (arg, role) in &plan.argv {
+        if is_control_arg(arg, *role) {
+            continue;
+        }
         if command == "ar"
             && *role == Role::Input
             && world.peek_bytes(arg).is_none()
@@ -424,4 +561,26 @@ fn scrubbed_env(root: &Path) -> Vec<(OsString, OsString)> {
     env.push((OsString::from("TEMP"), tmp.clone()));
     env.push((OsString::from("TMP"), tmp));
     env
+}
+
+#[cfg(unix)]
+fn make_executable(path: &Path) -> Result<(), String> {
+    use std::os::unix::fs::PermissionsExt;
+
+    let mut permissions = fs::metadata(path)
+        .map_err(|err| {
+            format!(
+                "real-process executable metadata `{}`: {err}",
+                path.display()
+            )
+        })?
+        .permissions();
+    permissions.set_mode(permissions.mode() | 0o700);
+    fs::set_permissions(path, permissions)
+        .map_err(|err| format!("real-process chmod executable `{}`: {err}", path.display()))
+}
+
+#[cfg(not(unix))]
+fn make_executable(_path: &Path) -> Result<(), String> {
+    Ok(())
 }
