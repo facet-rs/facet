@@ -857,6 +857,12 @@ impl Tool for FakeRustc {
         for output in outputs {
             let kind = if output.ends_with(".rmeta") {
                 "rmeta"
+            } else if crate_type == "proc-macro"
+                || output.ends_with(".dylib")
+                || output.ends_with(".so")
+                || output.ends_with(".dll")
+            {
+                "proc-macro"
             } else if crate_type == "bin" {
                 "bin"
             } else {

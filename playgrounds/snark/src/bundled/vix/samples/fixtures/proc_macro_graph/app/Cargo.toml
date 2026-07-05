@@ -1,0 +1,9 @@
+[package]
+name = "macro_app"
+version = "0.1.0"
+edition = "2021"
+
+[workspace]
+
+[dependencies]
+emit_answer_macro = { path = "../crates/emit_answer_macro" }
