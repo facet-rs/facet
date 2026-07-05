@@ -680,6 +680,7 @@ struct CargoUnitGraph {
 struct CargoUnit {
     target: CargoTarget,
     mode: String,
+    platform: Option<String>,
     dependencies: Vec<CargoDependency>,
 }
 
@@ -778,9 +779,9 @@ struct ProcMacroUnitShape {
     platform: String,
 }
 
-fn machine_proc_macro_unit_graph(
-    machine: &Machine,
-) -> Result<(Vec<ProcMacroUnitShape>, Vec<(String, String)>), String> {
+type ProcMacroUnitGraph = (Vec<ProcMacroUnitShape>, Vec<(String, String)>);
+
+fn machine_proc_macro_unit_graph(machine: &Machine) -> Result<ProcMacroUnitGraph, String> {
     let mut shapes = machine
         .trace()
         .iter()
@@ -927,7 +928,7 @@ fn cargo_proc_macro_unit_shapes_from_json(stdout: &str) -> Result<Vec<ProcMacroU
             let dependencies = unit
                 .dependencies
                 .iter()
-                .map(|dep| dep.extern_crate_name.clone())
+                .filter_map(|dep| dep.extern_crate_name.clone())
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect();
