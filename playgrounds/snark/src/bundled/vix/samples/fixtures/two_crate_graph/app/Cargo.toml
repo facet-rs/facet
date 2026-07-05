@@ -1,0 +1,7 @@
+[package]
+name = "mini_app"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+helper = { path = "../crates/helper" }

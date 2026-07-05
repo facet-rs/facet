@@ -14,7 +14,10 @@ use std::sync::{Arc, Mutex};
 
 use sha2::{Digest, Sha256};
 
-use crate::exec::{ExecCache, ExecEvent, ExecPlan, ObservedWorld, Outcome, Role, Tool, Tree};
+use crate::exec::{
+    ExecCache, ExecEvent, ExecPlan, ObservedWorld, Outcome, Role, Tool, Tree, role_embedded_paths,
+    role_input_paths, role_output_paths, role_search_dir_paths,
+};
 use crate::machine::{
     MachineExecBackend, MachineExecRequest, MachinePathDemand, MachinePendingRun,
 };
@@ -162,26 +165,30 @@ fn stage_declared_inputs(
 ) -> Result<(), String> {
     for (arg, role) in &plan.argv {
         match role {
-            Role::Input => {
-                let bytes = world.read_bytes(arg).ok_or_else(|| {
-                    format!("real-process input `{arg}` is outside mounted trees")
-                })?;
-                stage_file(root, arg, &bytes)?;
+            Role::Input | Role::InputFlag => {
+                for input in role_input_paths(arg, *role) {
+                    let bytes = world.read_bytes(&input).ok_or_else(|| {
+                        format!("real-process input `{input}` is outside mounted trees")
+                    })?;
+                    stage_file(root, &input, &bytes)?;
+                }
             }
-            Role::SearchDir => {
-                let physical = physical_path(arg, root)?;
-                fs::create_dir_all(&physical)
-                    .map_err(|err| format!("real-process create search dir `{arg}`: {err}"))?;
-                if let Some(names) = world.list(arg) {
-                    for name in names {
-                        let logical = listed_logical_path(arg, &name, world);
-                        if let Some(bytes) = world.peek_bytes(&logical) {
-                            stage_file(root, &logical, &bytes)?;
+            Role::SearchDir | Role::SearchDirFlag => {
+                for dir in role_search_dir_paths(arg, *role) {
+                    let physical = physical_path(&dir, root)?;
+                    fs::create_dir_all(&physical)
+                        .map_err(|err| format!("real-process create search dir `{dir}`: {err}"))?;
+                    if let Some(names) = world.list(&dir) {
+                        for name in names {
+                            let logical = listed_logical_path(&dir, &name, world);
+                            if let Some(bytes) = world.peek_bytes(&logical) {
+                                stage_file(root, &logical, &bytes)?;
+                            }
                         }
                     }
                 }
             }
-            Role::Output | Role::Flag => {}
+            Role::Output | Role::OutputFlag | Role::Flag => {}
         }
     }
     Ok(())
@@ -214,11 +221,11 @@ fn mount_root(path: &str) -> Option<String> {
 
 fn prepare_output_dirs(plan: &ExecPlan, root: &Path) -> Result<(), String> {
     for (arg, role) in &plan.argv {
-        if *role == Role::Output {
-            let path = physical_path(arg, root)?;
+        for output in role_output_paths(arg, *role) {
+            let path = physical_path(&output, root)?;
             if let Some(parent) = path.parent() {
                 fs::create_dir_all(parent)
-                    .map_err(|err| format!("real-process create output dir `{arg}`: {err}"))?;
+                    .map_err(|err| format!("real-process create output dir `{output}`: {err}"))?;
             }
         }
     }
@@ -228,11 +235,11 @@ fn prepare_output_dirs(plan: &ExecPlan, root: &Path) -> Result<(), String> {
 fn harvest_outputs(plan: &ExecPlan, root: &Path) -> Result<Tree, String> {
     let mut tree = Tree::default();
     for (arg, role) in &plan.argv {
-        if *role == Role::Output {
-            let path = physical_path(arg, root)?;
+        for output in role_output_paths(arg, *role) {
+            let path = physical_path(&output, root)?;
             let bytes = fs::read(&path)
-                .map_err(|err| format!("real-process output `{arg}` was not produced: {err}"))?;
-            tree.insert_bytes(arg.clone(), bytes);
+                .map_err(|err| format!("real-process output `{output}` was not produced: {err}"))?;
+            tree.insert_bytes(output, bytes);
         }
     }
     if tree.entries.is_empty() && tree.blobs.is_empty() {
@@ -263,6 +270,16 @@ fn map_arg(arg: &str, role: Role, root: &Path) -> Result<OsString, String> {
     match role {
         Role::Input | Role::Output | Role::SearchDir => {
             Ok(physical_path(arg, root)?.into_os_string())
+        }
+        Role::InputFlag | Role::OutputFlag | Role::SearchDirFlag => {
+            let mut mapped = arg.to_string();
+            let mut paths = role_embedded_paths(arg, role);
+            paths.sort_by_key(|path| std::cmp::Reverse(path.len()));
+            for path in paths {
+                let physical = physical_path(&path, root)?;
+                mapped = mapped.replace(&path, physical.to_string_lossy().as_ref());
+            }
+            Ok(OsString::from(mapped))
         }
         Role::Flag => Ok(OsString::from(arg)),
     }

@@ -5,10 +5,14 @@ fn doc_string(doc: Doc, key: String) -> String {
     doc.get(key).unwrap()
 }
 
+fn package_doc(manifest: Tree) -> Doc {
+    let doc = toml(manifest / p"Cargo.toml");
+    doc.get("package").unwrap()
+}
+
 pub fn crate_lib(target: Target, manifest: Tree) -> Tree {
     let rustc = Rustc::acquire(target);
-    let doc = toml(manifest / p"Cargo.toml");
-    let package = doc.get("package").unwrap();
+    let package = package_doc(manifest);
     let name = doc_string(package, "name");
     let edition = doc_string(package, "edition");
 
@@ -16,8 +20,86 @@ pub fn crate_lib(target: Target, manifest: Tree) -> Tree {
         --crate-name {name}
         --edition {edition}
         --crate-type lib
-        -L {manifest}
+        --emit=metadata={p"libmini_vendored.rmeta"},link={p"libmini_vendored.rlib"}
+        -L dependency={manifest}
         {manifest / p"src/lib.rs"}
-        -o {p"libmini_vendored.rlib"}
     }
+}
+
+fn dep_metadata(target: Target, dep: Tree) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let package = package_doc(dep);
+    let name = doc_string(package, "name");
+    let edition = doc_string(package, "edition");
+
+    rustc! {
+        --crate-name {name}
+        --edition {edition}
+        --crate-type lib
+        --emit=metadata={p"libhelper.rmeta"},link={p"libhelper.rlib"}
+        {dep / p"src/lib.rs"}
+    } / p"libhelper.rmeta"
+}
+
+fn dep_rlib(target: Target, dep: Tree) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let package = package_doc(dep);
+    let name = doc_string(package, "name");
+    let edition = doc_string(package, "edition");
+
+    rustc! {
+        --crate-name {name}
+        --edition {edition}
+        --crate-type lib
+        --emit=metadata={p"libhelper.rmeta"},link={p"libhelper.rlib"}
+        {dep / p"src/lib.rs"}
+    } / p"libhelper.rlib"
+}
+
+fn bin_check(target: Target, manifest: Tree, dep_meta: Tree) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let package = package_doc(manifest);
+    let name = doc_string(package, "name");
+    let edition = doc_string(package, "edition");
+
+    rustc! {
+        --crate-name {name}
+        --edition {edition}
+        --crate-type bin
+        --emit=metadata={p"mini_app.rmeta"}
+        --extern helper={dep_meta / p"libhelper.rmeta"}
+        -L dependency={dep_meta}
+        {manifest / p"src/main.rs"}
+    }
+}
+
+fn bin_link(target: Target, manifest: Tree, dep_rlib: Tree) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let package = package_doc(manifest);
+    let name = doc_string(package, "name");
+    let edition = doc_string(package, "edition");
+
+    rustc! {
+        --crate-name {name}
+        --edition {edition}
+        --crate-type bin
+        --emit=link={p"mini_app"}
+        --extern helper={dep_rlib / p"libhelper.rlib"}
+        -L dependency={dep_rlib}
+        {manifest / p"src/main.rs"}
+    }
+}
+
+pub fn crate_bin_check(target: Target, graph: Tree) -> Tree {
+    let dep = graph / p"crates/helper";
+    let root = graph / p"app";
+    let meta = dep_metadata(target, dep);
+    bin_check(target, root, meta) / p"mini_app.rmeta"
+}
+
+pub fn crate_bin(target: Target, graph: Tree) -> Tree {
+    let dep = graph / p"crates/helper";
+    let root = graph / p"app";
+    let rlib = dep_rlib(target, dep);
+    bin_link(target, root, rlib) / p"mini_app"
 }
