@@ -6858,6 +6858,35 @@ pub fn opened() -> String {
         ])
     }
 
+    fn proc_macro_graph_tree() -> Tree {
+        Tree::of(&[
+            (
+                "app/Cargo.toml",
+                include_str!(
+                    "../../../playgrounds/snark/src/bundled/vix/samples/fixtures/proc_macro_graph/app/Cargo.toml"
+                ),
+            ),
+            (
+                "app/src/main.rs",
+                include_str!(
+                    "../../../playgrounds/snark/src/bundled/vix/samples/fixtures/proc_macro_graph/app/src/main.rs"
+                ),
+            ),
+            (
+                "crates/emit_answer_macro/Cargo.toml",
+                include_str!(
+                    "../../../playgrounds/snark/src/bundled/vix/samples/fixtures/proc_macro_graph/crates/emit_answer_macro/Cargo.toml"
+                ),
+            ),
+            (
+                "crates/emit_answer_macro/src/lib.rs",
+                include_str!(
+                    "../../../playgrounds/snark/src/bundled/vix/samples/fixtures/proc_macro_graph/crates/emit_answer_macro/src/lib.rs"
+                ),
+            ),
+        ])
+    }
+
     #[test]
     fn the_scalar_corpus_runs_on_the_machine() {
         for lane in lanes() {
@@ -9677,6 +9706,77 @@ pub fn moved(n: Int) -> Map<String, Float> {
     }
 
     #[test]
+    fn crate_vix_fake_rustc_builds_proc_macro_as_host_unit() {
+        let src = include_str!("../../../playgrounds/snark/src/bundled/vix/samples/crate.vix");
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let target = cross_target_handle(&machine);
+            let graph = machine.intern_tree_concrete(proc_macro_graph_tree());
+
+            let built = machine
+                .demand_i64("crate_proc_macro_bin", vec![target, graph])
+                .unwrap();
+            let entries = machine.tree_entries(built).unwrap();
+            assert_eq!(
+                entries.keys().collect::<Vec<_>>(),
+                vec![&"macro_app".to_string()],
+                "{lane:?}: {entries:?}"
+            );
+            assert!(
+                entries["macro_app"].starts_with("bin("),
+                "{lane:?}: {entries:?}"
+            );
+
+            let requested = machine
+                .trace()
+                .iter()
+                .filter_map(|event| match event {
+                    DriveEvent::RunRequested {
+                        command_name,
+                        capability_key,
+                        argv,
+                        ..
+                    } if command_name == "rustc" => Some((capability_key.clone(), argv.clone())),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(requested.len(), 2, "{lane:?}: {requested:#?}");
+
+            let macro_unit = requested
+                .iter()
+                .find(|(_, argv)| has_arg_pair(argv, "--crate-name", "emit_answer_macro"))
+                .unwrap_or_else(|| panic!("{lane:?}: missing proc-macro unit in {requested:#?}"));
+            let consumer_unit = requested
+                .iter()
+                .find(|(_, argv)| has_arg_pair(argv, "--crate-name", "macro_app"))
+                .unwrap_or_else(|| panic!("{lane:?}: missing consumer unit in {requested:#?}"));
+            assert_ne!(
+                macro_unit.0, consumer_unit.0,
+                "{lane:?}: proc-macro producer must acquire host rustc while consumer keeps target rustc"
+            );
+            assert!(
+                has_arg_pair(&macro_unit.1, "--crate-type", "proc-macro"),
+                "{lane:?}: {requested:#?}"
+            );
+            let dylib = host_proc_macro_dylib_name();
+            assert!(
+                macro_unit
+                    .1
+                    .iter()
+                    .any(|arg| arg == &format!("--emit=link={dylib}")),
+                "{lane:?}: {requested:#?}"
+            );
+            assert!(
+                consumer_unit
+                    .1
+                    .iter()
+                    .any(|arg| arg.starts_with("emit_answer_macro=/m/") && arg.ends_with(&dylib)),
+                "{lane:?}: {requested:#?}"
+            );
+        }
+    }
+
+    #[test]
     fn inline_json_structural_values_run_on_the_machine() {
         let src = r#"
 pub fn parse(input: String) -> (String, Int, Bool) {
@@ -10928,6 +11028,32 @@ pub fn lazy(n: Int) -> Map<String, Float> {
             .iter()
             .filter(|event| matches!(event, DriveEvent::RunRequested { .. }))
             .count()
+    }
+
+    fn cross_target_handle(machine: &Machine) -> i64 {
+        let os = if cfg!(target_os = "linux") { 1 } else { 0 };
+        let arch = if cfg!(target_arch = "x86_64") { 1 } else { 0 };
+        machine
+            .driver
+            .intern_target(os, arch)
+            .expect("cross target")
+            .0
+    }
+
+    fn host_proc_macro_dylib_name() -> String {
+        let ext = if cfg!(target_os = "macos") {
+            "dylib"
+        } else if cfg!(target_os = "windows") {
+            "dll"
+        } else {
+            "so"
+        };
+        format!("libemit_answer_macro.{ext}")
+    }
+
+    fn has_arg_pair(argv: &[String], flag: &str, value: &str) -> bool {
+        argv.windows(2)
+            .any(|pair| pair[0] == flag && pair[1] == value)
     }
 
     fn run_outputs(machine: &Machine, pick: impl Fn(&DriveEvent) -> Option<u64>) -> Vec<u64> {

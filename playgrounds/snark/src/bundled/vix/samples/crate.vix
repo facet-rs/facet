@@ -1,4 +1,4 @@
-use vix::{Tree, Target, Path};
+use vix::{Tree, Target, Path, Os};
 use caps::Rustc;
 
 fn doc_string(doc: Doc, key: String) -> String {
@@ -363,4 +363,70 @@ pub fn crate_build_script_bin(target: Target, graph: Tree) -> Tree {
     let out_dir = build_script_out_dir(run);
     let lib = build_script_lib(target, manifest, directives, out_dir);
     build_script_bin_link(target, manifest, lib) / p"build_script_runner"
+}
+
+fn proc_macro_dylib_ext(host: Target) -> String {
+    match host.os {
+        Os::Macos => "dylib",
+        Os::Windows => "dll",
+        _ => "so",
+    }
+}
+
+fn proc_macro_dylib_path(host: Target) -> Path {
+    p"libemit_answer_macro.so".with_ext(proc_macro_dylib_ext(host))
+}
+
+fn proc_macro_dylib(manifest: Tree) -> Tree {
+    let host = Target::host();
+    let rustc = Rustc::acquire(host);
+    let package = package_doc(manifest);
+    let name = doc_string(package, "name");
+    let edition = doc_string(package, "edition");
+    let dylib = proc_macro_dylib_path(host);
+
+    rustc! {
+        --crate-name {name}
+        --edition {edition}
+        --crate-type proc-macro
+        --emit=link={dylib}
+        {manifest / p"src/lib.rs"}
+    }
+}
+
+fn proc_macro_bin_link(target: Target, manifest: Tree, macro_dylib: Tree) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let package = package_doc(manifest);
+    let name = doc_string(package, "name");
+    let edition = doc_string(package, "edition");
+    let dylib = proc_macro_dylib_path(Target::host());
+
+    rustc! {
+        --crate-name {name}
+        --edition {edition}
+        --crate-type bin
+        --emit=link={p"macro_app"}
+        --extern emit_answer_macro={macro_dylib / dylib}
+        -L dependency={macro_dylib}
+        {manifest / p"src/main.rs"}
+    }
+}
+
+pub fn crate_proc_macro_bin(target: Target, graph: Tree) -> Tree {
+    let macro_crate = graph / p"crates/emit_answer_macro";
+    let root = graph / p"app";
+    let macro_dylib = proc_macro_dylib(macro_crate);
+    proc_macro_bin_link(target, root, macro_dylib) / p"macro_app"
+}
+
+fn proc_macro_cross_target() -> Target {
+    let host = Target::host();
+    match host.os {
+        Os::Linux => Target { os: Os::Macos },
+        _ => Target { os: Os::Linux },
+    }
+}
+
+pub fn crate_proc_macro_cross_bin(graph: Tree) -> Tree {
+    crate_proc_macro_bin(proc_macro_cross_target(), graph)
 }
