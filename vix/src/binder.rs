@@ -590,7 +590,7 @@ impl Binder {
                 }
             }
             Expr::Identifier(name) => self.resolve(name),
-            Expr::Str(_) | Expr::Path(_) | Expr::Number(_) | Expr::Bool(_) => {}
+            Expr::Template(_) | Expr::Str(_) | Expr::Path(_) | Expr::Number(_) | Expr::Bool(_) => {}
         }
     }
 

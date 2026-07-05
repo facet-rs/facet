@@ -66,6 +66,7 @@ ast({
 
   // leaves: decode choice ("text" = raw source text)
   identifier: { as: "Identifier", decode: "text" },
+  template_string: { as: "Template", decode: "text" },
   string: { as: "Str", decode: "string" },
   path_literal: { as: "Path", decode: "path" },
   number: { as: "Number", decode: "text" },

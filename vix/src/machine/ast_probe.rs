@@ -217,6 +217,7 @@ fn expr_kind(expr: &ast::Expr) -> &'static str {
         ast::Expr::Scoped(_) => "scoped",
         ast::Expr::Identifier(_) => "identifier",
         ast::Expr::Str(_) => "string",
+        ast::Expr::Template(_) => "template",
         ast::Expr::Path(_) => "path",
         ast::Expr::Number(_) => "number",
         ast::Expr::Bool(_) => "bool",
@@ -227,6 +228,7 @@ fn expr_leaf_text(expr: &ast::Expr) -> Option<String> {
     match expr {
         ast::Expr::Identifier(expr)
         | ast::Expr::Str(expr)
+        | ast::Expr::Template(expr)
         | ast::Expr::Path(expr)
         | ast::Expr::Number(expr) => Some(expr.value.clone()),
         ast::Expr::Bool(expr) => Some(expr.value.to_string()),
@@ -344,6 +346,7 @@ fn expr_span(expr: &ast::Expr) -> Span {
         ast::Expr::Paren(expr) => expr.span,
         ast::Expr::Scoped(expr) => expr.span,
         ast::Expr::Identifier(expr)
+        | ast::Expr::Template(expr)
         | ast::Expr::Str(expr)
         | ast::Expr::Path(expr)
         | ast::Expr::Number(expr) => expr.span,

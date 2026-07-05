@@ -251,6 +251,15 @@ pub mod support {
         }
     }
 
+    /// `tmpl"…"` template literal -> contents, escapes processed.
+    pub fn decode_template(n: &ResolvedCstNode) -> Spanned<String> {
+        let raw = raw_text(n);
+        Spanned {
+            value: unquote(raw.strip_prefix("tmpl").unwrap_or(&raw)),
+            span: span(n),
+        }
+    }
+
     pub fn decode_bool(n: &ResolvedCstNode) -> Spanned<bool> {
         Spanned {
             value: raw_text(n) == "true",
