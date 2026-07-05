@@ -39,8 +39,8 @@ use super::driver::{
     RenderVariant, RenderedValue, SEALED_DECLASSIFY_HOST, SEALED_SEAL_HOST, SEALED_TO_STRING_HOST,
     STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_DEFAULT_HOST,
     STRING_LOWER_HOST, STRING_UPPER_HOST, SemanticComparator, StepMode, StoreHandle, TARGET_HOST,
-    TREE_PROJECT_HOST, VALUE_COMPARE_HOST, VERSION_PARSE_HOST, VERSION_SET_OP_HOST,
-    VERSION_SET_PARSE_HOST, ValueBundle,
+    TREE_PROJECT_HOST, VALUE_COMPARE_HOST, VERSION_FIELD_HOST, VERSION_PARSE_HOST,
+    VERSION_SET_OP_HOST, VERSION_SET_PARSE_HOST, ValueBundle,
 
 };
 use crate::ast;
@@ -1769,11 +1769,19 @@ fn collect_expr_schemas(
         }
         ast::Expr::Field(field) => {
             let receiver = collect_expr_schemas(&field.receiver, out, tables, fn_returns, env)?;
-            if let (Some(schema), ast::Member::Index(index)) = (receiver, &field.name)
-                && let Some(fields) = tuple_schema_fields(&schema)
-                && let Ok(field_index) = index.value.parse::<usize>()
-            {
-                return Ok(fields.get(field_index).cloned());
+            if let Some(schema) = &receiver {
+                if schema == "Version"
+                    && let ast::Member::Identifier(name) = &field.name
+                    && matches!(name.value.as_str(), "major" | "minor" | "patch")
+                {
+                    return Ok(Some("Int".to_string()));
+                }
+                if let ast::Member::Index(index) = &field.name
+                    && let Some(fields) = tuple_schema_fields(schema)
+                    && let Ok(field_index) = index.value.parse::<usize>()
+                {
+                    return Ok(fields.get(field_index).cloned());
+                }
             }
             Ok(None)
         }
@@ -3737,6 +3745,15 @@ impl<'a> FnLowerer<'a> {
                 }
                 if receiver.schema == "Target" && name.value == "arch" {
                     return Ok(self.store_read(&receiver, 1, "Arch".into()));
+                }
+                if receiver.schema == "Version" {
+                    let selector = match name.value.as_str() {
+                        "major" => 0,
+                        "minor" => 1,
+                        "patch" => 2,
+                        other => return Err(format!("unknown field {other} on Version")),
+                    };
+                    return Ok(self.version_field(&receiver, selector));
                 }
                 let info = self
                     .tables
@@ -6034,6 +6051,32 @@ impl<'a> FnLowerer<'a> {
             realization: None,
             pending: None,
         })
+    }
+
+    fn version_field(&mut self, receiver: &ValueSlot, selector: i64) -> ValueSlot {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: receiver.slot,
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 16,
+            value: selector,
+        });
+        self.code.push(Op::HostCall {
+            host: VERSION_FIELD_HOST,
+        });
+        ValueSlot {
+            slot: dst,
+            schema: "Int".into(),
+            realization: None,
+            pending: None,
+        }
     }
 
     fn compare_value(

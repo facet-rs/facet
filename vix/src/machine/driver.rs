@@ -159,6 +159,7 @@ pub const ARRAY_SET_HOST: u32 = 46;
 pub const FLESH_DUP_HOST: u32 = 47;
 pub const RECORD_UPDATE_HOST: u32 = 48;
 pub const CRATE_ARCHIVE_HOST: u32 = 49;
+pub const VERSION_FIELD_HOST: u32 = 50;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -3370,6 +3371,37 @@ impl Driver {
                 }
             };
 
+            let mut version_field_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let handle = read_frame_word(frame, primitive_region + 8);
+                    let field = read_frame_word(frame, primitive_region + 16);
+                    let store = store_cell.borrow();
+                    let entry = store
+                        .entry(handle)
+                        .ok_or_else(|| format!("store handle {handle}"))?;
+                    if entry.schema != "Version" {
+                        return Err(format!(
+                            "Version field access expected Version, got {}",
+                            entry.schema
+                        ));
+                    }
+                    let version = super::version::parse_bytes(&entry.bytes)?;
+                    let value = match field {
+                        0 => version.major,
+                        1 => version.minor,
+                        2 => version.patch,
+                        other => return Err(format!("unknown Version field {other}")),
+                    };
+                    drop(store);
+                    write_frame_word(frame, dst_slot, value as i64);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
             let mut value_compare_host = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
@@ -4446,7 +4478,7 @@ impl Driver {
                 }
             };
 
-            let mut hosts: [HostFn<'_>; 50] = [
+            let mut hosts: [HostFn<'_>; 51] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -4497,6 +4529,7 @@ impl Driver {
                 &mut flesh_dup,
                 &mut record_update,
                 &mut crate_archive_host,
+                &mut version_field_host,
             ];
             let step = exec
                 .task
