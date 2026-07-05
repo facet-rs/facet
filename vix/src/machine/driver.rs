@@ -41,6 +41,7 @@ use weavy::mem::{Access, Descriptor, Tag};
 use weavy::task::Op;
 use weavy::task::{FnId, HostFn, Program, Task, TaskStep};
 
+use crate::ast;
 use crate::fetch::{FetchBackend, NoFetchBackend};
 use crate::support::{PathMissing, assign_roles, subtree, tool_for};
 use crate::value::{Payload, Value};
@@ -132,6 +133,9 @@ pub const DOC_PARSE_HOST: u32 = 21;
 pub const DOC_GET_HOST: u32 = 22;
 pub const DOC_COERCE_HOST: u32 = 23;
 pub const ELF_DOC_HOST: u32 = 24;
+pub const AST_DOC_HOST: u32 = 25;
+pub const AST_FN_HOST: u32 = 26;
+pub const ARRAY_LEN_HOST: u32 = 27;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -583,8 +587,13 @@ struct PendingInvocation {
 }
 
 #[derive(Clone, Debug)]
-struct PendingPrimitive {
-    projection: super::elf::Projection,
+enum PendingPrimitive {
+    Elf {
+        projection: super::elf::Projection,
+    },
+    Ast {
+        projection: super::ast_probe::Projection,
+    },
 }
 
 #[derive(Clone, Debug)]
@@ -1138,6 +1147,9 @@ pub struct Driver {
     fetch_backend: Arc<dyn FetchBackend>,
     exec_backend: Option<Arc<dyn MachineExecBackend>>,
     elf_projection_memo: HashMap<(ContentHash, super::elf::Projection), i64>,
+    ast_roots: HashMap<i64, i64>,
+    ast_parse_memo: HashMap<ContentHash, Arc<ast::SourceFile>>,
+    ast_projection_memo: HashMap<(ContentHash, super::ast_probe::Projection, String), i64>,
     runs: BTreeMap<u64, PendingExecRun>,
     next_run_id: u64,
     trace_clock: u64,
@@ -1181,6 +1193,9 @@ impl Driver {
             fetch_backend: Arc::new(NoFetchBackend),
             exec_backend: None,
             elf_projection_memo: HashMap::new(),
+            ast_roots: HashMap::new(),
+            ast_parse_memo: HashMap::new(),
+            ast_projection_memo: HashMap::new(),
             runs: BTreeMap::new(),
             next_run_id: 0,
             trace_clock: 0,
@@ -1777,6 +1792,7 @@ impl Driver {
             let descriptors = &self.descriptors;
             let schema_refs = &self.schema_refs;
             let store_cell = &self.store;
+            let ast_roots_cell = RefCell::new(&mut self.ast_roots);
             let journal_cell = RefCell::new(&mut self.journal);
             let clock_cell = RefCell::new(&mut self.trace_clock);
             let lowered_fns = &self.fns;
@@ -2290,6 +2306,69 @@ impl Driver {
                 }
             };
 
+            let mut ast_doc_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let input = read_frame_word(frame, primitive_region + 8);
+                    let handle = alloc_ast_doc(store_cell, descriptors, schema_refs, input)?;
+                    ast_roots_cell.borrow_mut().insert(handle, input);
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut ast_fn_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let root = read_frame_word(frame, primitive_region + 8);
+                    let name = read_frame_word(frame, primitive_region + 16);
+                    let input = *ast_roots_cell
+                        .borrow()
+                        .get(&root)
+                        .ok_or_else(|| format!("handle {root} is not an ast() root"))?;
+                    let input_hash = store_cell
+                        .borrow()
+                        .entry(input)
+                        .ok_or_else(|| format!("store handle {input}"))?
+                        .content_hash;
+                    let pending = ast_projection_pending(
+                        input,
+                        input_hash,
+                        super::ast_probe::Projection::Fn,
+                        vec![name],
+                    );
+                    let pending = store_cell.borrow_mut().alloc_pending("Doc", pending).0;
+                    write_frame_word(frame, dst_slot, pending);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut array_len_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let array = read_frame_word(frame, primitive_region + 8);
+                    let len = match store_cell.borrow().array_entry(array, schema_refs)? {
+                        ArrayEntry::Words { words, .. } => words.len(),
+                        ArrayEntry::Pending(pending) => pending.len(),
+                    };
+                    write_frame_word(
+                        frame,
+                        dst_slot,
+                        i64::try_from(len).expect("array length fits i64"),
+                    );
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
             let mut array_filter_exclude = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
@@ -2441,7 +2520,7 @@ impl Driver {
                 });
             };
 
-            let mut hosts: [HostFn<'_>; 25] = [
+            let mut hosts: [HostFn<'_>; 28] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -2467,6 +2546,9 @@ impl Driver {
                 &mut doc_get_host,
                 &mut doc_coerce_host,
                 &mut elf_doc_host,
+                &mut ast_doc_host,
+                &mut ast_fn_host,
+                &mut array_len_host,
             ];
             let step = exec
                 .task
@@ -2632,7 +2714,14 @@ impl Driver {
             ));
         }
         if let Some(primitive) = invocation.primitive {
-            let value = self.force_elf_projection(primitive.projection, &invocation.args)?;
+            let value = match primitive {
+                PendingPrimitive::Elf { projection } => {
+                    self.force_elf_projection(projection, &invocation.args)?
+                }
+                PendingPrimitive::Ast { projection } => {
+                    self.force_ast_projection(projection, &invocation.args)?
+                }
+            };
             return Ok(PendingForce::Ready {
                 input_slot: req.input_slot,
                 value,
@@ -3172,6 +3261,140 @@ impl Driver {
             )),
         }
     }
+
+    fn force_ast_projection(
+        &mut self,
+        projection: super::ast_probe::Projection,
+        args: &[i64],
+    ) -> Result<i64, String> {
+        let input = *args.first().ok_or_else(|| {
+            format!(
+                "ast projection {} expected an input argument",
+                projection.name()
+            )
+        })?;
+        let name = match projection {
+            super::ast_probe::Projection::Items | super::ast_probe::Projection::Fns => {
+                if args.len() != 1 {
+                    return Err(format!(
+                        "ast projection {} expected one input, got {}",
+                        projection.name(),
+                        args.len()
+                    ));
+                }
+                String::new()
+            }
+            super::ast_probe::Projection::Fn | super::ast_probe::Projection::FnBodyChildren => {
+                let [_, name] = args else {
+                    return Err(format!(
+                        "ast projection {} expected input and name, got {} args",
+                        projection.name(),
+                        args.len()
+                    ));
+                };
+                self.store.borrow().string_value(*name, "String")?
+            }
+        };
+        let (source, input_hash) = self.ast_input_source(input)?;
+        let memo_key = (input_hash, projection, name.clone());
+        if let Some(&handle) = self.ast_projection_memo.get(&memo_key) {
+            let timestamp_us = self.next_timestamp();
+            self.emit(DriveEvent::ArtifactProbe {
+                format: "ast".to_string(),
+                projection: projection.name().to_string(),
+                input: hash_u64((input_hash, &name)),
+                cache_hit: true,
+                timestamp_us,
+            });
+            return Ok(handle);
+        }
+
+        let file = if let Some(file) = self.ast_parse_memo.get(&input_hash) {
+            Arc::clone(file)
+        } else {
+            let file = Arc::new(super::ast_probe::parse(&source)?);
+            self.ast_parse_memo.insert(input_hash, Arc::clone(&file));
+            file
+        };
+
+        let handle = match projection {
+            super::ast_probe::Projection::Items => alloc_doc_from_value(
+                &self.store,
+                &self.descriptors,
+                &self.schema_refs,
+                super::ast_probe::items(&file),
+            )?,
+            super::ast_probe::Projection::Fns => alloc_doc_from_value(
+                &self.store,
+                &self.descriptors,
+                &self.schema_refs,
+                super::ast_probe::fns(&file),
+            )?,
+            super::ast_probe::Projection::Fn => {
+                let item = super::ast_probe::fn_item(&file, &name)?;
+                alloc_ast_fn_doc(
+                    &self.store,
+                    &self.descriptors,
+                    &self.schema_refs,
+                    input,
+                    input_hash,
+                    item,
+                )?
+            }
+            super::ast_probe::Projection::FnBodyChildren => {
+                let item = super::ast_probe::fn_item(&file, &name)?;
+                alloc_doc_from_value(
+                    &self.store,
+                    &self.descriptors,
+                    &self.schema_refs,
+                    super::ast_probe::fn_body_children(item),
+                )?
+            }
+        };
+        self.ast_projection_memo.insert(memo_key, handle);
+        let timestamp_us = self.next_timestamp();
+        self.emit(DriveEvent::ArtifactProbe {
+            format: "ast".to_string(),
+            projection: projection.name().to_string(),
+            input: hash_u64((input_hash, &name)),
+            cache_hit: false,
+            timestamp_us,
+        });
+        Ok(handle)
+    }
+
+    fn ast_input_source(&mut self, handle: i64) -> Result<(String, ContentHash), String> {
+        let entry = self
+            .store
+            .borrow()
+            .entry(handle)
+            .cloned()
+            .ok_or_else(|| format!("store handle {handle}"))?;
+        let source = match entry.schema.as_str() {
+            "String" => String::from_utf8(entry.bytes).map_err(|err| err.to_string())?,
+            "Tree" => {
+                let forced = self.force_tree_handle(handle)?;
+                let TreeEntry::Concrete(tree) = self.store.borrow().tree_entry(forced)? else {
+                    return Err("ast input tree stayed pending".into());
+                };
+                let len = tree.entries.len();
+                let [(path, contents)] =
+                    <[(String, String); 1]>::try_from(tree.entries.into_iter().collect::<Vec<_>>())
+                        .map_err(|_| {
+                            format!("ast input tree must contain exactly one source, got {len}")
+                        })?;
+                if contents.is_empty() {
+                    return Err(format!("ast input source `{path}` is empty"));
+                }
+                contents
+            }
+            other => return Err(format!("ast input must be String or Tree, got {other}")),
+        };
+        let mut hasher = Sha256::new();
+        hasher.update(b"vix-ast-input");
+        hasher.update(source.as_bytes());
+        Ok((source, hasher.finalize().into()))
+    }
 }
 
 enum Burst {
@@ -3444,11 +3667,156 @@ fn elf_projection_pending(
     let identity_hash = hasher.finalize().into();
     PendingInvocation {
         closure_hash: hash_u64(("elf", projection.name())),
-        primitive: Some(PendingPrimitive { projection }),
+        primitive: Some(PendingPrimitive::Elf { projection }),
         args: vec![input],
         remaining_arity: 0,
         identity_hash,
     }
+}
+
+fn alloc_ast_doc(
+    store: &RefCell<ValueStore>,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    input: i64,
+) -> Result<i64, String> {
+    let input_hash = {
+        let store = store.borrow();
+        let entry = store
+            .entry(input)
+            .ok_or_else(|| format!("store handle {input}"))?;
+        match entry.schema.as_str() {
+            "String" | "Tree" => entry.content_hash,
+            other => return Err(format!("ast input must be String or Tree, got {other}")),
+        }
+    };
+    let rows = [
+        (
+            "items",
+            ast_projection_pending(
+                input,
+                input_hash,
+                super::ast_probe::Projection::Items,
+                Vec::new(),
+            ),
+        ),
+        (
+            "fns",
+            ast_projection_pending(
+                input,
+                input_hash,
+                super::ast_probe::Projection::Fns,
+                Vec::new(),
+            ),
+        ),
+    ]
+    .into_iter()
+    .map(|(key, pending)| {
+        let pending = store.borrow_mut().alloc_pending("Doc", pending).0;
+        (key.to_string(), pending_schema("Doc"), pending)
+    })
+    .collect::<Vec<_>>();
+    alloc_doc_object(store, descriptors, schema_refs, rows)
+}
+
+fn alloc_ast_fn_doc(
+    store: &RefCell<ValueStore>,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    input: i64,
+    input_hash: ContentHash,
+    item: &ast::FnItem,
+) -> Result<i64, String> {
+    let name_handle = store
+        .borrow_mut()
+        .alloc_raw("String", item.name.value.as_bytes().to_vec())
+        .0;
+    let children = ast_projection_pending(
+        input,
+        input_hash,
+        super::ast_probe::Projection::FnBodyChildren,
+        vec![name_handle],
+    );
+    let children = store.borrow_mut().alloc_pending("Doc", children).0;
+    let body = alloc_doc_object(
+        store,
+        descriptors,
+        schema_refs,
+        vec![
+            (
+                "span".to_string(),
+                "Doc".to_string(),
+                alloc_doc_from_value(
+                    store,
+                    descriptors,
+                    schema_refs,
+                    super::ast_probe::span_value(item.body.span),
+                )?,
+            ),
+            ("children".to_string(), pending_schema("Doc"), children),
+        ],
+    )?;
+    let mut rows = super::ast_probe::fn_fields(item)
+        .into_iter()
+        .map(|(key, value)| {
+            let Value::Str(key) = key else {
+                return Err(format!("ast fn key must be string, got {key:?}"));
+            };
+            let handle = alloc_doc_from_value(store, descriptors, schema_refs, value)?;
+            Ok((key, "Doc".to_string(), handle))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    rows.push(("body".to_string(), "Doc".to_string(), body));
+    alloc_doc_object(store, descriptors, schema_refs, rows)
+}
+
+fn ast_projection_pending(
+    input: i64,
+    input_hash: ContentHash,
+    projection: super::ast_probe::Projection,
+    extra_args: Vec<i64>,
+) -> PendingInvocation {
+    let mut hasher = Sha256::new();
+    hasher.update(b"vix-ast-projection");
+    hasher.update(projection.name().as_bytes());
+    hasher.update(input_hash);
+    for arg in &extra_args {
+        hasher.update(arg.to_le_bytes());
+    }
+    let mut args = Vec::with_capacity(1 + extra_args.len());
+    args.push(input);
+    args.extend(extra_args);
+    PendingInvocation {
+        closure_hash: hash_u64(("ast", projection.name())),
+        primitive: Some(PendingPrimitive::Ast { projection }),
+        args,
+        remaining_arity: 0,
+        identity_hash: hasher.finalize().into(),
+    }
+}
+
+fn alloc_doc_object(
+    store: &RefCell<ValueStore>,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    rows: Vec<(String, String, i64)>,
+) -> Result<i64, String> {
+    let mut pairs = Vec::with_capacity(rows.len());
+    for (key, value_schema, value_word) in rows {
+        let key_word = store.borrow_mut().alloc_raw("String", key.into_bytes()).0;
+        pairs.push(MapPair {
+            key_schema: "String".to_string(),
+            key_word,
+            value_schema,
+            value_word,
+            value_realization: None,
+        });
+    }
+    let map = store
+        .borrow_mut()
+        .alloc_map("Map<String,Doc>", pairs, schema_refs, descriptors)?
+        .0;
+    alloc_doc_variant(store, descriptors, 6, &[map])
 }
 
 fn compare_words(
@@ -4604,6 +4972,25 @@ fn map_schemas(schema: &str) -> Option<(&str, &str)> {
     Some((key, value))
 }
 
+fn pending_primitive_to_word(primitive: &PendingPrimitive) -> i64 {
+    match primitive {
+        PendingPrimitive::Elf { projection } => projection.to_word(),
+        PendingPrimitive::Ast { projection } => projection.to_word(),
+    }
+}
+
+fn pending_primitive_from_word(word: i64) -> Result<PendingPrimitive, String> {
+    if word >= 1000 {
+        Ok(PendingPrimitive::Ast {
+            projection: super::ast_probe::Projection::from_word(word)?,
+        })
+    } else {
+        Ok(PendingPrimitive::Elf {
+            projection: super::elf::Projection::from_word(word)?,
+        })
+    }
+}
+
 fn encode_pending_invocation(invocation: &PendingInvocation) -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&invocation.closure_hash.to_le_bytes());
@@ -4620,7 +5007,7 @@ fn encode_pending_invocation(invocation: &PendingInvocation) -> Vec<u8> {
     let primitive = invocation
         .primitive
         .as_ref()
-        .map(|primitive| primitive.projection.to_word())
+        .map(pending_primitive_to_word)
         .unwrap_or(-1);
     bytes.extend_from_slice(&primitive.to_le_bytes());
     bytes.extend_from_slice(&invocation.identity_hash);
@@ -4641,9 +5028,7 @@ fn decode_pending_invocation(bytes: &[u8]) -> Result<PendingInvocation, String> 
         usize::try_from(read_frame_word(bytes, 16)).map_err(|_| "remaining arity")?;
     let primitive = match read_frame_word(bytes, 24) {
         -1 => None,
-        word => Some(PendingPrimitive {
-            projection: super::elf::Projection::from_word(word)?,
-        }),
+        word => Some(pending_primitive_from_word(word)?),
     };
     let identity_hash: ContentHash = bytes[32..64]
         .try_into()
