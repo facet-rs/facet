@@ -31,17 +31,16 @@ use super::TotalF64;
 use super::driver::{
     ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_FILTER_EXCLUDE_HOST, ARRAY_JOIN_HOST,
     ARRAY_LEN_HOST, ARRAY_MAP_PENDING_HOST, ARRAY_POP_HOST, ARRAY_PUSH_HOST, ARRAY_SET_HOST,
-    AST_DOC_HOST, AST_FN_HOST, CRATE_ARCHIVE_HOST, CodeBundle, DOC_COERCE_HOST, DOC_GET_HOST, DOC_PACKAGE_HOST,
-    DOC_PARSE_HOST, DriveEvent, DriveEventSink, Driver, ELF_DOC_HOST, EXEC_HOST, FETCH_HOST,
-    FLESH_DUP_HOST, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST,
-    MAP_INSERT_HOST, MachineExecBackend, OCI_DOC_HOST, OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST,
-    PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RECORD_UPDATE_HOST, RenderNames,
-    RenderVariant, RenderedValue, SEALED_DECLASSIFY_HOST, SEALED_SEAL_HOST, SEALED_TO_STRING_HOST,
-    STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_DEFAULT_HOST,
-    STRING_LOWER_HOST, STRING_UPPER_HOST, SemanticComparator, StepMode, StoreHandle, TARGET_HOST,
-    TREE_PROJECT_HOST, VALUE_COMPARE_HOST, VERSION_PARSE_HOST, VERSION_SET_OP_HOST,
-    VERSION_SET_PARSE_HOST, ValueBundle,
-
+    AST_DOC_HOST, AST_FN_HOST, CRATE_ARCHIVE_HOST, CodeBundle, DOC_COERCE_HOST, DOC_GET_HOST,
+    DOC_PACKAGE_HOST, DOC_PARSE_HOST, DriveEvent, DriveEventSink, Driver, ELF_DOC_HOST, EXEC_HOST,
+    FETCH_HOST, FLESH_DUP_HOST, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST,
+    MAP_GET_HOST, MAP_INSERT_HOST, MachineExecBackend, OCI_DOC_HOST, OPTION_UNWRAP_HOST,
+    PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST,
+    RECORD_UPDATE_HOST, RenderNames, RenderVariant, RenderedValue, SEALED_DECLASSIFY_HOST,
+    SEALED_SEAL_HOST, SEALED_TO_STRING_HOST, STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST,
+    STRING_CONCAT_HOST, STRING_DEFAULT_HOST, STRING_LOWER_HOST, STRING_UPPER_HOST,
+    SemanticComparator, StepMode, StoreHandle, TARGET_HOST, TREE_PROJECT_HOST, VALUE_COMPARE_HOST,
+    VERSION_PARSE_HOST, VERSION_SET_OP_HOST, VERSION_SET_PARSE_HOST, ValueBundle,
 };
 use crate::ast;
 use crate::fetch::FetchBackend;
@@ -684,6 +683,10 @@ impl Machine {
 
     pub fn set_force_flesh_copy(&mut self, force: bool) {
         self.driver.set_force_flesh_copy(force);
+    }
+
+    pub fn set_use_flesh_arena(&mut self, use_arena: bool) {
+        self.driver.set_use_flesh_arena(use_arena);
     }
 
     pub fn entry_param_schemas(&self, name: &str) -> Option<&[String]> {
@@ -7206,6 +7209,20 @@ pub fn main() -> Int {
                 assert_eq!(reuse_result, copy_result, "{lane:?} {name}");
                 assert_eq!(reuse_trace, copy_trace, "{lane:?} {name}");
                 assert_eq!(reuse_bundle.values, copy_bundle.values, "{lane:?} {name}");
+
+                let mut heap = Machine::load_with_lane(src, lane).unwrap();
+                heap.driver.set_force_flesh_copy(false);
+                heap.driver.set_use_flesh_arena(false);
+                let heap_result = heap.demand_i64("main", vec![]).unwrap();
+                let heap_trace = heap.driver.trace.clone();
+                let heap_bundle = heap
+                    .driver
+                    .export_value_bundle(heap_result, Vec::new())
+                    .unwrap();
+
+                assert_eq!(reuse_result, heap_result, "{lane:?} {name}");
+                assert_eq!(reuse_trace, heap_trace, "{lane:?} {name}");
+                assert_eq!(reuse_bundle.values, heap_bundle.values, "{lane:?} {name}");
             }
         }
     }

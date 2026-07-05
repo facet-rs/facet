@@ -802,9 +802,11 @@ enum ArrayEntry {
     Pending(Vec<i64>),
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 struct FleshStore {
     entries: Vec<FleshEntry>,
+    arena: FleshArena,
+    use_arena: bool,
 }
 
 #[derive(Clone, Debug)]
@@ -816,25 +818,134 @@ struct FleshEntry {
 #[derive(Clone, Debug)]
 enum FleshValue {
     Record {
-        schema: String,
-        bytes: Vec<u8>,
+        schema: Arc<str>,
+        bytes: FleshBytes,
     },
     Map {
-        schema: String,
-        pairs: Vec<MapPair>,
+        schema: Arc<str>,
+        pairs: FleshPairs,
     },
     ArrayWords {
-        elem_schema: String,
-        words: Vec<i64>,
+        elem_schema: Arc<str>,
+        words: FleshWords,
     },
     Interned(i64),
 }
 
+#[derive(Clone, Debug, Default)]
+struct FleshArena {
+    bytes: Vec<u8>,
+    words: Vec<i64>,
+    pairs: Vec<MapPair>,
+}
+
+#[derive(Clone, Copy, Debug)]
+struct ArenaRange {
+    start: usize,
+    len: usize,
+}
+
+#[derive(Clone, Debug)]
+enum FleshBytes {
+    Heap(Vec<u8>),
+    Arena(ArenaRange),
+}
+
+#[derive(Clone, Debug)]
+enum FleshWords {
+    Heap(Vec<i64>),
+    Arena(ArenaRange),
+}
+
+#[derive(Clone, Debug)]
+enum FleshPairs {
+    Heap(Vec<MapPair>),
+    Arena(ArenaRange),
+}
+
+impl Default for FleshStore {
+    fn default() -> Self {
+        Self::new(true)
+    }
+}
+
+impl FleshArena {
+    fn alloc_bytes(&mut self, bytes: &[u8]) -> ArenaRange {
+        let start = self.bytes.len();
+        self.bytes.extend_from_slice(bytes);
+        ArenaRange {
+            start,
+            len: bytes.len(),
+        }
+    }
+
+    fn alloc_words(&mut self, words: &[i64]) -> ArenaRange {
+        let start = self.words.len();
+        self.words.extend_from_slice(words);
+        ArenaRange {
+            start,
+            len: words.len(),
+        }
+    }
+
+    fn alloc_pairs(&mut self, pairs: &[MapPair]) -> ArenaRange {
+        let start = self.pairs.len();
+        self.pairs.extend_from_slice(pairs);
+        ArenaRange {
+            start,
+            len: pairs.len(),
+        }
+    }
+}
+
 impl FleshStore {
+    fn new(use_arena: bool) -> Self {
+        Self {
+            entries: Vec::new(),
+            arena: FleshArena::default(),
+            use_arena,
+        }
+    }
+
     fn alloc(&mut self, value: FleshValue) -> i64 {
         let index = self.entries.len();
         self.entries.push(FleshEntry { refs: 1, value });
         flesh_word(index)
+    }
+
+    fn alloc_record_arc(&mut self, schema: Arc<str>, bytes: &[u8]) -> i64 {
+        let bytes = if self.use_arena {
+            FleshBytes::Arena(self.arena.alloc_bytes(bytes))
+        } else {
+            FleshBytes::Heap(bytes.to_vec())
+        };
+        self.alloc(FleshValue::Record { schema, bytes })
+    }
+
+    fn alloc_map(&mut self, schema: String, pairs: &[MapPair]) -> i64 {
+        self.alloc_map_arc(Arc::<str>::from(schema), pairs)
+    }
+
+    fn alloc_map_arc(&mut self, schema: Arc<str>, pairs: &[MapPair]) -> i64 {
+        let pairs = if self.use_arena {
+            FleshPairs::Arena(self.arena.alloc_pairs(pairs))
+        } else {
+            FleshPairs::Heap(pairs.to_vec())
+        };
+        self.alloc(FleshValue::Map { schema, pairs })
+    }
+
+    fn alloc_array_words(&mut self, elem_schema: String, words: &[i64]) -> i64 {
+        self.alloc_array_words_arc(Arc::<str>::from(elem_schema), words)
+    }
+
+    fn alloc_array_words_arc(&mut self, elem_schema: Arc<str>, words: &[i64]) -> i64 {
+        let words = if self.use_arena {
+            FleshWords::Arena(self.arena.alloc_words(words))
+        } else {
+            FleshWords::Heap(words.to_vec())
+        };
+        self.alloc(FleshValue::ArrayWords { elem_schema, words })
     }
 
     fn entry(&self, word: i64) -> Option<&FleshEntry> {
@@ -845,6 +956,514 @@ impl FleshStore {
         flesh_index(word).and_then(|index| self.entries.get_mut(index))
     }
 
+    fn bytes<'a>(&'a self, bytes: &'a FleshBytes) -> &'a [u8] {
+        match bytes {
+            FleshBytes::Heap(bytes) => bytes,
+            FleshBytes::Arena(range) => {
+                &self.arena.bytes[range.start..range.start.saturating_add(range.len)]
+            }
+        }
+    }
+
+    fn words<'a>(&'a self, words: &'a FleshWords) -> &'a [i64] {
+        match words {
+            FleshWords::Heap(words) => words,
+            FleshWords::Arena(range) => {
+                &self.arena.words[range.start..range.start.saturating_add(range.len)]
+            }
+        }
+    }
+
+    fn pairs<'a>(&'a self, pairs: &'a FleshPairs) -> &'a [MapPair] {
+        match pairs {
+            FleshPairs::Heap(pairs) => pairs,
+            FleshPairs::Arena(range) => {
+                &self.arena.pairs[range.start..range.start.saturating_add(range.len)]
+            }
+        }
+    }
+
+    fn bytes_to_vec(&self, bytes: &FleshBytes) -> Vec<u8> {
+        self.bytes(bytes).to_vec()
+    }
+
+    fn words_to_vec(&self, words: &FleshWords) -> Vec<i64> {
+        self.words(words).to_vec()
+    }
+
+    fn pairs_to_vec(&self, pairs: &FleshPairs) -> Vec<MapPair> {
+        self.pairs(pairs).to_vec()
+    }
+
+    fn record_field_word(
+        &self,
+        handle: i64,
+        descriptors: &HashMap<String, Descriptor<String>>,
+        field_index: usize,
+    ) -> Option<i64> {
+        self.entry(handle).and_then(|entry| match &entry.value {
+            FleshValue::Record { schema, bytes } => {
+                let descriptor = descriptors
+                    .get(schema.as_ref())
+                    .unwrap_or_else(|| panic!("descriptor for schema `{schema}`"));
+                let bytes = self.bytes(bytes);
+                let offset = field_offset(descriptor, bytes, field_index);
+                Some(read_frame_word(bytes, offset))
+            }
+            _ => None,
+        })
+    }
+
+    fn record_variant_tag(
+        &self,
+        handle: i64,
+        descriptors: &HashMap<String, Descriptor<String>>,
+    ) -> Option<u64> {
+        self.entry(handle).and_then(|entry| match &entry.value {
+            FleshValue::Record { schema, bytes } => {
+                let descriptor = descriptors
+                    .get(schema.as_ref())
+                    .unwrap_or_else(|| panic!("descriptor for schema `{schema}`"));
+                Some(read_variant_tag(self.bytes(bytes), descriptor))
+            }
+            _ => None,
+        })
+    }
+
+    fn with_record_bytes_mut<R>(
+        &mut self,
+        handle: i64,
+        schema: &str,
+        f: impl FnOnce(&mut [u8]) -> R,
+    ) -> Result<R, String> {
+        let index = flesh_index(handle).ok_or_else(|| format!("flesh handle {handle}"))?;
+        if self.use_arena {
+            let range = match self.entries.get(index).map(|entry| &entry.value) {
+                Some(FleshValue::Record {
+                    schema: record_schema,
+                    bytes: FleshBytes::Arena(range),
+                }) if record_schema.as_ref() == schema => *range,
+                Some(FleshValue::Record {
+                    schema: record_schema,
+                    ..
+                }) => return Err(format!("flesh record is `{record_schema}`, not {schema}")),
+                Some(_) => return Err(format!("flesh handle {handle} is not a Record")),
+                None => return Err(format!("flesh handle {handle}")),
+            };
+            let end = range.start + range.len;
+            Ok(f(&mut self.arena.bytes[range.start..end]))
+        } else {
+            let entry = self
+                .entries
+                .get_mut(index)
+                .ok_or_else(|| format!("flesh handle {handle}"))?;
+            match &mut entry.value {
+                FleshValue::Record {
+                    schema: record_schema,
+                    bytes: FleshBytes::Heap(bytes),
+                } if record_schema.as_ref() == schema => Ok(f(bytes)),
+                FleshValue::Record {
+                    schema: record_schema,
+                    ..
+                } => Err(format!("flesh record is `{record_schema}`, not {schema}")),
+                _ => Err(format!("flesh handle {handle} is not a Record")),
+            }
+        }
+    }
+
+    fn reusable_array_elem_schema(&self, handle: i64) -> Option<Arc<str>> {
+        self.entry(handle).and_then(|entry| match &entry.value {
+            FleshValue::ArrayWords { elem_schema, .. } if entry.refs == 1 => {
+                Some(elem_schema.clone())
+            }
+            _ => None,
+        })
+    }
+
+    fn array_elem_schema(
+        &self,
+        store: &ValueStore,
+        handle: i64,
+        schema_refs: &[String],
+    ) -> Result<Arc<str>, String> {
+        match self.entry(handle).map(|entry| &entry.value) {
+            Some(FleshValue::ArrayWords { elem_schema, .. }) => Ok(elem_schema.clone()),
+            Some(FleshValue::Interned(handle)) => match store.array_entry(*handle, schema_refs)? {
+                ArrayEntry::Words { elem_schema, .. } => Ok(Arc::<str>::from(elem_schema)),
+                ArrayEntry::Pending(_) => Err("pending array has no ready element schema".into()),
+            },
+            Some(_) => Err(format!("flesh handle {handle} is not an Array")),
+            None => match store.array_entry(handle, schema_refs)? {
+                ArrayEntry::Words { elem_schema, .. } => Ok(Arc::<str>::from(elem_schema)),
+                ArrayEntry::Pending(_) => Err("pending array has no ready element schema".into()),
+            },
+        }
+    }
+
+    fn alloc_array_pushed(
+        &mut self,
+        store: &ValueStore,
+        handle: i64,
+        schema_refs: &[String],
+        value: i64,
+    ) -> Result<i64, String> {
+        if let Some(entry) = self.entry(handle) {
+            return match &entry.value {
+                FleshValue::ArrayWords { elem_schema, words } => {
+                    let elem_schema = elem_schema.clone();
+                    let words = words.clone();
+                    let new_words = self.copy_words_with_extra(words, Some(value), None)?;
+                    Ok(self.alloc(FleshValue::ArrayWords {
+                        elem_schema,
+                        words: new_words,
+                    }))
+                }
+                FleshValue::Interned(handle) => {
+                    let ArrayEntry::Words {
+                        elem_schema,
+                        mut words,
+                    } = store.array_entry(*handle, schema_refs)?
+                    else {
+                        return Err("push on pending array".into());
+                    };
+                    words.push(value);
+                    Ok(self.alloc_array_words(elem_schema, &words))
+                }
+                _ => Err(format!("flesh handle {handle} is not an Array")),
+            };
+        }
+        let ArrayEntry::Words {
+            elem_schema,
+            mut words,
+        } = store.array_entry(handle, schema_refs)?
+        else {
+            return Err("push on pending array".into());
+        };
+        words.push(value);
+        Ok(self.alloc_array_words(elem_schema, &words))
+    }
+
+    fn alloc_array_popped(
+        &mut self,
+        store: &ValueStore,
+        handle: i64,
+        schema_refs: &[String],
+    ) -> Result<(i64, i64), String> {
+        if let Some(entry) = self.entry(handle) {
+            return match &entry.value {
+                FleshValue::ArrayWords { elem_schema, words } => {
+                    let elem_schema = elem_schema.clone();
+                    let words = words.clone();
+                    let old = self.words(&words);
+                    let value = *old.last().ok_or_else(|| "pop on empty array".to_string())?;
+                    let new_words = self.copy_words_with_extra(words, None, Some(1))?;
+                    let handle = self.alloc(FleshValue::ArrayWords {
+                        elem_schema,
+                        words: new_words,
+                    });
+                    Ok((handle, value))
+                }
+                FleshValue::Interned(handle) => {
+                    let ArrayEntry::Words {
+                        elem_schema,
+                        mut words,
+                    } = store.array_entry(*handle, schema_refs)?
+                    else {
+                        return Err("pop on pending array".into());
+                    };
+                    let value = words
+                        .pop()
+                        .ok_or_else(|| "pop on empty array".to_string())?;
+                    Ok((self.alloc_array_words(elem_schema, &words), value))
+                }
+                _ => Err(format!("flesh handle {handle} is not an Array")),
+            };
+        }
+        let ArrayEntry::Words {
+            elem_schema,
+            mut words,
+        } = store.array_entry(handle, schema_refs)?
+        else {
+            return Err("pop on pending array".into());
+        };
+        let value = words
+            .pop()
+            .ok_or_else(|| "pop on empty array".to_string())?;
+        Ok((self.alloc_array_words(elem_schema, &words), value))
+    }
+
+    fn alloc_array_set(
+        &mut self,
+        store: &ValueStore,
+        handle: i64,
+        schema_refs: &[String],
+        index: usize,
+        value: i64,
+    ) -> Result<i64, String> {
+        if let Some(entry) = self.entry(handle) {
+            return match &entry.value {
+                FleshValue::ArrayWords { elem_schema, words } => {
+                    let elem_schema = elem_schema.clone();
+                    let words = words.clone();
+                    let len = self.words(&words).len();
+                    if index >= len {
+                        return Err(format!("array index {index} out of bounds {len}"));
+                    }
+                    let new_words = self.copy_words_with_set(words, index, value)?;
+                    Ok(self.alloc(FleshValue::ArrayWords {
+                        elem_schema,
+                        words: new_words,
+                    }))
+                }
+                FleshValue::Interned(handle) => {
+                    let ArrayEntry::Words {
+                        elem_schema,
+                        mut words,
+                    } = store.array_entry(*handle, schema_refs)?
+                    else {
+                        return Err("set on pending array".into());
+                    };
+                    if index >= words.len() {
+                        return Err(format!("array index {index} out of bounds {}", words.len()));
+                    }
+                    words[index] = value;
+                    Ok(self.alloc_array_words(elem_schema, &words))
+                }
+                _ => Err(format!("flesh handle {handle} is not an Array")),
+            };
+        }
+        let ArrayEntry::Words {
+            elem_schema,
+            mut words,
+        } = store.array_entry(handle, schema_refs)?
+        else {
+            return Err("set on pending array".into());
+        };
+        if index >= words.len() {
+            return Err(format!("array index {index} out of bounds {}", words.len()));
+        }
+        words[index] = value;
+        Ok(self.alloc_array_words(elem_schema, &words))
+    }
+
+    fn copy_words_with_extra(
+        &mut self,
+        words: FleshWords,
+        extra: Option<i64>,
+        drop_tail: Option<usize>,
+    ) -> Result<FleshWords, String> {
+        let len = self.words(&words).len();
+        let keep = len
+            .checked_sub(drop_tail.unwrap_or(0))
+            .ok_or_else(|| "pop on empty array".to_string())?;
+        if self.use_arena {
+            let start = self.arena.words.len();
+            match words {
+                FleshWords::Arena(range) => {
+                    self.arena
+                        .words
+                        .extend_from_within(range.start..range.start + keep);
+                }
+                FleshWords::Heap(words) => self.arena.words.extend_from_slice(&words[..keep]),
+            }
+            if let Some(value) = extra {
+                self.arena.words.push(value);
+            }
+            Ok(FleshWords::Arena(ArenaRange {
+                start,
+                len: keep + usize::from(extra.is_some()),
+            }))
+        } else {
+            let mut copied = self.words(&words)[..keep].to_vec();
+            if let Some(value) = extra {
+                copied.push(value);
+            }
+            Ok(FleshWords::Heap(copied))
+        }
+    }
+
+    fn copy_words_with_set(
+        &mut self,
+        words: FleshWords,
+        index: usize,
+        value: i64,
+    ) -> Result<FleshWords, String> {
+        let len = self.words(&words).len();
+        if index >= len {
+            return Err(format!("array index {index} out of bounds {len}"));
+        }
+        if self.use_arena {
+            let start = self.arena.words.len();
+            match words {
+                FleshWords::Arena(range) => {
+                    self.arena
+                        .words
+                        .extend_from_within(range.start..range.start + range.len);
+                }
+                FleshWords::Heap(words) => self.arena.words.extend_from_slice(&words),
+            }
+            self.arena.words[start + index] = value;
+            Ok(FleshWords::Arena(ArenaRange { start, len }))
+        } else {
+            let mut copied = self.words(&words).to_vec();
+            copied[index] = value;
+            Ok(FleshWords::Heap(copied))
+        }
+    }
+
+    fn push_array_word_in_place(&mut self, handle: i64, value: i64) -> Result<(), String> {
+        let index = flesh_index(handle).ok_or_else(|| format!("flesh handle {handle}"))?;
+        if self.use_arena {
+            let (elem_schema, range) = match self.entries.get(index).map(|entry| &entry.value) {
+                Some(FleshValue::ArrayWords {
+                    elem_schema,
+                    words: FleshWords::Arena(range),
+                }) => (elem_schema.clone(), *range),
+                Some(_) => return Err(format!("flesh handle {handle} is not an Array")),
+                None => return Err(format!("flesh handle {handle}")),
+            };
+            if range.start + range.len == self.arena.words.len() {
+                self.arena.words.push(value);
+                if let FleshValue::ArrayWords {
+                    words: FleshWords::Arena(range),
+                    ..
+                } = &mut self.entries[index].value
+                {
+                    range.len += 1;
+                }
+            } else {
+                let old = self.arena.words[range.start..range.start + range.len].to_vec();
+                let start = self.arena.words.len();
+                self.arena.words.extend_from_slice(&old);
+                self.arena.words.push(value);
+                self.entries[index].value = FleshValue::ArrayWords {
+                    elem_schema,
+                    words: FleshWords::Arena(ArenaRange {
+                        start,
+                        len: old.len() + 1,
+                    }),
+                };
+            }
+            Ok(())
+        } else {
+            match &mut self.entries[index].value {
+                FleshValue::ArrayWords {
+                    words: FleshWords::Heap(words),
+                    ..
+                } => {
+                    words.push(value);
+                    Ok(())
+                }
+                _ => Err(format!("flesh handle {handle} is not an Array")),
+            }
+        }
+    }
+
+    fn pop_array_word_in_place(&mut self, handle: i64) -> Result<i64, String> {
+        let index = flesh_index(handle).ok_or_else(|| format!("flesh handle {handle}"))?;
+        if self.use_arena {
+            let range = match self.entries.get(index).map(|entry| &entry.value) {
+                Some(FleshValue::ArrayWords {
+                    words: FleshWords::Arena(range),
+                    ..
+                }) => *range,
+                Some(_) => return Err(format!("flesh handle {handle} is not an Array")),
+                None => return Err(format!("flesh handle {handle}")),
+            };
+            if range.len == 0 {
+                return Err("pop on empty array".to_string());
+            }
+            let value = self.arena.words[range.start + range.len - 1];
+            if range.start + range.len == self.arena.words.len() {
+                self.arena.words.pop();
+            }
+            if let FleshValue::ArrayWords {
+                words: FleshWords::Arena(range),
+                ..
+            } = &mut self.entries[index].value
+            {
+                range.len -= 1;
+            }
+            Ok(value)
+        } else {
+            match &mut self.entries[index].value {
+                FleshValue::ArrayWords {
+                    words: FleshWords::Heap(words),
+                    ..
+                } => words.pop().ok_or_else(|| "pop on empty array".to_string()),
+                _ => Err(format!("flesh handle {handle} is not an Array")),
+            }
+        }
+    }
+
+    fn set_array_word_in_place(
+        &mut self,
+        handle: i64,
+        index: usize,
+        value: i64,
+    ) -> Result<(), String> {
+        let entry_index = flesh_index(handle).ok_or_else(|| format!("flesh handle {handle}"))?;
+        if self.use_arena {
+            let range = match self.entries.get(entry_index).map(|entry| &entry.value) {
+                Some(FleshValue::ArrayWords {
+                    words: FleshWords::Arena(range),
+                    ..
+                }) => *range,
+                Some(_) => return Err(format!("flesh handle {handle} is not an Array")),
+                None => return Err(format!("flesh handle {handle}")),
+            };
+            if index >= range.len {
+                return Err(format!("array index {index} out of bounds {}", range.len));
+            }
+            self.arena.words[range.start + index] = value;
+            Ok(())
+        } else {
+            match &mut self.entries[entry_index].value {
+                FleshValue::ArrayWords {
+                    words: FleshWords::Heap(words),
+                    ..
+                } => {
+                    if index >= words.len() {
+                        return Err(format!("array index {index} out of bounds {}", words.len()));
+                    }
+                    words[index] = value;
+                    Ok(())
+                }
+                _ => Err(format!("flesh handle {handle} is not an Array")),
+            }
+        }
+    }
+
+    fn replace_map_pairs_in_place(
+        &mut self,
+        handle: i64,
+        schema: String,
+        pairs: &[MapPair],
+    ) -> Result<(), String> {
+        let index = flesh_index(handle).ok_or_else(|| format!("flesh handle {handle}"))?;
+        if self.use_arena {
+            let pair_range = self.arena.alloc_pairs(pairs);
+            self.entries[index].value = FleshValue::Map {
+                schema: Arc::<str>::from(schema),
+                pairs: FleshPairs::Arena(pair_range),
+            };
+            Ok(())
+        } else {
+            match &mut self.entries[index].value {
+                FleshValue::Map {
+                    schema: entry_schema,
+                    pairs: FleshPairs::Heap(entry_pairs),
+                } => {
+                    *entry_schema = Arc::<str>::from(schema);
+                    entry_pairs.clear();
+                    entry_pairs.extend_from_slice(pairs);
+                    Ok(())
+                }
+                _ => Err(format!("flesh handle {handle} is not a Map")),
+            }
+        }
+    }
+
     fn array_entry(
         &self,
         store: &ValueStore,
@@ -853,8 +1472,8 @@ impl FleshStore {
     ) -> Result<ArrayEntry, String> {
         match self.entry(handle).map(|entry| &entry.value) {
             Some(FleshValue::ArrayWords { elem_schema, words }) => Ok(ArrayEntry::Words {
-                elem_schema: elem_schema.clone(),
-                words: words.clone(),
+                elem_schema: elem_schema.to_string(),
+                words: self.words_to_vec(words),
             }),
             Some(FleshValue::Interned(handle)) => store.array_entry(*handle, schema_refs),
             Some(_) => Err(format!("flesh handle {handle} is not an Array")),
@@ -1452,28 +2071,32 @@ fn intern_flesh_word(
     let (handle, deduped) = match value {
         FleshValue::Record {
             schema: record_schema,
-            mut bytes,
+            bytes,
         } => {
-            if record_schema != schema {
+            if record_schema.as_ref() != schema {
                 return Err(format!("flesh record is `{record_schema}`, not {schema}"));
             }
+            let mut bytes = flesh.bytes_to_vec(&bytes);
             intern_value_bytes_children(
                 store,
                 flesh,
                 descriptors,
                 schema_refs,
-                &record_schema,
+                record_schema.as_ref(),
                 &mut bytes,
             )?;
-            store.alloc(&record_schema, bytes, descriptors)
+            store.alloc(record_schema.as_ref(), bytes, descriptors)
         }
         FleshValue::Map {
             schema: map_schema,
-            mut pairs,
+            pairs,
         } => {
-            if map_schema != schema && !map_schema_is_realized_projection(schema, &map_schema) {
+            if map_schema.as_ref() != schema
+                && !map_schema_is_realized_projection(schema, map_schema.as_ref())
+            {
                 return Err(format!("flesh map is `{map_schema}`, not {schema}"));
             }
+            let mut pairs = flesh.pairs_to_vec(&pairs);
             for pair in &mut pairs {
                 pair.key_word = intern_flesh_word(
                     store,
@@ -1494,21 +2117,25 @@ fn intern_flesh_word(
                 )?
                 .0;
             }
-            store.alloc_map(&map_schema, pairs, schema_refs, descriptors)?
+            store.alloc_map(map_schema.as_ref(), pairs, schema_refs, descriptors)?
         }
-        FleshValue::ArrayWords {
-            elem_schema,
-            mut words,
-        } => {
+        FleshValue::ArrayWords { elem_schema, words } => {
             if schema != "Array" {
                 return Err(format!("flesh array cannot intern as {schema}"));
             }
+            let mut words = flesh.words_to_vec(&words);
             for word in &mut words {
-                *word =
-                    intern_flesh_word(store, flesh, descriptors, schema_refs, &elem_schema, *word)?
-                        .0;
+                *word = intern_flesh_word(
+                    store,
+                    flesh,
+                    descriptors,
+                    schema_refs,
+                    elem_schema.as_ref(),
+                    *word,
+                )?
+                .0;
             }
-            store.alloc_array_words(&elem_schema, words, schema_refs)?
+            store.alloc_array_words(elem_schema.as_ref(), words, schema_refs)?
         }
         FleshValue::Interned(_) => unreachable!("handled above"),
     };
@@ -1574,6 +2201,7 @@ pub struct Driver {
     fns: Vec<LoweredFn>,
     descriptors: HashMap<String, Descriptor<String>>,
     schema_refs: Vec<String>,
+    schema_ref_arcs: Vec<Arc<str>>,
     memo: HashMap<CanonMemoKey, MemoEntry>,
     memo_candidates: HashMap<ProjectionCandidateKey, Vec<CanonMemoKey>>,
     journal: BTreeMap<String, i64>,
@@ -1594,6 +2222,7 @@ pub struct Driver {
     event_sink: Option<DriveEventSink>,
     step_mode: StepMode,
     force_flesh_copy: bool,
+    use_flesh_arena: bool,
     store: RefCell<ValueStore>,
 }
 
@@ -1625,6 +2254,7 @@ impl Driver {
             fns,
             descriptors,
             schema_refs: Vec::new(),
+            schema_ref_arcs: Vec::new(),
             memo: HashMap::new(),
             memo_candidates: HashMap::new(),
             journal: BTreeMap::new(),
@@ -1645,6 +2275,7 @@ impl Driver {
             event_sink: None,
             step_mode: StepMode::Run,
             force_flesh_copy: std::env::var_os("VIX_FORCE_FLESH_COPY").is_some(),
+            use_flesh_arena: std::env::var_os("VIX_DISABLE_FLESH_ARENA").is_none(),
             store: RefCell::new(ValueStore::default()),
         })
     }
@@ -1683,6 +2314,10 @@ impl Driver {
         self.force_flesh_copy = force;
     }
 
+    pub fn set_use_flesh_arena(&mut self, use_arena: bool) {
+        self.use_flesh_arena = use_arena;
+    }
+
     fn emit(&mut self, event: DriveEvent) {
         self.trace.push(event);
         let event = self.trace.last().expect("just pushed event");
@@ -1715,6 +2350,7 @@ impl Driver {
             return i64::try_from(index).expect("schema ref fits i64");
         }
         let index = self.schema_refs.len();
+        self.schema_ref_arcs.push(Arc::<str>::from(schema.as_str()));
         self.schema_refs.push(schema);
         i64::try_from(index).expect("schema ref fits i64")
     }
@@ -2366,7 +3002,7 @@ impl Driver {
             fn_ref,
             key,
             args: args.to_vec(),
-            flesh: FleshStore::default(),
+            flesh: FleshStore::new(self.use_flesh_arena),
             read_set: ProjectionReadSet::default(),
             ready: Vec::new(),
             awaited: Vec::new(),
@@ -2404,6 +3040,7 @@ impl Driver {
             let mut pending_invokes: Vec<PendingInvokeRequest> = Vec::new();
             let descriptors = &self.descriptors;
             let schema_refs = &self.schema_refs;
+            let schema_ref_arcs = &self.schema_ref_arcs;
             let store_cell = &self.store;
             let flesh_cell = RefCell::new(&mut exec.flesh);
             let ast_roots_cell = RefCell::new(&mut self.ast_roots);
@@ -2460,11 +3097,11 @@ impl Driver {
                 let dst_slot = read_frame_word(frame, store_alloc_region) as usize;
                 let type_ref = read_frame_word(frame, store_alloc_region + 8);
                 let schema =
-                    schema_name_for(type_ref, schema_refs).unwrap_or_else(|err| panic!("{err}"));
+                    schema_arc_for(type_ref, schema_ref_arcs).unwrap_or_else(|err| panic!("{err}"));
                 let variant_index = read_frame_word(frame, store_alloc_region + 16);
                 let field_count = read_frame_word(frame, store_alloc_region + 24) as usize;
                 let descriptor = descriptors
-                    .get(&schema)
+                    .get(schema.as_ref())
                     .unwrap_or_else(|| panic!("descriptor for schema `{schema}`"));
                 let mut bytes = vec![0u8; descriptor.layout.size];
                 write_variant_tag(&mut bytes, descriptor, variant_index as u64);
@@ -2487,10 +3124,9 @@ impl Driver {
                     descriptors,
                     fields,
                 );
-                let handle = flesh_cell.borrow_mut().alloc(FleshValue::Record {
-                    schema: schema.clone(),
-                    bytes,
-                });
+                let handle = flesh_cell
+                    .borrow_mut()
+                    .alloc_record_arc(schema.clone(), &bytes);
                 write_frame_word(frame, dst_slot, handle);
             };
 
@@ -2499,19 +3135,10 @@ impl Driver {
                 let mut handle = read_frame_word(frame, store_read_region + 8);
                 let field_index = read_frame_word(frame, store_read_region + 16) as usize;
                 if flesh_index(handle).is_some() {
-                    let local_read = {
-                        let flesh = flesh_cell.borrow();
-                        flesh.entry(handle).and_then(|entry| match &entry.value {
-                            FleshValue::Record { schema, bytes } => {
-                                let descriptor = descriptors
-                                    .get(schema)
-                                    .unwrap_or_else(|| panic!("descriptor for schema `{schema}`"));
-                                let offset = field_offset(descriptor, bytes, field_index);
-                                Some(read_frame_word(bytes, offset))
-                            }
-                            _ => None,
-                        })
-                    };
+                    let local_read =
+                        flesh_cell
+                            .borrow()
+                            .record_field_word(handle, descriptors, field_index);
                     if let Some(value) = local_read {
                         write_frame_word(frame, dst_slot, value);
                         return;
@@ -2577,18 +3204,7 @@ impl Driver {
                 let dst_slot = read_frame_word(frame, store_tag_region) as usize;
                 let mut handle = read_frame_word(frame, store_tag_region + 8);
                 if flesh_index(handle).is_some() {
-                    let local_tag = {
-                        let flesh = flesh_cell.borrow();
-                        flesh.entry(handle).and_then(|entry| match &entry.value {
-                            FleshValue::Record { schema, bytes } => {
-                                let descriptor = descriptors
-                                    .get(schema)
-                                    .unwrap_or_else(|| panic!("descriptor for schema `{schema}`"));
-                                Some(read_variant_tag(bytes, descriptor))
-                            }
-                            _ => None,
-                        })
-                    };
+                    let local_tag = flesh_cell.borrow().record_variant_tag(handle, descriptors);
                     if let Some(tag) = local_tag {
                         write_frame_word(
                             frame,
@@ -2663,10 +3279,7 @@ impl Driver {
                         read_frame_word(frame, store_alloc_region + 8),
                         schema_refs,
                     )?;
-                    let handle = flesh_cell.borrow_mut().alloc(FleshValue::Map {
-                        schema: schema.clone(),
-                        pairs: Vec::new(),
-                    });
+                    let handle = flesh_cell.borrow_mut().alloc_map(schema.clone(), &[]);
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -2737,19 +3350,20 @@ impl Driver {
                             [map_handle, key_word, value_word],
                         );
                     }
-                    let (stored_schema, mut pairs) = if let Some(entry) =
-                        flesh_cell.borrow().entry(map_handle)
-                    {
-                        match &entry.value {
-                            FleshValue::Map { schema, pairs } => (schema.clone(), pairs.clone()),
-                            FleshValue::Interned(handle) => {
-                                store_cell.borrow().map_pairs(*handle, schema_refs)?
+                    let (stored_schema, mut pairs) =
+                        if let Some(entry) = flesh_cell.borrow().entry(map_handle) {
+                            match &entry.value {
+                                FleshValue::Map { schema, pairs } => {
+                                    (schema.to_string(), flesh_cell.borrow().pairs_to_vec(pairs))
+                                }
+                                FleshValue::Interned(handle) => {
+                                    store_cell.borrow().map_pairs(*handle, schema_refs)?
+                                }
+                                _ => return Err(format!("flesh handle {map_handle} is not a Map")),
                             }
-                            _ => return Err(format!("flesh handle {map_handle} is not a Map")),
-                        }
-                    } else {
-                        store_cell.borrow().map_pairs(map_handle, schema_refs)?
-                    };
+                        } else {
+                            store_cell.borrow().map_pairs(map_handle, schema_refs)?
+                        };
                     if stored_schema != map_schema {
                         pairs = promote_map_pairs_to_realized(&stored_schema, &map_schema, pairs)?;
                     }
@@ -2761,24 +3375,23 @@ impl Driver {
                         value_realization: realized_value_schema(&value_schema)
                             .map(|_| value_realization),
                     };
-                    let handle = if !force_flesh_copy
-                        && let Some(entry) = flesh_cell.borrow_mut().entry_mut(map_handle)
-                        && entry.refs == 1
-                        && let FleshValue::Map {
-                            schema,
-                            pairs: entry_pairs,
-                        } = &mut entry.value
-                    {
-                        *schema = map_schema.clone();
-                        *entry_pairs = pairs;
-                        entry_pairs.push(new_pair);
+                    let can_reuse = !force_flesh_copy
+                        && flesh_cell.borrow().entry(map_handle).is_some_and(|entry| {
+                            entry.refs == 1 && matches!(entry.value, FleshValue::Map { .. })
+                        });
+                    let handle = if can_reuse {
+                        pairs.push(new_pair);
+                        flesh_cell.borrow_mut().replace_map_pairs_in_place(
+                            map_handle,
+                            map_schema.clone(),
+                            &pairs,
+                        )?;
                         map_handle
                     } else {
                         pairs.push(new_pair);
-                        flesh_cell.borrow_mut().alloc(FleshValue::Map {
-                            schema: map_schema.clone(),
-                            pairs,
-                        })
+                        flesh_cell
+                            .borrow_mut()
+                            .alloc_map(map_schema.clone(), &pairs)
                     };
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
@@ -2806,7 +3419,7 @@ impl Driver {
                     );
                     let map_schema = if let Some(entry) = flesh_cell.borrow().entry(map_handle) {
                         match &entry.value {
-                            FleshValue::Map { schema, .. } => schema.clone(),
+                            FleshValue::Map { schema, .. } => schema.to_string(),
                             FleshValue::Interned(handle) => store_cell
                                 .borrow()
                                 .entry(*handle)
@@ -2955,8 +3568,10 @@ impl Driver {
             let mut array_alloc = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
-                    let elem_schema =
-                        schema_name_for(read_frame_word(frame, primitive_region + 8), schema_refs)?;
+                    let elem_schema = schema_arc_for(
+                        read_frame_word(frame, primitive_region + 8),
+                        schema_ref_arcs,
+                    )?;
                     let count = usize::try_from(read_frame_word(frame, primitive_region + 16))
                         .map_err(|_| "negative array length".to_string())?;
                     let mut words = (0..count)
@@ -2968,14 +3583,14 @@ impl Driver {
                             &mut flesh_cell.borrow_mut(),
                             descriptors,
                             schema_refs,
-                            &elem_schema,
+                            elem_schema.as_ref(),
                             *word,
                         )?
                         .0;
                     }
                     let handle = flesh_cell
                         .borrow_mut()
-                        .alloc(FleshValue::ArrayWords { elem_schema, words });
+                        .alloc_array_words_arc(elem_schema, &words);
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -4107,15 +4722,7 @@ impl Driver {
                     let array = read_frame_word(frame, primitive_region + 8);
                     let mut value = read_frame_word(frame, primitive_region + 16);
                     if !force_flesh_copy {
-                        let elem_schema = {
-                            let flesh = flesh_cell.borrow();
-                            flesh.entry(array).and_then(|entry| match &entry.value {
-                                FleshValue::ArrayWords { elem_schema, .. } if entry.refs == 1 => {
-                                    Some(elem_schema.clone())
-                                }
-                                _ => None,
-                            })
-                        };
+                        let elem_schema = flesh_cell.borrow().reusable_array_elem_schema(array);
                         if let Some(elem_schema) = elem_schema {
                             value = intern_flesh_word(
                                 &mut store_cell.borrow_mut(),
@@ -4126,25 +4733,18 @@ impl Driver {
                                 value,
                             )?
                             .0;
-                            let mut flesh = flesh_cell.borrow_mut();
-                            let entry = flesh
-                                .entry_mut(array)
-                                .ok_or_else(|| format!("flesh handle {array}"))?;
-                            if let FleshValue::ArrayWords { words, .. } = &mut entry.value {
-                                words.push(value);
-                                write_frame_word(frame, dst_slot, array);
-                                return Ok(());
-                            }
+                            flesh_cell
+                                .borrow_mut()
+                                .push_array_word_in_place(array, value)?;
+                            write_frame_word(frame, dst_slot, array);
+                            return Ok(());
                         }
                     }
-                    let (elem_schema, mut words) = match flesh_cell.borrow().array_entry(
+                    let elem_schema = flesh_cell.borrow().array_elem_schema(
                         &store_cell.borrow(),
                         array,
                         schema_refs,
-                    )? {
-                        ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
-                        ArrayEntry::Pending(_) => return Err("push on pending array".into()),
-                    };
+                    )?;
                     value = intern_flesh_word(
                         &mut store_cell.borrow_mut(),
                         &mut flesh_cell.borrow_mut(),
@@ -4154,10 +4754,12 @@ impl Driver {
                         value,
                     )?
                     .0;
-                    words.push(value);
-                    let handle = flesh_cell
-                        .borrow_mut()
-                        .alloc(FleshValue::ArrayWords { elem_schema, words });
+                    let handle = flesh_cell.borrow_mut().alloc_array_pushed(
+                        &store_cell.borrow(),
+                        array,
+                        schema_refs,
+                        value,
+                    )?;
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -4180,35 +4782,18 @@ impl Driver {
                             })
                         };
                         if can_reuse {
-                            let mut flesh = flesh_cell.borrow_mut();
-                            let entry = flesh
-                                .entry_mut(array)
-                                .ok_or_else(|| format!("flesh handle {array}"))?;
-                            if let FleshValue::ArrayWords { words, .. } = &mut entry.value {
-                                let value = words
-                                    .pop()
-                                    .ok_or_else(|| "pop on empty array".to_string())?;
-                                write_frame_word(frame, value_slot, value);
-                                write_frame_word(frame, dst_slot, array);
-                                return Ok(());
-                            }
+                            let value = flesh_cell.borrow_mut().pop_array_word_in_place(array)?;
+                            write_frame_word(frame, value_slot, value);
+                            write_frame_word(frame, dst_slot, array);
+                            return Ok(());
                         }
                     }
-                    let (elem_schema, mut words) = match flesh_cell.borrow().array_entry(
+                    let (handle, value) = flesh_cell.borrow_mut().alloc_array_popped(
                         &store_cell.borrow(),
                         array,
                         schema_refs,
-                    )? {
-                        ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
-                        ArrayEntry::Pending(_) => return Err("pop on pending array".into()),
-                    };
-                    let value = words
-                        .pop()
-                        .ok_or_else(|| "pop on empty array".to_string())?;
+                    )?;
                     write_frame_word(frame, value_slot, value);
-                    let handle = flesh_cell
-                        .borrow_mut()
-                        .alloc(FleshValue::ArrayWords { elem_schema, words });
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -4225,15 +4810,7 @@ impl Driver {
                         .map_err(|_| "negative array index".to_string())?;
                     let mut value = read_frame_word(frame, primitive_region + 24);
                     if !force_flesh_copy {
-                        let elem_schema = {
-                            let flesh = flesh_cell.borrow();
-                            flesh.entry(array).and_then(|entry| match &entry.value {
-                                FleshValue::ArrayWords { elem_schema, .. } if entry.refs == 1 => {
-                                    Some(elem_schema.clone())
-                                }
-                                _ => None,
-                            })
-                        };
+                        let elem_schema = flesh_cell.borrow().reusable_array_elem_schema(array);
                         if let Some(elem_schema) = elem_schema {
                             value = intern_flesh_word(
                                 &mut store_cell.borrow_mut(),
@@ -4244,31 +4821,18 @@ impl Driver {
                                 value,
                             )?
                             .0;
-                            let mut flesh = flesh_cell.borrow_mut();
-                            let entry = flesh
-                                .entry_mut(array)
-                                .ok_or_else(|| format!("flesh handle {array}"))?;
-                            if let FleshValue::ArrayWords { words, .. } = &mut entry.value {
-                                if index >= words.len() {
-                                    return Err(format!(
-                                        "array index {index} out of bounds {}",
-                                        words.len()
-                                    ));
-                                }
-                                words[index] = value;
-                                write_frame_word(frame, dst_slot, array);
-                                return Ok(());
-                            }
+                            flesh_cell
+                                .borrow_mut()
+                                .set_array_word_in_place(array, index, value)?;
+                            write_frame_word(frame, dst_slot, array);
+                            return Ok(());
                         }
                     }
-                    let (elem_schema, mut words) = match flesh_cell.borrow().array_entry(
+                    let elem_schema = flesh_cell.borrow().array_elem_schema(
                         &store_cell.borrow(),
                         array,
                         schema_refs,
-                    )? {
-                        ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
-                        ArrayEntry::Pending(_) => return Err("set on pending array".into()),
-                    };
+                    )?;
                     value = intern_flesh_word(
                         &mut store_cell.borrow_mut(),
                         &mut flesh_cell.borrow_mut(),
@@ -4278,13 +4842,13 @@ impl Driver {
                         value,
                     )?
                     .0;
-                    if index >= words.len() {
-                        return Err(format!("array index {index} out of bounds {}", words.len()));
-                    }
-                    words[index] = value;
-                    let handle = flesh_cell
-                        .borrow_mut()
-                        .alloc(FleshValue::ArrayWords { elem_schema, words });
+                    let handle = flesh_cell.borrow_mut().alloc_array_set(
+                        &store_cell.borrow(),
+                        array,
+                        schema_refs,
+                        index,
+                        value,
+                    )?;
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -4303,12 +4867,12 @@ impl Driver {
             };
 
             let mut record_update = |frame: &mut [u8]| {
-                let result = (|| {
+                let result: Result<(), String> = (|| {
                     let dst_slot = read_frame_word(frame, store_alloc_region) as usize;
                     let base = read_frame_word(frame, store_alloc_region + 8);
-                    let schema = schema_name_for(
+                    let schema = schema_arc_for(
                         read_frame_word(frame, store_alloc_region + 16),
-                        schema_refs,
+                        schema_ref_arcs,
                     )?;
                     let variant_index =
                         usize::try_from(read_frame_word(frame, store_alloc_region + 24))
@@ -4317,7 +4881,7 @@ impl Driver {
                         usize::try_from(read_frame_word(frame, store_alloc_region + 32))
                             .map_err(|_| "negative record update count".to_string())?;
                     let descriptor = descriptors
-                        .get(&schema)
+                        .get(schema.as_ref())
                         .ok_or_else(|| format!("descriptor for schema `{schema}`"))?;
                     if !force_flesh_copy {
                         let can_reuse = {
@@ -4329,43 +4893,55 @@ impl Driver {
                                         FleshValue::Record {
                                             schema: record_schema,
                                             ..
-                                        } if record_schema == &schema
+                                            } if record_schema.as_ref() == schema.as_ref()
                                     )
                             })
                         };
                         if can_reuse {
-                            let mut flesh = flesh_cell.borrow_mut();
-                            let entry = flesh
-                                .entry_mut(base)
-                                .ok_or_else(|| format!("flesh handle {base}"))?;
-                            if let FleshValue::Record { bytes, .. } = &mut entry.value {
-                                for update_index in 0..update_count {
-                                    let field_index = usize::try_from(read_frame_word(
-                                        frame,
-                                        store_alloc_region + 40 + update_index * 16,
-                                    ))
-                                    .map_err(|_| "negative record field index".to_string())?;
-                                    let field_offset = field_offset(descriptor, bytes, field_index);
-                                    let field = field_descriptor(descriptor, bytes, field_index);
-                                    if field.layout.size > 8 {
-                                        return Err(format!(
-                                            "record update field {field_index} has {} bytes",
-                                            field.layout.size
-                                        ));
+                            flesh_cell.borrow_mut().with_record_bytes_mut(
+                                base,
+                                schema.as_ref(),
+                                |bytes| {
+                                    if matches!(descriptor.access, Access::Enum(_))
+                                        && variant_index
+                                            != usize::try_from(read_variant_tag(bytes, descriptor))
+                                                .unwrap_or(usize::MAX)
+                                    {
+                                        write_variant_tag(bytes, descriptor, variant_index as u64);
                                     }
-                                    let value = canonicalize_word_for_schema(
-                                        &field.schema,
-                                        read_frame_word(
+                                    for update_index in 0..update_count {
+                                        let field_index = usize::try_from(read_frame_word(
                                             frame,
-                                            store_alloc_region + 48 + update_index * 16,
-                                        ),
-                                    );
-                                    bytes[field_offset..field_offset + field.layout.size]
-                                        .copy_from_slice(&value.to_le_bytes()[..field.layout.size]);
-                                }
-                                write_frame_word(frame, dst_slot, base);
-                                return Ok(());
-                            }
+                                            store_alloc_region + 40 + update_index * 16,
+                                        ))
+                                        .map_err(|_| "negative record field index".to_string())?;
+                                        let field_offset =
+                                            field_offset(descriptor, bytes, field_index);
+                                        let field =
+                                            field_descriptor(descriptor, bytes, field_index);
+                                        if field.layout.size > 8 {
+                                            return Err(format!(
+                                                "record update field {field_index} has {} bytes",
+                                                field.layout.size
+                                            ));
+                                        }
+                                        let value = canonicalize_word_for_schema(
+                                            &field.schema,
+                                            read_frame_word(
+                                                frame,
+                                                store_alloc_region + 48 + update_index * 16,
+                                            ),
+                                        );
+                                        bytes[field_offset..field_offset + field.layout.size]
+                                            .copy_from_slice(
+                                                &value.to_le_bytes()[..field.layout.size],
+                                            );
+                                    }
+                                    Ok(())
+                                },
+                            )??;
+                            write_frame_word(frame, dst_slot, base);
+                            return Ok(());
                         }
                     }
                     let mut bytes = if let Some(entry) = flesh_cell.borrow().entry(base) {
@@ -4373,7 +4949,9 @@ impl Driver {
                             FleshValue::Record {
                                 schema: record_schema,
                                 bytes,
-                            } if record_schema == &schema => bytes.clone(),
+                            } if record_schema.as_ref() == schema.as_ref() => {
+                                flesh_cell.borrow().bytes_to_vec(bytes)
+                            }
                             FleshValue::Interned(handle) => store_cell
                                 .borrow()
                                 .entry(*handle)
@@ -4434,10 +5012,9 @@ impl Driver {
                         bytes[field_offset..field_offset + field.layout.size]
                             .copy_from_slice(&value.to_le_bytes()[..field.layout.size]);
                     }
-                    let handle = flesh_cell.borrow_mut().alloc(FleshValue::Record {
-                        schema: schema.clone(),
-                        bytes,
-                    });
+                    let handle = flesh_cell
+                        .borrow_mut()
+                        .alloc_record_arc(schema.clone(), &bytes);
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -8495,6 +9072,14 @@ fn schema_ref_for(schema: &str, schema_refs: &[String]) -> Result<i64, String> {
 }
 
 fn schema_name_for(schema_ref: i64, schema_refs: &[String]) -> Result<String, String> {
+    let index = usize::try_from(schema_ref).map_err(|_| format!("schema ref {schema_ref}"))?;
+    schema_refs
+        .get(index)
+        .cloned()
+        .ok_or_else(|| format!("schema ref {schema_ref}"))
+}
+
+fn schema_arc_for(schema_ref: i64, schema_refs: &[Arc<str>]) -> Result<Arc<str>, String> {
     let index = usize::try_from(schema_ref).map_err(|_| format!("schema ref {schema_ref}"))?;
     schema_refs
         .get(index)
