@@ -48,7 +48,7 @@ pub struct WireExecRequest {
     pub capability: u64,
     /// Which tool to run (the command grammar's name — toy registry for now).
     pub command: String,
-    /// A shipped machine Pending<T> value evaluated executor-side against the
+    /// A shipped machine `Pending<T>` value evaluated executor-side against the
     /// Run value; its result is the only thing that crosses.
     pub observer: Option<ValueBundle>,
 }
