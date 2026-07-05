@@ -1408,6 +1408,14 @@ impl Driver {
         }
     }
 
+    pub fn tree_blob_entries(&mut self, handle: i64) -> Result<BTreeMap<String, Vec<u8>>, String> {
+        let handle = self.force_tree_handle(handle)?;
+        match self.store.borrow().tree_entry(handle)? {
+            TreeEntry::Concrete(tree) => Ok(tree.blobs),
+            TreeEntry::Merge(_) | TreeEntry::Exec(_) => Err("tree force returned pending".into()),
+        }
+    }
+
     pub fn intern_tree_concrete(&self, tree: crate::exec::Tree) -> i64 {
         self.store.borrow_mut().alloc_tree_concrete(tree).0
     }
@@ -2586,6 +2594,9 @@ impl Driver {
                     for (path, contents) in tree.entries {
                         merged.entries.insert(path, contents);
                     }
+                    for (path, contents) in tree.blobs {
+                        merged.blobs.insert(path, contents);
+                    }
                 }
                 Ok(self.store.borrow_mut().alloc_tree_concrete(merged).0)
             }
@@ -2938,12 +2949,7 @@ impl Driver {
                     run.command.clone(),
                     run.output.clone(),
                     event.clone(),
-                    outcome
-                        .outputs
-                        .entries
-                        .iter()
-                        .map(|(path, contents)| (path.clone(), contents.clone()))
-                        .collect::<Vec<_>>(),
+                    outcome.outputs.display_entries(),
                 )
             };
             let timestamp_us = self.next_timestamp();
@@ -2992,8 +2998,15 @@ impl Driver {
                     return Err("forced command tree stayed pending".into());
                 };
                 let root = format!("/m/{}", mounts.len());
-                let text = if tree.entries.len() == 1 {
-                    format!("{root}/{}", tree.entries.keys().next().expect("one entry"))
+                let entry_count = tree.entries.len() + tree.blobs.len();
+                let text = if entry_count == 1 {
+                    let key = tree
+                        .entries
+                        .keys()
+                        .next()
+                        .or_else(|| tree.blobs.keys().next())
+                        .expect("one entry");
+                    format!("{root}/{key}")
                 } else {
                     root.clone()
                 };
@@ -3136,18 +3149,23 @@ impl Driver {
                 let TreeEntry::Concrete(tree) = self.store.borrow().tree_entry(forced)? else {
                     return Err("elf input tree stayed pending".into());
                 };
-                let [(path, contents)] =
-                    <[(String, String); 1]>::try_from(tree.entries.into_iter().collect::<Vec<_>>())
-                        .map_err(|entries| {
-                            format!(
-                                "elf input tree must contain exactly one blob, got {}",
-                                entries.len()
-                            )
-                        })?;
+                let count = tree.entries.len() + tree.blobs.len();
+                if count != 1 {
+                    return Err(format!(
+                        "elf input tree must contain exactly one blob, got {count}"
+                    ));
+                }
+                let (path, contents) = tree
+                    .entries
+                    .into_iter()
+                    .map(|(path, contents)| (path, contents.into_bytes()))
+                    .chain(tree.blobs)
+                    .next()
+                    .expect("one tree entry");
                 if contents.is_empty() {
                     return Err(format!("elf input blob `{path}` is empty"));
                 }
-                Ok(contents.into_bytes())
+                Ok(contents)
             }
             other => Err(format!(
                 "elf input must be Blob, String, or Tree, got {other}"
@@ -3862,7 +3880,7 @@ fn render_tree(store: &ValueStore, handle: i64) -> Result<RenderedValue, String>
     match store.tree_entry(handle)? {
         TreeEntry::Concrete(tree) => Ok(RenderedValue::Tree {
             entries: tree
-                .entries
+                .display_entries()
                 .into_iter()
                 .map(|(path, contents)| RenderedTreeEntry { path, contents })
                 .collect(),
@@ -4710,6 +4728,15 @@ fn encode_concrete_tree(tree: &crate::exec::Tree) -> Vec<u8> {
         encode_string(path, &mut bytes);
         encode_string(contents, &mut bytes);
     }
+    bytes.extend_from_slice(
+        &i64::try_from(tree.blobs.len())
+            .expect("tree blob count fits i64")
+            .to_le_bytes(),
+    );
+    for (path, contents) in &tree.blobs {
+        encode_string(path, &mut bytes);
+        encode_bytes(contents, &mut bytes);
+    }
     bytes
 }
 
@@ -4725,19 +4752,31 @@ fn decode_concrete_tree(bytes: &[u8]) -> Result<crate::exec::Tree, String> {
         let contents = decode_string(bytes, &mut at)?;
         entries.insert(path, contents);
     }
+    let mut blobs = BTreeMap::new();
+    if at < bytes.len() {
+        let blob_count =
+            usize::try_from(read_frame_word(bytes, at)).map_err(|_| "tree blob count")?;
+        at += 8;
+        for _ in 0..blob_count {
+            let path = decode_string(bytes, &mut at)?;
+            let contents = decode_bytes(bytes, &mut at)?;
+            blobs.insert(path, contents);
+        }
+    }
     if at != bytes.len() {
         return Err(format!(
             "tree entry has {} trailing bytes",
             bytes.len() - at
         ));
     }
-    Ok(crate::exec::Tree { entries })
+    Ok(crate::exec::Tree { entries, blobs })
 }
 
 fn hash_concrete_tree(tree: &crate::exec::Tree) -> ContentHash {
     let mut hasher = Sha256::new();
     hasher.update(b"vix-tree-concrete");
     for (path, contents) in &tree.entries {
+        hasher.update([0]);
         hasher.update(
             i64::try_from(path.len())
                 .expect("path length fits i64")
@@ -4751,19 +4790,43 @@ fn hash_concrete_tree(tree: &crate::exec::Tree) -> ContentHash {
         );
         hasher.update(contents.as_bytes());
     }
+    for (path, contents) in &tree.blobs {
+        hasher.update([1]);
+        hasher.update(
+            i64::try_from(path.len())
+                .expect("path length fits i64")
+                .to_le_bytes(),
+        );
+        hasher.update(path.as_bytes());
+        hasher.update(
+            i64::try_from(contents.len())
+                .expect("contents length fits i64")
+                .to_le_bytes(),
+        );
+        hasher.update(contents);
+    }
     hasher.finalize().into()
 }
 
 fn encode_string(value: &str, bytes: &mut Vec<u8>) {
+    encode_bytes(value.as_bytes(), bytes);
+}
+
+fn encode_bytes(value: &[u8], bytes: &mut Vec<u8>) {
     bytes.extend_from_slice(
         &i64::try_from(value.len())
             .expect("string length fits i64")
             .to_le_bytes(),
     );
-    bytes.extend_from_slice(value.as_bytes());
+    bytes.extend_from_slice(value);
 }
 
 fn decode_string(bytes: &[u8], at: &mut usize) -> Result<String, String> {
+    let value = decode_bytes(bytes, at)?;
+    String::from_utf8(value).map_err(|err| err.to_string())
+}
+
+fn decode_bytes(bytes: &[u8], at: &mut usize) -> Result<Vec<u8>, String> {
     if bytes.len() < *at + 8 {
         return Err("string length truncated".into());
     }
@@ -4772,7 +4835,7 @@ fn decode_string(bytes: &[u8], at: &mut usize) -> Result<String, String> {
     if bytes.len() < *at + len {
         return Err("string data truncated".into());
     }
-    let value = String::from_utf8(bytes[*at..*at + len].to_vec()).map_err(|err| err.to_string())?;
+    let value = bytes[*at..*at + len].to_vec();
     *at += len;
     Ok(value)
 }

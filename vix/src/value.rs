@@ -105,7 +105,11 @@ impl Value {
             Value::Tree(t) => {
                 let mut h = DefaultHasher::new();
                 self.hash_into(&mut h);
-                format!("tree({:08x}, {} paths)", h.finish() as u32, t.entries.len())
+                format!(
+                    "tree({:08x}, {} paths)",
+                    h.finish() as u32,
+                    t.entries.len() + t.blobs.len()
+                )
             }
         }
     }
@@ -265,7 +269,9 @@ impl Ord for Value {
             (Value::Tree(_), Value::Tree(_)) => {
                 let a = self.forced_tree().expect("tree rank");
                 let b = other.forced_tree().expect("tree rank");
-                a.entries.cmp(&b.entries)
+                a.entries
+                    .cmp(&b.entries)
+                    .then_with(|| a.blobs.cmp(&b.blobs))
             }
             _ => self.rank().cmp(&other.rank()),
         }

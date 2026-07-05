@@ -621,6 +621,13 @@ impl Machine {
         self.driver.tree_entries(handle)
     }
 
+    pub fn tree_blob_entries(
+        &mut self,
+        handle: i64,
+    ) -> Result<std::collections::BTreeMap<String, Vec<u8>>, String> {
+        self.driver.tree_blob_entries(handle)
+    }
+
     #[cfg(test)]
     fn intern_tree_concrete(&self, tree: crate::exec::Tree) -> i64 {
         self.driver.intern_tree_concrete(tree)

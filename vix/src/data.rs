@@ -22,16 +22,23 @@ pub(crate) fn parse_json(input: Value) -> Result<Value, String> {
 fn input_text(input: Value) -> Result<String, String> {
     match input {
         Value::Str(text) => Ok(text),
-        Value::Tree(Tree { entries }) => {
-            let len = entries.len();
-            let [(path, contents)] =
-                entries
-                    .into_iter()
-                    .collect::<Vec<_>>()
-                    .try_into()
-                    .map_err(|_| {
-                        format!("parser input tree must contain exactly one blob, got {len}")
-                    })?;
+        Value::Tree(Tree { entries, blobs }) => {
+            let len = entries.len() + blobs.len();
+            if len != 1 {
+                return Err(format!(
+                    "parser input tree must contain exactly one blob, got {len}"
+                ));
+            }
+            let (path, contents) = entries
+                .into_iter()
+                .map(|(path, contents)| Ok((path, contents)))
+                .chain(blobs.into_iter().map(|(path, contents)| {
+                    String::from_utf8(contents)
+                        .map(|contents| (path, contents))
+                        .map_err(|err| err.to_string())
+                }))
+                .next()
+                .expect("one parser input")?;
             if contents.is_empty() {
                 Err(format!("parser input blob `{path}` is empty"))
             } else {

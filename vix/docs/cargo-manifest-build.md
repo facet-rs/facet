@@ -120,16 +120,36 @@ Slice 1 is deliberately narrower than Cargo:
 - fake-VFS exec tests proving cold run, warm memo hit, and tier-2 cutoff after an
   unread file edit.
 
-The current exec substrate is fake-VFS-only: command tools are in-process
-implementations behind `Tool`, and no real-process runner exists. Slice 1 can
-therefore prove the lowering and cache behavior with a fake `rustc` tool, but
-the end-to-end real `cargo build` artifact comparison waits for a real-process
-exec backend.
+The default exec substrate is fake-VFS-only: command tools are in-process
+implementations behind `Tool`, and this remains the CI/default lane. The
+`real-process` Cargo feature adds an opt-in native backend that runs the same
+command-role plans as host processes. It is deliberately unsandboxed and trusts
+the host: vix stages role-declared inputs into a temporary work directory,
+scrubs the environment to an explicit allowlist, runs the host command, and
+harvests declared outputs back into vix trees.
+
+That open backend is not Vixen's sound runtime lane. It has no VFS
+interception, no syscall mediation, and no sandbox ceiling beyond what staging
+happens to provide. Tier 2 verifies only what command roles declare: input-role
+content bytes and search-dir membership. Header contents discovered by a real
+compiler through the host filesystem are not observed unless the command grammar
+declares them as inputs. This is enough for local artifact smoke tests and for
+the cache behavior that open vix can honestly own; proprietary VFS mediation is
+the sound lane.
+
+Slice 1 can prove lowering and cache behavior with the fake `rustc` tool, and
+with `--features real-process` it can additionally compile trivial host
+artifacts through `cc!`. The end-to-end real `cargo build` artifact comparison
+still waits for slice 2's real `rustc` plan graph.
 
 ## Later Slices
 
-Slice 2 should add path dependencies and `--extern`/`-L dependency` wiring, then
-split rmeta and final artifact units so dependents can start from metadata
-where rustc permits it. After that, add build-script compile/run units and feed
-their declared outputs into parent rustc invocations. Proc-macro host units can
-share most dependency wiring but need host/target separation in the plan keys.
+Slice 2 should add a real `rustc` oracle on top of the same real-process
+staging: path dependencies and `--extern`/`-L dependency` wiring, then split
+rmeta and final artifact units so dependents can start from metadata where
+rustc permits it. It will need command grammars that declare every rustc source,
+extern artifact, search path, response file, and emitted artifact explicitly;
+otherwise open tier-2 verification can only prove the subset the roles name.
+After that, add build-script compile/run units and feed their declared outputs
+into parent rustc invocations. Proc-macro host units can share most dependency
+wiring but need host/target separation in the plan keys.
