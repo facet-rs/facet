@@ -702,7 +702,7 @@ fn module_set_hash(root: &str, modules: &BTreeMap<String, String>) -> Vec<u8> {
     hasher.update(root.as_bytes());
     for (path, source) in modules {
         hasher.update(path.as_bytes());
-        hasher.update(&(source.len() as u64).to_le_bytes());
+        hasher.update((source.len() as u64).to_le_bytes());
         hasher.update(source.as_bytes());
     }
     hasher.finalize().to_vec()
