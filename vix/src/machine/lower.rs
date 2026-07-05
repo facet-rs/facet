@@ -31,7 +31,7 @@ use super::TotalF64;
 use super::driver::{
     ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_FILTER_EXCLUDE_HOST, ARRAY_JOIN_HOST,
     ARRAY_LEN_HOST, ARRAY_MAP_PENDING_HOST, ARRAY_POP_HOST, ARRAY_PUSH_HOST, ARRAY_SET_HOST,
-    AST_DOC_HOST, AST_FN_HOST, CodeBundle, DOC_COERCE_HOST, DOC_GET_HOST, DOC_PACKAGE_HOST,
+    AST_DOC_HOST, AST_FN_HOST, CRATE_ARCHIVE_HOST, CodeBundle, DOC_COERCE_HOST, DOC_GET_HOST, DOC_PACKAGE_HOST,
     DOC_PARSE_HOST, DriveEvent, DriveEventSink, Driver, ELF_DOC_HOST, EXEC_HOST, FETCH_HOST,
     FLESH_DUP_HOST, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST,
     MAP_INSERT_HOST, MachineExecBackend, OCI_DOC_HOST, OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST,
@@ -41,6 +41,7 @@ use super::driver::{
     STRING_LOWER_HOST, STRING_UPPER_HOST, SemanticComparator, StepMode, StoreHandle, TARGET_HOST,
     TREE_PROJECT_HOST, VALUE_COMPARE_HOST, VERSION_PARSE_HOST, VERSION_SET_OP_HOST,
     VERSION_SET_PARSE_HOST, ValueBundle,
+
 };
 use crate::ast;
 use crate::fetch::FetchBackend;
@@ -3121,6 +3122,7 @@ impl<'a> FnLowerer<'a> {
             "toml" => return self.doc_parse_call(call, 0),
             "json" => return self.doc_parse_call(call, 1),
             "build_directives" => return self.doc_parse_call(call, 2),
+            "crate_archive" => return self.crate_archive_call(call),
             "version" => return self.version_call(call),
             "render" => return self.render_call(call),
             "elf" => return self.elf_call(call),
@@ -5809,6 +5811,41 @@ impl<'a> FnLowerer<'a> {
         })
     }
 
+    fn crate_archive_call(&mut self, call: &ast::Call) -> Result<ValueSlot, String> {
+        let [ast::Arg::Expr(arg)] = call.args.args.as_slice() else {
+            return Err("crate_archive takes one Blob, String, or single-file Tree".into());
+        };
+        let input = self.expr(arg)?;
+        if !matches!(input.schema.as_str(), "Blob" | "String" | "Tree") {
+            return Err(format!("crate_archive called on {}", input.schema));
+        }
+        let input_slot = self.next_input_slot;
+        self.next_input_slot += 1;
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: input_slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: input.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: CRATE_ARCHIVE_HOST,
+        });
+        let dst = self.alloc();
+        self.code.push(Op::Await {
+            dst,
+            input: u32::try_from(input_slot).expect("input slot fits u32"),
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Tree".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
     fn extract_call(&mut self, call: &ast::Call) -> Result<ValueSlot, String> {
         let [ast::Arg::Expr(arg)] = call.args.args.as_slice() else {
             return Err("extract takes a tree".into());
@@ -6439,10 +6476,10 @@ mod tests {
     };
     use super::*;
     use crate::exec::{ExecEvent, Outcome, ReadSet, Tree};
-    use crate::fetch::FakeFetchBackend;
+    use crate::fetch::{FakeFetchBackend, sha256_hex};
     use sha2::{Digest, Sha256};
     use std::cell::RefCell;
-    use std::collections::BTreeMap;
+    use std::collections::{BTreeMap, BTreeSet};
     use std::hash::{DefaultHasher, Hash, Hasher};
     use std::rc::Rc;
     use std::sync::Arc;
@@ -8498,6 +8535,93 @@ pub fn src_tree(nonce: Int) -> Tree {{
             assert_eq!(
                 observations,
                 vec![(key.clone(), false), (key, true)],
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn crate_archive_fetches_checksum_pinned_registry_crate_into_source_tree() {
+        const URL: &str = "https://static.crates.io/crates/itoa/itoa-1.0.15.crate";
+        const ARCHIVE: &[u8] = include_bytes!("../../tests/fixtures/crate/itoa-1.0.15.crate");
+        let sha256 = sha256_hex(ARCHIVE);
+        assert_eq!(
+            sha256,
+            "4a5f13b858c8d314ee3e8f639011f7ccefe71f97f96e50151fb991f267928e2c"
+        );
+        let src = format!(
+            r#"
+use vix::Tree;
+
+pub fn itoa_source(nonce: Int) -> Tree {{
+    let archive = fetch(url: "{URL}", sha256: "{sha256}");
+    crate_archive(archive)
+}}
+"#
+        );
+        let expected_paths = BTreeSet::from([
+            ".cargo_vcs_info.json".to_string(),
+            ".github/FUNDING.yml".to_string(),
+            ".github/workflows/ci.yml".to_string(),
+            ".gitignore".to_string(),
+            "Cargo.lock".to_string(),
+            "Cargo.toml".to_string(),
+            "Cargo.toml.orig".to_string(),
+            "LICENSE-APACHE".to_string(),
+            "LICENSE-MIT".to_string(),
+            "README.md".to_string(),
+            "benches/bench.rs".to_string(),
+            "src/lib.rs".to_string(),
+            "src/udiv128.rs".to_string(),
+            "tests/test.rs".to_string(),
+        ]);
+
+        for lane in lanes() {
+            let backend = FakeFetchBackend::new().with_archive(
+                URL,
+                ARCHIVE,
+                Tree::of_blobs(&[("itoa-1.0.15.crate", ARCHIVE)]),
+            );
+            let mut machine = Machine::load_with_lane(&src, lane)
+                .unwrap()
+                .with_fetch_backend(backend);
+            let first = machine.demand_i64("itoa_source", vec![1]).unwrap();
+            let entries = machine.tree_entries(first).unwrap();
+            assert_eq!(
+                entries.keys().cloned().collect::<BTreeSet<_>>(),
+                expected_paths.clone(),
+                "{lane:?}"
+            );
+            assert!(
+                entries["Cargo.toml"].contains("name = \"itoa\""),
+                "{lane:?}"
+            );
+            assert!(
+                entries["src/lib.rs"].contains("pub struct Buffer"),
+                "{lane:?}"
+            );
+
+            let second = machine.demand_i64("itoa_source", vec![2]).unwrap();
+            assert_eq!(first, second, "{lane:?}");
+            let fetch_observations = machine
+                .trace()
+                .iter()
+                .filter_map(|event| match event {
+                    DriveEvent::Observation {
+                        key_text, replayed, ..
+                    } if key_text.starts_with("fetch:") => Some((key_text.clone(), *replayed)),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            let key = format!("fetch:{URL}:sha256:{sha256}");
+            assert_eq!(
+                fetch_observations,
+                vec![(key.clone(), false), (key, true)],
+                "{lane:?}"
+            );
+            assert_eq!(
+                artifact_probes_for(&machine, "crate_archive"),
+                vec![("tree".to_string(), false), ("tree".to_string(), true)],
                 "{lane:?}"
             );
         }

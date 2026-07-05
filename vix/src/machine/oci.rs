@@ -112,34 +112,15 @@ pub(super) fn parse_layout(tree: Tree) -> Result<Layout, String> {
 
 pub(super) fn archive_to_tree(bytes: &[u8]) -> Result<Tree, String> {
     let mut entries = BTreeMap::new();
-    let mut offset = 0usize;
-    while offset + 512 <= bytes.len() {
-        let header = &bytes[offset..offset + 512];
-        if header.iter().all(|byte| *byte == 0) {
-            return Ok(Tree {
-                entries,
-                blobs: BTreeMap::new(),
-            });
-        }
-        let name = normalize_path(&tar_name(header)?);
-        let size = tar_size(header)?;
-        let typeflag = header[156];
-        let data_offset = offset + 512;
-        let data_end = data_offset
-            .checked_add(size)
-            .ok_or_else(|| "tar entry size overflow".to_string())?;
-        if data_end > bytes.len() {
-            return Err(format!("tar entry `{name}` extends past archive"));
-        }
-        if matches!(typeflag, 0 | b'0') && !name.is_empty() {
-            let contents = String::from_utf8(bytes[data_offset..data_end].to_vec())
+    super::tar::walk(bytes, "OCI archive", |entry| {
+        let name = normalize_path(&entry.name);
+        if matches!(entry.typeflag, 0 | b'0') && !name.is_empty() {
+            let contents = String::from_utf8(entry.contents.to_vec())
                 .map_err(|err| format!("OCI archive entry `{name}` is not UTF-8: {err}"))?;
             entries.insert(name, contents);
         }
-        offset = data_offset
-            .checked_add(padded_len(size))
-            .ok_or_else(|| "tar offset overflow".to_string())?;
-    }
+        Ok(())
+    })?;
     Ok(Tree {
         entries,
         blobs: BTreeMap::new(),
@@ -324,68 +305,19 @@ enum LayerHit {
 }
 
 fn find_in_layer(bytes: &[u8], path: &str) -> Result<LayerHit, String> {
-    let mut offset = 0usize;
-    while offset + 512 <= bytes.len() {
-        let header = &bytes[offset..offset + 512];
-        if header.iter().all(|byte| *byte == 0) {
-            return Ok(LayerHit::Miss);
+    let mut hit = LayerHit::Miss;
+    super::tar::walk(bytes, "OCI layer", |entry| {
+        if !matches!(hit, LayerHit::Miss) {
+            return Ok(());
         }
-        let name = tar_name(header)?;
-        let size = tar_size(header)?;
-        let typeflag = header[156];
-        let data_offset = offset + 512;
-        let data_end = data_offset
-            .checked_add(size)
-            .ok_or_else(|| "tar entry size overflow".to_string())?;
-        if data_end > bytes.len() {
-            return Err(format!("tar entry `{name}` extends past layer"));
+        if whiteout_covers(&entry.name, path) {
+            hit = LayerHit::Whiteout;
+        } else if normalize_path(&entry.name) == path && matches!(entry.typeflag, 0 | b'0') {
+            hit = LayerHit::Found(entry.contents.to_vec());
         }
-        if whiteout_covers(&name, path) {
-            return Ok(LayerHit::Whiteout);
-        }
-        if normalize_path(&name) == path && matches!(typeflag, 0 | b'0') {
-            return Ok(LayerHit::Found(bytes[data_offset..data_end].to_vec()));
-        }
-        offset = data_offset
-            .checked_add(padded_len(size))
-            .ok_or_else(|| "tar offset overflow".to_string())?;
-    }
-    Ok(LayerHit::Miss)
-}
-
-fn tar_name(header: &[u8]) -> Result<String, String> {
-    let name = header_string(&header[0..100])?;
-    let prefix = header_string(&header[345..500])?;
-    if prefix.is_empty() {
-        Ok(name)
-    } else if name.is_empty() {
-        Ok(prefix)
-    } else {
-        Ok(format!("{prefix}/{name}"))
-    }
-}
-
-fn header_string(bytes: &[u8]) -> Result<String, String> {
-    let end = bytes
-        .iter()
-        .position(|byte| *byte == 0)
-        .unwrap_or(bytes.len());
-    std::str::from_utf8(&bytes[..end])
-        .map(str::to_string)
-        .map_err(|err| err.to_string())
-}
-
-fn tar_size(header: &[u8]) -> Result<usize, String> {
-    let raw = header_string(&header[124..136])?;
-    let trimmed = raw.trim();
-    if trimmed.is_empty() {
-        return Ok(0);
-    }
-    usize::from_str_radix(trimmed, 8).map_err(|err| format!("tar size `{trimmed}`: {err}"))
-}
-
-fn padded_len(size: usize) -> usize {
-    size.div_ceil(512) * 512
+        Ok(())
+    })?;
+    Ok(hit)
 }
 
 fn normalize_path(path: &str) -> String {

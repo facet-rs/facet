@@ -8218,6 +8218,7 @@ dependencies = [
  "facet-toml",
  "facet-value",
  "hex",
+ "miniz_oxide",
  "phon",
  "semver 1.0.28",
  "sha2 0.10.9",

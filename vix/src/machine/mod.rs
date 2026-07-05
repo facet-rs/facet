@@ -61,10 +61,12 @@
 //! never executing (trace absence), through the VM and JIT.
 
 mod ast_probe;
+mod crate_archive;
 pub mod driver;
 mod elf;
 pub mod lower;
 mod oci;
+mod tar;
 pub mod value;
 mod version;
 mod version_set;
