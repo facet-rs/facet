@@ -23,7 +23,7 @@ use std::sync::Arc;
 
 use facet::Facet;
 use tokio::sync::Mutex;
-use vix::exec::{ExecPlan, MountedWorld, ObservedWorld, ReadSet, Role, Tree};
+use vix::exec::{ExecPlan, MountedWorld, ObservedWorld, Outcome, ReadSet, Role, Tree};
 use vix::machine::{
     Machine, MachineExecBackend, MachineExecRequest, MachinePathDemand, MachinePendingRun,
     ValueBundle,
@@ -87,7 +87,7 @@ pub enum WireExecEvent {
     Finished {
         ok: bool,
         tree: u64,
-        read_set_len: u64,
+        read_set: ReadSet,
     },
     Failed {
         error: String,
@@ -555,7 +555,7 @@ impl ExecutorService {
             .send(WireExecEvent::Finished {
                 ok: true,
                 tree: done.tree,
-                read_set_len: done.read_set.entries.len() as u64,
+                read_set: done.read_set.clone(),
             })
             .await;
     }
@@ -658,7 +658,7 @@ impl ExecutorService {
         let _ = feed.send(WireExecEvent::Finished {
             ok: true,
             tree: done.tree,
-            read_set_len: done.read_set.entries.len() as u64,
+            read_set: done.read_set.clone(),
         });
 
         self.finish_with_observer(request, identity, &done, events)
@@ -811,8 +811,8 @@ struct FleetRun {
 struct FleetRunState {
     ready_paths: std::collections::HashSet<String>,
     source: Option<vix::exec::ExecEvent>,
-    finished: Option<Result<u64, String>>,
-    flushed: Option<Tree>,
+    finished: Option<Result<(u64, ReadSet), String>>,
+    flushed: Option<Outcome>,
 }
 
 impl FleetRun {
@@ -832,9 +832,9 @@ impl FleetRun {
             WireExecEvent::PathReady { path, .. } => {
                 state.ready_paths.insert(path);
             }
-            WireExecEvent::Finished { ok, tree, .. } => {
+            WireExecEvent::Finished { ok, tree, read_set } => {
                 state.finished = Some(if ok {
-                    Ok(tree)
+                    Ok((tree, read_set))
                 } else {
                     Err("run failed".to_string())
                 });
@@ -860,9 +860,14 @@ impl MachinePendingRun for FleetRun {
                 if let Some(finished) = &state.finished {
                     finished.clone()?;
                     drop(state);
-                    let (tree, _) = self.flush()?;
+                    let (outcome, _) = self.flush()?;
                     let prefix = format!("{path}/");
-                    return if tree.entries.keys().any(|entry| entry.starts_with(&prefix)) {
+                    return if outcome
+                        .outputs
+                        .entries
+                        .keys()
+                        .any(|entry| entry.starts_with(&prefix))
+                    {
                         Ok(MachinePathDemand::FinishRequired {
                             path: path.to_string(),
                         })
@@ -887,20 +892,21 @@ impl MachinePendingRun for FleetRun {
         Ok(MachinePathDemand::File(contents))
     }
 
-    fn flush(&self) -> Result<(Tree, vix::exec::ExecEvent), String> {
-        let (tree_hash, source) = {
+    fn flush(&self) -> Result<(Outcome, vix::exec::ExecEvent), String> {
+        let (tree_hash, read_set, source) = {
             let mut state = self.state.lock().unwrap();
             loop {
                 if let Some(finished) = &state.finished {
-                    let hash = finished.clone()?;
-                    if let Some(tree) = &state.flushed {
+                    let (hash, read_set) = finished.clone()?;
+                    if let Some(outcome) = &state.flushed {
                         return Ok((
-                            tree.clone(),
+                            outcome.clone(),
                             state.source.clone().unwrap_or(vix::exec::ExecEvent::Ran),
                         ));
                     }
                     break (
                         hash,
+                        read_set,
                         state.source.clone().unwrap_or(vix::exec::ExecEvent::Ran),
                     );
                 }
@@ -920,8 +926,12 @@ impl MachinePendingRun for FleetRun {
                 tree_from_bytes(&bytes)
             })
         })?;
-        self.state.lock().unwrap().flushed = Some(tree.clone());
-        Ok((tree, source))
+        let outcome = Outcome {
+            outputs: tree,
+            read_set,
+        };
+        self.state.lock().unwrap().flushed = Some(outcome.clone());
+        Ok((outcome, source))
     }
 }
 

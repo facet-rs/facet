@@ -96,28 +96,16 @@ where
         !matches!(self.backend, PlannedEqualityBackend::None)
     }
 
-    #[cfg(test)]
+    #[cfg(all(
+        test,
+        feature = "jit",
+        any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )
+    ))]
     pub(crate) fn has_native_plan(&self) -> bool {
-        #[cfg(all(
-            feature = "jit",
-            any(
-                all(target_os = "macos", target_arch = "aarch64"),
-                all(target_os = "linux", target_arch = "x86_64")
-            )
-        ))]
-        {
-            matches!(self.backend, PlannedEqualityBackend::Native(_))
-        }
-        #[cfg(not(all(
-            feature = "jit",
-            any(
-                all(target_os = "macos", target_arch = "aarch64"),
-                all(target_os = "linux", target_arch = "x86_64")
-            )
-        )))]
-        {
-            false
-        }
+        matches!(self.backend, PlannedEqualityBackend::Native(_))
     }
 }
 
