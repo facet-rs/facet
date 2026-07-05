@@ -41,6 +41,13 @@ pub enum Value {
         given: Vec<(String, Value)>,
     },
     Tree(crate::exec::Tree),
+    Sealed {
+        ciphertext: Vec<u8>,
+        taint: String,
+        recipient: String,
+        identity_hash: Vec<u8>,
+        content_tag: Option<String>,
+    },
 }
 
 #[derive(facet::Facet, Debug, Clone)]
@@ -70,6 +77,7 @@ impl Value {
             Value::Partial { .. } => 13,
             Value::Tree(_) => 14,
             Value::Blob(_) => 15,
+            Value::Sealed { .. } => 16,
         }
     }
 
@@ -114,6 +122,15 @@ impl Value {
                     t.entries.len() + t.blobs.len()
                 )
             }
+            Value::Sealed {
+                taint,
+                recipient,
+                identity_hash,
+                ..
+            } => format!(
+                "sealed({taint}, {recipient}, {:08x})",
+                short_hash(identity_hash)
+            ),
         }
     }
 
@@ -184,6 +201,19 @@ impl Value {
                 }
             }
             Value::Tree(_) => self.forced_tree().expect("tree rank").fingerprint().hash(h),
+            Value::Sealed {
+                ciphertext,
+                taint,
+                recipient,
+                identity_hash,
+                content_tag,
+            } => {
+                ciphertext.hash(h);
+                taint.hash(h);
+                recipient.hash(h);
+                identity_hash.hash(h);
+                content_tag.hash(h);
+            }
         }
     }
 
@@ -278,7 +308,35 @@ impl Ord for Value {
                     .cmp(&b.entries)
                     .then_with(|| a.blobs.cmp(&b.blobs))
             }
+            (
+                Value::Sealed {
+                    ciphertext: ac,
+                    taint: at,
+                    recipient: ar,
+                    identity_hash: ah,
+                    content_tag: ag,
+                },
+                Value::Sealed {
+                    ciphertext: bc,
+                    taint: bt,
+                    recipient: br,
+                    identity_hash: bh,
+                    content_tag: bg,
+                },
+            ) => ac
+                .cmp(bc)
+                .then_with(|| at.cmp(bt))
+                .then_with(|| ar.cmp(br))
+                .then_with(|| ah.cmp(bh))
+                .then_with(|| ag.cmp(bg)),
             _ => self.rank().cmp(&other.rank()),
         }
     }
+}
+
+fn short_hash(bytes: &[u8]) -> u32 {
+    let mut out = [0u8; 4];
+    let len = bytes.len().min(out.len());
+    out[..len].copy_from_slice(&bytes[..len]);
+    u32::from_be_bytes(out)
 }

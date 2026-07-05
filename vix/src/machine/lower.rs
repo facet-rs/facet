@@ -34,10 +34,10 @@ use super::driver::{
     ELF_DOC_HOST, EXEC_HOST, FETCH_HOST, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST,
     MAP_GET_HOST, MAP_INSERT_HOST, MachineExecBackend, OCI_DOC_HOST, OPTION_UNWRAP_HOST,
     PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RenderNames,
-    RenderVariant, RenderedValue, STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST,
-    STRING_CONCAT_HOST, STRING_DEFAULT_HOST, STRING_LOWER_HOST, STRING_UPPER_HOST, StepMode,
-    StoreHandle, TARGET_HOST, TREE_PROJECT_HOST, VALUE_COMPARE_HOST, VERSION_PARSE_HOST,
-    ValueBundle,
+    RenderVariant, RenderedValue, SEALED_DECLASSIFY_HOST, SEALED_SEAL_HOST, SEALED_TO_STRING_HOST,
+    STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_DEFAULT_HOST,
+    STRING_LOWER_HOST, STRING_UPPER_HOST, StepMode, StoreHandle, TARGET_HOST, TREE_PROJECT_HOST,
+    VALUE_COMPARE_HOST, VERSION_PARSE_HOST, ValueBundle,
 };
 use crate::ast;
 use crate::fetch::FetchBackend;
@@ -749,6 +749,7 @@ fn schema_names_for(
         "Run".to_string(),
         "Flag".to_string(),
         "Template".to_string(),
+        "Sealed".to_string(),
         "Tree".to_string(),
         "Array".to_string(),
         "Map".to_string(),
@@ -1842,6 +1843,9 @@ fn add_builtin_descriptors(descriptors: &mut HashMap<String, Descriptor<String>>
     descriptors
         .entry("Bool".into())
         .or_insert_with(|| declared_mem::i64_("Bool".into()));
+    descriptors
+        .entry("Sealed".into())
+        .or_insert_with(|| declared_mem::handle("SealedRef".into(), "Sealed".into()));
     descriptors.entry("Target".into()).or_insert_with(|| {
         declared_mem::declared_struct(
             "Target".into(),
@@ -2482,6 +2486,14 @@ impl<'a> FnLowerer<'a> {
             ast::Expr::Binary(b) => {
                 let mut a = self.expr(&b.left)?;
                 let mut r = self.expr(&b.right)?;
+                if b.op == "+"
+                    && matches!(a.schema.as_str(), "String" | "Sealed")
+                    && matches!(r.schema.as_str(), "String" | "Sealed")
+                {
+                    a = self.coerce_to_schema(a, "String")?;
+                    r = self.coerce_to_schema(r, "String")?;
+                    return self.string_concat(&a, &r);
+                }
                 if let Some(schema) =
                     strict_binary_operand_schema(&b.op, &a.schema, &r.schema).map(str::to_string)
                 {
@@ -3174,6 +3186,49 @@ impl<'a> FnLowerer<'a> {
                 }
                 Ok(Some(self.target_host()))
             }
+            ["Sealed", "seal"] => {
+                if self
+                    .tables
+                    .resolve_type_module(self.current_module, "Sealed")
+                    != Some("vix")
+                {
+                    return Ok(None);
+                }
+                let args = call
+                    .args
+                    .args
+                    .iter()
+                    .map(|arg| self.method_arg(arg, Some("String")))
+                    .collect::<Result<Vec<_>, _>>()?;
+                match args.as_slice() {
+                    [ciphertext, marker, recipient] => {
+                        Ok(Some(self.sealed_seal(ciphertext, marker, recipient, None)?))
+                    }
+                    [ciphertext, marker, recipient, tag] => Ok(Some(self.sealed_seal(
+                        ciphertext,
+                        marker,
+                        recipient,
+                        Some(tag),
+                    )?)),
+                    _ => Err(
+                        "Sealed::seal takes ciphertext, taint, recipient, and optional tag".into(),
+                    ),
+                }
+            }
+            ["Sealed", "declassify"] => {
+                if self
+                    .tables
+                    .resolve_type_module(self.current_module, "Sealed")
+                    != Some("vix")
+                {
+                    return Ok(None);
+                }
+                let [arg] = call.args.args.as_slice() else {
+                    return Err("Sealed::declassify takes one sealed value".into());
+                };
+                let sealed = self.method_arg(arg, Some("Sealed"))?;
+                Ok(Some(self.sealed_declassify(&sealed)?))
+            }
             _ => Ok(None),
         }
     }
@@ -3754,9 +3809,16 @@ impl<'a> FnLowerer<'a> {
         if value.schema == realized_schema(expected) {
             return self.coerce_realized_to_schema(value, expected);
         }
+        if value.schema == "Realized<Sealed>" && expected == "String" {
+            let sealed = self.coerce_realized_to_schema(value, "Sealed")?;
+            return self.sealed_to_string(&sealed);
+        }
         if value.schema == "Realized<Doc>" && expected != "Realized<Doc>" {
             let doc = self.coerce_realized_to_schema(value, "Doc")?;
             return self.coerce_to_schema(doc, expected);
+        }
+        if value.schema == "Sealed" && expected == "String" {
+            return self.sealed_to_string(&value);
         }
         if value.schema == "Doc"
             && matches!(
@@ -4580,6 +4642,105 @@ impl<'a> FnLowerer<'a> {
             realization: None,
             pending: None,
         }
+    }
+
+    fn sealed_seal(
+        &mut self,
+        ciphertext: &ValueSlot,
+        marker: &ValueSlot,
+        recipient: &ValueSlot,
+        tag: Option<&ValueSlot>,
+    ) -> Result<ValueSlot, String> {
+        self.expect_schema(ciphertext, "String")?;
+        self.expect_schema(marker, "String")?;
+        self.expect_schema(recipient, "String")?;
+        if let Some(tag) = tag {
+            self.expect_schema(tag, "String")?;
+        }
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: ciphertext.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: marker.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 24,
+            src: recipient.slot,
+        });
+        if let Some(tag) = tag {
+            self.code.push(Op::CopyI64 {
+                dst: region + 32,
+                src: tag.slot,
+            });
+        } else {
+            self.code.push(Op::ConstI64 {
+                dst: region + 32,
+                value: -1,
+            });
+        }
+        self.code.push(Op::HostCall {
+            host: SEALED_SEAL_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Sealed".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn sealed_declassify(&mut self, sealed: &ValueSlot) -> Result<ValueSlot, String> {
+        self.expect_schema(sealed, "Sealed")?;
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: sealed.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: SEALED_DECLASSIFY_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "String".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn sealed_to_string(&mut self, sealed: &ValueSlot) -> Result<ValueSlot, String> {
+        self.expect_schema(sealed, "Sealed")?;
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: sealed.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: SEALED_TO_STRING_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "String".into(),
+            realization: None,
+            pending: None,
+        })
     }
 
     fn array_literal(&mut self, array: &ast::Array) -> Result<ValueSlot, String> {
@@ -5858,6 +6019,102 @@ fallback={{ empty | default(\"8080\") }}
             );
             assert_eq!(spawned_count(&machine, "active"), 1, "{lane:?}");
             assert_eq!(spawned_count(&machine, "unused"), 0, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn sealed_values_render_metadata_but_not_plaintext() {
+        let source = r#"
+use vix::Sealed;
+
+pub fn secret() -> Sealed {
+    Sealed::seal("ciphertext", "secret.db", "alice", "db-v1")
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(source, lane);
+            let secret = machine.demand_i64("secret", Vec::new()).unwrap();
+            let RenderedValue::Sealed {
+                taint,
+                recipient,
+                identity_hash,
+                content_tag,
+            } = machine.render_result("secret", secret).unwrap()
+            else {
+                panic!("secret did not render as sealed metadata on {lane:?}");
+            };
+            assert_eq!(taint, "secret.db");
+            assert_eq!(recipient, "alice");
+            assert_eq!(content_tag.as_deref(), Some("db-v1"));
+            assert_eq!(identity_hash.len(), 64);
+            assert!(!identity_hash.contains("ciphertext"));
+        }
+    }
+
+    #[test]
+    fn sealed_taint_propagates_through_concat_and_blocks_plaintext_render() {
+        let source = r#"
+use vix::Sealed;
+
+pub fn derived() -> String {
+    let secret: Sealed = Sealed::seal("ciphertext", "secret.db", "alice");
+    "prefix-" + secret
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(source, lane);
+            let derived = machine.demand_i64("derived", Vec::new()).unwrap();
+            let err = machine.render_result("derived", derived).unwrap_err();
+            assert!(
+                err.contains("refusing to render tainted String as plaintext"),
+                "{lane:?}: {err}"
+            );
+            assert!(err.contains("secret.db"), "{lane:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn sealed_taint_propagates_through_template_holes_and_maps() {
+        let source = r#"
+use vix::{Map, Sealed};
+
+pub fn templated() -> String {
+    let secret: Sealed = Sealed::seal("ciphertext", "secret.template", "alice");
+    let bindings: Map<String, Sealed> = {};
+    let bindings = bindings.insert("secret", secret);
+    render(tmpl"token={{ secret }}", bindings)
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(source, lane);
+            let templated = machine.demand_i64("templated", Vec::new()).unwrap();
+            let err = machine.render_result("templated", templated).unwrap_err();
+            assert!(
+                err.contains("refusing to render tainted String as plaintext"),
+                "{lane:?}: {err}"
+            );
+            assert!(err.contains("secret.template"), "{lane:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn declassify_is_the_explicit_taint_removal_seam() {
+        let source = r#"
+use vix::Sealed;
+
+pub fn opened() -> String {
+    let secret: Sealed = Sealed::seal("ciphertext", "secret.db", "test");
+    Sealed::declassify(secret)
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(source, lane);
+            let opened = machine.demand_i64("opened", Vec::new()).unwrap();
+            let RenderedValue::String { value } = machine.render_result("opened", opened).unwrap()
+            else {
+                panic!("opened did not render as String on {lane:?}");
+            };
+            assert_eq!(value, "ciphertext");
         }
     }
 
