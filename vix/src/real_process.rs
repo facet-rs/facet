@@ -193,11 +193,7 @@ impl Tool for RealProcessTool {
         stage_declared_inputs(&plan, world, root)?;
         prepare_output_dirs(&plan, root)?;
 
-        let argv = plan
-            .argv
-            .iter()
-            .map(|(arg, role)| map_arg(arg, *role, root))
-            .collect::<Result<Vec<_>, _>>()?;
+        let argv = map_argv(&self.command, &plan, world, root)?;
         let output = Command::new(&self.command)
             .args(argv)
             .current_dir(root)
@@ -239,10 +235,7 @@ fn stage_declared_inputs(
         match role {
             Role::Input | Role::InputFlag => {
                 for input in role_input_paths(arg, *role) {
-                    let bytes = world.read_bytes(&input).ok_or_else(|| {
-                        format!("real-process input `{input}` is outside mounted trees")
-                    })?;
-                    stage_file(root, &input, &bytes)?;
+                    stage_declared_input(&input, world, root)?;
                 }
             }
             Role::SearchDir | Role::SearchDirFlag => {
@@ -264,6 +257,29 @@ fn stage_declared_inputs(
         }
     }
     Ok(())
+}
+
+fn stage_declared_input(
+    input: &str,
+    world: &mut ObservedWorld<'_>,
+    root: &Path,
+) -> Result<(), String> {
+    if let Some(bytes) = world.read_bytes(input) {
+        return stage_file(root, input, &bytes);
+    }
+    if let Some(names) = world.list(input) {
+        for name in names {
+            let logical = format!("{}/{}", input.trim_end_matches('/'), name);
+            let bytes = world.read_bytes(&logical).ok_or_else(|| {
+                format!("real-process input `{logical}` vanished while staging `{input}`")
+            })?;
+            stage_file(root, &logical, &bytes)?;
+        }
+        return Ok(());
+    }
+    Err(format!(
+        "real-process input `{input}` is outside mounted trees"
+    ))
 }
 
 fn listed_logical_path(dir: &str, name: &str, world: &ObservedWorld<'_>) -> String {
@@ -369,6 +385,30 @@ fn physical_path(logical: &str, root: &Path) -> Result<PathBuf, String> {
         ));
     }
     Ok(root.join(path))
+}
+
+fn map_argv(
+    command: &str,
+    plan: &ExecPlan,
+    world: &ObservedWorld<'_>,
+    root: &Path,
+) -> Result<Vec<OsString>, String> {
+    let mut argv = Vec::new();
+    for (arg, role) in &plan.argv {
+        if command == "ar"
+            && *role == Role::Input
+            && world.peek_bytes(arg).is_none()
+            && let Some(names) = world.peek_list(arg)
+        {
+            for name in names {
+                let logical = format!("{}/{}", arg.trim_end_matches('/'), name);
+                argv.push(physical_path(&logical, root)?.into_os_string());
+            }
+            continue;
+        }
+        argv.push(map_arg(arg, *role, root)?);
+    }
+    Ok(argv)
 }
 
 fn scrubbed_env(root: &Path) -> Vec<(OsString, OsString)> {
