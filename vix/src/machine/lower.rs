@@ -30,11 +30,12 @@ use weavy::task::{Fn as TaskFn, FnId, Op, Program};
 use super::TotalF64;
 use super::driver::{
     ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_FILTER_EXCLUDE_HOST, ARRAY_JOIN_HOST,
-    ARRAY_LEN_HOST, ARRAY_MAP_PENDING_HOST, AST_DOC_HOST, AST_FN_HOST, CodeBundle, DOC_COERCE_HOST,
-    DOC_GET_HOST, DOC_PACKAGE_HOST, DOC_PARSE_HOST, DriveEvent, DriveEventSink, Driver,
-    ELF_DOC_HOST, EXEC_HOST, FETCH_HOST, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST,
-    MAP_GET_HOST, MAP_INSERT_HOST, MachineExecBackend, OCI_DOC_HOST, OPTION_UNWRAP_HOST,
-    PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RenderNames,
+    ARRAY_LEN_HOST, ARRAY_MAP_PENDING_HOST, ARRAY_POP_HOST, ARRAY_PUSH_HOST, ARRAY_SET_HOST,
+    AST_DOC_HOST, AST_FN_HOST, CodeBundle, DOC_COERCE_HOST, DOC_GET_HOST, DOC_PACKAGE_HOST,
+    DOC_PARSE_HOST, DriveEvent, DriveEventSink, Driver, ELF_DOC_HOST, EXEC_HOST, FETCH_HOST,
+    FLESH_DUP_HOST, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST,
+    MAP_INSERT_HOST, MachineExecBackend, OCI_DOC_HOST, OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST,
+    PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RECORD_UPDATE_HOST, RenderNames,
     RenderVariant, RenderedValue, SEALED_DECLASSIFY_HOST, SEALED_SEAL_HOST, SEALED_TO_STRING_HOST,
     STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_DEFAULT_HOST,
     STRING_LOWER_HOST, STRING_UPPER_HOST, SemanticComparator, StepMode, StoreHandle, TARGET_HOST,
@@ -680,6 +681,10 @@ impl Machine {
         self.driver.set_step_mode(mode);
     }
 
+    pub fn set_force_flesh_copy(&mut self, force: bool) {
+        self.driver.set_force_flesh_copy(force);
+    }
+
     pub fn entry_param_schemas(&self, name: &str) -> Option<&[String]> {
         self.fn_params.get(name).map(Vec::as_slice)
     }
@@ -808,6 +813,7 @@ fn schema_names_for(
         "Option<Realized<Doc>>".to_string(),
         "Map<String,Doc>".to_string(),
         "Map<String,Realized<Doc>>".to_string(),
+        "Tuple<Int,Array>".to_string(),
     ]);
     for schema in fn_returns.values() {
         push_schema_closure(schema, &mut schema_names);
@@ -2778,7 +2784,13 @@ impl<'a> FnLowerer<'a> {
             .ok_or_else(|| format!("unbound name {name}"))?;
         let state = cell.0.borrow().clone();
         match state {
-            BindingState::Value(slot) => Ok(slot),
+            BindingState::Value(slot) => {
+                if self.schema_can_be_flesh(&slot.schema) {
+                    self.flesh_dup(&slot)
+                } else {
+                    Ok(slot)
+                }
+            }
             BindingState::Lazy {
                 value,
                 expected,
@@ -2789,9 +2801,20 @@ impl<'a> FnLowerer<'a> {
                     self.expr_expected(&value, contextual_expected.or(expected.as_deref()))?;
                 *cell.0.borrow_mut() = BindingState::Value(slot.clone());
                 self.slots = saved;
-                Ok(slot)
+                if self.schema_can_be_flesh(&slot.schema) {
+                    self.flesh_dup(&slot)
+                } else {
+                    Ok(slot)
+                }
             }
         }
+    }
+
+    fn schema_can_be_flesh(&self, schema: &str) -> bool {
+        schema == "Array"
+            || schema.starts_with("Map<")
+            || self.tables.structs.contains_key(schema)
+            || self.tables.enums.contains_key(schema)
     }
 
     /// Match on scalars: literal arms compile to EqI64 + JumpIfZero
@@ -3466,6 +3489,36 @@ impl<'a> FnLowerer<'a> {
                 let separator = self.method_arg(arg, Some("String"))?;
                 self.array_join(&receiver, &separator)
             }
+            "push" => {
+                if receiver.schema != "Array" {
+                    return Err(format!("push called on {}", receiver.schema));
+                }
+                let [arg] = call.args.args.as_slice() else {
+                    return Err("Array.push takes one value".into());
+                };
+                let value = self.method_arg(arg, None)?;
+                self.array_push(&receiver, &value)
+            }
+            "pop" => {
+                if receiver.schema != "Array" {
+                    return Err(format!("pop called on {}", receiver.schema));
+                }
+                if !call.args.args.is_empty() {
+                    return Err("Array.pop takes no arguments".into());
+                }
+                self.array_pop(&receiver)
+            }
+            "set" => {
+                if receiver.schema != "Array" {
+                    return Err(format!("set called on {}", receiver.schema));
+                }
+                let [index_arg, value_arg] = call.args.args.as_slice() else {
+                    return Err("Array.set takes index and value".into());
+                };
+                let index = self.method_arg(index_arg, Some("Int"))?;
+                let value = self.method_arg(value_arg, None)?;
+                self.array_set(&receiver, &index, &value)
+            }
             "insert" => {
                 let Some((key_schema, value_schema)) = map_schemas(&receiver.schema) else {
                     return Err(format!("insert called on {}", receiver.schema));
@@ -3773,13 +3826,23 @@ impl<'a> FnLowerer<'a> {
                 }
                 _ => return Err("multiple record update spreads are outside the B3 subset".into()),
             };
+            if let Some(base) = base {
+                let mut updates = Vec::new();
+                for (field_index, (field_name, _)) in info.fields.iter().enumerate() {
+                    let Some(init) = explicit.get(field_name) else {
+                        continue;
+                    };
+                    let field_schema = self.struct_field_schema(name, field_index)?;
+                    let value = self.expr_expected(init, Some(&field_schema))?;
+                    updates.push((field_index, value));
+                }
+                return self.record_update(name, 0, &base, &updates);
+            }
             let mut fields = Vec::new();
             for (field_index, (field_name, default)) in info.fields.iter().enumerate() {
                 let field_schema = self.struct_field_schema(name, field_index)?;
                 let value = if let Some(init) = explicit.get(field_name) {
                     self.expr_expected(init, Some(&field_schema))?
-                } else if let Some(base) = &base {
-                    self.store_read(base, field_index, field_schema.clone())
                 } else if let Some(default) = default {
                     self.expr_expected(default, Some(&field_schema))?
                 } else {
@@ -4390,6 +4453,62 @@ impl<'a> FnLowerer<'a> {
         })
     }
 
+    fn record_update(
+        &mut self,
+        schema: &str,
+        variant_index: usize,
+        base: &ValueSlot,
+        updates: &[(usize, ValueSlot)],
+    ) -> Result<ValueSlot, String> {
+        self.expect_schema(base, schema)?;
+        let dst = self.alloc();
+        let region = self.store_alloc_region;
+        let schema_ref = *self
+            .schema_refs
+            .get(schema)
+            .ok_or_else(|| format!("no schema ref for {schema}"))?;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: base.slot,
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 16,
+            value: schema_ref,
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 24,
+            value: i64::try_from(variant_index).expect("variant index fits i64"),
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 32,
+            value: i64::try_from(updates.len()).expect("update count fits i64"),
+        });
+        for (update_index, (field_index, value)) in updates.iter().enumerate() {
+            let update_offset = 16 * u32::try_from(update_index).expect("update index fits u32");
+            self.code.push(Op::ConstI64 {
+                dst: region + 40 + update_offset,
+                value: i64::try_from(*field_index).expect("field index fits i64"),
+            });
+            self.code.push(Op::CopyI64 {
+                dst: region + 48 + update_offset,
+                src: value.slot,
+            });
+        }
+        self.code.push(Op::HostCall {
+            host: RECORD_UPDATE_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: schema.to_string(),
+            realization: None,
+            pending: None,
+        })
+    }
+
     fn store_read(&mut self, handle: &ValueSlot, field_index: usize, schema: String) -> ValueSlot {
         let dst = self.alloc();
         let region = self.store_read_region;
@@ -4436,6 +4555,28 @@ impl<'a> FnLowerer<'a> {
             realization: None,
             pending: None,
         }
+    }
+
+    fn flesh_dup(&mut self, value: &ValueSlot) -> Result<ValueSlot, String> {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: value.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: FLESH_DUP_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: value.schema.clone(),
+            realization: value.realization,
+            pending: value.pending,
+        })
     }
 
     fn map_empty(&mut self, schema: &str) -> Result<ValueSlot, String> {
@@ -5227,6 +5368,110 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: dst,
             schema: "Int".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn array_push(&mut self, receiver: &ValueSlot, value: &ValueSlot) -> Result<ValueSlot, String> {
+        self.expect_schema(receiver, "Array")?;
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: receiver.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: value.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: ARRAY_PUSH_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Array".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn array_pop(&mut self, receiver: &ValueSlot) -> Result<ValueSlot, String> {
+        self.expect_schema(receiver, "Array")?;
+        let array_dst = self.alloc();
+        let value_dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: array_dst.into(),
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 8,
+            value: value_dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: receiver.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: ARRAY_POP_HOST,
+        });
+        self.store_alloc(
+            "Tuple<Int,Array>",
+            0,
+            &[
+                ValueSlot {
+                    slot: value_dst,
+                    schema: "Int".into(),
+                    realization: None,
+                    pending: None,
+                },
+                ValueSlot {
+                    slot: array_dst,
+                    schema: "Array".into(),
+                    realization: None,
+                    pending: None,
+                },
+            ],
+        )
+    }
+
+    fn array_set(
+        &mut self,
+        receiver: &ValueSlot,
+        index: &ValueSlot,
+        value: &ValueSlot,
+    ) -> Result<ValueSlot, String> {
+        self.expect_schema(receiver, "Array")?;
+        self.expect_schema(index, "Int")?;
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: receiver.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: index.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 24,
+            src: value.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: ARRAY_SET_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Array".into(),
             realization: None,
             pending: None,
         })
@@ -6832,6 +7077,70 @@ fn f(n: Int) -> Int {
                 1.5f64.to_bits(),
                 "{lane:?}"
             );
+        }
+    }
+
+    #[test]
+    fn flesh_reuse_is_unobservable_for_aggregate_updates() {
+        let cases = [
+            (
+                "array",
+                r#"
+pub fn main() -> Int {
+    ([0].push(1).push(2).pop()).0
+}
+"#,
+                2,
+            ),
+            (
+                "map",
+                r#"
+pub fn main() -> Int {
+    let m: Map<String, Int> = {};
+    m.insert("a", 1).insert("b", 2).get("b").unwrap() + 1
+}
+"#,
+                3,
+            ),
+            (
+                "record",
+                r#"
+struct Pair { left: Int, right: Int }
+
+pub fn main() -> Int {
+    let p = Pair { left: 1, right: 2 };
+    let q = Pair { right: 3, ..p };
+    q.left + q.right
+}
+"#,
+                4,
+            ),
+        ];
+        for lane in lanes() {
+            for (name, src, expected) in cases {
+                let mut reuse = Machine::load_with_lane(src, lane).unwrap();
+                reuse.driver.set_force_flesh_copy(false);
+                let reuse_result = reuse.demand_i64("main", vec![]).unwrap();
+                let reuse_trace = reuse.driver.trace.clone();
+                let reuse_bundle = reuse
+                    .driver
+                    .export_value_bundle(reuse_result, Vec::new())
+                    .unwrap();
+
+                let mut copy = Machine::load_with_lane(src, lane).unwrap();
+                copy.driver.set_force_flesh_copy(true);
+                let copy_result = copy.demand_i64("main", vec![]).unwrap();
+                let copy_trace = copy.driver.trace.clone();
+                let copy_bundle = copy
+                    .driver
+                    .export_value_bundle(copy_result, Vec::new())
+                    .unwrap();
+
+                assert_eq!(reuse_result, expected, "{lane:?} {name}");
+                assert_eq!(reuse_result, copy_result, "{lane:?} {name}");
+                assert_eq!(reuse_trace, copy_trace, "{lane:?} {name}");
+                assert_eq!(reuse_bundle.values, copy_bundle.values, "{lane:?} {name}");
+            }
         }
     }
 
