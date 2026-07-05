@@ -261,6 +261,12 @@ fn normalize_exec_substrate_trace(trace: &[DriveEvent]) -> NormalizedTrace {
                     verified: *verified,
                 });
             }
+            DriveEvent::MemoSemanticHit { fn_hash, verified } => {
+                events.push(NormalizedEvent::MemoSemanticHit {
+                    fn_hash: *fn_hash,
+                    verified: *verified,
+                });
+            }
             DriveEvent::Spawned { fn_hash } => {
                 events.push(NormalizedEvent::Spawned { fn_hash: *fn_hash });
             }
@@ -477,6 +483,10 @@ enum NormalizedEvent {
         fn_hash: u64,
     },
     MemoProjectionHit {
+        fn_hash: u64,
+        verified: usize,
+    },
+    MemoSemanticHit {
         fn_hash: u64,
         verified: usize,
     },

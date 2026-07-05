@@ -529,6 +529,9 @@ fn map_argv(
 ) -> Result<Vec<OsString>, String> {
     let mut argv = Vec::new();
     for (arg, role) in &plan.argv {
+        if is_control_arg(arg, *role) {
+            continue;
+        }
         if command == "ar"
             && *role == Role::Input
             && world.peek_bytes(arg).is_none()
