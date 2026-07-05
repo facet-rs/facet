@@ -33,6 +33,24 @@ const FORMATTING_MANIFEST: &str = include_str!(
 const FORMATTING_LIB: &str = include_str!(
     "../../playgrounds/snark/src/bundled/vix/samples/fixtures/lock_graph/crates/formatting_lib/src/lib.rs"
 );
+const BUILD_SCRIPT_LOCK: &str = include_str!(
+    "../../playgrounds/snark/src/bundled/vix/samples/fixtures/build_script/Cargo.lock"
+);
+const BUILD_SCRIPT_APP_LOCK: &str = include_str!(
+    "../../playgrounds/snark/src/bundled/vix/samples/fixtures/build_script/app/Cargo.lock"
+);
+const BUILD_SCRIPT_MANIFEST: &str = include_str!(
+    "../../playgrounds/snark/src/bundled/vix/samples/fixtures/build_script/app/Cargo.toml"
+);
+const BUILD_SCRIPT_RS: &str = include_str!(
+    "../../playgrounds/snark/src/bundled/vix/samples/fixtures/build_script/app/build.rs"
+);
+const BUILD_SCRIPT_LIB: &str = include_str!(
+    "../../playgrounds/snark/src/bundled/vix/samples/fixtures/build_script/app/src/lib.rs"
+);
+const BUILD_SCRIPT_MAIN: &str = include_str!(
+    "../../playgrounds/snark/src/bundled/vix/samples/fixtures/build_script/app/src/main.rs"
+);
 
 #[test]
 fn crate_vix_consumes_lockfile_and_builds_transitive_graph_with_fake_rustc() -> Result<(), String> {
@@ -79,6 +97,63 @@ fn crate_vix_consumes_lockfile_and_builds_transitive_graph_with_fake_rustc() -> 
                 "missing rustc extern edge {edge:?}: {extern_edges:?}"
             ));
         }
+    }
+    Ok(())
+}
+
+#[test]
+fn crate_vix_models_build_script_directives_and_out_dir_with_fake_runner() -> Result<(), String> {
+    let mut machine = Machine::load(SOURCE)?;
+    let target = machine.linux_target_handle();
+    let graph = machine
+        .intern_arg("Tree", MachineArg::Tree(build_script_tree()))?
+        .0;
+
+    let cfg = machine.demand_i64("crate_build_script_directive_cfg", vec![graph])?;
+    if rendered_string(&machine, "crate_build_script_directive_cfg", cfg)?
+        != "vix_slice3_build_script"
+    {
+        return Err("build script cfg directive was not parsed".into());
+    }
+
+    let out_dir = machine.demand_i64("crate_build_script_out_dir", vec![graph])?;
+    if machine
+        .tree_entries(out_dir)?
+        .get("generated.rs")
+        .is_none_or(|contents| !contents.contains("vix-build-script-generated"))
+    {
+        return Err("build script OUT_DIR generated.rs was not harvested".into());
+    }
+
+    let built = machine.demand_i64("crate_build_script_bin", vec![target, graph])?;
+    if !machine
+        .tree_entries(built)?
+        .contains_key("build_script_runner")
+    {
+        return Err("build script fake link did not produce build_script_runner".into());
+    }
+
+    let rustc_argv = machine
+        .trace()
+        .iter()
+        .filter_map(|event| match event {
+            DriveEvent::RunRequested {
+                command_name, argv, ..
+            } if command_name == "rustc" => Some(argv.as_slice()),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    if !rustc_argv.iter().any(|argv| {
+        argv.windows(2)
+            .any(|pair| pair[0] == "--cfg" && pair[1] == "vix_slice3_build_script")
+    }) {
+        return Err("parent rustc did not receive the build-script cfg".into());
+    }
+    if !rustc_argv.iter().any(|argv| {
+        argv.windows(2)
+            .any(|pair| pair[0] == "--env" && pair[1].starts_with("OUT_DIR="))
+    }) {
+        return Err("parent rustc did not receive OUT_DIR env".into());
     }
     Ok(())
 }
@@ -133,5 +208,16 @@ fn lock_graph_tree() -> Tree {
         ("crates/core_lib/src/lib.rs", CORE_LIB),
         ("crates/formatting_lib/Cargo.toml", FORMATTING_MANIFEST),
         ("crates/formatting_lib/src/lib.rs", FORMATTING_LIB),
+    ])
+}
+
+fn build_script_tree() -> Tree {
+    Tree::of(&[
+        ("Cargo.lock", BUILD_SCRIPT_LOCK),
+        ("app/Cargo.lock", BUILD_SCRIPT_APP_LOCK),
+        ("app/Cargo.toml", BUILD_SCRIPT_MANIFEST),
+        ("app/build.rs", BUILD_SCRIPT_RS),
+        ("app/src/lib.rs", BUILD_SCRIPT_LIB),
+        ("app/src/main.rs", BUILD_SCRIPT_MAIN),
     ])
 }

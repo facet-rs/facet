@@ -56,6 +56,25 @@ const LOCK_GRAPH_FORMATTING_LIB: &str = include_str!(
     "../../playgrounds/snark/src/bundled/vix/samples/fixtures/lock_graph/crates/formatting_lib/src/lib.rs"
 );
 const LOCK_GRAPH_EXPECTED_STDOUT: &[u8] = b"core via alpha + formatted\n";
+const BUILD_SCRIPT_LOCK: &str = include_str!(
+    "../../playgrounds/snark/src/bundled/vix/samples/fixtures/build_script/Cargo.lock"
+);
+const BUILD_SCRIPT_APP_LOCK: &str = include_str!(
+    "../../playgrounds/snark/src/bundled/vix/samples/fixtures/build_script/app/Cargo.lock"
+);
+const BUILD_SCRIPT_MANIFEST: &str = include_str!(
+    "../../playgrounds/snark/src/bundled/vix/samples/fixtures/build_script/app/Cargo.toml"
+);
+const BUILD_SCRIPT_RS: &str = include_str!(
+    "../../playgrounds/snark/src/bundled/vix/samples/fixtures/build_script/app/build.rs"
+);
+const BUILD_SCRIPT_LIB: &str = include_str!(
+    "../../playgrounds/snark/src/bundled/vix/samples/fixtures/build_script/app/src/lib.rs"
+);
+const BUILD_SCRIPT_MAIN: &str = include_str!(
+    "../../playgrounds/snark/src/bundled/vix/samples/fixtures/build_script/app/src/main.rs"
+);
+const BUILD_SCRIPT_EXPECTED_STDOUT: &[u8] = b"vix-build-script-generated\n";
 
 #[test]
 fn real_process_rustc_builds_two_crate_fixture_and_matches_cargo_unit_graph_oracle()
@@ -159,6 +178,62 @@ fn real_process_rustc_builds_lockfile_graph_and_matches_cargo_unit_graph_oracle(
     Ok(())
 }
 
+#[test]
+fn real_process_runs_build_script_threads_directives_and_out_dir_into_parent_rustc()
+-> Result<(), String> {
+    if !host_rustc_available() {
+        return Ok(());
+    }
+
+    let backend = Arc::new(RealProcessBackend::new());
+    let mut machine = Machine::load(SOURCE)?.with_exec_backend(backend);
+    let target = machine.linux_target_handle();
+    let graph = machine
+        .intern_arg("Tree", MachineArg::Tree(build_script_tree()))?
+        .0;
+
+    let built = machine.demand_i64("crate_build_script_bin", vec![target, graph])?;
+    let bin = tree_file_bytes(&mut machine, built, "build_script_runner")?;
+    let stdout = run_named_binary_bytes(&bin, "build_script_runner")?;
+    if stdout != BUILD_SCRIPT_EXPECTED_STDOUT {
+        return Err(format!(
+            "unexpected build-script fixture stdout: {:?}",
+            String::from_utf8_lossy(&stdout)
+        ));
+    }
+
+    let machine_graph = machine_rustc_unit_graph(&machine)?;
+    let cargo_graph = cargo_build_script_unit_graph_oracle()?;
+    if machine_graph != cargo_graph {
+        return Err(format!(
+            "build-script machine unit graph did not match cargo oracle\nmachine: {machine_graph:#?}\ncargo: {cargo_graph:#?}"
+        ));
+    }
+
+    let completed = machine
+        .trace()
+        .iter()
+        .filter_map(|event| match event {
+            DriveEvent::RunCompleted {
+                command_name,
+                outputs,
+                ..
+            } if command_name == "build_script" => Some(outputs),
+            _ => None,
+        })
+        .next()
+        .ok_or_else(|| "missing build_script completion event".to_string())?;
+    if !completed.iter().any(|(path, _)| path == "build.stdout")
+        || !completed.iter().any(|(path, _)| path == "out/generated.rs")
+    {
+        return Err(format!(
+            "build_script completion did not expose stdout and OUT_DIR: {completed:?}"
+        ));
+    }
+
+    Ok(())
+}
+
 fn host_rustc_available() -> bool {
     Command::new("rustc")
         .arg("--version")
@@ -196,12 +271,27 @@ fn lock_graph_tree() -> Tree {
     ])
 }
 
+fn build_script_tree() -> Tree {
+    Tree::of(&[
+        ("Cargo.lock", BUILD_SCRIPT_LOCK),
+        ("app/Cargo.lock", BUILD_SCRIPT_APP_LOCK),
+        ("app/Cargo.toml", BUILD_SCRIPT_MANIFEST),
+        ("app/build.rs", BUILD_SCRIPT_RS),
+        ("app/src/lib.rs", BUILD_SCRIPT_LIB),
+        ("app/src/main.rs", BUILD_SCRIPT_MAIN),
+    ])
+}
+
 fn run_binary_bytes(bytes: &[u8]) -> Result<Vec<u8>, String> {
+    run_named_binary_bytes(bytes, "mini_app")
+}
+
+fn run_named_binary_bytes(bytes: &[u8], name: &str) -> Result<Vec<u8>, String> {
     let temp = tempfile::Builder::new()
         .prefix("vix-real-rustc-bin-")
         .tempdir()
         .map_err(|err| err.to_string())?;
-    let bin = temp.path().join("mini_app");
+    let bin = temp.path().join(name);
     fs::write(&bin, bytes).map_err(|err| err.to_string())?;
     make_executable(&bin)?;
     let output = Command::new(&bin).output().map_err(|err| err.to_string())?;
@@ -314,6 +404,8 @@ fn source_suffix(source: &str) -> Result<String, String> {
         Ok("src/lib.rs".to_string())
     } else if source.ends_with("/src/main.rs") || source.ends_with("/main.rs") {
         Ok("src/main.rs".to_string())
+    } else if source.ends_with("/build.rs") {
+        Ok("build.rs".to_string())
     } else {
         Err(format!("unexpected source path `{source}`"))
     }
@@ -356,33 +448,7 @@ fn cargo_unit_graph_oracle() -> Result<Vec<UnitShape>, String> {
 
     let stdout = String::from_utf8(output.stdout).map_err(|err| err.to_string())?;
     let graph: CargoUnitGraph = facet_json::from_str(&stdout).map_err(|err| err.to_string())?;
-    let mut shapes = graph
-        .units
-        .iter()
-        .map(|unit| {
-            let dependencies = unit
-                .dependencies
-                .iter()
-                .map(|dep| dep.extern_crate_name.clone())
-                .collect::<BTreeSet<_>>()
-                .into_iter()
-                .collect();
-            Ok(UnitShape {
-                name: unit.target.name.clone(),
-                crate_type: unit
-                    .target
-                    .crate_types
-                    .first()
-                    .cloned()
-                    .ok_or_else(|| format!("missing crate type for {:?}", unit.target))?,
-                edition: unit.target.edition.clone(),
-                source_suffix: source_suffix(&unit.target.src_path)?,
-                dependencies,
-            })
-        })
-        .collect::<Result<Vec<_>, String>>()?;
-    shapes.sort();
-    Ok(shapes)
+    unit_shapes_from_graph(&graph, |_| true)
 }
 
 fn cargo_lock_graph_unit_graph_oracle() -> Result<Vec<UnitShape>, String> {
@@ -423,6 +489,58 @@ fn cargo_lock_graph_unit_graph_oracle() -> Result<Vec<UnitShape>, String> {
 
     let stdout = String::from_utf8(output.stdout).map_err(|err| err.to_string())?;
     cargo_unit_shapes_from_json(&stdout)
+}
+
+fn cargo_build_script_unit_graph_oracle() -> Result<Vec<UnitShape>, String> {
+    if !Command::new("cargo")
+        .arg("+nightly")
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success())
+    {
+        return Ok(Vec::new());
+    }
+
+    let temp = tempfile::Builder::new()
+        .prefix("vix-cargo-build-script-unit-graph-oracle-")
+        .tempdir()
+        .map_err(|err| err.to_string())?;
+    write_build_script_fixture(temp.path())?;
+    let manifest = temp.path().join("app/Cargo.toml");
+    let output = Command::new("cargo")
+        .arg("+nightly")
+        .arg("build")
+        .arg("--unit-graph")
+        .arg("-Z")
+        .arg("unstable-options")
+        .arg("--locked")
+        .arg("--manifest-path")
+        .arg(&manifest)
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo build-script unit graph oracle exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let stdout = String::from_utf8(output.stdout).map_err(|err| err.to_string())?;
+    let graph: CargoUnitGraph = facet_json::from_str(&stdout).map_err(|err| err.to_string())?;
+    if !graph.units.iter().any(|unit| {
+        unit.mode == "build" && unit.target.kind.iter().any(|kind| kind == "custom-build")
+    }) || !graph
+        .units
+        .iter()
+        .any(|unit| unit.mode == "run-custom-build")
+    {
+        return Err(format!(
+            "cargo oracle did not expose build and run-custom-build units: {graph:#?}"
+        ));
+    }
+    unit_shapes_from_graph(&graph, |unit| unit.mode != "run-custom-build")
 }
 
 fn write_fixture(root: &Path) -> Result<(), String> {
@@ -483,21 +601,59 @@ fn write_lock_graph_fixture(root: &Path) -> Result<(), String> {
     Ok(())
 }
 
+fn write_build_script_fixture(root: &Path) -> Result<(), String> {
+    let files: [(PathBuf, &str); 6] = [
+        (PathBuf::from("Cargo.lock"), BUILD_SCRIPT_LOCK),
+        (PathBuf::from("app/Cargo.lock"), BUILD_SCRIPT_APP_LOCK),
+        (PathBuf::from("app/Cargo.toml"), BUILD_SCRIPT_MANIFEST),
+        (PathBuf::from("app/build.rs"), BUILD_SCRIPT_RS),
+        (PathBuf::from("app/src/lib.rs"), BUILD_SCRIPT_LIB),
+        (PathBuf::from("app/src/main.rs"), BUILD_SCRIPT_MAIN),
+    ];
+    for (relative, contents) in files {
+        let path = root.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        }
+        fs::write(path, contents).map_err(|err| err.to_string())?;
+    }
+    Ok(())
+}
+
 fn cargo_unit_shapes_from_json(stdout: &str) -> Result<Vec<UnitShape>, String> {
     let graph: CargoUnitGraph = facet_json::from_str(stdout).map_err(|err| err.to_string())?;
+    unit_shapes_from_graph(&graph, |_| true)
+}
+
+fn unit_shapes_from_graph(
+    graph: &CargoUnitGraph,
+    include: impl Fn(&CargoUnit) -> bool,
+) -> Result<Vec<UnitShape>, String> {
     let mut shapes = graph
         .units
         .iter()
+        .filter(|unit| include(unit))
         .map(|unit| {
             let dependencies = unit
                 .dependencies
                 .iter()
-                .map(|dep| dep.extern_crate_name.clone())
+                .filter_map(|dep| {
+                    let dep_unit = graph.units.get(dep.index)?;
+                    if dep_unit
+                        .target
+                        .kind
+                        .iter()
+                        .any(|kind| kind == "custom-build")
+                    {
+                        return None;
+                    }
+                    dep.extern_crate_name.clone()
+                })
                 .collect::<BTreeSet<_>>()
                 .into_iter()
                 .collect();
             Ok(UnitShape {
-                name: unit.target.name.clone(),
+                name: unit.target.name.replace('-', "_"),
                 crate_type: unit
                     .target
                     .crate_types
@@ -511,6 +667,7 @@ fn cargo_unit_shapes_from_json(stdout: &str) -> Result<Vec<UnitShape>, String> {
         })
         .collect::<Result<Vec<_>, String>>()?;
     shapes.sort();
+    shapes.dedup();
     Ok(shapes)
 }
 
@@ -522,6 +679,7 @@ struct CargoUnitGraph {
 #[derive(Debug, Facet)]
 struct CargoUnit {
     target: CargoTarget,
+    mode: String,
     dependencies: Vec<CargoDependency>,
 }
 
@@ -531,9 +689,11 @@ struct CargoTarget {
     src_path: String,
     edition: String,
     crate_types: Vec<String>,
+    kind: Vec<String>,
 }
 
 #[derive(Debug, Facet)]
 struct CargoDependency {
-    extern_crate_name: String,
+    index: usize,
+    extern_crate_name: Option<String>,
 }

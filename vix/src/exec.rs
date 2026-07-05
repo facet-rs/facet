@@ -133,6 +133,8 @@ pub struct Mount {
 #[derive(facet::Facet, Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Role {
+    /// A staged executable produced by a prior command.
+    Executable,
     /// A path the tool will read.
     Input,
     /// An argv element that contains a path the tool will read.
@@ -141,6 +143,12 @@ pub enum Role {
     Output,
     /// An argv element that contains one or more paths the tool will write.
     OutputFlag,
+    /// A directory the tool may write with unknown contents.
+    OutputDir,
+    /// Captured process stdout, stored as an output artifact at this path.
+    Stdout,
+    /// An environment binding in KEY=VALUE form.
+    Env,
     /// A directory the tool will PROBE (search paths — the negative-lookup
     /// factory).
     SearchDir,
@@ -152,7 +160,7 @@ pub enum Role {
 
 pub fn role_input_paths(arg: &str, role: Role) -> Vec<String> {
     match role {
-        Role::Input => vec![arg.to_string()],
+        Role::Executable | Role::Input => vec![arg.to_string()],
         Role::InputFlag => embedded_path_after_equals(arg).into_iter().collect(),
         _ => Vec::new(),
     }
@@ -162,6 +170,27 @@ pub fn role_output_paths(arg: &str, role: Role) -> Vec<String> {
     match role {
         Role::Output => vec![arg.to_string()],
         Role::OutputFlag => rustc_emit_output_paths(arg),
+        _ => Vec::new(),
+    }
+}
+
+pub fn role_output_dir_paths(arg: &str, role: Role) -> Vec<String> {
+    match role {
+        Role::OutputDir => vec![arg.to_string()],
+        _ => Vec::new(),
+    }
+}
+
+pub fn role_stdout_paths(arg: &str, role: Role) -> Vec<String> {
+    match role {
+        Role::Stdout => vec![arg.to_string()],
+        _ => Vec::new(),
+    }
+}
+
+pub fn role_env_paths(arg: &str, role: Role) -> Vec<String> {
+    match role {
+        Role::Env => embedded_path_after_equals(arg).into_iter().collect(),
         _ => Vec::new(),
     }
 }
@@ -177,6 +206,9 @@ pub fn role_search_dir_paths(arg: &str, role: Role) -> Vec<String> {
 pub fn role_embedded_paths(arg: &str, role: Role) -> Vec<String> {
     let mut paths = role_input_paths(arg, role);
     paths.extend(role_output_paths(arg, role));
+    paths.extend(role_output_dir_paths(arg, role));
+    paths.extend(role_stdout_paths(arg, role));
+    paths.extend(role_env_paths(arg, role));
     paths.extend(role_search_dir_paths(arg, role));
     paths
 }
@@ -797,11 +829,22 @@ impl Tool for FakeRustc {
                 Role::SearchDir | Role::SearchDirFlag => {
                     arg.hash(&mut digest);
                 }
-                Role::Output | Role::OutputFlag => {}
+                Role::Output | Role::OutputFlag | Role::OutputDir | Role::Stdout => {}
+                Role::Env => {
+                    arg.hash(&mut digest);
+                }
                 Role::Input | Role::InputFlag => {
                     for input in role_input_paths(arg, *role) {
                         let source = world.read(&input).ok_or_else(|| {
                             format!("rustc: cannot read `{input}` (outside the mounts?)")
+                        })?;
+                        source.hash(&mut digest);
+                    }
+                }
+                Role::Executable => {
+                    for input in role_input_paths(arg, *role) {
+                        let source = world.read_bytes(&input).ok_or_else(|| {
+                            format!("rustc: cannot read executable `{input}` (outside the mounts?)")
                         })?;
                         source.hash(&mut digest);
                     }
@@ -821,6 +864,49 @@ impl Tool for FakeRustc {
             };
             tree.entries
                 .insert(output, format!("{kind}({digest:016x})"));
+        }
+        Ok(tree)
+    }
+}
+
+/// Fake build-script runner for the default lane. It mirrors Cargo's two
+/// observable products for the fixture: stdout directives and OUT_DIR files.
+pub struct FakeBuildScript;
+
+impl Tool for FakeBuildScript {
+    fn run(&self, plan: &ExecPlan, world: &mut ObservedWorld<'_>) -> Result<Tree, String> {
+        for input in plan
+            .argv
+            .iter()
+            .flat_map(|(arg, role)| role_input_paths(arg, *role))
+        {
+            let _ = world.read_bytes(&input).ok_or_else(|| {
+                format!("build_script: cannot read `{input}` (outside the mounts?)")
+            })?;
+        }
+
+        let stdout = plan
+            .argv
+            .iter()
+            .find_map(|(arg, role)| role_stdout_paths(arg, *role).into_iter().next())
+            .unwrap_or_else(|| "$stdout".to_string());
+        let out_dirs: Vec<String> = plan
+            .argv
+            .iter()
+            .flat_map(|(arg, role)| role_output_dir_paths(arg, *role))
+            .collect();
+
+        let mut tree = Tree::default();
+        tree.entries.insert(
+            stdout,
+            "cargo:rustc-cfg=vix_slice3_build_script\ncargo:warning=vix fake build script\n"
+                .to_string(),
+        );
+        for out_dir in out_dirs {
+            tree.entries.insert(
+                format!("{}/generated.rs", out_dir.trim_end_matches('/')),
+                "pub const GENERATED: &str = \"vix-build-script-generated\";\n".to_string(),
+            );
         }
         Ok(tree)
     }
