@@ -96,7 +96,7 @@ pub enum MachinePathDemand {
 
 pub trait MachinePendingRun: Send + Sync {
     fn demand_path(&self, path: &str) -> Result<MachinePathDemand, String>;
-    fn flush(&self) -> Result<(crate::exec::Tree, crate::exec::ExecEvent), String>;
+    fn flush(&self) -> Result<(crate::exec::Outcome, crate::exec::ExecEvent), String>;
 }
 
 pub trait MachineExecBackend: Send + Sync {
@@ -738,7 +738,6 @@ enum TreeEntry {
     Exec(u64),
 }
 
-#[derive(Clone)]
 struct PendingExecRun {
     command: String,
     plan: crate::exec::ExecPlan,
@@ -3485,13 +3484,19 @@ impl Driver {
             TreeEntry::Concrete(_) => Ok(tree_handle),
             TreeEntry::Merge(pending) => {
                 let mut merged = crate::exec::Tree::default();
+                let mut values = Vec::with_capacity(pending.len());
                 for handle in pending {
                     let invocation = self.store.borrow().pending_invocation(handle)?;
                     if invocation.primitive.is_some() {
                         return Err("primitive pending value cannot produce a tree".into());
                     }
                     let fn_ref = self.fn_ref_for_hash(invocation.closure_hash)?;
-                    let value = self.demand(fn_ref, invocation.args)?;
+                    values.push(self.demand(fn_ref, invocation.args)?);
+                }
+                for &value in &values {
+                    self.start_tree_runs(value)?;
+                }
+                for value in values {
                     let value = self.force_tree_handle(value)?;
                     let TreeEntry::Concrete(tree) = self.store.borrow().tree_entry(value)? else {
                         return Err("forced merge branch stayed pending".into());
@@ -3508,6 +3513,29 @@ impl Driver {
             TreeEntry::Exec(run_id) => {
                 let tree = self.finish_run(run_id)?;
                 Ok(self.store.borrow_mut().alloc_tree_concrete(tree).0)
+            }
+        }
+    }
+
+    fn start_tree_runs(&mut self, tree_handle: i64) -> Result<(), String> {
+        let tree = self.store.borrow().tree_entry(tree_handle)?;
+        match tree {
+            TreeEntry::Concrete(_) => Ok(()),
+            TreeEntry::Exec(run_id) => self.ensure_run_started(run_id),
+            TreeEntry::Merge(pending) => {
+                let mut values = Vec::with_capacity(pending.len());
+                for handle in pending {
+                    let invocation = self.store.borrow().pending_invocation(handle)?;
+                    if invocation.primitive.is_some() {
+                        return Err("primitive pending value cannot produce a tree".into());
+                    }
+                    let fn_ref = self.fn_ref_for_hash(invocation.closure_hash)?;
+                    values.push(self.demand(fn_ref, invocation.args)?);
+                }
+                for value in values {
+                    self.start_tree_runs(value)?;
+                }
+                Ok(())
             }
         }
     }
@@ -3750,18 +3778,13 @@ impl Driver {
     }
 
     fn ensure_run_started(&mut self, run_id: u64) -> Result<(), String> {
-        let needs_start = self
-            .runs
-            .get(&run_id)
-            .ok_or_else(|| format!("run {run_id}"))?
-            .completed
-            .is_none()
-            && self
+        let needs_start = {
+            let run = self
                 .runs
                 .get(&run_id)
-                .ok_or_else(|| format!("run {run_id}"))?
-                .remote
-                .is_none();
+                .ok_or_else(|| format!("run {run_id}"))?;
+            run.completed.is_none() && run.remote.is_none()
+        };
         if !self
             .runs
             .get(&run_id)
@@ -3782,7 +3805,7 @@ impl Driver {
                 timestamp_us,
             });
         }
-        if needs_start {
+        if needs_start && let Some(backend) = self.exec_backend.clone() {
             let (command, plan, capability, mounts) = {
                 let run = self.runs.get(&run_id).expect("run checked");
                 (
@@ -3792,34 +3815,21 @@ impl Driver {
                     run.mounts.clone(),
                 )
             };
-            if let Some(backend) = &self.exec_backend {
-                let request = {
-                    let run = self.runs.get(&run_id).expect("run checked");
-                    MachineExecRequest {
-                        command,
-                        plan,
-                        capability,
-                        mounts,
-                        output: run.output.clone(),
-                        span: run.span,
-                        observer: None,
-                    }
-                };
-                let remote = backend.spawn(request)?;
-                let run = self.runs.get_mut(&run_id).expect("run checked");
-                run.remote = Some(remote);
-            } else {
-                let tool = tool_for(&command)?;
-                let outcome = self.exec_cache.exec(&plan, capability, &mounts, tool)?;
-                let event = self
-                    .exec_cache
-                    .events
-                    .last()
-                    .cloned()
-                    .expect("exec pushed an event");
-                let run = self.runs.get_mut(&run_id).expect("run checked");
-                run.completed = Some((outcome, event));
-            }
+            let request = {
+                let run = self.runs.get(&run_id).expect("run checked");
+                MachineExecRequest {
+                    command,
+                    plan,
+                    capability,
+                    mounts,
+                    output: run.output.clone(),
+                    span: run.span,
+                    observer: None,
+                }
+            };
+            let remote = backend.spawn(request)?;
+            let run = self.runs.get_mut(&run_id).expect("run checked");
+            run.remote = Some(remote);
         }
         Ok(())
     }
@@ -3884,18 +3894,31 @@ impl Driver {
             return Ok(outcome);
         }
         if let Some(remote) = self.runs.get(&run_id).and_then(|run| run.remote.clone()) {
-            let (tree, event) = remote.flush()?;
-            let outcome = crate::exec::Outcome {
-                outputs: tree,
-                read_set: crate::exec::ReadSet::default(),
-            };
+            let (outcome, event) = remote.flush()?;
             let run = self.runs.get_mut(&run_id).expect("run checked");
             run.completed = Some((outcome.clone(), event));
             return Ok(outcome);
         }
-        Err(format!(
-            "scheduled run {run_id} has no local or remote completion"
-        ))
+        let (command, plan, capability, mounts) = {
+            let run = self.runs.get(&run_id).expect("run checked");
+            (
+                run.command.clone(),
+                run.plan.clone(),
+                run.capability,
+                run.mounts.clone(),
+            )
+        };
+        let tool = tool_for(&command)?;
+        let outcome = self.exec_cache.exec(&plan, capability, &mounts, tool)?;
+        let event = self
+            .exec_cache
+            .events
+            .last()
+            .cloned()
+            .expect("exec pushed an event");
+        let run = self.runs.get_mut(&run_id).expect("run checked");
+        run.completed = Some((outcome.clone(), event));
+        Ok(outcome)
     }
 
     fn finish_run(&mut self, run_id: u64) -> Result<crate::exec::Tree, String> {

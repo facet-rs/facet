@@ -5,6 +5,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
+use std::time::Instant;
 
 use facet::Facet;
 use vix::exec::Tree;
@@ -108,6 +109,7 @@ fn real_process_rustc_builds_lockfile_graph_and_matches_cargo_unit_graph_oracle(
         .intern_arg("Tree", MachineArg::Tree(lock_graph_tree()))?
         .0;
 
+    let cold_start = Instant::now();
     let checked = machine.demand_i64("crate_lock_bin_check", vec![target, graph])?;
     let _rmeta = tree_file_bytes(&mut machine, checked, "mini_app.rmeta")?;
 
@@ -120,6 +122,8 @@ fn real_process_rustc_builds_lockfile_graph_and_matches_cargo_unit_graph_oracle(
             String::from_utf8_lossy(&stdout)
         ));
     }
+    let cold_elapsed = cold_start.elapsed();
+    let built_tree = tree_snapshot(&mut machine, built)?;
 
     let machine_graph = machine_rustc_unit_graph(&machine)?;
     let cargo_graph = cargo_lock_graph_unit_graph_oracle()?;
@@ -128,6 +132,29 @@ fn real_process_rustc_builds_lockfile_graph_and_matches_cargo_unit_graph_oracle(
             "lock graph machine unit graph did not match cargo oracle\nmachine: {machine_graph:#?}\ncargo: {cargo_graph:#?}"
         ));
     }
+
+    machine.clear_trace();
+    let warm_start = Instant::now();
+    let warm = machine.demand_i64("crate_lock_bin", vec![target, graph])?;
+    let warm_tree = tree_snapshot(&mut machine, warm)?;
+    let warm_elapsed = warm_start.elapsed();
+    if warm_tree != built_tree {
+        return Err(format!(
+            "warm crate_lock_bin tree differed from cold tree\ncold: {built_tree:?}\nwarm: {warm_tree:?}"
+        ));
+    }
+    let warm_requested = machine
+        .trace()
+        .iter()
+        .filter(|event| matches!(event, DriveEvent::RunRequested { .. }))
+        .count();
+    if warm_requested != 0 {
+        return Err(format!(
+            "warm crate_lock_bin emitted {warm_requested} RunRequested events: {:?}",
+            machine.trace()
+        ));
+    }
+    eprintln!("crate_lock_bin machine wall: cold={cold_elapsed:?} warm={warm_elapsed:?}");
 
     Ok(())
 }
@@ -200,6 +227,13 @@ fn tree_file_bytes(machine: &mut Machine, handle: i64, path: &str) -> Result<Vec
     Err(format!(
         "missing `{path}` in text entries {entries:?} and blob entries {blobs:?}"
     ))
+}
+
+fn tree_snapshot(machine: &mut Machine, handle: i64) -> Result<Tree, String> {
+    Ok(Tree {
+        entries: machine.tree_entries(handle)?,
+        blobs: machine.tree_blob_entries(handle)?,
+    })
 }
 
 #[cfg(unix)]

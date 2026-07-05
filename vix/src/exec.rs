@@ -640,11 +640,32 @@ impl ExecCache {
         mounts: &[Mount],
         tool: &dyn Tool,
     ) -> Result<Outcome, String> {
+        if let Some(hit) = self.lookup(plan, capability, mounts) {
+            return Ok(hit);
+        }
+
+        let world = MountedWorld::new(mounts);
+        let mut observed = ObservedWorld::new(&world);
+        let outputs = tool.run(plan, &mut observed)?;
+        let outcome = Outcome {
+            outputs,
+            read_set: observed.into_read_set(),
+        };
+        self.record_ran(plan, capability, mounts, outcome.clone());
+        Ok(outcome)
+    }
+
+    pub fn lookup(
+        &mut self,
+        plan: &ExecPlan,
+        capability: u64,
+        mounts: &[Mount],
+    ) -> Option<Outcome> {
         let (identity, coarse) = self.keys(plan, capability, mounts);
 
         if let Some(hit) = self.tier1.get(&coarse) {
             self.events.push(ExecEvent::Tier1Hit);
-            return Ok(hit.clone());
+            return Some(hit.clone());
         }
 
         let world = MountedWorld::new(mounts);
@@ -656,24 +677,24 @@ impl ExecCache {
                     });
                     // Re-pin under the new coarse key: next time is tier-1.
                     self.tier1.insert(coarse, outcome.clone());
-                    return Ok(outcome.clone());
+                    return Some(outcome.clone());
                 }
             }
         }
+        None
+    }
 
-        let mut observed = ObservedWorld::new(&world);
-        let outputs = tool.run(plan, &mut observed)?;
-        let outcome = Outcome {
-            outputs,
-            read_set: observed.into_read_set(),
-        };
+    pub fn record_ran(
+        &mut self,
+        plan: &ExecPlan,
+        capability: u64,
+        mounts: &[Mount],
+        outcome: Outcome,
+    ) {
+        let (identity, coarse) = self.keys(plan, capability, mounts);
         self.events.push(ExecEvent::Ran);
         self.tier1.insert(coarse, outcome.clone());
-        self.candidates
-            .entry(identity)
-            .or_default()
-            .push(outcome.clone());
-        Ok(outcome)
+        self.candidates.entry(identity).or_default().push(outcome);
     }
 }
 

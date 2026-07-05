@@ -11,12 +11,13 @@ use std::fs;
 use std::path::{Component, Path, PathBuf};
 use std::process::Command;
 use std::sync::{Arc, Mutex};
+use std::thread::JoinHandle;
 
 use sha2::{Digest, Sha256};
 
 use crate::exec::{
-    ExecCache, ExecEvent, ExecPlan, ObservedWorld, Outcome, Role, Tool, Tree, role_embedded_paths,
-    role_input_paths, role_output_paths, role_search_dir_paths,
+    ExecCache, ExecEvent, ExecPlan, MountedWorld, ObservedWorld, Outcome, Role, Tool, Tree,
+    role_embedded_paths, role_input_paths, role_output_paths, role_search_dir_paths,
 };
 use crate::machine::{
     MachineExecBackend, MachineExecRequest, MachinePathDemand, MachinePendingRun,
@@ -25,13 +26,13 @@ use crate::machine::{
 const ENV_ALLOWLIST: &[&str] = &["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "SystemRoot"];
 
 pub struct RealProcessBackend {
-    cache: Mutex<ExecCache>,
+    cache: Arc<Mutex<ExecCache>>,
 }
 
 impl RealProcessBackend {
     pub fn new() -> Self {
         Self {
-            cache: Mutex::new(ExecCache::new()),
+            cache: Arc::new(Mutex::new(ExecCache::new())),
         }
     }
 }
@@ -44,57 +45,128 @@ impl Default for RealProcessBackend {
 
 impl MachineExecBackend for RealProcessBackend {
     fn spawn(&self, request: MachineExecRequest) -> Result<Arc<dyn MachinePendingRun>, String> {
-        let tool = RealProcessTool {
-            command: request.command.clone(),
-            output: request.output.clone(),
-        };
-        let mut cache = self
-            .cache
-            .lock()
-            .map_err(|_| "real-process exec cache poisoned".to_string())?;
-        let outcome = cache.exec(&request.plan, request.capability, &request.mounts, &tool)?;
-        let event = cache
-            .events
-            .last()
-            .cloned()
-            .ok_or_else(|| "real-process cache did not record an event".to_string())?;
-        Ok(Arc::new(RealProcessRun { outcome, event }))
+        let cache = Arc::clone(&self.cache);
+        let handle = std::thread::spawn(move || run_real_process_request(cache, request));
+        Ok(Arc::new(RealProcessRun {
+            state: Mutex::new(Some(RealProcessRunState::Starting(handle))),
+        }))
     }
 }
 
 struct RealProcessRun {
-    outcome: Outcome,
-    event: ExecEvent,
+    state: Mutex<Option<RealProcessRunState>>,
+}
+
+enum RealProcessRunState {
+    Starting(JoinHandle<Result<(Outcome, ExecEvent), String>>),
+    Done(Outcome, ExecEvent),
 }
 
 impl MachinePendingRun for RealProcessRun {
     fn demand_path(&self, path: &str) -> Result<MachinePathDemand, String> {
-        if self.outcome.outputs.entries.contains_key(path) {
-            let contents = self
-                .outcome
-                .outputs
-                .entries
-                .get(path)
-                .expect("entry checked")
-                .clone();
-            return Ok(MachinePathDemand::File(contents));
-        }
-        if self.outcome.outputs.blobs.contains_key(path)
-            || has_child(&self.outcome.outputs.entries, path)
-            || has_child(&self.outcome.outputs.blobs, path)
-        {
-            return Ok(MachinePathDemand::FinishRequired {
+        let state = self
+            .state
+            .lock()
+            .map_err(|_| "real-process run state poisoned".to_string())?;
+        if let Some(RealProcessRunState::Done(outcome, _)) = &*state {
+            if outcome.outputs.entries.contains_key(path) {
+                let contents = outcome
+                    .outputs
+                    .entries
+                    .get(path)
+                    .expect("entry checked")
+                    .clone();
+                return Ok(MachinePathDemand::File(contents));
+            }
+            if outcome.outputs.blobs.contains_key(path)
+                || has_child(&outcome.outputs.entries, path)
+                || has_child(&outcome.outputs.blobs, path)
+            {
+                return Ok(MachinePathDemand::FinishRequired {
+                    path: path.to_string(),
+                });
+            }
+            return Ok(MachinePathDemand::Missing {
                 path: path.to_string(),
             });
         }
-        Ok(MachinePathDemand::Missing {
+        Ok(MachinePathDemand::FinishRequired {
             path: path.to_string(),
         })
     }
 
-    fn flush(&self) -> Result<(Tree, ExecEvent), String> {
-        Ok((self.outcome.outputs.clone(), self.event.clone()))
+    fn flush(&self) -> Result<(Outcome, ExecEvent), String> {
+        let mut state = self
+            .state
+            .lock()
+            .map_err(|_| "real-process run state poisoned".to_string())?;
+        match state
+            .take()
+            .ok_or_else(|| "real-process run state missing".to_string())?
+        {
+            RealProcessRunState::Done(outcome, event) => {
+                *state = Some(RealProcessRunState::Done(outcome.clone(), event.clone()));
+                Ok((outcome, event))
+            }
+            RealProcessRunState::Starting(handle) => {
+                let (outcome, event) = handle
+                    .join()
+                    .map_err(|_| "real-process runner thread panicked".to_string())??;
+                *state = Some(RealProcessRunState::Done(outcome.clone(), event.clone()));
+                Ok((outcome, event))
+            }
+        }
     }
+}
+
+fn run_real_process_request(
+    cache: Arc<Mutex<ExecCache>>,
+    request: MachineExecRequest,
+) -> Result<(Outcome, ExecEvent), String> {
+    if let Some((outcome, event)) = {
+        let mut cache = cache
+            .lock()
+            .map_err(|_| "real-process exec cache poisoned".to_string())?;
+        cache
+            .lookup(&request.plan, request.capability, &request.mounts)
+            .map(|outcome| {
+                let event = cache
+                    .events
+                    .last()
+                    .cloned()
+                    .expect("lookup pushed an event");
+                (outcome, event)
+            })
+    } {
+        return Ok((outcome, event));
+    }
+
+    let tool = RealProcessTool {
+        command: request.command,
+        output: request.output,
+    };
+    let world = MountedWorld::new(&request.mounts);
+    let mut observed = ObservedWorld::new(&world);
+    let outputs = tool.run(&request.plan, &mut observed)?;
+    let outcome = Outcome {
+        outputs,
+        read_set: observed.into_read_set(),
+    };
+    let mut cache = cache
+        .lock()
+        .map_err(|_| "real-process exec cache poisoned".to_string())?;
+    cache.record_ran(
+        &request.plan,
+        request.capability,
+        &request.mounts,
+        outcome.clone(),
+    );
+    let event = cache
+        .events
+        .last()
+        .cloned()
+        .ok_or_else(|| "real-process cache did not record an event".to_string())?;
+    Ok((outcome, event))
 }
 
 fn has_child<T>(entries: &BTreeMap<String, T>, path: &str) -> bool {
