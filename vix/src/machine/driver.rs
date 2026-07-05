@@ -143,6 +143,9 @@ pub const DOC_PACKAGE_HOST: u32 = 31;
 pub const TARGET_HOST: u32 = 32;
 pub const VERSION_PARSE_HOST: u32 = 33;
 pub const VALUE_COMPARE_HOST: u32 = 34;
+pub const STRING_UPPER_HOST: u32 = 35;
+pub const STRING_LOWER_HOST: u32 = 36;
+pub const STRING_DEFAULT_HOST: u32 = 37;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -3085,7 +3088,68 @@ impl Driver {
                 }
             };
 
-            let mut hosts: [HostFn<'_>; 35] = [
+            let mut string_upper = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let input = read_frame_word(frame, primitive_region + 8);
+                    let value = store_cell
+                        .borrow()
+                        .string_value(input, "String")?
+                        .to_uppercase();
+                    let (handle, deduped) = store_cell
+                        .borrow_mut()
+                        .alloc_raw("String", value.into_bytes());
+                    write_frame_word(frame, dst_slot, handle);
+                    store_events.borrow_mut().push(DriveEvent::StoreAlloc {
+                        schema_ref: hash_u64("String"),
+                        deduped,
+                    });
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut string_lower = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let input = read_frame_word(frame, primitive_region + 8);
+                    let value = store_cell
+                        .borrow()
+                        .string_value(input, "String")?
+                        .to_lowercase();
+                    let (handle, deduped) = store_cell
+                        .borrow_mut()
+                        .alloc_raw("String", value.into_bytes());
+                    write_frame_word(frame, dst_slot, handle);
+                    store_events.borrow_mut().push(DriveEvent::StoreAlloc {
+                        schema_ref: hash_u64("String"),
+                        deduped,
+                    });
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut string_default = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let input = read_frame_word(frame, primitive_region + 8);
+                    let fallback = read_frame_word(frame, primitive_region + 16);
+                    let value = store_cell.borrow().string_value(input, "String")?;
+                    let handle = if value.is_empty() { fallback } else { input };
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut hosts: [HostFn<'_>; 38] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -3121,6 +3185,9 @@ impl Driver {
                 &mut target_host,
                 &mut version_parse_host,
                 &mut value_compare_host,
+                &mut string_upper,
+                &mut string_lower,
+                &mut string_default,
             ];
             let step = exec
                 .task
@@ -5398,6 +5465,10 @@ fn render_word(
         "Bool" => Ok(RenderedValue::Bool { value: word != 0 }),
         "String" => Ok(RenderedValue::String {
             value: store.string_value(word, "String")?,
+        }),
+        "Template" => Ok(RenderedValue::Raw {
+            schema: "Template".to_string(),
+            bytes_utf8: Some(store.string_value(word, "Template")?),
         }),
         "Path" => Ok(RenderedValue::Path {
             value: store.string_value(word, "Path")?,

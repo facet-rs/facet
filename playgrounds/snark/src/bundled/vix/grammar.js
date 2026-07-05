@@ -163,6 +163,7 @@ module.exports = grammar({
         $.paren,
         $.scoped_identifier,
         $.identifier,
+        $.template_string,
         $.string,
         $.path_literal,
         $.number,
@@ -187,6 +188,7 @@ module.exports = grammar({
         $.paren,
         $.scoped_identifier,
         $.identifier,
+        $.template_string,
         $.string,
         $.path_literal,
         $.number,
@@ -344,6 +346,9 @@ module.exports = grammar({
 
     // ---- leaves ------------------------------------------------------------
     identifier: () => /[A-Za-z_][A-Za-z0-9_]*/,
+
+    // Loop-free config-generation templates. Holes are lowered into demand edges.
+    template_string: () => /tmpl"([^"\\]|\\.)*"/,
 
     string: () => /"([^"\\]|\\.)*"/,
 

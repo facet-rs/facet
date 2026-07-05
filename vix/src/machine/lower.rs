@@ -35,8 +35,9 @@ use super::driver::{
     MAP_GET_HOST, MAP_INSERT_HOST, MachineExecBackend, OCI_DOC_HOST, OPTION_UNWRAP_HOST,
     PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RenderNames,
     RenderVariant, RenderedValue, STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST,
-    STRING_CONCAT_HOST, StepMode, StoreHandle, TARGET_HOST, VALUE_COMPARE_HOST, VERSION_PARSE_HOST, TREE_PROJECT_HOST, ValueBundle,
-
+    STRING_CONCAT_HOST, STRING_DEFAULT_HOST, STRING_LOWER_HOST, STRING_UPPER_HOST, StepMode,
+    StoreHandle, TARGET_HOST, TREE_PROJECT_HOST, VALUE_COMPARE_HOST, VERSION_PARSE_HOST,
+    ValueBundle,
 };
 use crate::ast;
 use crate::fetch::FetchBackend;
@@ -171,10 +172,15 @@ impl Machine {
         let string_handles = string_handles(&tables);
         let path_handles = path_handles(&tables, string_handles.len());
         let flag_handles = flag_handles(&tables, string_handles.len() + path_handles.len());
+        let template_handles = template_handles(
+            &tables,
+            string_handles.len() + path_handles.len() + flag_handles.len(),
+        );
         let literal_handles = LiteralHandles {
             strings: &string_handles,
             paths: &path_handles,
             flags: &flag_handles,
+            templates: &template_handles,
         };
         let signatures = FnSignatures {
             returns: &fn_returns,
@@ -259,6 +265,15 @@ impl Machine {
         for (value, expected) in flag_handles_sorted {
             let (actual, _) = driver.intern_raw_value("Flag", value.as_bytes().to_vec());
             assert_eq!(actual, *expected, "flag handle assignment is deterministic");
+        }
+        let mut template_handles_sorted: Vec<(&String, &i64)> = template_handles.iter().collect();
+        template_handles_sorted.sort_by_key(|(_, handle)| **handle);
+        for (value, expected) in template_handles_sorted {
+            let (actual, _) = driver.intern_raw_value("Template", value.as_bytes().to_vec());
+            assert_eq!(
+                actual, *expected,
+                "template handle assignment is deterministic"
+            );
         }
 
         Ok(Machine {
@@ -359,10 +374,12 @@ impl Machine {
         let string_handles = live_string_handles(&self.driver, &tables);
         let path_handles = live_path_handles(&self.driver, &tables);
         let flag_handles = live_flag_handles(&self.driver, &tables);
+        let template_handles = live_template_handles(&self.driver, &tables);
         let literal_handles = LiteralHandles {
             strings: &string_handles,
             paths: &path_handles,
             flags: &flag_handles,
+            templates: &template_handles,
         };
         let signatures = FnSignatures {
             returns: &fn_returns,
@@ -731,6 +748,7 @@ fn schema_names_for(
         "Rustc".to_string(),
         "Run".to_string(),
         "Flag".to_string(),
+        "Template".to_string(),
         "Tree".to_string(),
         "Array".to_string(),
         "Map".to_string(),
@@ -947,6 +965,37 @@ fn flag_literals(tables: &ModuleTables) -> BTreeSet<String> {
     flags
 }
 
+fn template_handles(tables: &ModuleTables, offset: usize) -> HashMap<String, i64> {
+    template_literals(tables)
+        .into_iter()
+        .enumerate()
+        .map(|(ix, value)| {
+            (
+                value,
+                i64::try_from(offset + ix).expect("template handle fits i64"),
+            )
+        })
+        .collect()
+}
+
+fn live_template_handles(driver: &Driver, tables: &ModuleTables) -> HashMap<String, i64> {
+    template_literals(tables)
+        .into_iter()
+        .map(|value| {
+            let (handle, _) = driver.intern_raw_value("Template", value.as_bytes().to_vec());
+            (value, handle)
+        })
+        .collect()
+}
+
+fn template_literals(tables: &ModuleTables) -> BTreeSet<String> {
+    let mut templates = BTreeSet::new();
+    for item in tables.fns.values() {
+        collect_block_templates(&item.body, &mut templates);
+    }
+    templates
+}
+
 fn collect_block_strings(block: &ast::Block, out: &mut BTreeSet<String>) {
     for stmt in &block.stmts {
         match stmt {
@@ -956,6 +1005,18 @@ fn collect_block_strings(block: &ast::Block, out: &mut BTreeSet<String>) {
     }
     if let Some(tail) = &block.tail {
         collect_expr_strings(tail, out);
+    }
+}
+
+fn collect_block_templates(block: &ast::Block, out: &mut BTreeSet<String>) {
+    for stmt in &block.stmts {
+        match stmt {
+            ast::Stmt::Let(l) => collect_expr_templates(&l.value, out),
+            ast::Stmt::Expr(e) => collect_expr_templates(&e.expr, out),
+        }
+    }
+    if let Some(tail) = &block.tail {
+        collect_expr_templates(tail, out);
     }
 }
 
@@ -1056,6 +1117,7 @@ fn collect_expr_paths(expr: &ast::Expr, out: &mut BTreeSet<String>) {
         }
         ast::Expr::Scoped(_)
         | ast::Expr::Identifier(_)
+        | ast::Expr::Template(_)
         | ast::Expr::Str(_)
         | ast::Expr::Number(_)
         | ast::Expr::Bool(_) => {}
@@ -1066,6 +1128,28 @@ fn collect_expr_strings(expr: &ast::Expr, out: &mut BTreeSet<String>) {
     match expr {
         ast::Expr::Str(s) => {
             out.insert(s.value.clone());
+        }
+        ast::Expr::Template(t) => {
+            if let Ok(source) = decode_template_literal(&t.value)
+                && let Ok(parts) = parse_template(&source)
+            {
+                out.insert(String::new());
+                for part in parts {
+                    match part {
+                        TemplatePart::Text(text) => {
+                            out.insert(text);
+                        }
+                        TemplatePart::Hole(hole) => {
+                            out.insert(hole.name);
+                            for filter in hole.filters {
+                                if let TemplateFilter::Default(value) = filter {
+                                    out.insert(value);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
         ast::Expr::Binary(b) => {
             collect_expr_strings(&b.left, out);
@@ -1156,6 +1240,91 @@ fn collect_expr_strings(expr: &ast::Expr, out: &mut BTreeSet<String>) {
     }
 }
 
+fn collect_expr_templates(expr: &ast::Expr, out: &mut BTreeSet<String>) {
+    match expr {
+        ast::Expr::Template(t) => {
+            out.insert(t.value.clone());
+        }
+        ast::Expr::Binary(b) => {
+            collect_expr_templates(&b.left, out);
+            collect_expr_templates(&b.right, out);
+        }
+        ast::Expr::Unary(u) => collect_expr_templates(&u.operand, out),
+        ast::Expr::Call(c) => {
+            for arg in &c.args.args {
+                match arg {
+                    ast::Arg::Expr(e) => collect_expr_templates(e, out),
+                    ast::Arg::Kwarg(k) => collect_expr_templates(&k.value, out),
+                    ast::Arg::Partial(_) => {}
+                }
+            }
+        }
+        ast::Expr::MethodCall(m) => {
+            collect_expr_templates(&m.receiver, out);
+            for arg in &m.args.args {
+                match arg {
+                    ast::Arg::Expr(e) => collect_expr_templates(e, out),
+                    ast::Arg::Kwarg(k) => collect_expr_templates(&k.value, out),
+                    ast::Arg::Partial(_) => {}
+                }
+            }
+        }
+        ast::Expr::Match(m) => {
+            collect_expr_templates(&m.scrutinee, out);
+            for arm in &m.arms {
+                if let Some(guard) = &arm.guard {
+                    collect_expr_templates(guard, out);
+                }
+                collect_expr_templates(&arm.value, out);
+            }
+        }
+        ast::Expr::StructLit(lit) => {
+            for field in &lit.fields {
+                collect_expr_templates(&field.value, out);
+            }
+            for spread in &lit.spreads {
+                if let Some(base) = &spread.base {
+                    collect_expr_templates(base, out);
+                }
+            }
+        }
+        ast::Expr::Paren(p) => collect_expr_templates(&p.inner, out),
+        ast::Expr::Field(f) => collect_expr_templates(&f.receiver, out),
+        ast::Expr::Tuple(t) => {
+            for elem in &t.elems {
+                collect_expr_templates(elem, out);
+            }
+        }
+        ast::Expr::Array(a) => {
+            for elem in &a.elems {
+                if let ast::ArrayElem::Expr(e) = elem {
+                    collect_expr_templates(e, out);
+                }
+            }
+        }
+        ast::Expr::Map(m) => {
+            for entry in &m.entries {
+                collect_expr_templates(&entry.key, out);
+                collect_expr_templates(&entry.value, out);
+            }
+        }
+        ast::Expr::Closure(c) => collect_expr_templates(&c.body, out),
+        ast::Expr::Command(c) => {
+            for part in &c.parts {
+                if let ast::CommandPart::Splice(s) = part {
+                    collect_expr_templates(&s.expr, out);
+                }
+            }
+        }
+        ast::Expr::Scoped(_)
+        | ast::Expr::Identifier(_)
+        | ast::Expr::Str(_)
+        | ast::Expr::Path(_)
+        | ast::Expr::Number(_)
+        | ast::Expr::Bool(_) => {}
+    }
+}
+
 fn collect_expr_flags(expr: &ast::Expr, out: &mut BTreeSet<String>) {
     match expr {
         ast::Expr::Array(a) => {
@@ -1234,6 +1403,7 @@ fn collect_expr_flags(expr: &ast::Expr, out: &mut BTreeSet<String>) {
         }
         ast::Expr::Scoped(_)
         | ast::Expr::Identifier(_)
+        | ast::Expr::Template(_)
         | ast::Expr::Str(_)
         | ast::Expr::Path(_)
         | ast::Expr::Number(_)
@@ -1355,6 +1525,7 @@ fn collect_expr_identifiers(expr: &ast::Expr, out: &mut BTreeSet<String>) {
             }
         }
         ast::Expr::Scoped(_)
+        | ast::Expr::Template(_)
         | ast::Expr::Str(_)
         | ast::Expr::Path(_)
         | ast::Expr::Number(_)
@@ -1444,6 +1615,7 @@ fn collect_expr_schemas(
         })),
         ast::Expr::Bool(_) => Ok(Some("Bool".into())),
         ast::Expr::Str(_) => Ok(Some("String".into())),
+        ast::Expr::Template(_) => Ok(Some("Template".into())),
         ast::Expr::Path(_) => Ok(Some("Path".into())),
         ast::Expr::Tuple(tuple) => {
             let mut fields = Vec::new();
@@ -1489,6 +1661,11 @@ fn collect_expr_schemas(
             {
                 out.push("Version".to_string());
                 return Ok(Some("Version".to_string()));
+            }
+            if let ast::PathRef::Identifier(name) = &call.callee
+                && name.value == "render"
+            {
+                return Ok(Some("String".into()));
             }
             if let Ok((enum_name, _, _)) = resolve_path_variant_for_collect(tables, &call.callee) {
                 return Ok(Some(enum_name));
@@ -1841,6 +2018,7 @@ struct LiteralHandles<'a> {
     strings: &'a HashMap<String, i64>,
     paths: &'a HashMap<String, i64>,
     flags: &'a HashMap<String, i64>,
+    templates: &'a HashMap<String, i64>,
 }
 
 #[derive(Clone)]
@@ -1861,6 +2039,119 @@ struct BoundCall {
     args: Vec<ValueSlot>,
     partial: bool,
     given: usize,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum TemplatePart {
+    Text(String),
+    Hole(TemplateHole),
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct TemplateHole {
+    name: String,
+    filters: Vec<TemplateFilter>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+enum TemplateFilter {
+    Upper,
+    Lower,
+    Default(String),
+}
+
+fn parse_template(source: &str) -> Result<Vec<TemplatePart>, String> {
+    let mut parts = Vec::new();
+    let mut rest = source;
+    loop {
+        let Some(start) = rest.find("{{") else {
+            if !rest.is_empty() || parts.is_empty() {
+                parts.push(TemplatePart::Text(rest.to_string()));
+            }
+            return Ok(parts);
+        };
+        if start > 0 {
+            parts.push(TemplatePart::Text(rest[..start].to_string()));
+        }
+        let after_start = &rest[start + 2..];
+        let Some(end) = after_start.find("}}") else {
+            return Err("template hole opened with `{{` but never closed".into());
+        };
+        let expr = after_start[..end].trim();
+        parts.push(TemplatePart::Hole(parse_template_hole(expr)?));
+        rest = &after_start[end + 2..];
+    }
+}
+
+fn decode_template_literal(raw: &str) -> Result<String, String> {
+    let quoted = raw
+        .strip_prefix("tmpl")
+        .ok_or_else(|| format!("template literal {raw:?} is missing `tmpl` prefix"))?;
+    parse_template_string_arg(quoted)
+}
+
+fn parse_template_hole(expr: &str) -> Result<TemplateHole, String> {
+    let mut pieces = expr.split('|').map(str::trim);
+    let name = pieces
+        .next()
+        .filter(|name| is_template_identifier(name))
+        .ok_or_else(|| format!("template hole `{expr}` does not start with a binding name"))?
+        .to_string();
+    let mut filters = Vec::new();
+    for filter in pieces {
+        filters.push(parse_template_filter(filter)?);
+    }
+    Ok(TemplateHole { name, filters })
+}
+
+fn parse_template_filter(filter: &str) -> Result<TemplateFilter, String> {
+    match filter {
+        "upper" => Ok(TemplateFilter::Upper),
+        "lower" => Ok(TemplateFilter::Lower),
+        _ => {
+            let Some(arg) = filter
+                .strip_prefix("default(")
+                .and_then(|rest| rest.strip_suffix(')'))
+            else {
+                return Err(format!("unknown template filter `{filter}`"));
+            };
+            Ok(TemplateFilter::Default(parse_template_string_arg(arg)?))
+        }
+    }
+}
+
+fn parse_template_string_arg(arg: &str) -> Result<String, String> {
+    let arg = arg.trim();
+    if !arg.starts_with('"') || !arg.ends_with('"') {
+        return Err(format!(
+            "template default filter expects a string literal, got `{arg}`"
+        ));
+    }
+    let mut out = String::with_capacity(arg.len().saturating_sub(2));
+    let mut chars = arg[1..arg.len() - 1].chars();
+    while let Some(ch) = chars.next() {
+        if ch == '\\' {
+            match chars.next() {
+                Some('n') => out.push('\n'),
+                Some('t') => out.push('\t'),
+                Some('r') => out.push('\r'),
+                Some(other) => out.push(other),
+                None => return Err("template default string ends with a backslash".into()),
+            }
+        } else {
+            out.push(ch);
+        }
+    }
+    Ok(out)
+}
+
+fn is_template_identifier(name: &str) -> bool {
+    let mut chars = name.chars();
+    let Some(first) = chars.next() else {
+        return false;
+    };
+    (first == '_' || first.is_ascii_alphabetic())
+        && chars.all(|ch| ch == '_' || ch.is_ascii_alphanumeric())
 }
 
 #[derive(Clone, Copy)]
@@ -2113,6 +2404,21 @@ impl<'a> FnLowerer<'a> {
                 Ok(ValueSlot {
                     slot: dst,
                     schema: "String".into(),
+                    realization: None,
+                    pending: None,
+                })
+            }
+            ast::Expr::Template(t) => {
+                let value = *self
+                    .literal_handles
+                    .templates
+                    .get(&t.value)
+                    .ok_or_else(|| format!("template literal {:?} was not interned", t.value))?;
+                let dst = self.alloc();
+                self.code.push(Op::ConstI64 { dst, value });
+                Ok(ValueSlot {
+                    slot: dst,
+                    schema: "Template".into(),
                     realization: None,
                     pending: None,
                 })
@@ -2622,6 +2928,7 @@ impl<'a> FnLowerer<'a> {
             "toml" => return self.doc_parse_call(call, 0),
             "json" => return self.doc_parse_call(call, 1),
             "version" => return self.version_call(call),
+            "render" => return self.render_call(call),
             "elf" => return self.elf_call(call),
             "ast" => return self.ast_call(call),
             "oci" => return self.oci_call(call),
@@ -3579,6 +3886,171 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: value.slot,
             schema: expected.to_string(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn render_call(&mut self, call: &ast::Call) -> Result<ValueSlot, String> {
+        let [template_arg, bindings_arg] = call.args.args.as_slice() else {
+            return Err("render takes a template and bindings".into());
+        };
+        let ast::Arg::Expr(ast::Expr::Template(template)) = template_arg else {
+            return Err(
+                "render's first argument must be a tmpl\"...\" literal in this rung".into(),
+            );
+        };
+        let bindings = self.method_arg(bindings_arg, None)?;
+        let source = decode_template_literal(&template.value)?;
+        let parts = parse_template(&source)?;
+        let mut out = self.string_literal("")?;
+        for part in parts {
+            let fragment = match part {
+                TemplatePart::Text(text) => self.string_literal(&text)?,
+                TemplatePart::Hole(hole) => self.template_hole(&bindings, &hole)?,
+            };
+            out = self.string_concat(&out, &fragment)?;
+        }
+        Ok(out)
+    }
+
+    fn template_hole(
+        &mut self,
+        bindings: &ValueSlot,
+        hole: &TemplateHole,
+    ) -> Result<ValueSlot, String> {
+        let mut value = self.template_binding(bindings, &hole.name)?;
+        value = self.coerce_to_schema(value, "String")?;
+        self.expect_schema(&value, "String")?;
+        for filter in &hole.filters {
+            value = match filter {
+                TemplateFilter::Upper => self.string_upper(&value)?,
+                TemplateFilter::Lower => self.string_lower(&value)?,
+                TemplateFilter::Default(default) => {
+                    let default = self.string_literal(default)?;
+                    self.string_default(&value, &default)?
+                }
+            };
+        }
+        Ok(value)
+    }
+
+    fn template_binding(&mut self, bindings: &ValueSlot, name: &str) -> Result<ValueSlot, String> {
+        if bindings.schema == "Realized<Doc>" {
+            let doc = self.coerce_to_schema(bindings.clone(), "Doc")?;
+            return self.doc_field_access(doc, name, Some("String"));
+        }
+        if bindings.schema == "Doc" {
+            return self.doc_field_access(bindings.clone(), name, Some("String"));
+        }
+        if let Some((key_schema, value_schema)) = map_schemas(&bindings.schema) {
+            if key_schema != "String" {
+                return Err(format!(
+                    "template bindings map keys must be String, got {key_schema}"
+                ));
+            }
+            let key = self.string_literal(name)?;
+            let logical_value_schema = realized_value_schema(value_schema).unwrap_or(value_schema);
+            let result_value_schema = realized_schema(logical_value_schema);
+            let option = self.map_get(bindings, key, "String", &result_value_schema)?;
+            return Ok(self.option_unwrap(&option, &result_value_schema));
+        }
+        if let Some(info) = self.tables.structs.get(&bindings.schema) {
+            let field_index = info
+                .fields
+                .iter()
+                .position(|(field_name, _)| field_name == name)
+                .ok_or_else(|| {
+                    format!("template binding `{name}` missing on {}", bindings.schema)
+                })?;
+            let schema = self.struct_field_schema(&bindings.schema, field_index)?;
+            return Ok(self.store_read(bindings, field_index, schema));
+        }
+        Err(format!(
+            "template bindings must be a Map, Doc, or record struct, got {}",
+            bindings.schema
+        ))
+    }
+
+    fn string_literal(&mut self, value: &str) -> Result<ValueSlot, String> {
+        let value = *self
+            .literal_handles
+            .strings
+            .get(value)
+            .ok_or_else(|| format!("string literal {value:?} was not interned"))?;
+        let dst = self.alloc();
+        self.code.push(Op::ConstI64 { dst, value });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "String".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn string_default(
+        &mut self,
+        value: &ValueSlot,
+        default: &ValueSlot,
+    ) -> Result<ValueSlot, String> {
+        self.string_host2(value, default, STRING_DEFAULT_HOST)
+    }
+
+    fn string_host2(
+        &mut self,
+        left: &ValueSlot,
+        right: &ValueSlot,
+        host: u32,
+    ) -> Result<ValueSlot, String> {
+        self.expect_schema(left, "String")?;
+        self.expect_schema(right, "String")?;
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: left.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: right.slot,
+        });
+        self.code.push(Op::HostCall { host });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "String".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn string_upper(&mut self, value: &ValueSlot) -> Result<ValueSlot, String> {
+        self.string_host1(value, STRING_UPPER_HOST)
+    }
+
+    fn string_lower(&mut self, value: &ValueSlot) -> Result<ValueSlot, String> {
+        self.string_host1(value, STRING_LOWER_HOST)
+    }
+
+    fn string_host1(&mut self, value: &ValueSlot, host: u32) -> Result<ValueSlot, String> {
+        self.expect_schema(value, "String")?;
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: value.slot,
+        });
+        self.code.push(Op::HostCall { host });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "String".into(),
             realization: None,
             pending: None,
         })
@@ -5311,6 +5783,41 @@ pub fn poly(n: Int) -> Int {
         Machine::load_modules_with_lane(root, modules, lane).unwrap_or_else(|err| {
             panic!("module set loads on {lane:?}: {err}");
         })
+    }
+
+    #[test]
+    fn config_gen_template_renders_bytes_and_demands_only_used_holes() {
+        let src = r#"
+fn active() -> String { "enabled" }
+fn unused() -> String { "never" }
+
+pub fn config() -> String {
+    let bindings: Map<String, String> = {};
+    let bindings = bindings
+        .insert("server", "api.local")
+        .insert("env", "PROD")
+        .insert("active", active())
+        .insert("unused", unused())
+        .insert("empty", "");
+    render(tmpl"server {{ server | upper }}
+env={{ env | lower }}
+active={{ active }}
+fallback={{ empty | default(\"8080\") }}
+", bindings)
+}
+"#;
+        let expected = "server API.LOCAL\nenv=prod\nactive=enabled\nfallback=8080\n";
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let result = machine.demand_i64("config", vec![]).unwrap();
+            assert_eq!(
+                machine.driver.raw_string(result, "String").unwrap(),
+                expected,
+                "{lane:?}"
+            );
+            assert_eq!(spawned_count(&machine, "active"), 1, "{lane:?}");
+            assert_eq!(spawned_count(&machine, "unused"), 0, "{lane:?}");
+        }
     }
 
     fn modules(entries: &[(&str, &str)]) -> BTreeMap<String, String> {
