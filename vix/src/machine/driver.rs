@@ -715,6 +715,15 @@ struct SealedPayload {
 pub struct ValueStore {
     entries: Vec<StoreEntry>,
     by_content: HashMap<(String, ContentHash), i64>,
+    array_words_meta: HashMap<i64, ArrayWordsMeta>,
+}
+
+#[derive(Clone, Debug)]
+struct ArrayWordsMeta {
+    elem_schema: String,
+    len: usize,
+    content_hash: ContentHash,
+    taint: Option<StructuralTaint>,
 }
 
 #[derive(Clone, Debug)]
@@ -1194,24 +1203,129 @@ impl ValueStore {
         for word in &words {
             bytes.extend_from_slice(&word.to_le_bytes());
         }
-        let mut hasher = Sha256::new();
-        hasher.update(b"vix-array-words");
-        hasher.update(elem_schema.as_bytes());
-        hasher.update(
-            i64::try_from(words.len())
-                .expect("array length fits i64")
-                .to_le_bytes(),
-        );
-        for word in &words {
-            hasher.update(canonical_word_hash_in_store(self, elem_schema, *word));
-        }
+        let array_hash = hash_array_words_from_scratch(self, elem_schema, &words);
         let taint = combine_taints(
             words
                 .iter()
                 .filter_map(|word| self.entry(*word).and_then(|entry| entry.taint.clone())),
         );
-        let content_hash = hash_with_taint(hasher.finalize().into(), &taint);
-        Ok(self.alloc_with_hash_tainted("Array", bytes, content_hash, taint))
+        let content_hash = hash_with_taint(array_hash, &taint);
+        let (handle, deduped) = self.alloc_with_hash_tainted("Array", bytes, content_hash, taint);
+        self.array_words_meta.insert(
+            handle,
+            ArrayWordsMeta {
+                elem_schema: elem_schema.to_string(),
+                len: words.len(),
+                content_hash: array_hash,
+                taint: self.entry(handle).and_then(|entry| entry.taint.clone()),
+            },
+        );
+        Ok((handle, deduped))
+    }
+
+    fn alloc_array_words_append(
+        &mut self,
+        base: i64,
+        elem_schema: &str,
+        word: i64,
+        schema_refs: &[String],
+    ) -> Result<(i64, bool), String> {
+        let meta = self.array_words_meta(base, schema_refs)?;
+        if meta.elem_schema != elem_schema {
+            return Err(format!(
+                "cannot append `{elem_schema}` to Array<{}>",
+                meta.elem_schema
+            ));
+        }
+        let base_entry = self
+            .entry(base)
+            .ok_or_else(|| format!("store handle {base}"))?;
+        if base_entry.schema != "Array" {
+            return Err(format!(
+                "base handle {base} is `{}`, not Array",
+                base_entry.schema
+            ));
+        }
+        let next_len = meta.len + 1;
+        let mut bytes = Vec::with_capacity(40);
+        bytes.extend_from_slice(&2i64.to_le_bytes());
+        bytes.extend_from_slice(&schema_ref_for(elem_schema, schema_refs)?.to_le_bytes());
+        bytes.extend_from_slice(
+            &i64::try_from(next_len)
+                .expect("array length fits i64")
+                .to_le_bytes(),
+        );
+        bytes.extend_from_slice(&base.to_le_bytes());
+        bytes.extend_from_slice(&word.to_le_bytes());
+        let child_hash = canonical_word_hash_in_store(self, elem_schema, word);
+        let array_hash =
+            array_words_push_hash(elem_schema, meta.content_hash, next_len, child_hash);
+        let taint = combine_taints(
+            [meta.taint.clone(), taint_for_word(self, word)]
+                .into_iter()
+                .flatten(),
+        );
+        let content_hash = hash_with_taint(array_hash, &taint);
+        let (handle, deduped) = self.alloc_with_hash_tainted("Array", bytes, content_hash, taint);
+        self.array_words_meta.insert(
+            handle,
+            ArrayWordsMeta {
+                elem_schema: elem_schema.to_string(),
+                len: next_len,
+                content_hash: array_hash,
+                taint: self.entry(handle).and_then(|entry| entry.taint.clone()),
+            },
+        );
+        Ok((handle, deduped))
+    }
+
+    fn array_words_meta(
+        &mut self,
+        handle: i64,
+        schema_refs: &[String],
+    ) -> Result<ArrayWordsMeta, String> {
+        if let Some(meta) = self.array_words_meta.get(&handle) {
+            return Ok(meta.clone());
+        }
+        let ArrayEntry::Words { elem_schema, words } = self.array_entry(handle, schema_refs)?
+        else {
+            return Err("pending arrays do not have word prefix hashes".into());
+        };
+        let content_hash = hash_array_words_from_scratch(self, &elem_schema, &words);
+        let taint = self
+            .entry(handle)
+            .ok_or_else(|| format!("store handle {handle}"))?
+            .taint
+            .clone();
+        let meta = ArrayWordsMeta {
+            elem_schema,
+            len: words.len(),
+            content_hash,
+            taint,
+        };
+        self.array_words_meta.insert(handle, meta.clone());
+        Ok(meta)
+    }
+
+    #[doc(hidden)]
+    pub fn alloc_array_words_for_bench(
+        &mut self,
+        elem_schema: &str,
+        words: Vec<i64>,
+        schema_refs: &[String],
+    ) -> Result<(i64, bool), String> {
+        self.alloc_array_words(elem_schema, words, schema_refs)
+    }
+
+    #[doc(hidden)]
+    pub fn alloc_array_words_append_for_bench(
+        &mut self,
+        base: i64,
+        elem_schema: &str,
+        word: i64,
+        schema_refs: &[String],
+    ) -> Result<(i64, bool), String> {
+        self.alloc_array_words_append(base, elem_schema, word, schema_refs)
     }
 
     fn alloc_pending(&mut self, value_schema: &str, invocation: PendingInvocation) -> (i64, bool) {
@@ -1270,6 +1384,40 @@ impl ValueStore {
                 })
             }
             1 => Ok(ArrayEntry::Pending(decode_handle_list(&entry.bytes)?)),
+            2 => {
+                let expected = 40;
+                if entry.bytes.len() != expected {
+                    return Err(format!(
+                        "Array append entry has {} bytes, expected {expected}",
+                        entry.bytes.len()
+                    ));
+                }
+                let elem_schema = schema_name_for(read_frame_word(&entry.bytes, 8), schema_refs)?;
+                let count = usize::try_from(read_frame_word(&entry.bytes, 16))
+                    .map_err(|_| "array count")?;
+                let base = read_frame_word(&entry.bytes, 24);
+                let word = read_frame_word(&entry.bytes, 32);
+                let ArrayEntry::Words {
+                    elem_schema: base_schema,
+                    mut words,
+                } = self.array_entry(base, schema_refs)?
+                else {
+                    return Err("Array append base cannot be pending".into());
+                };
+                if base_schema != elem_schema {
+                    return Err(format!(
+                        "Array append base is Array<{base_schema}>, not Array<{elem_schema}>"
+                    ));
+                }
+                if words.len() + 1 != count {
+                    return Err(format!(
+                        "Array append length is {count}, but base length is {}",
+                        words.len()
+                    ));
+                }
+                words.push(word);
+                Ok(ArrayEntry::Words { elem_schema, words })
+            }
             other => Err(format!("unknown Array kind {other}")),
         }
     }
@@ -7618,6 +7766,45 @@ fn hash_handle_list(domain: &[u8], handles: &[i64], store: &ValueStore) -> Conte
     hasher.finalize().into()
 }
 
+fn array_words_empty_hash(elem_schema: &str) -> ContentHash {
+    let mut hasher = Sha256::new();
+    hasher.update(b"vix-array-words-empty-v1");
+    hasher.update(elem_schema.as_bytes());
+    hasher.finalize().into()
+}
+
+fn array_words_push_hash(
+    elem_schema: &str,
+    prefix_hash: ContentHash,
+    next_len: usize,
+    child_hash: ContentHash,
+) -> ContentHash {
+    let mut hasher = Sha256::new();
+    hasher.update(b"vix-array-words-push-v1");
+    hasher.update(elem_schema.as_bytes());
+    hasher.update(
+        i64::try_from(next_len)
+            .expect("array length fits i64")
+            .to_le_bytes(),
+    );
+    hasher.update(prefix_hash);
+    hasher.update(child_hash);
+    hasher.finalize().into()
+}
+
+fn hash_array_words_from_scratch(
+    store: &ValueStore,
+    elem_schema: &str,
+    words: &[i64],
+) -> ContentHash {
+    let mut hash = array_words_empty_hash(elem_schema);
+    for (index, word) in words.iter().enumerate() {
+        let child_hash = canonical_word_hash_in_store(store, elem_schema, *word);
+        hash = array_words_push_hash(elem_schema, hash, index + 1, child_hash);
+    }
+    hash
+}
+
 fn encode_concrete_tree(tree: &crate::exec::Tree) -> Vec<u8> {
     let mut bytes = Vec::new();
     bytes.extend_from_slice(&0i64.to_le_bytes());
@@ -8570,6 +8757,93 @@ mod tests {
                 .trace
                 .iter()
                 .any(|e| matches!(e, DriveEvent::StoreAlloc { deduped: true, .. }))
+        );
+    }
+
+    #[test]
+    fn array_incremental_hash_matches_literal_full_hash() {
+        let schema_refs = vec!["Int".to_string(), "Bool".to_string(), "Float".to_string()];
+        let cases = [
+            ("Int", vec![1, 2, 3, 5, 8]),
+            ("Bool", vec![0, 1, 1, 0, 1]),
+            (
+                "Float",
+                vec![
+                    0.0f64.to_bits() as i64,
+                    (-0.0f64).to_bits() as i64,
+                    1.25f64.to_bits() as i64,
+                ],
+            ),
+        ];
+
+        for (elem_schema, words) in cases {
+            let mut store = ValueStore::default();
+            let (mut append_handle, _) = store
+                .alloc_array_words(elem_schema, Vec::new(), &schema_refs)
+                .unwrap();
+            for word in &words {
+                append_handle = store
+                    .alloc_array_words_append(append_handle, elem_schema, *word, &schema_refs)
+                    .unwrap()
+                    .0;
+            }
+
+            let full_hash = hash_array_words_from_scratch(&store, elem_schema, &words);
+            let expected_hash = hash_with_taint(full_hash, &None);
+            assert_eq!(
+                store.entry(append_handle).unwrap().content_hash,
+                expected_hash,
+                "append path hash for Array<{elem_schema}> matches the full oracle"
+            );
+
+            let (literal_handle, deduped) = store
+                .alloc_array_words(elem_schema, words.clone(), &schema_refs)
+                .unwrap();
+            assert!(deduped, "literal path dedupes Array<{elem_schema}>");
+            assert_eq!(
+                append_handle, literal_handle,
+                "append and literal construction share one canonical handle"
+            );
+        }
+    }
+
+    #[test]
+    fn array_incremental_hash_preserves_tainted_child_identity() {
+        let schema_refs = vec!["String".to_string()];
+        let taint = StructuralTaint {
+            marker: "secret".to_string(),
+            recipient: "solver".to_string(),
+            identity_hash: vec![1, 2, 3, 4],
+            content_tag: Some("trail".to_string()),
+        };
+        let mut store = ValueStore::default();
+        let left = store
+            .alloc_raw_tainted("String", b"left".to_vec(), Some(taint.clone()))
+            .0;
+        let right = store
+            .alloc_raw_tainted("String", b"right".to_vec(), Some(taint))
+            .0;
+        let (empty, _) = store
+            .alloc_array_words("String", Vec::new(), &schema_refs)
+            .unwrap();
+        let (one, _) = store
+            .alloc_array_words_append(empty, "String", left, &schema_refs)
+            .unwrap();
+        let (two, _) = store
+            .alloc_array_words_append(one, "String", right, &schema_refs)
+            .unwrap();
+        let (literal, deduped) = store
+            .alloc_array_words("String", vec![left, right], &schema_refs)
+            .unwrap();
+
+        assert!(deduped, "tainted literal path still dedupes");
+        assert_eq!(
+            two, literal,
+            "tainted append and literal paths are canonical"
+        );
+        assert_eq!(
+            store.entry(two).unwrap().taint,
+            store.entry(literal).unwrap().taint
         );
     }
 
