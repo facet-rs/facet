@@ -17,6 +17,7 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
 use std::sync::Arc;
 
@@ -36,8 +37,9 @@ use super::driver::{
     PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RenderNames,
     RenderVariant, RenderedValue, SEALED_DECLASSIFY_HOST, SEALED_SEAL_HOST, SEALED_TO_STRING_HOST,
     STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_DEFAULT_HOST,
-    STRING_LOWER_HOST, STRING_UPPER_HOST, StepMode, StoreHandle, TARGET_HOST, TREE_PROJECT_HOST,
-    VALUE_COMPARE_HOST, VERSION_PARSE_HOST, ValueBundle,
+    STRING_LOWER_HOST, STRING_UPPER_HOST, SemanticComparator, StepMode, StoreHandle, TARGET_HOST,
+    TREE_PROJECT_HOST, VALUE_COMPARE_HOST, VERSION_PARSE_HOST, VERSION_SET_OP_HOST,
+    VERSION_SET_PARSE_HOST, ValueBundle,
 };
 use crate::ast;
 use crate::fetch::FetchBackend;
@@ -208,18 +210,35 @@ impl Machine {
                 .map_err(|e| format!("lowering {name}: {e}"))?
             };
             task_fns.push(task_fn);
+            let arg_schemas = item
+                .params
+                .params
+                .iter()
+                .map(|param| type_schema_name(&param.ty))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| format!("lowering {name}: {e}"))?;
+            let param_names = item
+                .params
+                .params
+                .iter()
+                .map(|param| param.name.value.clone())
+                .collect::<Vec<_>>();
+            let semantic_comparators = semantic_comparators_for(
+                name,
+                &arg_schemas,
+                &param_names,
+                &fn_refs,
+                &fn_params,
+                &fn_returns,
+            )?;
+            let hash = hash_with_semantic_comparators(hash, &semantic_comparators, &names, &tables);
             lowered.push(LoweredFn {
                 hash,
                 task_fn: FnId(u32::try_from(ix).expect("fn count fits u32")),
                 arg_offsets: info.arg_offsets,
-                arg_schemas: item
-                    .params
-                    .params
-                    .iter()
-                    .map(|param| type_schema_name(&param.ty))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| format!("lowering {name}: {e}"))?,
+                arg_schemas,
                 return_schema: fn_returns[*name].clone(),
+                semantic_comparators,
                 invoke_region: info.invoke_region,
                 store_alloc_region: info.store_alloc_region,
                 store_read_region: info.store_read_region,
@@ -407,18 +426,35 @@ impl Machine {
                 .map_err(|e| format!("lowering {name}: {e}"))?
             };
             task_fns.push(task_fn);
+            let arg_schemas = item
+                .params
+                .params
+                .iter()
+                .map(|param| type_schema_name(&param.ty))
+                .collect::<Result<Vec<_>, _>>()
+                .map_err(|e| format!("lowering {name}: {e}"))?;
+            let param_names = item
+                .params
+                .params
+                .iter()
+                .map(|param| param.name.value.clone())
+                .collect::<Vec<_>>();
+            let semantic_comparators = semantic_comparators_for(
+                name,
+                &arg_schemas,
+                &param_names,
+                &fn_refs,
+                &fn_params,
+                &fn_returns,
+            )?;
+            let hash = hash_with_semantic_comparators(hash, &semantic_comparators, &names, &tables);
             lowered.push(LoweredFn {
                 hash,
                 task_fn: FnId(u32::try_from(ix).expect("fn count fits u32")),
                 arg_offsets: info.arg_offsets,
-                arg_schemas: item
-                    .params
-                    .params
-                    .iter()
-                    .map(|param| type_schema_name(&param.ty))
-                    .collect::<Result<Vec<_>, _>>()
-                    .map_err(|e| format!("lowering {name}: {e}"))?,
+                arg_schemas,
                 return_schema: fn_returns[*name].clone(),
+                semantic_comparators,
                 invoke_region: info.invoke_region,
                 store_alloc_region: info.store_alloc_region,
                 store_read_region: info.store_read_region,
@@ -516,6 +552,9 @@ impl Machine {
             ("Version", MachineArg::String(value)) => {
                 Ok(StoreHandle(self.driver.intern_version_value(&value)?.0))
             }
+            ("VersionSet", MachineArg::String(value)) => Ok(StoreHandle(
+                self.driver.intern_version_set_req_value(&value)?.0,
+            )),
             ("String", MachineArg::String(value)) => Ok(StoreHandle(
                 self.driver.intern_raw_value("String", value.into_bytes()).0,
             )),
@@ -702,6 +741,13 @@ impl Machine {
             .get(name)
             .map(|&fn_ref| self.driver.fn_ops(fn_ref))
     }
+
+    #[cfg(test)]
+    fn semantic_comparator_len(&self, name: &str) -> Option<usize> {
+        self.fn_refs
+            .get(name)
+            .map(|&fn_ref| self.driver.semantic_comparator_len(fn_ref))
+    }
 }
 
 fn module_hash(source: &str) -> Vec<u8> {
@@ -755,6 +801,7 @@ fn schema_names_for(
         "Map".to_string(),
         "Doc".to_string(),
         "Version".to_string(),
+        "VersionSet".to_string(),
         "Option<Doc>".to_string(),
         "Pending<Doc>".to_string(),
         "Realized<Doc>".to_string(),
@@ -1665,6 +1712,13 @@ fn collect_expr_schemas(
                 out.push("Version".to_string());
                 return Ok(Some("Version".to_string()));
             }
+            if let ast::PathRef::Scoped(path) = &call.callee {
+                let segments: Vec<&str> = path.segments.iter().map(|s| s.value.as_str()).collect();
+                if segments.as_slice() == ["VersionSet", "from_req"] {
+                    out.push("VersionSet".to_string());
+                    return Ok(Some("VersionSet".to_string()));
+                }
+            }
             if let ast::PathRef::Identifier(name) = &call.callee
                 && name.value == "render"
             {
@@ -1699,6 +1753,10 @@ fn collect_expr_schemas(
                 ("get", Some(schema)) => Ok(map_value_schema(schema).map(option_schema)),
                 ("unwrap", Some(schema)) => Ok(option_value_schema(schema).map(str::to_string)),
                 ("join", Some("Array" | "Doc" | "Realized<Doc>")) => Ok(Some("String".into())),
+                ("union" | "intersect" | "complement", Some("VersionSet")) => {
+                    Ok(Some("VersionSet".into()))
+                }
+                ("subset" | "contains", Some("VersionSet")) => Ok(Some("Bool".into())),
                 _ => Ok(None),
             }
         }
@@ -2008,6 +2066,62 @@ fn parked_stub(item: &ast::FnItem) -> Result<(TaskFn, LoweredInfo), String> {
             primitive_region: result,
         },
     ))
+}
+
+fn semantic_comparators_for(
+    fn_name: &str,
+    arg_schemas: &[String],
+    param_names: &[String],
+    fn_refs: &HashMap<String, usize>,
+    fn_params: &HashMap<String, Vec<String>>,
+    fn_returns: &HashMap<String, String>,
+) -> Result<Vec<SemanticComparator>, String> {
+    let mut comparators = Vec::new();
+    for (arg_index, (arg_name, arg_schema)) in param_names.iter().zip(arg_schemas).enumerate() {
+        let comparator_name = format!("{fn_name}__memo_verify_{arg_name}");
+        let Some(&fn_ref) = fn_refs.get(&comparator_name) else {
+            continue;
+        };
+        let params = fn_params
+            .get(&comparator_name)
+            .ok_or_else(|| format!("missing comparator params for {comparator_name}"))?;
+        if params != &[arg_schema.clone(), arg_schema.clone()] {
+            return Err(format!(
+                "semantic comparator `{comparator_name}` must take ({arg_schema}, {arg_schema}), got {params:?}"
+            ));
+        }
+        let return_schema = fn_returns
+            .get(&comparator_name)
+            .ok_or_else(|| format!("missing comparator return for {comparator_name}"))?;
+        if return_schema != "Bool" {
+            return Err(format!(
+                "semantic comparator `{comparator_name}` must return Bool, got {return_schema}"
+            ));
+        }
+        comparators.push(SemanticComparator { arg_index, fn_ref });
+    }
+    Ok(comparators)
+}
+
+fn hash_with_semantic_comparators(
+    base: u64,
+    comparators: &[SemanticComparator],
+    fn_names: &[&String],
+    tables: &ModuleTables,
+) -> u64 {
+    if comparators.is_empty() {
+        return base;
+    }
+    let mut hasher = DefaultHasher::new();
+    "vix-semantic-comparator-hash".hash(&mut hasher);
+    base.hash(&mut hasher);
+    for comparator in comparators {
+        comparator.arg_index.hash(&mut hasher);
+        if let Some(name) = fn_names.get(comparator.fn_ref) {
+            tables.fn_hashes[*name].hash(&mut hasher);
+        }
+    }
+    hasher.finish()
 }
 
 struct LoweredInfo {
@@ -3230,6 +3344,20 @@ impl<'a> FnLowerer<'a> {
                 }
                 Ok(Some(self.target_host()))
             }
+            ["VersionSet", "from_req"] => {
+                if self
+                    .tables
+                    .resolve_type_module(self.current_module, "VersionSet")
+                    != Some("vix")
+                {
+                    return Ok(None);
+                }
+                let [arg] = call.args.args.as_slice() else {
+                    return Err("VersionSet::from_req takes one String".into());
+                };
+                let input = self.method_arg(arg, Some("String"))?;
+                Ok(Some(self.version_set_from_req(&input)?))
+            }
             ["Sealed", "seal"] => {
                 if self
                     .tables
@@ -3385,6 +3513,49 @@ impl<'a> FnLowerer<'a> {
                 let receiver = self.coerce_to_schema(receiver, "Doc")?;
                 let name = self.method_arg(&call.args.args[0], Some("String"))?;
                 self.ast_fn(&receiver, &name)
+            }
+            "union" | "intersect" => {
+                if receiver.schema != "VersionSet" {
+                    return Err(format!("{} called on {}", call.name.value, receiver.schema));
+                }
+                let [arg] = call.args.args.as_slice() else {
+                    return Err(format!(
+                        "VersionSet.{} takes one VersionSet",
+                        call.name.value
+                    ));
+                };
+                let right = self.method_arg(arg, Some("VersionSet"))?;
+                let op = if call.name.value == "union" { 0 } else { 1 };
+                self.version_set_op(op, &receiver, Some(&right), "VersionSet")
+            }
+            "complement" => {
+                if receiver.schema != "VersionSet" {
+                    return Err(format!("complement called on {}", receiver.schema));
+                }
+                if !call.args.args.is_empty() {
+                    return Err("VersionSet.complement takes no arguments".into());
+                }
+                self.version_set_op(2, &receiver, None, "VersionSet")
+            }
+            "subset" => {
+                if receiver.schema != "VersionSet" {
+                    return Err(format!("subset called on {}", receiver.schema));
+                }
+                let [arg] = call.args.args.as_slice() else {
+                    return Err("VersionSet.subset takes one VersionSet".into());
+                };
+                let right = self.method_arg(arg, Some("VersionSet"))?;
+                self.version_set_op(3, &receiver, Some(&right), "Bool")
+            }
+            "contains" => {
+                if receiver.schema != "VersionSet" {
+                    return Err(format!("contains called on {}", receiver.schema));
+                }
+                let [arg] = call.args.args.as_slice() else {
+                    return Err("VersionSet.contains takes one Version".into());
+                };
+                let right = self.method_arg(arg, Some("Version"))?;
+                self.version_set_op(4, &receiver, Some(&right), "Bool")
             }
             "unwrap" => {
                 if !call.args.args.is_empty() {
@@ -5512,6 +5683,73 @@ impl<'a> FnLowerer<'a> {
         })
     }
 
+    fn version_set_from_req(&mut self, input: &ValueSlot) -> Result<ValueSlot, String> {
+        self.expect_schema(input, "String")?;
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: input.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: VERSION_SET_PARSE_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "VersionSet".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn version_set_op(
+        &mut self,
+        op: i64,
+        left: &ValueSlot,
+        right: Option<&ValueSlot>,
+        result_schema: &str,
+    ) -> Result<ValueSlot, String> {
+        self.expect_schema(left, "VersionSet")?;
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 8,
+            value: op,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: left.slot,
+        });
+        if let Some(right) = right {
+            self.code.push(Op::CopyI64 {
+                dst: region + 24,
+                src: right.slot,
+            });
+        } else {
+            self.code.push(Op::ConstI64 {
+                dst: region + 24,
+                value: 0,
+            });
+        }
+        self.code.push(Op::HostCall {
+            host: VERSION_SET_OP_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: result_schema.into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
     fn compare_value(
         &mut self,
         op: &str,
@@ -5705,7 +5943,7 @@ fn strict_binary_operand_schema<'a>(op: &str, left: &'a str, right: &'a str) -> 
         ("+" | "-" | "*", "Int")
         | ("+" | "*", "Float")
         | ("+", "String")
-        | ("==" | "!=", "Int" | "Float" | "String" | "Path" | "Bool" | "Version")
+        | ("==" | "!=", "Int" | "Float" | "String" | "Path" | "Bool" | "Version" | "VersionSet")
         | ("<" | "<=" | ">" | ">=", "Int" | "Version")
         | ("&&", "Bool") => Some(left),
         _ => None,
@@ -9758,6 +9996,134 @@ pub fn glibc_name_normalizes() -> Bool { version("GLIBC_2.35") == version("2.35.
     }
 
     #[test]
+    fn version_set_values_parse_and_obey_cargo_prerelease_rules() {
+        let src = r#"
+use vix::{Version, VersionSet};
+
+pub fn ops() -> Bool {
+    let pre = VersionSet::from_req("^1.2.3-alpha.1");
+    let narrow = VersionSet::from_req("^1.2.3");
+    let broad = VersionSet::from_req("^1.0.0");
+    let union = narrow.union(broad);
+    let intersection = narrow.intersect(broad);
+    pre.contains(version("1.2.3-alpha.1"))
+        && pre.contains(version("1.2.3"))
+        && (pre.contains(version("1.2.4-alpha.1")) == false)
+        && narrow.subset(broad)
+        && union.contains(version("1.1.0"))
+        && intersection.contains(version("1.2.9"))
+        && broad.complement().contains(version("2.0.0"))
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            assert_eq!(machine.demand_i64("ops", vec![]).unwrap(), 1, "{lane:?}");
+        }
+    }
+
+    fn semantic_cutoff_demo_source(comparator_name: &str) -> String {
+        format!(
+            r#"
+use vix::{{Version, VersionSet}};
+
+fn expensive(req: VersionSet) -> Int {{
+    match req.contains(version("1.2.3")) {{
+        true => 42,
+        false => 0,
+    }}
+}}
+
+pub fn derived(req: VersionSet) -> Int {{
+    expensive(req)
+}}
+
+fn {comparator_name}(old: VersionSet, new: VersionSet) -> Bool {{
+    new.subset(old)
+}}
+"#
+        )
+    }
+
+    fn call_derived(machine: &mut Machine, req: &str) -> i64 {
+        machine
+            .call(
+                "derived",
+                &[NamedArg {
+                    name: "req".into(),
+                    value: MachineArg::String(req.into()),
+                }],
+            )
+            .unwrap()
+            .0
+    }
+
+    #[test]
+    fn semantic_cutoff_hits_on_narrowing_and_misses_on_widening() {
+        let src = semantic_cutoff_demo_source("derived__memo_verify_req");
+        for lane in lanes() {
+            let mut narrowed = load_with_lane(&src, lane);
+            assert_eq!(
+                narrowed.semantic_comparator_len("derived"),
+                Some(1),
+                "{lane:?}"
+            );
+            assert_eq!(call_derived(&mut narrowed, "^1.0.0"), 42, "{lane:?}");
+            narrowed.clear_trace();
+            assert_eq!(call_derived(&mut narrowed, "^1.2.0"), 42, "{lane:?}");
+            assert_eq!(
+                memo_semantic_hit_count(&narrowed, "derived"),
+                1,
+                "{lane:?}: {:?}",
+                narrowed.trace()
+            );
+            assert_eq!(spawned_count(&narrowed, "derived"), 0, "{lane:?}");
+            assert_eq!(spawned_count(&narrowed, "expensive"), 0, "{lane:?}");
+            assert_eq!(
+                semantic_verified_count(&narrowed, "derived"),
+                vec![1],
+                "{lane:?}"
+            );
+
+            let mut widened = load_with_lane(&src, lane);
+            assert_eq!(call_derived(&mut widened, "^1.2.0"), 42, "{lane:?}");
+            widened.clear_trace();
+            assert_eq!(call_derived(&mut widened, "^1.0.0"), 42, "{lane:?}");
+            assert_eq!(memo_semantic_hit_count(&widened, "derived"), 0, "{lane:?}");
+            assert_eq!(spawned_count(&widened, "derived"), 1, "{lane:?}");
+            assert_eq!(spawned_count(&widened, "expensive"), 1, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn semantic_cutoff_soundness_differential_matches_without_comparator() {
+        let enabled_src = semantic_cutoff_demo_source("derived__memo_verify_req");
+        let disabled_src = semantic_cutoff_demo_source("derived__not_a_memo_verify_req");
+        for lane in lanes() {
+            let mut enabled = load_with_lane(&enabled_src, lane);
+            let mut disabled = load_with_lane(&disabled_src, lane);
+            let mut enabled_values = Vec::new();
+            let mut disabled_values = Vec::new();
+            let mut enabled_observable = Vec::new();
+            let mut disabled_observable = Vec::new();
+            for req in ["^1.0.0", "^1.2.0", "^1.0.0"] {
+                enabled.clear_trace();
+                disabled.clear_trace();
+                enabled_values.push(call_derived(&mut enabled, req));
+                disabled_values.push(call_derived(&mut disabled, req));
+                enabled_observable.push(semantic_observable_trace(&enabled));
+                disabled_observable.push(semantic_observable_trace(&disabled));
+            }
+            assert_eq!(enabled_values, disabled_values, "{lane:?}");
+            assert_eq!(enabled_observable, disabled_observable, "{lane:?}");
+            assert_eq!(
+                memo_semantic_hit_count(&enabled, "derived"),
+                0,
+                "last widened run recomputes on {lane:?}"
+            );
+        }
+    }
+
+    #[test]
     fn live_event_sink_streams_the_accumulated_trace() {
         for lane in lanes() {
             for mode in [StepMode::Run, StepMode::Step] {
@@ -10133,6 +10499,17 @@ pub fn lazy(n: Int) -> Map<String, Float> {
             .count()
     }
 
+    fn memo_semantic_hit_count(machine: &Machine, name: &str) -> usize {
+        let hash = machine.fn_hash(name).expect("function hash");
+        machine
+            .trace()
+            .iter()
+            .filter(|event| {
+                matches!(event, DriveEvent::MemoSemanticHit { fn_hash, .. } if *fn_hash == hash)
+            })
+            .count()
+    }
+
     fn projection_verified_count(machine: &Machine, name: &str) -> Vec<usize> {
         let hash = machine.fn_hash(name).expect("function hash");
         machine
@@ -10144,6 +10521,49 @@ pub fn lazy(n: Int) -> Map<String, Float> {
                 }
                 _ => None,
             })
+            .collect()
+    }
+
+    fn semantic_verified_count(machine: &Machine, name: &str) -> Vec<usize> {
+        let hash = machine.fn_hash(name).expect("function hash");
+        machine
+            .trace()
+            .iter()
+            .filter_map(|event| match event {
+                DriveEvent::MemoSemanticHit { fn_hash, verified } if *fn_hash == hash => {
+                    Some(*verified)
+                }
+                _ => None,
+            })
+            .collect()
+    }
+
+    fn semantic_observable_trace(machine: &Machine) -> Vec<DriveEvent> {
+        let recompute_hashes = [
+            machine.fn_hash("derived").expect("derived hash"),
+            machine.fn_hash("expensive").expect("expensive hash"),
+            machine
+                .fn_hash("derived__memo_verify_req")
+                .or_else(|| machine.fn_hash("derived__not_a_memo_verify_req"))
+                .expect("comparator hash"),
+        ];
+        machine
+            .trace()
+            .iter()
+            .filter(|event| match event {
+                DriveEvent::Demanded { fn_hash }
+                | DriveEvent::MemoHit { fn_hash }
+                | DriveEvent::MemoProjectionHit { fn_hash, .. }
+                | DriveEvent::MemoSemanticHit { fn_hash, .. }
+                | DriveEvent::Spawned { fn_hash }
+                | DriveEvent::ParkedOn { fn_hash }
+                | DriveEvent::Completed { fn_hash }
+                | DriveEvent::SpawnedInvocation { fn_hash, .. } => {
+                    !recompute_hashes.contains(fn_hash)
+                }
+                _ => true,
+            })
+            .cloned()
             .collect()
     }
 

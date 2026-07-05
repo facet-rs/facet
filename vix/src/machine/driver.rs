@@ -28,7 +28,7 @@
 
 use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::Hash;
 use std::sync::Arc;
 
@@ -150,6 +150,8 @@ pub const STRING_DEFAULT_HOST: u32 = 37;
 pub const SEALED_SEAL_HOST: u32 = 38;
 pub const SEALED_DECLASSIFY_HOST: u32 = 39;
 pub const SEALED_TO_STRING_HOST: u32 = 40;
+pub const VERSION_SET_PARSE_HOST: u32 = 41;
+pub const VERSION_SET_OP_HOST: u32 = 42;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -194,6 +196,8 @@ pub struct LoweredFn {
     /// Schema ref for the returned word. Float returns canonicalize at
     /// the memo boundary.
     pub return_schema: String,
+    /// Semantic memo comparators, one per declared argument verifier.
+    pub semantic_comparators: Vec<SemanticComparator>,
     /// Byte offset of this function's INVOKE region.
     pub invoke_region: u32,
     /// Byte offset of this function's STORE_ALLOC region:
@@ -208,6 +212,12 @@ pub struct LoweredFn {
     pub primitive_region: u32,
 }
 
+#[derive(Clone, Debug)]
+pub struct SemanticComparator {
+    pub arg_index: usize,
+    pub fn_ref: usize,
+}
+
 /// Driver-level events (join the unified trace via lowering-emitted
 /// marks later; recorded directly in this slice).
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -219,6 +229,9 @@ pub enum DriveEvent {
     /// Coarse memo key missed, but all observed projections from a
     /// prior run verified against the new composite arguments.
     MemoProjectionHit { fn_hash: u64, verified: usize },
+    /// Coarse memo key missed, but declared semantic comparators
+    /// accepted the changed arguments.
+    MemoSemanticHit { fn_hash: u64, verified: usize },
     /// Spawned a task (memo miss).
     Spawned { fn_hash: u64 },
     /// A task parked awaiting another invocation's result.
@@ -335,6 +348,9 @@ pub enum RenderedValue {
         value: String,
     },
     Version {
+        value: String,
+    },
+    VersionSet {
         value: String,
     },
     Raw {
@@ -580,6 +596,7 @@ pub type MapWordRow = (String, i64, String, i64, Option<i64>);
 #[derive(Clone, Debug)]
 struct MemoEntry {
     value: i64,
+    args: Vec<i64>,
     read_set: ProjectionReadSet,
 }
 
@@ -587,6 +604,13 @@ struct MemoEntry {
 enum ProjectionArgKey {
     Exact(ContentHash),
     Projectable(String),
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum MemoHitKind {
+    Exact,
+    Projection,
+    Semantic,
 }
 
 #[derive(Clone, Debug, Default, PartialEq, Eq)]
@@ -615,6 +639,10 @@ impl ProjectionReadSet {
 
     fn len(&self) -> usize {
         self.entries.len()
+    }
+
+    fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 }
 
@@ -1648,6 +1676,11 @@ impl Driver {
         self.fns[fn_ref].hash
     }
 
+    #[cfg(test)]
+    pub fn semantic_comparator_len(&self, fn_ref: usize) -> usize {
+        self.fns[fn_ref].semantic_comparators.len()
+    }
+
     pub fn pending_for_fn(&self, fn_ref: usize, args: Vec<i64>) -> Result<(i64, String), String> {
         let lowered = self
             .fns
@@ -1701,6 +1734,14 @@ impl Driver {
             .alloc_raw("Version", super::version::canonical_bytes(&version)))
     }
 
+    pub fn intern_version_set_req_value(&self, text: &str) -> Result<(i64, bool), String> {
+        let set = super::version_set::VersionSet::from_req(text)?;
+        Ok(self
+            .store
+            .borrow_mut()
+            .alloc_raw("VersionSet", set.canonical_bytes()))
+    }
+
     pub fn intern_linux_target(&self) -> (i64, bool) {
         self.intern_structured_target(OS_LINUX, host_arch_index())
             .unwrap_or_else(|_| {
@@ -1751,6 +1792,16 @@ impl Driver {
             });
             return Ok(entry.value);
         }
+        if let Some(entry) = self.semantic_memo_hit(fn_ref, &args, &key)? {
+            let verified = self.fns[fn_ref].semantic_comparators.len();
+            self.memo.insert(key.clone(), entry.clone());
+            self.index_memo_candidate(fn_ref, &args, &key);
+            self.emit(DriveEvent::MemoSemanticHit {
+                fn_hash: key.0,
+                verified,
+            });
+            return Ok(entry.value);
+        }
 
         // Waiters: invocation key → executions parked on it (by index
         // into `executions`) with the slot to fill.
@@ -1776,6 +1827,7 @@ impl Driver {
                     );
                     let done_entry = MemoEntry {
                         value,
+                        args: exec.args.clone(),
                         read_set: exec.read_set,
                     };
                     self.memo.insert(done_key.clone(), done_entry.clone());
@@ -1941,24 +1993,40 @@ impl Driver {
                             exec.awaited.resize(req.input_slot + 1, 0);
                         }
                         let hit = if let Some(entry) = self.memo.get(&req_key).cloned() {
-                            Some((entry, false))
-                        } else {
+                            Some((entry, MemoHitKind::Exact))
+                        } else if let Some(entry) =
                             self.projection_memo_hit(req.fn_ref, &req.args, &req_key)?
-                                .map(|entry| (entry, true))
+                        {
+                            Some((entry, MemoHitKind::Projection))
+                        } else {
+                            self.semantic_memo_hit(req.fn_ref, &req.args, &req_key)?
+                                .map(|entry| (entry, MemoHitKind::Semantic))
                         };
-                        if let Some((entry, projection_hit)) = hit {
+                        if let Some((entry, hit_kind)) = hit {
                             // Mechanism 1: memo hit — the slot fills
                             // synchronously, no task exists.
-                            if projection_hit {
-                                let verified = entry.read_set.len();
-                                self.memo.insert(req_key.clone(), entry.clone());
-                                self.index_memo_candidate(req.fn_ref, &req.args, &req_key);
-                                self.emit(DriveEvent::MemoProjectionHit {
-                                    fn_hash: req_key.0,
-                                    verified,
-                                });
-                            } else {
-                                self.emit(DriveEvent::MemoHit { fn_hash: req_key.0 });
+                            match hit_kind {
+                                MemoHitKind::Exact => {
+                                    self.emit(DriveEvent::MemoHit { fn_hash: req_key.0 });
+                                }
+                                MemoHitKind::Projection => {
+                                    let verified = entry.read_set.len();
+                                    self.memo.insert(req_key.clone(), entry.clone());
+                                    self.index_memo_candidate(req.fn_ref, &req.args, &req_key);
+                                    self.emit(DriveEvent::MemoProjectionHit {
+                                        fn_hash: req_key.0,
+                                        verified,
+                                    });
+                                }
+                                MemoHitKind::Semantic => {
+                                    let verified = self.fns[req.fn_ref].semantic_comparators.len();
+                                    self.memo.insert(req_key.clone(), entry.clone());
+                                    self.index_memo_candidate(req.fn_ref, &req.args, &req_key);
+                                    self.emit(DriveEvent::MemoSemanticHit {
+                                        fn_hash: req_key.0,
+                                        verified,
+                                    });
+                                }
                             }
                             exec.ready[req.input_slot] = true;
                             exec.awaited[req.input_slot] = entry.value;
@@ -2837,6 +2905,116 @@ impl Driver {
                 }
             };
 
+            let mut version_set_parse_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let input = read_frame_word(frame, primitive_region + 8);
+                    let text = store_cell.borrow().string_value(input, "String")?;
+                    let set = super::version_set::VersionSet::from_req(&text)?;
+                    let (handle, _) = store_cell
+                        .borrow_mut()
+                        .alloc_raw("VersionSet", set.canonical_bytes());
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut version_set_op_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let op = read_frame_word(frame, primitive_region + 8);
+                    let left = read_frame_word(frame, primitive_region + 16);
+                    let right = read_frame_word(frame, primitive_region + 24);
+                    let store = store_cell.borrow();
+                    let left_entry = store
+                        .entry(left)
+                        .ok_or_else(|| format!("store handle {left}"))?;
+                    if left_entry.schema != "VersionSet" {
+                        return Err(format!(
+                            "VersionSet op expected VersionSet, got {}",
+                            left_entry.schema
+                        ));
+                    }
+                    let left_set = super::version_set::VersionSet::parse_bytes(&left_entry.bytes)?;
+                    match op {
+                        0 | 1 | 3 => {
+                            let right_entry = store
+                                .entry(right)
+                                .ok_or_else(|| format!("store handle {right}"))?;
+                            if right_entry.schema != "VersionSet" {
+                                return Err(format!(
+                                    "VersionSet op expected VersionSet, got {}",
+                                    right_entry.schema
+                                ));
+                            }
+                            let right_set =
+                                super::version_set::VersionSet::parse_bytes(&right_entry.bytes)?;
+                            drop(store);
+                            match op {
+                                0 => {
+                                    let set = left_set.union(&right_set);
+                                    let handle = store_cell
+                                        .borrow_mut()
+                                        .alloc_raw("VersionSet", set.canonical_bytes())
+                                        .0;
+                                    write_frame_word(frame, dst_slot, handle);
+                                }
+                                1 => {
+                                    let set = left_set.intersect(&right_set);
+                                    let handle = store_cell
+                                        .borrow_mut()
+                                        .alloc_raw("VersionSet", set.canonical_bytes())
+                                        .0;
+                                    write_frame_word(frame, dst_slot, handle);
+                                }
+                                3 => {
+                                    write_frame_word(
+                                        frame,
+                                        dst_slot,
+                                        i64::from(left_set.is_subset_of(&right_set)),
+                                    );
+                                }
+                                _ => unreachable!(),
+                            }
+                        }
+                        2 => {
+                            drop(store);
+                            let set = left_set.complement();
+                            let handle = store_cell
+                                .borrow_mut()
+                                .alloc_raw("VersionSet", set.canonical_bytes())
+                                .0;
+                            write_frame_word(frame, dst_slot, handle);
+                        }
+                        4 => {
+                            let right_entry = store
+                                .entry(right)
+                                .ok_or_else(|| format!("store handle {right}"))?;
+                            if right_entry.schema != "Version" {
+                                return Err(format!(
+                                    "VersionSet.contains expected Version, got {}",
+                                    right_entry.schema
+                                ));
+                            }
+                            let version = super::version::parse_bytes(&right_entry.bytes)?;
+                            write_frame_word(
+                                frame,
+                                dst_slot,
+                                i64::from(left_set.contains(&version)),
+                            );
+                        }
+                        other => return Err(format!("unknown VersionSet op {other}")),
+                    }
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
             let mut ast_fn_host = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
@@ -3338,7 +3516,7 @@ impl Driver {
                 }
             };
 
-            let mut hosts: [HostFn<'_>; 41] = [
+            let mut hosts: [HostFn<'_>; 43] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -3380,6 +3558,8 @@ impl Driver {
                 &mut sealed_seal,
                 &mut sealed_declassify,
                 &mut sealed_to_string,
+                &mut version_set_parse_host,
+                &mut version_set_op_host,
             ];
             let step = exec
                 .task
@@ -3442,12 +3622,18 @@ impl Driver {
         args: &[i64],
     ) -> Option<ProjectionCandidateKey> {
         let lowered = &self.fns[fn_ref];
+        let semantic_args: BTreeSet<usize> = lowered
+            .semantic_comparators
+            .iter()
+            .map(|comparator| comparator.arg_index)
+            .collect();
         let mut saw_projectable = false;
         let args = args
             .iter()
             .zip(&lowered.arg_schemas)
-            .map(|(&word, schema)| {
-                if self.is_projectable_arg(schema, word) {
+            .enumerate()
+            .map(|(arg_index, (&word, schema))| {
+                if semantic_args.contains(&arg_index) || self.is_projectable_arg(schema, word) {
                     saw_projectable = true;
                     ProjectionArgKey::Projectable(schema.clone())
                 } else {
@@ -3486,11 +3672,68 @@ impl Driver {
             let Some(entry) = self.memo.get(candidate) else {
                 continue;
             };
+            if entry.read_set.is_empty() {
+                continue;
+            }
             if self.verify_projection_read_set(args, &entry.read_set)? {
                 return Ok(Some(entry.clone()));
             }
         }
         Ok(None)
+    }
+
+    fn semantic_memo_hit(
+        &mut self,
+        fn_ref: usize,
+        args: &[i64],
+        key: &CanonMemoKey,
+    ) -> Result<Option<MemoEntry>, String> {
+        if self.fns[fn_ref].semantic_comparators.is_empty() {
+            return Ok(None);
+        }
+        let Some(candidate_key) = self.projection_candidate_key(fn_ref, args) else {
+            return Ok(None);
+        };
+        let Some(candidates) = self.memo_candidates.get(&candidate_key).cloned() else {
+            return Ok(None);
+        };
+        for candidate in candidates {
+            if &candidate == key {
+                continue;
+            }
+            let Some(entry) = self.memo.get(&candidate).cloned() else {
+                continue;
+            };
+            if self.verify_semantic_comparators(fn_ref, &entry.args, args)? {
+                return Ok(Some(entry));
+            }
+        }
+        Ok(None)
+    }
+
+    fn verify_semantic_comparators(
+        &mut self,
+        fn_ref: usize,
+        old_args: &[i64],
+        new_args: &[i64],
+    ) -> Result<bool, String> {
+        let comparators = self.fns[fn_ref].semantic_comparators.clone();
+        for comparator in comparators {
+            let Some(&old_value) = old_args.get(comparator.arg_index) else {
+                return Ok(false);
+            };
+            let Some(&new_value) = new_args.get(comparator.arg_index) else {
+                return Ok(false);
+            };
+            if old_value == new_value {
+                continue;
+            }
+            let accepted = self.demand(comparator.fn_ref, vec![old_value, new_value])?;
+            if accepted == 0 {
+                return Ok(false);
+            }
+        }
+        Ok(true)
     }
 
     fn verify_projection_read_set(
@@ -5347,6 +5590,17 @@ fn compare_words(
             }
             super::version::cmp_total(&a.bytes, &b.bytes)
         }
+        "VersionSet" => {
+            let a = store.entry(a).ok_or_else(|| format!("store handle {a}"))?;
+            let b = store.entry(b).ok_or_else(|| format!("store handle {b}"))?;
+            if a.schema != "VersionSet" || b.schema != "VersionSet" {
+                return Err(format!(
+                    "compare expected VersionSet, got {} and {}",
+                    a.schema, b.schema
+                ));
+            }
+            Ok(a.bytes.cmp(&b.bytes))
+        }
         "Array" => compare_arrays(store, descriptors, schema_refs, a, b),
         schema if schema.starts_with("Map<") => compare_maps(store, descriptors, schema_refs, a, b),
         "Doc" => compare_docs(store, descriptors, schema_refs, a, b),
@@ -5701,6 +5955,20 @@ fn render_word(
         "Version" => Ok(RenderedValue::Version {
             value: store.string_value(word, "Version")?,
         }),
+        "VersionSet" => {
+            let entry = store
+                .entry(word)
+                .ok_or_else(|| format!("store handle {word}"))?;
+            if entry.schema != "VersionSet" {
+                return Err(format!(
+                    "handle {word} is `{}`, not VersionSet",
+                    entry.schema
+                ));
+            }
+            Ok(RenderedValue::VersionSet {
+                value: super::version_set::VersionSet::parse_bytes(&entry.bytes)?.render(),
+            })
+        }
         "Flag" => Ok(RenderedValue::Flag {
             value: store.string_value(word, "Flag")?,
         }),
@@ -7922,10 +8190,12 @@ mod tests {
     use weavy::task::{ArgCopy, Fn as TaskFn, Op};
 
     fn seed_memo(driver: &mut Driver, key: CanonMemoKey, value: i64) {
+        let args = key.1.iter().map(|_| 0).collect();
         driver.memo.insert(
             key,
             MemoEntry {
                 value,
+                args,
                 read_set: ProjectionReadSet::default(),
             },
         );
@@ -7988,6 +8258,7 @@ mod tests {
             arg_offsets: vec![0],
             arg_schemas: vec!["Int".into()],
             return_schema: "Int".into(),
+            semantic_comparators: Vec::new(),
             invoke_region: 8,
             store_alloc_region: 0,
             store_read_region: 0,
@@ -8082,6 +8353,7 @@ mod tests {
             arg_offsets: vec![],
             arg_schemas: vec![],
             return_schema: "Int".into(),
+            semantic_comparators: Vec::new(),
             invoke_region: 8,
             store_alloc_region: 0,
             store_read_region: 0,
@@ -8150,6 +8422,7 @@ mod tests {
             arg_offsets: vec![0],
             arg_schemas: vec!["Int".into()],
             return_schema: "Int".into(),
+            semantic_comparators: Vec::new(),
             invoke_region: 24,
             store_alloc_region: 0,
             store_read_region: 0,
@@ -8198,6 +8471,7 @@ mod tests {
                 arg_offsets,
                 arg_schemas,
                 return_schema: "Int".into(),
+                semantic_comparators: Vec::new(),
                 invoke_region: 128,
                 store_alloc_region: 0,
                 store_read_region: 48,
