@@ -94,6 +94,10 @@ pub enum VixDriveEvent {
     MemoHit {
         fn_hash: String,
     },
+    MemoProjectionHit {
+        fn_hash: String,
+        verified: u64,
+    },
     Spawned {
         fn_hash: String,
     },
@@ -279,6 +283,12 @@ fn trace_events(events: &[vix::machine::driver::DriveEvent]) -> Vec<VixDriveEven
             vix::machine::driver::DriveEvent::MemoHit { fn_hash } => VixDriveEvent::MemoHit {
                 fn_hash: hex_hash(*fn_hash),
             },
+            vix::machine::driver::DriveEvent::MemoProjectionHit { fn_hash, verified } => {
+                VixDriveEvent::MemoProjectionHit {
+                    fn_hash: hex_hash(*fn_hash),
+                    verified: u64::try_from(*verified).expect("verified count fits u64"),
+                }
+            }
             vix::machine::driver::DriveEvent::Spawned { fn_hash } => VixDriveEvent::Spawned {
                 fn_hash: hex_hash(*fn_hash),
             },
