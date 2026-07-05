@@ -1,4 +1,4 @@
-use vix::{Tree, Target};
+use vix::{Tree, Target, Path};
 use caps::Rustc;
 
 fn doc_string(doc: Doc, key: String) -> String {
@@ -8,6 +8,30 @@ fn doc_string(doc: Doc, key: String) -> String {
 fn package_doc(manifest: Tree) -> Doc {
     let doc = toml(manifest / p"Cargo.toml");
     doc.get("package").unwrap()
+}
+
+fn lock_doc(graph: Tree) -> Doc {
+    toml(graph / p"Cargo.lock")
+}
+
+fn lock_package(lock: Doc, name: String) -> Doc {
+    lock.package(name).unwrap()
+}
+
+fn lock_package_name(lock: Doc, name: String) -> String {
+    let package = lock_package(lock, name);
+    doc_string(package, "name")
+}
+
+fn lock_package_version(lock: Doc, name: String) -> String {
+    let package = lock_package(lock, name);
+    doc_string(package, "version")
+}
+
+pub fn lock_fixture_deps(graph: Tree, name: String) -> String {
+    let lock = lock_doc(graph);
+    let package = lock_package(lock, name);
+    package.get("dependencies").unwrap().join(",")
 }
 
 pub fn crate_lib(target: Target, manifest: Tree) -> Tree {
@@ -102,4 +126,135 @@ pub fn crate_bin(target: Target, graph: Tree) -> Tree {
     let root = graph / p"app";
     let rlib = dep_rlib(target, dep);
     bin_link(target, root, rlib) / p"mini_app"
+}
+
+fn lock_lib_metadata(target: Target, manifest: Tree, package: Doc, rmeta: Path, rlib: Path) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let name = doc_string(package, "name");
+    let edition = doc_string(package_doc(manifest), "edition");
+
+    rustc! {
+        --crate-name {name}
+        --edition {edition}
+        --crate-type lib
+        --emit=metadata={rmeta},link={rlib}
+        {manifest / p"src/lib.rs"}
+    }
+}
+
+fn lock_core_meta(target: Target, graph: Tree, lock: Doc) -> Tree {
+    let package = lock_package(lock, "core_lib");
+    lock_lib_metadata(target, graph / p"crates/core_lib", package, p"libcore_lib.rmeta", p"libcore_lib.rlib") / p"libcore_lib.rmeta"
+}
+
+fn lock_core_rlib(target: Target, graph: Tree, lock: Doc) -> Tree {
+    let package = lock_package(lock, "core_lib");
+    lock_lib_metadata(target, graph / p"crates/core_lib", package, p"libcore_lib.rmeta", p"libcore_lib.rlib") / p"libcore_lib.rlib"
+}
+
+fn lock_formatting_meta(target: Target, graph: Tree, lock: Doc) -> Tree {
+    let package = lock_package(lock, "formatting_lib");
+    lock_lib_metadata(target, graph / p"crates/formatting_lib", package, p"libformatting_lib.rmeta", p"libformatting_lib.rlib") / p"libformatting_lib.rmeta"
+}
+
+fn lock_formatting_rlib(target: Target, graph: Tree, lock: Doc) -> Tree {
+    let package = lock_package(lock, "formatting_lib");
+    lock_lib_metadata(target, graph / p"crates/formatting_lib", package, p"libformatting_lib.rmeta", p"libformatting_lib.rlib") / p"libformatting_lib.rlib"
+}
+
+fn lock_alpha_metadata(target: Target, graph: Tree, lock: Doc, core: Tree) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let manifest = graph / p"crates/alpha_lib";
+    let package = lock_package(lock, "alpha_lib");
+    let name = doc_string(package, "name");
+    let edition = doc_string(package_doc(manifest), "edition");
+
+    rustc! {
+        --crate-name {name}
+        --edition {edition}
+        --crate-type lib
+        --emit=metadata={p"libalpha_lib.rmeta"},link={p"libalpha_lib.rlib"}
+        --extern core_lib={core / p"libcore_lib.rmeta"}
+        -L dependency={core}
+        {manifest / p"src/lib.rs"}
+    } / p"libalpha_lib.rmeta"
+}
+
+fn lock_alpha_rlib(target: Target, graph: Tree, lock: Doc, core: Tree) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let manifest = graph / p"crates/alpha_lib";
+    let package = lock_package(lock, "alpha_lib");
+    let name = doc_string(package, "name");
+    let edition = doc_string(package_doc(manifest), "edition");
+
+    rustc! {
+        --crate-name {name}
+        --edition {edition}
+        --crate-type lib
+        --emit=metadata={p"libalpha_lib.rmeta"},link={p"libalpha_lib.rlib"}
+        --extern core_lib={core / p"libcore_lib.rlib"}
+        -L dependency={core}
+        {manifest / p"src/lib.rs"}
+    } / p"libalpha_lib.rlib"
+}
+
+fn lock_bin_metadata(target: Target, graph: Tree, lock: Doc, alpha: Tree, formatting: Tree, core: Tree) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let manifest = graph / p"app";
+    let name = lock_package_name(lock, "mini_app");
+    let edition = doc_string(package_doc(manifest), "edition");
+
+    rustc! {
+        --crate-name {name}
+        --edition {edition}
+        --crate-type bin
+        --emit=metadata={p"mini_app.rmeta"}
+        --extern alpha_lib={alpha / p"libalpha_lib.rmeta"}
+        --extern formatting_lib={formatting / p"libformatting_lib.rmeta"}
+        -L dependency={alpha}
+        -L dependency={formatting}
+        -L dependency={core}
+        {manifest / p"src/main.rs"}
+    }
+}
+
+fn lock_bin_link(target: Target, graph: Tree, lock: Doc, alpha: Tree, formatting: Tree, core: Tree) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let manifest = graph / p"app";
+    let name = lock_package_name(lock, "mini_app");
+    let edition = doc_string(package_doc(manifest), "edition");
+
+    rustc! {
+        --crate-name {name}
+        --edition {edition}
+        --crate-type bin
+        --emit=link={p"mini_app"}
+        --extern alpha_lib={alpha / p"libalpha_lib.rlib"}
+        --extern formatting_lib={formatting / p"libformatting_lib.rlib"}
+        -L dependency={alpha}
+        -L dependency={formatting}
+        -L dependency={core}
+        {manifest / p"src/main.rs"}
+    }
+}
+
+pub fn crate_lock_bin_check(target: Target, graph: Tree) -> Tree {
+    let lock = lock_doc(graph);
+    let core = lock_core_meta(target, graph, lock);
+    let alpha = lock_alpha_metadata(target, graph, lock, core);
+    let formatting = lock_formatting_meta(target, graph, lock);
+    lock_bin_metadata(target, graph, lock, alpha, formatting, core) / p"mini_app.rmeta"
+}
+
+pub fn crate_lock_bin(target: Target, graph: Tree) -> Tree {
+    let lock = lock_doc(graph);
+    let core = lock_core_rlib(target, graph, lock);
+    let alpha = lock_alpha_rlib(target, graph, lock, core);
+    let formatting = lock_formatting_rlib(target, graph, lock);
+    lock_bin_link(target, graph, lock, alpha, formatting, core) / p"mini_app"
+}
+
+pub fn crate_lock_root_version(graph: Tree) -> String {
+    let lock = lock_doc(graph);
+    lock_package_version(lock, "mini_app")
 }

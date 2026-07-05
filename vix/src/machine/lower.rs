@@ -30,12 +30,12 @@ use super::TotalF64;
 use super::driver::{
     ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_FILTER_EXCLUDE_HOST, ARRAY_JOIN_HOST,
     ARRAY_LEN_HOST, ARRAY_MAP_PENDING_HOST, AST_DOC_HOST, AST_FN_HOST, CodeBundle, DOC_COERCE_HOST,
-    DOC_GET_HOST, DOC_PARSE_HOST, DriveEvent, DriveEventSink, Driver, ELF_DOC_HOST, EXEC_HOST,
-    FETCH_HOST, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST,
-    MAP_INSERT_HOST, MachineExecBackend, OCI_DOC_HOST, OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST,
-    PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RenderNames, RenderVariant,
-    RenderedValue, STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, StepMode,
-    StoreHandle, TREE_PROJECT_HOST, ValueBundle,
+    DOC_GET_HOST, DOC_PACKAGE_HOST, DOC_PARSE_HOST, DriveEvent, DriveEventSink, Driver,
+    ELF_DOC_HOST, EXEC_HOST, FETCH_HOST, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST,
+    MAP_GET_HOST, MAP_INSERT_HOST, MachineExecBackend, OCI_DOC_HOST, OPTION_UNWRAP_HOST,
+    PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RenderNames,
+    RenderVariant, RenderedValue, STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST,
+    STRING_CONCAT_HOST, StepMode, StoreHandle, TREE_PROJECT_HOST, ValueBundle,
 };
 use crate::ast;
 use crate::fetch::FetchBackend;
@@ -1480,6 +1480,9 @@ fn collect_expr_schemas(
                 ("get", Some("Doc")) | ("get", Some("Realized<Doc>")) => {
                     Ok(Some(option_schema("Realized<Doc>")))
                 }
+                ("package", Some("Doc")) | ("package", Some("Realized<Doc>")) => {
+                    Ok(Some(option_schema("Realized<Doc>")))
+                }
                 ("get", Some(schema)) => Ok(map_value_schema(schema).map(option_schema)),
                 ("unwrap", Some(schema)) => Ok(option_value_schema(schema).map(str::to_string)),
                 ("join", Some("Array" | "Doc" | "Realized<Doc>")) => Ok(Some("String".into())),
@@ -2865,6 +2868,14 @@ impl<'a> FnLowerer<'a> {
                 }
                 let key = self.method_arg(&call.args.args[0], Some(key_schema))?;
                 self.map_get(&receiver, key, key_schema, &result_value_schema)
+            }
+            "package" => {
+                if call.args.args.len() != 1 {
+                    return Err("Doc.package takes one package name".into());
+                }
+                let receiver = self.coerce_to_schema(receiver, "Doc")?;
+                let name = self.method_arg(&call.args.args[0], Some("String"))?;
+                self.doc_package(&receiver, &name)
             }
             "fn" => {
                 if call.args.args.len() != 1 {
@@ -4283,6 +4294,34 @@ impl<'a> FnLowerer<'a> {
             src: key.slot,
         });
         self.code.push(Op::HostCall { host: DOC_GET_HOST });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: option_schema("Realized<Doc>"),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn doc_package(&mut self, doc: &ValueSlot, name: &ValueSlot) -> Result<ValueSlot, String> {
+        self.expect_schema(doc, "Doc")?;
+        self.expect_schema(name, "String")?;
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: doc.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: name.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: DOC_PACKAGE_HOST,
+        });
         Ok(ValueSlot {
             slot: dst,
             schema: option_schema("Realized<Doc>"),

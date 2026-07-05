@@ -153,3 +153,47 @@ otherwise open tier-2 verification can only prove the subset the roles name.
 After that, add build-script compile/run units and feed their declared outputs
 into parent rustc invocations. Proc-macro host units can share most dependency
 wiring but need host/target separation in the plan keys.
+
+## Lockfile Consumer Seam
+
+The resolution-to-build interface is a Cargo.lock-shaped resolved manifest.
+Open `crate.vix` consumes it as data with `toml()`. It does not invoke Cargo to
+resolve, inspect metadata, or build.
+
+The current open consumer accepts this Cargo.lock subset:
+
+- top-level `version` is allowed and ignored by the builder;
+- `[[package]]` tables are the resolved package set;
+- each package must provide `name` and `version`;
+- `dependencies = ["dep_name", ...]` is the resolved direct dependency list by
+  package name;
+- `source` is accepted when present, with Cargo's normal string shape, but path
+  packages may omit it exactly as Cargo.lock does.
+
+For the vendored offline fixture, package source trees live beside the lockfile:
+`app/` for the root binary and `crates/<package-name>/` for libraries. That
+layout convention is the open fixture's source locator; the lockfile remains the
+resolved package/edge contract.
+
+The build graph is demand-shaped rather than Cargo-shaped. A package's metadata
+or link artifact demands its direct dependencies' rmeta/rlib trees, and rustc
+receives those artifacts through `--extern` plus `-L dependency` search paths.
+The current fixture proves a transitive graph:
+
+```text
+mini_app -> alpha_lib -> core_lib
+mini_app -> formatting_lib
+```
+
+The default fake lane proves the command graph and extern wiring. With
+`real-process`, the same vix entry points run real `rustc`, execute the produced
+binary, and compare the derived unit shapes with
+`cargo +nightly build --unit-graph -Z unstable-options --locked` as the oracle.
+
+## Rodin Emit-Lock Follow-Up
+
+Rodin stays a separate proprietary resolver lane. The remaining bridge is small:
+convert Rodin's `SolveResult` into the Cargo.lock-shaped document above, including
+the selected package rows and direct dependency names. Once Rodin emits that
+lock-shaped tree, the open `crate.vix` consumer can build it without calling
+Cargo, closing the resolve -> emit-lock -> build round trip.

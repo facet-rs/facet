@@ -25,6 +25,36 @@ const HELPER_LIB: &str = include_str!(
     "../../playgrounds/snark/src/bundled/vix/samples/fixtures/two_crate_graph/crates/helper/src/lib.rs"
 );
 const EXPECTED_STDOUT: &[u8] = b"vix dependency fixture\n";
+const LOCK_GRAPH_LOCK: &str =
+    include_str!("../../playgrounds/snark/src/bundled/vix/samples/fixtures/lock_graph/Cargo.lock");
+const LOCK_GRAPH_APP_LOCK: &str = include_str!(
+    "../../playgrounds/snark/src/bundled/vix/samples/fixtures/lock_graph/app/Cargo.lock"
+);
+const LOCK_GRAPH_APP_MANIFEST: &str = include_str!(
+    "../../playgrounds/snark/src/bundled/vix/samples/fixtures/lock_graph/app/Cargo.toml"
+);
+const LOCK_GRAPH_APP_MAIN: &str = include_str!(
+    "../../playgrounds/snark/src/bundled/vix/samples/fixtures/lock_graph/app/src/main.rs"
+);
+const LOCK_GRAPH_ALPHA_MANIFEST: &str = include_str!(
+    "../../playgrounds/snark/src/bundled/vix/samples/fixtures/lock_graph/crates/alpha_lib/Cargo.toml"
+);
+const LOCK_GRAPH_ALPHA_LIB: &str = include_str!(
+    "../../playgrounds/snark/src/bundled/vix/samples/fixtures/lock_graph/crates/alpha_lib/src/lib.rs"
+);
+const LOCK_GRAPH_CORE_MANIFEST: &str = include_str!(
+    "../../playgrounds/snark/src/bundled/vix/samples/fixtures/lock_graph/crates/core_lib/Cargo.toml"
+);
+const LOCK_GRAPH_CORE_LIB: &str = include_str!(
+    "../../playgrounds/snark/src/bundled/vix/samples/fixtures/lock_graph/crates/core_lib/src/lib.rs"
+);
+const LOCK_GRAPH_FORMATTING_MANIFEST: &str = include_str!(
+    "../../playgrounds/snark/src/bundled/vix/samples/fixtures/lock_graph/crates/formatting_lib/Cargo.toml"
+);
+const LOCK_GRAPH_FORMATTING_LIB: &str = include_str!(
+    "../../playgrounds/snark/src/bundled/vix/samples/fixtures/lock_graph/crates/formatting_lib/src/lib.rs"
+);
+const LOCK_GRAPH_EXPECTED_STDOUT: &[u8] = b"core via alpha + formatted\n";
 
 #[test]
 fn real_process_rustc_builds_two_crate_fixture_and_matches_cargo_unit_graph_oracle()
@@ -64,6 +94,44 @@ fn real_process_rustc_builds_two_crate_fixture_and_matches_cargo_unit_graph_orac
     Ok(())
 }
 
+#[test]
+fn real_process_rustc_builds_lockfile_graph_and_matches_cargo_unit_graph_oracle()
+-> Result<(), String> {
+    if !host_rustc_available() {
+        return Ok(());
+    }
+
+    let backend = Arc::new(RealProcessBackend::new());
+    let mut machine = Machine::load(SOURCE)?.with_exec_backend(backend);
+    let target = machine.linux_target_handle();
+    let graph = machine
+        .intern_arg("Tree", MachineArg::Tree(lock_graph_tree()))?
+        .0;
+
+    let checked = machine.demand_i64("crate_lock_bin_check", vec![target, graph])?;
+    let _rmeta = tree_file_bytes(&mut machine, checked, "mini_app.rmeta")?;
+
+    let built = machine.demand_i64("crate_lock_bin", vec![target, graph])?;
+    let bin = tree_file_bytes(&mut machine, built, "mini_app")?;
+    let stdout = run_binary_bytes(&bin)?;
+    if stdout != LOCK_GRAPH_EXPECTED_STDOUT {
+        return Err(format!(
+            "unexpected lock graph binary stdout: {:?}",
+            String::from_utf8_lossy(&stdout)
+        ));
+    }
+
+    let machine_graph = machine_rustc_unit_graph(&machine)?;
+    let cargo_graph = cargo_lock_graph_unit_graph_oracle()?;
+    if machine_graph != cargo_graph {
+        return Err(format!(
+            "lock graph machine unit graph did not match cargo oracle\nmachine: {machine_graph:#?}\ncargo: {cargo_graph:#?}"
+        ));
+    }
+
+    Ok(())
+}
+
 fn host_rustc_available() -> bool {
     Command::new("rustc")
         .arg("--version")
@@ -77,6 +145,27 @@ fn two_crate_graph_tree() -> Tree {
         ("app/src/main.rs", APP_MAIN),
         ("crates/helper/Cargo.toml", HELPER_MANIFEST),
         ("crates/helper/src/lib.rs", HELPER_LIB),
+    ])
+}
+
+fn lock_graph_tree() -> Tree {
+    Tree::of(&[
+        ("Cargo.lock", LOCK_GRAPH_LOCK),
+        ("app/Cargo.lock", LOCK_GRAPH_APP_LOCK),
+        ("app/Cargo.toml", LOCK_GRAPH_APP_MANIFEST),
+        ("app/src/main.rs", LOCK_GRAPH_APP_MAIN),
+        ("crates/alpha_lib/Cargo.toml", LOCK_GRAPH_ALPHA_MANIFEST),
+        ("crates/alpha_lib/src/lib.rs", LOCK_GRAPH_ALPHA_LIB),
+        ("crates/core_lib/Cargo.toml", LOCK_GRAPH_CORE_MANIFEST),
+        ("crates/core_lib/src/lib.rs", LOCK_GRAPH_CORE_LIB),
+        (
+            "crates/formatting_lib/Cargo.toml",
+            LOCK_GRAPH_FORMATTING_MANIFEST,
+        ),
+        (
+            "crates/formatting_lib/src/lib.rs",
+            LOCK_GRAPH_FORMATTING_LIB,
+        ),
     ])
 }
 
@@ -262,6 +351,46 @@ fn cargo_unit_graph_oracle() -> Result<Vec<UnitShape>, String> {
     Ok(shapes)
 }
 
+fn cargo_lock_graph_unit_graph_oracle() -> Result<Vec<UnitShape>, String> {
+    if !Command::new("cargo")
+        .arg("+nightly")
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success())
+    {
+        return Ok(Vec::new());
+    }
+
+    let temp = tempfile::Builder::new()
+        .prefix("vix-cargo-lock-graph-unit-graph-oracle-")
+        .tempdir()
+        .map_err(|err| err.to_string())?;
+    write_lock_graph_fixture(temp.path())?;
+    let manifest = temp.path().join("app/Cargo.toml");
+    let output = Command::new("cargo")
+        .arg("+nightly")
+        .arg("build")
+        .arg("--unit-graph")
+        .arg("-Z")
+        .arg("unstable-options")
+        .arg("--locked")
+        .arg("--manifest-path")
+        .arg(&manifest)
+        .env("CARGO_NET_OFFLINE", "true")
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo lock graph unit graph oracle exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let stdout = String::from_utf8(output.stdout).map_err(|err| err.to_string())?;
+    cargo_unit_shapes_from_json(&stdout)
+}
+
 fn write_fixture(root: &Path) -> Result<(), String> {
     let files: [(PathBuf, &str); 4] = [
         (PathBuf::from("app/Cargo.toml"), APP_MANIFEST),
@@ -277,6 +406,78 @@ fn write_fixture(root: &Path) -> Result<(), String> {
         fs::write(path, contents).map_err(|err| err.to_string())?;
     }
     Ok(())
+}
+
+fn write_lock_graph_fixture(root: &Path) -> Result<(), String> {
+    let files: [(PathBuf, &str); 10] = [
+        (PathBuf::from("Cargo.lock"), LOCK_GRAPH_LOCK),
+        (PathBuf::from("app/Cargo.lock"), LOCK_GRAPH_APP_LOCK),
+        (PathBuf::from("app/Cargo.toml"), LOCK_GRAPH_APP_MANIFEST),
+        (PathBuf::from("app/src/main.rs"), LOCK_GRAPH_APP_MAIN),
+        (
+            PathBuf::from("crates/alpha_lib/Cargo.toml"),
+            LOCK_GRAPH_ALPHA_MANIFEST,
+        ),
+        (
+            PathBuf::from("crates/alpha_lib/src/lib.rs"),
+            LOCK_GRAPH_ALPHA_LIB,
+        ),
+        (
+            PathBuf::from("crates/core_lib/Cargo.toml"),
+            LOCK_GRAPH_CORE_MANIFEST,
+        ),
+        (
+            PathBuf::from("crates/core_lib/src/lib.rs"),
+            LOCK_GRAPH_CORE_LIB,
+        ),
+        (
+            PathBuf::from("crates/formatting_lib/Cargo.toml"),
+            LOCK_GRAPH_FORMATTING_MANIFEST,
+        ),
+        (
+            PathBuf::from("crates/formatting_lib/src/lib.rs"),
+            LOCK_GRAPH_FORMATTING_LIB,
+        ),
+    ];
+    for (relative, contents) in files {
+        let path = root.join(relative);
+        if let Some(parent) = path.parent() {
+            fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+        }
+        fs::write(path, contents).map_err(|err| err.to_string())?;
+    }
+    Ok(())
+}
+
+fn cargo_unit_shapes_from_json(stdout: &str) -> Result<Vec<UnitShape>, String> {
+    let graph: CargoUnitGraph = facet_json::from_str(stdout).map_err(|err| err.to_string())?;
+    let mut shapes = graph
+        .units
+        .iter()
+        .map(|unit| {
+            let dependencies = unit
+                .dependencies
+                .iter()
+                .map(|dep| dep.extern_crate_name.clone())
+                .collect::<BTreeSet<_>>()
+                .into_iter()
+                .collect();
+            Ok(UnitShape {
+                name: unit.target.name.clone(),
+                crate_type: unit
+                    .target
+                    .crate_types
+                    .first()
+                    .cloned()
+                    .ok_or_else(|| format!("missing crate type for {:?}", unit.target))?,
+                edition: unit.target.edition.clone(),
+                source_suffix: source_suffix(&unit.target.src_path)?,
+                dependencies,
+            })
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    shapes.sort();
+    Ok(shapes)
 }
 
 #[derive(Debug, Facet)]
