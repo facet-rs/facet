@@ -205,6 +205,9 @@ pub enum DriveEvent {
     Demanded { fn_hash: u64 },
     /// Served from memo — NO task existed.
     MemoHit { fn_hash: u64 },
+    /// Coarse memo key missed, but all observed projections from a
+    /// prior run verified against the new composite arguments.
+    MemoProjectionHit { fn_hash: u64, verified: usize },
     /// Spawned a task (memo miss).
     Spawned { fn_hash: u64 },
     /// A task parked awaiting another invocation's result.
@@ -451,6 +454,8 @@ struct Execution {
     task: LaneTask,
     fn_ref: usize,
     key: CanonMemoKey,
+    args: Vec<i64>,
+    read_set: ProjectionReadSet,
     ready: Vec<bool>,
     awaited: Vec<i64>,
     /// input slot → the invocation key feeding it (for wiring
@@ -548,8 +553,93 @@ impl LaneTask {
 
 type ContentHash = [u8; 32];
 type CanonMemoKey = (u64, Vec<ContentHash>);
+type ProjectionCandidateKey = (u64, Vec<ProjectionArgKey>);
 #[cfg(test)]
 pub type MapWordRow = (String, i64, String, i64, Option<i64>);
+
+#[derive(Clone, Debug)]
+struct MemoEntry {
+    value: i64,
+    read_set: ProjectionReadSet,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum ProjectionArgKey {
+    Exact(ContentHash),
+    Projectable(String),
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+struct ProjectionReadSet {
+    entries: Vec<ProjectionRead>,
+}
+
+impl ProjectionReadSet {
+    fn record(&mut self, read: ProjectionRead) {
+        if let Some(existing) = self
+            .entries
+            .iter_mut()
+            .find(|entry| entry.arg_index == read.arg_index && entry.path == read.path)
+        {
+            *existing = read;
+        } else {
+            self.entries.push(read);
+        }
+    }
+
+    fn extend(&mut self, other: &ProjectionReadSet) {
+        for read in &other.entries {
+            self.record(read.clone());
+        }
+    }
+
+    fn len(&self) -> usize {
+        self.entries.len()
+    }
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ProjectionRead {
+    arg_index: usize,
+    path: ProjectionPath,
+    observed: ContentHash,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+enum ProjectionPath {
+    Whole {
+        schema: String,
+    },
+    Field {
+        schema: String,
+        field_index: usize,
+    },
+    Tag {
+        schema: String,
+    },
+    MapGet {
+        map_schema: String,
+        key_schema: String,
+        key_hash: ContentHash,
+        value_schema: String,
+    },
+    TreePath {
+        path: String,
+    },
+    DocGet {
+        key: String,
+    },
+    Elf {
+        projection: String,
+    },
+    Ast {
+        projection: String,
+        name: Option<String>,
+    },
+    Oci {
+        projection: String,
+    },
+}
 
 #[derive(Clone, Debug)]
 pub struct StoreEntry {
@@ -1167,7 +1257,8 @@ pub struct Driver {
     fns: Vec<LoweredFn>,
     descriptors: HashMap<String, Descriptor<String>>,
     schema_refs: Vec<String>,
-    memo: HashMap<CanonMemoKey, i64>,
+    memo: HashMap<CanonMemoKey, MemoEntry>,
+    memo_candidates: HashMap<ProjectionCandidateKey, Vec<CanonMemoKey>>,
     journal: BTreeMap<String, i64>,
     exec_cache: crate::exec::ExecCache,
     fetch_backend: Arc<dyn FetchBackend>,
@@ -1216,6 +1307,7 @@ impl Driver {
             descriptors,
             schema_refs: Vec::new(),
             memo: HashMap::new(),
+            memo_candidates: HashMap::new(),
             journal: BTreeMap::new(),
             exec_cache: crate::exec::ExecCache::new(),
             fetch_backend: Arc::new(NoFetchBackend),
@@ -1576,9 +1668,19 @@ impl Driver {
     pub fn demand(&mut self, fn_ref: usize, args: Vec<i64>) -> Result<i64, String> {
         let key = self.memo_key(fn_ref, &args);
         self.emit(DriveEvent::Demanded { fn_hash: key.0 });
-        if let Some(&v) = self.memo.get(&key) {
+        if let Some(entry) = self.memo.get(&key).cloned() {
             self.emit(DriveEvent::MemoHit { fn_hash: key.0 });
-            return Ok(v);
+            return Ok(entry.value);
+        }
+        if let Some(entry) = self.projection_memo_hit(fn_ref, &args, &key)? {
+            let verified = entry.read_set.len();
+            self.memo.insert(key.clone(), entry.clone());
+            self.index_memo_candidate(fn_ref, &args, &key);
+            self.emit(DriveEvent::MemoProjectionHit {
+                fn_hash: key.0,
+                verified,
+            });
+            return Ok(entry.value);
         }
 
         // Waiters: invocation key → executions parked on it (by index
@@ -1597,7 +1699,18 @@ impl Driver {
                 Burst::Done(value) => {
                     let done_key = exec.key.clone();
                     let value = self.canonicalize_return_word(exec.fn_ref, value);
-                    self.memo.insert(done_key.clone(), value);
+                    self.record_whole_arg_if_projectable(
+                        exec.fn_ref,
+                        &exec.args,
+                        value,
+                        &mut exec.read_set,
+                    );
+                    let done_entry = MemoEntry {
+                        value,
+                        read_set: exec.read_set,
+                    };
+                    self.memo.insert(done_key.clone(), done_entry.clone());
+                    self.index_memo_candidate(exec.fn_ref, &exec.args, &done_key);
                     self.emit(DriveEvent::Completed {
                         fn_hash: done_key.0,
                     });
@@ -1610,6 +1723,15 @@ impl Driver {
                                 .expect("parked waiter exists");
                             w.ready[slot] = true;
                             w.awaited[slot] = value;
+                            let remapped = remap_read_set_for_caller(
+                                &self.fns[w.fn_ref].arg_schemas,
+                                &w.args,
+                                &exec.args,
+                                &done_entry.read_set,
+                                &self.store.borrow(),
+                                &self.descriptors,
+                            );
+                            w.read_set.extend(&remapped);
                             runnable.push(waiter_ix);
                         }
                     }
@@ -1627,6 +1749,15 @@ impl Driver {
                     parked_input,
                 } => {
                     for req in exec_requests {
+                        self.record_whole_args_if_projectable(
+                            exec.fn_ref,
+                            &exec.args,
+                            req.parts.iter().filter_map(|part| match part {
+                                CommandRequestPart::Splice(word) => Some(*word),
+                                CommandRequestPart::Token(_) => None,
+                            }),
+                            &mut exec.read_set,
+                        );
                         match self.execute_request(req) {
                             Ok((input_slot, value)) => {
                                 if exec.ready.len() <= input_slot {
@@ -1653,6 +1784,12 @@ impl Driver {
                         }
                     }
                     for req in doc_parse_requests {
+                        self.record_whole_arg_if_projectable(
+                            exec.fn_ref,
+                            &exec.args,
+                            req.input,
+                            &mut exec.read_set,
+                        );
                         match self.doc_parse_request(req) {
                             Ok((input_slot, value)) => {
                                 if exec.ready.len() <= input_slot {
@@ -1666,7 +1803,8 @@ impl Driver {
                         }
                     }
                     for req in project_requests {
-                        match self.project_request(req) {
+                        match self.project_request(req, exec.fn_ref, &exec.args, &mut exec.read_set)
+                        {
                             Ok((input_slot, value)) => {
                                 if exec.ready.len() <= input_slot {
                                     exec.ready.resize(input_slot + 1, false);
@@ -1679,6 +1817,12 @@ impl Driver {
                         }
                     }
                     for req in option_unwraps {
+                        self.record_whole_arg_if_projectable(
+                            exec.fn_ref,
+                            &exec.args,
+                            req.option,
+                            &mut exec.read_set,
+                        );
                         match self.option_unwrap_request(req) {
                             Ok(fills) => {
                                 for (input_slot, value) in fills {
@@ -1695,7 +1839,13 @@ impl Driver {
                     }
                     let mut new_requests = new_requests;
                     for req in pending_coercions {
-                        match self.pending_coercion(req, ix) {
+                        match self.pending_coercion(
+                            req,
+                            ix,
+                            exec.fn_ref,
+                            &exec.args,
+                            &mut exec.read_set,
+                        ) {
                             Ok(PendingForce::Invoke(invoke)) => new_requests.push(invoke),
                             Ok(PendingForce::Ready { input_slot, value }) => {
                                 if exec.ready.len() <= input_slot {
@@ -1721,12 +1871,37 @@ impl Driver {
                             exec.ready.resize(req.input_slot + 1, false);
                             exec.awaited.resize(req.input_slot + 1, 0);
                         }
-                        if let Some(&v) = self.memo.get(&req_key) {
+                        let hit = if let Some(entry) = self.memo.get(&req_key).cloned() {
+                            Some((entry, false))
+                        } else {
+                            self.projection_memo_hit(req.fn_ref, &req.args, &req_key)?
+                                .map(|entry| (entry, true))
+                        };
+                        if let Some((entry, projection_hit)) = hit {
                             // Mechanism 1: memo hit — the slot fills
                             // synchronously, no task exists.
-                            self.emit(DriveEvent::MemoHit { fn_hash: req_key.0 });
+                            if projection_hit {
+                                let verified = entry.read_set.len();
+                                self.memo.insert(req_key.clone(), entry.clone());
+                                self.index_memo_candidate(req.fn_ref, &req.args, &req_key);
+                                self.emit(DriveEvent::MemoProjectionHit {
+                                    fn_hash: req_key.0,
+                                    verified,
+                                });
+                            } else {
+                                self.emit(DriveEvent::MemoHit { fn_hash: req_key.0 });
+                            }
                             exec.ready[req.input_slot] = true;
-                            exec.awaited[req.input_slot] = v;
+                            exec.awaited[req.input_slot] = entry.value;
+                            let remapped = remap_read_set_for_caller(
+                                &self.fns[exec.fn_ref].arg_schemas,
+                                &exec.args,
+                                &req.args,
+                                &entry.read_set,
+                                &self.store.borrow(),
+                                &self.descriptors,
+                            );
+                            exec.read_set.extend(&remapped);
                         } else {
                             exec.feeds.insert(req.input_slot, req_key.clone());
                             let already_running = waiters.contains_key(&req_key)
@@ -1763,7 +1938,7 @@ impl Driver {
 
         self.memo
             .get(&key)
-            .copied()
+            .map(|entry| entry.value)
             .ok_or_else(|| "root invocation did not complete".to_string())
     }
 
@@ -1786,6 +1961,8 @@ impl Driver {
             task,
             fn_ref,
             key,
+            args: args.to_vec(),
+            read_set: ProjectionReadSet::default(),
             ready: Vec::new(),
             awaited: Vec::new(),
             feeds: HashMap::new(),
@@ -1828,6 +2005,9 @@ impl Driver {
             let clock_cell = RefCell::new(&mut self.trace_clock);
             let lowered_fns = &self.fns;
             let store_events = RefCell::new(Vec::new());
+            let projection_reads = RefCell::new(Vec::new());
+            let exec_arg_schemas = lowered_fns[exec.fn_ref].arg_schemas.clone();
+            let exec_args = exec.args.clone();
             let mut invoke = |frame: &mut [u8]| {
                 let word = |i: usize| {
                     i64::from_le_bytes(
@@ -1868,6 +2048,17 @@ impl Driver {
                     frame,
                     store_alloc_region + 32,
                 );
+                let fields = (0..field_count)
+                    .map(|i| read_frame_word(frame, store_alloc_region + 32 + i * 8))
+                    .collect::<Vec<_>>();
+                record_whole_args_if_projectable_static(
+                    &mut projection_reads.borrow_mut(),
+                    &exec_arg_schemas,
+                    &exec_args,
+                    &store_cell.borrow(),
+                    descriptors,
+                    fields,
+                );
                 let (handle, deduped) = store_cell.borrow_mut().alloc(&schema, bytes, descriptors);
                 write_frame_word(frame, dst_slot, handle);
                 let schema_ref = hash_u64(&schema);
@@ -1890,6 +2081,25 @@ impl Driver {
                     .unwrap_or_else(|| panic!("descriptor for schema `{}`", entry.schema));
                 let offset = field_offset(descriptor, &entry.bytes, field_index);
                 let value = read_frame_word(&entry.bytes, offset);
+                let field = field_descriptor(descriptor, &entry.bytes, field_index);
+                let field_schema = descriptor_word_schema(field);
+                let observed = canonical_word_hash_in_store(&store, &field_schema, value);
+                let projection_context = ProjectionRecordContext {
+                    arg_schemas: &exec_arg_schemas,
+                    args: &exec_args,
+                    store: &store,
+                    descriptors,
+                };
+                record_projection_for_matching_args_static(
+                    &mut projection_reads.borrow_mut(),
+                    &projection_context,
+                    handle,
+                    ProjectionPath::Field {
+                        schema: entry.schema.clone(),
+                        field_index,
+                    },
+                    observed,
+                );
                 write_frame_word(frame, dst_slot, value);
             };
 
@@ -1904,6 +2114,22 @@ impl Driver {
                     .get(&entry.schema)
                     .unwrap_or_else(|| panic!("descriptor for schema `{}`", entry.schema));
                 let tag = read_variant_tag(&entry.bytes, descriptor);
+                let observed = canonical_scalar_hash("Int", tag as i64);
+                let projection_context = ProjectionRecordContext {
+                    arg_schemas: &exec_arg_schemas,
+                    args: &exec_args,
+                    store: &store,
+                    descriptors,
+                };
+                record_projection_for_matching_args_static(
+                    &mut projection_reads.borrow_mut(),
+                    &projection_context,
+                    handle,
+                    ProjectionPath::Tag {
+                        schema: entry.schema.clone(),
+                    },
+                    observed,
+                );
                 write_frame_word(
                     frame,
                     dst_slot,
@@ -1970,6 +2196,14 @@ impl Driver {
                         &stored_value_schema,
                         read_frame_word(frame, store_alloc_region + 48),
                     );
+                    record_whole_args_if_projectable_static(
+                        &mut projection_reads.borrow_mut(),
+                        &exec_arg_schemas,
+                        &exec_args,
+                        &store_cell.borrow(),
+                        descriptors,
+                        [map_handle, key_word, value_word],
+                    );
                     let (stored_schema, mut pairs) =
                         store_cell.borrow().map_pairs(map_handle, schema_refs)?;
                     if stored_schema != map_schema {
@@ -2025,6 +2259,32 @@ impl Driver {
                         descriptors,
                         schema_refs,
                     )?;
+                    let observed = store_cell
+                        .borrow()
+                        .entry(handle)
+                        .expect("map_get allocated option")
+                        .content_hash;
+                    let store = store_cell.borrow();
+                    let map_schema = store.entry(map_handle).expect("map handle").schema.clone();
+                    let key_hash = canonical_word_hash_in_store(&store, &key_schema, key_word);
+                    let projection_context = ProjectionRecordContext {
+                        arg_schemas: &exec_arg_schemas,
+                        args: &exec_args,
+                        store: &store,
+                        descriptors,
+                    };
+                    record_projection_for_matching_args_static(
+                        &mut projection_reads.borrow_mut(),
+                        &projection_context,
+                        map_handle,
+                        ProjectionPath::MapGet {
+                            map_schema,
+                            key_schema,
+                            key_hash,
+                            value_schema,
+                        },
+                        observed,
+                    );
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -2050,6 +2310,14 @@ impl Driver {
                     let kind_ref = read_frame_word(frame, primitive_region + 8);
                     let kind = schema_name_for(kind_ref, schema_refs)?;
                     let target = read_frame_word(frame, primitive_region + 16);
+                    record_whole_args_if_projectable_static(
+                        &mut projection_reads.borrow_mut(),
+                        &exec_arg_schemas,
+                        &exec_args,
+                        &store_cell.borrow(),
+                        descriptors,
+                        [target],
+                    );
                     let target_hash = target_hash(store_cell, target)?;
                     let key = format!("acquire:{kind}:{target_hash:x}");
                     let mut journal = journal_cell.borrow_mut();
@@ -2092,7 +2360,15 @@ impl Driver {
                         .map_err(|_| "negative array length".to_string())?;
                     let words = (0..count)
                         .map(|i| read_frame_word(frame, primitive_region + 24 + i * 8))
-                        .collect();
+                        .collect::<Vec<_>>();
+                    record_whole_args_if_projectable_static(
+                        &mut projection_reads.borrow_mut(),
+                        &exec_arg_schemas,
+                        &exec_args,
+                        &store_cell.borrow(),
+                        descriptors,
+                        words.iter().copied(),
+                    );
                     let (handle, _) = store_cell.borrow_mut().alloc_array_words(
                         &elem_schema,
                         words,
@@ -2126,6 +2402,14 @@ impl Driver {
                             return Err("map over pending array is outside slice 4".into());
                         }
                     };
+                    record_whole_args_if_projectable_static(
+                        &mut projection_reads.borrow_mut(),
+                        &exec_arg_schemas,
+                        &exec_args,
+                        &store_cell.borrow(),
+                        descriptors,
+                        [array_handle],
+                    );
                     let pending = words
                         .into_iter()
                         .map(|word| {
@@ -2160,6 +2444,14 @@ impl Driver {
                     let array_handle = read_frame_word(frame, primitive_region + 8);
                     let array_entry =
                         { store_cell.borrow().array_entry(array_handle, schema_refs)? };
+                    record_whole_args_if_projectable_static(
+                        &mut projection_reads.borrow_mut(),
+                        &exec_arg_schemas,
+                        &exec_args,
+                        &store_cell.borrow(),
+                        descriptors,
+                        [array_handle],
+                    );
                     match array_entry {
                         ArrayEntry::Pending(pending) => {
                             let (handle, _) = store_cell.borrow_mut().alloc_tree_merge(pending);
@@ -2310,6 +2602,25 @@ impl Driver {
                         doc,
                         &key,
                     )?;
+                    let observed = store_cell
+                        .borrow()
+                        .entry(handle)
+                        .expect("doc_get allocated option")
+                        .content_hash;
+                    let store = store_cell.borrow();
+                    let projection_context = ProjectionRecordContext {
+                        arg_schemas: &exec_arg_schemas,
+                        args: &exec_args,
+                        store: &store,
+                        descriptors,
+                    };
+                    record_projection_for_matching_args_static(
+                        &mut projection_reads.borrow_mut(),
+                        &projection_context,
+                        doc,
+                        ProjectionPath::DocGet { key },
+                        observed,
+                    );
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -2326,6 +2637,14 @@ impl Driver {
                         read_frame_word(frame, primitive_region + 16),
                         schema_refs,
                     )?;
+                    record_whole_args_if_projectable_static(
+                        &mut projection_reads.borrow_mut(),
+                        &exec_arg_schemas,
+                        &exec_args,
+                        &store_cell.borrow(),
+                        descriptors,
+                        [doc],
+                    );
                     let word = doc_coerce(store_cell, descriptors, doc, &schema)?;
                     write_frame_word(frame, dst_slot, word);
                     Ok(())
@@ -2339,6 +2658,14 @@ impl Driver {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let input = read_frame_word(frame, primitive_region + 8);
+                    record_whole_args_if_projectable_static(
+                        &mut projection_reads.borrow_mut(),
+                        &exec_arg_schemas,
+                        &exec_args,
+                        &store_cell.borrow(),
+                        descriptors,
+                        [input],
+                    );
                     let handle = alloc_elf_doc(store_cell, descriptors, schema_refs, input)?;
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
@@ -2512,6 +2839,14 @@ impl Driver {
                                 return Err("filter over pending array is outside B4".into());
                             }
                         };
+                    record_whole_args_if_projectable_static(
+                        &mut projection_reads.borrow_mut(),
+                        &exec_arg_schemas,
+                        &exec_args,
+                        &store_cell.borrow(),
+                        descriptors,
+                        [array_handle],
+                    );
                     let kept = words
                         .into_iter()
                         .filter_map(|word| {
@@ -2547,6 +2882,14 @@ impl Driver {
                             return Err("glob on pending tree is outside B4".into());
                         }
                     };
+                    record_whole_args_if_projectable_static(
+                        &mut projection_reads.borrow_mut(),
+                        &exec_arg_schemas,
+                        &exec_args,
+                        &store_cell.borrow(),
+                        descriptors,
+                        [tree_handle],
+                    );
                     let mut paths: Vec<String> = tree
                         .entries
                         .keys()
@@ -2607,6 +2950,14 @@ impl Driver {
                     let args = (0..argc)
                         .map(|i| read_frame_word(frame, primitive_region + 32 + i * 8))
                         .collect::<Vec<_>>();
+                    record_whole_args_if_projectable_static(
+                        &mut projection_reads.borrow_mut(),
+                        &exec_arg_schemas,
+                        &exec_args,
+                        &store_cell.borrow(),
+                        descriptors,
+                        args.iter().copied(),
+                    );
                     let invocation = pending_invocation_for(&lowered_fns[fn_ref], store_cell, args);
                     let (handle, _) = store_cell
                         .borrow_mut()
@@ -2684,6 +3035,9 @@ impl Driver {
             for event in store_events.into_inner() {
                 self.emit(event);
             }
+            for read in projection_reads.into_inner() {
+                exec.read_set.record(read);
+            }
             if let Some(err) = host_error.into_inner() {
                 return Burst::Error(err);
             }
@@ -2729,6 +3083,159 @@ impl Driver {
         (lowered.hash, args)
     }
 
+    fn projection_candidate_key(
+        &self,
+        fn_ref: usize,
+        args: &[i64],
+    ) -> Option<ProjectionCandidateKey> {
+        let lowered = &self.fns[fn_ref];
+        let mut saw_projectable = false;
+        let args = args
+            .iter()
+            .zip(&lowered.arg_schemas)
+            .map(|(&word, schema)| {
+                if self.is_projectable_arg(schema, word) {
+                    saw_projectable = true;
+                    ProjectionArgKey::Projectable(schema.clone())
+                } else {
+                    ProjectionArgKey::Exact(self.canonical_word_hash(schema, word))
+                }
+            })
+            .collect();
+        saw_projectable.then_some((lowered.hash, args))
+    }
+
+    fn index_memo_candidate(&mut self, fn_ref: usize, args: &[i64], key: &CanonMemoKey) {
+        if let Some(candidate_key) = self.projection_candidate_key(fn_ref, args) {
+            let candidates = self.memo_candidates.entry(candidate_key).or_default();
+            if !candidates.contains(key) {
+                candidates.push(key.clone());
+            }
+        }
+    }
+
+    fn projection_memo_hit(
+        &self,
+        fn_ref: usize,
+        args: &[i64],
+        key: &CanonMemoKey,
+    ) -> Result<Option<MemoEntry>, String> {
+        let Some(candidate_key) = self.projection_candidate_key(fn_ref, args) else {
+            return Ok(None);
+        };
+        let Some(candidates) = self.memo_candidates.get(&candidate_key) else {
+            return Ok(None);
+        };
+        for candidate in candidates {
+            if candidate == key {
+                continue;
+            }
+            let Some(entry) = self.memo.get(candidate) else {
+                continue;
+            };
+            if self.verify_projection_read_set(args, &entry.read_set)? {
+                return Ok(Some(entry.clone()));
+            }
+        }
+        Ok(None)
+    }
+
+    fn verify_projection_read_set(
+        &self,
+        args: &[i64],
+        read_set: &ProjectionReadSet,
+    ) -> Result<bool, String> {
+        let mut store = self.store.borrow().clone();
+        for read in &read_set.entries {
+            let Some(&arg) = args.get(read.arg_index) else {
+                return Ok(false);
+            };
+            let observed = projection_observation_hash(
+                &mut store,
+                &self.descriptors,
+                &self.schema_refs,
+                arg,
+                &read.path,
+            )?;
+            if observed != read.observed {
+                return Ok(false);
+            }
+        }
+        Ok(true)
+    }
+
+    fn is_projectable_arg(&self, schema: &str, word: i64) -> bool {
+        self.store
+            .borrow()
+            .entry(word)
+            .is_some_and(|entry| entry.schema == schema && self.is_projectable_schema(schema))
+    }
+
+    fn is_projectable_schema(&self, schema: &str) -> bool {
+        schema == "Tree"
+            || schema == "Array"
+            || schema == "Doc"
+            || schema == "Blob"
+            || schema.starts_with("Map<")
+            || pending_value_schema(schema).is_some()
+            || self.descriptors.contains_key(schema)
+    }
+
+    fn record_projection_for_matching_args(
+        &self,
+        fn_ref: usize,
+        args: &[i64],
+        handle: i64,
+        path: ProjectionPath,
+        observed: ContentHash,
+        read_set: &mut ProjectionReadSet,
+    ) {
+        let lowered = &self.fns[fn_ref];
+        for (arg_index, (&arg, schema)) in args.iter().zip(&lowered.arg_schemas).enumerate() {
+            if arg == handle && self.is_projectable_arg(schema, arg) {
+                read_set.record(ProjectionRead {
+                    arg_index,
+                    path: path.clone(),
+                    observed,
+                });
+            }
+        }
+    }
+
+    fn record_whole_arg_if_projectable(
+        &self,
+        fn_ref: usize,
+        args: &[i64],
+        handle: i64,
+        read_set: &mut ProjectionReadSet,
+    ) {
+        let store = self.store.borrow();
+        let lowered = &self.fns[fn_ref];
+        for (arg_index, (&arg, schema)) in args.iter().zip(&lowered.arg_schemas).enumerate() {
+            if arg == handle && self.is_projectable_arg(schema, arg) {
+                read_set.record(ProjectionRead {
+                    arg_index,
+                    path: ProjectionPath::Whole {
+                        schema: schema.clone(),
+                    },
+                    observed: canonical_word_hash_in_store(&store, schema, arg),
+                });
+            }
+        }
+    }
+
+    fn record_whole_args_if_projectable(
+        &self,
+        fn_ref: usize,
+        args: &[i64],
+        handles: impl IntoIterator<Item = i64>,
+        read_set: &mut ProjectionReadSet,
+    ) {
+        for handle in handles {
+            self.record_whole_arg_if_projectable(fn_ref, args, handle, read_set);
+        }
+    }
+
     fn canonical_word_hash(&self, schema: &str, word: i64) -> ContentHash {
         let store = self.store.borrow();
         canonical_word_hash_in_store(&store, schema, word)
@@ -2742,9 +3249,37 @@ impl Driver {
         }
     }
 
-    fn project_request(&mut self, req: ProjectRequest) -> Result<(usize, i64), String> {
+    fn project_request(
+        &mut self,
+        req: ProjectRequest,
+        fn_ref: usize,
+        args: &[i64],
+        read_set: &mut ProjectionReadSet,
+    ) -> Result<(usize, i64), String> {
         let path = self.store.borrow().string_value(req.path, "Path")?;
+        let before = self.store.borrow().tree_entry(req.tree)?;
         let value = self.project_tree_path(req.tree, &path)?;
+        let observed = self
+            .store
+            .borrow()
+            .entry(value)
+            .ok_or_else(|| format!("store handle {value}"))?
+            .content_hash;
+        match before {
+            TreeEntry::Concrete(_) => {
+                self.record_projection_for_matching_args(
+                    fn_ref,
+                    args,
+                    req.tree,
+                    ProjectionPath::TreePath { path },
+                    observed,
+                    read_set,
+                );
+            }
+            TreeEntry::Merge(_) | TreeEntry::Exec(_) => {
+                self.record_whole_arg_if_projectable(fn_ref, args, req.tree, read_set);
+            }
+        }
         Ok((req.input_slot, value))
     }
 
@@ -2820,6 +3355,9 @@ impl Driver {
         &mut self,
         req: PendingCoerceRequest,
         caller: usize,
+        fn_ref: usize,
+        args: &[i64],
+        read_set: &mut ProjectionReadSet,
     ) -> Result<PendingForce, String> {
         let entry_schema = self
             .store
@@ -2841,7 +3379,7 @@ impl Driver {
             ));
         }
         if let Some(primitive) = invocation.primitive {
-            let value = match primitive.kind {
+            let value = match primitive.kind.clone() {
                 PendingPrimitiveKind::Elf(projection) => {
                     self.force_elf_projection(projection, &invocation.args)?
                 }
@@ -2852,6 +3390,48 @@ impl Driver {
                     self.force_oci_projection(projection, &invocation.args)?
                 }
             };
+            if let Some((&input, rest)) = invocation.args.split_first() {
+                let observed = self
+                    .store
+                    .borrow()
+                    .entry(value)
+                    .ok_or_else(|| format!("store handle {value}"))?
+                    .content_hash;
+                let path = match primitive.kind.clone() {
+                    PendingPrimitiveKind::Elf(projection) => ProjectionPath::Elf {
+                        projection: projection.name().to_string(),
+                    },
+                    PendingPrimitiveKind::Ast(projection) => {
+                        let name = if matches!(
+                            projection,
+                            super::ast_probe::Projection::Fn
+                                | super::ast_probe::Projection::FnBodyChildren
+                        ) {
+                            Some(self.store.borrow().string_value(
+                                *rest.first().ok_or_else(|| {
+                                    format!(
+                                        "ast projection {} expected a name argument",
+                                        projection.name()
+                                    )
+                                })?,
+                                "String",
+                            )?)
+                        } else {
+                            None
+                        };
+                        ProjectionPath::Ast {
+                            projection: projection.name().to_string(),
+                            name,
+                        }
+                    }
+                    PendingPrimitiveKind::Oci(projection) => ProjectionPath::Oci {
+                        projection: projection.name().to_string(),
+                    },
+                };
+                self.record_projection_for_matching_args(
+                    fn_ref, args, input, path, observed, read_set,
+                );
+            }
             return Ok(PendingForce::Ready {
                 input_slot: req.input_slot,
                 value,
@@ -5195,6 +5775,503 @@ fn canonical_word_hash_in_store(store: &ValueStore, schema: &str, word: i64) -> 
     hasher.finalize().into()
 }
 
+fn canonical_scalar_hash(schema: &str, word: i64) -> ContentHash {
+    let word = canonicalize_word_for_schema(schema, word);
+    let mut hasher = Sha256::new();
+    hasher.update(b"vix-scalar-word");
+    hasher.update(schema.as_bytes());
+    hasher.update(word.to_le_bytes());
+    hasher.finalize().into()
+}
+
+fn is_projectable_schema_static(
+    schema: &str,
+    descriptors: &HashMap<String, Descriptor<String>>,
+) -> bool {
+    schema == "Tree"
+        || schema == "Array"
+        || schema == "Doc"
+        || schema == "Blob"
+        || schema.starts_with("Map<")
+        || pending_value_schema(schema).is_some()
+        || descriptors.contains_key(schema)
+}
+
+fn is_projectable_arg_static(
+    arg_schema: &str,
+    arg: i64,
+    store: &ValueStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+) -> bool {
+    store.entry(arg).is_some_and(|entry| {
+        entry.schema == arg_schema && is_projectable_schema_static(arg_schema, descriptors)
+    })
+}
+
+struct ProjectionRecordContext<'a> {
+    arg_schemas: &'a [String],
+    args: &'a [i64],
+    store: &'a ValueStore,
+    descriptors: &'a HashMap<String, Descriptor<String>>,
+}
+
+fn record_projection_for_matching_args_static(
+    reads: &mut Vec<ProjectionRead>,
+    context: &ProjectionRecordContext<'_>,
+    handle: i64,
+    path: ProjectionPath,
+    observed: ContentHash,
+) {
+    for (arg_index, (&arg, schema)) in context.args.iter().zip(context.arg_schemas).enumerate() {
+        if arg == handle
+            && is_projectable_arg_static(schema, arg, context.store, context.descriptors)
+        {
+            reads.push(ProjectionRead {
+                arg_index,
+                path: path.clone(),
+                observed,
+            });
+        }
+    }
+}
+
+fn record_whole_args_if_projectable_static(
+    reads: &mut Vec<ProjectionRead>,
+    arg_schemas: &[String],
+    args: &[i64],
+    store: &ValueStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    handles: impl IntoIterator<Item = i64>,
+) {
+    for handle in handles {
+        for (arg_index, (&arg, schema)) in args.iter().zip(arg_schemas).enumerate() {
+            if arg == handle && is_projectable_arg_static(schema, arg, store, descriptors) {
+                reads.push(ProjectionRead {
+                    arg_index,
+                    path: ProjectionPath::Whole {
+                        schema: schema.clone(),
+                    },
+                    observed: canonical_word_hash_in_store(store, schema, arg),
+                });
+            }
+        }
+    }
+}
+
+fn remap_read_set_for_caller(
+    caller_arg_schemas: &[String],
+    caller_args: &[i64],
+    callee_args: &[i64],
+    callee_read_set: &ProjectionReadSet,
+    store: &ValueStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+) -> ProjectionReadSet {
+    let mut remapped = ProjectionReadSet::default();
+    for read in &callee_read_set.entries {
+        let Some(&callee_arg) = callee_args.get(read.arg_index) else {
+            continue;
+        };
+        for (arg_index, (&caller_arg, schema)) in
+            caller_args.iter().zip(caller_arg_schemas).enumerate()
+        {
+            if caller_arg == callee_arg
+                && is_projectable_arg_static(schema, caller_arg, store, descriptors)
+            {
+                remapped.record(ProjectionRead {
+                    arg_index,
+                    path: read.path.clone(),
+                    observed: read.observed,
+                });
+            }
+        }
+    }
+    remapped
+}
+
+fn projection_observation_hash(
+    store: &mut ValueStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    handle: i64,
+    path: &ProjectionPath,
+) -> Result<ContentHash, String> {
+    match path {
+        ProjectionPath::Whole { schema } => Ok(canonical_word_hash_in_store(store, schema, handle)),
+        ProjectionPath::Field {
+            schema,
+            field_index,
+        } => {
+            let entry = store
+                .entry(handle)
+                .ok_or_else(|| format!("store handle {handle}"))?;
+            if &entry.schema != schema {
+                return Err(format!(
+                    "handle {handle} is `{}`, not {schema}",
+                    entry.schema
+                ));
+            }
+            let descriptor = descriptors
+                .get(schema)
+                .ok_or_else(|| format!("descriptor for schema `{schema}`"))?;
+            let field = field_descriptor(descriptor, &entry.bytes, *field_index);
+            let field_schema = descriptor_word_schema(field);
+            let offset = field_offset(descriptor, &entry.bytes, *field_index);
+            let value = read_frame_word(&entry.bytes, offset);
+            Ok(canonical_word_hash_in_store(store, &field_schema, value))
+        }
+        ProjectionPath::Tag { schema } => {
+            let entry = store
+                .entry(handle)
+                .ok_or_else(|| format!("store handle {handle}"))?;
+            if &entry.schema != schema {
+                return Err(format!(
+                    "handle {handle} is `{}`, not {schema}",
+                    entry.schema
+                ));
+            }
+            let descriptor = descriptors
+                .get(schema)
+                .ok_or_else(|| format!("descriptor for schema `{schema}`"))?;
+            Ok(canonical_scalar_hash(
+                "Int",
+                read_variant_tag(&entry.bytes, descriptor) as i64,
+            ))
+        }
+        ProjectionPath::MapGet {
+            map_schema,
+            key_schema,
+            key_hash,
+            value_schema,
+        } => {
+            let entry = store
+                .entry(handle)
+                .ok_or_else(|| format!("store handle {handle}"))?;
+            if &entry.schema != map_schema {
+                return Err(format!(
+                    "handle {handle} is `{}`, not {map_schema}",
+                    entry.schema
+                ));
+            }
+            let (_, pairs) = store.map_pairs(handle, schema_refs)?;
+            for pair in pairs {
+                if pair.key_schema == key_schema.as_str()
+                    && canonical_word_hash_in_store(store, &pair.key_schema, pair.key_word)
+                        == *key_hash
+                {
+                    let (option, _) = if pair.value_schema == value_schema.as_str() {
+                        store.alloc_option_some(
+                            &pair.value_schema,
+                            pair.value_word,
+                            pair.value_realization,
+                            schema_refs,
+                        )?
+                    } else if let Some(inner) = realized_value_schema(value_schema) {
+                        if let Some(realization) = pair.value_realization {
+                            match realization {
+                                Realization::Ready if pair.value_schema == inner => store
+                                    .alloc_option_some(
+                                        value_schema,
+                                        pair.value_word,
+                                        Some(Realization::Ready),
+                                        schema_refs,
+                                    )?,
+                                Realization::Pending
+                                    if pair.value_schema == pending_schema(inner) =>
+                                {
+                                    store.alloc_option_some(
+                                        value_schema,
+                                        pair.value_word,
+                                        Some(Realization::Pending),
+                                        schema_refs,
+                                    )?
+                                }
+                                _ => store.alloc_option_none(value_schema, schema_refs)?,
+                            }
+                        } else if pair.value_schema == inner {
+                            store.alloc_option_some(
+                                value_schema,
+                                pair.value_word,
+                                Some(Realization::Ready),
+                                schema_refs,
+                            )?
+                        } else if pair.value_schema == pending_schema(inner) {
+                            store.alloc_option_some(
+                                value_schema,
+                                pair.value_word,
+                                Some(Realization::Pending),
+                                schema_refs,
+                            )?
+                        } else {
+                            store.alloc_option_none(value_schema, schema_refs)?
+                        }
+                    } else if pair.value_schema == pending_schema(value_schema) {
+                        store.alloc_option_some(
+                            &pair.value_schema,
+                            pair.value_word,
+                            pair.value_realization,
+                            schema_refs,
+                        )?
+                    } else {
+                        store.alloc_option_none(value_schema, schema_refs)?
+                    };
+                    return Ok(store.entry(option).expect("option handle").content_hash);
+                }
+            }
+            let (option, _) = store.alloc_option_none(value_schema, schema_refs)?;
+            Ok(store.entry(option).expect("option handle").content_hash)
+        }
+        ProjectionPath::TreePath { path } => {
+            let TreeEntry::Concrete(tree) = store.tree_entry(handle)? else {
+                return Ok(canonical_word_hash_in_store(store, "Tree", handle));
+            };
+            match subtree(&tree, path) {
+                Ok(projected) => Ok(hash_concrete_tree(&projected)),
+                Err(_) => Ok(canonical_scalar_hash("Missing", 0)),
+            }
+        }
+        ProjectionPath::DocGet { key } => {
+            doc_get_observation_hash(store, descriptors, schema_refs, handle, key)
+        }
+        ProjectionPath::Elf { projection } => {
+            let projection = super::elf::Projection::ALL
+                .into_iter()
+                .find(|candidate| candidate.name() == projection)
+                .ok_or_else(|| format!("unknown elf projection {projection}"))?;
+            let bytes = match store
+                .entry(handle)
+                .ok_or_else(|| format!("store handle {handle}"))?
+                .clone()
+            {
+                StoreEntry {
+                    schema,
+                    bytes,
+                    content_hash: _,
+                } if schema == "Blob" || schema == "String" => bytes,
+                StoreEntry { schema, .. } if schema == "Tree" => {
+                    let TreeEntry::Concrete(tree) = store.tree_entry(handle)? else {
+                        return Ok(canonical_word_hash_in_store(store, "Tree", handle));
+                    };
+                    let count = tree.entries.len() + tree.blobs.len();
+                    if count != 1 {
+                        return Ok(canonical_word_hash_in_store(store, "Tree", handle));
+                    }
+                    tree.entries
+                        .into_values()
+                        .map(|contents| contents.into_bytes())
+                        .chain(tree.blobs.into_values())
+                        .next()
+                        .expect("one tree entry")
+                }
+                StoreEntry { schema, .. } => {
+                    return Err(format!(
+                        "elf input must be Blob, String, or Tree, got {schema}"
+                    ));
+                }
+            };
+            let value = super::elf::project(&bytes, projection)?;
+            let scratch = RefCell::new(store.clone());
+            let handle = alloc_doc_from_value(&scratch, descriptors, schema_refs, value)?;
+            Ok(scratch
+                .borrow()
+                .entry(handle)
+                .expect("elf projection handle")
+                .content_hash)
+        }
+        ProjectionPath::Ast { projection, name } => ast_projection_observation_hash(
+            store,
+            descriptors,
+            schema_refs,
+            handle,
+            projection,
+            name.as_deref(),
+        ),
+        ProjectionPath::Oci { projection } => {
+            let projection = super::oci::Projection::ALL
+                .into_iter()
+                .find(|candidate| candidate.name() == projection)
+                .ok_or_else(|| format!("unknown OCI projection {projection}"))?;
+            let tree = match oci_tree_from_store(store, handle) {
+                Ok(tree) => tree,
+                Err(err)
+                    if store
+                        .entry(handle)
+                        .is_some_and(|entry| entry.schema == "Tree") =>
+                {
+                    let _ = err;
+                    return Ok(canonical_word_hash_in_store(store, "Tree", handle));
+                }
+                Err(err) => return Err(err),
+            };
+            let input_hash = super::oci::input_hash(&tree);
+            let scratch = RefCell::new(store.clone());
+            let projected = if projection == super::oci::Projection::Files {
+                alloc_oci_files_doc(&scratch, descriptors, input_hash, handle)?
+            } else {
+                let layout = super::oci::parse_layout(tree)?;
+                let value = super::oci::project(&layout, projection)?;
+                alloc_doc_from_value(&scratch, descriptors, schema_refs, value)?
+            };
+            Ok(scratch
+                .borrow()
+                .entry(projected)
+                .expect("OCI projection handle")
+                .content_hash)
+        }
+    }
+}
+
+fn doc_get_observation_hash(
+    store: &mut ValueStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    handle: i64,
+    key: &str,
+) -> Result<ContentHash, String> {
+    if let Some(input) = oci_virtual_files_input(store, descriptors, handle)? {
+        let tree = oci_tree_from_store(store, input)?;
+        let layout = super::oci::parse_layout(tree)?;
+        let projected = super::oci::project_file(&layout, key)?;
+        let scratch = RefCell::new(store.clone());
+        let option = if let Some(file) = projected {
+            let doc = alloc_doc_from_value(
+                &scratch,
+                descriptors,
+                schema_refs,
+                Value::Map(BTreeMap::from([
+                    (Value::Str("path".to_string()), Value::Str(key.to_string())),
+                    (
+                        Value::Str("contents".to_string()),
+                        Value::Str(file.contents),
+                    ),
+                    (
+                        Value::Str("layer_digest".to_string()),
+                        Value::Str(file.layer_digest),
+                    ),
+                    (Value::Str("size".to_string()), Value::Int(file.size)),
+                ])),
+            )?;
+            scratch.borrow_mut().alloc_option_some(
+                "Realized<Doc>",
+                doc,
+                Some(Realization::Ready),
+                schema_refs,
+            )?
+        } else {
+            scratch
+                .borrow_mut()
+                .alloc_option_none("Realized<Doc>", schema_refs)?
+        };
+        return Ok(scratch
+            .borrow()
+            .entry(option.0)
+            .expect("virtual doc option handle")
+            .content_hash);
+    }
+
+    let scratch = RefCell::new(store.clone());
+    let (option, _) = doc_get(&scratch, descriptors, schema_refs, handle, key)?;
+    Ok(scratch
+        .borrow()
+        .entry(option)
+        .expect("doc option handle")
+        .content_hash)
+}
+
+fn ast_projection_observation_hash(
+    store: &mut ValueStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    handle: i64,
+    projection: &str,
+    name: Option<&str>,
+) -> Result<ContentHash, String> {
+    let projection = ast_projection_by_name(projection)?;
+    let Some((source, input_hash)) = ast_input_source_for_verify(store, handle)? else {
+        return Ok(canonical_word_hash_in_store(store, "Tree", handle));
+    };
+    let file = super::ast_probe::parse(&source)?;
+    let scratch = RefCell::new(store.clone());
+    let projected = match projection {
+        super::ast_probe::Projection::Items => alloc_doc_from_value(
+            &scratch,
+            descriptors,
+            schema_refs,
+            super::ast_probe::items(&file),
+        )?,
+        super::ast_probe::Projection::Fns => alloc_doc_from_value(
+            &scratch,
+            descriptors,
+            schema_refs,
+            super::ast_probe::fns(&file),
+        )?,
+        super::ast_probe::Projection::Fn => {
+            let name = name.ok_or_else(|| "ast projection fn missing function name".to_string())?;
+            let item = super::ast_probe::fn_item(&file, name)?;
+            alloc_ast_fn_doc(&scratch, descriptors, schema_refs, handle, input_hash, item)?
+        }
+        super::ast_probe::Projection::FnBodyChildren => {
+            let name = name.ok_or_else(|| {
+                "ast projection fn.body.children missing function name".to_string()
+            })?;
+            let item = super::ast_probe::fn_item(&file, name)?;
+            alloc_doc_from_value(
+                &scratch,
+                descriptors,
+                schema_refs,
+                super::ast_probe::fn_body_children(item),
+            )?
+        }
+    };
+    Ok(scratch
+        .borrow()
+        .entry(projected)
+        .expect("AST projection handle")
+        .content_hash)
+}
+
+fn ast_projection_by_name(name: &str) -> Result<super::ast_probe::Projection, String> {
+    Ok(match name {
+        "items" => super::ast_probe::Projection::Items,
+        "fns" => super::ast_probe::Projection::Fns,
+        "fn" => super::ast_probe::Projection::Fn,
+        "fn.body.children" => super::ast_probe::Projection::FnBodyChildren,
+        other => return Err(format!("unknown AST projection {other}")),
+    })
+}
+
+fn ast_input_source_for_verify(
+    store: &ValueStore,
+    handle: i64,
+) -> Result<Option<(String, ContentHash)>, String> {
+    let entry = store
+        .entry(handle)
+        .cloned()
+        .ok_or_else(|| format!("store handle {handle}"))?;
+    match entry.schema.as_str() {
+        "String" => {
+            let source = String::from_utf8(entry.bytes).map_err(|err| err.to_string())?;
+            let mut hasher = Sha256::new();
+            hasher.update(b"vix-ast-input");
+            hasher.update(source.as_bytes());
+            Ok(Some((source, hasher.finalize().into())))
+        }
+        "Tree" => {
+            let TreeEntry::Concrete(tree) = store.tree_entry(handle)? else {
+                return Ok(None);
+            };
+            if tree.entries.len() != 1 || !tree.blobs.is_empty() {
+                return Ok(None);
+            }
+            let source = tree.entries.into_values().next().expect("one source entry");
+            let mut hasher = Sha256::new();
+            hasher.update(b"vix-ast-input");
+            hasher.update(source.as_bytes());
+            Ok(Some((source, hasher.finalize().into())))
+        }
+        other => Err(format!("ast input must be String or Tree, got {other}")),
+    }
+}
+
 fn canonical_map_pairs(
     store: &ValueStore,
     pairs: Vec<MapPair>,
@@ -5970,12 +7047,53 @@ fn field_offset(descriptor: &Descriptor<String>, bytes: &[u8], field_index: usiz
     }
 }
 
+fn field_descriptor<'a>(
+    descriptor: &'a Descriptor<String>,
+    bytes: &[u8],
+    field_index: usize,
+) -> &'a Descriptor<String> {
+    match &descriptor.access {
+        Access::Record(record) => {
+            &record
+                .fields
+                .get(field_index)
+                .unwrap_or_else(|| panic!("field index {field_index}"))
+                .descriptor
+        }
+        Access::Enum(access) => {
+            let selector = read_variant_tag(bytes, descriptor);
+            let variant = access
+                .variants
+                .iter()
+                .find(|variant| variant.selector == selector)
+                .unwrap_or_else(|| panic!("enum selector {selector}"));
+            &variant
+                .payload
+                .fields
+                .get(field_index)
+                .unwrap_or_else(|| panic!("field index {field_index}"))
+                .descriptor
+        }
+        other => panic!("STORE_READ for access {other:?}"),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
     use weavy::mem::Layout;
     use weavy::mem::declared as declared_mem;
     use weavy::task::{ArgCopy, Fn as TaskFn, Op};
+
+    fn seed_memo(driver: &mut Driver, key: CanonMemoKey, value: i64) {
+        driver.memo.insert(
+            key,
+            MemoEntry {
+                value,
+                read_set: ProjectionReadSet::default(),
+            },
+        );
+    }
 
     /// Build the classic: fib(n) = n < 2 ? n : fib(n-1) + fib(n-2),
     /// expressed as vix WOULD lower it — every fib(k) is a MEMO
@@ -6051,8 +7169,8 @@ mod tests {
         // without bodies).
         let zero = driver.memo_key(0, &[0]);
         let one = driver.memo_key(0, &[1]);
-        driver.memo.insert(zero, 0);
-        driver.memo.insert(one, 1);
+        seed_memo(&mut driver, zero, 0);
+        seed_memo(&mut driver, one, 1);
 
         assert_eq!(driver.demand(0, vec![20]).unwrap(), 6765);
 
@@ -6080,8 +7198,8 @@ mod tests {
         let mut driver = Driver::new(program, fns);
         let zero = driver.memo_key(0, &[0]);
         let one = driver.memo_key(0, &[1]);
-        driver.memo.insert(zero, 0);
-        driver.memo.insert(one, 1);
+        seed_memo(&mut driver, zero, 0);
+        seed_memo(&mut driver, one, 1);
         driver.demand(0, vec![15]).unwrap();
         let cold_spawns = driver
             .trace
@@ -6137,8 +7255,8 @@ mod tests {
         let mut driver = Driver::new(program, fns);
         let zero = driver.memo_key(0, &[0]);
         let one = driver.memo_key(0, &[1]);
-        driver.memo.insert(zero, 0);
-        driver.memo.insert(one, 1);
+        seed_memo(&mut driver, zero, 0);
+        seed_memo(&mut driver, one, 1);
         driver.demand(0, vec![5]).unwrap();
         assert!(
             !driver.trace.iter().any(|e| matches!(

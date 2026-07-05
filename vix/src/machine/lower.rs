@@ -5635,6 +5635,387 @@ fn main() -> Float {
     }
 
     #[test]
+    fn record_projection_hit_ignores_untouched_field_and_misses_touched_field() {
+        let src = r#"
+struct BigRecord {
+    wanted: Int,
+    untouched: String
+}
+
+pub fn make(wanted: Int, untouched: String) -> BigRecord {
+    BigRecord { wanted: wanted, untouched: untouched }
+}
+
+pub fn pick(record: BigRecord) -> Int {
+    record.wanted
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let first = machine
+                .call(
+                    "make",
+                    &[
+                        NamedArg {
+                            name: "wanted".to_string(),
+                            value: MachineArg::Int(7),
+                        },
+                        NamedArg {
+                            name: "untouched".to_string(),
+                            value: MachineArg::String("first".to_string()),
+                        },
+                    ],
+                )
+                .unwrap()
+                .0;
+            assert_eq!(
+                machine.demand_i64("pick", vec![first]).unwrap(),
+                7,
+                "{lane:?}"
+            );
+
+            let untouched_changed = machine
+                .call(
+                    "make",
+                    &[
+                        NamedArg {
+                            name: "wanted".to_string(),
+                            value: MachineArg::Int(7),
+                        },
+                        NamedArg {
+                            name: "untouched".to_string(),
+                            value: MachineArg::String("edited".to_string()),
+                        },
+                    ],
+                )
+                .unwrap()
+                .0;
+            machine.clear_trace();
+            assert_eq!(
+                machine.demand_i64("pick", vec![untouched_changed]).unwrap(),
+                7,
+                "{lane:?}"
+            );
+            assert_eq!(spawned_count(&machine, "pick"), 0, "{lane:?}");
+            assert_eq!(memo_projection_hit_count(&machine, "pick"), 1, "{lane:?}");
+            assert_eq!(
+                projection_verified_count(&machine, "pick"),
+                vec![1],
+                "{lane:?}"
+            );
+
+            let touched_changed = machine
+                .call(
+                    "make",
+                    &[
+                        NamedArg {
+                            name: "wanted".to_string(),
+                            value: MachineArg::Int(8),
+                        },
+                        NamedArg {
+                            name: "untouched".to_string(),
+                            value: MachineArg::String("edited".to_string()),
+                        },
+                    ],
+                )
+                .unwrap()
+                .0;
+            machine.clear_trace();
+            assert_eq!(
+                machine.demand_i64("pick", vec![touched_changed]).unwrap(),
+                8,
+                "{lane:?}"
+            );
+            assert_eq!(memo_projection_hit_count(&machine, "pick"), 0, "{lane:?}");
+            assert_eq!(spawned_count(&machine, "pick"), 1, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn map_projection_hit_ignores_untouched_entry_and_misses_touched_entry() {
+        let src = r#"
+pub fn make(wanted: String, untouched: String) -> Map<String, String> {
+    let m: Map<String, String> = {};
+    m.insert("wanted", wanted).insert("untouched", untouched)
+}
+
+pub fn pick(map: Map<String, String>) -> String {
+    map.get("wanted").unwrap()
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let first = machine
+                .call(
+                    "make",
+                    &[
+                        NamedArg {
+                            name: "wanted".to_string(),
+                            value: MachineArg::String("keep".to_string()),
+                        },
+                        NamedArg {
+                            name: "untouched".to_string(),
+                            value: MachineArg::String("first".to_string()),
+                        },
+                    ],
+                )
+                .unwrap()
+                .0;
+            let first_value = machine.demand_i64("pick", vec![first]).unwrap();
+            assert_eq!(
+                machine.driver.raw_string(first_value, "String").unwrap(),
+                "keep",
+                "{lane:?}"
+            );
+
+            let untouched_changed = machine
+                .call(
+                    "make",
+                    &[
+                        NamedArg {
+                            name: "wanted".to_string(),
+                            value: MachineArg::String("keep".to_string()),
+                        },
+                        NamedArg {
+                            name: "untouched".to_string(),
+                            value: MachineArg::String("edited".to_string()),
+                        },
+                    ],
+                )
+                .unwrap()
+                .0;
+            machine.clear_trace();
+            let second_value = machine.demand_i64("pick", vec![untouched_changed]).unwrap();
+            assert_eq!(
+                machine.driver.raw_string(second_value, "String").unwrap(),
+                "keep",
+                "{lane:?}"
+            );
+            assert_eq!(spawned_count(&machine, "pick"), 0, "{lane:?}");
+            assert_eq!(memo_projection_hit_count(&machine, "pick"), 1, "{lane:?}");
+            assert_eq!(
+                projection_verified_count(&machine, "pick"),
+                vec![1],
+                "{lane:?}"
+            );
+
+            let touched_changed = machine
+                .call(
+                    "make",
+                    &[
+                        NamedArg {
+                            name: "wanted".to_string(),
+                            value: MachineArg::String("changed".to_string()),
+                        },
+                        NamedArg {
+                            name: "untouched".to_string(),
+                            value: MachineArg::String("edited".to_string()),
+                        },
+                    ],
+                )
+                .unwrap()
+                .0;
+            machine.clear_trace();
+            let third_value = machine.demand_i64("pick", vec![touched_changed]).unwrap();
+            assert_eq!(
+                machine.driver.raw_string(third_value, "String").unwrap(),
+                "changed",
+                "{lane:?}"
+            );
+            assert_eq!(memo_projection_hit_count(&machine, "pick"), 0, "{lane:?}");
+            assert_eq!(spawned_count(&machine, "pick"), 1, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn is_patron_ruling_uses_only_is_patron_projection() {
+        let src = r#"
+struct Session {
+    is_patron: Bool,
+    profile_note: String
+}
+
+pub fn session(is_patron: Bool, profile_note: String) -> Session {
+    Session { is_patron: is_patron, profile_note: profile_note }
+}
+
+pub fn is_patron(session: Session) -> Bool {
+    session.is_patron
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let first = machine
+                .call(
+                    "session",
+                    &[
+                        NamedArg {
+                            name: "is_patron".to_string(),
+                            value: MachineArg::Bool(true),
+                        },
+                        NamedArg {
+                            name: "profile_note".to_string(),
+                            value: MachineArg::String("old profile".to_string()),
+                        },
+                    ],
+                )
+                .unwrap()
+                .0;
+            assert_eq!(
+                machine.demand_i64("is_patron", vec![first]).unwrap(),
+                1,
+                "{lane:?}"
+            );
+
+            let changed_profile = machine
+                .call(
+                    "session",
+                    &[
+                        NamedArg {
+                            name: "is_patron".to_string(),
+                            value: MachineArg::Bool(true),
+                        },
+                        NamedArg {
+                            name: "profile_note".to_string(),
+                            value: MachineArg::String("new profile".to_string()),
+                        },
+                    ],
+                )
+                .unwrap()
+                .0;
+            machine.clear_trace();
+            assert_eq!(
+                machine
+                    .demand_i64("is_patron", vec![changed_profile])
+                    .unwrap(),
+                1,
+                "{lane:?}"
+            );
+            assert_eq!(spawned_count(&machine, "is_patron"), 0, "{lane:?}");
+            assert_eq!(
+                memo_projection_hit_count(&machine, "is_patron"),
+                1,
+                "{lane:?}"
+            );
+            assert_eq!(
+                projection_verified_count(&machine, "is_patron"),
+                vec![1],
+                "{lane:?}"
+            );
+
+            let changed_patron = machine
+                .call(
+                    "session",
+                    &[
+                        NamedArg {
+                            name: "is_patron".to_string(),
+                            value: MachineArg::Bool(false),
+                        },
+                        NamedArg {
+                            name: "profile_note".to_string(),
+                            value: MachineArg::String("new profile".to_string()),
+                        },
+                    ],
+                )
+                .unwrap()
+                .0;
+            machine.clear_trace();
+            assert_eq!(
+                machine
+                    .demand_i64("is_patron", vec![changed_patron])
+                    .unwrap(),
+                0,
+                "{lane:?}"
+            );
+            assert_eq!(
+                memo_projection_hit_count(&machine, "is_patron"),
+                0,
+                "{lane:?}"
+            );
+            assert_eq!(spawned_count(&machine, "is_patron"), 1, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn projection_read_sets_survive_warm_reload() {
+        let src = r#"
+struct Session {
+    is_patron: Bool,
+    profile_note: String
+}
+
+pub fn session(is_patron: Bool, profile_note: String) -> Session {
+    Session { is_patron: is_patron, profile_note: profile_note }
+}
+
+pub fn is_patron(session: Session) -> Bool {
+    session.is_patron
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let first = machine
+                .call(
+                    "session",
+                    &[
+                        NamedArg {
+                            name: "is_patron".to_string(),
+                            value: MachineArg::Bool(true),
+                        },
+                        NamedArg {
+                            name: "profile_note".to_string(),
+                            value: MachineArg::String("old profile".to_string()),
+                        },
+                    ],
+                )
+                .unwrap()
+                .0;
+            assert_eq!(
+                machine.demand_i64("is_patron", vec![first]).unwrap(),
+                1,
+                "{lane:?}"
+            );
+            let reloaded = src.replace(
+                "pub fn is_patron(session: Session) -> Bool {",
+                "pub fn is_patron(session: Session) -> Bool {\n    // still only reads is_patron",
+            );
+            let diff = machine.reload(&reloaded).unwrap();
+            assert!(diff.changed.is_empty(), "{lane:?}: {diff:?}");
+
+            let changed_profile = machine
+                .call(
+                    "session",
+                    &[
+                        NamedArg {
+                            name: "is_patron".to_string(),
+                            value: MachineArg::Bool(true),
+                        },
+                        NamedArg {
+                            name: "profile_note".to_string(),
+                            value: MachineArg::String("after reload".to_string()),
+                        },
+                    ],
+                )
+                .unwrap()
+                .0;
+            machine.clear_trace();
+            assert_eq!(
+                machine
+                    .demand_i64("is_patron", vec![changed_profile])
+                    .unwrap(),
+                1,
+                "{lane:?}"
+            );
+            assert_eq!(spawned_count(&machine, "is_patron"), 0, "{lane:?}");
+            assert_eq!(
+                memo_projection_hit_count(&machine, "is_patron"),
+                1,
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
     fn option_unwrap_none_is_a_machine_error() {
         let src = r#"
 fn missing() -> Float {
@@ -8312,6 +8693,31 @@ pub fn lazy(n: Int) -> Map<String, Float> {
             .iter()
             .filter(|event| matches!(event, DriveEvent::MemoHit { fn_hash } if *fn_hash == hash))
             .count()
+    }
+
+    fn memo_projection_hit_count(machine: &Machine, name: &str) -> usize {
+        let hash = machine.fn_hash(name).expect("function hash");
+        machine
+            .trace()
+            .iter()
+            .filter(|event| {
+                matches!(event, DriveEvent::MemoProjectionHit { fn_hash, .. } if *fn_hash == hash)
+            })
+            .count()
+    }
+
+    fn projection_verified_count(machine: &Machine, name: &str) -> Vec<usize> {
+        let hash = machine.fn_hash(name).expect("function hash");
+        machine
+            .trace()
+            .iter()
+            .filter_map(|event| match event {
+                DriveEvent::MemoProjectionHit { fn_hash, verified } if *fn_hash == hash => {
+                    Some(*verified)
+                }
+                _ => None,
+            })
+            .collect()
     }
 
     fn host_call_count(machine: &Machine, name: &str, host: u32) -> usize {

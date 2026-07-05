@@ -388,7 +388,7 @@ impl MachineEventAdapter {
 
     fn convert(&mut self, event: &DriveEvent) -> Option<DemandEvent> {
         match event {
-            DriveEvent::MemoHit { fn_hash } => {
+            DriveEvent::MemoHit { fn_hash } | DriveEvent::MemoProjectionHit { fn_hash, .. } => {
                 let func = self.func_name(*fn_hash);
                 Some(DemandEvent::Hit {
                     generation: self.generation,
