@@ -5057,6 +5057,35 @@ pub fn poly(n: Int) -> Int {
         tar(&entries)
     }
 
+    fn two_crate_graph_tree() -> Tree {
+        Tree::of(&[
+            (
+                "app/Cargo.toml",
+                include_str!(
+                    "../../../playgrounds/snark/src/bundled/vix/samples/fixtures/two_crate_graph/app/Cargo.toml"
+                ),
+            ),
+            (
+                "app/src/main.rs",
+                include_str!(
+                    "../../../playgrounds/snark/src/bundled/vix/samples/fixtures/two_crate_graph/app/src/main.rs"
+                ),
+            ),
+            (
+                "crates/helper/Cargo.toml",
+                include_str!(
+                    "../../../playgrounds/snark/src/bundled/vix/samples/fixtures/two_crate_graph/crates/helper/Cargo.toml"
+                ),
+            ),
+            (
+                "crates/helper/src/lib.rs",
+                include_str!(
+                    "../../../playgrounds/snark/src/bundled/vix/samples/fixtures/two_crate_graph/crates/helper/src/lib.rs"
+                ),
+            ),
+        ])
+    }
+
     #[test]
     fn the_scalar_corpus_runs_on_the_machine() {
         for lane in lanes() {
@@ -7015,11 +7044,18 @@ pub fn moved(n: Int) -> Map<String, Float> {
             let entries = machine.tree_entries(built).unwrap();
             assert_eq!(
                 entries.keys().collect::<Vec<_>>(),
-                vec![&"libmini_vendored.rlib".to_string()],
+                vec![
+                    &"libmini_vendored.rlib".to_string(),
+                    &"libmini_vendored.rmeta".to_string()
+                ],
                 "{lane:?}: {entries:?}"
             );
             assert!(
                 entries["libmini_vendored.rlib"].starts_with("rlib("),
+                "{lane:?}: {entries:?}"
+            );
+            assert!(
+                entries["libmini_vendored.rmeta"].starts_with("rmeta("),
                 "{lane:?}: {entries:?}"
             );
 
@@ -7044,11 +7080,11 @@ pub fn moved(n: Int) -> Map<String, Float> {
                         "2021".to_string(),
                         "--crate-type".to_string(),
                         "lib".to_string(),
+                        "--emit=metadata=libmini_vendored.rmeta,link=libmini_vendored.rlib"
+                            .to_string(),
                         "-L".to_string(),
-                        "/m/0".to_string(),
+                        "dependency=/m/0".to_string(),
                         "/m/1/lib.rs".to_string(),
-                        "-o".to_string(),
-                        "libmini_vendored.rlib".to_string(),
                     ][..],
                 )],
                 "{lane:?}: {requested:?}"
@@ -7071,6 +7107,7 @@ pub fn moved(n: Int) -> Map<String, Float> {
                 completed.as_slice(),
                 [("rustc", ExecEvent::Ran, outputs)]
                     if outputs.iter().any(|(path, _)| path == "libmini_vendored.rlib")
+                        && outputs.iter().any(|(path, _)| path == "libmini_vendored.rmeta")
             ));
 
             let crate_hash = machine.fn_hash("crate_lib").expect("crate_lib hash");
@@ -7129,6 +7166,111 @@ pub fn moved(n: Int) -> Map<String, Float> {
                 "{lane:?}: {:?}",
                 machine.trace()
             );
+        }
+    }
+
+    #[test]
+    fn crate_vix_fake_rustc_builds_bin_with_dependency_metadata_and_rlib() {
+        let src = include_str!("../../../playgrounds/snark/src/bundled/vix/samples/crate.vix");
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let target = machine.linux_target_handle();
+            let graph = machine.intern_tree_concrete(two_crate_graph_tree());
+
+            let checked = machine
+                .demand_i64("crate_bin_check", vec![target, graph])
+                .unwrap();
+            let check_entries = machine.tree_entries(checked).unwrap();
+            assert_eq!(
+                check_entries.keys().collect::<Vec<_>>(),
+                vec![&"mini_app.rmeta".to_string()],
+                "{lane:?}: {check_entries:?}"
+            );
+            assert!(
+                check_entries["mini_app.rmeta"].starts_with("rmeta("),
+                "{lane:?}: {check_entries:?}"
+            );
+
+            let built = machine
+                .demand_i64("crate_bin", vec![target, graph])
+                .unwrap();
+            let entries = machine.tree_entries(built).unwrap();
+            assert_eq!(
+                entries.keys().collect::<Vec<_>>(),
+                vec![&"mini_app".to_string()],
+                "{lane:?}: {entries:?}"
+            );
+            assert!(
+                entries["mini_app"].starts_with("bin("),
+                "{lane:?}: {entries:?}"
+            );
+
+            let requested = machine
+                .trace()
+                .iter()
+                .filter_map(|event| match event {
+                    DriveEvent::RunRequested {
+                        command_name, argv, ..
+                    } if command_name == "rustc" => Some(argv.clone()),
+                    _ => None,
+                })
+                .collect::<Vec<_>>();
+            assert_eq!(requested.len(), 4, "{lane:?}: {requested:#?}");
+            assert!(
+                requested[0]
+                    .iter()
+                    .any(|arg| arg == "--emit=metadata=libhelper.rmeta,link=libhelper.rlib"),
+                "{lane:?}: {requested:#?}"
+            );
+            assert!(
+                requested[1]
+                    .iter()
+                    .any(|arg| arg == "--emit=metadata=mini_app.rmeta"),
+                "{lane:?}: {requested:#?}"
+            );
+            assert!(
+                requested[1]
+                    .iter()
+                    .any(|arg| arg.starts_with("helper=/m/") && arg.ends_with("/libhelper.rmeta")),
+                "{lane:?}: {requested:#?}"
+            );
+            assert!(
+                requested[1]
+                    .iter()
+                    .any(|arg| arg.starts_with("dependency=/m/")),
+                "{lane:?}: {requested:#?}"
+            );
+            assert!(
+                requested[2]
+                    .iter()
+                    .any(|arg| arg == "--emit=metadata=libhelper.rmeta,link=libhelper.rlib"),
+                "{lane:?}: {requested:#?}"
+            );
+            assert!(
+                requested[3].iter().any(|arg| arg == "--emit=link=mini_app"),
+                "{lane:?}: {requested:#?}"
+            );
+            assert!(
+                requested[3]
+                    .iter()
+                    .any(|arg| arg.starts_with("helper=/m/") && arg.ends_with("/libhelper.rlib")),
+                "{lane:?}: {requested:#?}"
+            );
+
+            let started = machine
+                .trace()
+                .iter()
+                .filter(|event| {
+                    matches!(
+                        event,
+                        DriveEvent::RunStarted {
+                            command_name,
+                            ..
+                        } if command_name == "rustc"
+                    )
+                })
+                .count();
+            assert_eq!(started, 4, "{lane:?}: {:?}", machine.trace());
         }
     }
 

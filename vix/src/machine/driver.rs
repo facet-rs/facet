@@ -2883,10 +2883,15 @@ impl Driver {
         for part in req.parts {
             match part {
                 CommandRequestPart::Token(handle) => {
-                    argv.push(self.store.borrow().string_value(handle, "String")?);
+                    let token = self.store.borrow().string_value(handle, "String")?;
+                    append_command_token(token, &mut argv)?;
                 }
                 CommandRequestPart::Splice(word) => {
-                    self.splice_word_into_command(word, &mut argv, &mut mounts)?;
+                    let prefer_tree_root =
+                        argv.last().is_some_and(|arg| arg.ends_with("dependency="));
+                    let args =
+                        self.splice_word_to_command_args(word, &mut mounts, prefer_tree_root)?;
+                    append_spliced_command_args(args, &mut argv)?;
                 }
             }
         }
@@ -3112,12 +3117,12 @@ impl Driver {
         Ok(outcome.outputs)
     }
 
-    fn splice_word_into_command(
+    fn splice_word_to_command_args(
         &mut self,
         word: i64,
-        argv: &mut Vec<String>,
         mounts: &mut Vec<crate::exec::Mount>,
-    ) -> Result<(), String> {
+        prefer_tree_root: bool,
+    ) -> Result<Vec<String>, String> {
         let entry = self
             .store
             .borrow()
@@ -3125,17 +3130,19 @@ impl Driver {
             .cloned()
             .ok_or_else(|| format!("cannot splice scalar word {word} into a command"))?;
         match entry.schema.as_str() {
-            "Path" | "String" | "Flag" => {
-                argv.push(String::from_utf8(entry.bytes).map_err(|err| err.to_string())?);
-            }
+            "Path" | "String" | "Flag" => Ok(vec![
+                String::from_utf8(entry.bytes).map_err(|err| err.to_string())?,
+            ]),
             "Array" => match { self.store.borrow().array_entry(word, &self.schema_refs)? } {
                 ArrayEntry::Words { words, .. } => {
+                    let mut args = Vec::new();
                     for word in words {
-                        self.splice_word_into_command(word, argv, mounts)?;
+                        args.extend(self.splice_word_to_command_args(word, mounts, false)?);
                     }
+                    Ok(args)
                 }
                 ArrayEntry::Pending(_) => {
-                    return Err("pending arrays cannot be spliced into commands".into());
+                    Err("pending arrays cannot be spliced into commands".into())
                 }
             },
             "Tree" => {
@@ -3145,7 +3152,7 @@ impl Driver {
                 };
                 let root = format!("/m/{}", mounts.len());
                 let entry_count = tree.entries.len() + tree.blobs.len();
-                let text = if entry_count == 1 {
+                let text = if entry_count == 1 && !prefer_tree_root {
                     let key = tree
                         .entries
                         .keys()
@@ -3157,11 +3164,10 @@ impl Driver {
                     root.clone()
                 };
                 mounts.push(crate::exec::Mount { at: root, tree });
-                argv.push(text);
+                Ok(vec![text])
             }
-            other => return Err(format!("cannot splice {other} into a command")),
+            other => Err(format!("cannot splice {other} into a command")),
         }
-        Ok(())
     }
 
     fn fetch_request(&mut self, req: FetchRequest) -> Result<(usize, i64), String> {
@@ -5656,6 +5662,31 @@ fn cap_schema(command: &str) -> String {
         _ => "Cc",
     }
     .to_string()
+}
+
+fn append_command_token(token: String, argv: &mut Vec<String>) -> Result<(), String> {
+    if token.starts_with(',') {
+        let previous = argv
+            .last_mut()
+            .ok_or_else(|| format!("command affix `{token}` has no previous argument"))?;
+        previous.push_str(&token);
+        return Ok(());
+    }
+    argv.push(token);
+    Ok(())
+}
+
+fn append_spliced_command_args(args: Vec<String>, argv: &mut Vec<String>) -> Result<(), String> {
+    if argv.last().is_some_and(|arg| arg.ends_with('=')) {
+        if args.len() != 1 {
+            return Err("command affix splice must produce exactly one argument".into());
+        }
+        let previous = argv.last_mut().expect("checked");
+        previous.push_str(&args[0]);
+        return Ok(());
+    }
+    argv.extend(args);
+    Ok(())
 }
 
 fn capability_hash(command: &str, fingerprint: &str) -> u64 {

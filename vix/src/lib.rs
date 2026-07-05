@@ -358,9 +358,14 @@ pub mod support {
                 for arg in argv {
                     let role = match prev {
                         Some("-o") => Role::Output,
-                        Some("-L") => Role::SearchDir,
+                        Some("-L") if arg.contains("/m/") => Role::SearchDirFlag,
+                        Some("-L") => Role::Flag,
+                        Some("--extern") if arg.contains("/m/") => Role::InputFlag,
+                        Some("--extern") => Role::Flag,
                         _ if arg.starts_with("/m/") => Role::Input,
-                        _ if arg.starts_with("-L") && arg.contains("/m/") => Role::SearchDir,
+                        _ if arg.starts_with("--emit=") && arg.contains('=') => Role::OutputFlag,
+                        _ if arg.starts_with("-L") && arg.contains("/m/") => Role::SearchDirFlag,
+                        _ if arg.starts_with("--extern") && arg.contains("/m/") => Role::InputFlag,
                         _ => Role::Flag,
                     };
                     out.push((arg.clone(), role));

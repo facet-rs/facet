@@ -135,13 +135,73 @@ pub struct Mount {
 pub enum Role {
     /// A path the tool will read.
     Input,
+    /// An argv element that contains a path the tool will read.
+    InputFlag,
     /// A path the tool will write.
     Output,
+    /// An argv element that contains one or more paths the tool will write.
+    OutputFlag,
     /// A directory the tool will PROBE (search paths — the negative-lookup
     /// factory).
     SearchDir,
+    /// An argv element that contains a directory the tool will probe.
+    SearchDirFlag,
     /// Behavior-changing but not path-shaped.
     Flag,
+}
+
+pub fn role_input_paths(arg: &str, role: Role) -> Vec<String> {
+    match role {
+        Role::Input => vec![arg.to_string()],
+        Role::InputFlag => embedded_path_after_equals(arg).into_iter().collect(),
+        _ => Vec::new(),
+    }
+}
+
+pub fn role_output_paths(arg: &str, role: Role) -> Vec<String> {
+    match role {
+        Role::Output => vec![arg.to_string()],
+        Role::OutputFlag => rustc_emit_output_paths(arg),
+        _ => Vec::new(),
+    }
+}
+
+pub fn role_search_dir_paths(arg: &str, role: Role) -> Vec<String> {
+    match role {
+        Role::SearchDir => vec![arg.to_string()],
+        Role::SearchDirFlag => embedded_path_after_equals(arg).into_iter().collect(),
+        _ => Vec::new(),
+    }
+}
+
+pub fn role_embedded_paths(arg: &str, role: Role) -> Vec<String> {
+    let mut paths = role_input_paths(arg, role);
+    paths.extend(role_output_paths(arg, role));
+    paths.extend(role_search_dir_paths(arg, role));
+    paths
+}
+
+fn embedded_path_after_equals(arg: &str) -> Option<String> {
+    arg.rsplit_once('=')
+        .map(|(_, path)| path)
+        .filter(|path| !path.is_empty())
+        .map(str::to_string)
+}
+
+fn rustc_emit_output_paths(arg: &str) -> Vec<String> {
+    let Some(spec) = arg.strip_prefix("--emit=") else {
+        return Vec::new();
+    };
+    spec.split(',')
+        .filter_map(|entry| {
+            let mut parts = entry.splitn(2, '=');
+            let _kind = parts.next()?;
+            parts
+                .next()
+                .filter(|path| !path.is_empty())
+                .map(str::to_string)
+        })
+        .collect()
 }
 
 /// A resolved command: argv with roles. This is what a `cc! { … }` block
@@ -213,16 +273,17 @@ impl ExecPlan {
 /// derive this from salience queries over the parsed invocation.
 pub fn describe(command: &str, plan: &ExecPlan) -> Vec<String> {
     let base = |p: &str| p.rsplit('/').next().unwrap_or(p).to_string();
-    let output = plan
-        .argv
-        .iter()
-        .find(|(_, r)| *r == Role::Output)
-        .map(|(a, _)| base(a));
+    let output = plan.argv.iter().find_map(|(a, r)| {
+        role_output_paths(a, *r)
+            .into_iter()
+            .next()
+            .map(|path| base(&path))
+    });
     let inputs: Vec<String> = plan
         .argv
         .iter()
-        .filter(|(_, r)| *r == Role::Input)
-        .map(|(a, _)| base(a))
+        .flat_map(|(a, r)| role_input_paths(a, *r))
+        .map(|path| base(&path))
         .collect();
     let flags: Vec<&str> = plan
         .argv
@@ -233,8 +294,7 @@ pub fn describe(command: &str, plan: &ExecPlan) -> Vec<String> {
     let search: Vec<String> = plan
         .argv
         .iter()
-        .filter(|(_, r)| *r == Role::SearchDir)
-        .map(|(a, _)| a.clone())
+        .flat_map(|(a, r)| role_search_dir_paths(a, *r))
         .collect();
 
     let level0 = match command {
@@ -627,17 +687,15 @@ pub struct FakeCc;
 
 impl Tool for FakeCc {
     fn run(&self, plan: &ExecPlan, world: &mut ObservedWorld<'_>) -> Result<Tree, String> {
-        let search_dirs: Vec<&str> = plan
+        let search_dirs: Vec<String> = plan
             .argv
             .iter()
-            .filter(|(_, r)| *r == Role::SearchDir)
-            .map(|(a, _)| a.as_str())
+            .flat_map(|(a, r)| role_search_dir_paths(a, *r))
             .collect();
         let output = plan
             .argv
             .iter()
-            .find(|(_, r)| *r == Role::Output)
-            .map(|(a, _)| a.clone())
+            .find_map(|(a, r)| role_output_paths(a, *r).into_iter().next())
             .ok_or("cc: no output")?;
 
         let mut digest = DefaultHasher::new();
@@ -646,9 +704,13 @@ impl Tool for FakeCc {
                 arg.hash(&mut digest);
             }
         }
-        for (input, _) in plan.argv.iter().filter(|(_, r)| *r == Role::Input) {
+        for input in plan
+            .argv
+            .iter()
+            .flat_map(|(arg, role)| role_input_paths(arg, *role))
+        {
             let source = world
-                .read(input)
+                .read(&input)
                 .ok_or_else(|| format!("cc: cannot read `{input}` (outside the mounts?)"))?;
             source.hash(&mut digest);
             // Quoted includes probe the including file's own directory FIRST
@@ -693,12 +755,14 @@ pub struct FakeRustc;
 
 impl Tool for FakeRustc {
     fn run(&self, plan: &ExecPlan, world: &mut ObservedWorld<'_>) -> Result<Tree, String> {
-        let output = plan
+        let outputs: Vec<String> = plan
             .argv
             .iter()
-            .find(|(_, role)| *role == Role::Output)
-            .map(|(arg, _)| arg.clone())
-            .ok_or("rustc: no output")?;
+            .flat_map(|(arg, role)| role_output_paths(arg, *role))
+            .collect();
+        if outputs.is_empty() {
+            return Err("rustc: no output".into());
+        }
         let mut digest = DefaultHasher::new();
         let mut crate_type = "lib";
         for (index, (arg, role)) in plan.argv.iter().enumerate() {
@@ -709,24 +773,35 @@ impl Tool for FakeRustc {
                         crate_type = arg;
                     }
                 }
-                Role::SearchDir => {
+                Role::SearchDir | Role::SearchDirFlag => {
                     arg.hash(&mut digest);
                 }
-                Role::Output => {}
-                Role::Input => {
-                    let source = world.read(arg).ok_or_else(|| {
-                        format!("rustc: cannot read `{arg}` (outside the mounts?)")
-                    })?;
-                    source.hash(&mut digest);
+                Role::Output | Role::OutputFlag => {}
+                Role::Input | Role::InputFlag => {
+                    for input in role_input_paths(arg, *role) {
+                        let source = world.read(&input).ok_or_else(|| {
+                            format!("rustc: cannot read `{input}` (outside the mounts?)")
+                        })?;
+                        source.hash(&mut digest);
+                    }
                 }
             }
         }
 
-        let kind = if crate_type == "bin" { "bin" } else { "rlib" };
-        Ok(Tree::of(&[(
-            output.as_str(),
-            &format!("{kind}({:016x})", digest.finish()),
-        )]))
+        let digest = digest.finish();
+        let mut tree = Tree::default();
+        for output in outputs {
+            let kind = if output.ends_with(".rmeta") {
+                "rmeta"
+            } else if crate_type == "bin" {
+                "bin"
+            } else {
+                "rlib"
+            };
+            tree.entries
+                .insert(output, format!("{kind}({digest:016x})"));
+        }
+        Ok(tree)
     }
 }
 
@@ -739,8 +814,7 @@ impl Tool for FakeAr {
         let output = plan
             .argv
             .iter()
-            .find(|(_, r)| *r == Role::Output)
-            .map(|(a, _)| a.clone())
+            .find_map(|(a, r)| role_output_paths(a, *r).into_iter().next())
             .ok_or("ar: no output")?;
         let mut digest = DefaultHasher::new();
         for (arg, role) in &plan.argv {
@@ -748,15 +822,19 @@ impl Tool for FakeAr {
                 arg.hash(&mut digest);
             }
         }
-        for (input, _) in plan.argv.iter().filter(|(_, r)| *r == Role::Input) {
-            if let Some(contents) = world.read(input) {
+        for input in plan
+            .argv
+            .iter()
+            .flat_map(|(arg, role)| role_input_paths(arg, *role))
+        {
+            if let Some(contents) = world.read(&input) {
                 contents.hash(&mut digest);
                 continue;
             }
             // A directory input: enumerate it (a LISTING observation — new
             // members will diverge the pin) and archive every file.
             let names = world
-                .list(input)
+                .list(&input)
                 .ok_or_else(|| format!("ar: cannot read `{input}` (outside the mounts?)"))?;
             for name in names {
                 let contents = world
