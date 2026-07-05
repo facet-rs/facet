@@ -2498,11 +2498,27 @@ impl Driver {
                 let mut handle = read_frame_word(frame, store_read_region + 8);
                 let field_index = read_frame_word(frame, store_read_region + 16) as usize;
                 if flesh_index(handle).is_some() {
+                    let local_read = {
+                        let flesh = flesh_cell.borrow();
+                        flesh.entry(handle).and_then(|entry| match &entry.value {
+                            FleshValue::Record { schema, bytes } => {
+                                let descriptor = descriptors
+                                    .get(schema)
+                                    .unwrap_or_else(|| panic!("descriptor for schema `{schema}`"));
+                                let offset = field_offset(descriptor, bytes, field_index);
+                                Some(read_frame_word(bytes, offset))
+                            }
+                            _ => None,
+                        })
+                    };
+                    if let Some(value) = local_read {
+                        write_frame_word(frame, dst_slot, value);
+                        return;
+                    }
                     let schema = flesh_cell
                         .borrow()
                         .entry(handle)
                         .and_then(|entry| match &entry.value {
-                            FleshValue::Record { schema, .. } => Some(schema.clone()),
                             FleshValue::Interned(handle) => store_cell
                                 .borrow()
                                 .entry(*handle)
@@ -2560,11 +2576,30 @@ impl Driver {
                 let dst_slot = read_frame_word(frame, store_tag_region) as usize;
                 let mut handle = read_frame_word(frame, store_tag_region + 8);
                 if flesh_index(handle).is_some() {
+                    let local_tag = {
+                        let flesh = flesh_cell.borrow();
+                        flesh.entry(handle).and_then(|entry| match &entry.value {
+                            FleshValue::Record { schema, bytes } => {
+                                let descriptor = descriptors
+                                    .get(schema)
+                                    .unwrap_or_else(|| panic!("descriptor for schema `{schema}`"));
+                                Some(read_variant_tag(bytes, descriptor))
+                            }
+                            _ => None,
+                        })
+                    };
+                    if let Some(tag) = local_tag {
+                        write_frame_word(
+                            frame,
+                            dst_slot,
+                            i64::try_from(tag).expect("variant tag fits i64"),
+                        );
+                        return;
+                    }
                     let schema = flesh_cell
                         .borrow()
                         .entry(handle)
                         .and_then(|entry| match &entry.value {
-                            FleshValue::Record { schema, .. } => Some(schema.clone()),
                             FleshValue::Interned(handle) => store_cell
                                 .borrow()
                                 .entry(*handle)
@@ -9475,6 +9510,12 @@ mod tests {
             Op::ConstI64 { dst: 32, value: 21 },
             Op::HostCall {
                 host: STORE_ALLOC_HOST,
+            },
+            Op::ConstI64 { dst: 0, value: 96 },
+            Op::CopyI64 { dst: 8, src: 96 },
+            Op::ConstI64 { dst: 16, value: 0 },
+            Op::HostCall {
+                host: FLESH_INTERN_HOST,
             },
             // read the tag into 104 and payload field 0 into 112.
             Op::ConstI64 {
