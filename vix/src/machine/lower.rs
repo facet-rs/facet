@@ -7368,6 +7368,38 @@ pub fn main(target: Target) -> Tree {
     }
 
     #[test]
+    fn machine_exec_mount_ceiling_errors_outside_declared_mounts() {
+        let src = r#"
+use vix::Target;
+use caps::Cc;
+
+pub fn bad(target: Target) -> Tree {
+    let cc = Cc::acquire(target);
+    cc! { -c {p"/m/unmounted/ghost.c"} -o {p"ghost.o"} }
+}
+"#;
+        let mut traces = Vec::new();
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let target = machine.linux_target_handle();
+            let handle = machine.demand_i64("bad", vec![target]).unwrap();
+            let err = machine
+                .tree_entries(handle)
+                .expect_err("undeclared input path is outside the mount ceiling");
+            assert!(err.contains("outside the mounts"), "{lane:?}: {err}");
+            assert_eq!(run_requested_count(&machine), 1, "{lane:?}");
+            assert_eq!(
+                started_outputs(&machine),
+                output_set(&["ghost.o"]),
+                "{lane:?}"
+            );
+            assert_eq!(completed_outputs(&machine), Vec::<u64>::new(), "{lane:?}");
+            traces.push((lane, machine.trace().to_vec()));
+        }
+        assert_lane_traces_equal(&traces);
+    }
+
+    #[test]
     fn unused_command_binding_emits_no_exec_ops_or_runs() {
         let src = r#"
 use vix::Target;
