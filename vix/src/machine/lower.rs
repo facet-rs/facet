@@ -5741,15 +5741,18 @@ fn max_store_field_count(block: &ast::Block) -> usize {
 
 #[cfg(test)]
 mod tests {
-    use super::super::driver::StepCommand;
+    use super::super::driver::{
+        MachineExecBackend, MachineExecRequest, MachinePathDemand, MachinePendingRun, StepCommand,
+    };
     use super::*;
-    use crate::exec::{ExecEvent, Tree};
+    use crate::exec::{ExecEvent, Outcome, ReadSet, Tree};
     use crate::fetch::FakeFetchBackend;
     use sha2::{Digest, Sha256};
     use std::cell::RefCell;
     use std::collections::BTreeMap;
     use std::hash::{DefaultHasher, Hash, Hasher};
     use std::rc::Rc;
+    use std::sync::Arc;
 
     const CORPUS: &str = r#"
 fn square(x: Int) -> Int { x * x }
@@ -5773,6 +5776,44 @@ pub fn poly(n: Int) -> Int {
         Machine::load_with_lane(source, lane).unwrap_or_else(|err| {
             panic!("loads on {lane:?}: {err}");
         })
+    }
+
+    #[derive(Default)]
+    struct DeferredExecBackend;
+
+    impl MachineExecBackend for DeferredExecBackend {
+        fn spawn(&self, request: MachineExecRequest) -> Result<Arc<dyn MachinePendingRun>, String> {
+            Ok(Arc::new(DeferredRun { request }))
+        }
+    }
+
+    struct DeferredRun {
+        request: MachineExecRequest,
+    }
+
+    impl MachinePendingRun for DeferredRun {
+        fn demand_path(&self, path: &str) -> Result<MachinePathDemand, String> {
+            Ok(MachinePathDemand::FinishRequired {
+                path: path.to_string(),
+            })
+        }
+
+        fn flush(&self) -> Result<(Outcome, ExecEvent), String> {
+            let mut tree = Tree::default();
+            tree.entries.insert(
+                self.request.output.clone(),
+                format!("deferred({})", self.request.output),
+            );
+            Ok((
+                Outcome {
+                    outputs: tree,
+                    read_set: ReadSet {
+                        entries: BTreeMap::new(),
+                    },
+                },
+                ExecEvent::Ran,
+            ))
+        }
     }
 
     fn load_modules_with_lane(
@@ -9796,6 +9837,23 @@ pub fn lazy(n: Int) -> Map<String, Float> {
         })
     }
 
+    fn has_two_starts_before_any_completion(machine: &Machine) -> bool {
+        let mut starts = 0usize;
+        for event in machine.trace() {
+            match event {
+                DriveEvent::RunStarted { .. } => {
+                    starts += 1;
+                    if starts >= 2 {
+                        return true;
+                    }
+                }
+                DriveEvent::RunCompleted { .. } => return false,
+                _ => {}
+            }
+        }
+        false
+    }
+
     fn output_set(paths: &[&str]) -> Vec<u64> {
         let mut values: Vec<u64> = paths.iter().map(|path| trace_hash(path)).collect();
         values.sort();
@@ -9807,6 +9865,43 @@ pub fn lazy(n: Int) -> Map<String, Float> {
             include_str!("../../../playgrounds/snark/src/bundled/vix/samples/merge-demand.vix"),
             lane,
         )
+    }
+
+    #[test]
+    fn async_backend_merge_starts_sibling_runs_before_joining_any() {
+        let src = r#"
+use vix::{Tree, Path, Target};
+use caps::Cc;
+
+fn object(cc: Cc, unit: Path) -> Tree {
+    cc! { -o {unit.with_ext("o")} }
+}
+
+pub fn both(target: Target) -> Tree {
+    let cc = Cc::acquire(target);
+    let units = [p"a.c", p"b.c"];
+    units.map(|u| object(cc, u)).collect()
+}
+"#;
+        for lane in lanes() {
+            let backend = Arc::new(DeferredExecBackend);
+            let mut machine = Machine::load_with_lane(src, lane)
+                .unwrap_or_else(|err| panic!("loads on {lane:?}: {err}"))
+                .with_exec_backend(backend);
+            let target = machine.linux_target_handle();
+            let handle = machine.demand_i64("both", vec![target]).unwrap();
+            let entries = machine.tree_entries(handle).unwrap();
+            assert_eq!(
+                entries.keys().cloned().collect::<Vec<_>>(),
+                vec!["a.o".to_string(), "b.o".to_string()],
+                "{lane:?}: {entries:?}"
+            );
+            assert!(
+                has_two_starts_before_any_completion(&machine),
+                "{lane:?}: {:?}",
+                machine.trace()
+            );
+        }
     }
 
     #[test]
