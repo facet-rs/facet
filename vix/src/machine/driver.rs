@@ -152,6 +152,12 @@ pub const SEALED_DECLASSIFY_HOST: u32 = 39;
 pub const SEALED_TO_STRING_HOST: u32 = 40;
 pub const VERSION_SET_PARSE_HOST: u32 = 41;
 pub const VERSION_SET_OP_HOST: u32 = 42;
+pub const FLESH_INTERN_HOST: u32 = 43;
+pub const ARRAY_PUSH_HOST: u32 = 44;
+pub const ARRAY_POP_HOST: u32 = 45;
+pub const ARRAY_SET_HOST: u32 = 46;
+pub const FLESH_DUP_HOST: u32 = 47;
+pub const RECORD_UPDATE_HOST: u32 = 48;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -492,6 +498,7 @@ struct Execution {
     fn_ref: usize,
     key: CanonMemoKey,
     args: Vec<i64>,
+    flesh: FleshStore,
     read_set: ProjectionReadSet,
     ready: Vec<bool>,
     awaited: Vec<i64>,
@@ -785,6 +792,75 @@ enum ArrayEntry {
         words: Vec<i64>,
     },
     Pending(Vec<i64>),
+}
+
+#[derive(Clone, Debug, Default)]
+struct FleshStore {
+    entries: Vec<FleshEntry>,
+}
+
+#[derive(Clone, Debug)]
+struct FleshEntry {
+    refs: usize,
+    value: FleshValue,
+}
+
+#[derive(Clone, Debug)]
+enum FleshValue {
+    Record {
+        schema: String,
+        bytes: Vec<u8>,
+    },
+    Map {
+        schema: String,
+        pairs: Vec<MapPair>,
+    },
+    ArrayWords {
+        elem_schema: String,
+        words: Vec<i64>,
+    },
+    Interned(i64),
+}
+
+impl FleshStore {
+    fn alloc(&mut self, value: FleshValue) -> i64 {
+        let index = self.entries.len();
+        self.entries.push(FleshEntry { refs: 1, value });
+        flesh_word(index)
+    }
+
+    fn entry(&self, word: i64) -> Option<&FleshEntry> {
+        flesh_index(word).and_then(|index| self.entries.get(index))
+    }
+
+    fn entry_mut(&mut self, word: i64) -> Option<&mut FleshEntry> {
+        flesh_index(word).and_then(|index| self.entries.get_mut(index))
+    }
+
+    fn array_entry(
+        &self,
+        store: &ValueStore,
+        handle: i64,
+        schema_refs: &[String],
+    ) -> Result<ArrayEntry, String> {
+        match self.entry(handle).map(|entry| &entry.value) {
+            Some(FleshValue::ArrayWords { elem_schema, words }) => Ok(ArrayEntry::Words {
+                elem_schema: elem_schema.clone(),
+                words: words.clone(),
+            }),
+            Some(FleshValue::Interned(handle)) => store.array_entry(*handle, schema_refs),
+            Some(_) => Err(format!("flesh handle {handle} is not an Array")),
+            None => store.array_entry(handle, schema_refs),
+        }
+    }
+}
+
+fn flesh_word(index: usize) -> i64 {
+    -1 - i64::try_from(index).expect("flesh handle fits i64")
+}
+
+fn flesh_index(word: i64) -> Option<usize> {
+    (word < 0).then(|| usize::try_from(-1 - word).expect("flesh handle index"))
 }
 
 #[derive(Clone, Debug)]
@@ -1345,6 +1421,143 @@ impl ValueStore {
     }
 }
 
+fn intern_flesh_word(
+    store: &mut ValueStore,
+    flesh: &mut FleshStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    schema: &str,
+    word: i64,
+) -> Result<(i64, bool), String> {
+    let Some(index) = flesh_index(word) else {
+        return Ok((word, true));
+    };
+    let value = flesh
+        .entries
+        .get(index)
+        .ok_or_else(|| format!("flesh handle {word}"))?
+        .value
+        .clone();
+    if let FleshValue::Interned(handle) = value {
+        return Ok((handle, true));
+    }
+    let (handle, deduped) = match value {
+        FleshValue::Record {
+            schema: record_schema,
+            mut bytes,
+        } => {
+            if record_schema != schema {
+                return Err(format!("flesh record is `{record_schema}`, not {schema}"));
+            }
+            intern_value_bytes_children(
+                store,
+                flesh,
+                descriptors,
+                schema_refs,
+                &record_schema,
+                &mut bytes,
+            )?;
+            store.alloc(&record_schema, bytes, descriptors)
+        }
+        FleshValue::Map {
+            schema: map_schema,
+            mut pairs,
+        } => {
+            if map_schema != schema && !map_schema_is_realized_projection(schema, &map_schema) {
+                return Err(format!("flesh map is `{map_schema}`, not {schema}"));
+            }
+            for pair in &mut pairs {
+                pair.key_word = intern_flesh_word(
+                    store,
+                    flesh,
+                    descriptors,
+                    schema_refs,
+                    &pair.key_schema,
+                    pair.key_word,
+                )?
+                .0;
+                pair.value_word = intern_flesh_word(
+                    store,
+                    flesh,
+                    descriptors,
+                    schema_refs,
+                    &pair.value_schema,
+                    pair.value_word,
+                )?
+                .0;
+            }
+            store.alloc_map(&map_schema, pairs, schema_refs, descriptors)?
+        }
+        FleshValue::ArrayWords {
+            elem_schema,
+            mut words,
+        } => {
+            if schema != "Array" {
+                return Err(format!("flesh array cannot intern as {schema}"));
+            }
+            for word in &mut words {
+                *word =
+                    intern_flesh_word(store, flesh, descriptors, schema_refs, &elem_schema, *word)?
+                        .0;
+            }
+            store.alloc_array_words(&elem_schema, words, schema_refs)?
+        }
+        FleshValue::Interned(_) => unreachable!("handled above"),
+    };
+    flesh.entries[index].value = FleshValue::Interned(handle);
+    Ok((handle, deduped))
+}
+
+fn map_schema_is_realized_projection(expected: &str, actual: &str) -> bool {
+    let Some((expected_key, expected_value)) = map_schemas(expected) else {
+        return false;
+    };
+    let Some((actual_key, actual_value)) = map_schemas(actual) else {
+        return false;
+    };
+    expected_key == actual_key && realized_value_schema(actual_value) == Some(expected_value)
+}
+
+fn intern_value_bytes_children(
+    store: &mut ValueStore,
+    flesh: &mut FleshStore,
+    descriptors: &HashMap<String, Descriptor<String>>,
+    schema_refs: &[String],
+    schema: &str,
+    bytes: &mut [u8],
+) -> Result<(), String> {
+    let descriptor = descriptors
+        .get(schema)
+        .ok_or_else(|| format!("descriptor for schema `{schema}`"))?;
+    match &descriptor.access {
+        Access::Record(record) => {
+            for field in &record.fields {
+                let field_schema = descriptor_word_schema(&field.descriptor);
+                let word = read_frame_word(bytes, field.offset);
+                let (interned, _) =
+                    intern_flesh_word(store, flesh, descriptors, schema_refs, &field_schema, word)?;
+                write_frame_word(bytes, field.offset, interned);
+            }
+        }
+        Access::Enum(enum_access) => {
+            let tag = usize::try_from(read_variant_tag(bytes, descriptor))
+                .map_err(|_| "negative enum tag".to_string())?;
+            let Some(variant) = enum_access.variants.get(tag) else {
+                return Ok(());
+            };
+            for field in &variant.payload.fields {
+                let field_schema = descriptor_word_schema(&field.descriptor);
+                let word = read_frame_word(bytes, field.offset);
+                let (interned, _) =
+                    intern_flesh_word(store, flesh, descriptors, schema_refs, &field_schema, word)?;
+                write_frame_word(bytes, field.offset, interned);
+            }
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
 /// The demand scheduler.
 pub struct Driver {
     program: Program,
@@ -1371,6 +1584,7 @@ pub struct Driver {
     pub trace: Vec<DriveEvent>,
     event_sink: Option<DriveEventSink>,
     step_mode: StepMode,
+    force_flesh_copy: bool,
     store: RefCell<ValueStore>,
 }
 
@@ -1420,6 +1634,7 @@ impl Driver {
             trace: Vec::new(),
             event_sink: None,
             step_mode: StepMode::Run,
+            force_flesh_copy: std::env::var_os("VIX_FORCE_FLESH_COPY").is_some(),
             store: RefCell::new(ValueStore::default()),
         })
     }
@@ -1452,6 +1667,10 @@ impl Driver {
 
     pub fn set_step_mode(&mut self, mode: StepMode) {
         self.step_mode = mode;
+    }
+
+    pub fn set_force_flesh_copy(&mut self, force: bool) {
+        self.force_flesh_copy = force;
     }
 
     fn emit(&mut self, event: DriveEvent) {
@@ -1819,6 +2038,23 @@ impl Driver {
             match requests {
                 Burst::Done(value) => {
                     let done_key = exec.key.clone();
+                    let mut value = value;
+                    if flesh_index(value).is_some() {
+                        let return_schema = self.fns[exec.fn_ref].return_schema.clone();
+                        let (interned, deduped) = intern_flesh_word(
+                            &mut self.store.borrow_mut(),
+                            &mut exec.flesh,
+                            &self.descriptors,
+                            &self.schema_refs,
+                            &return_schema,
+                            value,
+                        )?;
+                        self.emit(DriveEvent::StoreAlloc {
+                            schema_ref: hash_u64(&return_schema),
+                            deduped,
+                        });
+                        value = interned;
+                    }
                     let value = self.canonicalize_return_word(exec.fn_ref, value);
                     self.record_whole_arg_if_projectable(
                         exec.fn_ref,
@@ -2100,6 +2336,7 @@ impl Driver {
             fn_ref,
             key,
             args: args.to_vec(),
+            flesh: FleshStore::default(),
             read_set: ProjectionReadSet::default(),
             ready: Vec::new(),
             awaited: Vec::new(),
@@ -2137,6 +2374,7 @@ impl Driver {
             let descriptors = &self.descriptors;
             let schema_refs = &self.schema_refs;
             let store_cell = &self.store;
+            let flesh_cell = RefCell::new(&mut exec.flesh);
             let ast_roots_cell = RefCell::new(&mut self.ast_roots);
             let oci_file_memo_cell = RefCell::new(&mut self.oci_file_memo);
             let journal_cell = RefCell::new(&mut self.journal);
@@ -2146,6 +2384,7 @@ impl Driver {
             let projection_reads = RefCell::new(Vec::new());
             let exec_arg_schemas = lowered_fns[exec.fn_ref].arg_schemas.clone();
             let exec_args = exec.args.clone();
+            let force_flesh_copy = self.force_flesh_copy;
             let mut invoke = |frame: &mut [u8]| {
                 let word = |i: usize| {
                     i64::from_le_bytes(
@@ -2157,7 +2396,27 @@ impl Driver {
                 let input_slot = word(0) as usize;
                 let fn_ref = word(1) as usize;
                 let argc = word(2) as usize;
-                let args = (0..argc).map(|k| word(3 + k)).collect();
+                let mut args = (0..argc).map(|k| word(3 + k)).collect::<Vec<_>>();
+                let arg_schemas = &lowered_fns[fn_ref].arg_schemas;
+                for (arg, schema) in args.iter_mut().zip(arg_schemas) {
+                    let was_flesh = flesh_index(*arg).is_some();
+                    let (interned, deduped) = intern_flesh_word(
+                        &mut store_cell.borrow_mut(),
+                        &mut flesh_cell.borrow_mut(),
+                        descriptors,
+                        schema_refs,
+                        schema,
+                        *arg,
+                    )
+                    .unwrap_or_else(|err| panic!("{err}"));
+                    if was_flesh {
+                        store_events.borrow_mut().push(DriveEvent::StoreAlloc {
+                            schema_ref: hash_u64(schema),
+                            deduped,
+                        });
+                    }
+                    *arg = interned;
+                }
                 requests.push(InvokeRequest {
                     caller: exec_ix,
                     input_slot,
@@ -2197,19 +2456,45 @@ impl Driver {
                     descriptors,
                     fields,
                 );
-                let (handle, deduped) = store_cell.borrow_mut().alloc(&schema, bytes, descriptors);
-                write_frame_word(frame, dst_slot, handle);
-                let schema_ref = hash_u64(&schema);
-                store_events.borrow_mut().push(DriveEvent::StoreAlloc {
-                    schema_ref,
-                    deduped,
+                let handle = flesh_cell.borrow_mut().alloc(FleshValue::Record {
+                    schema: schema.clone(),
+                    bytes,
                 });
+                write_frame_word(frame, dst_slot, handle);
             };
 
             let mut store_read = |frame: &mut [u8]| {
                 let dst_slot = read_frame_word(frame, store_read_region) as usize;
-                let handle = read_frame_word(frame, store_read_region + 8);
+                let mut handle = read_frame_word(frame, store_read_region + 8);
                 let field_index = read_frame_word(frame, store_read_region + 16) as usize;
+                if flesh_index(handle).is_some() {
+                    let schema = flesh_cell
+                        .borrow()
+                        .entry(handle)
+                        .and_then(|entry| match &entry.value {
+                            FleshValue::Record { schema, .. } => Some(schema.clone()),
+                            FleshValue::Interned(handle) => store_cell
+                                .borrow()
+                                .entry(*handle)
+                                .map(|entry| entry.schema.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| panic!("flesh record handle {handle}"));
+                    let (interned, deduped) = intern_flesh_word(
+                        &mut store_cell.borrow_mut(),
+                        &mut flesh_cell.borrow_mut(),
+                        descriptors,
+                        schema_refs,
+                        &schema,
+                        handle,
+                    )
+                    .unwrap_or_else(|err| panic!("{err}"));
+                    store_events.borrow_mut().push(DriveEvent::StoreAlloc {
+                        schema_ref: hash_u64(&schema),
+                        deduped,
+                    });
+                    handle = interned;
+                }
                 let store = store_cell.borrow();
                 let entry = store
                     .entry(handle)
@@ -2243,7 +2528,35 @@ impl Driver {
 
             let mut store_tag = |frame: &mut [u8]| {
                 let dst_slot = read_frame_word(frame, store_tag_region) as usize;
-                let handle = read_frame_word(frame, store_tag_region + 8);
+                let mut handle = read_frame_word(frame, store_tag_region + 8);
+                if flesh_index(handle).is_some() {
+                    let schema = flesh_cell
+                        .borrow()
+                        .entry(handle)
+                        .and_then(|entry| match &entry.value {
+                            FleshValue::Record { schema, .. } => Some(schema.clone()),
+                            FleshValue::Interned(handle) => store_cell
+                                .borrow()
+                                .entry(*handle)
+                                .map(|entry| entry.schema.clone()),
+                            _ => None,
+                        })
+                        .unwrap_or_else(|| panic!("flesh record handle {handle}"));
+                    let (interned, deduped) = intern_flesh_word(
+                        &mut store_cell.borrow_mut(),
+                        &mut flesh_cell.borrow_mut(),
+                        descriptors,
+                        schema_refs,
+                        &schema,
+                        handle,
+                    )
+                    .unwrap_or_else(|err| panic!("{err}"));
+                    store_events.borrow_mut().push(DriveEvent::StoreAlloc {
+                        schema_ref: hash_u64(&schema),
+                        deduped,
+                    });
+                    handle = interned;
+                }
                 let store = store_cell.borrow();
                 let entry = store
                     .entry(handle)
@@ -2284,17 +2597,11 @@ impl Driver {
                         read_frame_word(frame, store_alloc_region + 8),
                         schema_refs,
                     )?;
-                    let (handle, deduped) = store_cell.borrow_mut().alloc_map(
-                        &schema,
-                        Vec::new(),
-                        schema_refs,
-                        descriptors,
-                    )?;
-                    write_frame_word(frame, dst_slot, handle);
-                    store_events.borrow_mut().push(DriveEvent::StoreAlloc {
-                        schema_ref: hash_u64(&schema),
-                        deduped,
+                    let handle = flesh_cell.borrow_mut().alloc(FleshValue::Map {
+                        schema: schema.clone(),
+                        pairs: Vec::new(),
                     });
+                    write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
                 if let Err(err) = result {
@@ -2334,38 +2641,80 @@ impl Driver {
                         &stored_value_schema,
                         read_frame_word(frame, store_alloc_region + 48),
                     );
-                    record_whole_args_if_projectable_static(
-                        &mut projection_reads.borrow_mut(),
-                        &exec_arg_schemas,
-                        &exec_args,
-                        &store_cell.borrow(),
+                    let mut key_word = key_word;
+                    let mut value_word = value_word;
+                    key_word = intern_flesh_word(
+                        &mut store_cell.borrow_mut(),
+                        &mut flesh_cell.borrow_mut(),
                         descriptors,
-                        [map_handle, key_word, value_word],
-                    );
-                    let (stored_schema, mut pairs) =
-                        store_cell.borrow().map_pairs(map_handle, schema_refs)?;
+                        schema_refs,
+                        &key_schema,
+                        key_word,
+                    )?
+                    .0;
+                    value_word = intern_flesh_word(
+                        &mut store_cell.borrow_mut(),
+                        &mut flesh_cell.borrow_mut(),
+                        descriptors,
+                        schema_refs,
+                        &stored_value_schema,
+                        value_word,
+                    )?
+                    .0;
+                    if flesh_index(map_handle).is_none() {
+                        record_whole_args_if_projectable_static(
+                            &mut projection_reads.borrow_mut(),
+                            &exec_arg_schemas,
+                            &exec_args,
+                            &store_cell.borrow(),
+                            descriptors,
+                            [map_handle, key_word, value_word],
+                        );
+                    }
+                    let (stored_schema, mut pairs) = if let Some(entry) =
+                        flesh_cell.borrow().entry(map_handle)
+                    {
+                        match &entry.value {
+                            FleshValue::Map { schema, pairs } => (schema.clone(), pairs.clone()),
+                            FleshValue::Interned(handle) => {
+                                store_cell.borrow().map_pairs(*handle, schema_refs)?
+                            }
+                            _ => return Err(format!("flesh handle {map_handle} is not a Map")),
+                        }
+                    } else {
+                        store_cell.borrow().map_pairs(map_handle, schema_refs)?
+                    };
                     if stored_schema != map_schema {
                         pairs = promote_map_pairs_to_realized(&stored_schema, &map_schema, pairs)?;
                     }
-                    pairs.push(MapPair {
+                    let new_pair = MapPair {
                         key_schema,
                         key_word,
                         value_schema: stored_value_schema,
                         value_word,
                         value_realization: realized_value_schema(&value_schema)
                             .map(|_| value_realization),
-                    });
-                    let (handle, deduped) = store_cell.borrow_mut().alloc_map(
-                        &map_schema,
-                        pairs,
-                        schema_refs,
-                        descriptors,
-                    )?;
+                    };
+                    let handle = if !force_flesh_copy
+                        && let Some(entry) = flesh_cell.borrow_mut().entry_mut(map_handle)
+                        && entry.refs == 1
+                        && let FleshValue::Map {
+                            schema,
+                            pairs: entry_pairs,
+                        } = &mut entry.value
+                    {
+                        *schema = map_schema.clone();
+                        *entry_pairs = pairs;
+                        entry_pairs.push(new_pair);
+                        map_handle
+                    } else {
+                        pairs.push(new_pair);
+                        flesh_cell.borrow_mut().alloc(FleshValue::Map {
+                            schema: map_schema.clone(),
+                            pairs,
+                        })
+                    };
                     write_frame_word(frame, dst_slot, handle);
-                    store_events.borrow_mut().push(DriveEvent::StoreAlloc {
-                        schema_ref: hash_u64(&map_schema),
-                        deduped,
-                    });
                     Ok(())
                 })();
                 if let Err(err) = result {
@@ -2376,7 +2725,7 @@ impl Driver {
             let mut map_get = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, store_alloc_region) as usize;
-                    let map_handle = read_frame_word(frame, store_alloc_region + 8);
+                    let mut map_handle = read_frame_word(frame, store_alloc_region + 8);
                     let value_schema = schema_name_for(
                         read_frame_word(frame, store_alloc_region + 16),
                         schema_refs,
@@ -2389,6 +2738,40 @@ impl Driver {
                         &key_schema,
                         read_frame_word(frame, store_alloc_region + 32),
                     );
+                    let map_schema = if let Some(entry) = flesh_cell.borrow().entry(map_handle) {
+                        match &entry.value {
+                            FleshValue::Map { schema, .. } => schema.clone(),
+                            FleshValue::Interned(handle) => store_cell
+                                .borrow()
+                                .entry(*handle)
+                                .ok_or_else(|| format!("store handle {handle}"))?
+                                .schema
+                                .clone(),
+                            _ => return Err(format!("flesh handle {map_handle} is not a Map")),
+                        }
+                    } else {
+                        store_cell
+                            .borrow()
+                            .entry(map_handle)
+                            .ok_or_else(|| format!("store handle {map_handle}"))?
+                            .schema
+                            .clone()
+                    };
+                    if flesh_index(map_handle).is_some() {
+                        let (interned, deduped) = intern_flesh_word(
+                            &mut store_cell.borrow_mut(),
+                            &mut flesh_cell.borrow_mut(),
+                            descriptors,
+                            schema_refs,
+                            &map_schema,
+                            map_handle,
+                        )?;
+                        store_events.borrow_mut().push(DriveEvent::StoreAlloc {
+                            schema_ref: hash_u64(&map_schema),
+                            deduped,
+                        });
+                        map_handle = interned;
+                    }
                     let (handle, _) = store_cell.borrow_mut().map_get(
                         map_handle,
                         &key_schema,
@@ -2403,7 +2786,6 @@ impl Driver {
                         .expect("map_get allocated option")
                         .content_hash;
                     let store = store_cell.borrow();
-                    let map_schema = store.entry(map_handle).expect("map handle").schema.clone();
                     let key_hash = canonical_word_hash_in_store(&store, &key_schema, key_word);
                     let projection_context = ProjectionRecordContext {
                         arg_schemas: &exec_arg_schemas,
@@ -2447,7 +2829,22 @@ impl Driver {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let kind_ref = read_frame_word(frame, primitive_region + 8);
                     let kind = schema_name_for(kind_ref, schema_refs)?;
-                    let target = read_frame_word(frame, primitive_region + 16);
+                    let mut target = read_frame_word(frame, primitive_region + 16);
+                    if flesh_index(target).is_some() {
+                        let (interned, deduped) = intern_flesh_word(
+                            &mut store_cell.borrow_mut(),
+                            &mut flesh_cell.borrow_mut(),
+                            descriptors,
+                            schema_refs,
+                            "Target",
+                            target,
+                        )?;
+                        store_events.borrow_mut().push(DriveEvent::StoreAlloc {
+                            schema_ref: hash_u64("Target"),
+                            deduped,
+                        });
+                        target = interned;
+                    }
                     record_whole_args_if_projectable_static(
                         &mut projection_reads.borrow_mut(),
                         &exec_arg_schemas,
@@ -2496,22 +2893,23 @@ impl Driver {
                         schema_name_for(read_frame_word(frame, primitive_region + 8), schema_refs)?;
                     let count = usize::try_from(read_frame_word(frame, primitive_region + 16))
                         .map_err(|_| "negative array length".to_string())?;
-                    let words = (0..count)
+                    let mut words = (0..count)
                         .map(|i| read_frame_word(frame, primitive_region + 24 + i * 8))
                         .collect::<Vec<_>>();
-                    record_whole_args_if_projectable_static(
-                        &mut projection_reads.borrow_mut(),
-                        &exec_arg_schemas,
-                        &exec_args,
-                        &store_cell.borrow(),
-                        descriptors,
-                        words.iter().copied(),
-                    );
-                    let (handle, _) = store_cell.borrow_mut().alloc_array_words(
-                        &elem_schema,
-                        words,
-                        schema_refs,
-                    )?;
+                    for word in &mut words {
+                        *word = intern_flesh_word(
+                            &mut store_cell.borrow_mut(),
+                            &mut flesh_cell.borrow_mut(),
+                            descriptors,
+                            schema_refs,
+                            &elem_schema,
+                            *word,
+                        )?
+                        .0;
+                    }
+                    let handle = flesh_cell
+                        .borrow_mut()
+                        .alloc(FleshValue::ArrayWords { elem_schema, words });
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -2534,39 +2932,60 @@ impl Driver {
                             Ok((read_frame_word(frame, at), read_frame_word(frame, at + 8)))
                         })
                         .collect::<Result<Vec<_>, String>>()?;
-                    let words = match store_cell.borrow().array_entry(array_handle, schema_refs)? {
+                    let words = match flesh_cell.borrow().array_entry(
+                        &store_cell.borrow(),
+                        array_handle,
+                        schema_refs,
+                    )? {
                         ArrayEntry::Words { words, .. } => words,
                         ArrayEntry::Pending(_) => {
                             return Err("map over pending array is outside slice 4".into());
                         }
                     };
-                    record_whole_args_if_projectable_static(
-                        &mut projection_reads.borrow_mut(),
-                        &exec_arg_schemas,
-                        &exec_args,
-                        &store_cell.borrow(),
-                        descriptors,
-                        [array_handle],
-                    );
+                    if flesh_index(array_handle).is_none() {
+                        record_whole_args_if_projectable_static(
+                            &mut projection_reads.borrow_mut(),
+                            &exec_arg_schemas,
+                            &exec_args,
+                            &store_cell.borrow(),
+                            descriptors,
+                            [array_handle],
+                        );
+                    }
                     let pending = words
                         .into_iter()
                         .map(|word| {
-                            let args = arg_specs
+                            let mut args = arg_specs
                                 .iter()
                                 .map(|(kind, value)| match kind {
                                     0 => *value,
                                     1 => word,
                                     other => panic!("unknown map arg kind {other}"),
                                 })
-                                .collect();
+                                .collect::<Vec<_>>();
+                            for (arg, schema) in
+                                args.iter_mut().zip(&lowered_fns[fn_ref].arg_schemas)
+                            {
+                                *arg = intern_flesh_word(
+                                    &mut store_cell.borrow_mut(),
+                                    &mut flesh_cell.borrow_mut(),
+                                    descriptors,
+                                    schema_refs,
+                                    schema,
+                                    *arg,
+                                )?
+                                .0;
+                            }
                             let invocation =
                                 pending_invocation_for(&lowered_fns[fn_ref], store_cell, args);
-                            store_cell
-                                .borrow_mut()
-                                .alloc_pending(&lowered_fns[fn_ref].return_schema, invocation)
-                                .0
+                            Ok::<i64, String>(
+                                store_cell
+                                    .borrow_mut()
+                                    .alloc_pending(&lowered_fns[fn_ref].return_schema, invocation)
+                                    .0,
+                            )
                         })
-                        .collect();
+                        .collect::<Result<Vec<_>, _>>()?;
                     let (handle, _) = store_cell.borrow_mut().alloc_array_pending(pending);
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
@@ -2580,16 +2999,21 @@ impl Driver {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let array_handle = read_frame_word(frame, primitive_region + 8);
-                    let array_entry =
-                        { store_cell.borrow().array_entry(array_handle, schema_refs)? };
-                    record_whole_args_if_projectable_static(
-                        &mut projection_reads.borrow_mut(),
-                        &exec_arg_schemas,
-                        &exec_args,
+                    let array_entry = flesh_cell.borrow().array_entry(
                         &store_cell.borrow(),
-                        descriptors,
-                        [array_handle],
-                    );
+                        array_handle,
+                        schema_refs,
+                    )?;
+                    if flesh_index(array_handle).is_none() {
+                        record_whole_args_if_projectable_static(
+                            &mut projection_reads.borrow_mut(),
+                            &exec_arg_schemas,
+                            &exec_args,
+                            &store_cell.borrow(),
+                            descriptors,
+                            [array_handle],
+                        );
+                    }
                     match array_entry {
                         ArrayEntry::Pending(pending) => {
                             let (handle, _) = store_cell.borrow_mut().alloc_tree_merge(pending);
@@ -3051,7 +3475,11 @@ impl Driver {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let array = read_frame_word(frame, primitive_region + 8);
-                    let len = match store_cell.borrow().array_entry(array, schema_refs)? {
+                    let len = match flesh_cell.borrow().array_entry(
+                        &store_cell.borrow(),
+                        array,
+                        schema_refs,
+                    )? {
                         ArrayEntry::Words { words, .. } => words.len(),
                         ArrayEntry::Pending(pending) => pending.len(),
                     };
@@ -3105,7 +3533,11 @@ impl Driver {
                         store.entry(word).and_then(|entry| entry.taint.clone())
                     }));
                     let separator = store.string_value(separator, "String")?;
-                    let joined = match store.array_entry(array, schema_refs)? {
+                    let array_entry =
+                        flesh_cell
+                            .borrow()
+                            .array_entry(&store, array, schema_refs)?;
+                    let joined = match array_entry {
                         ArrayEntry::Words { elem_schema, words } => {
                             if elem_schema != "String" && elem_schema != "Doc" {
                                 return Err(format!("join called on Array<{elem_schema}>"));
@@ -3159,21 +3591,26 @@ impl Driver {
                             store_cell.borrow().string_value(handle, "Path")
                         })
                         .collect::<Result<Vec<_>, _>>()?;
-                    let (elem_schema, words) =
-                        match store_cell.borrow().array_entry(array_handle, schema_refs)? {
-                            ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
-                            ArrayEntry::Pending(_) => {
-                                return Err("filter over pending array is outside B4".into());
-                            }
-                        };
-                    record_whole_args_if_projectable_static(
-                        &mut projection_reads.borrow_mut(),
-                        &exec_arg_schemas,
-                        &exec_args,
+                    let (elem_schema, words) = match flesh_cell.borrow().array_entry(
                         &store_cell.borrow(),
-                        descriptors,
-                        [array_handle],
-                    );
+                        array_handle,
+                        schema_refs,
+                    )? {
+                        ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
+                        ArrayEntry::Pending(_) => {
+                            return Err("filter over pending array is outside B4".into());
+                        }
+                    };
+                    if flesh_index(array_handle).is_none() {
+                        record_whole_args_if_projectable_static(
+                            &mut projection_reads.borrow_mut(),
+                            &exec_arg_schemas,
+                            &exec_args,
+                            &store_cell.borrow(),
+                            descriptors,
+                            [array_handle],
+                        );
+                    }
                     let kept = words
                         .into_iter()
                         .filter_map(|word| {
@@ -3281,9 +3718,20 @@ impl Driver {
                         .map_err(|_| "negative fn ref".to_string())?;
                     let argc = usize::try_from(read_frame_word(frame, primitive_region + 24))
                         .map_err(|_| "negative argc".to_string())?;
-                    let args = (0..argc)
+                    let mut args = (0..argc)
                         .map(|i| read_frame_word(frame, primitive_region + 32 + i * 8))
                         .collect::<Vec<_>>();
+                    for (arg, schema) in args.iter_mut().zip(&lowered_fns[fn_ref].arg_schemas) {
+                        *arg = intern_flesh_word(
+                            &mut store_cell.borrow_mut(),
+                            &mut flesh_cell.borrow_mut(),
+                            descriptors,
+                            schema_refs,
+                            schema,
+                            *arg,
+                        )?
+                        .0;
+                    }
                     record_whole_args_if_projectable_static(
                         &mut projection_reads.borrow_mut(),
                         &exec_arg_schemas,
@@ -3314,19 +3762,50 @@ impl Driver {
             };
 
             let mut pending_invoke = |frame: &mut [u8]| {
-                let input_slot = read_frame_word(frame, primitive_region) as usize;
-                let pending = read_frame_word(frame, primitive_region + 8);
-                let argc = usize::try_from(read_frame_word(frame, primitive_region + 16))
-                    .unwrap_or_else(|_| panic!("negative pending invoke argc"));
-                let args = (0..argc)
-                    .map(|i| read_frame_word(frame, primitive_region + 24 + i * 8))
-                    .collect();
-                pending_invokes.push(PendingInvokeRequest {
-                    caller: exec_ix,
-                    input_slot,
-                    pending,
-                    args,
-                });
+                let result = (|| {
+                    let input_slot = read_frame_word(frame, primitive_region) as usize;
+                    let pending = read_frame_word(frame, primitive_region + 8);
+                    let argc = usize::try_from(read_frame_word(frame, primitive_region + 16))
+                        .map_err(|_| "negative pending invoke argc".to_string())?;
+                    let mut args = (0..argc)
+                        .map(|i| read_frame_word(frame, primitive_region + 24 + i * 8))
+                        .collect::<Vec<_>>();
+                    let invocation = store_cell.borrow().pending_invocation(pending)?;
+                    let fn_ref = lowered_fns
+                        .iter()
+                        .position(|lowered| lowered.hash == invocation.closure_hash)
+                        .ok_or_else(|| {
+                            format!(
+                                "no function with closure hash {:016x}",
+                                invocation.closure_hash
+                            )
+                        })?;
+                    let start = invocation.args.len();
+                    for (arg, schema) in args
+                        .iter_mut()
+                        .zip(lowered_fns[fn_ref].arg_schemas.iter().skip(start))
+                    {
+                        *arg = intern_flesh_word(
+                            &mut store_cell.borrow_mut(),
+                            &mut flesh_cell.borrow_mut(),
+                            descriptors,
+                            schema_refs,
+                            schema,
+                            *arg,
+                        )?
+                        .0;
+                    }
+                    pending_invokes.push(PendingInvokeRequest {
+                        caller: exec_ix,
+                        input_slot,
+                        pending,
+                        args,
+                    });
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
             };
 
             let mut target_host = |frame: &mut [u8]| {
@@ -3519,7 +3998,383 @@ impl Driver {
                 }
             };
 
-            let mut hosts: [HostFn<'_>; 43] = [
+            let mut flesh_intern = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let src = read_frame_word(frame, primitive_region + 8);
+                    let schema = schema_name_for(
+                        read_frame_word(frame, primitive_region + 16),
+                        schema_refs,
+                    )?;
+                    let was_flesh = flesh_index(src).is_some();
+                    let (handle, deduped) = intern_flesh_word(
+                        &mut store_cell.borrow_mut(),
+                        &mut flesh_cell.borrow_mut(),
+                        descriptors,
+                        schema_refs,
+                        &schema,
+                        src,
+                    )?;
+                    write_frame_word(frame, dst_slot, handle);
+                    if was_flesh {
+                        store_events.borrow_mut().push(DriveEvent::StoreAlloc {
+                            schema_ref: hash_u64(&schema),
+                            deduped,
+                        });
+                    }
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut array_push = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let array = read_frame_word(frame, primitive_region + 8);
+                    let mut value = read_frame_word(frame, primitive_region + 16);
+                    if !force_flesh_copy {
+                        let elem_schema = {
+                            let flesh = flesh_cell.borrow();
+                            flesh.entry(array).and_then(|entry| match &entry.value {
+                                FleshValue::ArrayWords { elem_schema, .. } if entry.refs == 1 => {
+                                    Some(elem_schema.clone())
+                                }
+                                _ => None,
+                            })
+                        };
+                        if let Some(elem_schema) = elem_schema {
+                            value = intern_flesh_word(
+                                &mut store_cell.borrow_mut(),
+                                &mut flesh_cell.borrow_mut(),
+                                descriptors,
+                                schema_refs,
+                                &elem_schema,
+                                value,
+                            )?
+                            .0;
+                            let mut flesh = flesh_cell.borrow_mut();
+                            let entry = flesh
+                                .entry_mut(array)
+                                .ok_or_else(|| format!("flesh handle {array}"))?;
+                            if let FleshValue::ArrayWords { words, .. } = &mut entry.value {
+                                words.push(value);
+                                write_frame_word(frame, dst_slot, array);
+                                return Ok(());
+                            }
+                        }
+                    }
+                    let (elem_schema, mut words) = match flesh_cell.borrow().array_entry(
+                        &store_cell.borrow(),
+                        array,
+                        schema_refs,
+                    )? {
+                        ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
+                        ArrayEntry::Pending(_) => return Err("push on pending array".into()),
+                    };
+                    value = intern_flesh_word(
+                        &mut store_cell.borrow_mut(),
+                        &mut flesh_cell.borrow_mut(),
+                        descriptors,
+                        schema_refs,
+                        &elem_schema,
+                        value,
+                    )?
+                    .0;
+                    words.push(value);
+                    let handle = flesh_cell
+                        .borrow_mut()
+                        .alloc(FleshValue::ArrayWords { elem_schema, words });
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut array_pop = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let value_slot = read_frame_word(frame, primitive_region + 8) as usize;
+                    let array = read_frame_word(frame, primitive_region + 16);
+                    if !force_flesh_copy {
+                        let can_reuse = {
+                            let flesh = flesh_cell.borrow();
+                            flesh.entry(array).is_some_and(|entry| {
+                                entry.refs == 1
+                                    && matches!(entry.value, FleshValue::ArrayWords { .. })
+                            })
+                        };
+                        if can_reuse {
+                            let mut flesh = flesh_cell.borrow_mut();
+                            let entry = flesh
+                                .entry_mut(array)
+                                .ok_or_else(|| format!("flesh handle {array}"))?;
+                            if let FleshValue::ArrayWords { words, .. } = &mut entry.value {
+                                let value = words
+                                    .pop()
+                                    .ok_or_else(|| "pop on empty array".to_string())?;
+                                write_frame_word(frame, value_slot, value);
+                                write_frame_word(frame, dst_slot, array);
+                                return Ok(());
+                            }
+                        }
+                    }
+                    let (elem_schema, mut words) = match flesh_cell.borrow().array_entry(
+                        &store_cell.borrow(),
+                        array,
+                        schema_refs,
+                    )? {
+                        ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
+                        ArrayEntry::Pending(_) => return Err("pop on pending array".into()),
+                    };
+                    let value = words
+                        .pop()
+                        .ok_or_else(|| "pop on empty array".to_string())?;
+                    write_frame_word(frame, value_slot, value);
+                    let handle = flesh_cell
+                        .borrow_mut()
+                        .alloc(FleshValue::ArrayWords { elem_schema, words });
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut array_set = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let array = read_frame_word(frame, primitive_region + 8);
+                    let index = usize::try_from(read_frame_word(frame, primitive_region + 16))
+                        .map_err(|_| "negative array index".to_string())?;
+                    let mut value = read_frame_word(frame, primitive_region + 24);
+                    if !force_flesh_copy {
+                        let elem_schema = {
+                            let flesh = flesh_cell.borrow();
+                            flesh.entry(array).and_then(|entry| match &entry.value {
+                                FleshValue::ArrayWords { elem_schema, .. } if entry.refs == 1 => {
+                                    Some(elem_schema.clone())
+                                }
+                                _ => None,
+                            })
+                        };
+                        if let Some(elem_schema) = elem_schema {
+                            value = intern_flesh_word(
+                                &mut store_cell.borrow_mut(),
+                                &mut flesh_cell.borrow_mut(),
+                                descriptors,
+                                schema_refs,
+                                &elem_schema,
+                                value,
+                            )?
+                            .0;
+                            let mut flesh = flesh_cell.borrow_mut();
+                            let entry = flesh
+                                .entry_mut(array)
+                                .ok_or_else(|| format!("flesh handle {array}"))?;
+                            if let FleshValue::ArrayWords { words, .. } = &mut entry.value {
+                                if index >= words.len() {
+                                    return Err(format!(
+                                        "array index {index} out of bounds {}",
+                                        words.len()
+                                    ));
+                                }
+                                words[index] = value;
+                                write_frame_word(frame, dst_slot, array);
+                                return Ok(());
+                            }
+                        }
+                    }
+                    let (elem_schema, mut words) = match flesh_cell.borrow().array_entry(
+                        &store_cell.borrow(),
+                        array,
+                        schema_refs,
+                    )? {
+                        ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
+                        ArrayEntry::Pending(_) => return Err("set on pending array".into()),
+                    };
+                    value = intern_flesh_word(
+                        &mut store_cell.borrow_mut(),
+                        &mut flesh_cell.borrow_mut(),
+                        descriptors,
+                        schema_refs,
+                        &elem_schema,
+                        value,
+                    )?
+                    .0;
+                    if index >= words.len() {
+                        return Err(format!("array index {index} out of bounds {}", words.len()));
+                    }
+                    words[index] = value;
+                    let handle = flesh_cell
+                        .borrow_mut()
+                        .alloc(FleshValue::ArrayWords { elem_schema, words });
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut flesh_dup = |frame: &mut [u8]| {
+                let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                let src = read_frame_word(frame, primitive_region + 8);
+                if let Some(entry) = flesh_cell.borrow_mut().entry_mut(src) {
+                    entry.refs = entry.refs.saturating_add(1);
+                }
+                write_frame_word(frame, dst_slot, src);
+            };
+
+            let mut record_update = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, store_alloc_region) as usize;
+                    let base = read_frame_word(frame, store_alloc_region + 8);
+                    let schema = schema_name_for(
+                        read_frame_word(frame, store_alloc_region + 16),
+                        schema_refs,
+                    )?;
+                    let variant_index =
+                        usize::try_from(read_frame_word(frame, store_alloc_region + 24))
+                            .map_err(|_| "negative record variant index".to_string())?;
+                    let update_count =
+                        usize::try_from(read_frame_word(frame, store_alloc_region + 32))
+                            .map_err(|_| "negative record update count".to_string())?;
+                    let descriptor = descriptors
+                        .get(&schema)
+                        .ok_or_else(|| format!("descriptor for schema `{schema}`"))?;
+                    if !force_flesh_copy {
+                        let can_reuse = {
+                            let flesh = flesh_cell.borrow();
+                            flesh.entry(base).is_some_and(|entry| {
+                                entry.refs == 1
+                                    && matches!(
+                                        &entry.value,
+                                        FleshValue::Record {
+                                            schema: record_schema,
+                                            ..
+                                        } if record_schema == &schema
+                                    )
+                            })
+                        };
+                        if can_reuse {
+                            let mut flesh = flesh_cell.borrow_mut();
+                            let entry = flesh
+                                .entry_mut(base)
+                                .ok_or_else(|| format!("flesh handle {base}"))?;
+                            if let FleshValue::Record { bytes, .. } = &mut entry.value {
+                                for update_index in 0..update_count {
+                                    let field_index = usize::try_from(read_frame_word(
+                                        frame,
+                                        store_alloc_region + 40 + update_index * 16,
+                                    ))
+                                    .map_err(|_| "negative record field index".to_string())?;
+                                    let field_offset = field_offset(descriptor, bytes, field_index);
+                                    let field = field_descriptor(descriptor, bytes, field_index);
+                                    if field.layout.size > 8 {
+                                        return Err(format!(
+                                            "record update field {field_index} has {} bytes",
+                                            field.layout.size
+                                        ));
+                                    }
+                                    let value = canonicalize_word_for_schema(
+                                        &field.schema,
+                                        read_frame_word(
+                                            frame,
+                                            store_alloc_region + 48 + update_index * 16,
+                                        ),
+                                    );
+                                    bytes[field_offset..field_offset + field.layout.size]
+                                        .copy_from_slice(&value.to_le_bytes()[..field.layout.size]);
+                                }
+                                write_frame_word(frame, dst_slot, base);
+                                return Ok(());
+                            }
+                        }
+                    }
+                    let mut bytes = if let Some(entry) = flesh_cell.borrow().entry(base) {
+                        match &entry.value {
+                            FleshValue::Record {
+                                schema: record_schema,
+                                bytes,
+                            } if record_schema == &schema => bytes.clone(),
+                            FleshValue::Interned(handle) => store_cell
+                                .borrow()
+                                .entry(*handle)
+                                .ok_or_else(|| format!("store handle {handle}"))?
+                                .bytes
+                                .clone(),
+                            FleshValue::Record {
+                                schema: record_schema,
+                                ..
+                            } => {
+                                return Err(format!(
+                                    "flesh record is `{record_schema}`, not {schema}"
+                                ));
+                            }
+                            _ => return Err(format!("flesh handle {base} is not a Record")),
+                        }
+                    } else {
+                        record_whole_args_if_projectable_static(
+                            &mut projection_reads.borrow_mut(),
+                            &exec_arg_schemas,
+                            &exec_args,
+                            &store_cell.borrow(),
+                            descriptors,
+                            [base],
+                        );
+                        store_cell
+                            .borrow()
+                            .entry(base)
+                            .ok_or_else(|| format!("store handle {base}"))?
+                            .bytes
+                            .clone()
+                    };
+                    if matches!(descriptor.access, Access::Enum(_))
+                        && variant_index
+                            != usize::try_from(read_variant_tag(&bytes, descriptor))
+                                .unwrap_or(usize::MAX)
+                    {
+                        write_variant_tag(&mut bytes, descriptor, variant_index as u64);
+                    }
+                    for update_index in 0..update_count {
+                        let field_index = usize::try_from(read_frame_word(
+                            frame,
+                            store_alloc_region + 40 + update_index * 16,
+                        ))
+                        .map_err(|_| "negative record field index".to_string())?;
+                        let field_offset = field_offset(descriptor, &bytes, field_index);
+                        let field = field_descriptor(descriptor, &bytes, field_index);
+                        if field.layout.size > 8 {
+                            return Err(format!(
+                                "record update field {field_index} has {} bytes",
+                                field.layout.size
+                            ));
+                        }
+                        let value = canonicalize_word_for_schema(
+                            &field.schema,
+                            read_frame_word(frame, store_alloc_region + 48 + update_index * 16),
+                        );
+                        bytes[field_offset..field_offset + field.layout.size]
+                            .copy_from_slice(&value.to_le_bytes()[..field.layout.size]);
+                    }
+                    let handle = flesh_cell.borrow_mut().alloc(FleshValue::Record {
+                        schema: schema.clone(),
+                        bytes,
+                    });
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut hosts: [HostFn<'_>; 49] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -3563,6 +4418,12 @@ impl Driver {
                 &mut sealed_to_string,
                 &mut version_set_parse_host,
                 &mut version_set_op_host,
+                &mut flesh_intern,
+                &mut array_push,
+                &mut array_pop,
+                &mut array_set,
+                &mut flesh_dup,
+                &mut record_update,
             ];
             let step = exec
                 .task
@@ -8555,6 +9416,15 @@ mod tests {
                 Op::ConstI64 { dst: 32, value },
                 Op::HostCall {
                     host: STORE_ALLOC_HOST,
+                },
+                Op::ConstI64 {
+                    dst: 0,
+                    value: dst.into(),
+                },
+                Op::CopyI64 { dst: 8, src: dst },
+                Op::ConstI64 { dst: 16, value: 0 },
+                Op::HostCall {
+                    host: FLESH_INTERN_HOST,
                 },
             ]
         };
