@@ -1436,7 +1436,8 @@ fn collect_pattern_strings(pattern: &ast::Pattern, out: &mut BTreeSet<String>) {
         ast::Pattern::Wildcard(_)
         | ast::Pattern::Scoped(_)
         | ast::Pattern::Identifier(_)
-        | ast::Pattern::Number(_) => {}
+        | ast::Pattern::Number(_)
+        | ast::Pattern::Bool(_) => {}
     }
 }
 
@@ -1560,7 +1561,8 @@ fn collect_pattern_bindings(pattern: &ast::Pattern, out: &mut BTreeSet<String>) 
         ast::Pattern::Wildcard(_)
         | ast::Pattern::Scoped(_)
         | ast::Pattern::Str(_)
-        | ast::Pattern::Number(_) => {}
+        | ast::Pattern::Number(_)
+        | ast::Pattern::Bool(_) => {}
     }
 }
 
@@ -2683,12 +2685,14 @@ impl<'a> FnLowerer<'a> {
         let result = self.alloc();
         let mut result_schema: Option<String> = None;
         let mut jump_to_end: Vec<usize> = Vec::new();
+        let mut bool_covered = BTreeSet::new();
 
         let last = m.arms.len().saturating_sub(1);
         for (i, arm) in m.arms.iter().enumerate() {
             let saved_slots = self.slots.clone();
             self.slots = fork_bindings(&saved_slots);
             let mut skip_patches: Vec<usize> = Vec::new();
+            let mut bool_pattern = None;
             match &arm.pattern {
                 ast::Pattern::Number(n) => {
                     let value: i64 = n
@@ -2708,6 +2712,25 @@ impl<'a> FnLowerer<'a> {
                         value: test,
                         target: 0,
                     });
+                }
+                ast::Pattern::Bool(b) => {
+                    let lit = self.alloc();
+                    self.code.push(Op::ConstI64 {
+                        dst: lit,
+                        value: i64::from(b.value),
+                    });
+                    let test = self.alloc();
+                    self.code.push(Op::EqI64 {
+                        dst: test,
+                        a: self.expect_schema(&scrut, "Bool")?,
+                        b: lit,
+                    });
+                    skip_patches.push(self.code.len());
+                    self.code.push(Op::JumpIfZero {
+                        value: test,
+                        target: 0,
+                    });
+                    bool_pattern = Some(b.value);
                 }
                 ast::Pattern::Str(s) => {
                     let value =
@@ -2810,6 +2833,10 @@ impl<'a> FnLowerer<'a> {
                     value: self.expect_schema(&guard, "Bool")?,
                     target: 0,
                 });
+            } else if scrut.schema == "Bool"
+                && let Some(value) = bool_pattern
+            {
+                bool_covered.insert(value);
             }
             if skip_patches.is_empty() && i != last {
                 return Err("irrefutable arm before the last arm".into());
@@ -2864,6 +2891,23 @@ impl<'a> FnLowerer<'a> {
                  checking arrives with the checker)"
                     .into(),
             );
+        }
+        if scrut.schema == "Bool"
+            && !matches!(
+                m.arms.last().map(|a| &a.pattern),
+                Some(ast::Pattern::Wildcard(_) | ast::Pattern::Identifier(_))
+            )
+            && !(bool_covered.contains(&true) && bool_covered.contains(&false))
+        {
+            let missing = match (bool_covered.contains(&true), bool_covered.contains(&false)) {
+                (false, false) => "true,false",
+                (false, true) => "true",
+                (true, false) => "false",
+                (true, true) => unreachable!("checked above"),
+            };
+            return Err(format!(
+                "bool match must cover true and false; missing {missing}"
+            ));
         }
         let end = u32::try_from(self.code.len()).expect("code len fits u32");
         for at in jump_to_end {
@@ -6220,6 +6264,62 @@ fn f(n: Int) -> Int {
                 .and_then(|mut m| m.demand_i64("f", vec![0]))
                 .unwrap_err();
             assert!(err.contains("irrefutable"), "{lane:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn bool_literal_patterns_are_exhaustive_as_true_plus_false() {
+        let src = "fn f(b: Bool) -> Int { match b { true => 1, false => 0 } }";
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            assert_eq!(
+                machine
+                    .call(
+                        "f",
+                        &[NamedArg {
+                            name: "b".to_string(),
+                            value: MachineArg::Bool(true),
+                        }],
+                    )
+                    .unwrap()
+                    .0,
+                1,
+                "{lane:?}"
+            );
+            assert_eq!(
+                machine
+                    .call(
+                        "f",
+                        &[NamedArg {
+                            name: "b".to_string(),
+                            value: MachineArg::Bool(false),
+                        }],
+                    )
+                    .unwrap()
+                    .0,
+                0,
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn bool_literal_patterns_missing_false_are_rejected() {
+        let src = "fn f(b: Bool) -> Int { match b { true => 1 } }";
+        for lane in lanes() {
+            let err = Machine::load_with_lane(src, lane)
+                .and_then(|mut m| {
+                    m.call(
+                        "f",
+                        &[NamedArg {
+                            name: "b".to_string(),
+                            value: MachineArg::Bool(true),
+                        }],
+                    )
+                    .map(|_| ())
+                })
+                .unwrap_err();
+            assert!(err.contains("missing false"), "{lane:?}: {err}");
         }
     }
 
