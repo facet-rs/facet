@@ -52,6 +52,7 @@ pub struct StoreValue {
     pub schema: String,
     pub bytes: Vec<u8>,
     pub content_hash: Vec<u8>,
+    pub taint: Option<StructuralTaint>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, Facet)]
@@ -146,6 +147,9 @@ pub const VALUE_COMPARE_HOST: u32 = 34;
 pub const STRING_UPPER_HOST: u32 = 35;
 pub const STRING_LOWER_HOST: u32 = 36;
 pub const STRING_DEFAULT_HOST: u32 = 37;
+pub const SEALED_SEAL_HOST: u32 = 38;
+pub const SEALED_DECLASSIFY_HOST: u32 = 39;
+pub const SEALED_TO_STRING_HOST: u32 = 40;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -371,6 +375,12 @@ pub enum RenderedValue {
     Doc {
         variant: String,
         value: Option<Box<RenderedValue>>,
+    },
+    Sealed {
+        taint: String,
+        recipient: String,
+        identity_hash: String,
+        content_tag: Option<String>,
     },
 }
 
@@ -656,6 +666,21 @@ pub struct StoreEntry {
     pub schema: String,
     pub bytes: Vec<u8>,
     pub content_hash: ContentHash,
+    pub taint: Option<StructuralTaint>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord, Hash, Facet)]
+pub struct StructuralTaint {
+    pub marker: String,
+    pub recipient: String,
+    pub identity_hash: Vec<u8>,
+    pub content_tag: Option<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct SealedPayload {
+    ciphertext: Vec<u8>,
+    taint: StructuralTaint,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -678,6 +703,8 @@ struct OrderedMapPair {
     pair: MapPair,
     key_hash: ContentHash,
     value_hash: ContentHash,
+    key_taint: Option<StructuralTaint>,
+    value_taint: Option<StructuralTaint>,
 }
 
 #[derive(Clone, Debug)]
@@ -815,6 +842,7 @@ impl ValueStore {
             if existing.schema == entry.schema
                 && existing.bytes == entry.bytes
                 && existing.content_hash == entry.content_hash
+                && existing.taint == entry.taint
             {
                 self.by_content.insert(key, handle as i64);
                 return Ok(());
@@ -844,7 +872,8 @@ impl ValueStore {
         let descriptor = descriptors
             .get(schema)
             .unwrap_or_else(|| panic!("descriptor for schema `{schema}`"));
-        let content_hash = hash_value_bytes(descriptor, &bytes, self);
+        let taint = taint_for_value_bytes(self, descriptor, &bytes);
+        let content_hash = hash_with_taint(hash_value_bytes(descriptor, &bytes, self), &taint);
         let key = (schema.to_string(), content_hash);
         if let Some(handle) = self.by_content.get(&key).copied() {
             return (handle, true);
@@ -854,17 +883,27 @@ impl ValueStore {
             schema: schema.to_string(),
             bytes,
             content_hash,
+            taint,
         });
         self.by_content.insert(key, handle);
         (handle, false)
     }
 
     fn alloc_raw(&mut self, schema: &str, bytes: Vec<u8>) -> (i64, bool) {
+        self.alloc_raw_tainted(schema, bytes, None)
+    }
+
+    fn alloc_raw_tainted(
+        &mut self,
+        schema: &str,
+        bytes: Vec<u8>,
+        taint: Option<StructuralTaint>,
+    ) -> (i64, bool) {
         let mut hasher = Sha256::new();
         hasher.update(b"vix-raw-value");
         hasher.update(schema.as_bytes());
         hasher.update(&bytes);
-        let content_hash = hasher.finalize().into();
+        let content_hash = hash_with_taint(hasher.finalize().into(), &taint);
         let key = (schema.to_string(), content_hash);
         if let Some(handle) = self.by_content.get(&key).copied() {
             return (handle, true);
@@ -874,6 +913,7 @@ impl ValueStore {
             schema: schema.to_string(),
             bytes,
             content_hash,
+            taint,
         });
         self.by_content.insert(key, handle);
         (handle, false)
@@ -888,8 +928,9 @@ impl ValueStore {
     ) -> Result<(i64, bool), String> {
         let ordered = canonical_map_pairs(self, pairs, descriptors, schema_refs)?;
         let bytes = encode_map_pairs(&ordered, schema_refs)?;
-        let content_hash = hash_map_pairs(schema, &ordered);
-        Ok(self.alloc_with_hash(schema, bytes, content_hash))
+        let taint = taint_for_ordered_map_pairs(&ordered);
+        let content_hash = hash_with_taint(hash_map_pairs(schema, &ordered), &taint);
+        Ok(self.alloc_with_hash_tainted(schema, bytes, content_hash, taint))
     }
 
     fn map_pairs(
@@ -1083,6 +1124,16 @@ impl ValueStore {
         bytes: Vec<u8>,
         content_hash: ContentHash,
     ) -> (i64, bool) {
+        self.alloc_with_hash_tainted(schema, bytes, content_hash, None)
+    }
+
+    fn alloc_with_hash_tainted(
+        &mut self,
+        schema: &str,
+        bytes: Vec<u8>,
+        content_hash: ContentHash,
+        taint: Option<StructuralTaint>,
+    ) -> (i64, bool) {
         let key = (schema.to_string(), content_hash);
         if let Some(handle) = self.by_content.get(&key).copied() {
             return (handle, true);
@@ -1092,6 +1143,7 @@ impl ValueStore {
             schema: schema.to_string(),
             bytes,
             content_hash,
+            taint,
         });
         self.by_content.insert(key, handle);
         (handle, false)
@@ -1125,8 +1177,13 @@ impl ValueStore {
         for word in &words {
             hasher.update(canonical_word_hash_in_store(self, elem_schema, *word));
         }
-        let content_hash = hasher.finalize().into();
-        Ok(self.alloc_with_hash("Array", bytes, content_hash))
+        let taint = combine_taints(
+            words
+                .iter()
+                .filter_map(|word| self.entry(*word).and_then(|entry| entry.taint.clone())),
+        );
+        let content_hash = hash_with_taint(hasher.finalize().into(), &taint);
+        Ok(self.alloc_with_hash_tainted("Array", bytes, content_hash, taint))
     }
 
     fn alloc_pending(&mut self, value_schema: &str, invocation: PendingInvocation) -> (i64, bool) {
@@ -1214,6 +1271,7 @@ impl ValueStore {
             schema: "Tree".to_string(),
             bytes,
             content_hash: identity,
+            taint: None,
         });
         (handle, false)
     }
@@ -1430,6 +1488,7 @@ impl Driver {
                 schema: entry.schema,
                 bytes: entry.bytes,
                 content_hash: entry.content_hash.to_vec(),
+                taint: entry.taint,
             })
             .collect();
         Ok(ValueBundle {
@@ -1455,6 +1514,7 @@ impl Driver {
                     schema: value.schema,
                     bytes: value.bytes,
                     content_hash,
+                    taint: value.taint,
                 },
             )?;
         }
@@ -2831,13 +2891,19 @@ impl Driver {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let left = read_frame_word(frame, primitive_region + 8);
                     let right = read_frame_word(frame, primitive_region + 16);
-                    let left = store_cell.borrow().string_value(left, "String")?;
-                    let right = store_cell.borrow().string_value(right, "String")?;
+                    let store = store_cell.borrow();
+                    let taint = combine_taints([left, right].into_iter().filter_map(|word| {
+                        store.entry(word).and_then(|entry| entry.taint.clone())
+                    }));
+                    let left = store.string_value(left, "String")?;
+                    let right = store.string_value(right, "String")?;
+                    drop(store);
                     let handle = store_cell
                         .borrow_mut()
-                        .alloc_raw(
+                        .alloc_raw_tainted(
                             "String",
                             [left.as_str(), right.as_str()].concat().into_bytes(),
+                            taint,
                         )
                         .0;
                     write_frame_word(frame, dst_slot, handle);
@@ -2853,8 +2919,12 @@ impl Driver {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let array = read_frame_word(frame, primitive_region + 8);
                     let separator = read_frame_word(frame, primitive_region + 16);
-                    let separator = store_cell.borrow().string_value(separator, "String")?;
-                    let joined = match store_cell.borrow().array_entry(array, schema_refs)? {
+                    let store = store_cell.borrow();
+                    let taint = combine_taints([array, separator].into_iter().filter_map(|word| {
+                        store.entry(word).and_then(|entry| entry.taint.clone())
+                    }));
+                    let separator = store.string_value(separator, "String")?;
+                    let joined = match store.array_entry(array, schema_refs)? {
                         ArrayEntry::Words { elem_schema, words } => {
                             if elem_schema != "String" && elem_schema != "Doc" {
                                 return Err(format!("join called on Array<{elem_schema}>"));
@@ -2863,17 +2933,17 @@ impl Driver {
                                 .into_iter()
                                 .map(|word| {
                                     if elem_schema == "String" {
-                                        store_cell.borrow().string_value(word, "String")
+                                        store.string_value(word, "String")
                                     } else {
                                         let DocPayload::String(handle) =
-                                            doc_payload(&store_cell.borrow(), descriptors, word)?
+                                            doc_payload(&store, descriptors, word)?
                                         else {
                                             return Err(
                                                 "join called on non-string Doc array element"
                                                     .to_string(),
                                             );
                                         };
-                                        store_cell.borrow().string_value(handle, "String")
+                                        store.string_value(handle, "String")
                                     }
                                 })
                                 .collect::<Result<Vec<_>, _>>()?
@@ -2883,9 +2953,10 @@ impl Driver {
                             return Err("join called on pending array".to_string());
                         }
                     };
+                    drop(store);
                     let handle = store_cell
                         .borrow_mut()
-                        .alloc_raw("String", joined.into_bytes())
+                        .alloc_raw_tainted("String", joined.into_bytes(), taint)
                         .0;
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
@@ -2998,13 +3069,20 @@ impl Driver {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let path = read_frame_word(frame, primitive_region + 8);
                     let ext = read_frame_word(frame, primitive_region + 16);
-                    let path = store_cell.borrow().string_value(path, "Path")?;
-                    let ext = store_cell.borrow().string_value(ext, "String")?;
+                    let store = store_cell.borrow();
+                    let taint = combine_taints([path, ext].into_iter().filter_map(|word| {
+                        store.entry(word).and_then(|entry| entry.taint.clone())
+                    }));
+                    let path = store.string_value(path, "Path")?;
+                    let ext = store.string_value(ext, "String")?;
+                    drop(store);
                     let stem = path.rsplit_once('.').map(|(stem, _)| stem).unwrap_or(&path);
                     let value = format!("{stem}.{ext}");
-                    let (handle, _) = store_cell
-                        .borrow_mut()
-                        .alloc_raw("Path", value.into_bytes());
+                    let (handle, _) = store_cell.borrow_mut().alloc_raw_tainted(
+                        "Path",
+                        value.into_bytes(),
+                        taint,
+                    );
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -3091,13 +3169,15 @@ impl Driver {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let input = read_frame_word(frame, primitive_region + 8);
-                    let value = store_cell
-                        .borrow()
-                        .string_value(input, "String")?
-                        .to_uppercase();
-                    let (handle, deduped) = store_cell
-                        .borrow_mut()
-                        .alloc_raw("String", value.into_bytes());
+                    let store = store_cell.borrow();
+                    let taint = store.entry(input).and_then(|entry| entry.taint.clone());
+                    let value = store.string_value(input, "String")?.to_uppercase();
+                    drop(store);
+                    let (handle, deduped) = store_cell.borrow_mut().alloc_raw_tainted(
+                        "String",
+                        value.into_bytes(),
+                        taint,
+                    );
                     write_frame_word(frame, dst_slot, handle);
                     store_events.borrow_mut().push(DriveEvent::StoreAlloc {
                         schema_ref: hash_u64("String"),
@@ -3114,13 +3194,15 @@ impl Driver {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let input = read_frame_word(frame, primitive_region + 8);
-                    let value = store_cell
-                        .borrow()
-                        .string_value(input, "String")?
-                        .to_lowercase();
-                    let (handle, deduped) = store_cell
-                        .borrow_mut()
-                        .alloc_raw("String", value.into_bytes());
+                    let store = store_cell.borrow();
+                    let taint = store.entry(input).and_then(|entry| entry.taint.clone());
+                    let value = store.string_value(input, "String")?.to_lowercase();
+                    drop(store);
+                    let (handle, deduped) = store_cell.borrow_mut().alloc_raw_tainted(
+                        "String",
+                        value.into_bytes(),
+                        taint,
+                    );
                     write_frame_word(frame, dst_slot, handle);
                     store_events.borrow_mut().push(DriveEvent::StoreAlloc {
                         schema_ref: hash_u64("String"),
@@ -3148,7 +3230,115 @@ impl Driver {
                 }
             };
 
-            let mut hosts: [HostFn<'_>; 38] = [
+            let mut sealed_seal = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let ciphertext = read_frame_word(frame, primitive_region + 8);
+                    let marker = read_frame_word(frame, primitive_region + 16);
+                    let recipient = read_frame_word(frame, primitive_region + 24);
+                    let tag = read_frame_word(frame, primitive_region + 32);
+                    let store = store_cell.borrow();
+                    let ciphertext = store.string_value(ciphertext, "String")?.into_bytes();
+                    let marker = store.string_value(marker, "String")?;
+                    let recipient = store.string_value(recipient, "String")?;
+                    let tag = if tag >= 0 {
+                        Some(store.string_value(tag, "String")?)
+                    } else {
+                        None
+                    };
+                    drop(store);
+                    let payload = sealed_payload(ciphertext, marker, recipient, tag);
+                    let taint = payload.taint.clone();
+                    let (handle, deduped) = store_cell.borrow_mut().alloc_raw_tainted(
+                        "Sealed",
+                        encode_sealed_payload(&payload),
+                        Some(taint),
+                    );
+                    write_frame_word(frame, dst_slot, handle);
+                    store_events.borrow_mut().push(DriveEvent::StoreAlloc {
+                        schema_ref: hash_u64("Sealed"),
+                        deduped,
+                    });
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut sealed_declassify = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let sealed = read_frame_word(frame, primitive_region + 8);
+                    let payload = {
+                        let store = store_cell.borrow();
+                        let entry = store
+                            .entry(sealed)
+                            .ok_or_else(|| format!("store handle {sealed}"))?;
+                        if entry.schema != "Sealed" {
+                            return Err(format!(
+                                "declassify expected Sealed, got {}",
+                                entry.schema
+                            ));
+                        }
+                        decode_sealed_payload(&entry.bytes)?
+                    };
+                    if payload.taint.recipient != "test" {
+                        return Err(format!(
+                            "declassify has no backend for recipient `{}`",
+                            payload.taint.recipient
+                        ));
+                    }
+                    let (handle, deduped) = store_cell
+                        .borrow_mut()
+                        .alloc_raw("String", payload.ciphertext);
+                    write_frame_word(frame, dst_slot, handle);
+                    store_events.borrow_mut().push(DriveEvent::StoreAlloc {
+                        schema_ref: hash_u64("String"),
+                        deduped,
+                    });
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut sealed_to_string = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let sealed = read_frame_word(frame, primitive_region + 8);
+                    let (identity, taint) = {
+                        let store = store_cell.borrow();
+                        let entry = store
+                            .entry(sealed)
+                            .ok_or_else(|| format!("store handle {sealed}"))?;
+                        if entry.schema != "Sealed" {
+                            return Err(format!(
+                                "sealed-to-string expected Sealed, got {}",
+                                entry.schema
+                            ));
+                        }
+                        let payload = decode_sealed_payload(&entry.bytes)?;
+                        (payload.taint.identity_hash, entry.taint.clone())
+                    };
+                    let bytes = format!("sealed:{}", hex_bytes(&identity)).into_bytes();
+                    let (handle, deduped) = store_cell
+                        .borrow_mut()
+                        .alloc_raw_tainted("String", bytes, taint);
+                    write_frame_word(frame, dst_slot, handle);
+                    store_events.borrow_mut().push(DriveEvent::StoreAlloc {
+                        schema_ref: hash_u64("String"),
+                        deduped,
+                    });
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut hosts: [HostFn<'_>; 41] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -3187,6 +3377,9 @@ impl Driver {
                 &mut string_upper,
                 &mut string_lower,
                 &mut string_default,
+                &mut sealed_seal,
+                &mut sealed_declassify,
+                &mut sealed_to_string,
             ];
             let step = exec
                 .task
@@ -5471,6 +5664,15 @@ fn render_word(
     if schema.starts_with("Option<") {
         return render_option(store, descriptors, schema_refs, names, word);
     }
+    if schema != "Sealed"
+        && let Some(entry) = store.entry(word)
+        && let Some(taint) = &entry.taint
+    {
+        return Err(format!(
+            "refusing to render tainted {schema} as plaintext; declassify explicitly first (taint `{}`)",
+            taint.marker
+        ));
+    }
     match schema {
         "Int" => Ok(RenderedValue::Int { value: word }),
         "Float" => {
@@ -5503,6 +5705,7 @@ fn render_word(
             value: store.string_value(word, "Flag")?,
         }),
         "Tree" => render_tree(store, word),
+        "Sealed" => render_sealed(store, word),
         "Array" => render_array(store, descriptors, schema_refs, names, word),
         "Doc" => render_doc(store, descriptors, schema_refs, names, word),
         schema if schema.starts_with("Map<") => {
@@ -5613,6 +5816,25 @@ fn render_tree(store: &ValueStore, handle: i64) -> Result<RenderedValue, String>
             },
         }),
     }
+}
+
+fn render_sealed(store: &ValueStore, handle: i64) -> Result<RenderedValue, String> {
+    let entry = store
+        .entry(handle)
+        .ok_or_else(|| format!("store handle {handle}"))?;
+    if entry.schema != "Sealed" {
+        return Err(format!(
+            "render expected Sealed, got handle {handle} with schema {}",
+            entry.schema
+        ));
+    }
+    let payload = decode_sealed_payload(&entry.bytes)?;
+    Ok(RenderedValue::Sealed {
+        taint: payload.taint.marker,
+        recipient: payload.taint.recipient,
+        identity_hash: hex_bytes(&payload.taint.identity_hash),
+        content_tag: payload.taint.content_tag,
+    })
 }
 
 fn render_array(
@@ -5967,6 +6189,10 @@ fn split_top_level_schemas(inner: &str) -> Vec<String> {
 }
 
 fn hex_content_hash(hash: &ContentHash) -> String {
+    hex_bytes(hash)
+}
+
+fn hex_bytes(hash: &[u8]) -> String {
     let mut out = String::with_capacity(hash.len() * 2);
     for byte in hash {
         use std::fmt::Write as _;
@@ -6063,6 +6289,183 @@ fn read_frame_word(frame: &[u8], at: usize) -> i64 {
 
 fn write_frame_word(frame: &mut [u8], at: usize, value: i64) {
     frame[at..at + 8].copy_from_slice(&value.to_le_bytes());
+}
+
+fn sealed_payload(
+    ciphertext: Vec<u8>,
+    marker: String,
+    recipient: String,
+    tag: Option<String>,
+) -> SealedPayload {
+    let identity_hash = sealed_identity_hash(&ciphertext);
+    SealedPayload {
+        ciphertext,
+        taint: StructuralTaint {
+            marker,
+            recipient,
+            identity_hash: identity_hash.to_vec(),
+            content_tag: tag,
+        },
+    }
+}
+
+fn encode_sealed_payload(payload: &SealedPayload) -> Vec<u8> {
+    let mut bytes = Vec::new();
+    encode_bytes(&payload.ciphertext, &mut bytes);
+    encode_string(&payload.taint.marker, &mut bytes);
+    encode_string(&payload.taint.recipient, &mut bytes);
+    match &payload.taint.content_tag {
+        Some(tag) => {
+            bytes.extend_from_slice(&1i64.to_le_bytes());
+            encode_string(tag, &mut bytes);
+        }
+        None => bytes.extend_from_slice(&0i64.to_le_bytes()),
+    }
+    bytes
+}
+
+fn decode_sealed_payload(bytes: &[u8]) -> Result<SealedPayload, String> {
+    let mut at = 0;
+    let ciphertext = decode_bytes(bytes, &mut at)?;
+    let marker = decode_string(bytes, &mut at)?;
+    let recipient = decode_string(bytes, &mut at)?;
+    let tag = match read_frame_word(bytes, at) {
+        0 => {
+            at += 8;
+            None
+        }
+        1 => {
+            at += 8;
+            Some(decode_string(bytes, &mut at)?)
+        }
+        other => return Err(format!("unknown sealed content tag marker {other}")),
+    };
+    if at != bytes.len() {
+        return Err(format!(
+            "sealed payload has {} trailing byte(s)",
+            bytes.len() - at
+        ));
+    }
+    Ok(sealed_payload(ciphertext, marker, recipient, tag))
+}
+
+fn sealed_identity_hash(ciphertext: &[u8]) -> ContentHash {
+    let mut hasher = Sha256::new();
+    hasher.update(b"vix-sealed-identity-v1");
+    hasher.update(ciphertext);
+    hasher.finalize().into()
+}
+
+fn hash_with_taint(base: ContentHash, taint: &Option<StructuralTaint>) -> ContentHash {
+    let Some(taint) = taint else {
+        return base;
+    };
+    let mut hasher = Sha256::new();
+    hasher.update(b"vix-tainted-identity-v1");
+    hasher.update(base);
+    hash_taint_into(&mut hasher, taint);
+    hasher.finalize().into()
+}
+
+fn hash_taint_into(hasher: &mut Sha256, taint: &StructuralTaint) {
+    hasher.update(taint.marker.as_bytes());
+    hasher.update(taint.recipient.as_bytes());
+    hasher.update(&taint.identity_hash);
+    if let Some(tag) = &taint.content_tag {
+        hasher.update(tag.as_bytes());
+    }
+}
+
+fn combine_taints(taints: impl IntoIterator<Item = StructuralTaint>) -> Option<StructuralTaint> {
+    let mut taints = taints.into_iter().collect::<Vec<_>>();
+    taints.sort();
+    taints.dedup();
+    match taints.as_slice() {
+        [] => None,
+        [single] => Some(single.clone()),
+        many => {
+            let mut hasher = Sha256::new();
+            hasher.update(b"vix-combined-taint-v1");
+            for taint in many {
+                hash_taint_into(&mut hasher, taint);
+            }
+            Some(StructuralTaint {
+                marker: many
+                    .iter()
+                    .map(|taint| taint.marker.as_str())
+                    .collect::<Vec<_>>()
+                    .join("&"),
+                // Law 4 attaches here: this field currently records all
+                // observed recipients; the next rung replaces it with the
+                // capability-checked intersection lattice.
+                recipient: many
+                    .iter()
+                    .map(|taint| taint.recipient.as_str())
+                    .collect::<Vec<_>>()
+                    .join("&"),
+                identity_hash: hasher.finalize().to_vec(),
+                content_tag: None,
+            })
+        }
+    }
+}
+
+fn taint_for_word(store: &ValueStore, word: i64) -> Option<StructuralTaint> {
+    store.entry(word).and_then(|entry| entry.taint.clone())
+}
+
+fn taint_for_value_bytes(
+    store: &ValueStore,
+    descriptor: &Descriptor<String>,
+    bytes: &[u8],
+) -> Option<StructuralTaint> {
+    match &descriptor.access {
+        Access::Record(record) => combine_taints(
+            record
+                .fields
+                .iter()
+                .map(|field| read_word_at(bytes, field.offset, field.descriptor.layout.size))
+                .filter_map(|word| taint_for_word(store, word)),
+        ),
+        Access::Enum(access) => {
+            let selector = read_variant_tag(bytes, descriptor);
+            let variant = access
+                .variants
+                .iter()
+                .find(|variant| variant.selector == selector)?;
+            combine_taints(
+                variant
+                    .payload
+                    .fields
+                    .iter()
+                    .map(|field| read_word_at(bytes, field.offset, field.descriptor.layout.size))
+                    .filter_map(|word| taint_for_word(store, word)),
+            )
+        }
+        Access::Handle { .. } => {
+            taint_for_word(store, read_word_at(bytes, 0, descriptor.layout.size))
+        }
+        Access::Array { .. }
+        | Access::Scalar
+        | Access::Option(_)
+        | Access::Tensor(_)
+        | Access::Sequence(_)
+        | Access::Set(_)
+        | Access::Map(_)
+        | Access::Result(_)
+        | Access::Pointer(_)
+        | Access::Dynamic
+        | Access::Opaque(_)
+        | Access::Recurse => None,
+    }
+}
+
+fn taint_for_ordered_map_pairs(pairs: &[OrderedMapPair]) -> Option<StructuralTaint> {
+    combine_taints(pairs.iter().flat_map(|pair| {
+        [pair.key_taint.clone(), pair.value_taint.clone()]
+            .into_iter()
+            .flatten()
+    }))
 }
 
 fn canonicalize_word_for_schema(schema: &str, word: i64) -> i64 {
@@ -6362,6 +6765,7 @@ fn projection_observation_hash(
                     schema,
                     bytes,
                     content_hash: _,
+                    taint: _,
                 } if schema == "Blob" || schema == "String" => bytes,
                 StoreEntry { schema, .. } if schema == "Tree" => {
                     let TreeEntry::Concrete(tree) = store.tree_entry(handle)? else {
@@ -6605,10 +7009,14 @@ fn canonical_map_pairs(
             let key_hash = canonical_word_hash_in_store(store, &pair.key_schema, pair.key_word);
             let value_hash =
                 canonical_word_hash_in_store(store, &pair.value_schema, pair.value_word);
+            let key_taint = taint_for_word(store, pair.key_word);
+            let value_taint = taint_for_word(store, pair.value_word);
             OrderedMapPair {
                 pair,
                 key_hash,
                 value_hash,
+                key_taint,
+                value_taint,
             }
         })
         .collect();
