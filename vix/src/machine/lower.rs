@@ -10124,36 +10124,6 @@ pub fn lazy(n: Int) -> Map<String, Float> {
         h.finish()
     }
 
-    pub(crate) fn spawned_functions(machine: &Machine) -> BTreeSet<String> {
-        event_functions(machine, |event| match event {
-            DriveEvent::Spawned { fn_hash } => Some(*fn_hash),
-            _ => None,
-        })
-    }
-
-    pub(crate) fn memo_hit_functions(machine: &Machine) -> BTreeSet<String> {
-        event_functions(machine, |event| match event {
-            DriveEvent::MemoHit { fn_hash } => Some(*fn_hash),
-            _ => None,
-        })
-    }
-
-    fn event_functions(
-        machine: &Machine,
-        pick: impl Fn(&DriveEvent) -> Option<u64>,
-    ) -> BTreeSet<String> {
-        let by_hash: HashMap<u64, String> = machine
-            .fn_hashes()
-            .into_iter()
-            .map(|(name, hash)| (hash, name))
-            .collect();
-        machine
-            .trace()
-            .iter()
-            .filter_map(|event| pick(event).and_then(|hash| by_hash.get(&hash).cloned()))
-            .collect()
-    }
-
     fn expected_object() -> BTreeMap<String, String> {
         BTreeMap::from([("wanted.o".to_string(), "obj(9259fea8a69f1945)".to_string())])
     }
@@ -10166,19 +10136,6 @@ pub fn lazy(n: Int) -> Map<String, Float> {
             .filter(|event| matches!(event, DriveEvent::Spawned { fn_hash } if *fn_hash == hash))
             .count()
     }
-
-    pub(crate) fn memo_hit_count(machine: &Machine, name: &str) -> usize {
-        let hash = machine.fn_hash(name).expect("function hash");
-        machine
-            .trace()
-            .iter()
-            .filter(|event| matches!(event, DriveEvent::MemoHit { fn_hash } if *fn_hash == hash))
-            .count()
-    }
-
-    const _: fn(&Machine) -> BTreeSet<String> = spawned_functions;
-    const _: fn(&Machine) -> BTreeSet<String> = memo_hit_functions;
-    const _: fn(&Machine, &str) -> usize = memo_hit_count;
 
     fn memo_semantic_hit_count(machine: &Machine, name: &str) -> usize {
         let hash = machine.fn_hash(name).expect("function hash");
