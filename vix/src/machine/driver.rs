@@ -164,6 +164,8 @@ pub const OPTION_CONSTRUCT_HOST: u32 = 51;
 pub const OPTION_DESTRUCT_HOST: u32 = 52;
 pub const STRING_SPLIT_HOST: u32 = 53;
 pub const STRING_PARSE_INT_HOST: u32 = 54;
+pub const STRING_CONTAINS_HOST: u32 = 55;
+pub const STRING_IS_NUMERIC_HOST: u32 = 56;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -3512,6 +3514,38 @@ impl Driver {
                 }
             };
 
+            let mut string_contains_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let str_handle = read_frame_word(frame, primitive_region + 8);
+                    let needle_handle = read_frame_word(frame, primitive_region + 16);
+                    let store = store_cell.borrow();
+                    let text = store.string_value(str_handle, "String")?;
+                    let needle = store.string_value(needle_handle, "String")?;
+                    write_frame_word(frame, dst_slot, i64::from(text.contains(&needle)));
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            // A semver prerelease identifier is numeric iff it is a non-empty run
+            // of ASCII digits (and so compares numerically, below alphanumerics).
+            let mut string_is_numeric_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let str_handle = read_frame_word(frame, primitive_region + 8);
+                    let text = store_cell.borrow().string_value(str_handle, "String")?;
+                    let numeric = !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
+                    write_frame_word(frame, dst_slot, i64::from(numeric));
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
             let mut value_compare_host = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
@@ -4588,7 +4622,7 @@ impl Driver {
                 }
             };
 
-            let mut hosts: [HostFn<'_>; 55] = [
+            let mut hosts: [HostFn<'_>; 57] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -4644,6 +4678,8 @@ impl Driver {
                 &mut option_destruct_host,
                 &mut string_split_host,
                 &mut string_parse_int_host,
+                &mut string_contains_host,
+                &mut string_is_numeric_host,
             ];
             let step = exec
                 .task

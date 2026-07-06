@@ -49,3 +49,14 @@ fn version_parse_strip_and_compare_in_vix() {
         .expect("rodin.vix version_probe runs");
     assert_eq!(value, 35);
 }
+
+// Operator overloading: `fn >(self: Rank, other: Rank)` makes `a > b` dispatch
+// to the user function. hi > lo (5>3) = 1, lo > hi = 0.
+#[test]
+fn user_type_owns_its_comparison_operator() {
+    let mut machine = Machine::load(&rodin_source()).expect("rodin.vix loads");
+    let value = machine
+        .demand_i64("rank_probe", vec![0])
+        .expect("rodin.vix rank_probe runs");
+    assert_eq!(value, 1);
+}

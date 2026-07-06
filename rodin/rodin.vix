@@ -22,7 +22,7 @@
 // Version + parse_version come from vix std (vix/std/version.vix) — a plain vix
 // struct (records-at-offsets), parsed by vix over the string primitives. The
 // machine has no version-shaped op.
-use vix::{Version, parse_version, version_lte, VersionSet, Map};
+use vix::{Version, parse_version, version_lte, Ordering, VersionSet, Map};
 
 // ---------------------------------------------------------------------------
 // Package identity  (rodin-facts/src/interner.rs: PkgId, CompatClass, SourceIx)
@@ -227,6 +227,36 @@ pub fn string_probe(seed: Int) -> Int {
     let minor = rest.before(".").parse_int();
     let patch = rest.after(".").parse_int();
     major * 100 + minor * 10 + patch + seed - seed
+}
+
+// Operator-overload smoke test: a user type owns its comparison via the
+// spaceship; `>` (and `< <= >=`) derive from it.
+struct Rank {
+    n: Int,
+}
+
+fn <=>(self: Rank, other: Rank) -> Ordering {
+    match self.n < other.n {
+        true => Ordering::Less,
+        false => match self.n > other.n {
+            true => Ordering::Greater,
+            false => Ordering::Equal,
+        },
+    }
+}
+
+pub fn rank_probe(seed: Int) -> Int {
+    let hi = Rank { n: 5 };
+    let lo = Rank { n: 3 };
+    let gt = match hi > lo {
+        true => 1,
+        false => 0,
+    };
+    let lt = match lo > hi {
+        true => 10,
+        false => 0,
+    };
+    gt + lt + seed - seed
 }
 
 // The glibc-preflight path in miniature: strip a "GLIBC_" prefix, parse a

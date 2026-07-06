@@ -1,4 +1,15 @@
-// vix standard library — Version.
+// vix standard library.
+
+// The result of a three-way comparison. A type defines `fn <=>(self, other) ->
+// Ordering` and the machine derives `< <= > >=` from it. Variant order is
+// Less(0) / Equal(1) / Greater(2) — the operator derivation depends on it.
+pub enum Ordering {
+    Less,
+    Equal,
+    Greater,
+}
+
+// Version.
 //
 // A version is a records-at-offsets value, not a host primitive: `.major` is an
 // ordinary field read, parsing is vix code over the string primitives, and

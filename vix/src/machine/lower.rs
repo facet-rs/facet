@@ -38,9 +38,9 @@ use super::driver::{
     OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST,
     PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RECORD_UPDATE_HOST, RenderNames,
     RenderVariant, RenderedValue, SEALED_DECLASSIFY_HOST, SEALED_SEAL_HOST, SEALED_TO_STRING_HOST,
-    STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_DEFAULT_HOST,
-    STRING_LOWER_HOST, STRING_PARSE_INT_HOST, STRING_SPLIT_HOST, STRING_UPPER_HOST,
-    SemanticComparator, StepMode, StoreHandle, TARGET_HOST,
+    STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_CONTAINS_HOST,
+    STRING_DEFAULT_HOST, STRING_IS_NUMERIC_HOST, STRING_LOWER_HOST, STRING_PARSE_INT_HOST,
+    STRING_SPLIT_HOST, STRING_UPPER_HOST, SemanticComparator, StepMode, StoreHandle, TARGET_HOST,
     TREE_PROJECT_HOST, VALUE_COMPARE_HOST, VERSION_PARSE_HOST, VERSION_SET_OP_HOST,
     VERSION_SET_PARSE_HOST, ValueBundle,
 
@@ -730,7 +730,7 @@ fn inject_std_modules(modules: &mut BTreeMap<String, String>) {
 }
 
 fn references_vix_std(modules: &BTreeMap<String, String>) -> bool {
-    const STD_NAMES: &[&str] = &["Version", "parse_version", "version_lte"];
+    const STD_NAMES: &[&str] = &["Version", "parse_version", "version_lte", "Ordering"];
     modules
         .values()
         .any(|source| STD_NAMES.iter().any(|name| contains_word(source, name)))
@@ -1748,6 +1748,7 @@ fn collect_expr_schemas(
                 ("subset" | "contains", Some("VersionSet")) => Ok(Some("Bool".into())),
                 ("before" | "after" | "strip_prefix", Some("String")) => Ok(Some("String".into())),
                 ("parse_int", Some("String")) => Ok(Some("Int".into())),
+                ("contains" | "is_numeric", Some("String")) => Ok(Some("Bool".into())),
                 _ => Ok(None),
             }
         }
@@ -2597,6 +2598,30 @@ impl<'a> FnLowerer<'a> {
             ast::Expr::Binary(b) => {
                 let mut a = self.expr(&b.left)?;
                 let mut r = self.expr(&b.right)?;
+                // Comparison operators derive from a user-defined spaceship
+                // `fn <=>(self: T, other) -> Ordering`: `a < b` ≡ `(a <=> b)` is
+                // Less, etc. Only ordering is overridable this way; `==`/`!=` stay
+                // structural (identity). The `<=>` name is a normal function name
+                // (the grammar allows operator symbols).
+                if matches!(b.op.as_str(), "<" | "<=" | ">" | ">=") {
+                    let dispatch = self
+                        .resolve_function_name("<=>")
+                        .map(str::to_string)
+                        .and_then(|resolved| {
+                            let fn_ref = *self.fn_refs.get(&resolved)?;
+                            let params = self.signatures.params.get(&resolved)?;
+                            (params.first() == Some(&a.schema))
+                                .then(|| (fn_ref, params.get(1).cloned()))
+                        });
+                    if let Some((fn_ref, p1)) = dispatch {
+                        let r = match &p1 {
+                            Some(p1) => self.coerce_to_schema(r, p1)?,
+                            None => r,
+                        };
+                        let ord = self.invoke_fn(fn_ref, vec![a, r], "Ordering".into())?;
+                        return Ok(self.ordering_to_bool(&ord, b.op.as_str()));
+                    }
+                }
                 if b.op == "+"
                     && matches!(a.schema.as_str(), "String" | "Sealed")
                     && matches!(r.schema.as_str(), "String" | "Sealed")
@@ -3615,6 +3640,13 @@ impl<'a> FnLowerer<'a> {
                 let right = self.method_arg(arg, Some("VersionSet"))?;
                 self.version_set_op(3, &receiver, Some(&right), "Bool")
             }
+            "contains" if receiver.schema == "String" => {
+                let [arg] = call.args.args.as_slice() else {
+                    return Err("String.contains takes one needle".into());
+                };
+                let needle = self.method_arg(arg, Some("String"))?;
+                Ok(self.string_query(&receiver, Some(&needle), STRING_CONTAINS_HOST))
+            }
             "contains" => {
                 if receiver.schema != "VersionSet" {
                     return Err(format!("contains called on {}", receiver.schema));
@@ -3657,6 +3689,15 @@ impl<'a> FnLowerer<'a> {
                     return Err("String.parse_int takes no arguments".into());
                 }
                 Ok(self.string_parse_int(&receiver))
+            }
+            "is_numeric" => {
+                if receiver.schema != "String" {
+                    return Err(format!("is_numeric called on {}", receiver.schema));
+                }
+                if !call.args.args.is_empty() {
+                    return Err("String.is_numeric takes no arguments".into());
+                }
+                Ok(self.string_query(&receiver, None, STRING_IS_NUMERIC_HOST))
             }
             other => Err(format!(
                 "method {other} is outside the machine slice-3 subset"
@@ -6102,6 +6143,71 @@ impl<'a> FnLowerer<'a> {
         }
     }
 
+    /// Derive a comparison operator's Bool from an `Ordering` value (variants
+    /// Less=0, Equal=1, Greater=2): `<` is Less, `>` is Greater, `<=` is
+    /// not-Greater, `>=` is not-Less.
+    fn ordering_to_bool(&mut self, ord: &ValueSlot, op: &str) -> ValueSlot {
+        let tag = self.store_tag(ord);
+        let (target, equal) = match op {
+            "<" => (0, true),
+            ">" => (2, true),
+            "<=" => (2, false),
+            _ => (0, false),
+        };
+        let lit = self.alloc();
+        self.code.push(Op::ConstI64 {
+            dst: lit,
+            value: target,
+        });
+        let dst = self.alloc();
+        self.code.push(if equal {
+            Op::EqI64 {
+                dst,
+                a: tag.slot,
+                b: lit,
+            }
+        } else {
+            Op::NeI64 {
+                dst,
+                a: tag.slot,
+                b: lit,
+            }
+        });
+        ValueSlot {
+            slot: dst,
+            schema: "Bool".into(),
+            realization: None,
+            pending: None,
+        }
+    }
+
+    /// A String -> Bool query (contains needs an argument, is_numeric does not).
+    fn string_query(&mut self, receiver: &ValueSlot, arg: Option<&ValueSlot>, host: u32) -> ValueSlot {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: receiver.slot,
+        });
+        if let Some(arg) = arg {
+            self.code.push(Op::CopyI64 {
+                dst: region + 16,
+                src: arg.slot,
+            });
+        }
+        self.code.push(Op::HostCall { host });
+        ValueSlot {
+            slot: dst,
+            schema: "Bool".into(),
+            realization: None,
+            pending: None,
+        }
+    }
+
     fn string_parse_int(&mut self, receiver: &ValueSlot) -> ValueSlot {
         let dst = self.alloc();
         let region = self.primitive_region;
@@ -6452,7 +6558,7 @@ fn strict_binary_operand_schema<'a>(op: &str, left: &'a str, right: &'a str) -> 
         | ("+" | "*", "Float")
         | ("+", "String")
         | ("==" | "!=", "Int" | "Float" | "String" | "Path" | "Bool" | "Version" | "VersionSet")
-        | ("<" | "<=" | ">" | ">=", "Int" | "Version")
+        | ("<" | "<=" | ">" | ">=", "Int" | "String" | "Version")
         | ("&&", "Bool") => Some(left),
         _ => None,
     }

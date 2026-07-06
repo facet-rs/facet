@@ -53,7 +53,7 @@ module.exports = grammar({
       seq(
         optional(field("vis", "pub")),
         "fn",
-        field("name", $.identifier),
+        field("name", $.fn_name),
         optional(field("generics", $.generic_params)),
         field("params", $.param_list),
         optional(seq("->", field("return_type", $._type))),
@@ -347,6 +347,30 @@ module.exports = grammar({
 
     // ---- leaves ------------------------------------------------------------
     identifier: () => /[A-Za-z_][A-Za-z0-9_]*/,
+
+    // A function may be named by an operator symbol — the spaceship
+    // `fn <=>(self: Version, other) -> Ordering` overloads comparison for the
+    // receiver's type (and `< <= > >=` derive from it); `fn +` / `fn /` etc.
+    // overload arithmetic. A single leaf token (identifier OR operator) so `name`
+    // stays a uniform leaf with a text value, not a mixed-alternative field.
+    fn_name: () =>
+      token(
+        choice(
+          /[A-Za-z_][A-Za-z0-9_]*/,
+          "<=>",
+          "==",
+          "!=",
+          "<=",
+          ">=",
+          "<",
+          ">",
+          "+",
+          "-",
+          "*",
+          "/",
+          "%",
+        ),
+      ),
 
     // Loop-free config-generation templates. Holes are lowered into demand edges.
     template_string: () => /tmpl"([^"\\]|\\.)*"/,

@@ -2,61 +2,66 @@
 
 ## Versions
 
-A version is a semver point — major.minor.patch plus prerelease and build tags —
-ordered by semver precedence. Resolution needs three things from a version: its
-ordering (to compare and to bound intervals), its components (major/minor/patch,
-for the compat-class rule in doc 10), and equality. All three are properties of
-the *value*; none requires parsing at use. A version is parsed once (a memoized
-demand) and thereafter read structurally. Do not store a version as its display
-string and re-parse it per access — see 90.
+A version is a **full semver value**: `major.minor.patch`, an optional
+**prerelease** (a dot-separated sequence of identifiers), and optional **build**
+metadata. All of it is modeled — prerelease is not deferred; cargo resolves
+prereleases, so we do too. A version is a records-at-offsets vix value; parsing
+(once, memoized) and comparison are vix. `.major` is a field read.
 
-## Version sets are interval algebra
+### Precedence (semver, exact)
 
-A version set is a set of versions represented as a normalized union of
-half-open intervals `[lower, upper)`, each bound being either a version or
-unbounded. Normalized means: intervals sorted by lower bound, with touching or
-overlapping intervals merged — so the representation is canonical, equal sets are
-structurally equal, and the store content-addresses them for free (no
-hand-rolled canonical form).
+Compare `major`, then `minor`, then `patch` numerically. If those are equal:
 
-The operations resolution uses, as meaning:
+- a version **with** a prerelease has **lower** precedence than the same version
+  without one (`1.2.3-alpha` < `1.2.3`);
+- two prereleases compare identifier by identifier, left to right:
+  - a purely numeric identifier compares numerically;
+  - an alphanumeric identifier compares by ASCII order;
+  - a numeric identifier is always **lower** than an alphanumeric one;
+  - if every shared identifier is equal, the version with **more** identifiers is
+    higher (`1.2.3-alpha` < `1.2.3-alpha.1`).
 
-- **contains(v)** — is a version in the set.
-- **union / intersect** — set algebra (interval intersect is max-lower /
-  min-upper).
-- **complement (relative to a universe)** — the versions in the universe not in
-  the set; expresses "everything the requirement excludes."
-- **is_subset_of** — `self ∩ other == self`; the containment test conflict
-  learning leans on (doc 50).
-- **exact(v)** — the singleton `[v, next_patch(v))`.
-- **empty / universe** — lattice bottom and top.
+**Build metadata does not affect precedence.** Its role in equality is cargo
+domain truth — pin `1.2.3+a` vs `1.2.3+b` against the oracle.
+
+## Version sets
+
+A version set is interval algebra — a normalized union of half-open
+`[lower, upper)` intervals over the precedence order, canonical so the store
+content-addresses it. Operations: `contains` / `union` / `intersect` /
+`complement` / `is_subset_of` / `exact` / `empty` / `universe`.
+
+The total order **includes prereleases**, so the model carries cargo's
+**prerelease admission** rule — not a release-only approximation:
+
+- cargo admits a prerelease `M.m.p-pre` into a requirement only when some
+  comparator in that requirement pins the **same** `M.m.p` **and itself carries a
+  prerelease**. `^1.2.3` does *not* admit `2.0.0-alpha` (even though
+  `2.0.0-alpha < 2.0.0`); `>=1.2.3-alpha` *does* admit `1.2.3-beta`.
+- so `exact(v)` is the true prerelease-aware singleton `{v}`, not the release-only
+  shorthand `[v, next_patch(v))`; and the caret/tilde/comparator intervals carry
+  admission at their prerelease-bearing bounds.
+
+The exact admission behaviour is cargo domain truth: **model it fully and pin
+every corner against `cargo generate-lockfile` / `cargo tree` fixtures** (doc 00).
+That is validation against the oracle — not deferral of the capability.
 
 ## Requirements → sets (cargo's caret/tilde/wildcard truth)
 
-A cargo `VersionReq` is a conjunction of comparators; each comparator maps to an
-interval and the requirement's set is their intersection. These rules are cargo
-domain truth and must match exactly:
+A cargo `VersionReq` is a conjunction of comparators; each maps to an interval
+(carrying prerelease admission per the rule above) and the requirement's set is
+their intersection. Release-boundary rules, which must match cargo exactly:
 
 - `=x` / wildcard — upper bound is the next unfixed component (`=1` ⇒ [1.0.0,
-  2.0.0); `=1.2` ⇒ [1.2.0, 1.3.0); `=1.2.3` ⇒ [1.2.3, 1.2.4)).
-- `>x` `>=x` `<x` `<=x` — half-lines, same component-rollover on the open side.
+  2.0.0); `=1.2` ⇒ [1.2.0, 1.3.0); `=1.2.3` ⇒ the singleton).
+- `>x` `>=x` `<x` `<=x` — half-lines with the same component rollover.
 - `~x` (tilde) — [base, next-minor) if minor given, else [base, next-major).
-- `^x` (caret) — upper bound at the next *incompatible* version: next major if
-  major>0; else next minor if minor>0; else next patch. This is exactly the
-  compat-class boundary from doc 10, expressed as an interval.
-
-## The prerelease boundary (known modeling gap)
-
-This interval model is exact for **release-only** version universes. cargo's
-prerelease admission policy is *not* a finite union of plain half-open intervals
-over semver's total order: an admitted release range implies infinitely many
-excluded prerelease points above it. rodin-core deferred this ("v2," via a
-per-interval admission flag or an ordering trick) and so do we — but it is an
-explicit open problem, not a silent drop. Adding prerelease changes the *set
-representation*, so decide it before the set type ossifies.
+- `^x` (caret) — upper bound at the next incompatible version: next major if
+  major>0; else next minor if minor>0; else next patch — the compat-class
+  boundary from doc 10.
 
 ## What is NOT part of this
 
-The `Vec<Interval>` backing and any interning of sets. The machine stores and
-content-addresses the set value; normalization gives canonicality for free. No
-canonical-bytes step. See 90.
+The backing container and any interning of sets. The machine stores and
+content-addresses the set value; normalization gives canonicality for free. See
+90.
