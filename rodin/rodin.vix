@@ -19,7 +19,25 @@
 //   3. [CLOSED] `Version` host value now has `.major/.minor/.patch` accessors
 //      (VERSION_FIELD host op over version::parse_bytes).
 
-use vix::{Version, VersionSet, Map};
+use vix::{VersionSet, Map};
+
+// Version is a plain vix struct — a records-at-offsets value, not a host
+// primitive. `.major` is an ordinary field read; parsing is vix code over the
+// string primitives (before/after/parse_int), a memoized vix function. The
+// machine has no version-shaped op. (pre/build deferred — see docs/30.)
+struct Version {
+    major: Int,
+    minor: Int,
+    patch: Int,
+}
+
+fn parse_version(s: String) -> Version {
+    let major = s.before(".").parse_int();
+    let rest = s.after(".");
+    let minor = rest.before(".").parse_int();
+    let patch = rest.after(".").parse_int();
+    Version { major: major, minor: minor, patch: patch }
+}
 
 // ---------------------------------------------------------------------------
 // Package identity  (rodin-facts/src/interner.rs: PkgId, CompatClass, SourceIx)
@@ -186,7 +204,7 @@ fn compat_code(v: Version) -> Int {
 
 pub fn main(seed: Int) -> Int {
     // 2.3.4 -> major bucket 2 ; 0.5.1 -> 1005 ; 0.0.7 -> 2007
-    compat_code(version("2.3.4")) + compat_code(version("0.5.1")) + compat_code(version("0.0.7")) + seed - seed
+    compat_code(parse_version("2.3.4")) + compat_code(parse_version("0.5.1")) + compat_code(parse_version("0.0.7")) + seed - seed
 }
 
 // ---------------------------------------------------------------------------
@@ -208,7 +226,7 @@ fn selected_or(sel: Option<Version>, fallback: Int) -> Int {
 
 pub fn option_probe(seed: Int) -> Int {
     // Some(2.3.4) -> compat_code 2 ; None -> fallback 9000 -> 9002
-    selected_or(Some(version("2.3.4")), 0) + selected_or(no_version(), 9000) + seed - seed
+    selected_or(Some(parse_version("2.3.4")), 0) + selected_or(no_version(), 9000) + seed - seed
 }
 
 // ---------------------------------------------------------------------------
