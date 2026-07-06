@@ -1,132 +1,79 @@
 # rodin.vix — the plan (read this first)
 
-Porting Rodin (the cargo-shaped version resolver) into the vix language. This
-file is the single entry point; read it before touching anything.
+Reimplement Rodin (the cargo-shaped version resolver) **entirely in vix**, as the
+only production Rodin. This file is the entry point; read it, then `docs/`.
 
-## Mission
+## Why the first plan failed (root cause)
 
-Reimplement Rodin **entirely in vix**, running on the vix demand machine (memo /
-demand / incremental / content-addressing for free). This vix implementation is
-the **only production Rodin**. Grow the vix language surface wherever the port
-needs it — that IS the work, not a detour.
+Rodin was first implemented **directly in Rust** (`rodin-core`, `rodin-facts`).
+That finished Rust artifact became the anchor: the plan was written as "port
+rodin-core," which silently promoted its Rust representations to givens and
+rewarded mirroring its internals to make a diff pass. The whole gap list became
+Rust→vix *bridges* ("expose Version's fields," "expose VersionSet ops"), so an
+agent handed "wire a host accessor" produced exactly that — an intrinsic that
+re-parses a version's display-string bytes on every field access. The intrinsic
+wasn't a slip; it was the plan's faithful output. Worse, `rodin-core` hand-built
+an entire incremental / memo / proof / read-set / warm-reuse stack — precisely
+the services the vix machine *is* — so a faithful port rebuilds the machine
+inside the machine.
 
-## Non-negotiable doctrine (each one a hard lesson from the session that made this)
+## The method (this plan)
 
-- **cargo is THE oracle.** Ground truth for resolution = `cargo tree --target`,
-  `cargo generate-lockfile`. Not rodin-core.
-- **rodin-core (in vixenware/vixen: crates/rodin-core, rodin-facts, rodin-survey)
-  is the Rust REFERENCE to port FROM and diff against — not production.** Do NOT
-  optimize/benchmark/extend it. `vix-solve` (PubGrub) is dead. See the vixenware
-  repo-root `CLAUDE.md`.
-- **Faithful but functional, and COMPLETE.** rodin-core is imperative/`&mut`;
-  vix is persistent `State` threaded through recursion (the recasting is already
-  written: `docs/design/rodin-pure-kernel.md` §6, on branch
-  `rodin-pure-kernel-design` / in vixenware). Port the WHOLE model. Do NOT build
-  a 10% "version-only" toy and bolt features on later — that shape won't hold.
+1. **Distill `rodin-core` into `docs/`** — representation-neutral prose:
+   behavior, invariants, and the solving strategy, never a struct/field/byte
+   layout. Litmus for every sentence: if it names a type, a field, an interner,
+   or canonical bytes, it's contraband; if it could be handed to someone
+   implementing in an unnamed substrate, it's clean.
+2. **Delete `rodin-core`** (in vixenware) once the distillation is reviewed. No
+   Rust artifact left to port from; no internals left to mirror.
+3. **Implement Rodin in vix**, derived from `docs/` + cargo, native from the
+   start. The `vix/tests/rodin.rs` harness gets rebuilt around cargo fixtures.
+
+## Doctrine (durable)
+
+- **cargo is THE and ONLY oracle.** Ground truth = `cargo tree --target`,
+  `cargo generate-lockfile` on small workspace fixtures. `rodin-core` is being
+  turned into docs, then deleted; it is not a differential target.
 - **No god `Value` enum.** Values are schema-laid-out bytes (records-at-offsets,
-  enums-as-tag+variants). Type is static.
-- **Where a type is declared: `vix/docs/where-values-are-declared.md`.** Declare
-  in Rust iff Rust code manipulates it (facet bridges to vix); else declare in
-  vix. Content-addressing is FREE for any vix value — never hand-roll
-  `canonical_bytes`. `Region`/`State`/`Domain`/`LearnedNoGood` are vix-declared.
-  Only `Version`/`VersionSet` are Rust host primitives, and even their Rust
-  justification is weak (canonical-bytes is free) — the sole open question is
-  whether interval-algebra throughput needs them in Rust; that's a MEASUREMENT,
-  default vix.
-- **Don't manufacture side-structures.** No new crates, no new worktrees, no
-  playground samples for real components. Work in `~/oss/facet-cc` (it is already
-  the facet worktree). rodin.vix lives in the facet repo at `rodin/`.
-- **Never leave work unpushed.** (This session lost nothing only because we
-  caught 130 unpushed commits in time.) Commit and push often.
+  enums-as-tag+variants). A field is an offset read, never a parse.
+- **Content-addressing / memo / incremental are FREE.** Never hand-roll
+  `canonical_bytes`, an interner, a read-set, a proof, or warm-fact reuse — the
+  machine provides all of it. See `docs/90-substrate-ledger.md`.
+- **Red-flag test for any step.** A step of the form "expose Rust type X to vix
+  via a host op" is presumed wrong. Steps read "express X as a vix
+  value/computation, check against cargo." A host op is admissible only when a
+  *measured* hotspot demands it (the VersionSet interval-throughput question) —
+  never because the Rust version had it.
+- **Grow the vix language surface where the port needs it** — but as vix-native
+  values/demand, not as Rust bridges.
+- **Never revert by delete/checkout/reset; commit and push often; work in
+  `~/oss/facet-cc`.** (rodin-core's deletion is a deliberate reviewed plan step,
+  not a revert.)
 
-## Where everything is
+## The spec (`docs/`, numbered = build order)
 
-- Branch: **`rodin`** off `origin/main` (facet, github.com/facet-rs/facet), in
-  `~/oss/facet-cc`. Has the `Version`/`VersionSet`/flesh primitives.
-- Resolver source: **`rodin/rodin.vix`**.
-- Differential harness: **`vix/tests/rodin.rs`** — `Machine::load(source)` +
-  `machine.demand_i64("main", args)`. Run: `cargo nextest run -p vix --test rodin`.
-- Blueprint (the algorithm, functionally recast, with cited line numbers):
-  `docs/design/rodin-pure-kernel.md` (vixenware `rodin-pure-kernel-design`).
-- Rust reference: vixenware/vixen `crates/rodin-core/src/lib.rs`,
-  `crates/rodin-facts/src/{interner,region,version_set}.rs`.
-- The superseded oracle line is archived at `origin/snark-playground-rebased` —
-  do NOT merge it (main is ~9k lines ahead; that branch is the interpret-only
-  oracle main already replaced with the machine).
+- `00-oracle.md` — cargo is the only oracle: invocations, comparison, fixtures. *(pending)*
+- `10-identity.md` — identity = (source, name, compat-class); coexistence bucketing.
+- `20-constraints.md` — dependency edges → clauses/guards/consequents as meaning; the consumption gate.
+- `30-versions-sets.md` — versions as ordered values; interval-set meaning; cargo caret/tilde/wildcard; the prerelease gap.
+- `40-search.md` — narrow → propagate-to-fixpoint → highest-first candidates → hypothesize/recurse/backtrack.
+- `50-conflict-learning.md` — regions as boxes; point→widen→install; subsumption by containment; region unit-propagation.
+- `60-features.md` — feature unification, optional/dep:/scoped, default features. *(pending)*
+- `70-targets-cfg.md` — cfg/target gating. *(pending)*
+- `90-substrate-ledger.md` — the do-NOT-build table: rodin-core subsystem → vix mechanism.
 
-## Package identity (locked)
+## Status
 
-`PackageId { source: Source, name: String, compat: Option<CompatClass> }` — a
-composite, NOT a bare name. `serde@1` + `serde@2` cohabitate (compat class);
-crates.io / git / path are distinct provenances (source). This mirrors
-rodin-facts `PkgId (source, name, compat)`. `CompatClass::from_version`: major!=0
-→ Major(major); else minor!=0 → Minor(minor); else Patch(patch). (Modeled as a
-3-variant enum in vix to avoid Option until it lands — see gaps.)
-
-## The build loop
-
-Write vix → `cargo nextest run -p vix --test rodin` → the machine reports the
-next missing surface → add it to the machine (`vix/src/machine/{lower,driver}.rs`)
-or model around it → repeat. Every resolver function is checked against **cargo**
-(fixtures mirroring small workspaces) and **rodin-core** (same inputs, same
-outputs).
-
-## Surface gaps to add, IN ORDER (documented in rodin.vix header)
-
-1. **`Version` accessors** `.major/.minor/.patch` — the current runtime blocker.
-   `version::parse_bytes` (vix/src/machine/version.rs) already yields a
-   `semver::Version`; wire a host accessor: `lower.rs` accepts field/method
-   access on a `Version` value, `driver.rs` executes it → `Int`. Template for
-   host-value ops: the `VersionSet` handling in driver.rs (~6609) / lower.rs
-   (~557). `compat_of` goes green the moment this lands → un-`#[ignore]`
-   `vix/tests/rodin.rs`.
-2. **`Option` as a prelude enum + generic enum monomorphization.** Today Option
-   has no user construction/matching (only `.unwrap()`), and generic enums don't
-   lower ("expected Option, got Option<Int>, machine slice-2 subset"). Option is
-   pervasive in the resolver (`Domain.selected`, `Gate.target`, `PackageId.compat`)
-   — this is the biggest surface piece. Add generic enum lowering, put
-   `enum Option<T> { None, Some(T) }` in a prelude.
-3. **`Set` type** (has Map/Array). Currently modeled as `Map<K, Bool>`. Decide
-   whether a first-class `Set` is worth it or `Map<K,Unit>` stands.
-4. **`VersionSet` op exposure to vix** — `contains`/`intersect`/`union`/
-   `complement`/`is_subset_of`/`from_req` must be callable from vix (the Rust
-   methods exist in version_set.rs; confirm/expose the vix-facing dispatch).
-
-## The algorithm, after the surface (blueprint §6, faithful)
-
-`solve → seed_problem → search → try_candidates → propagate (fixpoint) →
-fold_clauses → learn → install_learned_fact`. CSP-style domain narrowing over
-per-package `VersionSet` intervals with **region** conflict learning (NOT
-2-watched-literal CDCL). `State` = persistent record (`domains: Map<PackageId,
-Domain>`, features, hypotheses, applied). Reference workload: 457 decisions, 69
-conflicts. Combinators the kernel wants (from §6): a try-fold / early-abort-fold
-(4 call sites) — explicit recursion works, sugar optional.
-
-Build order after surface: version core (domains + propagate narrowing + backtrack,
-matching cargo on a 2-crate fixture) → region learning → features → cfg/targets.
-Each is a full slice of the real model, cargo-checked — not a throwaway subset.
-
-## Current state
-
-- `rodin/rodin.vix`: full type surface compiles through the machine; `compat_of`
-  (CompatClass::from_version) lowers + RUNS faithfully.
-- **Gap #1 (Version accessors) — CLOSED.** `.major/.minor/.patch` lower to a
-  `VERSION_FIELD` host op over `version::parse_bytes`. Field access special-cased
-  in `lower.rs::field_access` + schema inference in `collect_expr_schemas`.
-- **Gap #2 (Option construction + matching) — CLOSED.** `Some`/`None` and
-  `match { Some(x) => .., None => .. }` now work, generic over any `Option<T>`.
-  DECISION: reused the machine's existing content-addressed Option store entry
-  (the one `map.get`/`.unwrap()` already produce/consume) instead of a parallel
-  store-alloc'd prelude enum — one Option representation, pending-aware, no god
-  enum. Host ops: `OPTION_CONSTRUCT` (Some/None), `OPTION_DESTRUCT` (tag +
-  payload for matching). Construction routed in `lower.rs::call` ("Some") and the
-  `Identifier` arm ("None", using the expected type); matching in `match_expr`.
-- `vix/tests/rodin.rs`: both green — `compat_class_matches_rodin_core_from_version`
-  (gap #1, runs) and `option_round_trips_some_and_none` (gap #2, Some/None ×
-  match over `Option<Version>`). Run: `cargo nextest run -p vix --test rodin`.
-- Immediate next step: **gap #4, expose `VersionSet` ops to vix** (contains /
-  intersect / union / complement / subset / from_req — Rust methods exist, the
-  vix-facing dispatch is partly wired in `lower.rs` ~3573; confirm the full set),
-  then the algorithm core (version domains + propagate + backtrack on a 2-crate
-  cargo fixture). Gap #3 (first-class `Set`) stays deferred: `Map<K,Bool>` stands
-  until a measurement says otherwise.
+- Distilled + written: 10, 20, 30, 40, 50, 90. The model (`rodin-facts`) and the
+  core search (`solve`/`seed_problem`/`search`/`propagate`/`learn`/
+  `install_learned_fact`/`widen`) are fully read.
+- Pending source reads: features + cfg gating in `rodin-core/src/lib.rs` (→ 60,
+  70), `cargo_evidence.rs` (→ 00).
+- Two invariants flagged for confirmation during the remaining distillation: the
+  role of the *unclassed* identity form (10), and the exact inputs of the
+  *consumption gate* (20).
+- **`rodin-core` deletion is gated on review of the distillation.**
+- Superseded by this plan: the `VERSION_FIELD` intrinsic + string-blob `Version`,
+  and the current gap-driven `rodin.vix`. Version becomes a vix value (parse a
+  memoized demand); `rodin.vix` gets rewritten native. Not deleted to hide —
+  replaced by the native implementation.
