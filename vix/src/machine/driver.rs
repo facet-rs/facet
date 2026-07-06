@@ -191,6 +191,23 @@ pub enum StepCommand {
 
 pub type DriveEventSink = Box<dyn FnMut(&DriveEvent) -> StepCommand>;
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+pub(super) struct FnRef(usize);
+
+impl FnRef {
+    pub(super) fn new(index: usize) -> Self {
+        Self(index)
+    }
+
+    fn from_frame_word(word: i64) -> Self {
+        Self(word as usize)
+    }
+
+    pub(super) fn index(self) -> usize {
+        self.0
+    }
+}
+
 /// One compiled vix function: its task program identity plus where its
 /// INVOKE region and argument slots live. Cached content-addressed —
 /// `hash` is the closure hash (canonical AST × referenced code+types),
@@ -229,7 +246,17 @@ pub struct LoweredFn {
 #[derive(Clone, Debug)]
 pub struct SemanticComparator {
     pub arg_index: usize,
-    pub fn_ref: usize,
+    fn_ref: FnRef,
+}
+
+impl SemanticComparator {
+    pub(super) fn new(arg_index: usize, fn_ref: FnRef) -> Self {
+        Self { arg_index, fn_ref }
+    }
+
+    pub(super) fn fn_ref(&self) -> FnRef {
+        self.fn_ref
+    }
 }
 
 /// Driver-level events (join the unified trace via lowering-emitted
@@ -433,7 +460,7 @@ pub struct RenderVariant {
 struct InvokeRequest {
     caller: usize,
     input_slot: usize,
-    fn_ref: usize,
+    fn_ref: FnRef,
     args: Vec<i64>,
 }
 
@@ -510,7 +537,7 @@ struct PendingInvokeRequest {
 /// A running or parked task execution.
 struct Execution {
     task: LaneTask,
-    fn_ref: usize,
+    fn_ref: FnRef,
     key: CanonMemoKey,
     args: Vec<i64>,
     molten: MoltenStore,
@@ -1648,6 +1675,10 @@ pub struct Driver {
 }
 
 impl Driver {
+    fn lowered(&self, fn_ref: FnRef) -> &LoweredFn {
+        &self.fns[fn_ref.index()]
+    }
+
     pub fn new(program: Program, fns: Vec<LoweredFn>) -> Self {
         Self::with_descriptors(program, fns, HashMap::new())
     }
@@ -1952,20 +1983,24 @@ impl Driver {
             .0)
     }
 
-    pub fn fn_hash(&self, fn_ref: usize) -> u64 {
-        self.fns[fn_ref].hash
+    pub(super) fn fn_hash(&self, fn_ref: FnRef) -> u64 {
+        self.lowered(fn_ref).hash
     }
 
     #[cfg(test)]
-    pub fn semantic_comparator_len(&self, fn_ref: usize) -> usize {
-        self.fns[fn_ref].semantic_comparators.len()
+    pub(super) fn semantic_comparator_len(&self, fn_ref: FnRef) -> usize {
+        self.lowered(fn_ref).semantic_comparators.len()
     }
 
-    pub fn pending_for_fn(&self, fn_ref: usize, args: Vec<i64>) -> Result<(i64, String), String> {
+    pub(super) fn pending_for_fn(
+        &self,
+        fn_ref: FnRef,
+        args: Vec<i64>,
+    ) -> Result<(i64, String), String> {
         let lowered = self
             .fns
-            .get(fn_ref)
-            .ok_or_else(|| format!("function ref {fn_ref}"))?;
+            .get(fn_ref.index())
+            .ok_or_else(|| format!("function ref {}", fn_ref.index()))?;
         if args.len() > lowered.arg_schemas.len() {
             return Err(format!(
                 "pending invocation got {} args, expected at most {}",
@@ -1998,8 +2033,8 @@ impl Driver {
     }
 
     #[cfg(test)]
-    pub fn fn_ops(&self, fn_ref: usize) -> &[Op] {
-        &self.program.fns[self.fns[fn_ref].task_fn.0 as usize].code
+    pub(super) fn fn_ops(&self, fn_ref: FnRef) -> &[Op] {
+        &self.program.fns[self.lowered(fn_ref).task_fn.0 as usize].code
     }
 
     pub fn intern_raw_value(&self, schema: &str, bytes: Vec<u8>) -> (i64, bool) {
@@ -2055,7 +2090,7 @@ impl Driver {
 
     /// Demand one invocation's identity: the edge of the machine.
     /// Returns the scalar result (slice 1).
-    pub fn demand(&mut self, fn_ref: usize, args: Vec<i64>) -> Result<i64, String> {
+    pub(super) fn demand(&mut self, fn_ref: FnRef, args: Vec<i64>) -> Result<i64, String> {
         let key = self.memo_key(fn_ref, &args);
         self.emit(DriveEvent::Demanded { fn_hash: key.0 });
         if let Some(entry) = self.memo.get(&key).cloned() {
@@ -2073,7 +2108,7 @@ impl Driver {
             return Ok(entry.value);
         }
         if let Some(entry) = self.semantic_memo_hit(fn_ref, &args, &key)? {
-            let verified = self.fns[fn_ref].semantic_comparators.len();
+            let verified = self.lowered(fn_ref).semantic_comparators.len();
             self.memo.insert(key.clone(), entry.clone());
             self.index_memo_candidate(fn_ref, &args, &key);
             self.emit(DriveEvent::MemoSemanticHit {
@@ -2101,7 +2136,7 @@ impl Driver {
                     let mut value = value;
                     match Handle::from_word(value) {
                         Handle::Molten(_) => {
-                            let return_schema = self.fns[exec.fn_ref].return_schema.clone();
+                            let return_schema = self.lowered(exec.fn_ref).return_schema.clone();
                             let (interned, deduped) = intern_molten_word(
                                 &mut self.store.borrow_mut(),
                                 &mut exec.molten,
@@ -2145,7 +2180,7 @@ impl Driver {
                             w.ready[slot] = true;
                             w.awaited[slot] = value;
                             let remapped = remap_read_set_for_caller(
-                                &self.fns[w.fn_ref].arg_schemas,
+                                &self.lowered(w.fn_ref).arg_schemas,
                                 &w.args,
                                 &exec.args,
                                 &done_entry.read_set,
@@ -2339,7 +2374,7 @@ impl Driver {
                                     });
                                 }
                                 MemoHitKind::Semantic => {
-                                    let verified = self.fns[req.fn_ref].semantic_comparators.len();
+                                    let verified = self.lowered(req.fn_ref).semantic_comparators.len();
                                     self.memo.insert(req_key.clone(), entry.clone());
                                     self.index_memo_candidate(req.fn_ref, &req.args, &req_key);
                                     self.emit(DriveEvent::MemoSemanticHit {
@@ -2351,7 +2386,7 @@ impl Driver {
                             exec.ready[req.input_slot] = true;
                             exec.awaited[req.input_slot] = entry.value;
                             let remapped = remap_read_set_for_caller(
-                                &self.fns[exec.fn_ref].arg_schemas,
+                                &self.lowered(exec.fn_ref).arg_schemas,
                                 &exec.args,
                                 &req.args,
                                 &entry.read_set,
@@ -2402,17 +2437,17 @@ impl Driver {
     fn spawn(
         &mut self,
         executions: &mut Vec<Option<Execution>>,
-        fn_ref: usize,
+        fn_ref: FnRef,
         key: CanonMemoKey,
         args: &[i64],
     ) -> Result<usize, String> {
-        let fn_hash = self.fns[fn_ref].hash;
+        let fn_hash = self.lowered(fn_ref).hash;
         self.emit(DriveEvent::Spawned { fn_hash });
         self.emit(DriveEvent::SpawnedInvocation {
             fn_hash,
             key_hash: memo_key_hash(&key),
         });
-        let lowered = &self.fns[fn_ref];
+        let lowered = &self.lowered(fn_ref);
         let task = self.lane.spawn(&self.program, lowered, args)?;
         executions.push(Some(Execution {
             task,
@@ -2431,7 +2466,7 @@ impl Driver {
     /// Run one execution until done or blocked, capturing INVOKE
     /// requests raised during the burst.
     fn burst(&mut self, exec: &mut Execution, exec_ix: usize) -> Burst {
-        let lowered = &self.fns[exec.fn_ref];
+        let lowered = &self.lowered(exec.fn_ref);
         let invoke_region = lowered.invoke_region as usize;
         let store_alloc_region = lowered.store_alloc_region as usize;
         let store_read_region = lowered.store_read_region as usize;
@@ -2466,7 +2501,7 @@ impl Driver {
             let lowered_fns = &self.fns;
             let store_events = RefCell::new(Vec::new());
             let projection_reads = RefCell::new(Vec::new());
-            let exec_arg_schemas = lowered_fns[exec.fn_ref].arg_schemas.clone();
+            let exec_arg_schemas = lowered_fns[exec.fn_ref.index()].arg_schemas.clone();
             let exec_args = exec.args.clone();
             let force_molten_copy = self.force_molten_copy;
             let mut invoke = |frame: &mut [u8]| {
@@ -2478,10 +2513,10 @@ impl Driver {
                     )
                 };
                 let input_slot = word(0) as usize;
-                let fn_ref = word(1) as usize;
+                let fn_ref = FnRef::from_frame_word(word(1));
                 let argc = word(2) as usize;
                 let mut args = (0..argc).map(|k| word(3 + k)).collect::<Vec<_>>();
-                let arg_schemas = &lowered_fns[fn_ref].arg_schemas;
+                let arg_schemas = &lowered_fns[fn_ref.index()].arg_schemas;
                 for (arg, schema) in args.iter_mut().zip(arg_schemas) {
                     let was_molten = match Handle::from_word(*arg) {
                         Handle::Molten(_) => true,
@@ -3093,8 +3128,10 @@ impl Driver {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let array_handle = read_frame_word(frame, primitive_region + 8);
-                    let fn_ref = usize::try_from(read_frame_word(frame, primitive_region + 16))
-                        .map_err(|_| "negative fn ref".to_string())?;
+                    let fn_ref = FnRef::new(
+                        usize::try_from(read_frame_word(frame, primitive_region + 16))
+                            .map_err(|_| "negative fn ref".to_string())?,
+                    );
                     let arg_count = usize::try_from(read_frame_word(frame, primitive_region + 24))
                         .map_err(|_| "negative map arg count".to_string())?;
                     let arg_specs = (0..arg_count)
@@ -3138,7 +3175,7 @@ impl Driver {
                                 })
                                 .collect::<Vec<_>>();
                             for (arg, schema) in
-                                args.iter_mut().zip(&lowered_fns[fn_ref].arg_schemas)
+                                args.iter_mut().zip(&lowered_fns[fn_ref.index()].arg_schemas)
                             {
                                 *arg = intern_molten_word(
                                     &mut store_cell.borrow_mut(),
@@ -3151,11 +3188,11 @@ impl Driver {
                                 .0;
                             }
                             let invocation =
-                                pending_invocation_for(&lowered_fns[fn_ref], store_cell, args);
+                                pending_invocation_for(&lowered_fns[fn_ref.index()], store_cell, args);
                             Ok::<i64, String>(
                                 store_cell
                                     .borrow_mut()
-                                    .alloc_pending(&lowered_fns[fn_ref].return_schema, invocation)
+                                    .alloc_pending(&lowered_fns[fn_ref.index()].return_schema, invocation)
                                     .0,
                             )
                         })
@@ -4071,14 +4108,16 @@ impl Driver {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let value_schema =
                         schema_name_for(read_frame_word(frame, primitive_region + 8), schema_refs)?;
-                    let fn_ref = usize::try_from(read_frame_word(frame, primitive_region + 16))
-                        .map_err(|_| "negative fn ref".to_string())?;
+                    let fn_ref = FnRef::new(
+                        usize::try_from(read_frame_word(frame, primitive_region + 16))
+                            .map_err(|_| "negative fn ref".to_string())?,
+                    );
                     let argc = usize::try_from(read_frame_word(frame, primitive_region + 24))
                         .map_err(|_| "negative argc".to_string())?;
                     let mut args = (0..argc)
                         .map(|i| read_frame_word(frame, primitive_region + 32 + i * 8))
                         .collect::<Vec<_>>();
-                    for (arg, schema) in args.iter_mut().zip(&lowered_fns[fn_ref].arg_schemas) {
+                    for (arg, schema) in args.iter_mut().zip(&lowered_fns[fn_ref.index()].arg_schemas) {
                         *arg = intern_molten_word(
                             &mut store_cell.borrow_mut(),
                             &mut molten_cell.borrow_mut(),
@@ -4097,7 +4136,7 @@ impl Driver {
                         descriptors,
                         args.iter().copied(),
                     );
-                    let invocation = pending_invocation_for(&lowered_fns[fn_ref], store_cell, args);
+                    let invocation = pending_invocation_for(&lowered_fns[fn_ref.index()], store_cell, args);
                     let (handle, _) = store_cell
                         .borrow_mut()
                         .alloc_pending(&value_schema, invocation);
@@ -4131,6 +4170,7 @@ impl Driver {
                     let fn_ref = lowered_fns
                         .iter()
                         .position(|lowered| lowered.hash == invocation.closure_hash)
+                        .map(FnRef::new)
                         .ok_or_else(|| {
                             format!(
                                 "no function with closure hash {:016x}",
@@ -4140,7 +4180,7 @@ impl Driver {
                     let start = invocation.args.len();
                     for (arg, schema) in args
                         .iter_mut()
-                        .zip(lowered_fns[fn_ref].arg_schemas.iter().skip(start))
+                        .zip(lowered_fns[fn_ref.index()].arg_schemas.iter().skip(start))
                     {
                         *arg = intern_molten_word(
                             &mut store_cell.borrow_mut(),
@@ -4876,8 +4916,8 @@ impl Driver {
         }
     }
 
-    fn memo_key(&self, fn_ref: usize, args: &[i64]) -> CanonMemoKey {
-        let lowered = &self.fns[fn_ref];
+    fn memo_key(&self, fn_ref: FnRef, args: &[i64]) -> CanonMemoKey {
+        let lowered = &self.lowered(fn_ref);
         let args = args
             .iter()
             .zip(&lowered.arg_schemas)
@@ -4888,10 +4928,10 @@ impl Driver {
 
     fn projection_candidate_key(
         &self,
-        fn_ref: usize,
+        fn_ref: FnRef,
         args: &[i64],
     ) -> Option<ProjectionCandidateKey> {
-        let lowered = &self.fns[fn_ref];
+        let lowered = &self.lowered(fn_ref);
         let semantic_args: BTreeSet<usize> = lowered
             .semantic_comparators
             .iter()
@@ -4914,7 +4954,7 @@ impl Driver {
         saw_projectable.then_some((lowered.hash, args))
     }
 
-    fn index_memo_candidate(&mut self, fn_ref: usize, args: &[i64], key: &CanonMemoKey) {
+    fn index_memo_candidate(&mut self, fn_ref: FnRef, args: &[i64], key: &CanonMemoKey) {
         if let Some(candidate_key) = self.projection_candidate_key(fn_ref, args) {
             let candidates = self.memo_candidates.entry(candidate_key).or_default();
             if !candidates.contains(key) {
@@ -4925,7 +4965,7 @@ impl Driver {
 
     fn projection_memo_hit(
         &self,
-        fn_ref: usize,
+        fn_ref: FnRef,
         args: &[i64],
         key: &CanonMemoKey,
     ) -> Result<Option<MemoEntry>, String> {
@@ -4954,11 +4994,11 @@ impl Driver {
 
     fn semantic_memo_hit(
         &mut self,
-        fn_ref: usize,
+        fn_ref: FnRef,
         args: &[i64],
         key: &CanonMemoKey,
     ) -> Result<Option<MemoEntry>, String> {
-        if self.fns[fn_ref].semantic_comparators.is_empty() {
+        if self.lowered(fn_ref).semantic_comparators.is_empty() {
             return Ok(None);
         }
         let Some(candidate_key) = self.projection_candidate_key(fn_ref, args) else {
@@ -4983,11 +5023,11 @@ impl Driver {
 
     fn verify_semantic_comparators(
         &mut self,
-        fn_ref: usize,
+        fn_ref: FnRef,
         old_args: &[i64],
         new_args: &[i64],
     ) -> Result<bool, String> {
-        let comparators = self.fns[fn_ref].semantic_comparators.clone();
+        let comparators = self.lowered(fn_ref).semantic_comparators.clone();
         for comparator in comparators {
             let Some(&old_value) = old_args.get(comparator.arg_index) else {
                 return Ok(false);
@@ -5049,14 +5089,14 @@ impl Driver {
 
     fn record_projection_for_matching_args(
         &self,
-        fn_ref: usize,
+        fn_ref: FnRef,
         args: &[i64],
         handle: i64,
         path: ProjectionPath,
         observed: ContentHash,
         read_set: &mut ProjectionReadSet,
     ) {
-        let lowered = &self.fns[fn_ref];
+        let lowered = &self.lowered(fn_ref);
         for (arg_index, (&arg, schema)) in args.iter().zip(&lowered.arg_schemas).enumerate() {
             if arg == handle && self.is_projectable_arg(schema, arg) {
                 read_set.record(ProjectionRead {
@@ -5070,13 +5110,13 @@ impl Driver {
 
     fn record_whole_arg_if_projectable(
         &self,
-        fn_ref: usize,
+        fn_ref: FnRef,
         args: &[i64],
         handle: i64,
         read_set: &mut ProjectionReadSet,
     ) {
         let store = self.store.borrow();
-        let lowered = &self.fns[fn_ref];
+        let lowered = &self.lowered(fn_ref);
         for (arg_index, (&arg, schema)) in args.iter().zip(&lowered.arg_schemas).enumerate() {
             if arg == handle && self.is_projectable_arg(schema, arg) {
                 read_set.record(ProjectionRead {
@@ -5092,7 +5132,7 @@ impl Driver {
 
     fn record_whole_args_if_projectable(
         &self,
-        fn_ref: usize,
+        fn_ref: FnRef,
         args: &[i64],
         handles: impl IntoIterator<Item = i64>,
         read_set: &mut ProjectionReadSet,
@@ -5107,8 +5147,8 @@ impl Driver {
         canonical_word_hash_in_store(&store, schema, word)
     }
 
-    fn canonicalize_return_word(&self, fn_ref: usize, word: i64) -> i64 {
-        if self.fns[fn_ref].return_schema == "Float" {
+    fn canonicalize_return_word(&self, fn_ref: FnRef, word: i64) -> i64 {
+        if self.lowered(fn_ref).return_schema == "Float" {
             canonicalize_word_for_schema("Float", word)
         } else {
             word
@@ -5118,7 +5158,7 @@ impl Driver {
     fn project_request(
         &mut self,
         req: ProjectRequest,
-        fn_ref: usize,
+        fn_ref: FnRef,
         args: &[i64],
         read_set: &mut ProjectionReadSet,
     ) -> Result<(usize, i64), String> {
@@ -5250,7 +5290,7 @@ impl Driver {
         &mut self,
         req: PendingCoerceRequest,
         caller: usize,
-        fn_ref: usize,
+        fn_ref: FnRef,
         args: &[i64],
         read_set: &mut ProjectionReadSet,
     ) -> Result<PendingForce, String> {
@@ -5355,11 +5395,11 @@ impl Driver {
         let fn_ref = self.fn_ref_for_hash(invocation.closure_hash)?;
         let mut args = invocation.args;
         args.extend(req.args);
-        if args.len() != self.fns[fn_ref].arg_schemas.len() {
+        if args.len() != self.lowered(fn_ref).arg_schemas.len() {
             return Err(format!(
                 "pending invocation completed to {} argument(s), expected {}",
                 args.len(),
-                self.fns[fn_ref].arg_schemas.len()
+                self.lowered(fn_ref).arg_schemas.len()
             ));
         }
         Ok(InvokeRequest {
@@ -5390,10 +5430,11 @@ impl Driver {
         }
     }
 
-    fn fn_ref_for_hash(&self, closure_hash: u64) -> Result<usize, String> {
+    fn fn_ref_for_hash(&self, closure_hash: u64) -> Result<FnRef, String> {
         self.fns
             .iter()
             .position(|lowered| lowered.hash == closure_hash)
+            .map(FnRef::new)
             .ok_or_else(|| format!("no function with closure hash {closure_hash:016x}"))
     }
 
@@ -9623,12 +9664,12 @@ mod tests {
         let mut driver = Driver::new(program, fns);
         // Base cases enter as memo facts (vix Const nodes resolve
         // without bodies).
-        let zero = driver.memo_key(0, &[0]);
-        let one = driver.memo_key(0, &[1]);
+        let zero = driver.memo_key(FnRef::new(0), &[0]);
+        let one = driver.memo_key(FnRef::new(0), &[1]);
         seed_memo(&mut driver, zero, 0);
         seed_memo(&mut driver, one, 1);
 
-        assert_eq!(driver.demand(0, vec![20]).unwrap(), 6765);
+        assert_eq!(driver.demand(FnRef::new(0), vec![20]).unwrap(), 6765);
 
         let spawns = driver
             .trace
@@ -9652,11 +9693,11 @@ mod tests {
     fn warm_demand_spawns_nothing() {
         let (program, fns) = fib_body_program();
         let mut driver = Driver::new(program, fns);
-        let zero = driver.memo_key(0, &[0]);
-        let one = driver.memo_key(0, &[1]);
+        let zero = driver.memo_key(FnRef::new(0), &[0]);
+        let one = driver.memo_key(FnRef::new(0), &[1]);
         seed_memo(&mut driver, zero, 0);
         seed_memo(&mut driver, one, 1);
-        driver.demand(0, vec![15]).unwrap();
+        driver.demand(FnRef::new(0), vec![15]).unwrap();
         let cold_spawns = driver
             .trace
             .iter()
@@ -9664,7 +9705,7 @@ mod tests {
             .count();
 
         driver.trace.clear();
-        assert_eq!(driver.demand(0, vec![15]).unwrap(), 610);
+        assert_eq!(driver.demand(FnRef::new(0), vec![15]).unwrap(), 610);
         let warm_spawns = driver
             .trace
             .iter()
@@ -9710,11 +9751,11 @@ mod tests {
             primitive_region: 0,
         });
         let mut driver = Driver::new(program, fns);
-        let zero = driver.memo_key(0, &[0]);
-        let one = driver.memo_key(0, &[1]);
+        let zero = driver.memo_key(FnRef::new(0), &[0]);
+        let one = driver.memo_key(FnRef::new(0), &[1]);
         seed_memo(&mut driver, zero, 0);
         seed_memo(&mut driver, one, 1);
-        driver.demand(0, vec![5]).unwrap();
+        driver.demand(FnRef::new(0), vec![5]).unwrap();
         assert!(
             !driver.trace.iter().any(|e| matches!(
                 e,
@@ -9779,7 +9820,7 @@ mod tests {
             primitive_region: 0,
         }];
         let mut driver = Driver::new(program, fns);
-        assert_eq!(driver.demand(0, vec![6]).unwrap(), 42);
+        assert_eq!(driver.demand(FnRef::new(0), vec![6]).unwrap(), 42);
         let spawns = driver
             .trace
             .iter()
@@ -9878,7 +9919,7 @@ mod tests {
         ];
         let mut driver = store_driver_for(code, vec![], vec![]);
 
-        assert_eq!(driver.demand(0, vec![]).unwrap(), 21);
+        assert_eq!(driver.demand(FnRef::new(0), vec![]).unwrap(), 21);
         assert_eq!(driver.store_len(), 1);
         assert!(
             driver
@@ -9927,7 +9968,7 @@ mod tests {
         ]);
         let mut driver = store_driver_for(code, vec![], vec![]);
 
-        assert_eq!(driver.demand(0, vec![]).unwrap(), 1);
+        assert_eq!(driver.demand(FnRef::new(0), vec![]).unwrap(), 1);
         assert_eq!(driver.store_len(), 1);
         assert!(
             driver
@@ -9974,8 +10015,8 @@ mod tests {
         assert!(d2);
         assert_eq!(h1, h2, "same value returns the same handle");
 
-        assert_eq!(driver.demand(0, vec![h1]).unwrap(), 55);
-        assert_eq!(driver.demand(0, vec![h2]).unwrap(), 55);
+        assert_eq!(driver.demand(FnRef::new(0), vec![h1]).unwrap(), 55);
+        assert_eq!(driver.demand(FnRef::new(0), vec![h2]).unwrap(), 55);
         let spawns = driver
             .trace
             .iter()

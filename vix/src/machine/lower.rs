@@ -33,7 +33,7 @@ use super::driver::{
     ARRAY_LEN_HOST, ARRAY_MAP_PENDING_HOST, ARRAY_POP_HOST, ARRAY_PUSH_HOST, ARRAY_SET_HOST,
     AST_DOC_HOST, AST_FN_HOST, CRATE_ARCHIVE_HOST, CodeBundle, DOC_COERCE_HOST, DOC_GET_HOST, DOC_PACKAGE_HOST,
     DOC_PARSE_HOST, DriveEvent, DriveEventSink, Driver, ELF_DOC_HOST, EXEC_HOST, FETCH_HOST,
-    MOLTEN_DUP_HOST, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST,
+    FnRef, MOLTEN_DUP_HOST, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST,
     MAP_INSERT_HOST, MachineExecBackend, OCI_DOC_HOST, OPTION_CONSTRUCT_HOST, OPTION_DESTRUCT_HOST,
     OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST,
     PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RECORD_UPDATE_HOST, RenderNames,
@@ -196,7 +196,7 @@ impl Machine {
             .fn_refs
             .get(name)
             .ok_or_else(|| format!("no function named {name}"))?;
-        self.driver.demand(fn_ref, args)
+        self.driver.demand(FnRef::new(fn_ref), args)
     }
 
     pub fn demand_f64(&mut self, name: &str, args: Vec<i64>) -> Result<f64, String> {
@@ -316,7 +316,7 @@ impl Machine {
             return Err(format!("pending args for {name} must be a prefix"));
         }
         let words = words.into_iter().map(|(_, word)| word).collect();
-        let (handle, _) = self.driver.pending_for_fn(fn_ref, words)?;
+        let (handle, _) = self.driver.pending_for_fn(FnRef::new(fn_ref), words)?;
         let handle = StoreHandle(handle);
         let bundle = self.export_value(handle)?;
         Ok((handle, bundle))
@@ -429,7 +429,7 @@ impl Machine {
     pub fn fn_hash(&self, name: &str) -> Option<u64> {
         self.fn_refs
             .get(name)
-            .map(|&fn_ref| self.driver.fn_hash(fn_ref))
+            .map(|&fn_ref| self.driver.fn_hash(FnRef::new(fn_ref)))
     }
 
     pub fn fn_hashes(&self) -> BTreeMap<String, u64> {
@@ -443,14 +443,14 @@ impl Machine {
     fn fn_ops(&self, name: &str) -> Option<&[Op]> {
         self.fn_refs
             .get(name)
-            .map(|&fn_ref| self.driver.fn_ops(fn_ref))
+            .map(|&fn_ref| self.driver.fn_ops(FnRef::new(fn_ref)))
     }
 
     #[cfg(test)]
     fn semantic_comparator_len(&self, name: &str) -> Option<usize> {
         self.fn_refs
             .get(name)
-            .map(|&fn_ref| self.driver.semantic_comparator_len(fn_ref))
+            .map(|&fn_ref| self.driver.semantic_comparator_len(FnRef::new(fn_ref)))
     }
 }
 
@@ -2091,7 +2091,7 @@ fn semantic_comparators_for(
                 "semantic comparator `{comparator_name}` must return Bool, got {return_schema}"
             ));
         }
-        comparators.push(SemanticComparator { arg_index, fn_ref });
+        comparators.push(SemanticComparator::new(arg_index, FnRef::new(fn_ref)));
     }
     Ok(comparators)
 }
@@ -2110,7 +2110,7 @@ fn hash_with_semantic_comparators(
     base.hash(&mut hasher);
     for comparator in comparators {
         comparator.arg_index.hash(&mut hasher);
-        if let Some(name) = fn_names.get(comparator.fn_ref) {
+        if let Some(name) = fn_names.get(comparator.fn_ref().index()) {
             tables.fn_hashes[*name].hash(&mut hasher);
         }
     }
