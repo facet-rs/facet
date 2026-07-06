@@ -19,25 +19,10 @@
 //   3. [CLOSED] `Version` host value now has `.major/.minor/.patch` accessors
 //      (VERSION_FIELD host op over version::parse_bytes).
 
-use vix::{VersionSet, Map};
-
-// Version is a plain vix struct — a records-at-offsets value, not a host
-// primitive. `.major` is an ordinary field read; parsing is vix code over the
-// string primitives (before/after/parse_int), a memoized vix function. The
-// machine has no version-shaped op. (pre/build deferred — see docs/30.)
-struct Version {
-    major: Int,
-    minor: Int,
-    patch: Int,
-}
-
-fn parse_version(s: String) -> Version {
-    let major = s.before(".").parse_int();
-    let rest = s.after(".");
-    let minor = rest.before(".").parse_int();
-    let patch = rest.after(".").parse_int();
-    Version { major: major, minor: minor, patch: patch }
-}
+// Version + parse_version come from vix std (vix/std/version.vix) — a plain vix
+// struct (records-at-offsets), parsed by vix over the string primitives. The
+// machine has no version-shaped op.
+use vix::{Version, parse_version, VersionSet, Map};
 
 // ---------------------------------------------------------------------------
 // Package identity  (rodin-facts/src/interner.rs: PkgId, CompatClass, SourceIx)

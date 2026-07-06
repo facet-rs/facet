@@ -1,0 +1,31 @@
+// vix standard library — Version.
+//
+// A version is a records-at-offsets value, not a host primitive: `.major` is an
+// ordinary field read, parsing is vix code over the string primitives, and
+// comparison is vix over the fields. The machine knows nothing about it.
+// (pre/build deferred — see rodin/docs/30-versions-sets.md.)
+
+pub struct Version {
+    major: Int,
+    minor: Int,
+    patch: Int,
+}
+
+pub fn parse_version(s: String) -> Version {
+    let major = s.before(".").parse_int();
+    let rest = s.after(".");
+    let minor = rest.before(".").parse_int();
+    let patch = rest.after(".").parse_int();
+    Version { major: major, minor: minor, patch: patch }
+}
+
+// a <= b by semver precedence over major.minor.patch.
+pub fn version_lte(a: Version, b: Version) -> Bool {
+    match a.major != b.major {
+        true => a.major < b.major,
+        false => match a.minor != b.minor {
+            true => a.minor < b.minor,
+            false => a.patch <= b.patch,
+        },
+    }
+}
