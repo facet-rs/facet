@@ -152,13 +152,20 @@ pub const SEALED_DECLASSIFY_HOST: u32 = 39;
 pub const SEALED_TO_STRING_HOST: u32 = 40;
 pub const VERSION_SET_PARSE_HOST: u32 = 41;
 pub const VERSION_SET_OP_HOST: u32 = 42;
-pub const FLESH_INTERN_HOST: u32 = 43;
+pub const MOLTEN_INTERN_HOST: u32 = 43;
 pub const ARRAY_PUSH_HOST: u32 = 44;
 pub const ARRAY_POP_HOST: u32 = 45;
 pub const ARRAY_SET_HOST: u32 = 46;
-pub const FLESH_DUP_HOST: u32 = 47;
+pub const MOLTEN_DUP_HOST: u32 = 47;
 pub const RECORD_UPDATE_HOST: u32 = 48;
 pub const CRATE_ARCHIVE_HOST: u32 = 49;
+pub const VERSION_FIELD_HOST: u32 = 50;
+pub const OPTION_CONSTRUCT_HOST: u32 = 51;
+pub const OPTION_DESTRUCT_HOST: u32 = 52;
+pub const STRING_SPLIT_HOST: u32 = 53;
+pub const STRING_PARSE_INT_HOST: u32 = 54;
+pub const STRING_CONTAINS_HOST: u32 = 55;
+pub const STRING_IS_NUMERIC_HOST: u32 = 56;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -506,7 +513,7 @@ struct Execution {
     fn_ref: usize,
     key: CanonMemoKey,
     args: Vec<i64>,
-    flesh: FleshStore,
+    molten: MoltenStore,
     read_set: ProjectionReadSet,
     ready: Vec<bool>,
     awaited: Vec<i64>,
@@ -803,18 +810,18 @@ enum ArrayEntry {
 }
 
 #[derive(Clone, Debug, Default)]
-struct FleshStore {
-    entries: Vec<FleshEntry>,
+struct MoltenStore {
+    entries: Vec<MoltenEntry>,
 }
 
 #[derive(Clone, Debug)]
-struct FleshEntry {
+struct MoltenEntry {
     refs: usize,
-    value: FleshValue,
+    value: MoltenValue,
 }
 
 #[derive(Clone, Debug)]
-enum FleshValue {
+enum MoltenValue {
     Record {
         schema: String,
         bytes: Vec<u8>,
@@ -830,19 +837,19 @@ enum FleshValue {
     Interned(i64),
 }
 
-impl FleshStore {
-    fn alloc(&mut self, value: FleshValue) -> i64 {
+impl MoltenStore {
+    fn alloc(&mut self, value: MoltenValue) -> i64 {
         let index = self.entries.len();
-        self.entries.push(FleshEntry { refs: 1, value });
-        flesh_word(index)
+        self.entries.push(MoltenEntry { refs: 1, value });
+        molten_word(index)
     }
 
-    fn entry(&self, word: i64) -> Option<&FleshEntry> {
-        flesh_index(word).and_then(|index| self.entries.get(index))
+    fn entry(&self, word: i64) -> Option<&MoltenEntry> {
+        molten_index(word).and_then(|index| self.entries.get(index))
     }
 
-    fn entry_mut(&mut self, word: i64) -> Option<&mut FleshEntry> {
-        flesh_index(word).and_then(|index| self.entries.get_mut(index))
+    fn entry_mut(&mut self, word: i64) -> Option<&mut MoltenEntry> {
+        molten_index(word).and_then(|index| self.entries.get_mut(index))
     }
 
     fn array_entry(
@@ -852,23 +859,23 @@ impl FleshStore {
         schema_refs: &[String],
     ) -> Result<ArrayEntry, String> {
         match self.entry(handle).map(|entry| &entry.value) {
-            Some(FleshValue::ArrayWords { elem_schema, words }) => Ok(ArrayEntry::Words {
+            Some(MoltenValue::ArrayWords { elem_schema, words }) => Ok(ArrayEntry::Words {
                 elem_schema: elem_schema.clone(),
                 words: words.clone(),
             }),
-            Some(FleshValue::Interned(handle)) => store.array_entry(*handle, schema_refs),
-            Some(_) => Err(format!("flesh handle {handle} is not an Array")),
+            Some(MoltenValue::Interned(handle)) => store.array_entry(*handle, schema_refs),
+            Some(_) => Err(format!("molten handle {handle} is not an Array")),
             None => store.array_entry(handle, schema_refs),
         }
     }
 }
 
-fn flesh_word(index: usize) -> i64 {
-    -1 - i64::try_from(index).expect("flesh handle fits i64")
+fn molten_word(index: usize) -> i64 {
+    -1 - i64::try_from(index).expect("molten handle fits i64")
 }
 
-fn flesh_index(word: i64) -> Option<usize> {
-    (word < 0).then(|| usize::try_from(-1 - word).expect("flesh handle index"))
+fn molten_index(word: i64) -> Option<usize> {
+    (word < 0).then(|| usize::try_from(-1 - word).expect("molten handle index"))
 }
 
 #[derive(Clone, Debug)]
@@ -1429,37 +1436,37 @@ impl ValueStore {
     }
 }
 
-fn intern_flesh_word(
+fn intern_molten_word(
     store: &mut ValueStore,
-    flesh: &mut FleshStore,
+    molten: &mut MoltenStore,
     descriptors: &HashMap<String, Descriptor<String>>,
     schema_refs: &[String],
     schema: &str,
     word: i64,
 ) -> Result<(i64, bool), String> {
-    let Some(index) = flesh_index(word) else {
+    let Some(index) = molten_index(word) else {
         return Ok((word, true));
     };
-    let value = flesh
+    let value = molten
         .entries
         .get(index)
-        .ok_or_else(|| format!("flesh handle {word}"))?
+        .ok_or_else(|| format!("molten handle {word}"))?
         .value
         .clone();
-    if let FleshValue::Interned(handle) = value {
+    if let MoltenValue::Interned(handle) = value {
         return Ok((handle, true));
     }
     let (handle, deduped) = match value {
-        FleshValue::Record {
+        MoltenValue::Record {
             schema: record_schema,
             mut bytes,
         } => {
             if record_schema != schema {
-                return Err(format!("flesh record is `{record_schema}`, not {schema}"));
+                return Err(format!("molten record is `{record_schema}`, not {schema}"));
             }
             intern_value_bytes_children(
                 store,
-                flesh,
+                molten,
                 descriptors,
                 schema_refs,
                 &record_schema,
@@ -1467,26 +1474,26 @@ fn intern_flesh_word(
             )?;
             store.alloc(&record_schema, bytes, descriptors)
         }
-        FleshValue::Map {
+        MoltenValue::Map {
             schema: map_schema,
             mut pairs,
         } => {
             if map_schema != schema && !map_schema_is_realized_projection(schema, &map_schema) {
-                return Err(format!("flesh map is `{map_schema}`, not {schema}"));
+                return Err(format!("molten map is `{map_schema}`, not {schema}"));
             }
             for pair in &mut pairs {
-                pair.key_word = intern_flesh_word(
+                pair.key_word = intern_molten_word(
                     store,
-                    flesh,
+                    molten,
                     descriptors,
                     schema_refs,
                     &pair.key_schema,
                     pair.key_word,
                 )?
                 .0;
-                pair.value_word = intern_flesh_word(
+                pair.value_word = intern_molten_word(
                     store,
-                    flesh,
+                    molten,
                     descriptors,
                     schema_refs,
                     &pair.value_schema,
@@ -1496,23 +1503,23 @@ fn intern_flesh_word(
             }
             store.alloc_map(&map_schema, pairs, schema_refs, descriptors)?
         }
-        FleshValue::ArrayWords {
+        MoltenValue::ArrayWords {
             elem_schema,
             mut words,
         } => {
             if schema != "Array" {
-                return Err(format!("flesh array cannot intern as {schema}"));
+                return Err(format!("molten array cannot intern as {schema}"));
             }
             for word in &mut words {
                 *word =
-                    intern_flesh_word(store, flesh, descriptors, schema_refs, &elem_schema, *word)?
+                    intern_molten_word(store, molten, descriptors, schema_refs, &elem_schema, *word)?
                         .0;
             }
             store.alloc_array_words(&elem_schema, words, schema_refs)?
         }
-        FleshValue::Interned(_) => unreachable!("handled above"),
+        MoltenValue::Interned(_) => unreachable!("handled above"),
     };
-    flesh.entries[index].value = FleshValue::Interned(handle);
+    molten.entries[index].value = MoltenValue::Interned(handle);
     Ok((handle, deduped))
 }
 
@@ -1528,7 +1535,7 @@ fn map_schema_is_realized_projection(expected: &str, actual: &str) -> bool {
 
 fn intern_value_bytes_children(
     store: &mut ValueStore,
-    flesh: &mut FleshStore,
+    molten: &mut MoltenStore,
     descriptors: &HashMap<String, Descriptor<String>>,
     schema_refs: &[String],
     schema: &str,
@@ -1543,7 +1550,7 @@ fn intern_value_bytes_children(
                 let field_schema = descriptor_word_schema(&field.descriptor);
                 let word = read_frame_word(bytes, field.offset);
                 let (interned, _) =
-                    intern_flesh_word(store, flesh, descriptors, schema_refs, &field_schema, word)?;
+                    intern_molten_word(store, molten, descriptors, schema_refs, &field_schema, word)?;
                 write_frame_word(bytes, field.offset, interned);
             }
         }
@@ -1557,7 +1564,7 @@ fn intern_value_bytes_children(
                 let field_schema = descriptor_word_schema(&field.descriptor);
                 let word = read_frame_word(bytes, field.offset);
                 let (interned, _) =
-                    intern_flesh_word(store, flesh, descriptors, schema_refs, &field_schema, word)?;
+                    intern_molten_word(store, molten, descriptors, schema_refs, &field_schema, word)?;
                 write_frame_word(bytes, field.offset, interned);
             }
         }
@@ -1593,7 +1600,7 @@ pub struct Driver {
     pub trace: Vec<DriveEvent>,
     event_sink: Option<DriveEventSink>,
     step_mode: StepMode,
-    force_flesh_copy: bool,
+    force_molten_copy: bool,
     store: RefCell<ValueStore>,
 }
 
@@ -1644,7 +1651,7 @@ impl Driver {
             trace: Vec::new(),
             event_sink: None,
             step_mode: StepMode::Run,
-            force_flesh_copy: std::env::var_os("VIX_FORCE_FLESH_COPY").is_some(),
+            force_molten_copy: std::env::var_os("VIX_FORCE_MOLTEN_COPY").is_some(),
             store: RefCell::new(ValueStore::default()),
         })
     }
@@ -1679,8 +1686,8 @@ impl Driver {
         self.step_mode = mode;
     }
 
-    pub fn set_force_flesh_copy(&mut self, force: bool) {
-        self.force_flesh_copy = force;
+    pub fn set_force_molten_copy(&mut self, force: bool) {
+        self.force_molten_copy = force;
     }
 
     fn emit(&mut self, event: DriveEvent) {
@@ -2049,11 +2056,11 @@ impl Driver {
                 Burst::Done(value) => {
                     let done_key = exec.key.clone();
                     let mut value = value;
-                    if flesh_index(value).is_some() {
+                    if molten_index(value).is_some() {
                         let return_schema = self.fns[exec.fn_ref].return_schema.clone();
-                        let (interned, deduped) = intern_flesh_word(
+                        let (interned, deduped) = intern_molten_word(
                             &mut self.store.borrow_mut(),
-                            &mut exec.flesh,
+                            &mut exec.molten,
                             &self.descriptors,
                             &self.schema_refs,
                             &return_schema,
@@ -2366,7 +2373,7 @@ impl Driver {
             fn_ref,
             key,
             args: args.to_vec(),
-            flesh: FleshStore::default(),
+            molten: MoltenStore::default(),
             read_set: ProjectionReadSet::default(),
             ready: Vec::new(),
             awaited: Vec::new(),
@@ -2405,7 +2412,7 @@ impl Driver {
             let descriptors = &self.descriptors;
             let schema_refs = &self.schema_refs;
             let store_cell = &self.store;
-            let flesh_cell = RefCell::new(&mut exec.flesh);
+            let molten_cell = RefCell::new(&mut exec.molten);
             let ast_roots_cell = RefCell::new(&mut self.ast_roots);
             let oci_file_memo_cell = RefCell::new(&mut self.oci_file_memo);
             let journal_cell = RefCell::new(&mut self.journal);
@@ -2415,7 +2422,7 @@ impl Driver {
             let projection_reads = RefCell::new(Vec::new());
             let exec_arg_schemas = lowered_fns[exec.fn_ref].arg_schemas.clone();
             let exec_args = exec.args.clone();
-            let force_flesh_copy = self.force_flesh_copy;
+            let force_molten_copy = self.force_molten_copy;
             let mut invoke = |frame: &mut [u8]| {
                 let word = |i: usize| {
                     i64::from_le_bytes(
@@ -2430,17 +2437,17 @@ impl Driver {
                 let mut args = (0..argc).map(|k| word(3 + k)).collect::<Vec<_>>();
                 let arg_schemas = &lowered_fns[fn_ref].arg_schemas;
                 for (arg, schema) in args.iter_mut().zip(arg_schemas) {
-                    let was_flesh = flesh_index(*arg).is_some();
-                    let (interned, deduped) = intern_flesh_word(
+                    let was_molten = molten_index(*arg).is_some();
+                    let (interned, deduped) = intern_molten_word(
                         &mut store_cell.borrow_mut(),
-                        &mut flesh_cell.borrow_mut(),
+                        &mut molten_cell.borrow_mut(),
                         descriptors,
                         schema_refs,
                         schema,
                         *arg,
                     )
                     .unwrap_or_else(|err| panic!("{err}"));
-                    if was_flesh {
+                    if was_molten {
                         store_events.borrow_mut().push(DriveEvent::StoreAlloc {
                             schema_ref: hash_u64(schema),
                             deduped,
@@ -2487,7 +2494,7 @@ impl Driver {
                     descriptors,
                     fields,
                 );
-                let handle = flesh_cell.borrow_mut().alloc(FleshValue::Record {
+                let handle = molten_cell.borrow_mut().alloc(MoltenValue::Record {
                     schema: schema.clone(),
                     bytes,
                 });
@@ -2498,11 +2505,11 @@ impl Driver {
                 let dst_slot = read_frame_word(frame, store_read_region) as usize;
                 let mut handle = read_frame_word(frame, store_read_region + 8);
                 let field_index = read_frame_word(frame, store_read_region + 16) as usize;
-                if flesh_index(handle).is_some() {
+                if molten_index(handle).is_some() {
                     let local_read = {
-                        let flesh = flesh_cell.borrow();
-                        flesh.entry(handle).and_then(|entry| match &entry.value {
-                            FleshValue::Record { schema, bytes } => {
+                        let molten = molten_cell.borrow();
+                        molten.entry(handle).and_then(|entry| match &entry.value {
+                            MoltenValue::Record { schema, bytes } => {
                                 let descriptor = descriptors
                                     .get(schema)
                                     .unwrap_or_else(|| panic!("descriptor for schema `{schema}`"));
@@ -2516,20 +2523,20 @@ impl Driver {
                         write_frame_word(frame, dst_slot, value);
                         return;
                     }
-                    let schema = flesh_cell
+                    let schema = molten_cell
                         .borrow()
                         .entry(handle)
                         .and_then(|entry| match &entry.value {
-                            FleshValue::Interned(handle) => store_cell
+                            MoltenValue::Interned(handle) => store_cell
                                 .borrow()
                                 .entry(*handle)
                                 .map(|entry| entry.schema.clone()),
                             _ => None,
                         })
-                        .unwrap_or_else(|| panic!("flesh record handle {handle}"));
-                    let (interned, deduped) = intern_flesh_word(
+                        .unwrap_or_else(|| panic!("molten record handle {handle}"));
+                    let (interned, deduped) = intern_molten_word(
                         &mut store_cell.borrow_mut(),
-                        &mut flesh_cell.borrow_mut(),
+                        &mut molten_cell.borrow_mut(),
                         descriptors,
                         schema_refs,
                         &schema,
@@ -2576,11 +2583,11 @@ impl Driver {
             let mut store_tag = |frame: &mut [u8]| {
                 let dst_slot = read_frame_word(frame, store_tag_region) as usize;
                 let mut handle = read_frame_word(frame, store_tag_region + 8);
-                if flesh_index(handle).is_some() {
+                if molten_index(handle).is_some() {
                     let local_tag = {
-                        let flesh = flesh_cell.borrow();
-                        flesh.entry(handle).and_then(|entry| match &entry.value {
-                            FleshValue::Record { schema, bytes } => {
+                        let molten = molten_cell.borrow();
+                        molten.entry(handle).and_then(|entry| match &entry.value {
+                            MoltenValue::Record { schema, bytes } => {
                                 let descriptor = descriptors
                                     .get(schema)
                                     .unwrap_or_else(|| panic!("descriptor for schema `{schema}`"));
@@ -2597,20 +2604,20 @@ impl Driver {
                         );
                         return;
                     }
-                    let schema = flesh_cell
+                    let schema = molten_cell
                         .borrow()
                         .entry(handle)
                         .and_then(|entry| match &entry.value {
-                            FleshValue::Interned(handle) => store_cell
+                            MoltenValue::Interned(handle) => store_cell
                                 .borrow()
                                 .entry(*handle)
                                 .map(|entry| entry.schema.clone()),
                             _ => None,
                         })
-                        .unwrap_or_else(|| panic!("flesh record handle {handle}"));
-                    let (interned, deduped) = intern_flesh_word(
+                        .unwrap_or_else(|| panic!("molten record handle {handle}"));
+                    let (interned, deduped) = intern_molten_word(
                         &mut store_cell.borrow_mut(),
-                        &mut flesh_cell.borrow_mut(),
+                        &mut molten_cell.borrow_mut(),
                         descriptors,
                         schema_refs,
                         &schema,
@@ -2663,7 +2670,7 @@ impl Driver {
                         read_frame_word(frame, store_alloc_region + 8),
                         schema_refs,
                     )?;
-                    let handle = flesh_cell.borrow_mut().alloc(FleshValue::Map {
+                    let handle = molten_cell.borrow_mut().alloc(MoltenValue::Map {
                         schema: schema.clone(),
                         pairs: Vec::new(),
                     });
@@ -2709,25 +2716,25 @@ impl Driver {
                     );
                     let mut key_word = key_word;
                     let mut value_word = value_word;
-                    key_word = intern_flesh_word(
+                    key_word = intern_molten_word(
                         &mut store_cell.borrow_mut(),
-                        &mut flesh_cell.borrow_mut(),
+                        &mut molten_cell.borrow_mut(),
                         descriptors,
                         schema_refs,
                         &key_schema,
                         key_word,
                     )?
                     .0;
-                    value_word = intern_flesh_word(
+                    value_word = intern_molten_word(
                         &mut store_cell.borrow_mut(),
-                        &mut flesh_cell.borrow_mut(),
+                        &mut molten_cell.borrow_mut(),
                         descriptors,
                         schema_refs,
                         &stored_value_schema,
                         value_word,
                     )?
                     .0;
-                    if flesh_index(map_handle).is_none() {
+                    if molten_index(map_handle).is_none() {
                         record_whole_args_if_projectable_static(
                             &mut projection_reads.borrow_mut(),
                             &exec_arg_schemas,
@@ -2738,14 +2745,14 @@ impl Driver {
                         );
                     }
                     let (stored_schema, mut pairs) = if let Some(entry) =
-                        flesh_cell.borrow().entry(map_handle)
+                        molten_cell.borrow().entry(map_handle)
                     {
                         match &entry.value {
-                            FleshValue::Map { schema, pairs } => (schema.clone(), pairs.clone()),
-                            FleshValue::Interned(handle) => {
+                            MoltenValue::Map { schema, pairs } => (schema.clone(), pairs.clone()),
+                            MoltenValue::Interned(handle) => {
                                 store_cell.borrow().map_pairs(*handle, schema_refs)?
                             }
-                            _ => return Err(format!("flesh handle {map_handle} is not a Map")),
+                            _ => return Err(format!("molten handle {map_handle} is not a Map")),
                         }
                     } else {
                         store_cell.borrow().map_pairs(map_handle, schema_refs)?
@@ -2761,10 +2768,10 @@ impl Driver {
                         value_realization: realized_value_schema(&value_schema)
                             .map(|_| value_realization),
                     };
-                    let handle = if !force_flesh_copy
-                        && let Some(entry) = flesh_cell.borrow_mut().entry_mut(map_handle)
+                    let handle = if !force_molten_copy
+                        && let Some(entry) = molten_cell.borrow_mut().entry_mut(map_handle)
                         && entry.refs == 1
-                        && let FleshValue::Map {
+                        && let MoltenValue::Map {
                             schema,
                             pairs: entry_pairs,
                         } = &mut entry.value
@@ -2775,7 +2782,7 @@ impl Driver {
                         map_handle
                     } else {
                         pairs.push(new_pair);
-                        flesh_cell.borrow_mut().alloc(FleshValue::Map {
+                        molten_cell.borrow_mut().alloc(MoltenValue::Map {
                             schema: map_schema.clone(),
                             pairs,
                         })
@@ -2804,16 +2811,16 @@ impl Driver {
                         &key_schema,
                         read_frame_word(frame, store_alloc_region + 32),
                     );
-                    let map_schema = if let Some(entry) = flesh_cell.borrow().entry(map_handle) {
+                    let map_schema = if let Some(entry) = molten_cell.borrow().entry(map_handle) {
                         match &entry.value {
-                            FleshValue::Map { schema, .. } => schema.clone(),
-                            FleshValue::Interned(handle) => store_cell
+                            MoltenValue::Map { schema, .. } => schema.clone(),
+                            MoltenValue::Interned(handle) => store_cell
                                 .borrow()
                                 .entry(*handle)
                                 .ok_or_else(|| format!("store handle {handle}"))?
                                 .schema
                                 .clone(),
-                            _ => return Err(format!("flesh handle {map_handle} is not a Map")),
+                            _ => return Err(format!("molten handle {map_handle} is not a Map")),
                         }
                     } else {
                         store_cell
@@ -2823,10 +2830,10 @@ impl Driver {
                             .schema
                             .clone()
                     };
-                    if flesh_index(map_handle).is_some() {
-                        let (interned, deduped) = intern_flesh_word(
+                    if molten_index(map_handle).is_some() {
+                        let (interned, deduped) = intern_molten_word(
                             &mut store_cell.borrow_mut(),
-                            &mut flesh_cell.borrow_mut(),
+                            &mut molten_cell.borrow_mut(),
                             descriptors,
                             schema_refs,
                             &map_schema,
@@ -2896,10 +2903,10 @@ impl Driver {
                     let kind_ref = read_frame_word(frame, primitive_region + 8);
                     let kind = schema_name_for(kind_ref, schema_refs)?;
                     let mut target = read_frame_word(frame, primitive_region + 16);
-                    if flesh_index(target).is_some() {
-                        let (interned, deduped) = intern_flesh_word(
+                    if molten_index(target).is_some() {
+                        let (interned, deduped) = intern_molten_word(
                             &mut store_cell.borrow_mut(),
-                            &mut flesh_cell.borrow_mut(),
+                            &mut molten_cell.borrow_mut(),
                             descriptors,
                             schema_refs,
                             "Target",
@@ -2963,9 +2970,9 @@ impl Driver {
                         .map(|i| read_frame_word(frame, primitive_region + 24 + i * 8))
                         .collect::<Vec<_>>();
                     for word in &mut words {
-                        *word = intern_flesh_word(
+                        *word = intern_molten_word(
                             &mut store_cell.borrow_mut(),
-                            &mut flesh_cell.borrow_mut(),
+                            &mut molten_cell.borrow_mut(),
                             descriptors,
                             schema_refs,
                             &elem_schema,
@@ -2973,9 +2980,9 @@ impl Driver {
                         )?
                         .0;
                     }
-                    let handle = flesh_cell
+                    let handle = molten_cell
                         .borrow_mut()
-                        .alloc(FleshValue::ArrayWords { elem_schema, words });
+                        .alloc(MoltenValue::ArrayWords { elem_schema, words });
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -2998,7 +3005,7 @@ impl Driver {
                             Ok((read_frame_word(frame, at), read_frame_word(frame, at + 8)))
                         })
                         .collect::<Result<Vec<_>, String>>()?;
-                    let words = match flesh_cell.borrow().array_entry(
+                    let words = match molten_cell.borrow().array_entry(
                         &store_cell.borrow(),
                         array_handle,
                         schema_refs,
@@ -3008,7 +3015,7 @@ impl Driver {
                             return Err("map over pending array is outside slice 4".into());
                         }
                     };
-                    if flesh_index(array_handle).is_none() {
+                    if molten_index(array_handle).is_none() {
                         record_whole_args_if_projectable_static(
                             &mut projection_reads.borrow_mut(),
                             &exec_arg_schemas,
@@ -3032,9 +3039,9 @@ impl Driver {
                             for (arg, schema) in
                                 args.iter_mut().zip(&lowered_fns[fn_ref].arg_schemas)
                             {
-                                *arg = intern_flesh_word(
+                                *arg = intern_molten_word(
                                     &mut store_cell.borrow_mut(),
-                                    &mut flesh_cell.borrow_mut(),
+                                    &mut molten_cell.borrow_mut(),
                                     descriptors,
                                     schema_refs,
                                     schema,
@@ -3065,12 +3072,12 @@ impl Driver {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let array_handle = read_frame_word(frame, primitive_region + 8);
-                    let array_entry = flesh_cell.borrow().array_entry(
+                    let array_entry = molten_cell.borrow().array_entry(
                         &store_cell.borrow(),
                         array_handle,
                         schema_refs,
                     )?;
-                    if flesh_index(array_handle).is_none() {
+                    if molten_index(array_handle).is_none() {
                         record_whole_args_if_projectable_static(
                             &mut projection_reads.borrow_mut(),
                             &exec_arg_schemas,
@@ -3370,6 +3377,177 @@ impl Driver {
                 }
             };
 
+            let mut version_field_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let handle = read_frame_word(frame, primitive_region + 8);
+                    let field = read_frame_word(frame, primitive_region + 16);
+                    let store = store_cell.borrow();
+                    let entry = store
+                        .entry(handle)
+                        .ok_or_else(|| format!("store handle {handle}"))?;
+                    if entry.schema != "Version" {
+                        return Err(format!(
+                            "Version field access expected Version, got {}",
+                            entry.schema
+                        ));
+                    }
+                    let version = super::version::parse_bytes(&entry.bytes)?;
+                    let value = match field {
+                        0 => version.major,
+                        1 => version.minor,
+                        2 => version.patch,
+                        other => return Err(format!("unknown Version field {other}")),
+                    };
+                    drop(store);
+                    write_frame_word(frame, dst_slot, value as i64);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            // Option construction: `Some(x)` / `None` build the same content-
+            // addressed Option store entry that `map.get` produces, so the whole
+            // language shares one Option representation.
+            let mut option_construct_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let tag = read_frame_word(frame, primitive_region + 8);
+                    let value_ref = read_frame_word(frame, primitive_region + 16);
+                    let value_word = read_frame_word(frame, primitive_region + 24);
+                    let value_schema = schema_name_for(value_ref, schema_refs)?;
+                    let (handle, _) = match tag {
+                        0 => store_cell
+                            .borrow_mut()
+                            .alloc_option_none(&value_schema, schema_refs)?,
+                        1 => store_cell.borrow_mut().alloc_option_some(
+                            &value_schema,
+                            value_word,
+                            None,
+                            schema_refs,
+                        )?,
+                        other => return Err(format!("unknown Option tag {other}")),
+                    };
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            // Option matching: selector 0 reads the tag (0 = None, 1 = Some),
+            // selector 1 reads the Some payload word for binding.
+            let mut option_destruct_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let handle = read_frame_word(frame, primitive_region + 8);
+                    let selector = read_frame_word(frame, primitive_region + 16);
+                    let payload = store_cell.borrow().option_payload(handle, schema_refs)?;
+                    let value = match (selector, payload) {
+                        (0, OptionPayload::None) => 0,
+                        (0, OptionPayload::Some { .. }) => 1,
+                        (1, OptionPayload::Some { word, .. }) => word,
+                        (1, OptionPayload::None) => {
+                            return Err("Option payload read on None".into());
+                        }
+                        (other, _) => {
+                            return Err(format!("unknown Option destruct selector {other}"));
+                        }
+                    };
+                    write_frame_word(frame, dst_slot, value);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            // General string primitives (the parser building blocks). selector 0
+            // = substring before the first delimiter (whole string if absent),
+            // 1 = substring after it (empty if absent), 2 = strip the delimiter as
+            // a prefix (whole string if it is not a prefix).
+            let mut string_split_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let str_handle = read_frame_word(frame, primitive_region + 8);
+                    let delim_handle = read_frame_word(frame, primitive_region + 16);
+                    let selector = read_frame_word(frame, primitive_region + 24);
+                    let store = store_cell.borrow();
+                    let text = store.string_value(str_handle, "String")?;
+                    let delim = store.string_value(delim_handle, "String")?;
+                    drop(store);
+                    let part: &str = match selector {
+                        0 => text
+                            .split_once(delim.as_str())
+                            .map_or(text.as_str(), |(b, _)| b),
+                        1 => text.split_once(delim.as_str()).map_or("", |(_, a)| a),
+                        2 => text.strip_prefix(delim.as_str()).unwrap_or(text.as_str()),
+                        other => return Err(format!("unknown string split selector {other}")),
+                    };
+                    let handle = store_cell
+                        .borrow_mut()
+                        .alloc_raw("String", part.as_bytes().to_vec())
+                        .0;
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut string_parse_int_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let str_handle = read_frame_word(frame, primitive_region + 8);
+                    let text = store_cell.borrow().string_value(str_handle, "String")?;
+                    let value: i64 = text
+                        .trim()
+                        .parse()
+                        .map_err(|_| format!("parse_int: {text:?} is not an integer"))?;
+                    write_frame_word(frame, dst_slot, value);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut string_contains_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let str_handle = read_frame_word(frame, primitive_region + 8);
+                    let needle_handle = read_frame_word(frame, primitive_region + 16);
+                    let store = store_cell.borrow();
+                    let text = store.string_value(str_handle, "String")?;
+                    let needle = store.string_value(needle_handle, "String")?;
+                    write_frame_word(frame, dst_slot, i64::from(text.contains(&needle)));
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            // A semver prerelease identifier is numeric iff it is a non-empty run
+            // of ASCII digits (and so compares numerically, below alphanumerics).
+            let mut string_is_numeric_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let str_handle = read_frame_word(frame, primitive_region + 8);
+                    let text = store_cell.borrow().string_value(str_handle, "String")?;
+                    let numeric = !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit());
+                    write_frame_word(frame, dst_slot, i64::from(numeric));
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
             let mut value_compare_host = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
@@ -3547,7 +3725,7 @@ impl Driver {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let array = read_frame_word(frame, primitive_region + 8);
-                    let len = match flesh_cell.borrow().array_entry(
+                    let len = match molten_cell.borrow().array_entry(
                         &store_cell.borrow(),
                         array,
                         schema_refs,
@@ -3606,7 +3784,7 @@ impl Driver {
                     }));
                     let separator = store.string_value(separator, "String")?;
                     let array_entry =
-                        flesh_cell
+                        molten_cell
                             .borrow()
                             .array_entry(&store, array, schema_refs)?;
                     let joined = match array_entry {
@@ -3663,7 +3841,7 @@ impl Driver {
                             store_cell.borrow().string_value(handle, "Path")
                         })
                         .collect::<Result<Vec<_>, _>>()?;
-                    let (elem_schema, words) = match flesh_cell.borrow().array_entry(
+                    let (elem_schema, words) = match molten_cell.borrow().array_entry(
                         &store_cell.borrow(),
                         array_handle,
                         schema_refs,
@@ -3673,7 +3851,7 @@ impl Driver {
                             return Err("filter over pending array is outside B4".into());
                         }
                     };
-                    if flesh_index(array_handle).is_none() {
+                    if molten_index(array_handle).is_none() {
                         record_whole_args_if_projectable_static(
                             &mut projection_reads.borrow_mut(),
                             &exec_arg_schemas,
@@ -3794,9 +3972,9 @@ impl Driver {
                         .map(|i| read_frame_word(frame, primitive_region + 32 + i * 8))
                         .collect::<Vec<_>>();
                     for (arg, schema) in args.iter_mut().zip(&lowered_fns[fn_ref].arg_schemas) {
-                        *arg = intern_flesh_word(
+                        *arg = intern_molten_word(
                             &mut store_cell.borrow_mut(),
-                            &mut flesh_cell.borrow_mut(),
+                            &mut molten_cell.borrow_mut(),
                             descriptors,
                             schema_refs,
                             schema,
@@ -3857,9 +4035,9 @@ impl Driver {
                         .iter_mut()
                         .zip(lowered_fns[fn_ref].arg_schemas.iter().skip(start))
                     {
-                        *arg = intern_flesh_word(
+                        *arg = intern_molten_word(
                             &mut store_cell.borrow_mut(),
-                            &mut flesh_cell.borrow_mut(),
+                            &mut molten_cell.borrow_mut(),
                             descriptors,
                             schema_refs,
                             schema,
@@ -4070,7 +4248,7 @@ impl Driver {
                 }
             };
 
-            let mut flesh_intern = |frame: &mut [u8]| {
+            let mut molten_intern = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let src = read_frame_word(frame, primitive_region + 8);
@@ -4078,17 +4256,17 @@ impl Driver {
                         read_frame_word(frame, primitive_region + 16),
                         schema_refs,
                     )?;
-                    let was_flesh = flesh_index(src).is_some();
-                    let (handle, deduped) = intern_flesh_word(
+                    let was_molten = molten_index(src).is_some();
+                    let (handle, deduped) = intern_molten_word(
                         &mut store_cell.borrow_mut(),
-                        &mut flesh_cell.borrow_mut(),
+                        &mut molten_cell.borrow_mut(),
                         descriptors,
                         schema_refs,
                         &schema,
                         src,
                     )?;
                     write_frame_word(frame, dst_slot, handle);
-                    if was_flesh {
+                    if was_molten {
                         store_events.borrow_mut().push(DriveEvent::StoreAlloc {
                             schema_ref: hash_u64(&schema),
                             deduped,
@@ -4106,38 +4284,38 @@ impl Driver {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let array = read_frame_word(frame, primitive_region + 8);
                     let mut value = read_frame_word(frame, primitive_region + 16);
-                    if !force_flesh_copy {
+                    if !force_molten_copy {
                         let elem_schema = {
-                            let flesh = flesh_cell.borrow();
-                            flesh.entry(array).and_then(|entry| match &entry.value {
-                                FleshValue::ArrayWords { elem_schema, .. } if entry.refs == 1 => {
+                            let molten = molten_cell.borrow();
+                            molten.entry(array).and_then(|entry| match &entry.value {
+                                MoltenValue::ArrayWords { elem_schema, .. } if entry.refs == 1 => {
                                     Some(elem_schema.clone())
                                 }
                                 _ => None,
                             })
                         };
                         if let Some(elem_schema) = elem_schema {
-                            value = intern_flesh_word(
+                            value = intern_molten_word(
                                 &mut store_cell.borrow_mut(),
-                                &mut flesh_cell.borrow_mut(),
+                                &mut molten_cell.borrow_mut(),
                                 descriptors,
                                 schema_refs,
                                 &elem_schema,
                                 value,
                             )?
                             .0;
-                            let mut flesh = flesh_cell.borrow_mut();
-                            let entry = flesh
+                            let mut molten = molten_cell.borrow_mut();
+                            let entry = molten
                                 .entry_mut(array)
-                                .ok_or_else(|| format!("flesh handle {array}"))?;
-                            if let FleshValue::ArrayWords { words, .. } = &mut entry.value {
+                                .ok_or_else(|| format!("molten handle {array}"))?;
+                            if let MoltenValue::ArrayWords { words, .. } = &mut entry.value {
                                 words.push(value);
                                 write_frame_word(frame, dst_slot, array);
                                 return Ok(());
                             }
                         }
                     }
-                    let (elem_schema, mut words) = match flesh_cell.borrow().array_entry(
+                    let (elem_schema, mut words) = match molten_cell.borrow().array_entry(
                         &store_cell.borrow(),
                         array,
                         schema_refs,
@@ -4145,9 +4323,9 @@ impl Driver {
                         ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
                         ArrayEntry::Pending(_) => return Err("push on pending array".into()),
                     };
-                    value = intern_flesh_word(
+                    value = intern_molten_word(
                         &mut store_cell.borrow_mut(),
-                        &mut flesh_cell.borrow_mut(),
+                        &mut molten_cell.borrow_mut(),
                         descriptors,
                         schema_refs,
                         &elem_schema,
@@ -4155,9 +4333,9 @@ impl Driver {
                     )?
                     .0;
                     words.push(value);
-                    let handle = flesh_cell
+                    let handle = molten_cell
                         .borrow_mut()
-                        .alloc(FleshValue::ArrayWords { elem_schema, words });
+                        .alloc(MoltenValue::ArrayWords { elem_schema, words });
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -4171,20 +4349,20 @@ impl Driver {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let value_slot = read_frame_word(frame, primitive_region + 8) as usize;
                     let array = read_frame_word(frame, primitive_region + 16);
-                    if !force_flesh_copy {
+                    if !force_molten_copy {
                         let can_reuse = {
-                            let flesh = flesh_cell.borrow();
-                            flesh.entry(array).is_some_and(|entry| {
+                            let molten = molten_cell.borrow();
+                            molten.entry(array).is_some_and(|entry| {
                                 entry.refs == 1
-                                    && matches!(entry.value, FleshValue::ArrayWords { .. })
+                                    && matches!(entry.value, MoltenValue::ArrayWords { .. })
                             })
                         };
                         if can_reuse {
-                            let mut flesh = flesh_cell.borrow_mut();
-                            let entry = flesh
+                            let mut molten = molten_cell.borrow_mut();
+                            let entry = molten
                                 .entry_mut(array)
-                                .ok_or_else(|| format!("flesh handle {array}"))?;
-                            if let FleshValue::ArrayWords { words, .. } = &mut entry.value {
+                                .ok_or_else(|| format!("molten handle {array}"))?;
+                            if let MoltenValue::ArrayWords { words, .. } = &mut entry.value {
                                 let value = words
                                     .pop()
                                     .ok_or_else(|| "pop on empty array".to_string())?;
@@ -4194,7 +4372,7 @@ impl Driver {
                             }
                         }
                     }
-                    let (elem_schema, mut words) = match flesh_cell.borrow().array_entry(
+                    let (elem_schema, mut words) = match molten_cell.borrow().array_entry(
                         &store_cell.borrow(),
                         array,
                         schema_refs,
@@ -4206,9 +4384,9 @@ impl Driver {
                         .pop()
                         .ok_or_else(|| "pop on empty array".to_string())?;
                     write_frame_word(frame, value_slot, value);
-                    let handle = flesh_cell
+                    let handle = molten_cell
                         .borrow_mut()
-                        .alloc(FleshValue::ArrayWords { elem_schema, words });
+                        .alloc(MoltenValue::ArrayWords { elem_schema, words });
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -4224,31 +4402,31 @@ impl Driver {
                     let index = usize::try_from(read_frame_word(frame, primitive_region + 16))
                         .map_err(|_| "negative array index".to_string())?;
                     let mut value = read_frame_word(frame, primitive_region + 24);
-                    if !force_flesh_copy {
+                    if !force_molten_copy {
                         let elem_schema = {
-                            let flesh = flesh_cell.borrow();
-                            flesh.entry(array).and_then(|entry| match &entry.value {
-                                FleshValue::ArrayWords { elem_schema, .. } if entry.refs == 1 => {
+                            let molten = molten_cell.borrow();
+                            molten.entry(array).and_then(|entry| match &entry.value {
+                                MoltenValue::ArrayWords { elem_schema, .. } if entry.refs == 1 => {
                                     Some(elem_schema.clone())
                                 }
                                 _ => None,
                             })
                         };
                         if let Some(elem_schema) = elem_schema {
-                            value = intern_flesh_word(
+                            value = intern_molten_word(
                                 &mut store_cell.borrow_mut(),
-                                &mut flesh_cell.borrow_mut(),
+                                &mut molten_cell.borrow_mut(),
                                 descriptors,
                                 schema_refs,
                                 &elem_schema,
                                 value,
                             )?
                             .0;
-                            let mut flesh = flesh_cell.borrow_mut();
-                            let entry = flesh
+                            let mut molten = molten_cell.borrow_mut();
+                            let entry = molten
                                 .entry_mut(array)
-                                .ok_or_else(|| format!("flesh handle {array}"))?;
-                            if let FleshValue::ArrayWords { words, .. } = &mut entry.value {
+                                .ok_or_else(|| format!("molten handle {array}"))?;
+                            if let MoltenValue::ArrayWords { words, .. } = &mut entry.value {
                                 if index >= words.len() {
                                     return Err(format!(
                                         "array index {index} out of bounds {}",
@@ -4261,7 +4439,7 @@ impl Driver {
                             }
                         }
                     }
-                    let (elem_schema, mut words) = match flesh_cell.borrow().array_entry(
+                    let (elem_schema, mut words) = match molten_cell.borrow().array_entry(
                         &store_cell.borrow(),
                         array,
                         schema_refs,
@@ -4269,9 +4447,9 @@ impl Driver {
                         ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
                         ArrayEntry::Pending(_) => return Err("set on pending array".into()),
                     };
-                    value = intern_flesh_word(
+                    value = intern_molten_word(
                         &mut store_cell.borrow_mut(),
-                        &mut flesh_cell.borrow_mut(),
+                        &mut molten_cell.borrow_mut(),
                         descriptors,
                         schema_refs,
                         &elem_schema,
@@ -4282,9 +4460,9 @@ impl Driver {
                         return Err(format!("array index {index} out of bounds {}", words.len()));
                     }
                     words[index] = value;
-                    let handle = flesh_cell
+                    let handle = molten_cell
                         .borrow_mut()
-                        .alloc(FleshValue::ArrayWords { elem_schema, words });
+                        .alloc(MoltenValue::ArrayWords { elem_schema, words });
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -4293,10 +4471,10 @@ impl Driver {
                 }
             };
 
-            let mut flesh_dup = |frame: &mut [u8]| {
+            let mut molten_dup = |frame: &mut [u8]| {
                 let dst_slot = read_frame_word(frame, primitive_region) as usize;
                 let src = read_frame_word(frame, primitive_region + 8);
-                if let Some(entry) = flesh_cell.borrow_mut().entry_mut(src) {
+                if let Some(entry) = molten_cell.borrow_mut().entry_mut(src) {
                     entry.refs = entry.refs.saturating_add(1);
                 }
                 write_frame_word(frame, dst_slot, src);
@@ -4319,14 +4497,14 @@ impl Driver {
                     let descriptor = descriptors
                         .get(&schema)
                         .ok_or_else(|| format!("descriptor for schema `{schema}`"))?;
-                    if !force_flesh_copy {
+                    if !force_molten_copy {
                         let can_reuse = {
-                            let flesh = flesh_cell.borrow();
-                            flesh.entry(base).is_some_and(|entry| {
+                            let molten = molten_cell.borrow();
+                            molten.entry(base).is_some_and(|entry| {
                                 entry.refs == 1
                                     && matches!(
                                         &entry.value,
-                                        FleshValue::Record {
+                                        MoltenValue::Record {
                                             schema: record_schema,
                                             ..
                                         } if record_schema == &schema
@@ -4334,11 +4512,11 @@ impl Driver {
                             })
                         };
                         if can_reuse {
-                            let mut flesh = flesh_cell.borrow_mut();
-                            let entry = flesh
+                            let mut molten = molten_cell.borrow_mut();
+                            let entry = molten
                                 .entry_mut(base)
-                                .ok_or_else(|| format!("flesh handle {base}"))?;
-                            if let FleshValue::Record { bytes, .. } = &mut entry.value {
+                                .ok_or_else(|| format!("molten handle {base}"))?;
+                            if let MoltenValue::Record { bytes, .. } = &mut entry.value {
                                 for update_index in 0..update_count {
                                     let field_index = usize::try_from(read_frame_word(
                                         frame,
@@ -4368,27 +4546,27 @@ impl Driver {
                             }
                         }
                     }
-                    let mut bytes = if let Some(entry) = flesh_cell.borrow().entry(base) {
+                    let mut bytes = if let Some(entry) = molten_cell.borrow().entry(base) {
                         match &entry.value {
-                            FleshValue::Record {
+                            MoltenValue::Record {
                                 schema: record_schema,
                                 bytes,
                             } if record_schema == &schema => bytes.clone(),
-                            FleshValue::Interned(handle) => store_cell
+                            MoltenValue::Interned(handle) => store_cell
                                 .borrow()
                                 .entry(*handle)
                                 .ok_or_else(|| format!("store handle {handle}"))?
                                 .bytes
                                 .clone(),
-                            FleshValue::Record {
+                            MoltenValue::Record {
                                 schema: record_schema,
                                 ..
                             } => {
                                 return Err(format!(
-                                    "flesh record is `{record_schema}`, not {schema}"
+                                    "molten record is `{record_schema}`, not {schema}"
                                 ));
                             }
-                            _ => return Err(format!("flesh handle {base} is not a Record")),
+                            _ => return Err(format!("molten handle {base} is not a Record")),
                         }
                     } else {
                         record_whole_args_if_projectable_static(
@@ -4434,7 +4612,7 @@ impl Driver {
                         bytes[field_offset..field_offset + field.layout.size]
                             .copy_from_slice(&value.to_le_bytes()[..field.layout.size]);
                     }
-                    let handle = flesh_cell.borrow_mut().alloc(FleshValue::Record {
+                    let handle = molten_cell.borrow_mut().alloc(MoltenValue::Record {
                         schema: schema.clone(),
                         bytes,
                     });
@@ -4446,7 +4624,7 @@ impl Driver {
                 }
             };
 
-            let mut hosts: [HostFn<'_>; 50] = [
+            let mut hosts: [HostFn<'_>; 57] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -4490,13 +4668,20 @@ impl Driver {
                 &mut sealed_to_string,
                 &mut version_set_parse_host,
                 &mut version_set_op_host,
-                &mut flesh_intern,
+                &mut molten_intern,
                 &mut array_push,
                 &mut array_pop,
                 &mut array_set,
-                &mut flesh_dup,
+                &mut molten_dup,
                 &mut record_update,
                 &mut crate_archive_host,
+                &mut version_field_host,
+                &mut option_construct_host,
+                &mut option_destruct_host,
+                &mut string_split_host,
+                &mut string_parse_int_host,
+                &mut string_contains_host,
+                &mut string_is_numeric_host,
             ];
             let step = exec
                 .task
@@ -9517,7 +9702,7 @@ mod tests {
             Op::CopyI64 { dst: 8, src: 96 },
             Op::ConstI64 { dst: 16, value: 0 },
             Op::HostCall {
-                host: FLESH_INTERN_HOST,
+                host: MOLTEN_INTERN_HOST,
             },
             // read the tag into 104 and payload field 0 into 112.
             Op::ConstI64 {
@@ -9578,7 +9763,7 @@ mod tests {
                 Op::CopyI64 { dst: 8, src: dst },
                 Op::ConstI64 { dst: 16, value: 0 },
                 Op::HostCall {
-                    host: FLESH_INTERN_HOST,
+                    host: MOLTEN_INTERN_HOST,
                 },
             ]
         };

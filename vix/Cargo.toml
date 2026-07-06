@@ -28,7 +28,9 @@ sha2.workspace = true
 weavy = { path = "../weavy" }
 
 [features]
-default = []
+# JIT is compiled in by default; the Interp/Jit lane is chosen at runtime.
+# iPhone (no runtime codegen allowed) builds opt out with --no-default-features.
+default = ["jit"]
 jit = ["weavy/jit"]
 real-process = ["dep:tempfile"]
 

@@ -1,0 +1,46 @@
+// vix standard library.
+
+// The result of a three-way comparison. A type defines `fn <=>(self, other) ->
+// Ordering` and the machine derives `< <= > >=` from it. Variant order is
+// Less(0) / Equal(1) / Greater(2) — the operator derivation depends on it.
+pub enum Ordering {
+    Less,
+    Equal,
+    Greater,
+}
+
+// Version.
+//
+// A version is a records-at-offsets value, not a host primitive: `.major` is an
+// ordinary field read, parsing is vix code over the string primitives, and
+// comparison is vix over the fields. The machine knows nothing about it.
+// (pre/build deferred — see rodin/docs/30-versions-sets.md.)
+
+pub struct Version {
+    major: Int,
+    minor: Int,
+    patch: Int,
+}
+
+pub fn parse_version(s: String) -> Version {
+    // Pad so 1- and 2-component versions ("2", "2.35") parse too: take the
+    // component before each of the first three dots.
+    let padded = s + ".0.0";
+    let major = padded.before(".").parse_int();
+    let after_major = padded.after(".");
+    let minor = after_major.before(".").parse_int();
+    let after_minor = after_major.after(".");
+    let patch = after_minor.before(".").parse_int();
+    Version { major: major, minor: minor, patch: patch }
+}
+
+// a <= b by semver precedence over major.minor.patch.
+pub fn version_lte(a: Version, b: Version) -> Bool {
+    match a.major != b.major {
+        true => a.major < b.major,
+        false => match a.minor != b.minor {
+            true => a.minor < b.minor,
+            false => a.patch <= b.patch,
+        },
+    }
+}

@@ -1,8 +1,18 @@
+// glibc preflight — decide, without executing anything, whether an image's
+// libc is new enough. Version handling is all vix now: `elf` (host) hands back
+// the raw symbol string (e.g. "GLIBC_2.35"); stripping the prefix, parsing, and
+// comparing are vix over the std Version.
+use vix::{Version, parse_version, version_lte};
+
+fn glibc_version(name: String) -> Version {
+    parse_version(name.strip_prefix("GLIBC_"))
+}
+
 pub fn shipped_glibc(image: Tree) -> Version {
     let libc: Blob = oci(image).files.get("usr/lib/libc.so.6").unwrap().contents;
-    version(elf(libc).needs_glibc)
+    glibc_version(elf(libc).needs_glibc)
 }
 
 pub fn matches_floor(image: Tree) -> Bool {
-    version("2.34.0") <= shipped_glibc(image)
+    version_lte(parse_version("2.34.0"), shipped_glibc(image))
 }

@@ -21,7 +21,7 @@
 (flag) @constant
 
 ; declarations & references
-(fn_item name: (identifier) @function)
+(fn_item name: (fn_name) @function)
 (call callee: (identifier) @function.call)
 (call callee: (scoped_identifier (identifier) @function.call .))
 (method_call name: (identifier) @function.method)

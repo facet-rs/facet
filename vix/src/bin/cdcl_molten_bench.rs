@@ -21,7 +21,7 @@ fn main() {
 
 fn run_vix(source: &str, force_copy: bool) -> Duration {
     let mut machine = Machine::load(source).expect("generated CDCL bench source loads");
-    machine.set_force_flesh_copy(force_copy);
+    machine.set_force_molten_copy(force_copy);
     let start = Instant::now();
     for seed in 0..RUNS {
         let value = machine

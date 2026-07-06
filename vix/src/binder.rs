@@ -349,9 +349,12 @@ fn builtin_module_item(module: &str, name: &str) -> Option<ModuleItem> {
     let kind = match (module, name) {
         (
             "vix",
+            // `Version` is intentionally NOT here: it is declared in vix std
+            // (vix/std/version.vix), so `use vix::Version` falls through this
+            // builtin fallback to the real `vix` module. This is the migration
+            // lever — a type leaves the host-primitive list to become vix std.
             "Int" | "Float" | "String" | "Bool" | "Blob" | "Doc" | "Tree" | "Path" | "Target"
-            | "Map" | "Array" | "Flag" | "Run" | "Os" | "Arch" | "Version" | "VersionSet"
-            | "Sealed",
+            | "Map" | "Array" | "Flag" | "Run" | "Os" | "Arch" | "VersionSet" | "Sealed",
         ) => ImportKind::Type,
         ("caps", "Cc" | "Ar" | "Rustc") => ImportKind::Type,
         _ => return None,

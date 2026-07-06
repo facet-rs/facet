@@ -33,12 +33,14 @@ use super::driver::{
     ARRAY_LEN_HOST, ARRAY_MAP_PENDING_HOST, ARRAY_POP_HOST, ARRAY_PUSH_HOST, ARRAY_SET_HOST,
     AST_DOC_HOST, AST_FN_HOST, CRATE_ARCHIVE_HOST, CodeBundle, DOC_COERCE_HOST, DOC_GET_HOST, DOC_PACKAGE_HOST,
     DOC_PARSE_HOST, DriveEvent, DriveEventSink, Driver, ELF_DOC_HOST, EXEC_HOST, FETCH_HOST,
-    FLESH_DUP_HOST, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST,
-    MAP_INSERT_HOST, MachineExecBackend, OCI_DOC_HOST, OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST,
+    MOLTEN_DUP_HOST, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST,
+    MAP_INSERT_HOST, MachineExecBackend, OCI_DOC_HOST, OPTION_CONSTRUCT_HOST, OPTION_DESTRUCT_HOST,
+    OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST,
     PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RECORD_UPDATE_HOST, RenderNames,
     RenderVariant, RenderedValue, SEALED_DECLASSIFY_HOST, SEALED_SEAL_HOST, SEALED_TO_STRING_HOST,
-    STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_DEFAULT_HOST,
-    STRING_LOWER_HOST, STRING_UPPER_HOST, SemanticComparator, StepMode, StoreHandle, TARGET_HOST,
+    STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_CONTAINS_HOST,
+    STRING_DEFAULT_HOST, STRING_IS_NUMERIC_HOST, STRING_LOWER_HOST, STRING_PARSE_INT_HOST,
+    STRING_SPLIT_HOST, STRING_UPPER_HOST, SemanticComparator, StepMode, StoreHandle, TARGET_HOST,
     TREE_PROJECT_HOST, VALUE_COMPARE_HOST, VERSION_PARSE_HOST, VERSION_SET_OP_HOST,
     VERSION_SET_PARSE_HOST, ValueBundle,
 
@@ -107,205 +109,34 @@ impl Machine {
         modules: BTreeMap<String, String>,
         lane: Lane,
     ) -> Result<Machine, String> {
-        let module_hash = module_set_hash(root, &modules);
-        let tables = load_module_tables_from_modules(root, &modules)?;
-
-        // Deterministic fn_ref assignment: sorted names.
-        let mut names: Vec<&String> = tables.fns.keys().collect();
-        names.sort();
-        let fn_refs: HashMap<String, usize> = names
-            .iter()
-            .enumerate()
-            .map(|(ix, name)| ((*name).clone(), ix))
-            .collect();
-        let fn_returns: HashMap<String, String> = names
-            .iter()
-            .map(|name| {
-                let item = &tables.fns[*name];
-                let schema = item
-                    .return_type
-                    .as_ref()
-                    .map(type_schema_name)
-                    .transpose()?
-                    .unwrap_or_else(|| "Int".into());
-                Ok(((*name).clone(), schema))
-            })
-            .collect::<Result<_, String>>()?;
-        let fn_params: HashMap<String, Vec<String>> = names
-            .iter()
-            .map(|name| {
-                let item = &tables.fns[*name];
-                Ok((
-                    (*name).clone(),
-                    item.params
-                        .params
-                        .iter()
-                        .map(|param| type_schema_name(&param.ty))
-                        .collect::<Result<Vec<_>, _>>()?,
-                ))
-            })
-            .collect::<Result<_, String>>()?;
-        let fn_param_names: HashMap<String, Vec<String>> = names
-            .iter()
-            .map(|name| {
-                let item = &tables.fns[*name];
-                (
-                    (*name).clone(),
-                    item.params
-                        .params
-                        .iter()
-                        .map(|param| param.name.value.clone())
-                        .collect(),
-                )
-            })
-            .collect();
-        let mut schema_names = schema_names_for(&tables, &fn_returns, &fn_params)?;
-        schema_names.sort();
-        schema_names.dedup();
-        let render_names = render_names_for(&tables);
-        let schema_refs: HashMap<String, i64> = schema_names
-            .iter()
-            .enumerate()
-            .map(|(ix, name)| {
-                (
-                    name.clone(),
-                    i64::try_from(ix).expect("schema ref fits i64"),
-                )
-            })
-            .collect();
-        let string_handles = string_handles(&tables);
-        let path_handles = path_handles(&tables, string_handles.len());
-        let flag_handles = flag_handles(&tables, string_handles.len() + path_handles.len());
-        let template_handles = template_handles(
-            &tables,
-            string_handles.len() + path_handles.len() + flag_handles.len(),
-        );
-        let literal_handles = LiteralHandles {
-            strings: &string_handles,
-            paths: &path_handles,
-            flags: &flag_handles,
-            templates: &template_handles,
-        };
-        let signatures = FnSignatures {
-            returns: &fn_returns,
-            params: &fn_params,
-            param_names: &fn_param_names,
-        };
-
-        let mut task_fns = Vec::with_capacity(names.len());
-        let mut lowered = Vec::with_capacity(names.len());
-        for (ix, name) in names.iter().enumerate() {
-            let item = &tables.fns[*name];
-            let hash = tables.fn_hashes[*name];
-            let (task_fn, info) = if parked_generic_or_fn_typed(item) {
-                parked_stub(item)?
-            } else {
-                FnLowerer::lower(
-                    item,
-                    &tables,
-                    &tables.fn_modules[*name],
-                    &fn_refs,
-                    signatures,
-                    &schema_refs,
-                    literal_handles,
-                )
-                .map_err(|e| format!("lowering {name}: {e}"))?
-            };
-            task_fns.push(task_fn);
-            let arg_schemas = item
-                .params
-                .params
-                .iter()
-                .map(|param| type_schema_name(&param.ty))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| format!("lowering {name}: {e}"))?;
-            let param_names = item
-                .params
-                .params
-                .iter()
-                .map(|param| param.name.value.clone())
-                .collect::<Vec<_>>();
-            let semantic_comparators = semantic_comparators_for(
-                name,
-                &arg_schemas,
-                &param_names,
-                &fn_refs,
-                &fn_params,
-                &fn_returns,
-            )?;
-            let hash = hash_with_semantic_comparators(hash, &semantic_comparators, &names, &tables);
-            lowered.push(LoweredFn {
-                hash,
-                task_fn: FnId(u32::try_from(ix).expect("fn count fits u32")),
-                arg_offsets: info.arg_offsets,
-                arg_schemas,
-                return_schema: fn_returns[*name].clone(),
-                semantic_comparators,
-                invoke_region: info.invoke_region,
-                store_alloc_region: info.store_alloc_region,
-                store_read_region: info.store_read_region,
-                store_tag_region: info.store_tag_region,
-                primitive_region: info.primitive_region,
-            });
-        }
-
-        let mut descriptors = tables.descriptors;
-        add_builtin_descriptors(&mut descriptors);
-        for name in &schema_names {
-            if let Some(descriptor) = derived_descriptor(name) {
-                descriptors.entry(name.clone()).or_insert(descriptor);
-            }
-        }
+        let mut modules = modules;
+        inject_std_modules(&mut modules);
+        let c = compile_module_set(root, &modules, RefSource::Fresh)?;
 
         let mut driver =
-            Driver::try_with_descriptors(Program { fns: task_fns }, lowered, descriptors, lane)?;
-        for name in &schema_names {
+            Driver::try_with_descriptors(c.program, c.lowered, c.descriptors, lane)?;
+        // The driver's own interning must reproduce the fresh 0-based assignment.
+        for name in &c.schema_names {
             let actual = driver.intern_schema_ref(name.clone());
             assert_eq!(
-                actual, schema_refs[name],
+                actual, c.schema_refs[name],
                 "schema ref assignment is deterministic"
             );
         }
-        let mut string_handles_sorted: Vec<(&String, &i64)> = string_handles.iter().collect();
-        string_handles_sorted.sort_by_key(|(_, handle)| **handle);
-        for (value, expected) in string_handles_sorted {
-            let (actual, _) = driver.intern_raw_value("String", value.as_bytes().to_vec());
-            assert_eq!(
-                actual, *expected,
-                "string handle assignment is deterministic"
-            );
-        }
-        let mut path_handles_sorted: Vec<(&String, &i64)> = path_handles.iter().collect();
-        path_handles_sorted.sort_by_key(|(_, handle)| **handle);
-        for (value, expected) in path_handles_sorted {
-            let (actual, _) = driver.intern_raw_value("Path", value.as_bytes().to_vec());
-            assert_eq!(actual, *expected, "path handle assignment is deterministic");
-        }
-        let mut flag_handles_sorted: Vec<(&String, &i64)> = flag_handles.iter().collect();
-        flag_handles_sorted.sort_by_key(|(_, handle)| **handle);
-        for (value, expected) in flag_handles_sorted {
-            let (actual, _) = driver.intern_raw_value("Flag", value.as_bytes().to_vec());
-            assert_eq!(actual, *expected, "flag handle assignment is deterministic");
-        }
-        let mut template_handles_sorted: Vec<(&String, &i64)> = template_handles.iter().collect();
-        template_handles_sorted.sort_by_key(|(_, handle)| **handle);
-        for (value, expected) in template_handles_sorted {
-            let (actual, _) = driver.intern_raw_value("Template", value.as_bytes().to_vec());
-            assert_eq!(
-                actual, *expected,
-                "template handle assignment is deterministic"
-            );
-        }
+        assert_literal_handles(&mut driver, "String", &c.literal_handles.strings);
+        assert_literal_handles(&mut driver, "Path", &c.literal_handles.paths);
+        assert_literal_handles(&mut driver, "Flag", &c.literal_handles.flags);
+        assert_literal_handles(&mut driver, "Template", &c.literal_handles.templates);
 
         Ok(Machine {
             driver,
-            fn_refs,
-            fn_params: fn_params.into_iter().collect(),
-            fn_param_names: fn_param_names.into_iter().collect(),
-            fn_returns: fn_returns.into_iter().collect(),
-            render_names,
+            fn_refs: c.fn_refs,
+            fn_params: c.fn_params.into_iter().collect(),
+            fn_param_names: c.fn_param_names.into_iter().collect(),
+            fn_returns: c.fn_returns.into_iter().collect(),
+            render_names: c.render_names,
             source: modules.get(root).cloned().unwrap_or_default(),
-            module_hash,
+            module_hash: c.module_hash,
         })
     }
 
@@ -335,152 +166,19 @@ impl Machine {
         root: &str,
         modules: BTreeMap<String, String>,
     ) -> Result<ReloadDiff, String> {
+        let mut modules = modules;
+        inject_std_modules(&mut modules);
         let before = self.fn_hashes();
-        let module_hash = module_set_hash(root, &modules);
-        let tables = load_module_tables_from_modules(root, &modules)?;
+        let c = compile_module_set(root, &modules, RefSource::Existing(&mut self.driver))?;
 
-        let mut names: Vec<&String> = tables.fns.keys().collect();
-        names.sort();
-        let fn_refs: HashMap<String, usize> = names
-            .iter()
-            .enumerate()
-            .map(|(ix, name)| ((*name).clone(), ix))
-            .collect();
-        let fn_returns: HashMap<String, String> = names
-            .iter()
-            .map(|name| {
-                let item = &tables.fns[*name];
-                let schema = item
-                    .return_type
-                    .as_ref()
-                    .map(type_schema_name)
-                    .transpose()?
-                    .unwrap_or_else(|| "Int".into());
-                Ok(((*name).clone(), schema))
-            })
-            .collect::<Result<_, String>>()?;
-        let fn_params: HashMap<String, Vec<String>> = names
-            .iter()
-            .map(|name| {
-                let item = &tables.fns[*name];
-                Ok((
-                    (*name).clone(),
-                    item.params
-                        .params
-                        .iter()
-                        .map(|param| type_schema_name(&param.ty))
-                        .collect::<Result<Vec<_>, _>>()?,
-                ))
-            })
-            .collect::<Result<_, String>>()?;
-        let fn_param_names: HashMap<String, Vec<String>> = names
-            .iter()
-            .map(|name| {
-                let item = &tables.fns[*name];
-                (
-                    (*name).clone(),
-                    item.params
-                        .params
-                        .iter()
-                        .map(|param| param.name.value.clone())
-                        .collect(),
-                )
-            })
-            .collect();
-        let mut schema_names = schema_names_for(&tables, &fn_returns, &fn_params)?;
-        schema_names.sort();
-        schema_names.dedup();
-        let render_names = render_names_for(&tables);
-        let schema_refs = self.driver.schema_ref_map_for(&schema_names);
-        let string_handles = live_string_handles(&self.driver, &tables);
-        let path_handles = live_path_handles(&self.driver, &tables);
-        let flag_handles = live_flag_handles(&self.driver, &tables);
-        let template_handles = live_template_handles(&self.driver, &tables);
-        let literal_handles = LiteralHandles {
-            strings: &string_handles,
-            paths: &path_handles,
-            flags: &flag_handles,
-            templates: &template_handles,
-        };
-        let signatures = FnSignatures {
-            returns: &fn_returns,
-            params: &fn_params,
-            param_names: &fn_param_names,
-        };
-
-        let mut task_fns = Vec::with_capacity(names.len());
-        let mut lowered = Vec::with_capacity(names.len());
-        for (ix, name) in names.iter().enumerate() {
-            let item = &tables.fns[*name];
-            let hash = tables.fn_hashes[*name];
-            let (task_fn, info) = if parked_generic_or_fn_typed(item) {
-                parked_stub(item)?
-            } else {
-                FnLowerer::lower(
-                    item,
-                    &tables,
-                    &tables.fn_modules[*name],
-                    &fn_refs,
-                    signatures,
-                    &schema_refs,
-                    literal_handles,
-                )
-                .map_err(|e| format!("lowering {name}: {e}"))?
-            };
-            task_fns.push(task_fn);
-            let arg_schemas = item
-                .params
-                .params
-                .iter()
-                .map(|param| type_schema_name(&param.ty))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| format!("lowering {name}: {e}"))?;
-            let param_names = item
-                .params
-                .params
-                .iter()
-                .map(|param| param.name.value.clone())
-                .collect::<Vec<_>>();
-            let semantic_comparators = semantic_comparators_for(
-                name,
-                &arg_schemas,
-                &param_names,
-                &fn_refs,
-                &fn_params,
-                &fn_returns,
-            )?;
-            let hash = hash_with_semantic_comparators(hash, &semantic_comparators, &names, &tables);
-            lowered.push(LoweredFn {
-                hash,
-                task_fn: FnId(u32::try_from(ix).expect("fn count fits u32")),
-                arg_offsets: info.arg_offsets,
-                arg_schemas,
-                return_schema: fn_returns[*name].clone(),
-                semantic_comparators,
-                invoke_region: info.invoke_region,
-                store_alloc_region: info.store_alloc_region,
-                store_read_region: info.store_read_region,
-                store_tag_region: info.store_tag_region,
-                primitive_region: info.primitive_region,
-            });
-        }
-
-        let mut descriptors = tables.descriptors;
-        add_builtin_descriptors(&mut descriptors);
-        for name in &schema_names {
-            if let Some(descriptor) = derived_descriptor(name) {
-                descriptors.entry(name.clone()).or_insert(descriptor);
-            }
-        }
-        self.driver
-            .reload(Program { fns: task_fns }, lowered, descriptors)?;
-        self.fn_refs = fn_refs;
-        self.fn_params = fn_params.into_iter().collect();
-        self.fn_param_names = fn_param_names.into_iter().collect();
-        self.fn_returns = fn_returns.into_iter().collect();
-        self.render_names = render_names;
+        self.driver.reload(c.program, c.lowered, c.descriptors)?;
+        self.fn_refs = c.fn_refs;
+        self.fn_params = c.fn_params.into_iter().collect();
+        self.fn_param_names = c.fn_param_names.into_iter().collect();
+        self.fn_returns = c.fn_returns.into_iter().collect();
+        self.render_names = c.render_names;
         self.source = modules.get(root).cloned().unwrap_or_default();
-        self.module_hash = module_hash;
+        self.module_hash = c.module_hash;
 
         let after = self.fn_hashes();
         let changed = before
@@ -682,8 +380,8 @@ impl Machine {
         self.driver.set_step_mode(mode);
     }
 
-    pub fn set_force_flesh_copy(&mut self, force: bool) {
-        self.driver.set_force_flesh_copy(force);
+    pub fn set_force_molten_copy(&mut self, force: bool) {
+        self.driver.set_force_molten_copy(force);
     }
 
     pub fn entry_param_schemas(&self, name: &str) -> Option<&[String]> {
@@ -761,6 +459,290 @@ fn module_hash(source: &str) -> Vec<u8> {
     hasher.update(b"vix-machine-module");
     hasher.update(source.as_bytes());
     hasher.finalize().to_vec()
+}
+
+/// The interned handle tables for a compiled module set. Fresh (0-based) on a
+/// cold load; preserved from the live driver on reload so warm memo/store stay
+/// valid.
+struct LiteralHandleMaps {
+    strings: HashMap<String, i64>,
+    paths: HashMap<String, i64>,
+    flags: HashMap<String, i64>,
+    templates: HashMap<String, i64>,
+}
+
+/// Where schema-refs and literal handles come from — the one axis on which cold
+/// load and warm reload differ. Fresh assigns 0..N; Existing preserves the live
+/// driver's numbering (and extends it), which is what keeps warm state valid.
+enum RefSource<'a> {
+    Fresh,
+    Existing(&'a mut Driver),
+}
+
+impl RefSource<'_> {
+    fn schema_refs(&mut self, schema_names: &[String]) -> HashMap<String, i64> {
+        match self {
+            RefSource::Fresh => schema_names
+                .iter()
+                .enumerate()
+                .map(|(ix, name)| (name.clone(), i64::try_from(ix).expect("schema ref fits i64")))
+                .collect(),
+            RefSource::Existing(driver) => driver.schema_ref_map_for(schema_names),
+        }
+    }
+
+    fn literal_handles(&mut self, tables: &ModuleTables) -> LiteralHandleMaps {
+        match self {
+            RefSource::Fresh => {
+                let strings = string_handles(tables);
+                let paths = path_handles(tables, strings.len());
+                let flags = flag_handles(tables, strings.len() + paths.len());
+                let templates =
+                    template_handles(tables, strings.len() + paths.len() + flags.len());
+                LiteralHandleMaps {
+                    strings,
+                    paths,
+                    flags,
+                    templates,
+                }
+            }
+            RefSource::Existing(driver) => {
+                let driver: &Driver = driver;
+                LiteralHandleMaps {
+                    strings: live_string_handles(driver, tables),
+                    paths: live_path_handles(driver, tables),
+                    flags: live_flag_handles(driver, tables),
+                    templates: live_template_handles(driver, tables),
+                }
+            }
+        }
+    }
+}
+
+/// Everything a module set lowers to, before it is handed to a driver — the
+/// single shared pipeline behind both cold load and warm reload.
+struct Compiled {
+    program: Program,
+    lowered: Vec<LoweredFn>,
+    descriptors: HashMap<String, Descriptor<String>>,
+    fn_refs: HashMap<String, usize>,
+    fn_returns: HashMap<String, String>,
+    fn_params: HashMap<String, Vec<String>>,
+    fn_param_names: HashMap<String, Vec<String>>,
+    render_names: RenderNames,
+    schema_names: Vec<String>,
+    schema_refs: HashMap<String, i64>,
+    literal_handles: LiteralHandleMaps,
+    module_hash: Vec<u8>,
+}
+
+/// Compile a module set into a lowered program: the whole of loading a vix
+/// program *except* interning into a driver. Cold load and warm reload share it
+/// verbatim, differing only in `ref_source` (fresh vs. driver-backed) and in
+/// what they do with the `Compiled` result.
+fn compile_module_set(
+    root: &str,
+    modules: &BTreeMap<String, String>,
+    mut ref_source: RefSource,
+) -> Result<Compiled, String> {
+    let module_hash = module_set_hash(root, modules);
+    let tables = load_module_tables_from_modules(root, modules)?;
+
+    // Deterministic fn_ref assignment: sorted names.
+    let mut names: Vec<&String> = tables.fns.keys().collect();
+    names.sort();
+    let fn_refs: HashMap<String, usize> = names
+        .iter()
+        .enumerate()
+        .map(|(ix, name)| ((*name).clone(), ix))
+        .collect();
+    let fn_returns: HashMap<String, String> = names
+        .iter()
+        .map(|name| {
+            let item = &tables.fns[*name];
+            let schema = item
+                .return_type
+                .as_ref()
+                .map(type_schema_name)
+                .transpose()?
+                .unwrap_or_else(|| "Int".into());
+            Ok(((*name).clone(), schema))
+        })
+        .collect::<Result<_, String>>()?;
+    let fn_params: HashMap<String, Vec<String>> = names
+        .iter()
+        .map(|name| {
+            let item = &tables.fns[*name];
+            Ok((
+                (*name).clone(),
+                item.params
+                    .params
+                    .iter()
+                    .map(|param| type_schema_name(&param.ty))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ))
+        })
+        .collect::<Result<_, String>>()?;
+    let fn_param_names: HashMap<String, Vec<String>> = names
+        .iter()
+        .map(|name| {
+            let item = &tables.fns[*name];
+            (
+                (*name).clone(),
+                item.params
+                    .params
+                    .iter()
+                    .map(|param| param.name.value.clone())
+                    .collect(),
+            )
+        })
+        .collect();
+    let mut schema_names = schema_names_for(&tables, &fn_returns, &fn_params)?;
+    schema_names.sort();
+    schema_names.dedup();
+    let render_names = render_names_for(&tables);
+    let schema_refs = ref_source.schema_refs(&schema_names);
+    let handles = ref_source.literal_handles(&tables);
+    let literal_handles = LiteralHandles {
+        strings: &handles.strings,
+        paths: &handles.paths,
+        flags: &handles.flags,
+        templates: &handles.templates,
+    };
+    let signatures = FnSignatures {
+        returns: &fn_returns,
+        params: &fn_params,
+        param_names: &fn_param_names,
+    };
+
+    let mut task_fns = Vec::with_capacity(names.len());
+    let mut lowered = Vec::with_capacity(names.len());
+    for (ix, name) in names.iter().enumerate() {
+        let item = &tables.fns[*name];
+        let hash = tables.fn_hashes[*name];
+        let (task_fn, info) = if parked_generic_or_fn_typed(item) {
+            parked_stub(item)?
+        } else {
+            FnLowerer::lower(
+                item,
+                &tables,
+                &tables.fn_modules[*name],
+                &fn_refs,
+                signatures,
+                &schema_refs,
+                literal_handles,
+            )
+            .map_err(|e| format!("lowering {name}: {e}"))?
+        };
+        task_fns.push(task_fn);
+        let arg_schemas = item
+            .params
+            .params
+            .iter()
+            .map(|param| type_schema_name(&param.ty))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("lowering {name}: {e}"))?;
+        let param_names = item
+            .params
+            .params
+            .iter()
+            .map(|param| param.name.value.clone())
+            .collect::<Vec<_>>();
+        let semantic_comparators = semantic_comparators_for(
+            name,
+            &arg_schemas,
+            &param_names,
+            &fn_refs,
+            &fn_params,
+            &fn_returns,
+        )?;
+        let hash = hash_with_semantic_comparators(hash, &semantic_comparators, &names, &tables);
+        lowered.push(LoweredFn {
+            hash,
+            task_fn: FnId(u32::try_from(ix).expect("fn count fits u32")),
+            arg_offsets: info.arg_offsets,
+            arg_schemas,
+            return_schema: fn_returns[*name].clone(),
+            semantic_comparators,
+            invoke_region: info.invoke_region,
+            store_alloc_region: info.store_alloc_region,
+            store_read_region: info.store_read_region,
+            store_tag_region: info.store_tag_region,
+            primitive_region: info.primitive_region,
+        });
+    }
+
+    let mut descriptors = tables.descriptors;
+    add_builtin_descriptors(&mut descriptors);
+    for name in &schema_names {
+        if let Some(descriptor) = derived_descriptor(name) {
+            descriptors.entry(name.clone()).or_insert(descriptor);
+        }
+    }
+
+    Ok(Compiled {
+        program: Program { fns: task_fns },
+        lowered,
+        descriptors,
+        fn_refs,
+        fn_returns,
+        fn_params,
+        fn_param_names,
+        render_names,
+        schema_names,
+        schema_refs,
+        literal_handles: handles,
+        module_hash,
+    })
+}
+
+/// On a cold load the driver's interning must reproduce the fresh handle
+/// assignment exactly — assert it, in handle order.
+fn assert_literal_handles(driver: &mut Driver, schema: &str, handles: &HashMap<String, i64>) {
+    let mut sorted: Vec<(&String, &i64)> = handles.iter().collect();
+    sorted.sort_by_key(|(_, handle)| **handle);
+    for (value, expected) in sorted {
+        let (actual, _) = driver.intern_raw_value(schema, value.as_bytes().to_vec());
+        assert_eq!(
+            actual, *expected,
+            "{schema} handle assignment is deterministic"
+        );
+    }
+}
+
+/// Pull the bundled vix standard library into a program's module set — but only
+/// when the program actually references it, so programs that never touch
+/// `Version` don't pay for its source (interned literals, lowered fns). Applied
+/// on load and reload alike, keyed on the same source, so the module set is
+/// identical across warm reloads. `use vix::X` then resolves to std via the
+/// binder's real-module lookup, with host primitives as the fallback.
+///
+/// The reference test is a heuristic word scan pending proper import-driven
+/// inclusion; a false positive merely includes std unnecessarily.
+fn inject_std_modules(modules: &mut BTreeMap<String, String>) {
+    if modules.contains_key("vix") || !references_vix_std(modules) {
+        return;
+    }
+    modules.insert(
+        "vix".to_string(),
+        include_str!("../../std/version.vix").to_string(),
+    );
+}
+
+fn references_vix_std(modules: &BTreeMap<String, String>) -> bool {
+    const STD_NAMES: &[&str] = &["Version", "parse_version", "version_lte", "Ordering"];
+    modules
+        .values()
+        .any(|source| STD_NAMES.iter().any(|name| contains_word(source, name)))
+}
+
+/// Whole-word substring test — so `Version` does not match inside `VersionSet`.
+fn contains_word(haystack: &str, word: &str) -> bool {
+    let is_boundary = |ch: Option<char>| ch.is_none_or(|c| !c.is_alphanumeric() && c != '_');
+    haystack.match_indices(word).any(|(start, _)| {
+        is_boundary(haystack[..start].chars().next_back())
+            && is_boundary(haystack[start + word.len()..].chars().next())
+    })
 }
 
 fn module_set_hash(root: &str, modules: &BTreeMap<String, String>) -> Vec<u8> {
@@ -1764,13 +1746,17 @@ fn collect_expr_schemas(
                     Ok(Some("VersionSet".into()))
                 }
                 ("subset" | "contains", Some("VersionSet")) => Ok(Some("Bool".into())),
+                ("before" | "after" | "strip_prefix", Some("String")) => Ok(Some("String".into())),
+                ("parse_int", Some("String")) => Ok(Some("Int".into())),
+                ("contains" | "is_numeric", Some("String")) => Ok(Some("Bool".into())),
                 _ => Ok(None),
             }
         }
         ast::Expr::Field(field) => {
             let receiver = collect_expr_schemas(&field.receiver, out, tables, fn_returns, env)?;
-            if let (Some(schema), ast::Member::Index(index)) = (receiver, &field.name)
-                && let Some(fields) = tuple_schema_fields(&schema)
+            if let Some(schema) = &receiver
+                && let ast::Member::Index(index) = &field.name
+                && let Some(fields) = tuple_schema_fields(schema)
                 && let Ok(field_index) = index.value.parse::<usize>()
             {
                 return Ok(fields.get(field_index).cloned());
@@ -2579,6 +2565,9 @@ impl<'a> FnLowerer<'a> {
                 })
             }
             ast::Expr::Identifier(name) => {
+                if name.value == "None" && !self.slots.contains_key("None") {
+                    return self.option_none(expected);
+                }
                 if let Some(info) = self.tables.structs.get(&name.value)
                     && info.is_unit
                     && !self.slots.contains_key(&name.value)
@@ -2609,6 +2598,30 @@ impl<'a> FnLowerer<'a> {
             ast::Expr::Binary(b) => {
                 let mut a = self.expr(&b.left)?;
                 let mut r = self.expr(&b.right)?;
+                // Comparison operators derive from a user-defined spaceship
+                // `fn <=>(self: T, other) -> Ordering`: `a < b` ≡ `(a <=> b)` is
+                // Less, etc. Only ordering is overridable this way; `==`/`!=` stay
+                // structural (identity). The `<=>` name is a normal function name
+                // (the grammar allows operator symbols).
+                if matches!(b.op.as_str(), "<" | "<=" | ">" | ">=") {
+                    let dispatch = self
+                        .resolve_function_name("<=>")
+                        .map(str::to_string)
+                        .and_then(|resolved| {
+                            let fn_ref = *self.fn_refs.get(&resolved)?;
+                            let params = self.signatures.params.get(&resolved)?;
+                            (params.first() == Some(&a.schema))
+                                .then(|| (fn_ref, params.get(1).cloned()))
+                        });
+                    if let Some((fn_ref, p1)) = dispatch {
+                        let r = match &p1 {
+                            Some(p1) => self.coerce_to_schema(r, p1)?,
+                            None => r,
+                        };
+                        let ord = self.invoke_fn(fn_ref, vec![a, r], "Ordering".into())?;
+                        return Ok(self.ordering_to_bool(&ord, b.op.as_str()));
+                    }
+                }
                 if b.op == "+"
                     && matches!(a.schema.as_str(), "String" | "Sealed")
                     && matches!(r.schema.as_str(), "String" | "Sealed")
@@ -2786,8 +2799,8 @@ impl<'a> FnLowerer<'a> {
         let state = cell.0.borrow().clone();
         match state {
             BindingState::Value(slot) => {
-                if self.schema_can_be_flesh(&slot.schema) {
-                    self.flesh_dup(&slot)
+                if self.schema_can_be_molten(&slot.schema) {
+                    self.molten_dup(&slot)
                 } else {
                     Ok(slot)
                 }
@@ -2802,8 +2815,8 @@ impl<'a> FnLowerer<'a> {
                     self.expr_expected(&value, contextual_expected.or(expected.as_deref()))?;
                 *cell.0.borrow_mut() = BindingState::Value(slot.clone());
                 self.slots = saved;
-                if self.schema_can_be_flesh(&slot.schema) {
-                    self.flesh_dup(&slot)
+                if self.schema_can_be_molten(&slot.schema) {
+                    self.molten_dup(&slot)
                 } else {
                     Ok(slot)
                 }
@@ -2811,7 +2824,7 @@ impl<'a> FnLowerer<'a> {
         }
     }
 
-    fn schema_can_be_flesh(&self, schema: &str) -> bool {
+    fn schema_can_be_molten(&self, schema: &str) -> bool {
         schema == "Array"
             || schema.starts_with("Map<")
             || self.tables.structs.contains_key(schema)
@@ -2905,6 +2918,24 @@ impl<'a> FnLowerer<'a> {
                     let (enum_name, variant_index, _) = self.resolve_scoped_variant(path)?;
                     self.variant_match_test(&scrut, &enum_name, variant_index, &mut skip_patches)?;
                 }
+                ast::Pattern::Variant(p) if scrut.schema.starts_with("Option<") => {
+                    let segments = path_ref_segments(&p.path)?;
+                    let variant = segments.last().map(String::as_str).unwrap_or_default();
+                    if variant != "Some" {
+                        return Err(format!(
+                            "Option pattern `{variant}` is not Some or None"
+                        ));
+                    }
+                    let value_schema = option_value_schema(&scrut.schema)
+                        .ok_or_else(|| format!("scrutinee {} is not an Option", scrut.schema))?
+                        .to_string();
+                    self.option_tag_test(&scrut, 1, &mut skip_patches);
+                    let [pattern] = p.args.as_slice() else {
+                        return Err("Some pattern takes one binding".into());
+                    };
+                    let payload = self.option_destruct(&scrut, 1, &value_schema);
+                    self.bind_option_payload(pattern, payload)?;
+                }
                 ast::Pattern::Variant(p) => {
                     let (enum_name, variant_index, shape) = self.resolve_path_variant(&p.path)?;
                     self.variant_match_test(&scrut, &enum_name, variant_index, &mut skip_patches)?;
@@ -2953,6 +2984,11 @@ impl<'a> FnLowerer<'a> {
                     if i != last {
                         return Err("wildcard arm must be last".into());
                     }
+                }
+                ast::Pattern::Identifier(name)
+                    if scrut.schema.starts_with("Option<") && name.value == "None" =>
+                {
+                    self.option_tag_test(&scrut, 0, &mut skip_patches);
                 }
                 ast::Pattern::Identifier(name) => {
                     if let Some(variant_index) =
@@ -3124,6 +3160,7 @@ impl<'a> FnLowerer<'a> {
             "build_directives" => return self.doc_parse_call(call, 2),
             "crate_archive" => return self.crate_archive_call(call),
             "version" => return self.version_call(call),
+            "Some" => return self.option_some_call(call),
             "render" => return self.render_call(call),
             "elf" => return self.elf_call(call),
             "ast" => return self.ast_call(call),
@@ -3603,6 +3640,13 @@ impl<'a> FnLowerer<'a> {
                 let right = self.method_arg(arg, Some("VersionSet"))?;
                 self.version_set_op(3, &receiver, Some(&right), "Bool")
             }
+            "contains" if receiver.schema == "String" => {
+                let [arg] = call.args.args.as_slice() else {
+                    return Err("String.contains takes one needle".into());
+                };
+                let needle = self.method_arg(arg, Some("String"))?;
+                Ok(self.string_query(&receiver, Some(&needle), STRING_CONTAINS_HOST))
+            }
             "contains" => {
                 if receiver.schema != "VersionSet" {
                     return Err(format!("contains called on {}", receiver.schema));
@@ -3621,6 +3665,39 @@ impl<'a> FnLowerer<'a> {
                     return Err(format!("unwrap called on {}", receiver.schema));
                 };
                 Ok(self.option_unwrap(&receiver, value_schema))
+            }
+            "before" | "after" | "strip_prefix" => {
+                if receiver.schema != "String" {
+                    return Err(format!("{} called on {}", call.name.value, receiver.schema));
+                }
+                let [arg] = call.args.args.as_slice() else {
+                    return Err(format!("String.{} takes one argument", call.name.value));
+                };
+                let delim = self.method_arg(arg, Some("String"))?;
+                let selector = match call.name.value.as_str() {
+                    "before" => 0,
+                    "after" => 1,
+                    _ => 2,
+                };
+                Ok(self.string_split(&receiver, &delim, selector))
+            }
+            "parse_int" => {
+                if receiver.schema != "String" {
+                    return Err(format!("parse_int called on {}", receiver.schema));
+                }
+                if !call.args.args.is_empty() {
+                    return Err("String.parse_int takes no arguments".into());
+                }
+                Ok(self.string_parse_int(&receiver))
+            }
+            "is_numeric" => {
+                if receiver.schema != "String" {
+                    return Err(format!("is_numeric called on {}", receiver.schema));
+                }
+                if !call.args.args.is_empty() {
+                    return Err("String.is_numeric takes no arguments".into());
+                }
+                Ok(self.string_query(&receiver, None, STRING_IS_NUMERIC_HOST))
             }
             other => Err(format!(
                 "method {other} is outside the machine slice-3 subset"
@@ -4559,7 +4636,7 @@ impl<'a> FnLowerer<'a> {
         }
     }
 
-    fn flesh_dup(&mut self, value: &ValueSlot) -> Result<ValueSlot, String> {
+    fn molten_dup(&mut self, value: &ValueSlot) -> Result<ValueSlot, String> {
         let dst = self.alloc();
         let region = self.primitive_region;
         self.code.push(Op::ConstI64 {
@@ -4571,7 +4648,7 @@ impl<'a> FnLowerer<'a> {
             src: value.slot,
         });
         self.code.push(Op::HostCall {
-            host: FLESH_DUP_HOST,
+            host: MOLTEN_DUP_HOST,
         });
         Ok(ValueSlot {
             slot: dst,
@@ -6036,6 +6113,257 @@ impl<'a> FnLowerer<'a> {
         })
     }
 
+    fn string_split(&mut self, receiver: &ValueSlot, delim: &ValueSlot, selector: i64) -> ValueSlot {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: receiver.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: delim.slot,
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 24,
+            value: selector,
+        });
+        self.code.push(Op::HostCall {
+            host: STRING_SPLIT_HOST,
+        });
+        ValueSlot {
+            slot: dst,
+            schema: "String".into(),
+            realization: None,
+            pending: None,
+        }
+    }
+
+    /// Derive a comparison operator's Bool from an `Ordering` value (variants
+    /// Less=0, Equal=1, Greater=2): `<` is Less, `>` is Greater, `<=` is
+    /// not-Greater, `>=` is not-Less.
+    fn ordering_to_bool(&mut self, ord: &ValueSlot, op: &str) -> ValueSlot {
+        let tag = self.store_tag(ord);
+        let (target, equal) = match op {
+            "<" => (0, true),
+            ">" => (2, true),
+            "<=" => (2, false),
+            _ => (0, false),
+        };
+        let lit = self.alloc();
+        self.code.push(Op::ConstI64 {
+            dst: lit,
+            value: target,
+        });
+        let dst = self.alloc();
+        self.code.push(if equal {
+            Op::EqI64 {
+                dst,
+                a: tag.slot,
+                b: lit,
+            }
+        } else {
+            Op::NeI64 {
+                dst,
+                a: tag.slot,
+                b: lit,
+            }
+        });
+        ValueSlot {
+            slot: dst,
+            schema: "Bool".into(),
+            realization: None,
+            pending: None,
+        }
+    }
+
+    /// A String -> Bool query (contains needs an argument, is_numeric does not).
+    fn string_query(&mut self, receiver: &ValueSlot, arg: Option<&ValueSlot>, host: u32) -> ValueSlot {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: receiver.slot,
+        });
+        if let Some(arg) = arg {
+            self.code.push(Op::CopyI64 {
+                dst: region + 16,
+                src: arg.slot,
+            });
+        }
+        self.code.push(Op::HostCall { host });
+        ValueSlot {
+            slot: dst,
+            schema: "Bool".into(),
+            realization: None,
+            pending: None,
+        }
+    }
+
+    fn string_parse_int(&mut self, receiver: &ValueSlot) -> ValueSlot {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: receiver.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: STRING_PARSE_INT_HOST,
+        });
+        ValueSlot {
+            slot: dst,
+            schema: "Int".into(),
+            realization: None,
+            pending: None,
+        }
+    }
+
+    fn option_some_call(&mut self, call: &ast::Call) -> Result<ValueSlot, String> {
+        let [ast::Arg::Expr(arg)] = call.args.args.as_slice() else {
+            return Err("Some takes one value".into());
+        };
+        let value = self.expr(arg)?;
+        let value_schema = value.schema.clone();
+        self.option_construct(1, &value_schema, Some(&value))
+    }
+
+    fn option_none(&mut self, expected: Option<&str>) -> Result<ValueSlot, String> {
+        let Some(option_schema) = expected else {
+            return Err("None requires a known Option type from context".into());
+        };
+        let Some(value_schema) = option_value_schema(option_schema) else {
+            return Err(format!(
+                "None used where non-Option type {option_schema} is expected"
+            ));
+        };
+        let value_schema = value_schema.to_string();
+        self.option_construct(0, &value_schema, None)
+    }
+
+    fn option_construct(
+        &mut self,
+        tag: i64,
+        value_schema: &str,
+        value: Option<&ValueSlot>,
+    ) -> Result<ValueSlot, String> {
+        let value_ref = *self
+            .schema_refs
+            .get(value_schema)
+            .ok_or_else(|| format!("no schema ref for {value_schema}"))?;
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 8,
+            value: tag,
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 16,
+            value: value_ref,
+        });
+        if let Some(value) = value {
+            self.code.push(Op::CopyI64 {
+                dst: region + 24,
+                src: value.slot,
+            });
+        } else {
+            self.code.push(Op::ConstI64 {
+                dst: region + 24,
+                value: 0,
+            });
+        }
+        self.code.push(Op::HostCall {
+            host: OPTION_CONSTRUCT_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: option_schema(value_schema),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn option_destruct(&mut self, scrut: &ValueSlot, selector: i64, schema: &str) -> ValueSlot {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: scrut.slot,
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 16,
+            value: selector,
+        });
+        self.code.push(Op::HostCall {
+            host: OPTION_DESTRUCT_HOST,
+        });
+        ValueSlot {
+            slot: dst,
+            schema: schema.into(),
+            realization: None,
+            pending: None,
+        }
+    }
+
+    /// Emit the tag test for an Option match arm: skip to the next arm unless
+    /// the scrutinee's tag equals `want_tag` (0 = None, 1 = Some).
+    fn option_tag_test(&mut self, scrut: &ValueSlot, want_tag: i64, skip_patches: &mut Vec<usize>) {
+        let tag = self.option_destruct(scrut, 0, "Int");
+        let lit = self.alloc();
+        self.code.push(Op::ConstI64 {
+            dst: lit,
+            value: want_tag,
+        });
+        let test = self.alloc();
+        self.code.push(Op::EqI64 {
+            dst: test,
+            a: tag.slot,
+            b: lit,
+        });
+        skip_patches.push(self.code.len());
+        self.code.push(Op::JumpIfZero {
+            value: test,
+            target: 0,
+        });
+    }
+
+    fn bind_option_payload(
+        &mut self,
+        pattern: &ast::Pattern,
+        payload: ValueSlot,
+    ) -> Result<(), String> {
+        match pattern {
+            ast::Pattern::Identifier(name) => {
+                self.slots
+                    .insert(name.value.clone(), BindingCell::value(payload));
+                Ok(())
+            }
+            ast::Pattern::Wildcard(_) => Ok(()),
+            other => Err(format!(
+                "Some pattern binding {other:?} is outside the machine slice-2 subset"
+            )),
+        }
+    }
+
     fn compare_value(
         &mut self,
         op: &str,
@@ -6230,7 +6558,7 @@ fn strict_binary_operand_schema<'a>(op: &str, left: &'a str, right: &'a str) -> 
         | ("+" | "*", "Float")
         | ("+", "String")
         | ("==" | "!=", "Int" | "Float" | "String" | "Path" | "Bool" | "Version" | "VersionSet")
-        | ("<" | "<=" | ">" | ">=", "Int" | "Version")
+        | ("<" | "<=" | ">" | ">=", "Int" | "String" | "Version")
         | ("&&", "Bool") => Some(left),
         _ => None,
     }
@@ -6470,7 +6798,7 @@ fn max_store_field_count(block: &ast::Block) -> usize {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::super::driver::{
         MachineExecBackend, MachineExecRequest, MachinePathDemand, MachinePendingRun, StepCommand,
     };
@@ -6554,41 +6882,6 @@ pub fn poly(n: Int) -> Int {
         Machine::load_modules_with_lane(root, modules, lane).unwrap_or_else(|err| {
             panic!("module set loads on {lane:?}: {err}");
         })
-    }
-
-    #[test]
-    fn config_gen_template_renders_bytes_and_demands_only_used_holes() {
-        let src = r#"
-fn active() -> String { "enabled" }
-fn unused() -> String { "never" }
-
-pub fn config() -> String {
-    let bindings: Map<String, String> = {};
-    let bindings = bindings
-        .insert("server", "api.local")
-        .insert("env", "PROD")
-        .insert("active", active())
-        .insert("unused", unused())
-        .insert("empty", "");
-    render(tmpl"server {{ server | upper }}
-env={{ env | lower }}
-active={{ active }}
-fallback={{ empty | default(\"8080\") }}
-", bindings)
-}
-"#;
-        let expected = "server API.LOCAL\nenv=prod\nactive=enabled\nfallback=8080\n";
-        for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
-            let result = machine.demand_i64("config", vec![]).unwrap();
-            assert_eq!(
-                machine.driver.raw_string(result, "String").unwrap(),
-                expected,
-                "{lane:?}"
-            );
-            assert_eq!(spawned_count(&machine, "active"), 1, "{lane:?}");
-            assert_eq!(spawned_count(&machine, "unused"), 0, "{lane:?}");
-        }
     }
 
     #[test]
@@ -6934,60 +7227,6 @@ pub fn opened() -> String {
     }
 
     #[test]
-    fn shared_calls_spawn_once() {
-        for lane in lanes() {
-            let mut m = load_with_lane(CORPUS, lane);
-            m.demand_i64("poly", vec![3]).unwrap();
-            let spawns = m
-                .trace()
-                .iter()
-                .filter(|e| matches!(e, DriveEvent::Spawned { .. }))
-                .count();
-            // poly, twice_sq, square — square(4) is called twice with the
-            // same argument and spawns ONCE (memo + waiter joining).
-            assert_eq!(spawns, 3, "{lane:?}");
-        }
-    }
-
-    #[test]
-    fn warm_demand_is_two_events() {
-        for lane in lanes() {
-            let mut m = load_with_lane(CORPUS, lane);
-            m.demand_i64("poly", vec![3]).unwrap();
-            m.clear_trace();
-            assert_eq!(m.demand_i64("poly", vec![3]).unwrap(), 29, "{lane:?}");
-            assert_eq!(
-                m.trace().len(),
-                2,
-                "Demanded + MemoHit, nothing else on {lane:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn undemanded_functions_never_trace() {
-        let source = format!("{CORPUS}\nfn never(z: Int) -> Int {{ z * 1000 }}\n");
-        for lane in lanes() {
-            let mut m = load_with_lane(&source, lane);
-            m.demand_i64("poly", vec![5]).unwrap();
-            // Mechanism 2 by absence: `never`'s closure hash appears
-            // nowhere in the trace.
-            let never_ref = m.fn_refs["never"];
-            let _ = never_ref;
-            let poly = m.demand_i64("poly", vec![5]).unwrap();
-            assert_eq!(poly, (6 * 6) * 2 - 5, "{lane:?}");
-            assert_eq!(
-                m.trace()
-                    .iter()
-                    .filter(|e| matches!(e, DriveEvent::Spawned { .. }))
-                    .count(),
-                3,
-                "three spawns total; `never` never appears on {lane:?}"
-            );
-        }
-    }
-
-    #[test]
     fn fib_runs_linear_on_the_machine() {
         let src = r#"
 fn fib(n: Int) -> Int {
@@ -7015,36 +7254,6 @@ fn fib(n: Int) -> Int {
             // fib(0)..fib(20): 21 distinct invocations, 21 spawns — LINEAR.
             // Naive recursion runs 13,529 more bodies than this.
             assert_eq!(spawns, 21, "{lane:?}");
-            traces.push((lane, m.trace().to_vec()));
-        }
-        assert_lane_traces_equal(&traces);
-    }
-
-    #[test]
-    fn untaken_arms_never_spawn() {
-        let src = r#"
-fn cheap(x: Int) -> Int { x + 1 }
-fn expensive(x: Int) -> Int { x * 1000000 }
-fn pick(b: Int) -> Int {
-    match b {
-        0 => cheap(b),
-        _ => expensive(b),
-    }
-}
-"#;
-        let mut traces = Vec::new();
-        for lane in lanes() {
-            let mut m = load_with_lane(src, lane);
-            assert_eq!(m.demand_i64("pick", vec![0]).unwrap(), 1, "{lane:?}");
-            let spawns = m
-                .trace()
-                .iter()
-                .filter(|e| matches!(e, DriveEvent::Spawned { .. }))
-                .count();
-            // pick + cheap. `expensive` sits in an untaken arm: its INVOKE
-            // never executed, so it never spawned, never demanded, never
-            // anything — the laziness proof by trace absence.
-            assert_eq!(spawns, 2, "{lane:?}");
             traces.push((lane, m.trace().to_vec()));
         }
         assert_lane_traces_equal(&traces);
@@ -7147,7 +7356,7 @@ fn f(n: Int) -> Int {
     }
 
     #[test]
-    fn flesh_reuse_is_unobservable_for_aggregate_updates() {
+    fn molten_reuse_is_unobservable_for_aggregate_updates() {
         let cases = [
             (
                 "array",
@@ -7185,7 +7394,7 @@ pub fn main() -> Int {
         for lane in lanes() {
             for (name, src, expected) in cases {
                 let mut reuse = Machine::load_with_lane(src, lane).unwrap();
-                reuse.driver.set_force_flesh_copy(false);
+                reuse.driver.set_force_molten_copy(false);
                 let reuse_result = reuse.demand_i64("main", vec![]).unwrap();
                 let reuse_trace = reuse.driver.trace.clone();
                 let reuse_bundle = reuse
@@ -7194,7 +7403,7 @@ pub fn main() -> Int {
                     .unwrap();
 
                 let mut copy = Machine::load_with_lane(src, lane).unwrap();
-                copy.driver.set_force_flesh_copy(true);
+                copy.driver.set_force_molten_copy(true);
                 let copy_result = copy.demand_i64("main", vec![]).unwrap();
                 let copy_trace = copy.driver.trace.clone();
                 let copy_bundle = copy
@@ -7238,102 +7447,6 @@ fn main() -> Int {
     }
 
     #[test]
-    fn structural_equal_handles_share_store_and_memo() {
-        let src = r#"
-enum Expr {
-    Num(Int),
-    Add(Expr, Expr),
-}
-
-fn make_a() -> Expr {
-    Expr::Add(Expr::Num(1), Expr::Num(2))
-}
-
-fn make_b() -> Expr {
-    Expr::Add(Expr::Num(1), Expr::Num(2))
-}
-
-fn eval(e: Expr) -> Int {
-    match e {
-        Expr::Num(n) => n,
-        Expr::Add(a, b) => eval(a) + eval(b),
-    }
-}
-
-fn main() -> Int {
-    let a = make_a();
-    let b = make_b();
-    eval(a) + eval(b)
-}
-"#;
-        for lane in lanes() {
-            let mut m = load_with_lane(src, lane);
-            assert_eq!(m.demand_i64("main", vec![]).unwrap(), 6, "{lane:?}");
-            let eval_hash = m.fn_hash("eval").expect("eval hash");
-            let eval_spawns = m
-                .trace()
-                .iter()
-                .filter(|e| matches!(e, DriveEvent::Spawned { fn_hash } if *fn_hash == eval_hash))
-                .count();
-            let eval_hits = m
-                .trace()
-                .iter()
-                .filter(|e| matches!(e, DriveEvent::MemoHit { fn_hash } if *fn_hash == eval_hash))
-                .count();
-            assert_eq!(
-                eval_spawns, 3,
-                "Add, Num(1), Num(2) each spawn once on {lane:?}"
-            );
-            assert!(
-                eval_hits > 0,
-                "second structurally equal tree hits memo on {lane:?}"
-            );
-            assert!(
-                m.trace()
-                    .iter()
-                    .any(|e| matches!(e, DriveEvent::StoreAlloc { deduped: true, .. })),
-                "second constructor path dedupes in the value store on {lane:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn untaken_variant_arms_never_spawn() {
-        let src = r#"
-enum Choice { A, B }
-
-fn expensive() -> Int { 999999 }
-
-fn pick(c: Choice) -> Int {
-    match c {
-        Choice::A => 1,
-        Choice::B => expensive(),
-    }
-}
-
-fn main() -> Int {
-    pick(Choice::A)
-}
-"#;
-        let mut traces = Vec::new();
-        for lane in lanes() {
-            let mut m = load_with_lane(src, lane);
-            assert_eq!(m.demand_i64("main", vec![]).unwrap(), 1, "{lane:?}");
-            let expensive_hash = m.fn_hash("expensive").expect("expensive hash");
-            assert!(
-                !m.trace().iter().any(|e| matches!(
-                    e,
-                    DriveEvent::Demanded { fn_hash } | DriveEvent::Spawned { fn_hash }
-                        if *fn_hash == expensive_hash
-                )),
-                "untaken variant arm never demands or spawns expensive on {lane:?}"
-            );
-            traces.push((lane, m.trace().to_vec()));
-        }
-        assert_lane_traces_equal(&traces);
-    }
-
-    #[test]
     fn strings_are_interned_and_match_by_handle() {
         let src = r#"
 fn classify() -> Int {
@@ -7362,78 +7475,6 @@ fn classify() -> Int {
     }
 
     #[test]
-    fn eval_vix_demo_returns_42_on_the_machine() {
-        let src = include_str!("../../../playgrounds/snark/src/bundled/vix/samples/eval.vix");
-        let mut cold_traces = Vec::new();
-        for lane in lanes() {
-            let mut m = load_with_lane(src, lane);
-            let bits = m.demand_i64("demo", vec![]).unwrap() as u64;
-            assert_eq!(bits, 42.0f64.to_bits(), "{lane:?}");
-            let demo_hash = m.fn_hash("demo").expect("demo hash");
-            let spawns = m
-                .trace()
-                .iter()
-                .filter(|event| matches!(event, DriveEvent::Spawned { .. }))
-                .count();
-            assert_eq!(
-                spawns, 6,
-                "demo plus five distinct eval invocations on {lane:?}"
-            );
-            cold_traces.push((lane, m.trace().to_vec()));
-
-            m.clear_trace();
-            let warm_bits = m.demand_i64("demo", vec![]).unwrap() as u64;
-            assert_eq!(warm_bits, 42.0f64.to_bits(), "{lane:?}");
-            assert_eq!(
-                m.trace(),
-                &[
-                    DriveEvent::Demanded { fn_hash: demo_hash },
-                    DriveEvent::MemoHit { fn_hash: demo_hash },
-                ],
-                "warm demo is exactly demand + memo hit on {lane:?}"
-            );
-        }
-        assert_lane_traces_equal(&cold_traces);
-    }
-
-    #[test]
-    fn eval_vix_untaken_helper_never_appears() {
-        let src = format!(
-            "{}\n{}",
-            include_str!("../../../playgrounds/snark/src/bundled/vix/samples/eval.vix"),
-            r#"
-fn never_float() -> Float { 99.0 }
-
-pub fn lazy_probe() -> Float {
-    let e = Expr::Num(1.0);
-    match e {
-        Expr::Num(n) => n,
-        Expr::Var(_) => never_float(),
-        _ => 0.0,
-    }
-}
-"#
-        );
-        for lane in lanes() {
-            let mut m = load_with_lane(&src, lane);
-            assert_eq!(
-                (m.demand_i64("lazy_probe", vec![]).unwrap() as u64),
-                1.0f64.to_bits(),
-                "{lane:?}"
-            );
-            let never_hash = m.fn_hash("never_float").expect("never_float hash");
-            assert!(
-                !m.trace().iter().any(|event| matches!(
-                    event,
-                    DriveEvent::Demanded { fn_hash } | DriveEvent::Spawned { fn_hash }
-                        if *fn_hash == never_hash
-                )),
-                "helper in untaken variant arm never demanded or spawned on {lane:?}"
-            );
-        }
-    }
-
-    #[test]
     fn maps_are_canonical_regardless_of_insertion_order() {
         let src = r#"
 fn ab() -> Map<String, Float> {
@@ -7456,431 +7497,6 @@ fn ba() -> Map<String, Float> {
             assert_eq!(
                 ab, ba,
                 "dedupe returns the same canonical handle on {lane:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn insertion_order_equal_maps_memoize_as_equal_arguments() {
-        let src = r#"
-fn ab() -> Map<String, Float> {
-    let m: Map<String, Float> = {};
-    m.insert("a", 1.0).insert("b", 2.0)
-}
-
-fn ba() -> Map<String, Float> {
-    let m: Map<String, Float> = {};
-    m.insert("b", 2.0).insert("a", 1.0)
-}
-
-fn consume(m: Map<String, Float>) -> Float {
-    m.get("a").unwrap() + m.get("b").unwrap()
-}
-
-fn main() -> Float {
-    consume(ab()) + consume(ba())
-}
-"#;
-        for lane in lanes() {
-            let mut m = load_with_lane(src, lane);
-            assert_eq!(
-                (m.demand_i64("main", vec![]).unwrap() as u64),
-                6.0f64.to_bits(),
-                "{lane:?}"
-            );
-            let consume_hash = m.fn_hash("consume").expect("consume hash");
-            let consume_spawns = m
-                .trace()
-                .iter()
-                .filter(|event| matches!(event, DriveEvent::Spawned { fn_hash } if *fn_hash == consume_hash))
-                .count();
-            let consume_hits = m
-                .trace()
-                .iter()
-                .filter(|event| matches!(event, DriveEvent::MemoHit { fn_hash } if *fn_hash == consume_hash))
-                .count();
-            assert_eq!(consume_spawns, 1, "{lane:?}");
-            assert_eq!(consume_hits, 1, "{lane:?}");
-        }
-    }
-
-    #[test]
-    fn record_projection_hit_ignores_untouched_field_and_misses_touched_field() {
-        let src = r#"
-struct BigRecord {
-    wanted: Int,
-    untouched: String
-}
-
-pub fn make(wanted: Int, untouched: String) -> BigRecord {
-    BigRecord { wanted: wanted, untouched: untouched }
-}
-
-pub fn pick(record: BigRecord) -> Int {
-    record.wanted
-}
-"#;
-        for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
-            let first = machine
-                .call(
-                    "make",
-                    &[
-                        NamedArg {
-                            name: "wanted".to_string(),
-                            value: MachineArg::Int(7),
-                        },
-                        NamedArg {
-                            name: "untouched".to_string(),
-                            value: MachineArg::String("first".to_string()),
-                        },
-                    ],
-                )
-                .unwrap()
-                .0;
-            assert_eq!(
-                machine.demand_i64("pick", vec![first]).unwrap(),
-                7,
-                "{lane:?}"
-            );
-
-            let untouched_changed = machine
-                .call(
-                    "make",
-                    &[
-                        NamedArg {
-                            name: "wanted".to_string(),
-                            value: MachineArg::Int(7),
-                        },
-                        NamedArg {
-                            name: "untouched".to_string(),
-                            value: MachineArg::String("edited".to_string()),
-                        },
-                    ],
-                )
-                .unwrap()
-                .0;
-            machine.clear_trace();
-            assert_eq!(
-                machine.demand_i64("pick", vec![untouched_changed]).unwrap(),
-                7,
-                "{lane:?}"
-            );
-            assert_eq!(spawned_count(&machine, "pick"), 0, "{lane:?}");
-            assert_eq!(memo_projection_hit_count(&machine, "pick"), 1, "{lane:?}");
-            assert_eq!(
-                projection_verified_count(&machine, "pick"),
-                vec![1],
-                "{lane:?}"
-            );
-
-            let touched_changed = machine
-                .call(
-                    "make",
-                    &[
-                        NamedArg {
-                            name: "wanted".to_string(),
-                            value: MachineArg::Int(8),
-                        },
-                        NamedArg {
-                            name: "untouched".to_string(),
-                            value: MachineArg::String("edited".to_string()),
-                        },
-                    ],
-                )
-                .unwrap()
-                .0;
-            machine.clear_trace();
-            assert_eq!(
-                machine.demand_i64("pick", vec![touched_changed]).unwrap(),
-                8,
-                "{lane:?}"
-            );
-            assert_eq!(memo_projection_hit_count(&machine, "pick"), 0, "{lane:?}");
-            assert_eq!(spawned_count(&machine, "pick"), 1, "{lane:?}");
-        }
-    }
-
-    #[test]
-    fn map_projection_hit_ignores_untouched_entry_and_misses_touched_entry() {
-        let src = r#"
-pub fn make(wanted: String, untouched: String) -> Map<String, String> {
-    let m: Map<String, String> = {};
-    m.insert("wanted", wanted).insert("untouched", untouched)
-}
-
-pub fn pick(map: Map<String, String>) -> String {
-    map.get("wanted").unwrap()
-}
-"#;
-        for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
-            let first = machine
-                .call(
-                    "make",
-                    &[
-                        NamedArg {
-                            name: "wanted".to_string(),
-                            value: MachineArg::String("keep".to_string()),
-                        },
-                        NamedArg {
-                            name: "untouched".to_string(),
-                            value: MachineArg::String("first".to_string()),
-                        },
-                    ],
-                )
-                .unwrap()
-                .0;
-            let first_value = machine.demand_i64("pick", vec![first]).unwrap();
-            assert_eq!(
-                machine.driver.raw_string(first_value, "String").unwrap(),
-                "keep",
-                "{lane:?}"
-            );
-
-            let untouched_changed = machine
-                .call(
-                    "make",
-                    &[
-                        NamedArg {
-                            name: "wanted".to_string(),
-                            value: MachineArg::String("keep".to_string()),
-                        },
-                        NamedArg {
-                            name: "untouched".to_string(),
-                            value: MachineArg::String("edited".to_string()),
-                        },
-                    ],
-                )
-                .unwrap()
-                .0;
-            machine.clear_trace();
-            let second_value = machine.demand_i64("pick", vec![untouched_changed]).unwrap();
-            assert_eq!(
-                machine.driver.raw_string(second_value, "String").unwrap(),
-                "keep",
-                "{lane:?}"
-            );
-            assert_eq!(spawned_count(&machine, "pick"), 0, "{lane:?}");
-            assert_eq!(memo_projection_hit_count(&machine, "pick"), 1, "{lane:?}");
-            assert_eq!(
-                projection_verified_count(&machine, "pick"),
-                vec![1],
-                "{lane:?}"
-            );
-
-            let touched_changed = machine
-                .call(
-                    "make",
-                    &[
-                        NamedArg {
-                            name: "wanted".to_string(),
-                            value: MachineArg::String("changed".to_string()),
-                        },
-                        NamedArg {
-                            name: "untouched".to_string(),
-                            value: MachineArg::String("edited".to_string()),
-                        },
-                    ],
-                )
-                .unwrap()
-                .0;
-            machine.clear_trace();
-            let third_value = machine.demand_i64("pick", vec![touched_changed]).unwrap();
-            assert_eq!(
-                machine.driver.raw_string(third_value, "String").unwrap(),
-                "changed",
-                "{lane:?}"
-            );
-            assert_eq!(memo_projection_hit_count(&machine, "pick"), 0, "{lane:?}");
-            assert_eq!(spawned_count(&machine, "pick"), 1, "{lane:?}");
-        }
-    }
-
-    #[test]
-    fn is_patron_ruling_uses_only_is_patron_projection() {
-        let src = r#"
-struct Session {
-    is_patron: Bool,
-    profile_note: String
-}
-
-pub fn session(is_patron: Bool, profile_note: String) -> Session {
-    Session { is_patron: is_patron, profile_note: profile_note }
-}
-
-pub fn is_patron(session: Session) -> Bool {
-    session.is_patron
-}
-"#;
-        for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
-            let first = machine
-                .call(
-                    "session",
-                    &[
-                        NamedArg {
-                            name: "is_patron".to_string(),
-                            value: MachineArg::Bool(true),
-                        },
-                        NamedArg {
-                            name: "profile_note".to_string(),
-                            value: MachineArg::String("old profile".to_string()),
-                        },
-                    ],
-                )
-                .unwrap()
-                .0;
-            assert_eq!(
-                machine.demand_i64("is_patron", vec![first]).unwrap(),
-                1,
-                "{lane:?}"
-            );
-
-            let changed_profile = machine
-                .call(
-                    "session",
-                    &[
-                        NamedArg {
-                            name: "is_patron".to_string(),
-                            value: MachineArg::Bool(true),
-                        },
-                        NamedArg {
-                            name: "profile_note".to_string(),
-                            value: MachineArg::String("new profile".to_string()),
-                        },
-                    ],
-                )
-                .unwrap()
-                .0;
-            machine.clear_trace();
-            assert_eq!(
-                machine
-                    .demand_i64("is_patron", vec![changed_profile])
-                    .unwrap(),
-                1,
-                "{lane:?}"
-            );
-            assert_eq!(spawned_count(&machine, "is_patron"), 0, "{lane:?}");
-            assert_eq!(
-                memo_projection_hit_count(&machine, "is_patron"),
-                1,
-                "{lane:?}"
-            );
-            assert_eq!(
-                projection_verified_count(&machine, "is_patron"),
-                vec![1],
-                "{lane:?}"
-            );
-
-            let changed_patron = machine
-                .call(
-                    "session",
-                    &[
-                        NamedArg {
-                            name: "is_patron".to_string(),
-                            value: MachineArg::Bool(false),
-                        },
-                        NamedArg {
-                            name: "profile_note".to_string(),
-                            value: MachineArg::String("new profile".to_string()),
-                        },
-                    ],
-                )
-                .unwrap()
-                .0;
-            machine.clear_trace();
-            assert_eq!(
-                machine
-                    .demand_i64("is_patron", vec![changed_patron])
-                    .unwrap(),
-                0,
-                "{lane:?}"
-            );
-            assert_eq!(
-                memo_projection_hit_count(&machine, "is_patron"),
-                0,
-                "{lane:?}"
-            );
-            assert_eq!(spawned_count(&machine, "is_patron"), 1, "{lane:?}");
-        }
-    }
-
-    #[test]
-    fn projection_read_sets_survive_warm_reload() {
-        let src = r#"
-struct Session {
-    is_patron: Bool,
-    profile_note: String
-}
-
-pub fn session(is_patron: Bool, profile_note: String) -> Session {
-    Session { is_patron: is_patron, profile_note: profile_note }
-}
-
-pub fn is_patron(session: Session) -> Bool {
-    session.is_patron
-}
-"#;
-        for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
-            let first = machine
-                .call(
-                    "session",
-                    &[
-                        NamedArg {
-                            name: "is_patron".to_string(),
-                            value: MachineArg::Bool(true),
-                        },
-                        NamedArg {
-                            name: "profile_note".to_string(),
-                            value: MachineArg::String("old profile".to_string()),
-                        },
-                    ],
-                )
-                .unwrap()
-                .0;
-            assert_eq!(
-                machine.demand_i64("is_patron", vec![first]).unwrap(),
-                1,
-                "{lane:?}"
-            );
-            let reloaded = src.replace(
-                "pub fn is_patron(session: Session) -> Bool {",
-                "pub fn is_patron(session: Session) -> Bool {\n    // still only reads is_patron",
-            );
-            let diff = machine.reload(&reloaded).unwrap();
-            assert!(diff.changed.is_empty(), "{lane:?}: {diff:?}");
-
-            let changed_profile = machine
-                .call(
-                    "session",
-                    &[
-                        NamedArg {
-                            name: "is_patron".to_string(),
-                            value: MachineArg::Bool(true),
-                        },
-                        NamedArg {
-                            name: "profile_note".to_string(),
-                            value: MachineArg::String("after reload".to_string()),
-                        },
-                    ],
-                )
-                .unwrap()
-                .0;
-            machine.clear_trace();
-            assert_eq!(
-                machine
-                    .demand_i64("is_patron", vec![changed_profile])
-                    .unwrap(),
-                1,
-                "{lane:?}"
-            );
-            assert_eq!(spawned_count(&machine, "is_patron"), 0, "{lane:?}");
-            assert_eq!(
-                memo_projection_hit_count(&machine, "is_patron"),
-                1,
-                "{lane:?}"
             );
         }
     }
@@ -8040,83 +7656,6 @@ pub fn main(target: Target) -> Int {
             );
             assert_eq!(run_requested_count(&machine), 0, "{lane:?}");
             assert_eq!(completed_outputs(&machine), Vec::<u64>::new(), "{lane:?}");
-        }
-    }
-
-    #[test]
-    fn unused_let_call_never_spawns() {
-        let src = r#"
-fn expensive() -> Int { 41 }
-
-pub fn main() -> Int {
-    let x = expensive();
-    7
-}
-"#;
-        for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 7, "{lane:?}");
-            assert_eq!(spawned_count(&machine, "expensive"), 0, "{lane:?}");
-        }
-    }
-
-    #[test]
-    fn let_binding_sinks_into_only_using_match_arm() {
-        let src = r#"
-fn expensive() -> Int { 41 }
-
-pub fn main(n: Int) -> Int {
-    let x = expensive();
-    match n {
-        0 => 7,
-        _ => x + 1,
-    }
-}
-"#;
-        for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
-            assert_eq!(machine.demand_i64("main", vec![0]).unwrap(), 7, "{lane:?}");
-            assert_eq!(spawned_count(&machine, "expensive"), 0, "{lane:?}");
-            machine.clear_trace();
-            assert_eq!(machine.demand_i64("main", vec![1]).unwrap(), 42, "{lane:?}");
-            assert_eq!(spawned_count(&machine, "expensive"), 1, "{lane:?}");
-        }
-    }
-
-    #[test]
-    fn shared_let_binding_computes_once() {
-        let src = r#"
-fn f(x: Int) -> Int { x + 1 }
-
-pub fn main() -> Int {
-    let x = f(20);
-    x + x
-}
-"#;
-        for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 42, "{lane:?}");
-            assert_eq!(spawned_count(&machine, "f"), 1, "{lane:?}");
-            assert_eq!(memo_hit_count(&machine, "f"), 0, "{lane:?}");
-        }
-    }
-
-    #[test]
-    fn memo_hits_across_distinct_calls_exact_counts() {
-        let src = r#"
-fn f(x: Int) -> Int { x + 1 }
-fn a() -> Int { f(20) }
-fn b() -> Int { f(20) }
-
-pub fn main() -> Int {
-    a() + b()
-}
-"#;
-        for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 42, "{lane:?}");
-            assert_eq!(spawned_count(&machine, "f"), 1, "{lane:?}");
-            assert_eq!(memo_hit_count(&machine, "f"), 1, "{lane:?}");
         }
     }
 
@@ -8760,101 +8299,6 @@ pub fn answer() -> Int {
     }
 
     #[test]
-    fn warm_reload_cross_module_leaf_edit_misses_transitive_users_only() {
-        let initial = modules(&[
-            (
-                "root",
-                r#"
-use a::bridge;
-
-fn independent() -> Int {
-    5
-}
-
-pub fn main() -> Int {
-    bridge() + independent()
-}
-"#,
-            ),
-            (
-                "a",
-                r#"
-fn leaf() -> Int {
-    1
-}
-
-pub fn bridge() -> Int {
-    leaf() + 10
-}
-
-fn unused() -> Int {
-    100
-}
-"#,
-            ),
-        ]);
-        let edited = modules(&[
-            (
-                "root",
-                r#"
-use a::bridge;
-
-fn independent() -> Int {
-    5
-}
-
-pub fn main() -> Int {
-    bridge() + independent()
-}
-"#,
-            ),
-            (
-                "a",
-                r#"
-fn leaf() -> Int {
-    2
-}
-
-pub fn bridge() -> Int {
-    leaf() + 10
-}
-
-fn unused() -> Int {
-    100
-}
-"#,
-            ),
-        ]);
-        for lane in lanes() {
-            let mut machine = load_modules_with_lane("root", initial.clone(), lane);
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 16, "{lane:?}");
-            let diff = machine.reload_modules("root", edited.clone()).unwrap();
-            assert_eq!(
-                diff.changed,
-                BTreeSet::from([
-                    "a::bridge".to_string(),
-                    "a::leaf".to_string(),
-                    "main".to_string(),
-                ]),
-                "{lane:?}"
-            );
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 17, "{lane:?}");
-            assert_eq!(
-                spawned_functions(&machine),
-                BTreeSet::from([
-                    "a::bridge".to_string(),
-                    "a::leaf".to_string(),
-                    "main".to_string(),
-                ]),
-                "{lane:?}"
-            );
-            let hits = memo_hit_functions(&machine);
-            assert!(hits.contains("independent"), "{lane:?}: {hits:?}");
-            assert!(!hits.contains("a::unused"), "{lane:?}: {hits:?}");
-        }
-    }
-
-    #[test]
     fn machine_fn_memo_and_exec_tiers_compose() {
         let src = r#"
 use vix::{Tree, Path, Target};
@@ -9017,244 +8461,6 @@ fn b(cc: Cc, src: Tree, unit: Path) -> Tree {
         }
     }
 
-    fn anti_nix_diamond() -> &'static str {
-        r#"
-fn leaf() -> Int {
-    1
-}
-
-fn left() -> Int {
-    leaf() + 10
-}
-
-fn right() -> Int {
-    leaf() + 20
-}
-
-fn independent() -> Int {
-    5
-}
-
-fn never_demanded() -> Int {
-    100
-}
-
-pub fn main() -> Int {
-    left() + right() + independent()
-}
-"#
-    }
-
-    fn type_closure_source() -> &'static str {
-        r#"
-enum Choice { A, B }
-
-fn typed(x: Choice) -> Int {
-    match x {
-        Choice::A => 1,
-        Choice::B => 2,
-    }
-}
-
-fn bridge() -> Int {
-    typed(Choice::A)
-}
-
-fn independent() -> Int {
-    7
-}
-
-pub fn main() -> Int {
-    bridge() + independent()
-}
-"#
-    }
-
-    #[test]
-    fn warm_reload_eval_identity_survives_trivia_and_semantic_edits() {
-        let src = include_str!("../../../playgrounds/snark/src/bundled/vix/samples/eval.vix");
-        for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
-            assert_eq!(
-                (machine.demand_i64("demo", vec![]).unwrap() as u64),
-                42.0f64.to_bits(),
-                "{lane:?}"
-            );
-            assert_eq!(memo_hit_functions(&machine), BTreeSet::new(), "{lane:?}");
-            assert!(!spawned_functions(&machine).is_empty(), "{lane:?}");
-
-            let demo_hash = machine.fn_hash("demo").expect("demo hash");
-            machine.clear_trace();
-            assert_eq!(
-                (machine.demand_i64("demo", vec![]).unwrap() as u64),
-                42.0f64.to_bits(),
-                "{lane:?}"
-            );
-            assert_eq!(
-                machine.trace(),
-                &[
-                    DriveEvent::Demanded { fn_hash: demo_hash },
-                    DriveEvent::MemoHit { fn_hash: demo_hash },
-                ],
-                "{lane:?}"
-            );
-
-            let reformatted = src
-                .replace("fn demo() -> Float {", "fn demo() -> Float {\n    // hi!\n")
-                .replace("use vix::Map;", "// preamble\n\nuse vix::Map;");
-            let reformatted = load_with_lane(&reformatted, lane);
-            assert_eq!(
-                machine.fn_hash("demo"),
-                reformatted.fn_hash("demo"),
-                "{lane:?}"
-            );
-            assert_eq!(
-                machine.fn_hash("eval"),
-                reformatted.fn_hash("eval"),
-                "{lane:?}"
-            );
-
-            let changed = src.replace("Expr::Num(6.0)", "Expr::Num(5.0)");
-            let changed = load_with_lane(&changed, lane);
-            assert_ne!(machine.fn_hash("demo"), changed.fn_hash("demo"), "{lane:?}");
-            assert_eq!(machine.fn_hash("eval"), changed.fn_hash("eval"), "{lane:?}");
-        }
-    }
-
-    #[test]
-    fn warm_reload_trivia_costs_only_root_hit() {
-        for lane in lanes() {
-            let mut machine = load_with_lane(anti_nix_diamond(), lane);
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 37, "{lane:?}");
-            let reformatted = anti_nix_diamond()
-                .replace(
-                    "fn leaf() -> Int {",
-                    "// top-level trivia\nfn leaf() -> Int {\n    // leaf",
-                )
-                .replace("fn left() -> Int {", "fn left() -> Int {\n\n    // left")
-                .replace("fn right() -> Int {", "fn right() -> Int {\n    // right")
-                .replace(
-                    "fn never_demanded() -> Int {",
-                    "fn never_demanded() -> Int {\n    // dead code trivia",
-                )
-                .replace("left() + right()", "left()   +   right()");
-            let diff = machine.reload(&reformatted).unwrap();
-            assert!(diff.changed.is_empty(), "{lane:?}: {diff:?}");
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 37, "{lane:?}");
-            assert_eq!(spawned_functions(&machine), BTreeSet::new(), "{lane:?}");
-            assert_eq!(
-                memo_hit_functions(&machine),
-                BTreeSet::from(["main".to_string()]),
-                "{lane:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn warm_reload_leaf_edit_misses_exact_blast_radius() {
-        for lane in lanes() {
-            let mut machine = load_with_lane(anti_nix_diamond(), lane);
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 37, "{lane:?}");
-            let edited = anti_nix_diamond()
-                .replace("fn leaf() -> Int {\n    1", "fn leaf() -> Int {\n    2");
-            let diff = machine.reload(&edited).unwrap();
-            assert_eq!(
-                diff.changed,
-                BTreeSet::from([
-                    "leaf".to_string(),
-                    "left".to_string(),
-                    "main".to_string(),
-                    "right".to_string(),
-                ]),
-                "{lane:?}"
-            );
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 39, "{lane:?}");
-            assert_eq!(
-                spawned_functions(&machine),
-                BTreeSet::from([
-                    "leaf".to_string(),
-                    "left".to_string(),
-                    "main".to_string(),
-                    "right".to_string(),
-                ]),
-                "{lane:?}"
-            );
-            let hits = memo_hit_functions(&machine);
-            assert!(hits.contains("independent"), "{lane:?}: {hits:?}");
-            assert!(!hits.contains("never_demanded"), "{lane:?}: {hits:?}");
-        }
-    }
-
-    #[test]
-    fn warm_reload_unused_edit_costs_zero_misses_and_hashes_only_itself() {
-        for lane in lanes() {
-            let mut machine = load_with_lane(anti_nix_diamond(), lane);
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 37, "{lane:?}");
-            let before = machine.fn_hashes();
-            let edited = anti_nix_diamond().replace(
-                "fn never_demanded() -> Int {\n    100",
-                "fn never_demanded() -> Int {\n    101",
-            );
-            let diff = machine.reload(&edited).unwrap();
-            assert_eq!(
-                diff.changed,
-                BTreeSet::from(["never_demanded".to_string()]),
-                "{lane:?}"
-            );
-            for name in ["leaf", "left", "right", "independent", "main"] {
-                assert_eq!(
-                    before.get(name),
-                    machine.fn_hashes().get(name),
-                    "{name} should not inherit an unreferenced function edit on {lane:?}"
-                );
-            }
-            assert_ne!(
-                before.get("never_demanded"),
-                machine.fn_hashes().get("never_demanded"),
-                "{lane:?}"
-            );
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 37, "{lane:?}");
-            assert_eq!(spawned_functions(&machine), BTreeSet::new(), "{lane:?}");
-            assert_eq!(
-                memo_hit_functions(&machine),
-                BTreeSet::from(["main".to_string()]),
-                "{lane:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn warm_reload_type_decl_edit_misses_transitive_users() {
-        for lane in lanes() {
-            let mut machine = load_with_lane(type_closure_source(), lane);
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 8, "{lane:?}");
-            let edited =
-                type_closure_source().replace("enum Choice { A, B }", "enum Choice { B, A }");
-            let diff = machine.reload(&edited).unwrap();
-            assert_eq!(
-                diff.changed,
-                BTreeSet::from([
-                    "bridge".to_string(),
-                    "main".to_string(),
-                    "typed".to_string()
-                ]),
-                "{lane:?}"
-            );
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 8, "{lane:?}");
-            assert_eq!(
-                spawned_functions(&machine),
-                BTreeSet::from([
-                    "bridge".to_string(),
-                    "main".to_string(),
-                    "typed".to_string()
-                ]),
-                "{lane:?}"
-            );
-            let hits = memo_hit_functions(&machine);
-            assert!(hits.contains("independent"), "{lane:?}: {hits:?}");
-        }
-    }
-
     #[test]
     fn recursive_scc_hashes_survive_definition_order_on_machine() {
         let ab = r#"
@@ -9270,65 +8476,6 @@ fn a() -> Int { b() }
             let ba = load_with_lane(ba, lane);
             assert_eq!(ab.fn_hash("a"), ba.fn_hash("a"), "{lane:?}");
             assert_eq!(ab.fn_hash("b"), ba.fn_hash("b"), "{lane:?}");
-        }
-    }
-
-    #[test]
-    fn pending_entries_resolve_through_reloaded_hash_tables() {
-        let src = r#"
-fn producer() -> Float { 1.0 }
-
-pub fn make() -> Map<String, Float> {
-    let m: Map<String, Float> = {};
-    m.insert("x", producer())
-}
-
-pub fn touch(m: Map<String, Float>, nonce: Int) -> Float {
-    m.get("x").unwrap()
-}
-"#;
-        for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
-            let handle = machine.demand_i64("make", vec![]).unwrap();
-            assert_eq!(
-                (machine.demand_i64("touch", vec![handle, 0]).unwrap() as u64),
-                1.0f64.to_bits(),
-                "{lane:?}"
-            );
-
-            let trivia = src.replace(
-                "fn producer() -> Float {",
-                "fn producer() -> Float {\n    // hi\n",
-            );
-            let diff = machine.reload(&trivia).unwrap();
-            assert!(diff.changed.is_empty(), "{lane:?}: {diff:?}");
-            assert_eq!(
-                (machine.demand_i64("touch", vec![handle, 1]).unwrap() as u64),
-                1.0f64.to_bits(),
-                "{lane:?}"
-            );
-            assert_eq!(spawned_count(&machine, "producer"), 0, "{lane:?}");
-            assert_eq!(memo_hit_count(&machine, "producer"), 1, "{lane:?}");
-
-            let semantic = src.replace(
-                "fn producer() -> Float { 1.0 }",
-                "fn producer() -> Float { 2.0 }",
-            );
-            let diff = machine.reload(&semantic).unwrap();
-            assert_eq!(
-                diff.changed,
-                BTreeSet::from(["make".to_string(), "producer".to_string()]),
-                "{lane:?}"
-            );
-            let handle = machine.demand_i64("make", vec![]).unwrap();
-            machine.clear_trace();
-            assert_eq!(
-                (machine.demand_i64("touch", vec![handle, 2]).unwrap() as u64),
-                2.0f64.to_bits(),
-                "{lane:?}"
-            );
-            assert_eq!(spawned_count(&machine, "producer"), 1, "{lane:?}");
-            assert_eq!(memo_hit_count(&machine, "producer"), 0, "{lane:?}");
         }
     }
 
@@ -10665,35 +9812,6 @@ fn {comparator_name}(old: VersionSet, new: VersionSet) -> Bool {{
     }
 
     #[test]
-    fn semantic_cutoff_soundness_differential_matches_without_comparator() {
-        let enabled_src = semantic_cutoff_demo_source("derived__memo_verify_req");
-        let disabled_src = semantic_cutoff_demo_source("derived__not_a_memo_verify_req");
-        for lane in lanes() {
-            let mut enabled = load_with_lane(&enabled_src, lane);
-            let mut disabled = load_with_lane(&disabled_src, lane);
-            let mut enabled_values = Vec::new();
-            let mut disabled_values = Vec::new();
-            let mut enabled_observable = Vec::new();
-            let mut disabled_observable = Vec::new();
-            for req in ["^1.0.0", "^1.2.0", "^1.0.0"] {
-                enabled.clear_trace();
-                disabled.clear_trace();
-                enabled_values.push(call_derived(&mut enabled, req));
-                disabled_values.push(call_derived(&mut disabled, req));
-                enabled_observable.push(semantic_observable_trace(&enabled));
-                disabled_observable.push(semantic_observable_trace(&disabled));
-            }
-            assert_eq!(enabled_values, disabled_values, "{lane:?}");
-            assert_eq!(enabled_observable, disabled_observable, "{lane:?}");
-            assert_eq!(
-                memo_semantic_hit_count(&enabled, "derived"),
-                0,
-                "last widened run recomputes on {lane:?}"
-            );
-        }
-    }
-
-    #[test]
     fn live_event_sink_streams_the_accumulated_trace() {
         for lane in lanes() {
             for mode in [StepMode::Run, StepMode::Step] {
@@ -11006,14 +10124,14 @@ pub fn lazy(n: Int) -> Map<String, Float> {
         h.finish()
     }
 
-    fn spawned_functions(machine: &Machine) -> BTreeSet<String> {
+    pub(crate) fn spawned_functions(machine: &Machine) -> BTreeSet<String> {
         event_functions(machine, |event| match event {
             DriveEvent::Spawned { fn_hash } => Some(*fn_hash),
             _ => None,
         })
     }
 
-    fn memo_hit_functions(machine: &Machine) -> BTreeSet<String> {
+    pub(crate) fn memo_hit_functions(machine: &Machine) -> BTreeSet<String> {
         event_functions(machine, |event| match event {
             DriveEvent::MemoHit { fn_hash } => Some(*fn_hash),
             _ => None,
@@ -11049,7 +10167,7 @@ pub fn lazy(n: Int) -> Map<String, Float> {
             .count()
     }
 
-    fn memo_hit_count(machine: &Machine, name: &str) -> usize {
+    pub(crate) fn memo_hit_count(machine: &Machine, name: &str) -> usize {
         let hash = machine.fn_hash(name).expect("function hash");
         machine
             .trace()
@@ -11058,16 +10176,9 @@ pub fn lazy(n: Int) -> Map<String, Float> {
             .count()
     }
 
-    fn memo_projection_hit_count(machine: &Machine, name: &str) -> usize {
-        let hash = machine.fn_hash(name).expect("function hash");
-        machine
-            .trace()
-            .iter()
-            .filter(|event| {
-                matches!(event, DriveEvent::MemoProjectionHit { fn_hash, .. } if *fn_hash == hash)
-            })
-            .count()
-    }
+    const _: fn(&Machine) -> BTreeSet<String> = spawned_functions;
+    const _: fn(&Machine) -> BTreeSet<String> = memo_hit_functions;
+    const _: fn(&Machine, &str) -> usize = memo_hit_count;
 
     fn memo_semantic_hit_count(machine: &Machine, name: &str) -> usize {
         let hash = machine.fn_hash(name).expect("function hash");
@@ -11078,20 +10189,6 @@ pub fn lazy(n: Int) -> Map<String, Float> {
                 matches!(event, DriveEvent::MemoSemanticHit { fn_hash, .. } if *fn_hash == hash)
             })
             .count()
-    }
-
-    fn projection_verified_count(machine: &Machine, name: &str) -> Vec<usize> {
-        let hash = machine.fn_hash(name).expect("function hash");
-        machine
-            .trace()
-            .iter()
-            .filter_map(|event| match event {
-                DriveEvent::MemoProjectionHit { fn_hash, verified } if *fn_hash == hash => {
-                    Some(*verified)
-                }
-                _ => None,
-            })
-            .collect()
     }
 
     fn semantic_verified_count(machine: &Machine, name: &str) -> Vec<usize> {
@@ -11105,35 +10202,6 @@ pub fn lazy(n: Int) -> Map<String, Float> {
                 }
                 _ => None,
             })
-            .collect()
-    }
-
-    fn semantic_observable_trace(machine: &Machine) -> Vec<DriveEvent> {
-        let recompute_hashes = [
-            machine.fn_hash("derived").expect("derived hash"),
-            machine.fn_hash("expensive").expect("expensive hash"),
-            machine
-                .fn_hash("derived__memo_verify_req")
-                .or_else(|| machine.fn_hash("derived__not_a_memo_verify_req"))
-                .expect("comparator hash"),
-        ];
-        machine
-            .trace()
-            .iter()
-            .filter(|event| match event {
-                DriveEvent::Demanded { fn_hash }
-                | DriveEvent::MemoHit { fn_hash }
-                | DriveEvent::MemoProjectionHit { fn_hash, .. }
-                | DriveEvent::MemoSemanticHit { fn_hash, .. }
-                | DriveEvent::Spawned { fn_hash }
-                | DriveEvent::ParkedOn { fn_hash }
-                | DriveEvent::Completed { fn_hash }
-                | DriveEvent::SpawnedInvocation { fn_hash, .. } => {
-                    !recompute_hashes.contains(fn_hash)
-                }
-                _ => true,
-            })
-            .cloned()
             .collect()
     }
 
