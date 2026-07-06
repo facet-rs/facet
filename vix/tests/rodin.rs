@@ -27,3 +27,14 @@ fn option_round_trips_some_and_none() {
     // Some(2.3.4) -> compat_code 2 ; no_version() None -> fallback 9000
     assert_eq!(value, 2 + 9000);
 }
+
+// Exercises the general string primitives (before / after / parse_int) that a
+// vix version parser is built from: "2.3.4" -> 2*100 + 3*10 + 4.
+#[test]
+fn string_primitives_decompose_a_version() {
+    let mut machine = Machine::load(&rodin_source()).expect("rodin.vix loads");
+    let value = machine
+        .demand_i64("string_probe", vec![0])
+        .expect("rodin.vix string_probe runs");
+    assert_eq!(value, 234);
+}

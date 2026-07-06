@@ -210,3 +210,18 @@ pub fn option_probe(seed: Int) -> Int {
     // Some(2.3.4) -> compat_code 2 ; None -> fallback 9000 -> 9002
     selected_or(Some(version("2.3.4")), 0) + selected_or(no_version(), 9000) + seed - seed
 }
+
+// ---------------------------------------------------------------------------
+// String primitives: before/after a delimiter + parse_int. The building blocks
+// for a version parser written in vix (no host op re-parses a version). Here
+// "2.3.4" is decomposed component-by-component and re-encoded as 234.
+// ---------------------------------------------------------------------------
+
+pub fn string_probe(seed: Int) -> Int {
+    let v = "2.3.4";
+    let major = v.before(".").parse_int();
+    let rest = v.after(".");
+    let minor = rest.before(".").parse_int();
+    let patch = rest.after(".").parse_int();
+    major * 100 + minor * 10 + patch + seed - seed
+}

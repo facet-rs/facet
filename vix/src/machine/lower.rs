@@ -39,7 +39,8 @@ use super::driver::{
     PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RECORD_UPDATE_HOST, RenderNames,
     RenderVariant, RenderedValue, SEALED_DECLASSIFY_HOST, SEALED_SEAL_HOST, SEALED_TO_STRING_HOST,
     STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_DEFAULT_HOST,
-    STRING_LOWER_HOST, STRING_UPPER_HOST, SemanticComparator, StepMode, StoreHandle, TARGET_HOST,
+    STRING_LOWER_HOST, STRING_PARSE_INT_HOST, STRING_SPLIT_HOST, STRING_UPPER_HOST,
+    SemanticComparator, StepMode, StoreHandle, TARGET_HOST,
     TREE_PROJECT_HOST, VALUE_COMPARE_HOST, VERSION_FIELD_HOST, VERSION_PARSE_HOST,
     VERSION_SET_OP_HOST, VERSION_SET_PARSE_HOST, ValueBundle,
 
@@ -1765,6 +1766,8 @@ fn collect_expr_schemas(
                     Ok(Some("VersionSet".into()))
                 }
                 ("subset" | "contains", Some("VersionSet")) => Ok(Some("Bool".into())),
+                ("before" | "after", Some("String")) => Ok(Some("String".into())),
+                ("parse_int", Some("String")) => Ok(Some("Int".into())),
                 _ => Ok(None),
             }
         }
@@ -3657,6 +3660,26 @@ impl<'a> FnLowerer<'a> {
                     return Err(format!("unwrap called on {}", receiver.schema));
                 };
                 Ok(self.option_unwrap(&receiver, value_schema))
+            }
+            "before" | "after" => {
+                if receiver.schema != "String" {
+                    return Err(format!("{} called on {}", call.name.value, receiver.schema));
+                }
+                let [arg] = call.args.args.as_slice() else {
+                    return Err(format!("String.{} takes one delimiter", call.name.value));
+                };
+                let delim = self.method_arg(arg, Some("String"))?;
+                let selector = if call.name.value == "before" { 0 } else { 1 };
+                Ok(self.string_split(&receiver, &delim, selector))
+            }
+            "parse_int" => {
+                if receiver.schema != "String" {
+                    return Err(format!("parse_int called on {}", receiver.schema));
+                }
+                if !call.args.args.is_empty() {
+                    return Err("String.parse_int takes no arguments".into());
+                }
+                Ok(self.string_parse_int(&receiver))
             }
             other => Err(format!(
                 "method {other} is outside the machine slice-3 subset"
@@ -6098,6 +6121,58 @@ impl<'a> FnLowerer<'a> {
         });
         self.code.push(Op::HostCall {
             host: VERSION_FIELD_HOST,
+        });
+        ValueSlot {
+            slot: dst,
+            schema: "Int".into(),
+            realization: None,
+            pending: None,
+        }
+    }
+
+    fn string_split(&mut self, receiver: &ValueSlot, delim: &ValueSlot, selector: i64) -> ValueSlot {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: receiver.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: delim.slot,
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 24,
+            value: selector,
+        });
+        self.code.push(Op::HostCall {
+            host: STRING_SPLIT_HOST,
+        });
+        ValueSlot {
+            slot: dst,
+            schema: "String".into(),
+            realization: None,
+            pending: None,
+        }
+    }
+
+    fn string_parse_int(&mut self, receiver: &ValueSlot) -> ValueSlot {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: receiver.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: STRING_PARSE_INT_HOST,
         });
         ValueSlot {
             slot: dst,

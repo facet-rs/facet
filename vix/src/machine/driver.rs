@@ -162,6 +162,8 @@ pub const CRATE_ARCHIVE_HOST: u32 = 49;
 pub const VERSION_FIELD_HOST: u32 = 50;
 pub const OPTION_CONSTRUCT_HOST: u32 = 51;
 pub const OPTION_DESTRUCT_HOST: u32 = 52;
+pub const STRING_SPLIT_HOST: u32 = 53;
+pub const STRING_PARSE_INT_HOST: u32 = 54;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -3461,6 +3463,60 @@ impl Driver {
                 }
             };
 
+            // General string primitives (the parser building blocks). selector 0
+            // = substring before the first delimiter (whole string if absent),
+            // 1 = substring after it (empty if absent).
+            let mut string_split_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let str_handle = read_frame_word(frame, primitive_region + 8);
+                    let delim_handle = read_frame_word(frame, primitive_region + 16);
+                    let selector = read_frame_word(frame, primitive_region + 24);
+                    let store = store_cell.borrow();
+                    let text = store.string_value(str_handle, "String")?;
+                    let delim = store.string_value(delim_handle, "String")?;
+                    drop(store);
+                    let part: &str = match text.find(&delim) {
+                        Some(index) => match selector {
+                            0 => &text[..index],
+                            1 => &text[index + delim.len()..],
+                            other => return Err(format!("unknown string split selector {other}")),
+                        },
+                        None => match selector {
+                            0 => text.as_str(),
+                            1 => "",
+                            other => return Err(format!("unknown string split selector {other}")),
+                        },
+                    };
+                    let handle = store_cell
+                        .borrow_mut()
+                        .alloc_raw("String", part.as_bytes().to_vec())
+                        .0;
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut string_parse_int_host = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let str_handle = read_frame_word(frame, primitive_region + 8);
+                    let text = store_cell.borrow().string_value(str_handle, "String")?;
+                    let value: i64 = text
+                        .trim()
+                        .parse()
+                        .map_err(|_| format!("parse_int: {text:?} is not an integer"))?;
+                    write_frame_word(frame, dst_slot, value);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
             let mut value_compare_host = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
@@ -4537,7 +4593,7 @@ impl Driver {
                 }
             };
 
-            let mut hosts: [HostFn<'_>; 53] = [
+            let mut hosts: [HostFn<'_>; 55] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -4591,6 +4647,8 @@ impl Driver {
                 &mut version_field_host,
                 &mut option_construct_host,
                 &mut option_destruct_host,
+                &mut string_split_host,
+                &mut string_parse_int_host,
             ];
             let step = exec
                 .task
