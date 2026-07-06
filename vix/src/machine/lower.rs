@@ -111,205 +111,32 @@ impl Machine {
     ) -> Result<Machine, String> {
         let mut modules = modules;
         inject_std_modules(&mut modules);
-        let module_hash = module_set_hash(root, &modules);
-        let tables = load_module_tables_from_modules(root, &modules)?;
-
-        // Deterministic fn_ref assignment: sorted names.
-        let mut names: Vec<&String> = tables.fns.keys().collect();
-        names.sort();
-        let fn_refs: HashMap<String, usize> = names
-            .iter()
-            .enumerate()
-            .map(|(ix, name)| ((*name).clone(), ix))
-            .collect();
-        let fn_returns: HashMap<String, String> = names
-            .iter()
-            .map(|name| {
-                let item = &tables.fns[*name];
-                let schema = item
-                    .return_type
-                    .as_ref()
-                    .map(type_schema_name)
-                    .transpose()?
-                    .unwrap_or_else(|| "Int".into());
-                Ok(((*name).clone(), schema))
-            })
-            .collect::<Result<_, String>>()?;
-        let fn_params: HashMap<String, Vec<String>> = names
-            .iter()
-            .map(|name| {
-                let item = &tables.fns[*name];
-                Ok((
-                    (*name).clone(),
-                    item.params
-                        .params
-                        .iter()
-                        .map(|param| type_schema_name(&param.ty))
-                        .collect::<Result<Vec<_>, _>>()?,
-                ))
-            })
-            .collect::<Result<_, String>>()?;
-        let fn_param_names: HashMap<String, Vec<String>> = names
-            .iter()
-            .map(|name| {
-                let item = &tables.fns[*name];
-                (
-                    (*name).clone(),
-                    item.params
-                        .params
-                        .iter()
-                        .map(|param| param.name.value.clone())
-                        .collect(),
-                )
-            })
-            .collect();
-        let mut schema_names = schema_names_for(&tables, &fn_returns, &fn_params)?;
-        schema_names.sort();
-        schema_names.dedup();
-        let render_names = render_names_for(&tables);
-        let schema_refs: HashMap<String, i64> = schema_names
-            .iter()
-            .enumerate()
-            .map(|(ix, name)| {
-                (
-                    name.clone(),
-                    i64::try_from(ix).expect("schema ref fits i64"),
-                )
-            })
-            .collect();
-        let string_handles = string_handles(&tables);
-        let path_handles = path_handles(&tables, string_handles.len());
-        let flag_handles = flag_handles(&tables, string_handles.len() + path_handles.len());
-        let template_handles = template_handles(
-            &tables,
-            string_handles.len() + path_handles.len() + flag_handles.len(),
-        );
-        let literal_handles = LiteralHandles {
-            strings: &string_handles,
-            paths: &path_handles,
-            flags: &flag_handles,
-            templates: &template_handles,
-        };
-        let signatures = FnSignatures {
-            returns: &fn_returns,
-            params: &fn_params,
-            param_names: &fn_param_names,
-        };
-
-        let mut task_fns = Vec::with_capacity(names.len());
-        let mut lowered = Vec::with_capacity(names.len());
-        for (ix, name) in names.iter().enumerate() {
-            let item = &tables.fns[*name];
-            let hash = tables.fn_hashes[*name];
-            let (task_fn, info) = if parked_generic_or_fn_typed(item) {
-                parked_stub(item)?
-            } else {
-                FnLowerer::lower(
-                    item,
-                    &tables,
-                    &tables.fn_modules[*name],
-                    &fn_refs,
-                    signatures,
-                    &schema_refs,
-                    literal_handles,
-                )
-                .map_err(|e| format!("lowering {name}: {e}"))?
-            };
-            task_fns.push(task_fn);
-            let arg_schemas = item
-                .params
-                .params
-                .iter()
-                .map(|param| type_schema_name(&param.ty))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| format!("lowering {name}: {e}"))?;
-            let param_names = item
-                .params
-                .params
-                .iter()
-                .map(|param| param.name.value.clone())
-                .collect::<Vec<_>>();
-            let semantic_comparators = semantic_comparators_for(
-                name,
-                &arg_schemas,
-                &param_names,
-                &fn_refs,
-                &fn_params,
-                &fn_returns,
-            )?;
-            let hash = hash_with_semantic_comparators(hash, &semantic_comparators, &names, &tables);
-            lowered.push(LoweredFn {
-                hash,
-                task_fn: FnId(u32::try_from(ix).expect("fn count fits u32")),
-                arg_offsets: info.arg_offsets,
-                arg_schemas,
-                return_schema: fn_returns[*name].clone(),
-                semantic_comparators,
-                invoke_region: info.invoke_region,
-                store_alloc_region: info.store_alloc_region,
-                store_read_region: info.store_read_region,
-                store_tag_region: info.store_tag_region,
-                primitive_region: info.primitive_region,
-            });
-        }
-
-        let mut descriptors = tables.descriptors;
-        add_builtin_descriptors(&mut descriptors);
-        for name in &schema_names {
-            if let Some(descriptor) = derived_descriptor(name) {
-                descriptors.entry(name.clone()).or_insert(descriptor);
-            }
-        }
+        let c = compile_module_set(root, &modules, RefSource::Fresh)?;
 
         let mut driver =
-            Driver::try_with_descriptors(Program { fns: task_fns }, lowered, descriptors, lane)?;
-        for name in &schema_names {
+            Driver::try_with_descriptors(c.program, c.lowered, c.descriptors, lane)?;
+        // The driver's own interning must reproduce the fresh 0-based assignment.
+        for name in &c.schema_names {
             let actual = driver.intern_schema_ref(name.clone());
             assert_eq!(
-                actual, schema_refs[name],
+                actual, c.schema_refs[name],
                 "schema ref assignment is deterministic"
             );
         }
-        let mut string_handles_sorted: Vec<(&String, &i64)> = string_handles.iter().collect();
-        string_handles_sorted.sort_by_key(|(_, handle)| **handle);
-        for (value, expected) in string_handles_sorted {
-            let (actual, _) = driver.intern_raw_value("String", value.as_bytes().to_vec());
-            assert_eq!(
-                actual, *expected,
-                "string handle assignment is deterministic"
-            );
-        }
-        let mut path_handles_sorted: Vec<(&String, &i64)> = path_handles.iter().collect();
-        path_handles_sorted.sort_by_key(|(_, handle)| **handle);
-        for (value, expected) in path_handles_sorted {
-            let (actual, _) = driver.intern_raw_value("Path", value.as_bytes().to_vec());
-            assert_eq!(actual, *expected, "path handle assignment is deterministic");
-        }
-        let mut flag_handles_sorted: Vec<(&String, &i64)> = flag_handles.iter().collect();
-        flag_handles_sorted.sort_by_key(|(_, handle)| **handle);
-        for (value, expected) in flag_handles_sorted {
-            let (actual, _) = driver.intern_raw_value("Flag", value.as_bytes().to_vec());
-            assert_eq!(actual, *expected, "flag handle assignment is deterministic");
-        }
-        let mut template_handles_sorted: Vec<(&String, &i64)> = template_handles.iter().collect();
-        template_handles_sorted.sort_by_key(|(_, handle)| **handle);
-        for (value, expected) in template_handles_sorted {
-            let (actual, _) = driver.intern_raw_value("Template", value.as_bytes().to_vec());
-            assert_eq!(
-                actual, *expected,
-                "template handle assignment is deterministic"
-            );
-        }
+        assert_literal_handles(&mut driver, "String", &c.literal_handles.strings);
+        assert_literal_handles(&mut driver, "Path", &c.literal_handles.paths);
+        assert_literal_handles(&mut driver, "Flag", &c.literal_handles.flags);
+        assert_literal_handles(&mut driver, "Template", &c.literal_handles.templates);
 
         Ok(Machine {
             driver,
-            fn_refs,
-            fn_params: fn_params.into_iter().collect(),
-            fn_param_names: fn_param_names.into_iter().collect(),
-            fn_returns: fn_returns.into_iter().collect(),
-            render_names,
+            fn_refs: c.fn_refs,
+            fn_params: c.fn_params.into_iter().collect(),
+            fn_param_names: c.fn_param_names.into_iter().collect(),
+            fn_returns: c.fn_returns.into_iter().collect(),
+            render_names: c.render_names,
             source: modules.get(root).cloned().unwrap_or_default(),
-            module_hash,
+            module_hash: c.module_hash,
         })
     }
 
@@ -342,151 +169,16 @@ impl Machine {
         let mut modules = modules;
         inject_std_modules(&mut modules);
         let before = self.fn_hashes();
-        let module_hash = module_set_hash(root, &modules);
-        let tables = load_module_tables_from_modules(root, &modules)?;
+        let c = compile_module_set(root, &modules, RefSource::Existing(&mut self.driver))?;
 
-        let mut names: Vec<&String> = tables.fns.keys().collect();
-        names.sort();
-        let fn_refs: HashMap<String, usize> = names
-            .iter()
-            .enumerate()
-            .map(|(ix, name)| ((*name).clone(), ix))
-            .collect();
-        let fn_returns: HashMap<String, String> = names
-            .iter()
-            .map(|name| {
-                let item = &tables.fns[*name];
-                let schema = item
-                    .return_type
-                    .as_ref()
-                    .map(type_schema_name)
-                    .transpose()?
-                    .unwrap_or_else(|| "Int".into());
-                Ok(((*name).clone(), schema))
-            })
-            .collect::<Result<_, String>>()?;
-        let fn_params: HashMap<String, Vec<String>> = names
-            .iter()
-            .map(|name| {
-                let item = &tables.fns[*name];
-                Ok((
-                    (*name).clone(),
-                    item.params
-                        .params
-                        .iter()
-                        .map(|param| type_schema_name(&param.ty))
-                        .collect::<Result<Vec<_>, _>>()?,
-                ))
-            })
-            .collect::<Result<_, String>>()?;
-        let fn_param_names: HashMap<String, Vec<String>> = names
-            .iter()
-            .map(|name| {
-                let item = &tables.fns[*name];
-                (
-                    (*name).clone(),
-                    item.params
-                        .params
-                        .iter()
-                        .map(|param| param.name.value.clone())
-                        .collect(),
-                )
-            })
-            .collect();
-        let mut schema_names = schema_names_for(&tables, &fn_returns, &fn_params)?;
-        schema_names.sort();
-        schema_names.dedup();
-        let render_names = render_names_for(&tables);
-        let schema_refs = self.driver.schema_ref_map_for(&schema_names);
-        let string_handles = live_string_handles(&self.driver, &tables);
-        let path_handles = live_path_handles(&self.driver, &tables);
-        let flag_handles = live_flag_handles(&self.driver, &tables);
-        let template_handles = live_template_handles(&self.driver, &tables);
-        let literal_handles = LiteralHandles {
-            strings: &string_handles,
-            paths: &path_handles,
-            flags: &flag_handles,
-            templates: &template_handles,
-        };
-        let signatures = FnSignatures {
-            returns: &fn_returns,
-            params: &fn_params,
-            param_names: &fn_param_names,
-        };
-
-        let mut task_fns = Vec::with_capacity(names.len());
-        let mut lowered = Vec::with_capacity(names.len());
-        for (ix, name) in names.iter().enumerate() {
-            let item = &tables.fns[*name];
-            let hash = tables.fn_hashes[*name];
-            let (task_fn, info) = if parked_generic_or_fn_typed(item) {
-                parked_stub(item)?
-            } else {
-                FnLowerer::lower(
-                    item,
-                    &tables,
-                    &tables.fn_modules[*name],
-                    &fn_refs,
-                    signatures,
-                    &schema_refs,
-                    literal_handles,
-                )
-                .map_err(|e| format!("lowering {name}: {e}"))?
-            };
-            task_fns.push(task_fn);
-            let arg_schemas = item
-                .params
-                .params
-                .iter()
-                .map(|param| type_schema_name(&param.ty))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| format!("lowering {name}: {e}"))?;
-            let param_names = item
-                .params
-                .params
-                .iter()
-                .map(|param| param.name.value.clone())
-                .collect::<Vec<_>>();
-            let semantic_comparators = semantic_comparators_for(
-                name,
-                &arg_schemas,
-                &param_names,
-                &fn_refs,
-                &fn_params,
-                &fn_returns,
-            )?;
-            let hash = hash_with_semantic_comparators(hash, &semantic_comparators, &names, &tables);
-            lowered.push(LoweredFn {
-                hash,
-                task_fn: FnId(u32::try_from(ix).expect("fn count fits u32")),
-                arg_offsets: info.arg_offsets,
-                arg_schemas,
-                return_schema: fn_returns[*name].clone(),
-                semantic_comparators,
-                invoke_region: info.invoke_region,
-                store_alloc_region: info.store_alloc_region,
-                store_read_region: info.store_read_region,
-                store_tag_region: info.store_tag_region,
-                primitive_region: info.primitive_region,
-            });
-        }
-
-        let mut descriptors = tables.descriptors;
-        add_builtin_descriptors(&mut descriptors);
-        for name in &schema_names {
-            if let Some(descriptor) = derived_descriptor(name) {
-                descriptors.entry(name.clone()).or_insert(descriptor);
-            }
-        }
-        self.driver
-            .reload(Program { fns: task_fns }, lowered, descriptors)?;
-        self.fn_refs = fn_refs;
-        self.fn_params = fn_params.into_iter().collect();
-        self.fn_param_names = fn_param_names.into_iter().collect();
-        self.fn_returns = fn_returns.into_iter().collect();
-        self.render_names = render_names;
+        self.driver.reload(c.program, c.lowered, c.descriptors)?;
+        self.fn_refs = c.fn_refs;
+        self.fn_params = c.fn_params.into_iter().collect();
+        self.fn_param_names = c.fn_param_names.into_iter().collect();
+        self.fn_returns = c.fn_returns.into_iter().collect();
+        self.render_names = c.render_names;
         self.source = modules.get(root).cloned().unwrap_or_default();
-        self.module_hash = module_hash;
+        self.module_hash = c.module_hash;
 
         let after = self.fn_hashes();
         let changed = before
@@ -767,6 +459,255 @@ fn module_hash(source: &str) -> Vec<u8> {
     hasher.update(b"vix-machine-module");
     hasher.update(source.as_bytes());
     hasher.finalize().to_vec()
+}
+
+/// The interned handle tables for a compiled module set. Fresh (0-based) on a
+/// cold load; preserved from the live driver on reload so warm memo/store stay
+/// valid.
+struct LiteralHandleMaps {
+    strings: HashMap<String, i64>,
+    paths: HashMap<String, i64>,
+    flags: HashMap<String, i64>,
+    templates: HashMap<String, i64>,
+}
+
+/// Where schema-refs and literal handles come from — the one axis on which cold
+/// load and warm reload differ. Fresh assigns 0..N; Existing preserves the live
+/// driver's numbering (and extends it), which is what keeps warm state valid.
+enum RefSource<'a> {
+    Fresh,
+    Existing(&'a mut Driver),
+}
+
+impl RefSource<'_> {
+    fn schema_refs(&mut self, schema_names: &[String]) -> HashMap<String, i64> {
+        match self {
+            RefSource::Fresh => schema_names
+                .iter()
+                .enumerate()
+                .map(|(ix, name)| (name.clone(), i64::try_from(ix).expect("schema ref fits i64")))
+                .collect(),
+            RefSource::Existing(driver) => driver.schema_ref_map_for(schema_names),
+        }
+    }
+
+    fn literal_handles(&mut self, tables: &ModuleTables) -> LiteralHandleMaps {
+        match self {
+            RefSource::Fresh => {
+                let strings = string_handles(tables);
+                let paths = path_handles(tables, strings.len());
+                let flags = flag_handles(tables, strings.len() + paths.len());
+                let templates =
+                    template_handles(tables, strings.len() + paths.len() + flags.len());
+                LiteralHandleMaps {
+                    strings,
+                    paths,
+                    flags,
+                    templates,
+                }
+            }
+            RefSource::Existing(driver) => {
+                let driver: &Driver = driver;
+                LiteralHandleMaps {
+                    strings: live_string_handles(driver, tables),
+                    paths: live_path_handles(driver, tables),
+                    flags: live_flag_handles(driver, tables),
+                    templates: live_template_handles(driver, tables),
+                }
+            }
+        }
+    }
+}
+
+/// Everything a module set lowers to, before it is handed to a driver — the
+/// single shared pipeline behind both cold load and warm reload.
+struct Compiled {
+    program: Program,
+    lowered: Vec<LoweredFn>,
+    descriptors: HashMap<String, Descriptor<String>>,
+    fn_refs: HashMap<String, usize>,
+    fn_returns: HashMap<String, String>,
+    fn_params: HashMap<String, Vec<String>>,
+    fn_param_names: HashMap<String, Vec<String>>,
+    render_names: RenderNames,
+    schema_names: Vec<String>,
+    schema_refs: HashMap<String, i64>,
+    literal_handles: LiteralHandleMaps,
+    module_hash: Vec<u8>,
+}
+
+/// Compile a module set into a lowered program: the whole of loading a vix
+/// program *except* interning into a driver. Cold load and warm reload share it
+/// verbatim, differing only in `ref_source` (fresh vs. driver-backed) and in
+/// what they do with the `Compiled` result.
+fn compile_module_set(
+    root: &str,
+    modules: &BTreeMap<String, String>,
+    mut ref_source: RefSource,
+) -> Result<Compiled, String> {
+    let module_hash = module_set_hash(root, modules);
+    let tables = load_module_tables_from_modules(root, modules)?;
+
+    // Deterministic fn_ref assignment: sorted names.
+    let mut names: Vec<&String> = tables.fns.keys().collect();
+    names.sort();
+    let fn_refs: HashMap<String, usize> = names
+        .iter()
+        .enumerate()
+        .map(|(ix, name)| ((*name).clone(), ix))
+        .collect();
+    let fn_returns: HashMap<String, String> = names
+        .iter()
+        .map(|name| {
+            let item = &tables.fns[*name];
+            let schema = item
+                .return_type
+                .as_ref()
+                .map(type_schema_name)
+                .transpose()?
+                .unwrap_or_else(|| "Int".into());
+            Ok(((*name).clone(), schema))
+        })
+        .collect::<Result<_, String>>()?;
+    let fn_params: HashMap<String, Vec<String>> = names
+        .iter()
+        .map(|name| {
+            let item = &tables.fns[*name];
+            Ok((
+                (*name).clone(),
+                item.params
+                    .params
+                    .iter()
+                    .map(|param| type_schema_name(&param.ty))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ))
+        })
+        .collect::<Result<_, String>>()?;
+    let fn_param_names: HashMap<String, Vec<String>> = names
+        .iter()
+        .map(|name| {
+            let item = &tables.fns[*name];
+            (
+                (*name).clone(),
+                item.params
+                    .params
+                    .iter()
+                    .map(|param| param.name.value.clone())
+                    .collect(),
+            )
+        })
+        .collect();
+    let mut schema_names = schema_names_for(&tables, &fn_returns, &fn_params)?;
+    schema_names.sort();
+    schema_names.dedup();
+    let render_names = render_names_for(&tables);
+    let schema_refs = ref_source.schema_refs(&schema_names);
+    let handles = ref_source.literal_handles(&tables);
+    let literal_handles = LiteralHandles {
+        strings: &handles.strings,
+        paths: &handles.paths,
+        flags: &handles.flags,
+        templates: &handles.templates,
+    };
+    let signatures = FnSignatures {
+        returns: &fn_returns,
+        params: &fn_params,
+        param_names: &fn_param_names,
+    };
+
+    let mut task_fns = Vec::with_capacity(names.len());
+    let mut lowered = Vec::with_capacity(names.len());
+    for (ix, name) in names.iter().enumerate() {
+        let item = &tables.fns[*name];
+        let hash = tables.fn_hashes[*name];
+        let (task_fn, info) = if parked_generic_or_fn_typed(item) {
+            parked_stub(item)?
+        } else {
+            FnLowerer::lower(
+                item,
+                &tables,
+                &tables.fn_modules[*name],
+                &fn_refs,
+                signatures,
+                &schema_refs,
+                literal_handles,
+            )
+            .map_err(|e| format!("lowering {name}: {e}"))?
+        };
+        task_fns.push(task_fn);
+        let arg_schemas = item
+            .params
+            .params
+            .iter()
+            .map(|param| type_schema_name(&param.ty))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("lowering {name}: {e}"))?;
+        let param_names = item
+            .params
+            .params
+            .iter()
+            .map(|param| param.name.value.clone())
+            .collect::<Vec<_>>();
+        let semantic_comparators = semantic_comparators_for(
+            name,
+            &arg_schemas,
+            &param_names,
+            &fn_refs,
+            &fn_params,
+            &fn_returns,
+        )?;
+        let hash = hash_with_semantic_comparators(hash, &semantic_comparators, &names, &tables);
+        lowered.push(LoweredFn {
+            hash,
+            task_fn: FnId(u32::try_from(ix).expect("fn count fits u32")),
+            arg_offsets: info.arg_offsets,
+            arg_schemas,
+            return_schema: fn_returns[*name].clone(),
+            semantic_comparators,
+            invoke_region: info.invoke_region,
+            store_alloc_region: info.store_alloc_region,
+            store_read_region: info.store_read_region,
+            store_tag_region: info.store_tag_region,
+            primitive_region: info.primitive_region,
+        });
+    }
+
+    let mut descriptors = tables.descriptors;
+    add_builtin_descriptors(&mut descriptors);
+    for name in &schema_names {
+        if let Some(descriptor) = derived_descriptor(name) {
+            descriptors.entry(name.clone()).or_insert(descriptor);
+        }
+    }
+
+    Ok(Compiled {
+        program: Program { fns: task_fns },
+        lowered,
+        descriptors,
+        fn_refs,
+        fn_returns,
+        fn_params,
+        fn_param_names,
+        render_names,
+        schema_names,
+        schema_refs,
+        literal_handles: handles,
+        module_hash,
+    })
+}
+
+/// On a cold load the driver's interning must reproduce the fresh handle
+/// assignment exactly — assert it, in handle order.
+fn assert_literal_handles(driver: &mut Driver, schema: &str, handles: &HashMap<String, i64>) {
+    let mut sorted: Vec<(&String, &i64)> = handles.iter().collect();
+    sorted.sort_by_key(|(_, handle)| **handle);
+    for (value, expected) in sorted {
+        let (actual, _) = driver.intern_raw_value(schema, value.as_bytes().to_vec());
+        assert_eq!(
+            actual, *expected,
+            "{schema} handle assignment is deterministic"
+        );
+    }
 }
 
 /// Pull the bundled vix standard library into a program's module set — but only
