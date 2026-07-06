@@ -1746,7 +1746,7 @@ fn collect_expr_schemas(
                     Ok(Some("VersionSet".into()))
                 }
                 ("subset" | "contains", Some("VersionSet")) => Ok(Some("Bool".into())),
-                ("before" | "after", Some("String")) => Ok(Some("String".into())),
+                ("before" | "after" | "strip_prefix", Some("String")) => Ok(Some("String".into())),
                 ("parse_int", Some("String")) => Ok(Some("Int".into())),
                 _ => Ok(None),
             }
@@ -3634,15 +3634,19 @@ impl<'a> FnLowerer<'a> {
                 };
                 Ok(self.option_unwrap(&receiver, value_schema))
             }
-            "before" | "after" => {
+            "before" | "after" | "strip_prefix" => {
                 if receiver.schema != "String" {
                     return Err(format!("{} called on {}", call.name.value, receiver.schema));
                 }
                 let [arg] = call.args.args.as_slice() else {
-                    return Err(format!("String.{} takes one delimiter", call.name.value));
+                    return Err(format!("String.{} takes one argument", call.name.value));
                 };
                 let delim = self.method_arg(arg, Some("String"))?;
-                let selector = if call.name.value == "before" { 0 } else { 1 };
+                let selector = match call.name.value.as_str() {
+                    "before" => 0,
+                    "after" => 1,
+                    _ => 2,
+                };
                 Ok(self.string_split(&receiver, &delim, selector))
             }
             "parse_int" => {

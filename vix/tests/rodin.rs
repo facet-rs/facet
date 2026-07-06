@@ -38,3 +38,14 @@ fn string_primitives_decompose_a_version() {
         .expect("rodin.vix string_probe runs");
     assert_eq!(value, 234);
 }
+
+// The glibc-preflight path: strip "GLIBC_", parse "2.35" (2-component), and
+// compare with version_lte — all in vix. 2.34.0 <= 2.35.0, so returns .minor.
+#[test]
+fn version_parse_strip_and_compare_in_vix() {
+    let mut machine = Machine::load(&rodin_source()).expect("rodin.vix loads");
+    let value = machine
+        .demand_i64("version_probe", vec![0])
+        .expect("rodin.vix version_probe runs");
+    assert_eq!(value, 35);
+}

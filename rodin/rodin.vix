@@ -22,7 +22,7 @@
 // Version + parse_version come from vix std (vix/std/version.vix) — a plain vix
 // struct (records-at-offsets), parsed by vix over the string primitives. The
 // machine has no version-shaped op.
-use vix::{Version, parse_version, VersionSet, Map};
+use vix::{Version, parse_version, version_lte, VersionSet, Map};
 
 // ---------------------------------------------------------------------------
 // Package identity  (rodin-facts/src/interner.rs: PkgId, CompatClass, SourceIx)
@@ -227,4 +227,15 @@ pub fn string_probe(seed: Int) -> Int {
     let minor = rest.before(".").parse_int();
     let patch = rest.after(".").parse_int();
     major * 100 + minor * 10 + patch + seed - seed
+}
+
+// The glibc-preflight path in miniature: strip a "GLIBC_" prefix, parse a
+// 2-component version, and compare — exactly what the preflight sample needs.
+pub fn version_probe(seed: Int) -> Int {
+    let floor = parse_version("2.34.0");
+    let shipped = parse_version("GLIBC_2.35".strip_prefix("GLIBC_"));
+    match version_lte(floor, shipped) {
+        true => shipped.minor + seed - seed,
+        false => 0,
+    }
 }

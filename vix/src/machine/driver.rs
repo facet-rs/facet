@@ -3465,7 +3465,8 @@ impl Driver {
 
             // General string primitives (the parser building blocks). selector 0
             // = substring before the first delimiter (whole string if absent),
-            // 1 = substring after it (empty if absent).
+            // 1 = substring after it (empty if absent), 2 = strip the delimiter as
+            // a prefix (whole string if it is not a prefix).
             let mut string_split_host = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
@@ -3476,17 +3477,11 @@ impl Driver {
                     let text = store.string_value(str_handle, "String")?;
                     let delim = store.string_value(delim_handle, "String")?;
                     drop(store);
-                    let part: &str = match text.find(&delim) {
-                        Some(index) => match selector {
-                            0 => &text[..index],
-                            1 => &text[index + delim.len()..],
-                            other => return Err(format!("unknown string split selector {other}")),
-                        },
-                        None => match selector {
-                            0 => text.as_str(),
-                            1 => "",
-                            other => return Err(format!("unknown string split selector {other}")),
-                        },
+                    let part: &str = match selector {
+                        0 => text.split_once(delim.as_str()).map_or(text.as_str(), |(b, _)| b),
+                        1 => text.split_once(delim.as_str()).map_or("", |(_, a)| a),
+                        2 => text.strip_prefix(delim.as_str()).unwrap_or(text.as_str()),
+                        other => return Err(format!("unknown string split selector {other}")),
                     };
                     let handle = store_cell
                         .borrow_mut()
