@@ -52,27 +52,29 @@ inside the machine.
 
 ## The spec (`docs/`, numbered = build order)
 
-- `00-oracle.md` — cargo is the only oracle: invocations, comparison, fixtures. *(pending)*
+- `00-oracle.md` — cargo is the only oracle: invocations, comparison, fixtures.
 - `10-identity.md` — identity = (source, name, compat-class); coexistence bucketing.
 - `20-constraints.md` — dependency edges → clauses/guards/consequents as meaning; the consumption gate.
 - `30-versions-sets.md` — versions as ordered values; interval-set meaning; cargo caret/tilde/wildcard; the prerelease gap.
 - `40-search.md` — narrow → propagate-to-fixpoint → highest-first candidates → hypothesize/recurse/backtrack.
 - `50-conflict-learning.md` — regions as boxes; point→widen→install; subsumption by containment; region unit-propagation.
-- `60-features.md` — feature unification, optional/dep:/scoped, default features. *(pending)*
-- `70-targets-cfg.md` — cfg/target gating. *(pending)*
+- `60-features.md` — atoms + monotone unification; normal/build/dev scopes; the four enable forms; optional-dep implicit features.
+- `70-targets-cfg.md` — cfg/target gating; the consumption gate; per-target projection.
 - `90-substrate-ledger.md` — the do-NOT-build table: rodin-core subsystem → vix mechanism.
 
 ## Status
 
-- Distilled + written: 10, 20, 30, 40, 50, 90. The model (`rodin-facts`) and the
-  core search (`solve`/`seed_problem`/`search`/`propagate`/`learn`/
-  `install_learned_fact`/`widen`) are fully read.
-- Pending source reads: features + cfg gating in `rodin-core/src/lib.rs` (→ 60,
-  70), `cargo_evidence.rs` (→ 00).
-- Two invariants flagged for confirmation during the remaining distillation: the
+- **Distillation complete: all nine docs written** (00, 10, 20, 30, 40, 50, 60,
+  70, 90). The model (`rodin-facts`), the core search
+  (`solve`/`seed_problem`/`search`/`propagate`/`learn`/`install_learned_fact`/
+  `widen`), the feature + cfg compilation, and the cargo-evidence harness are all
+  read and distilled.
+- Two invariants still flagged in-text for confirmation when implementing: the
   role of the *unclassed* identity form (10), and the exact inputs of the
-  *consumption gate* (20).
-- **`rodin-core` deletion is gated on review of the distillation.**
+  *consumption gate* (20/70). Both are answerable against cargo during the build.
+- **Next: review the distillation, then delete `rodin-core` (in vixenware), then
+  implement native from `docs/` + cargo (build order = doc numbering).** The
+  deletion is a reviewed plan step, gated on your read of `docs/`.
 - Superseded by this plan: the `VERSION_FIELD` intrinsic + string-blob `Version`,
   and the current gap-driven `rodin.vix`. Version becomes a vix value (parse a
   memoized demand); `rodin.vix` gets rewritten native. Not deleted to hide —
