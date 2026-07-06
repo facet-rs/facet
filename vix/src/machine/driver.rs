@@ -29,6 +29,7 @@
 use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::fmt;
 use std::hash::Hash;
 use std::sync::Arc;
 
@@ -637,7 +638,47 @@ impl LaneTask {
     }
 }
 
-type ContentHash = [u8; 32];
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub struct ContentHash([u8; 32]);
+
+impl ContentHash {
+    fn from_slice(bytes: &[u8]) -> Result<Self, usize> {
+        bytes
+            .try_into()
+            .map(Self)
+            .map_err(|_: std::array::TryFromSliceError| bytes.len())
+    }
+
+    fn to_vec(self) -> Vec<u8> {
+        self.0.to_vec()
+    }
+}
+
+impl AsRef<[u8]> for ContentHash {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl From<[u8; 32]> for ContentHash {
+    fn from(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+}
+
+impl fmt::Display for ContentHash {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for byte in self.0 {
+            write!(f, "{byte:02x}")?;
+        }
+        Ok(())
+    }
+}
+
+fn finish_hash(hasher: Sha256) -> ContentHash {
+    ContentHash(hasher.finalize().into())
+}
+
 type CanonMemoKey = (u64, Vec<ContentHash>);
 type ProjectionCandidateKey = (u64, Vec<ProjectionArgKey>);
 #[cfg(test)]
@@ -1091,7 +1132,7 @@ impl ValueStore {
         hasher.update(b"vix-raw-value");
         hasher.update(schema.as_bytes());
         hasher.update(&bytes);
-        let content_hash = hash_with_taint(hasher.finalize().into(), &taint);
+        let content_hash = hash_with_taint(finish_hash(hasher), &taint);
         let key = (schema.to_string(), content_hash);
         if let Some(handle) = self.by_content.get(&key).copied() {
             return (handle, true);
@@ -1229,7 +1270,7 @@ impl ValueStore {
         hasher.update(b"vix-option");
         hasher.update(option_schema.as_bytes());
         hasher.update(0i64.to_le_bytes());
-        let content_hash = hasher.finalize().into();
+        let content_hash = finish_hash(hasher);
         Ok(self.alloc_with_hash(&option_schema, bytes, content_hash))
     }
 
@@ -1265,7 +1306,7 @@ impl ValueStore {
             hasher.update(realization.to_word().to_le_bytes());
         }
         hasher.update(value_hash);
-        let content_hash = hasher.finalize().into();
+        let content_hash = finish_hash(hasher);
         Ok(self.alloc_with_hash(&option_schema, bytes, content_hash))
     }
 
@@ -1370,7 +1411,7 @@ impl ValueStore {
                 .iter()
                 .filter_map(|word| self.entry(*word).and_then(|entry| entry.taint.clone())),
         );
-        let content_hash = hash_with_taint(hasher.finalize().into(), &taint);
+        let content_hash = hash_with_taint(finish_hash(hasher), &taint);
         Ok(self.alloc_with_hash_tainted("Array", bytes, content_hash, taint))
     }
 
@@ -1842,11 +1883,8 @@ impl Driver {
         values.sort_by_key(|value| value.handle);
         let mut store = self.store.borrow_mut();
         for value in values {
-            let content_hash: ContentHash = value
-                .content_hash
-                .as_slice()
-                .try_into()
-                .map_err(|_| format!("content hash has {} bytes", value.content_hash.len()))?;
+            let content_hash = ContentHash::from_slice(&value.content_hash)
+                .map_err(|len| format!("content hash has {len} bytes"))?;
             store.insert_at(
                 usize::try_from(value.handle).map_err(|_| format!("handle {}", value.handle))?,
                 StoreEntry {
@@ -5920,7 +5958,7 @@ impl Driver {
         let mut hasher = Sha256::new();
         hasher.update(b"vix-elf-input");
         hasher.update(&bytes);
-        let input_hash: ContentHash = hasher.finalize().into();
+        let input_hash: ContentHash = finish_hash(hasher);
         if let Some(&handle) = self.elf_projection_memo.get(&(input_hash, projection)) {
             let timestamp_us = self.next_timestamp();
             self.emit(DriveEvent::ArtifactProbe {
@@ -6100,7 +6138,7 @@ impl Driver {
             ));
         };
         let tree = self.oci_input_tree(*input)?;
-        let input_hash = super::oci::input_hash(&tree);
+        let input_hash = ContentHash::from(super::oci::input_hash(&tree));
         if let Some(&handle) = self.oci_projection_memo.get(&(input_hash, projection)) {
             let timestamp_us = self.next_timestamp();
             self.emit(DriveEvent::ArtifactProbe {
@@ -6162,7 +6200,7 @@ impl Driver {
         let mut hasher = Sha256::new();
         hasher.update(b"vix-ast-input");
         hasher.update(source.as_bytes());
-        Ok((source, hasher.finalize().into()))
+        Ok((source, finish_hash(hasher)))
     }
 
     fn oci_input_tree(&mut self, handle: i64) -> Result<crate::exec::Tree, String> {
@@ -6488,7 +6526,7 @@ fn oci_virtual_file_get(
         let store = ctx.store.borrow();
         oci_tree_from_store(&store, input)?
     };
-    let input_hash = super::oci::input_hash(&tree);
+    let input_hash = ContentHash::from(super::oci::input_hash(&tree));
     let key = (input_hash, path.to_string());
     if let Some(cached) = ctx.oci_file_memo.borrow().get(&key).cloned() {
         emit_artifact_probe(
@@ -6664,7 +6702,7 @@ fn alloc_oci_doc(
     let input_hash = {
         let store = store.borrow();
         let tree = oci_tree_from_store(&store, input)?;
-        super::oci::input_hash(&tree)
+        ContentHash::from(super::oci::input_hash(&tree))
     };
     let mut pairs = Vec::new();
     for projection in super::oci::Projection::ALL {
@@ -6712,7 +6750,7 @@ fn elf_projection_pending(
     hasher.update(b"vix-elf-projection");
     hasher.update(projection.name().as_bytes());
     hasher.update(input_hash);
-    let identity_hash = hasher.finalize().into();
+    let identity_hash = finish_hash(hasher);
     PendingInvocation {
         closure_hash: hash_u64(("elf", projection.name())),
         primitive: Some(PendingPrimitive {
@@ -6843,7 +6881,7 @@ fn ast_projection_pending(
         }),
         args,
         remaining_arity: 0,
-        identity_hash: hasher.finalize().into(),
+        identity_hash: finish_hash(hasher),
     }
 }
 
@@ -6880,7 +6918,7 @@ fn oci_projection_pending(
     hasher.update(b"vix-oci-projection");
     hasher.update(projection.name().as_bytes());
     hasher.update(input_hash);
-    let identity_hash = hasher.finalize().into();
+    let identity_hash = finish_hash(hasher);
     PendingInvocation {
         closure_hash: hash_u64(("oci", projection.name())),
         primitive: Some(PendingPrimitive {
@@ -7846,7 +7884,7 @@ fn split_top_level_schemas(inner: &str) -> Vec<String> {
 }
 
 fn hex_content_hash(hash: &ContentHash) -> String {
-    hex_bytes(hash)
+    hash.to_string()
 }
 
 fn hex_bytes(hash: &[u8]) -> String {
@@ -7937,7 +7975,7 @@ fn pending_identity_hash(lowered: &LoweredFn, store: &ValueStore, args: &[i64]) 
         hasher.update(schema.as_bytes());
         hasher.update(canonical_word_hash_in_store(store, schema, word));
     }
-    hasher.finalize().into()
+    finish_hash(hasher)
 }
 
 fn read_frame_word(frame: &[u8], at: usize) -> i64 {
@@ -8010,7 +8048,7 @@ fn sealed_identity_hash(ciphertext: &[u8]) -> ContentHash {
     let mut hasher = Sha256::new();
     hasher.update(b"vix-sealed-identity-v1");
     hasher.update(ciphertext);
-    hasher.finalize().into()
+    finish_hash(hasher)
 }
 
 fn hash_with_taint(base: ContentHash, taint: &Option<StructuralTaint>) -> ContentHash {
@@ -8021,7 +8059,7 @@ fn hash_with_taint(base: ContentHash, taint: &Option<StructuralTaint>) -> Conten
     hasher.update(b"vix-tainted-identity-v1");
     hasher.update(base);
     hash_taint_into(&mut hasher, taint);
-    hasher.finalize().into()
+    finish_hash(hasher)
 }
 
 fn hash_taint_into(hasher: &mut Sha256, taint: &StructuralTaint) {
@@ -8148,7 +8186,7 @@ fn canonical_word_hash_in_store(store: &ValueStore, schema: &str, word: i64) -> 
     hasher.update(b"vix-scalar-word");
     hasher.update(schema.as_bytes());
     hasher.update(word.to_le_bytes());
-    hasher.finalize().into()
+    finish_hash(hasher)
 }
 
 fn canonical_scalar_hash(schema: &str, word: i64) -> ContentHash {
@@ -8157,7 +8195,7 @@ fn canonical_scalar_hash(schema: &str, word: i64) -> ContentHash {
     hasher.update(b"vix-scalar-word");
     hasher.update(schema.as_bytes());
     hasher.update(word.to_le_bytes());
-    hasher.finalize().into()
+    finish_hash(hasher)
 }
 
 fn is_projectable_schema_static(
@@ -8479,7 +8517,7 @@ fn projection_observation_hash(
                 }
                 Err(err) => return Err(err),
             };
-            let input_hash = super::oci::input_hash(&tree);
+            let input_hash = ContentHash::from(super::oci::input_hash(&tree));
             let scratch = RefCell::new(store.clone());
             let projected = if projection == super::oci::Projection::Files {
                 alloc_oci_files_doc(&scratch, descriptors, input_hash, handle)?
@@ -8633,7 +8671,7 @@ fn ast_input_source_for_verify(
             let mut hasher = Sha256::new();
             hasher.update(b"vix-ast-input");
             hasher.update(source.as_bytes());
-            Ok(Some((source, hasher.finalize().into())))
+            Ok(Some((source, finish_hash(hasher))))
         }
         "Tree" => {
             let TreeEntry::Concrete(tree) = store.tree_entry(handle)? else {
@@ -8646,7 +8684,7 @@ fn ast_input_source_for_verify(
             let mut hasher = Sha256::new();
             hasher.update(b"vix-ast-input");
             hasher.update(source.as_bytes());
-            Ok(Some((source, hasher.finalize().into())))
+            Ok(Some((source, finish_hash(hasher))))
         }
         other => Err(format!("ast input must be String or Tree, got {other}")),
     }
@@ -8690,7 +8728,7 @@ fn canonical_map_pairs(
             a.pair.key_word,
             b.pair.key_word,
         )
-        .unwrap_or_else(|_| a.key_hash.cmp(&b.key_hash))
+        .unwrap_or_else(|_| a.key_hash.as_ref().cmp(b.key_hash.as_ref()))
     });
     let mut deduped: Vec<OrderedMapPair> = Vec::new();
     for pair in pairs {
@@ -8852,7 +8890,7 @@ fn hash_map_pairs(schema: &str, pairs: &[OrderedMapPair]) -> ContentHash {
         }
         hasher.update(pair.value_hash);
     }
-    hasher.finalize().into()
+    finish_hash(hasher)
 }
 
 fn map_realization_bitset_words(count: usize) -> usize {
@@ -8916,7 +8954,7 @@ fn encode_pending_invocation(invocation: &PendingInvocation) -> Vec<u8> {
         .map(PendingPrimitive::to_word)
         .unwrap_or(-1);
     bytes.extend_from_slice(&primitive.to_le_bytes());
-    bytes.extend_from_slice(&invocation.identity_hash);
+    bytes.extend_from_slice(invocation.identity_hash.as_ref());
     for arg in &invocation.args {
         bytes.extend_from_slice(&arg.to_le_bytes());
     }
@@ -8936,9 +8974,8 @@ fn decode_pending_invocation(bytes: &[u8]) -> Result<PendingInvocation, String> 
         -1 => None,
         word => Some(PendingPrimitive::from_word(word)?),
     };
-    let identity_hash: ContentHash = bytes[32..64]
-        .try_into()
-        .expect("pending identity hash length");
+    let identity_hash =
+        ContentHash::from_slice(&bytes[32..64]).expect("pending identity hash length");
     let expected = 64 + argc * 8;
     if bytes.len() != expected {
         return Err(format!(
@@ -9004,7 +9041,7 @@ fn hash_handle_list(domain: &[u8], handles: &[i64], store: &ValueStore) -> Conte
         hasher.update(entry.schema.as_bytes());
         hasher.update(entry.content_hash);
     }
-    hasher.finalize().into()
+    finish_hash(hasher)
 }
 
 fn encode_concrete_tree(tree: &crate::exec::Tree) -> Vec<u8> {
@@ -9096,7 +9133,7 @@ fn hash_concrete_tree(tree: &crate::exec::Tree) -> ContentHash {
         );
         hasher.update(contents);
     }
-    hasher.finalize().into()
+    finish_hash(hasher)
 }
 
 fn encode_string(value: &str, bytes: &mut Vec<u8>) {
@@ -9356,7 +9393,7 @@ fn pending_exec_identity_hash(
         hasher.update(mount.at.as_bytes());
         hasher.update(mount.tree.fingerprint().to_le_bytes());
     }
-    hasher.finalize().into()
+    finish_hash(hasher)
 }
 
 fn hash_value_bytes(
@@ -9366,7 +9403,7 @@ fn hash_value_bytes(
 ) -> ContentHash {
     let mut hasher = Sha256::new();
     hash_value_into(&mut hasher, descriptor, bytes, store);
-    hasher.finalize().into()
+    finish_hash(hasher)
 }
 
 fn hash_value_into(
