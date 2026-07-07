@@ -331,6 +331,25 @@ pub mod support {
         Ok(crate::exec::Tree { entries, blobs })
     }
 
+    pub(crate) fn tree_text(tree: &crate::exec::Tree, path: &str) -> Result<String, String> {
+        if let Some(contents) = tree.entries.get(path) {
+            return Ok(contents.clone());
+        }
+        if let Some(contents) = tree.blobs.get(path) {
+            return String::from_utf8(contents.clone()).map_err(|err| err.to_string());
+        }
+        let prefix = format!("{path}/");
+        if tree
+            .entries
+            .keys()
+            .chain(tree.blobs.keys())
+            .any(|key| key.starts_with(&prefix))
+        {
+            return Err(format!("path `{path}` is a directory, not a file"));
+        }
+        Err(format!("no `{path}` in tree"))
+    }
+
     pub(crate) fn assign_roles(
         command: &str,
         argv: &[String],

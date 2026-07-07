@@ -47,7 +47,7 @@ use weavy::task::{FnId, HostFn, Program, Task, TaskStep};
 use crate::ast;
 use crate::fetch::{FetchBackend, NoFetchBackend};
 use crate::module::{DescriptorMap, SchemaTables, VixDescriptor};
-use crate::support::{PathMissing, assign_roles, subtree, tool_for};
+use crate::support::{PathMissing, assign_roles, subtree, tool_for, tree_text};
 use crate::value::{Payload, Value};
 
 #[derive(Clone, Debug, PartialEq, Eq, Facet)]
@@ -188,6 +188,7 @@ pub const STRING_IS_NUMERIC_HOST: u32 = 56;
 pub const PATH_JOIN_HOST: u32 = 57;
 pub const PATH_TO_STRING_HOST: u32 = 58;
 pub const DOC_IS_MAP_HOST: u32 = 59;
+pub const TREE_TEXT_HOST: u32 = 60;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -494,6 +495,13 @@ struct InvokeRequest {
 
 #[derive(Clone, Debug)]
 struct ProjectRequest {
+    input_slot: usize,
+    tree: i64,
+    path: i64,
+}
+
+#[derive(Clone, Debug)]
+struct TextProjectRequest {
     input_slot: usize,
     tree: i64,
     path: i64,
@@ -1189,13 +1197,19 @@ struct PendingExecRun {
     command: String,
     plan: crate::exec::ExecPlan,
     capability: u64,
-    mounts: Vec<crate::exec::Mount>,
+    mounts: Vec<ExecMount>,
     output: String,
     scheduled: bool,
     completed: Option<(crate::exec::Outcome, crate::exec::ExecEvent)>,
     completion_logged: bool,
     remote: Option<Arc<dyn MachinePendingRun>>,
     span: Option<(u32, u32)>,
+}
+
+#[derive(Clone, Debug)]
+enum ExecMount {
+    Concrete(crate::exec::Mount),
+    PendingTree { at: String, tree: i64 },
 }
 
 #[derive(Clone, Copy, Debug)]
@@ -2607,18 +2621,20 @@ impl Driver {
                     }
                     // Execution finished: drop it (arena and all).
                 }
-                Burst::Pending {
-                    new_requests,
-                    project_requests,
-                    exec_requests,
-                    fetch_requests,
-                    doc_parse_requests,
-                    crate_archive_requests,
-                    option_unwraps,
-                    pending_coercions,
-                    pending_invokes,
-                    parked_input,
-                } => {
+                Burst::Pending(pending) => {
+                    let BurstPending {
+                        new_requests,
+                        project_requests,
+                        text_project_requests,
+                        exec_requests,
+                        fetch_requests,
+                        doc_parse_requests,
+                        crate_archive_requests,
+                        option_unwraps,
+                        pending_coercions,
+                        pending_invokes,
+                        parked_input,
+                    } = *pending;
                     for req in exec_requests {
                         self.record_whole_args_if_projectable(
                             exec.fn_ref,
@@ -2695,6 +2711,24 @@ impl Driver {
                     for req in project_requests {
                         match self.project_request(req, exec.fn_ref, &exec.args, &mut exec.read_set)
                         {
+                            Ok((input_slot, value)) => {
+                                if exec.ready.len() <= input_slot {
+                                    exec.ready.resize(input_slot + 1, false);
+                                    exec.awaited.resize(input_slot + 1, 0);
+                                }
+                                exec.ready[input_slot] = true;
+                                exec.awaited[input_slot] = value;
+                            }
+                            Err(err) => return Err(err),
+                        }
+                    }
+                    for req in text_project_requests {
+                        match self.text_project_request(
+                            req,
+                            exec.fn_ref,
+                            &exec.args,
+                            &mut exec.read_set,
+                        ) {
                             Ok((input_slot, value)) => {
                                 if exec.ready.len() <= input_slot {
                                     exec.ready.resize(input_slot + 1, false);
@@ -2899,6 +2933,7 @@ impl Driver {
 
             let mut requests: Vec<InvokeRequest> = Vec::new();
             let mut project_requests: Vec<ProjectRequest> = Vec::new();
+            let mut text_project_requests: Vec<TextProjectRequest> = Vec::new();
             let mut exec_requests: Vec<ExecRequest> = Vec::new();
             let mut fetch_requests: Vec<FetchRequest> = Vec::new();
             let mut doc_parse_requests: Vec<DocParseRequest> = Vec::new();
@@ -3741,6 +3776,17 @@ impl Driver {
                 let tree = read_frame_word(frame, primitive_region + 8);
                 let path = read_frame_word(frame, primitive_region + 16);
                 project_requests.push(ProjectRequest {
+                    input_slot,
+                    tree,
+                    path,
+                });
+            };
+
+            let mut tree_text = |frame: &mut [u8]| {
+                let input_slot = read_frame_word(frame, primitive_region) as usize;
+                let tree = read_frame_word(frame, primitive_region + 8);
+                let path = read_frame_word(frame, primitive_region + 16);
+                text_project_requests.push(TextProjectRequest {
                     input_slot,
                     tree,
                     path,
@@ -5477,7 +5523,7 @@ impl Driver {
                 }
             };
 
-            let mut hosts: [HostFn<'_>; 60] = [
+            let mut hosts: [HostFn<'_>; 61] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -5538,6 +5584,7 @@ impl Driver {
                 &mut path_join,
                 &mut path_to_string,
                 &mut doc_is_map,
+                &mut tree_text,
             ];
             let step = exec
                 .task
@@ -5568,9 +5615,10 @@ impl Driver {
                         // Slot filled between bursts: loop and re-enter.
                         continue;
                     }
-                    return Burst::Pending {
+                    return Burst::Pending(Box::new(BurstPending {
                         new_requests: requests,
                         project_requests,
+                        text_project_requests,
                         exec_requests,
                         fetch_requests,
                         doc_parse_requests,
@@ -5579,7 +5627,7 @@ impl Driver {
                         pending_coercions,
                         pending_invokes,
                         parked_input: input,
-                    };
+                    }));
                 }
             }
         }
@@ -5862,6 +5910,40 @@ impl Driver {
         Ok((req.input_slot, value))
     }
 
+    fn text_project_request(
+        &mut self,
+        req: TextProjectRequest,
+        fn_ref: FnRef,
+        args: &[i64],
+        read_set: &mut ProjectionReadSet,
+    ) -> Result<(usize, i64), String> {
+        let path = self.store.borrow().string_value(req.path, "Path")?;
+        let before = self.store.borrow().tree_entry(req.tree)?;
+        let value = self.project_tree_text(req.tree, &path)?;
+        let observed = self
+            .store
+            .borrow()
+            .entry(value)
+            .ok_or_else(|| format!("store handle {value}"))?
+            .content_hash;
+        match before {
+            TreeEntry::Concrete(_) => {
+                self.record_projection_for_matching_args(
+                    fn_ref,
+                    args,
+                    req.tree,
+                    ProjectionPath::TreePath { path },
+                    observed,
+                    read_set,
+                );
+            }
+            TreeEntry::Merge(_) | TreeEntry::Exec(_) => {
+                self.record_whole_arg_if_projectable(fn_ref, args, req.tree, read_set);
+            }
+        }
+        Ok((req.input_slot, value))
+    }
+
     fn project_tree_path(&mut self, tree_handle: i64, path: &str) -> Result<i64, String> {
         let tree = self.store.borrow().tree_entry(tree_handle)?;
         match tree {
@@ -5888,6 +5970,41 @@ impl Driver {
                     }
                     .diagnostic()
                 })
+            }
+        }
+    }
+
+    fn project_tree_text(&mut self, tree_handle: i64, path: &str) -> Result<i64, String> {
+        let tree = self.store.borrow().tree_entry(tree_handle)?;
+        match tree {
+            TreeEntry::Concrete(tree) => {
+                let text = tree_text(&tree, path)?;
+                Ok(self
+                    .store
+                    .borrow_mut()
+                    .alloc_raw("String", text.into_bytes(), &self.schemas)
+                    .0)
+            }
+            TreeEntry::Merge(pending) => {
+                for handle in pending.into_iter().rev() {
+                    let value = self.merge_child_tree_value(handle)?;
+                    if let Ok(found) = self.project_tree_text(value, path) {
+                        return Ok(found);
+                    }
+                }
+                Err(PathMissing {
+                    path: path.to_string(),
+                }
+                .diagnostic())
+            }
+            TreeEntry::Exec(run_id) => {
+                let projected = self.demand_exec_path(run_id, path, false)?.ok_or_else(|| {
+                    PathMissing {
+                        path: path.to_string(),
+                    }
+                    .diagnostic()
+                })?;
+                self.project_tree_text(projected, path.rsplit_once('/').map_or(path, |(_, b)| b))
             }
         }
     }
@@ -6177,7 +6294,13 @@ impl Driver {
             .find(|(_, role)| *role == crate::exec::Role::Output)
             .map(|(path, _)| path.clone())
             .unwrap_or_default();
-        let identity = pending_exec_identity_hash(&req.command, &plan, cap_hash, &mounts);
+        let identity = pending_exec_identity_hash(
+            &self.store.borrow(),
+            &req.command,
+            &plan,
+            cap_hash,
+            &mounts,
+        );
         let run_id = self.next_run_id;
         self.next_run_id = self.next_run_id.saturating_add(1);
         let timestamp_us = self.next_timestamp();
@@ -6249,6 +6372,7 @@ impl Driver {
                     run.mounts.clone(),
                 )
             };
+            let mounts = self.resolve_exec_mounts(&mounts)?;
             let request = {
                 let run = self.runs.get(&run_id).expect("run checked");
                 MachineExecRequest {
@@ -6342,6 +6466,7 @@ impl Driver {
                 run.mounts.clone(),
             )
         };
+        let mounts = self.resolve_exec_mounts(&mounts)?;
         let tool = tool_for(&command)?;
         let outcome = self.exec_cache.exec(&plan, capability, &mounts, tool)?;
         let event = self
@@ -6391,7 +6516,7 @@ impl Driver {
     fn splice_word_to_command_args(
         &mut self,
         word: i64,
-        mounts: &mut Vec<crate::exec::Mount>,
+        mounts: &mut Vec<ExecMount>,
         prefer_tree_root: bool,
     ) -> Result<Vec<String>, String> {
         let entry = self
@@ -6404,12 +6529,14 @@ impl Driver {
             "Path" | "String" | "Flag" => Ok(vec![
                 String::from_utf8(entry.bytes).map_err(|err| err.to_string())?,
             ]),
+            "Arg" => self.splice_arg_to_command_args(word, mounts),
             schema if self.schemas.is_list(schema) => {
                 match { self.store.borrow().array_entry(word, &self.schemas)? } {
                     ArrayEntry::Words { words, .. } => {
                         let mut args = Vec::new();
                         for word in words {
-                            args.extend(self.splice_word_to_command_args(word, mounts, false)?);
+                            let nested = self.splice_word_to_command_args(word, mounts, false)?;
+                            append_spliced_command_args(nested, &mut args)?;
                         }
                         Ok(args)
                     }
@@ -6436,11 +6563,78 @@ impl Driver {
                 } else {
                     root.clone()
                 };
-                mounts.push(crate::exec::Mount { at: root, tree });
+                mounts.push(ExecMount::Concrete(crate::exec::Mount { at: root, tree }));
                 Ok(vec![text])
             }
             other => Err(format!("cannot splice {other} into a command")),
         }
+    }
+
+    fn splice_arg_to_command_args(
+        &mut self,
+        word: i64,
+        mounts: &mut Vec<ExecMount>,
+    ) -> Result<Vec<String>, String> {
+        let entry = self
+            .store
+            .borrow()
+            .entry(word)
+            .cloned()
+            .ok_or_else(|| format!("store handle {word}"))?;
+        let descriptor = self
+            .descriptors
+            .get("Arg")
+            .ok_or_else(|| "missing Arg descriptor".to_string())?;
+        let selector = read_variant_tag(&entry.bytes, descriptor);
+        match selector {
+            0 => {
+                let value =
+                    read_frame_word(&entry.bytes, field_offset(descriptor, &entry.bytes, 0));
+                Ok(vec![self.store.borrow().string_value(value, "String")?])
+            }
+            1 => {
+                let value =
+                    read_frame_word(&entry.bytes, field_offset(descriptor, &entry.bytes, 0));
+                Ok(vec![self.store.borrow().string_value(value, "Path")?])
+            }
+            2 => {
+                let tree = read_frame_word(&entry.bytes, field_offset(descriptor, &entry.bytes, 0));
+                let subpath =
+                    read_frame_word(&entry.bytes, field_offset(descriptor, &entry.bytes, 1));
+                let subpath = self.store.borrow().string_value(subpath, "Path")?;
+                let root = format!("/m/{}", mounts.len());
+                let text = if subpath.is_empty() {
+                    root.clone()
+                } else {
+                    format!("{root}/{}", subpath.trim_start_matches('/'))
+                };
+                mounts.push(ExecMount::PendingTree { at: root, tree });
+                Ok(vec![text])
+            }
+            other => Err(format!("unknown Arg selector {other}")),
+        }
+    }
+
+    fn resolve_exec_mounts(
+        &mut self,
+        mounts: &[ExecMount],
+    ) -> Result<Vec<crate::exec::Mount>, String> {
+        mounts
+            .iter()
+            .map(|mount| match mount {
+                ExecMount::Concrete(mount) => Ok(mount.clone()),
+                ExecMount::PendingTree { at, tree } => {
+                    let forced = self.force_tree_handle(*tree)?;
+                    let TreeEntry::Concrete(tree) = self.store.borrow().tree_entry(forced)? else {
+                        return Err("forced command tree stayed pending".into());
+                    };
+                    Ok(crate::exec::Mount {
+                        at: at.clone(),
+                        tree,
+                    })
+                }
+            })
+            .collect()
     }
 
     fn fetch_request(&mut self, req: FetchRequest) -> Result<(usize, i64), String> {
@@ -6900,19 +7094,22 @@ impl Driver {
 
 enum Burst {
     Done(i64),
-    Pending {
-        new_requests: Vec<InvokeRequest>,
-        project_requests: Vec<ProjectRequest>,
-        exec_requests: Vec<ExecRequest>,
-        fetch_requests: Vec<FetchRequest>,
-        doc_parse_requests: Vec<DocParseRequest>,
-        crate_archive_requests: Vec<CrateArchiveRequest>,
-        option_unwraps: Vec<OptionUnwrapRequest>,
-        pending_coercions: Vec<PendingCoerceRequest>,
-        pending_invokes: Vec<PendingInvokeRequest>,
-        parked_input: usize,
-    },
+    Pending(Box<BurstPending>),
     Error(String),
+}
+
+struct BurstPending {
+    new_requests: Vec<InvokeRequest>,
+    project_requests: Vec<ProjectRequest>,
+    text_project_requests: Vec<TextProjectRequest>,
+    exec_requests: Vec<ExecRequest>,
+    fetch_requests: Vec<FetchRequest>,
+    doc_parse_requests: Vec<DocParseRequest>,
+    crate_archive_requests: Vec<CrateArchiveRequest>,
+    option_unwraps: Vec<OptionUnwrapRequest>,
+    pending_coercions: Vec<PendingCoerceRequest>,
+    pending_invokes: Vec<PendingInvokeRequest>,
+    parked_input: usize,
 }
 
 enum PendingForce {
@@ -10515,10 +10712,11 @@ fn capability_hash(command: &str, fingerprint: &str) -> u64 {
 }
 
 fn pending_exec_identity_hash(
+    store: &ValueStore,
     command: &str,
     plan: &crate::exec::ExecPlan,
     capability: u64,
-    mounts: &[crate::exec::Mount],
+    mounts: &[ExecMount],
 ) -> ContentHash {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"vix-pending-exec");
@@ -10526,8 +10724,22 @@ fn pending_exec_identity_hash(
     hasher.update(plan.identity_hash().as_ref());
     hasher.update(&capability.to_le_bytes());
     for mount in mounts {
-        hasher.update(mount.at.as_bytes());
-        hasher.update(mount.tree.fingerprint().as_ref());
+        match mount {
+            ExecMount::Concrete(mount) => {
+                hasher.update(&[0]);
+                hasher.update(mount.at.as_bytes());
+                hasher.update(mount.tree.fingerprint().as_ref());
+            }
+            ExecMount::PendingTree { at, tree } => {
+                hasher.update(&[1]);
+                hasher.update(at.as_bytes());
+                if let Some(entry) = store.entry(*tree) {
+                    hasher.update(entry.content_hash.as_ref());
+                } else {
+                    hasher.update(&tree.to_le_bytes());
+                }
+            }
+        }
     }
     finish_hash(hasher)
 }

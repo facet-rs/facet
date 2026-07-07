@@ -1,4 +1,4 @@
-use vix::{Tree, Target, Path, Os, Map, Version};
+use vix::{Tree, Target, Path, Os, Map, Version, Arg};
 use caps::Rustc;
 
 fn doc_string(doc: Doc, key: String) -> String {
@@ -1126,29 +1126,26 @@ fn solution_artifact_ref(index: Index, result: SolveResult, targets: UnitTargetT
     }
 }
 
-// PIN exec-argv-interpolation-gap:
-//   desired: Arg::Interpolation { tree: solution_unit_built(ref.producer), subpath: ref.subpath }
-//   current one/two-dep shim: emit "name=" here and let the command splice the producing Tree.
-//   current variable-length repro: flattening to "name=/m/0/file" loses the tree interpolation edge.
 fn argv_extern_prefix_for_artifact(artifact: UnitArtifactRef) -> String {
     artifact.extern_name + "="
 }
 
-fn argv_extern_arg_for_artifact(artifact: UnitArtifactRef) -> String {
-    artifact.extern_name + "=/m/0/" + artifact.compat_file
+fn argv_extern_interpolation_for_artifact(artifact: UnitArtifactRef, tree: Tree) -> Arg {
+    Arg::Interpolation { tree: tree, subpath: artifact.subpath }
 }
 
-fn solution_extern_args(index: Index, result: SolveResult, targets: UnitTargetTable, source: Tree, target_name: String, deps: [Int], mode: String, out: [String]) -> [String] {
+fn solution_extern_args(target: Target, index: Index, result: SolveResult, targets: UnitTargetTable, source: Tree, target_name: String, deps: [Int], mode: String, out: [Arg]) -> [Arg] {
     match deps.len() == 0 {
         true => out,
-        false => solution_extern_args_tuple(index, result, targets, source, target_name, deps.pop(), mode, out),
+        false => solution_extern_args_tuple(target, index, result, targets, source, target_name, deps.pop(), mode, out),
     }
 }
 
-fn solution_extern_args_tuple(index: Index, result: SolveResult, targets: UnitTargetTable, source: Tree, target_name: String, popped: (Int, [Int]), mode: String, out: [String]) -> [String] {
+fn solution_extern_args_tuple(target: Target, index: Index, result: SolveResult, targets: UnitTargetTable, source: Tree, target_name: String, popped: (Int, [Int]), mode: String, out: [Arg]) -> [Arg] {
     let artifact = solution_artifact_ref(index, result, targets, source, target_name, popped.0, mode);
-    let next = out.push("--extern").push(argv_extern_arg_for_artifact(artifact));
-    solution_extern_args(index, result, targets, source, target_name, popped.1, mode, next)
+    let built = solution_unit_built(target, source, index, result, targets, target_name, popped.0, mode);
+    let next = out.push(Arg::Str("--extern")).push(Arg::Str(argv_extern_prefix_for_artifact(artifact))).push(argv_extern_interpolation_for_artifact(artifact, built));
+    solution_extern_args(target, index, result, targets, source, target_name, popped.1, mode, next)
 }
 
 fn solution_lib_no_deps(target: Target, source: Tree, unit: ResolvedUnit) -> Tree {
@@ -1161,9 +1158,10 @@ fn solution_lib_with_one_dep(target: Target, source: Tree, index: Index, result:
     let edition = doc_string(package_doc(manifest), "edition");
     let deps = solution_dependency_tree(target, source, index, result, targets, target_name, unit, mode);
     let dep_ref = solution_artifact_ref(index, result, targets, source, target_name, dep, mode);
-    let dep_artifact = solution_unit_artifact(target, source, index, result, targets, target_name, dep, mode);
+    let dep_built = solution_unit_built(target, source, index, result, targets, target_name, dep, mode);
     let dep_extern = argv_extern_prefix_for_artifact(dep_ref);
     let profile_args = rustc_profile_args(unit.profile);
+    let dep_arg = argv_extern_interpolation_for_artifact(dep_ref, dep_built);
 
     rustc! {
         --crate-name {unit.name}
@@ -1172,7 +1170,7 @@ fn solution_lib_with_one_dep(target: Target, source: Tree, index: Index, result:
         {profile_args}
         --emit=metadata={unit.metadata},link={unit.link}
         -L dependency={deps}
-        --extern {dep_extern}{dep_artifact}
+        --extern {dep_extern}{dep_arg}
         {manifest / unit.source}
     }
 }
@@ -1194,9 +1192,10 @@ fn solution_bin_check_with_one_dep(target: Target, source: Tree, index: Index, r
     let edition = doc_string(package_doc(manifest), "edition");
     let deps = solution_dependency_tree(target, source, index, result, targets, target_name, unit, "metadata");
     let dep_ref = solution_artifact_ref(index, result, targets, source, target_name, dep, "metadata");
-    let dep_artifact = solution_unit_artifact(target, source, index, result, targets, target_name, dep, "metadata");
+    let dep_built = solution_unit_built(target, source, index, result, targets, target_name, dep, "metadata");
     let dep_extern = argv_extern_prefix_for_artifact(dep_ref);
     let profile_args = rustc_profile_args(unit.profile);
+    let dep_arg = argv_extern_interpolation_for_artifact(dep_ref, dep_built);
 
     rustc! {
         --crate-name {unit.name}
@@ -1205,7 +1204,7 @@ fn solution_bin_check_with_one_dep(target: Target, source: Tree, index: Index, r
         {profile_args}
         --emit=metadata={unit.metadata}
         -L dependency={deps}
-        --extern {dep_extern}{dep_artifact}
+        --extern {dep_extern}{dep_arg}
         {manifest / unit.source}
     }
 }
@@ -1221,11 +1220,13 @@ fn solution_bin_check_with_two_dep_ids(target: Target, source: Tree, index: Inde
     let deps = solution_dependency_tree(target, source, index, result, targets, target_name, unit, "metadata");
     let dep_a_ref = solution_artifact_ref(index, result, targets, source, target_name, dep_a, "metadata");
     let dep_b_ref = solution_artifact_ref(index, result, targets, source, target_name, dep_b, "metadata");
-    let dep_a_artifact = solution_unit_artifact(target, source, index, result, targets, target_name, dep_a, "metadata");
-    let dep_b_artifact = solution_unit_artifact(target, source, index, result, targets, target_name, dep_b, "metadata");
+    let dep_a_built = solution_unit_built(target, source, index, result, targets, target_name, dep_a, "metadata");
+    let dep_b_built = solution_unit_built(target, source, index, result, targets, target_name, dep_b, "metadata");
     let dep_a_extern = argv_extern_prefix_for_artifact(dep_a_ref);
     let dep_b_extern = argv_extern_prefix_for_artifact(dep_b_ref);
     let profile_args = rustc_profile_args(unit.profile);
+    let dep_a_arg = argv_extern_interpolation_for_artifact(dep_a_ref, dep_a_built);
+    let dep_b_arg = argv_extern_interpolation_for_artifact(dep_b_ref, dep_b_built);
 
     rustc! {
         --crate-name {unit.name}
@@ -1234,8 +1235,8 @@ fn solution_bin_check_with_two_dep_ids(target: Target, source: Tree, index: Inde
         {profile_args}
         --emit=metadata={unit.metadata}
         -L dependency={deps}
-        --extern {dep_a_extern}{dep_a_artifact}
-        --extern {dep_b_extern}{dep_b_artifact}
+        --extern {dep_a_extern}{dep_a_arg}
+        --extern {dep_b_extern}{dep_b_arg}
         {manifest / unit.source}
     }
 }
@@ -1260,9 +1261,10 @@ fn solution_bin_link_with_one_dep(target: Target, source: Tree, index: Index, re
     let edition = doc_string(package_doc(manifest), "edition");
     let deps = solution_dependency_tree(target, source, index, result, targets, target_name, unit, "link");
     let dep_ref = solution_artifact_ref(index, result, targets, source, target_name, dep, "link");
-    let dep_artifact = solution_unit_artifact(target, source, index, result, targets, target_name, dep, "link");
+    let dep_built = solution_unit_built(target, source, index, result, targets, target_name, dep, "link");
     let dep_extern = argv_extern_prefix_for_artifact(dep_ref);
     let profile_args = rustc_profile_args(unit.profile);
+    let dep_arg = argv_extern_interpolation_for_artifact(dep_ref, dep_built);
 
     rustc! {
         --crate-name {unit.name}
@@ -1271,7 +1273,7 @@ fn solution_bin_link_with_one_dep(target: Target, source: Tree, index: Index, re
         {profile_args}
         --emit=link={unit.link}
         -L dependency={deps}
-        --extern {dep_extern}{dep_artifact}
+        --extern {dep_extern}{dep_arg}
         {manifest / unit.source}
     }
 }
@@ -1287,11 +1289,13 @@ fn solution_bin_link_with_two_dep_ids(target: Target, source: Tree, index: Index
     let deps = solution_dependency_tree(target, source, index, result, targets, target_name, unit, "link");
     let dep_a_ref = solution_artifact_ref(index, result, targets, source, target_name, dep_a, "link");
     let dep_b_ref = solution_artifact_ref(index, result, targets, source, target_name, dep_b, "link");
-    let dep_a_artifact = solution_unit_artifact(target, source, index, result, targets, target_name, dep_a, "link");
-    let dep_b_artifact = solution_unit_artifact(target, source, index, result, targets, target_name, dep_b, "link");
+    let dep_a_built = solution_unit_built(target, source, index, result, targets, target_name, dep_a, "link");
+    let dep_b_built = solution_unit_built(target, source, index, result, targets, target_name, dep_b, "link");
     let dep_a_extern = argv_extern_prefix_for_artifact(dep_a_ref);
     let dep_b_extern = argv_extern_prefix_for_artifact(dep_b_ref);
     let profile_args = rustc_profile_args(unit.profile);
+    let dep_a_arg = argv_extern_interpolation_for_artifact(dep_a_ref, dep_a_built);
+    let dep_b_arg = argv_extern_interpolation_for_artifact(dep_b_ref, dep_b_built);
 
     rustc! {
         --crate-name {unit.name}
@@ -1300,8 +1304,8 @@ fn solution_bin_link_with_two_dep_ids(target: Target, source: Tree, index: Index
         {profile_args}
         --emit=link={unit.link}
         -L dependency={deps}
-        --extern {dep_a_extern}{dep_a_artifact}
-        --extern {dep_b_extern}{dep_b_artifact}
+        --extern {dep_a_extern}{dep_a_arg}
+        --extern {dep_b_extern}{dep_b_arg}
         {manifest / unit.source}
     }
 }
