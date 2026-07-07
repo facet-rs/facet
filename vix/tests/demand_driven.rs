@@ -990,6 +990,7 @@ pub fn main() -> Int {
 fn tail_loop_emits_one_demand_per_entry_zero_per_iteration() {
     for lane in lanes() {
         let mut machine = load_with_lane(countdown_tail_source(), lane);
+        assert!(machine.diagnostics().is_empty(), "{lane:?}");
         assert_eq!(machine.demand_i64("countdown", vec![12, 0]).unwrap(), 12);
         assert_eq!(demanded_count(&machine, "countdown"), 1, "{lane:?}");
         assert_eq!(spawned_count(&machine, "countdown"), 1, "{lane:?}");
@@ -1192,6 +1193,14 @@ pub fn sum(n: Int) -> Int {
 "#;
     for lane in lanes() {
         let mut machine = load_with_lane(src, lane);
+        assert!(
+            machine.diagnostics().iter().any(|diagnostic| {
+                diagnostic.contains("self-call at ")
+                    && diagnostic.contains("is a demand boundary (not tail position) - not looped")
+            }),
+            "{lane:?}: {:?}",
+            machine.diagnostics()
+        );
         assert_eq!(machine.demand_i64("sum", vec![6]).unwrap(), 21, "{lane:?}");
         assert_eq!(demanded_count(&machine, "sum"), 7, "{lane:?}");
         assert_eq!(spawned_count(&machine, "sum"), 7, "{lane:?}");

@@ -64,6 +64,7 @@ pub struct Machine {
     source: String,
     module_hash: Vec<u8>,
     lower_options: LowerOptions,
+    diagnostics: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -143,6 +144,7 @@ impl Machine {
             source,
             module_hash: c.module_hash,
             lower_options,
+            diagnostics: c.diagnostics,
         })
     }
 
@@ -192,6 +194,7 @@ impl Machine {
         self.source = modules.get(root).cloned().unwrap_or_default();
         self.modules = modules;
         self.module_hash = c.module_hash;
+        self.diagnostics = c.diagnostics;
 
         let after = self.fn_hashes();
         let changed = before
@@ -404,6 +407,10 @@ impl Machine {
         self.reload_modules(&root, modules)
     }
 
+    pub fn diagnostics(&self) -> &[String] {
+        &self.diagnostics
+    }
+
     pub fn entry_param_schemas(&self, name: &str) -> Option<&[String]> {
         self.fn_params.get(name).map(Vec::as_slice)
     }
@@ -571,6 +578,7 @@ struct Compiled {
     schema_refs: HashMap<String, i64>,
     literal_handles: LiteralHandleMaps,
     module_hash: Vec<u8>,
+    diagnostics: Vec<String>,
 }
 
 /// Compile a module set into a lowered program: the whole of loading a vix
@@ -655,10 +663,17 @@ fn compile_module_set(
 
     let mut task_fns = Vec::with_capacity(names.len());
     let mut lowered = Vec::with_capacity(names.len());
+    let mut diagnostics = Vec::new();
     for (ix, name) in names.iter().enumerate() {
         let item = &tables.fns[*name];
         let hash = tables.fn_hashes[*name];
         let _ = lower_options.force_tail_invoke;
+        diagnostics.extend(tail_self_call_diagnostics(
+            item,
+            &tables,
+            &tables.fn_modules[*name],
+            name,
+        ));
         let (task_fn, info) = if parked_generic_or_fn_typed(item) {
             parked_stub(item)?
         } else {
@@ -732,6 +747,7 @@ fn compile_module_set(
         schema_refs,
         literal_handles: handles,
         module_hash,
+        diagnostics,
     })
 }
 
@@ -1607,6 +1623,335 @@ fn collect_expr_identifiers(expr: &ast::Expr, out: &mut BTreeSet<String>) {
         | ast::Expr::Path(_)
         | ast::Expr::Number(_)
         | ast::Expr::Bool(_) => {}
+    }
+}
+
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TailPosition {
+    Tail,
+    NonTail,
+}
+
+fn tail_self_call_diagnostics(
+    item: &ast::FnItem,
+    tables: &ModuleTables,
+    current_module: &str,
+    fn_name: &str,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    collect_tail_self_calls_in_block(&item.body, tables, current_module, fn_name, &mut out);
+    out
+}
+
+fn collect_tail_self_calls_in_block(
+    block: &ast::Block,
+    tables: &ModuleTables,
+    current_module: &str,
+    fn_name: &str,
+    out: &mut Vec<String>,
+) {
+    for stmt in &block.stmts {
+        match stmt {
+            ast::Stmt::Let(stmt) => collect_tail_self_calls_expr(
+                &stmt.value,
+                TailPosition::NonTail,
+                tables,
+                current_module,
+                fn_name,
+                out,
+            ),
+            ast::Stmt::Expr(stmt) => collect_tail_self_calls_expr(
+                &stmt.expr,
+                TailPosition::NonTail,
+                tables,
+                current_module,
+                fn_name,
+                out,
+            ),
+        }
+    }
+    if let Some(tail) = &block.tail {
+        collect_tail_self_calls_expr(
+            tail,
+            TailPosition::Tail,
+            tables,
+            current_module,
+            fn_name,
+            out,
+        );
+    }
+}
+
+fn collect_tail_self_calls_expr(
+    expr: &ast::Expr,
+    position: TailPosition,
+    tables: &ModuleTables,
+    current_module: &str,
+    fn_name: &str,
+    out: &mut Vec<String>,
+) {
+    match expr {
+        ast::Expr::Call(call) => {
+            if position == TailPosition::NonTail
+                && call_resolves_to(call, tables, current_module, fn_name)
+            {
+                let span = expr_span(expr);
+                out.push(format!(
+                    "self-call at {}..{} is a demand boundary (not tail position) - not looped",
+                    span.start, span.end
+                ));
+            }
+            collect_tail_self_calls_args(&call.args, tables, current_module, fn_name, out);
+        }
+        ast::Expr::Match(m) => {
+            collect_tail_self_calls_expr(
+                &m.scrutinee,
+                TailPosition::NonTail,
+                tables,
+                current_module,
+                fn_name,
+                out,
+            );
+            for arm in &m.arms {
+                if let Some(guard) = &arm.guard {
+                    collect_tail_self_calls_expr(
+                        guard,
+                        TailPosition::NonTail,
+                        tables,
+                        current_module,
+                        fn_name,
+                        out,
+                    );
+                }
+                collect_tail_self_calls_expr(
+                    &arm.value,
+                    position,
+                    tables,
+                    current_module,
+                    fn_name,
+                    out,
+                );
+            }
+        }
+        ast::Expr::Paren(paren) => collect_tail_self_calls_expr(
+            &paren.inner,
+            position,
+            tables,
+            current_module,
+            fn_name,
+            out,
+        ),
+        ast::Expr::Binary(binary) => {
+            collect_tail_self_calls_expr(
+                &binary.left,
+                TailPosition::NonTail,
+                tables,
+                current_module,
+                fn_name,
+                out,
+            );
+            collect_tail_self_calls_expr(
+                &binary.right,
+                TailPosition::NonTail,
+                tables,
+                current_module,
+                fn_name,
+                out,
+            );
+        }
+        ast::Expr::Unary(unary) => collect_tail_self_calls_expr(
+            &unary.operand,
+            TailPosition::NonTail,
+            tables,
+            current_module,
+            fn_name,
+            out,
+        ),
+        ast::Expr::MethodCall(call) => {
+            collect_tail_self_calls_expr(
+                &call.receiver,
+                TailPosition::NonTail,
+                tables,
+                current_module,
+                fn_name,
+                out,
+            );
+            collect_tail_self_calls_args(&call.args, tables, current_module, fn_name, out);
+        }
+        ast::Expr::Field(field) => collect_tail_self_calls_expr(
+            &field.receiver,
+            TailPosition::NonTail,
+            tables,
+            current_module,
+            fn_name,
+            out,
+        ),
+        ast::Expr::StructLit(lit) => {
+            for field in &lit.fields {
+                collect_tail_self_calls_expr(
+                    &field.value,
+                    TailPosition::NonTail,
+                    tables,
+                    current_module,
+                    fn_name,
+                    out,
+                );
+            }
+            for spread in &lit.spreads {
+                if let Some(base) = &spread.base {
+                    collect_tail_self_calls_expr(
+                        base,
+                        TailPosition::NonTail,
+                        tables,
+                        current_module,
+                        fn_name,
+                        out,
+                    );
+                }
+            }
+        }
+        ast::Expr::Map(map) => {
+            for entry in &map.entries {
+                collect_tail_self_calls_expr(
+                    &entry.key,
+                    TailPosition::NonTail,
+                    tables,
+                    current_module,
+                    fn_name,
+                    out,
+                );
+                collect_tail_self_calls_expr(
+                    &entry.value,
+                    TailPosition::NonTail,
+                    tables,
+                    current_module,
+                    fn_name,
+                    out,
+                );
+            }
+        }
+        ast::Expr::Tuple(tuple) => {
+            for elem in &tuple.elems {
+                collect_tail_self_calls_expr(
+                    elem,
+                    TailPosition::NonTail,
+                    tables,
+                    current_module,
+                    fn_name,
+                    out,
+                );
+            }
+        }
+        ast::Expr::Array(array) => {
+            for elem in &array.elems {
+                if let ast::ArrayElem::Expr(expr) = elem {
+                    collect_tail_self_calls_expr(
+                        expr,
+                        TailPosition::NonTail,
+                        tables,
+                        current_module,
+                        fn_name,
+                        out,
+                    );
+                }
+            }
+        }
+        ast::Expr::Closure(closure) => collect_tail_self_calls_expr(
+            &closure.body,
+            TailPosition::NonTail,
+            tables,
+            current_module,
+            fn_name,
+            out,
+        ),
+        ast::Expr::Command(command) => {
+            for part in &command.parts {
+                if let ast::CommandPart::Splice(splice) = part {
+                    collect_tail_self_calls_expr(
+                        &splice.expr,
+                        TailPosition::NonTail,
+                        tables,
+                        current_module,
+                        fn_name,
+                        out,
+                    );
+                }
+            }
+        }
+        ast::Expr::Scoped(_)
+        | ast::Expr::Identifier(_)
+        | ast::Expr::Template(_)
+        | ast::Expr::Str(_)
+        | ast::Expr::Path(_)
+        | ast::Expr::Number(_)
+        | ast::Expr::Bool(_) => {}
+    }
+}
+
+fn collect_tail_self_calls_args(
+    args: &ast::ArgList,
+    tables: &ModuleTables,
+    current_module: &str,
+    fn_name: &str,
+    out: &mut Vec<String>,
+) {
+    for arg in &args.args {
+        match arg {
+            ast::Arg::Expr(expr) => collect_tail_self_calls_expr(
+                expr,
+                TailPosition::NonTail,
+                tables,
+                current_module,
+                fn_name,
+                out,
+            ),
+            ast::Arg::Kwarg(kwarg) => collect_tail_self_calls_expr(
+                &kwarg.value,
+                TailPosition::NonTail,
+                tables,
+                current_module,
+                fn_name,
+                out,
+            ),
+            ast::Arg::Partial(_) => {}
+        }
+    }
+}
+
+fn call_resolves_to(
+    call: &ast::Call,
+    tables: &ModuleTables,
+    current_module: &str,
+    fn_name: &str,
+) -> bool {
+    let ast::PathRef::Identifier(name) = &call.callee else {
+        return false;
+    };
+    tables.resolve_fn(current_module, &name.value) == Some(fn_name)
+}
+
+fn expr_span(expr: &ast::Expr) -> ast::Span {
+    match expr {
+        ast::Expr::Binary(expr) => expr.span,
+        ast::Expr::Unary(expr) => expr.span,
+        ast::Expr::Call(expr) => expr.span,
+        ast::Expr::MethodCall(expr) => expr.span,
+        ast::Expr::Field(expr) => expr.span,
+        ast::Expr::Match(expr) => expr.span,
+        ast::Expr::Closure(expr) => expr.span,
+        ast::Expr::Command(expr) => expr.span,
+        ast::Expr::StructLit(expr) => expr.span,
+        ast::Expr::Map(expr) => expr.span,
+        ast::Expr::Tuple(expr) => expr.span,
+        ast::Expr::Array(expr) => expr.span,
+        ast::Expr::Paren(expr) => expr.span,
+        ast::Expr::Scoped(expr) => expr.span,
+        ast::Expr::Identifier(expr)
+        | ast::Expr::Template(expr)
+        | ast::Expr::Str(expr)
+        | ast::Expr::Path(expr)
+        | ast::Expr::Number(expr) => expr.span,
+        ast::Expr::Bool(expr) => expr.span,
     }
 }
 
