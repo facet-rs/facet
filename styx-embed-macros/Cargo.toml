@@ -1,6 +1,6 @@
 [package]
 name = "styx-embed-macros"
-version = "5.0.0-rc.5"
+version = "5.0.0-rc.6"
 edition.workspace = true
 rust-version.workspace = true
 description = "Proc macros for embedding Styx schemas in binaries"

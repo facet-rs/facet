@@ -1,6 +1,6 @@
 [package]
 name = "weavy"
-version = "0.2.2"
+version = "0.3.0"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true

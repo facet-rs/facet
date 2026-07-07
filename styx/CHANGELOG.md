@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [5.0.0-rc.6](https://github.com/facet-rs/facet/compare/styx-cli-v5.0.0-rc.5...styx-cli-v5.0.0-rc.6) - 2026-07-05
+
+### Other
+
+- update Cargo.lock dependencies
+
 ## [5.0.0-rc.5](https://github.com/facet-rs/facet/compare/facet-styx-v5.0.0-rc.4...facet-styx-v5.0.0-rc.5) - 2026-06-28
 
 ### Fixed

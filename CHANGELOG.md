@@ -7,6 +7,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-axum-v0.50.0-rc.5...facet-axum-v0.50.0-rc.6) - 2026-07-05
+
+### Other
+
+- update Cargo.toml dependencies
+
+## [0.3.0](https://github.com/facet-rs/facet/compare/weavy-v0.2.2...weavy-v0.3.0) - 2026-07-05
+
+### Other
+
+- oci() artifact probe (images as merged trees) ([#2434](https://github.com/facet-rs/facet/pull/2434))
+- vix + fable on the snark/weavy substrate: demand-driven build language, typed frames, one codegen ([#2431](https://github.com/facet-rs/facet/pull/2431))
+- reuse hostcall chain records
+- use weavy hostcall layout facts
+- expose hostcall site count
+- satisfy jit debug clippy
+- Merge branch 'main' into snark-playground-rebased
+- :jit + diagnostics: productionization audit fixes + real docs
+- :jit: DWARF columns; spike: template-as-debug-source + guard/IC-lane DWARF
+- Merge main: PL core's direct-parse default + HostCallChain rebind
+- graduate JIT debug/profile machinery into weavy::jit::{debug,dwarf}
+- Resolve Weavy lowered programs by reference
+- Harden snark LR GLR scaffold
+- Scaffold snark LR/GLR parser path
+
+## [0.50.0-rc.6](https://github.com/facet-rs/facet/compare/facet-macros-impl-v0.50.0-rc.5...facet-macros-impl-v0.50.0-rc.6) - 2026-07-05
+
+### Other
+
+- rustfmt facet-macros + gingembre
+
 ## [0.2.2](https://github.com/facet-rs/facet/compare/weavy-v0.2.1...weavy-v0.2.2) - 2026-06-28
 
 ### Other

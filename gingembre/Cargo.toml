@@ -1,6 +1,6 @@
 [package]
 name = "gingembre"
-version = "0.0.1"
+version = "0.0.2"
 edition = "2024"
 rust-version = "1.92"
 authors = ["Amos Wenger <amos@bearcove.eu>"]
@@ -17,7 +17,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-gingembre-syntax = { path = "../gingembre-syntax", version = "0.0.1" }
+gingembre-syntax = { path = "../gingembre-syntax", version = "0.0.2" }
 camino.workspace = true
 facet.workspace = true
 facet-value.workspace = true
