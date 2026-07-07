@@ -1,4 +1,4 @@
-use vix::{Tree, Target, Path, Os, Map};
+use vix::{Tree, Target, Path, Os, Map, Version};
 use caps::Rustc;
 
 fn doc_string(doc: Doc, key: String) -> String {
@@ -276,8 +276,34 @@ struct ResolvedGraph {
     units: Map<Int, ResolvedUnit>,
 }
 
+struct UnitTarget {
+    kind: String,
+    manifest: Path,
+    source: Path,
+    metadata: Path,
+    link: Path,
+    metadata_file: String,
+    link_file: String,
+}
+
+struct UnitTargetTable {
+    root: Int,
+    targets: Map<Int, UnitTarget>,
+}
+
+struct UnitArtifactRef {
+    producer: Int,
+    extern_name: String,
+    subpath: Path,
+    compat_file: String,
+}
+
 fn resolved_unit(graph: ResolvedGraph, ix: Int) -> ResolvedUnit {
     graph.units.get(ix).unwrap()
+}
+
+fn unit_target(targets: UnitTargetTable, pkg: Int) -> UnitTarget {
+    targets.targets.get(pkg).unwrap()
 }
 
 fn extern_file(unit: ResolvedUnit, mode: String) -> String {
@@ -640,6 +666,331 @@ pub fn crate_resolved_bin_check(target: Target, source: Tree, graph: ResolvedGra
 
 pub fn crate_resolved_bin(target: Target, source: Tree, graph: ResolvedGraph) -> Tree {
     resolved_unit_artifact(target, source, graph, graph.root, "link")
+}
+
+fn selected_contains(selected: Map<Int, Version>, pkg: Int) -> Bool {
+    match selected.get(pkg) {
+        Some(_) => true,
+        None => false,
+    }
+}
+
+fn guard_is_parent_in_graph(index: Index, guard_id: Int, clause_id: Int, parent: Int) -> Bool {
+    match index.guard_clause_ids.get(guard_id).unwrap() == clause_id
+        && index.guard_pkgs.get(guard_id).unwrap() == parent {
+        true => match index.guard_version_values.get(guard_id) {
+            Some(_) => false,
+            None => index.guard_kinds.get(guard_id).unwrap() == 0,
+        },
+        false => false,
+    }
+}
+
+fn clause_has_parent_guard(index: Index, parent: Int, clause_id: Int, guard_ids: [Int]) -> Bool {
+    match guard_ids.len() == 0 {
+        true => false,
+        false => match guard_ids.pop() {
+            popped => match guard_is_parent_in_graph(index, popped.0, clause_id, parent) {
+                true => true,
+                false => clause_has_parent_guard(index, parent, clause_id, popped.1),
+            },
+        },
+    }
+}
+
+fn solution_dependency_clause(index: Index, result: SolveResult, parent: Int, clause_id: Int, target: String) -> Bool {
+    match gate_active_id(index, clause_id, target)
+        && selected_contains(result.selected, parent)
+        && clause_has_parent_guard(index, parent, clause_id, index.guard_ids)
+        && index.consequent_tags.get(clause_id).unwrap() == "in_graph" {
+        true => selected_contains(result.selected, index.consequent_pkgs.get(clause_id).unwrap()),
+        false => false,
+    }
+}
+
+fn solution_dep_ids(index: Index, result: SolveResult, parent: Int, target: String, clause_ids: [Int], out: [Int]) -> [Int] {
+    match clause_ids.len() == 0 {
+        true => out,
+        false => solution_dep_ids_tuple(index, result, parent, target, clause_ids.pop(), out),
+    }
+}
+
+fn solution_dep_ids_tuple(index: Index, result: SolveResult, parent: Int, target: String, popped: (Int, [Int]), out: [Int]) -> [Int] {
+    let next = match solution_dependency_clause(index, result, parent, popped.0, target) {
+        true => out.push(index.consequent_pkgs.get(popped.0).unwrap()),
+        false => out,
+    };
+    solution_dep_ids(index, result, parent, target, popped.1, next)
+}
+
+fn solution_unit(index: Index, result: SolveResult, targets: UnitTargetTable, source: Tree, target: String, pkg: Int) -> ResolvedUnit {
+    let target_shape = unit_target(targets, pkg);
+    let manifest = source / target_shape.manifest;
+    let name = doc_string(package_doc(manifest), "name");
+    ResolvedUnit {
+        name: name,
+        kind: target_shape.kind,
+        manifest: target_shape.manifest,
+        source: target_shape.source,
+        deps: solution_dep_ids(index, result, pkg, target, index.clause_ids, []),
+        metadata: target_shape.metadata,
+        link: target_shape.link,
+        metadata_file: target_shape.metadata_file,
+        link_file: target_shape.link_file,
+    }
+}
+
+fn solution_dependency_artifacts(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, deps: [Int], mode: String, out: [Tree]) -> [Tree] {
+    match deps.len() == 0 {
+        true => out,
+        false => solution_dependency_artifacts_tuple(target, source, index, result, targets, target_name, deps.pop(), mode, out),
+    }
+}
+
+fn solution_dependency_artifacts_tuple(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, popped: (Int, [Int]), mode: String, out: [Tree]) -> [Tree] {
+    let unit = solution_unit(index, result, targets, source, target_name, popped.0);
+    let nested = solution_dependency_artifacts(target, source, index, result, targets, target_name, unit.deps, mode, out);
+    let built = solution_unit_built(target, source, index, result, targets, target_name, popped.0, mode);
+    solution_dependency_artifacts(target, source, index, result, targets, target_name, popped.1, mode, nested.push(built))
+}
+
+fn solution_dependency_tree(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, unit: ResolvedUnit, mode: String) -> Tree {
+    let artifacts: [Tree] = solution_dependency_artifacts(target, source, index, result, targets, target_name, unit.deps, mode, []);
+    artifacts.collect()
+}
+
+fn solution_unit_artifact_path(unit: ResolvedUnit, mode: String) -> Path {
+    match mode == "metadata" {
+        true => unit.metadata,
+        false => unit.link,
+    }
+}
+
+fn solution_artifact_ref(index: Index, result: SolveResult, targets: UnitTargetTable, source: Tree, target_name: String, pkg: Int, mode: String) -> UnitArtifactRef {
+    let unit = solution_unit(index, result, targets, source, target_name, pkg);
+    let compat_file = match mode == "metadata" {
+        true => unit.metadata_file,
+        false => unit.link_file,
+    };
+    UnitArtifactRef {
+        producer: pkg,
+        extern_name: unit.name,
+        subpath: solution_unit_artifact_path(unit, mode),
+        compat_file: compat_file,
+    }
+}
+
+// PIN exec-argv-interpolation-gap:
+//   desired: Arg::Interpolation { tree: solution_unit_built(ref.producer), subpath: ref.subpath }
+//   current one/two-dep shim: emit "name=" here and let the command splice the producing Tree.
+//   current variable-length repro: flattening to "name=/m/0/file" loses the tree interpolation edge.
+fn argv_extern_prefix_for_artifact(artifact: UnitArtifactRef) -> String {
+    artifact.extern_name + "="
+}
+
+fn argv_extern_arg_for_artifact(artifact: UnitArtifactRef) -> String {
+    artifact.extern_name + "=/m/0/" + artifact.compat_file
+}
+
+fn solution_extern_args(index: Index, result: SolveResult, targets: UnitTargetTable, source: Tree, target_name: String, deps: [Int], mode: String, out: [String]) -> [String] {
+    match deps.len() == 0 {
+        true => out,
+        false => solution_extern_args_tuple(index, result, targets, source, target_name, deps.pop(), mode, out),
+    }
+}
+
+fn solution_extern_args_tuple(index: Index, result: SolveResult, targets: UnitTargetTable, source: Tree, target_name: String, popped: (Int, [Int]), mode: String, out: [String]) -> [String] {
+    let artifact = solution_artifact_ref(index, result, targets, source, target_name, popped.0, mode);
+    let next = out.push("--extern").push(argv_extern_arg_for_artifact(artifact));
+    solution_extern_args(index, result, targets, source, target_name, popped.1, mode, next)
+}
+
+fn solution_lib_no_deps(target: Target, source: Tree, unit: ResolvedUnit) -> Tree {
+    generic_lib_no_deps(target, source, unit)
+}
+
+fn solution_lib_with_one_dep(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, unit: ResolvedUnit, mode: String, dep: Int) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let manifest = source / unit.manifest;
+    let edition = doc_string(package_doc(manifest), "edition");
+    let deps = solution_dependency_tree(target, source, index, result, targets, target_name, unit, mode);
+    let dep_ref = solution_artifact_ref(index, result, targets, source, target_name, dep, mode);
+    let dep_artifact = solution_unit_artifact(target, source, index, result, targets, target_name, dep, mode);
+    let dep_extern = argv_extern_prefix_for_artifact(dep_ref);
+
+    rustc! {
+        --crate-name {unit.name}
+        --edition {edition}
+        --crate-type lib
+        --emit=metadata={unit.metadata},link={unit.link}
+        -L dependency={deps}
+        --extern {dep_extern}{dep_artifact}
+        {manifest / unit.source}
+    }
+}
+
+fn solution_lib(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, unit: ResolvedUnit, mode: String) -> Tree {
+    match unit.deps.len() == 0 {
+        true => solution_lib_no_deps(target, source, unit),
+        false => solution_lib_with_one_dep(target, source, index, result, targets, target_name, unit, mode, unit.deps.pop().0),
+    }
+}
+
+fn solution_bin_check_no_deps(target: Target, source: Tree, unit: ResolvedUnit) -> Tree {
+    generic_bin_check_no_deps(target, source, unit)
+}
+
+fn solution_bin_check_with_one_dep(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, unit: ResolvedUnit, dep: Int) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let manifest = source / unit.manifest;
+    let edition = doc_string(package_doc(manifest), "edition");
+    let deps = solution_dependency_tree(target, source, index, result, targets, target_name, unit, "metadata");
+    let dep_ref = solution_artifact_ref(index, result, targets, source, target_name, dep, "metadata");
+    let dep_artifact = solution_unit_artifact(target, source, index, result, targets, target_name, dep, "metadata");
+    let dep_extern = argv_extern_prefix_for_artifact(dep_ref);
+
+    rustc! {
+        --crate-name {unit.name}
+        --edition {edition}
+        --crate-type bin
+        --emit=metadata={unit.metadata}
+        -L dependency={deps}
+        --extern {dep_extern}{dep_artifact}
+        {manifest / unit.source}
+    }
+}
+
+fn solution_bin_check_with_two_deps(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, unit: ResolvedUnit, popped: (Int, [Int])) -> Tree {
+    solution_bin_check_with_two_dep_ids(target, source, index, result, targets, target_name, unit, popped.0, popped.1.pop().0)
+}
+
+fn solution_bin_check_with_two_dep_ids(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, unit: ResolvedUnit, dep_a: Int, dep_b: Int) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let manifest = source / unit.manifest;
+    let edition = doc_string(package_doc(manifest), "edition");
+    let deps = solution_dependency_tree(target, source, index, result, targets, target_name, unit, "metadata");
+    let dep_a_ref = solution_artifact_ref(index, result, targets, source, target_name, dep_a, "metadata");
+    let dep_b_ref = solution_artifact_ref(index, result, targets, source, target_name, dep_b, "metadata");
+    let dep_a_artifact = solution_unit_artifact(target, source, index, result, targets, target_name, dep_a, "metadata");
+    let dep_b_artifact = solution_unit_artifact(target, source, index, result, targets, target_name, dep_b, "metadata");
+    let dep_a_extern = argv_extern_prefix_for_artifact(dep_a_ref);
+    let dep_b_extern = argv_extern_prefix_for_artifact(dep_b_ref);
+
+    rustc! {
+        --crate-name {unit.name}
+        --edition {edition}
+        --crate-type bin
+        --emit=metadata={unit.metadata}
+        -L dependency={deps}
+        --extern {dep_a_extern}{dep_a_artifact}
+        --extern {dep_b_extern}{dep_b_artifact}
+        {manifest / unit.source}
+    }
+}
+
+fn solution_bin_check(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, unit: ResolvedUnit) -> Tree {
+    match unit.deps.len() == 0 {
+        true => solution_bin_check_no_deps(target, source, unit),
+        false => match unit.deps.len() == 1 {
+            true => solution_bin_check_with_one_dep(target, source, index, result, targets, target_name, unit, unit.deps.pop().0),
+            false => solution_bin_check_with_two_deps(target, source, index, result, targets, target_name, unit, unit.deps.pop()),
+        },
+    }
+}
+
+fn solution_bin_link_no_deps(target: Target, source: Tree, unit: ResolvedUnit) -> Tree {
+    generic_bin_link_no_deps(target, source, unit)
+}
+
+fn solution_bin_link_with_one_dep(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, unit: ResolvedUnit, dep: Int) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let manifest = source / unit.manifest;
+    let edition = doc_string(package_doc(manifest), "edition");
+    let deps = solution_dependency_tree(target, source, index, result, targets, target_name, unit, "link");
+    let dep_ref = solution_artifact_ref(index, result, targets, source, target_name, dep, "link");
+    let dep_artifact = solution_unit_artifact(target, source, index, result, targets, target_name, dep, "link");
+    let dep_extern = argv_extern_prefix_for_artifact(dep_ref);
+
+    rustc! {
+        --crate-name {unit.name}
+        --edition {edition}
+        --crate-type bin
+        --emit=link={unit.link}
+        -L dependency={deps}
+        --extern {dep_extern}{dep_artifact}
+        {manifest / unit.source}
+    }
+}
+
+fn solution_bin_link_with_two_deps(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, unit: ResolvedUnit, popped: (Int, [Int])) -> Tree {
+    solution_bin_link_with_two_dep_ids(target, source, index, result, targets, target_name, unit, popped.0, popped.1.pop().0)
+}
+
+fn solution_bin_link_with_two_dep_ids(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, unit: ResolvedUnit, dep_a: Int, dep_b: Int) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let manifest = source / unit.manifest;
+    let edition = doc_string(package_doc(manifest), "edition");
+    let deps = solution_dependency_tree(target, source, index, result, targets, target_name, unit, "link");
+    let dep_a_ref = solution_artifact_ref(index, result, targets, source, target_name, dep_a, "link");
+    let dep_b_ref = solution_artifact_ref(index, result, targets, source, target_name, dep_b, "link");
+    let dep_a_artifact = solution_unit_artifact(target, source, index, result, targets, target_name, dep_a, "link");
+    let dep_b_artifact = solution_unit_artifact(target, source, index, result, targets, target_name, dep_b, "link");
+    let dep_a_extern = argv_extern_prefix_for_artifact(dep_a_ref);
+    let dep_b_extern = argv_extern_prefix_for_artifact(dep_b_ref);
+
+    rustc! {
+        --crate-name {unit.name}
+        --edition {edition}
+        --crate-type bin
+        --emit=link={unit.link}
+        -L dependency={deps}
+        --extern {dep_a_extern}{dep_a_artifact}
+        --extern {dep_b_extern}{dep_b_artifact}
+        {manifest / unit.source}
+    }
+}
+
+fn solution_bin_link(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, unit: ResolvedUnit) -> Tree {
+    match unit.deps.len() == 0 {
+        true => solution_bin_link_no_deps(target, source, unit),
+        false => match unit.deps.len() == 1 {
+            true => solution_bin_link_with_one_dep(target, source, index, result, targets, target_name, unit, unit.deps.pop().0),
+            false => solution_bin_link_with_two_deps(target, source, index, result, targets, target_name, unit, unit.deps.pop()),
+        },
+    }
+}
+
+fn solution_bin(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, unit: ResolvedUnit, mode: String) -> Tree {
+    match mode == "metadata" {
+        true => solution_bin_check(target, source, index, result, targets, target_name, unit),
+        false => solution_bin_link(target, source, index, result, targets, target_name, unit),
+    }
+}
+
+fn solution_unit_built(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, pkg: Int, mode: String) -> Tree {
+    let unit = solution_unit(index, result, targets, source, target_name, pkg);
+    match unit.kind == "lib" {
+        true => solution_lib(target, source, index, result, targets, target_name, unit, mode),
+        false => solution_bin(target, source, index, result, targets, target_name, unit, mode),
+    }
+}
+
+fn solution_unit_artifact(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, pkg: Int, mode: String) -> Tree {
+    let unit = solution_unit(index, result, targets, source, target_name, pkg);
+    let built = solution_unit_built(target, source, index, result, targets, target_name, pkg, mode);
+    built / solution_unit_artifact_path(unit, mode)
+}
+
+pub fn crate_solution_bin_check(target: Target, source: Tree, index: Index, problem: Problem, target_name: String, targets: UnitTargetTable) -> Tree {
+    let result = solve(index, problem, target_name);
+    let root = targets.root;
+    solution_unit_artifact(target, source, index, result, targets, target_name, root, "metadata")
+}
+
+pub fn crate_solution_bin(target: Target, source: Tree, index: Index, problem: Problem, target_name: String, targets: UnitTargetTable) -> Tree {
+    let result = solve(index, problem, target_name);
+    let root = targets.root;
+    solution_unit_artifact(target, source, index, result, targets, target_name, root, "link")
 }
 
 fn build_script_compile(manifest: Tree) -> Tree {
