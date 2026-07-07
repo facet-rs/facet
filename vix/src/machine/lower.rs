@@ -667,7 +667,6 @@ fn compile_module_set(
     for (ix, name) in names.iter().enumerate() {
         let item = &tables.fns[*name];
         let hash = tables.fn_hashes[*name];
-        let _ = lower_options.force_tail_invoke;
         diagnostics.extend(tail_self_call_diagnostics(
             item,
             &tables,
@@ -679,15 +678,17 @@ fn compile_module_set(
         } else {
             FnLowerer::lower(
                 item,
-                &tables,
-                &tables.fn_modules[*name],
-                name,
-                ix,
-                &fn_refs,
-                signatures,
-                &schema_refs,
-                literal_handles,
-                lower_options,
+                LowerEnv {
+                    tables: &tables,
+                    current_module: &tables.fn_modules[*name],
+                    current_fn_name: name,
+                    current_fn_ref: ix,
+                    fn_refs: &fn_refs,
+                    signatures,
+                    schema_refs: &schema_refs,
+                    literal_handles,
+                    lower_options,
+                },
             )
             .map_err(|e| format!("lowering {name}: {e}"))?
         };
@@ -2677,6 +2678,16 @@ struct BoundCall {
     given: usize,
 }
 
+struct BindCallSpec<'a> {
+    fn_name: &'a str,
+    param_names: &'a [String],
+    param_schemas: &'a [String],
+    args: &'a ast::ArgList,
+    start: usize,
+    allow_partial: bool,
+    tail_identifier_uses: Option<&'a HashMap<String, usize>>,
+}
+
 enum TailOutcome {
     Value(ValueSlot),
     Jumped,
@@ -2804,6 +2815,18 @@ struct FnSignatures<'a> {
 
 type Bindings = HashMap<String, BindingCell>;
 
+struct LowerEnv<'a> {
+    tables: &'a ModuleTables,
+    current_module: &'a str,
+    current_fn_name: &'a str,
+    current_fn_ref: usize,
+    fn_refs: &'a HashMap<String, usize>,
+    signatures: FnSignatures<'a>,
+    schema_refs: &'a HashMap<String, i64>,
+    literal_handles: LiteralHandles<'a>,
+    lower_options: LowerOptions,
+}
+
 #[derive(Clone)]
 struct BindingCell(Rc<RefCell<BindingState>>);
 
@@ -2890,27 +2913,16 @@ struct FnLowererSnapshot {
 }
 
 impl<'a> FnLowerer<'a> {
-    fn lower(
-        item: &ast::FnItem,
-        tables: &'a ModuleTables,
-        current_module: &'a str,
-        current_fn_name: &'a str,
-        current_fn_ref: usize,
-        fn_refs: &'a HashMap<String, usize>,
-        signatures: FnSignatures<'a>,
-        schema_refs: &'a HashMap<String, i64>,
-        literal_handles: LiteralHandles<'a>,
-        lower_options: LowerOptions,
-    ) -> Result<(TaskFn, LoweredInfo), String> {
+    fn lower(item: &ast::FnItem, env: LowerEnv<'a>) -> Result<(TaskFn, LoweredInfo), String> {
         let mut this = FnLowerer {
-            tables,
-            current_module,
-            current_fn_name,
-            current_fn_ref,
-            fn_refs,
-            signatures,
-            schema_refs,
-            literal_handles,
+            tables: env.tables,
+            current_module: env.current_module,
+            current_fn_name: env.current_fn_name,
+            current_fn_ref: env.current_fn_ref,
+            fn_refs: env.fn_refs,
+            signatures: env.signatures,
+            schema_refs: env.schema_refs,
+            literal_handles: env.literal_handles,
             slots: HashMap::new(),
             param_slots: Vec::new(),
             next: 0,
@@ -2923,7 +2935,7 @@ impl<'a> FnLowerer<'a> {
             primitive_region: 0,
             next_input_slot: 0,
             consume_receiver: None,
-            force_tail_invoke: lower_options.force_tail_invoke,
+            force_tail_invoke: env.lower_options.force_tail_invoke,
         };
 
         let mut arg_offsets = Vec::new();
@@ -3899,15 +3911,15 @@ impl<'a> FnLowerer<'a> {
                 .get(&resolved_name)
                 .ok_or_else(|| format!("missing param schemas for {resolved_name}"))?
                 .clone();
-            let bound = self.bind_call_args(
-                &resolved_name,
-                &param_names,
-                &param_schemas,
-                &call.args,
-                0,
-                true,
-                None,
-            )?;
+            let bound = self.bind_call_args(BindCallSpec {
+                fn_name: &resolved_name,
+                param_names: &param_names,
+                param_schemas: &param_schemas,
+                args: &call.args,
+                start: 0,
+                allow_partial: true,
+                tail_identifier_uses: None,
+            })?;
             let return_schema = self.signatures.returns[&resolved_name].clone();
             if bound.partial {
                 return self.pending_alloc_for_fn(
@@ -3940,15 +3952,15 @@ impl<'a> FnLowerer<'a> {
             .get(&fn_name)
             .ok_or_else(|| format!("missing param schemas for {fn_name}"))?
             .clone();
-        let bound = self.bind_call_args(
-            &fn_name,
-            &param_names,
-            &param_schemas,
-            &call.args,
-            pending.given,
-            false,
-            None,
-        )?;
+        let bound = self.bind_call_args(BindCallSpec {
+            fn_name: &fn_name,
+            param_names: &param_names,
+            param_schemas: &param_schemas,
+            args: &call.args,
+            start: pending.given,
+            allow_partial: false,
+            tail_identifier_uses: None,
+        })?;
         let value_schema = pending_value_schema(&callee.schema)
             .ok_or_else(|| format!("callee {name} is `{}`, not pending", callee.schema))?
             .to_string();
@@ -4037,15 +4049,15 @@ impl<'a> FnLowerer<'a> {
         }
         let snapshot = self.snapshot();
         let tail_identifier_uses = identifier_uses_in_arg_list(&call.args);
-        let bound = self.bind_call_args(
-            &resolved_name,
-            &param_names,
-            &param_schemas,
-            &call.args,
-            0,
-            false,
-            Some(&tail_identifier_uses),
-        )?;
+        let bound = self.bind_call_args(BindCallSpec {
+            fn_name: &resolved_name,
+            param_names: &param_names,
+            param_schemas: &param_schemas,
+            args: &call.args,
+            start: 0,
+            allow_partial: false,
+            tail_identifier_uses: Some(&tail_identifier_uses),
+        })?;
         if self.emit_self_tail_jump(bound.args, &param_schemas)? {
             Ok(Some(TailOutcome::Jumped))
         } else {
@@ -4093,16 +4105,16 @@ impl<'a> FnLowerer<'a> {
             .ok_or_else(|| format!("unknown fn_ref {fn_ref}"))
     }
 
-    fn bind_call_args(
-        &mut self,
-        fn_name: &str,
-        param_names: &[String],
-        param_schemas: &[String],
-        args: &ast::ArgList,
-        start: usize,
-        allow_partial: bool,
-        tail_identifier_uses: Option<&HashMap<String, usize>>,
-    ) -> Result<BoundCall, String> {
+    fn bind_call_args(&mut self, spec: BindCallSpec<'_>) -> Result<BoundCall, String> {
+        let BindCallSpec {
+            fn_name,
+            param_names,
+            param_schemas,
+            args,
+            start,
+            allow_partial,
+            tail_identifier_uses,
+        } = spec;
         if start > param_names.len() || param_names.len() != param_schemas.len() {
             return Err(format!("bad parameter table for `{fn_name}`"));
         }
@@ -4204,8 +4216,7 @@ impl<'a> FnLowerer<'a> {
         if identifier_uses.get(receiver).copied() != Some(1) {
             return self.expr_expected(expr, expected);
         }
-        let saved_consume_receiver =
-            std::mem::replace(&mut self.consume_receiver, Some(receiver.to_string()));
+        let saved_consume_receiver = self.consume_receiver.replace(receiver.to_string());
         let result = self.expr_expected(expr, expected);
         self.consume_receiver = saved_consume_receiver;
         result
@@ -5785,15 +5796,15 @@ impl<'a> FnLowerer<'a> {
             .get(name)
             .ok_or_else(|| format!("missing param schemas for {name}"))?
             .clone();
-        let bound = self.bind_call_args(
-            name,
-            &param_names,
-            &param_schemas,
-            &call.args,
-            0,
-            false,
-            None,
-        )?;
+        let bound = self.bind_call_args(BindCallSpec {
+            fn_name: name,
+            param_names: &param_names,
+            param_schemas: &param_schemas,
+            args: &call.args,
+            start: 0,
+            allow_partial: false,
+            tail_identifier_uses: None,
+        })?;
         self.pending_alloc_for_fn(fn_ref, value_schema, bound.args, None)
     }
 
