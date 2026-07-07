@@ -22,7 +22,8 @@
 // Version + parse_version come from vix std (vix/std/version.vix) — a plain vix
 // struct (records-at-offsets), parsed by vix over the string primitives. The
 // machine has no version-shaped op.
-use vix::{Version, parse_version, version_lte, Ordering, VersionSet, Map};
+use vix::{Version, parse_version, version_lte, Ordering, VersionSet, Map, Tree, Target};
+use caps::Rustc;
 
 // ---------------------------------------------------------------------------
 // Package identity  (rodin-facts/src/interner.rs: PkgId, CompatClass, SourceIx)
@@ -566,31 +567,103 @@ fn gate_kind_active(kind: String) -> Bool {
     }
 }
 
-fn target_is_unix(target: String) -> Bool {
-    bool_or(target.contains("linux"), target.contains("darwin"))
+fn doc_string(doc: Doc, key: String) -> String {
+    doc.get(key).unwrap()
 }
 
-fn target_is_windows(target: String) -> Bool {
-    target.contains("windows")
+fn doc_field(doc: Doc, key: String) -> Doc {
+    doc.get(key).unwrap()
 }
 
-fn target_atom_matches(expr: String, target: String) -> Bool {
-    match expr.contains("windows") {
-        true => target_is_windows(target),
-        false => match expr.contains("unix") {
-            true => target_is_unix(target),
-            false => match expr.contains("target_family = \"unix\"") {
-                true => target_is_unix(target),
-                false => match expr.contains("target_family = \"windows\"") {
-                    true => target_is_windows(target),
-                    false => match expr.contains("target_os = \"linux\"") {
-                        true => target.contains("linux"),
-                        false => match expr.contains("target_os = \"macos\"") {
-                            true => target.contains("darwin"),
-                            false => match expr.contains("target_arch = \"x86_64\"") {
-                                true => target.contains("x86_64"),
-                                false => expr == target,
-                            },
+fn doc_list_empty(values: Doc) -> Bool {
+    doc_string(values, "tag") == "nil"
+}
+
+fn cfg_fact_key(key: String, value: String) -> String {
+    key + "=" + value
+}
+
+fn cfg_fact_line_key(line: String) -> String {
+    match line.contains("=") {
+        true => cfg_fact_key(line.before("="), line.after("=").after("\"").before("\"")),
+        false => line,
+    }
+}
+
+fn cfg_facts_insert_lines(lines: Doc, facts: Map<String, Bool>) -> Map<String, Bool> {
+    match doc_list_empty(lines) {
+        true => facts,
+        false => cfg_facts_insert_line_node(lines, facts),
+    }
+}
+
+fn cfg_facts_insert_line_node(node: Doc, facts: Map<String, Bool>) -> Map<String, Bool> {
+    let line = doc_string(node, "head");
+    cfg_facts_insert_lines(doc_field(node, "tail"), facts.insert(cfg_fact_line_key(line), true))
+}
+
+fn rustc_cfg_stdout(target_triple: String) -> Tree {
+    let rustc = Rustc::acquire(Target::host());
+    rustc! {
+        --stdout {p"cfg.stdout"}
+        --print cfg
+        --target {target_triple}
+    }
+}
+
+fn rustc_cfg_facts_from_lines(lines: Doc) -> Map<String, Bool> {
+    let facts: Map<String, Bool> = {};
+    cfg_facts_insert_lines(lines, facts)
+}
+
+fn rustc_cfg_facts(target_triple: String) -> Map<String, Bool> {
+    rustc_cfg_facts_from_lines(rustc_cfg(rustc_cfg_stdout(target_triple) / p"cfg.stdout"))
+}
+
+fn cfg_exprs_eval_all(exprs: Doc, facts: Map<String, Bool>, target: String) -> Bool {
+    match doc_list_empty(exprs) {
+        true => true,
+        false => cfg_exprs_eval_all_node(exprs, facts, target),
+    }
+}
+
+fn cfg_exprs_eval_all_node(node: Doc, facts: Map<String, Bool>, target: String) -> Bool {
+    cfg_expr_eval(doc_field(node, "head"), facts, target) && cfg_exprs_eval_all(doc_field(node, "tail"), facts, target)
+}
+
+fn cfg_exprs_eval_any(exprs: Doc, facts: Map<String, Bool>, target: String) -> Bool {
+    match doc_list_empty(exprs) {
+        true => false,
+        false => cfg_exprs_eval_any_node(exprs, facts, target),
+    }
+}
+
+fn cfg_exprs_eval_any_node(node: Doc, facts: Map<String, Bool>, target: String) -> Bool {
+    bool_or(cfg_expr_eval(doc_field(node, "head"), facts, target), cfg_exprs_eval_any(doc_field(node, "tail"), facts, target))
+}
+
+fn cfg_fact_contains(facts: Map<String, Bool>, key: String) -> Bool {
+    match facts.get(key) {
+        Some(_) => true,
+        None => false,
+    }
+}
+
+fn cfg_expr_eval(expr: Doc, facts: Map<String, Bool>, target: String) -> Bool {
+    let tag = doc_string(expr, "tag");
+    match tag == "all" {
+        true => cfg_exprs_eval_all(doc_field(expr, "exprs"), facts, target),
+        false => match tag == "any" {
+            true => cfg_exprs_eval_any(doc_field(expr, "exprs"), facts, target),
+            false => match tag == "not" {
+                true => bool_not(cfg_expr_eval(doc_field(expr, "expr"), facts, target)),
+                false => match tag == "kv" {
+                    true => cfg_fact_contains(facts, cfg_fact_key(doc_string(expr, "key"), doc_string(expr, "value"))),
+                    false => match tag == "atom" {
+                        true => cfg_fact_contains(facts, doc_string(expr, "name")),
+                        false => match tag == "triple" {
+                            true => doc_string(expr, "value") == target,
+                            false => false,
                         },
                     },
                 },
@@ -599,50 +672,8 @@ fn target_atom_matches(expr: String, target: String) -> Bool {
     }
 }
 
-fn target_any_matches(expr: String, target: String) -> Bool {
-    match expr == "" {
-        true => false,
-        false => bool_or4(
-            expr.contains("windows") && target_is_windows(target),
-            expr.contains("unix") && target_is_unix(target),
-            expr.contains("target_os = \"linux\"") && target.contains("linux"),
-            bool_or(
-                expr.contains("target_os = \"macos\"") && target.contains("darwin"),
-                expr.contains("target_arch = \"x86_64\"") && target.contains("x86_64"),
-            ),
-        ),
-    }
-}
-
-fn target_all_matches(expr: String, target: String) -> Bool {
-    target_required_atom_matches(expr, target, "windows", target_is_windows(target))
-        && target_required_atom_matches(expr, target, "unix", target_is_unix(target))
-        && target_required_atom_matches(expr, target, "target_os = \"linux\"", target.contains("linux"))
-        && target_required_atom_matches(expr, target, "target_os = \"macos\"", target.contains("darwin"))
-        && target_required_atom_matches(expr, target, "target_arch = \"x86_64\"", target.contains("x86_64"))
-}
-
-fn target_required_atom_matches(expr: String, target: String, atom: String, matches: Bool) -> Bool {
-    match expr.contains(atom) {
-        true => matches,
-        false => true,
-    }
-}
-
 fn target_matches(expr: String, target: String) -> Bool {
-    match expr == "cfg(any())" {
-        true => false,
-        false => match expr.contains("any(") {
-            true => target_any_matches(expr.after("any(").before(")"), target),
-            false => match expr.contains("all(") {
-                true => target_all_matches(expr.after("all(").before(")"), target),
-                false => match expr.contains("not(") {
-                    true => bool_not(target_atom_matches(expr.after("not(").before(")"), target)),
-                    false => target_atom_matches(expr, target),
-                },
-            },
-        },
-    }
+    cfg_expr_eval(cfg(expr), rustc_cfg_facts(target), target)
 }
 
 fn gate_target_active(target_expr: Option<String>, target: String) -> Bool {

@@ -10,6 +10,8 @@ struct CargoPackage {
 struct CargoDependencyDecl {
     name: String,
     kind: String,
+    target: String,
+    cfg: Doc,
     version_req: String,
     path: String,
     workspace: Bool,
@@ -222,17 +224,39 @@ pub fn package_of(manifest: Tree, workspace: Tree, manifest_path: String) -> Car
 }
 
 fn dependency_table(manifest: Tree, kind: String) -> Doc {
+    manifest_doc(manifest).get(dependency_table_name(kind)).unwrap()
+}
+
+fn dependency_table_name(kind: String) -> String {
     match kind == "build" {
-        true => manifest_doc(manifest).get("build-dependencies").unwrap(),
+        true => "build-dependencies",
         false => match kind == "dev" {
-            true => manifest_doc(manifest).get("dev-dependencies").unwrap(),
-            false => manifest_doc(manifest).get("dependencies").unwrap(),
+            true => "dev-dependencies",
+            false => "dependencies",
         },
     }
 }
 
 fn dependency_doc(manifest: Tree, name: String, kind: String) -> Doc {
     dependency_table(manifest, kind).get(name).unwrap()
+}
+
+fn target_dependency_table(manifest: Tree, target: String, kind: String) -> Doc {
+    manifest_doc(manifest)
+        .get("target")
+        .unwrap()
+        .get(target)
+        .unwrap()
+        .get(dependency_table_name(kind))
+        .unwrap()
+}
+
+fn target_dependency_doc(manifest: Tree, target: String, name: String, kind: String) -> Doc {
+    target_dependency_table(manifest, target, kind).get(name).unwrap()
+}
+
+fn cfg_true() -> Doc {
+    cfg("cfg(all())")
 }
 
 fn workspace_dependency_version(workspace: Tree, name: String) -> String {
@@ -305,6 +329,34 @@ pub fn detailed_dependency_of(
     CargoDependencyDecl {
         name: name,
         kind: kind,
+        target: "",
+        cfg: cfg_true(),
+        version_req: version_req,
+        path: path,
+        workspace: workspace_dep,
+        optional: dependency_optional(dep),
+        default_features: default_features,
+        features: dependency_features(dep),
+    }
+}
+
+pub fn detailed_target_dependency_of(
+    manifest: Tree,
+    workspace: Tree,
+    target: String,
+    name: String,
+    kind: String,
+) -> CargoDependencyDecl {
+    let dep = target_dependency_doc(manifest, target, name, kind);
+    let workspace_dep = dependency_is_workspace(dep);
+    let version_req = dependency_version_req(dep, workspace, name, workspace_dep);
+    let path = dependency_path(dep, workspace, name, workspace_dep);
+    let default_features = dependency_default_features(dep, workspace, name, workspace_dep);
+    CargoDependencyDecl {
+        name: name,
+        kind: kind,
+        target: target,
+        cfg: cfg(target),
         version_req: version_req,
         path: path,
         workspace: workspace_dep,
@@ -320,6 +372,8 @@ pub fn version_dependency_of(manifest: Tree, name: String, kind: String) -> Carg
     CargoDependencyDecl {
         name: name,
         kind: kind,
+        target: "",
+        cfg: cfg_true(),
         version_req: version_req,
         path: "",
         workspace: false,

@@ -4031,6 +4031,8 @@ impl<'a> FnLowerer<'a> {
             "toml" => return self.doc_parse_call(call, 0),
             "json" => return self.doc_parse_call(call, 1),
             "build_directives" => return self.doc_parse_call(call, 2),
+            "cfg" => return self.doc_parse_call(call, 3),
+            "rustc_cfg" => return self.doc_parse_call(call, 4),
             "crate_archive" => return self.crate_archive_call(call),
             "version" => return self.version_call(call),
             "Some" => return self.option_some_call(call),

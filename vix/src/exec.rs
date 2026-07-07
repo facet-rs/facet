@@ -814,7 +814,12 @@ impl Tool for FakeRustc {
             .iter()
             .flat_map(|(arg, role)| role_output_paths(arg, *role))
             .collect();
-        if outputs.is_empty() {
+        let stdout_paths: Vec<String> = plan
+            .argv
+            .iter()
+            .flat_map(|(arg, role)| role_stdout_paths(arg, *role))
+            .collect();
+        if outputs.is_empty() && stdout_paths.is_empty() {
             return Err("rustc: no output".into());
         }
         let mut digest = DefaultHasher::new();
@@ -871,6 +876,24 @@ impl Tool for FakeRustc {
             };
             tree.entries
                 .insert(output, format!("{kind}({digest:016x})"));
+        }
+        for stdout in stdout_paths {
+            let target = plan
+                .argv
+                .windows(2)
+                .find(|pair| pair[0].0 == "--target")
+                .map(|pair| pair[1].0.as_str())
+                .unwrap_or("x86_64-unknown-linux-gnu");
+            let cfg = if target.contains("windows") {
+                "target_arch=\"x86_64\"\ntarget_family=\"windows\"\ntarget_os=\"windows\"\nwindows\n"
+            } else if target.contains("wasm32") {
+                "target_arch=\"wasm32\"\ntarget_family=\"wasm\"\ntarget_os=\"unknown\"\n"
+            } else if target.contains("darwin") || target.contains("apple") {
+                "target_arch=\"aarch64\"\ntarget_family=\"unix\"\ntarget_os=\"macos\"\nunix\n"
+            } else {
+                "target_arch=\"x86_64\"\ntarget_family=\"unix\"\ntarget_os=\"linux\"\nunix\n"
+            };
+            tree.entries.insert(stdout, cfg.to_string());
         }
         Ok(tree)
     }

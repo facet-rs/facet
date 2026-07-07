@@ -188,6 +188,44 @@ fn dependency_declarations_extract_workspace_and_detailed_forms() -> Result<(), 
 }
 
 #[test]
+fn target_dependency_declarations_carry_parsed_cfg_data() -> Result<(), String> {
+    let mut machine = manifest_machine()?;
+    let workspace = intern_tree(&mut machine, workspace_tree())?;
+    let manifest = intern_tree(
+        &mut machine,
+        Tree::of(&[(
+            "Cargo.toml",
+            r#"
+[package]
+name = "target-demo"
+version = "0.1.0"
+edition = "2024"
+
+[target.'cfg(all(unix, target_arch = "x86_64"))'.dependencies]
+libc = "0.2"
+"#,
+        )]),
+    )?;
+
+    let libc = detailed_target_dep(
+        &mut machine,
+        manifest,
+        workspace,
+        r#"cfg(all(unix, target_arch = "x86_64"))"#,
+        "libc",
+        "normal",
+    )?;
+    assert_eq!(field_string(&libc, "name")?, "libc");
+    assert_eq!(field_string(&libc, "version_req")?, "0.2");
+    assert_eq!(
+        field_string(&libc, "target")?,
+        r#"cfg(all(unix, target_arch = "x86_64"))"#
+    );
+    assert_eq!(field_doc_tag(&libc, "cfg")?, "all");
+    Ok(())
+}
+
+#[test]
 fn package_workspace_fields_are_inherited_generically() -> Result<(), String> {
     let mut machine = manifest_machine()?;
     let workspace = intern_tree(&mut machine, workspace_tree())?;
@@ -275,7 +313,7 @@ fn real_workspace_metadata_baseline_is_counted() -> Result<(), String> {
     let vix_member_count = machine.demand_i64("workspace_member_count", vec![workspace])?;
     let workspace_members: BTreeSet<_> = metadata.workspace_members.iter().collect();
     let mut total_oracle_deps = 0usize;
-    let mut target_cfg_unmodeled = 0usize;
+    let mut target_cfg_represented = 0usize;
     let mut before_workspace_allowlist_failures = 0usize;
 
     for package in metadata
@@ -291,7 +329,7 @@ fn real_workspace_metadata_baseline_is_counted() -> Result<(), String> {
         })?;
         before_workspace_allowlist_failures += legacy_workspace_allowlist_failures(&manifest_text);
         total_oracle_deps += package.dependencies.len();
-        target_cfg_unmodeled += package
+        target_cfg_represented += package
             .dependencies
             .iter()
             .filter(|dependency| dependency.target.is_some())
@@ -302,7 +340,7 @@ fn real_workspace_metadata_baseline_is_counted() -> Result<(), String> {
     assert_eq!(vix_member_count, 145);
     assert_eq!(total_oracle_deps, 1122);
     assert_eq!(before_workspace_allowlist_failures, 760);
-    assert_eq!(target_cfg_unmodeled, 55);
+    assert_eq!(target_cfg_represented, 55);
 
     Ok(())
 }
@@ -344,7 +382,7 @@ fn real_workspace_dependency_probe_shard(shard: usize, shards: usize) -> Result<
 
     let workspace_members: BTreeSet<_> = metadata.workspace_members.iter().collect();
     let mut selected_oracle_deps = 0usize;
-    let mut target_cfg_unmodeled = 0usize;
+    let mut target_cfg_remainder = 0usize;
     let mut name_kind_mismatches = 0usize;
     let mut vix_errors = 0usize;
     let mut probed = 0usize;
@@ -375,17 +413,30 @@ fn real_workspace_dependency_probe_shard(shard: usize, shards: usize) -> Result<
                 continue;
             }
             selected_oracle_deps += 1;
-            if dependency.target.is_some() {
-                target_cfg_unmodeled += 1;
-                continue;
-            }
             probed += 1;
             let kind = dependency.kind.as_deref().unwrap_or("normal");
             let key = dependency.key();
-            match detailed_dep(&mut machine, manifest, workspace, key, kind) {
+            let actual = match dependency.target.as_deref() {
+                Some(target) => {
+                    detailed_target_dep(&mut machine, manifest, workspace, target, key, kind)
+                }
+                None => detailed_dep(&mut machine, manifest, workspace, key, kind),
+            };
+            match actual {
                 Ok(actual) => {
                     let actual_name = field_string(&actual, "name")?;
                     let actual_kind = field_string(&actual, "kind")?;
+                    let actual_target = field_string(&actual, "target")?;
+                    if actual_target != dependency.target.as_deref().unwrap_or("") {
+                        target_cfg_remainder += 1;
+                        push_example(
+                            &mut examples,
+                            format!(
+                                "{}:{} expected target {:?}, got {actual_target:?}",
+                                package.name, key, dependency.target
+                            ),
+                        );
+                    }
                     if actual_name != key || actual_kind != kind {
                         name_kind_mismatches += 1;
                         push_example(
@@ -413,7 +464,7 @@ fn real_workspace_dependency_probe_shard(shard: usize, shards: usize) -> Result<
         shards,
         selected_oracle_deps,
         probed,
-        target_cfg_unmodeled,
+        target_cfg_remainder,
         name_kind_mismatches,
         vix_errors,
         examples,
@@ -422,11 +473,8 @@ fn real_workspace_dependency_probe_shard(shard: usize, shards: usize) -> Result<
     assert!(summary.shard < summary.shards, "{summary:#?}");
     assert!(summary.selected_oracle_deps > 0, "{summary:#?}");
     assert!(summary.probed > 0, "{summary:#?}");
-    assert_eq!(
-        summary.selected_oracle_deps,
-        summary.probed + summary.target_cfg_unmodeled,
-        "{summary:#?}"
-    );
+    assert_eq!(summary.selected_oracle_deps, summary.probed, "{summary:#?}");
+    assert_eq!(summary.target_cfg_remainder, 0, "{summary:#?}");
     assert_eq!(summary.name_kind_mismatches, 0, "{summary:#?}");
     assert_eq!(summary.vix_errors, 0, "{summary:#?}");
     assert!(summary.examples.is_empty(), "{summary:#?}");
@@ -452,6 +500,24 @@ fn detailed_dep(
         vec![manifest, workspace, name, kind],
     )?;
     record(machine.render_result("detailed_dependency_of", value)?)
+}
+
+fn detailed_target_dep(
+    machine: &mut Machine,
+    manifest: i64,
+    workspace: i64,
+    target: &str,
+    name: &str,
+    kind: &str,
+) -> Result<BTreeMap<String, RenderedValue>, String> {
+    let target = intern_string(machine, target)?;
+    let name = intern_string(machine, name)?;
+    let kind = intern_string(machine, kind)?;
+    let value = machine.demand_i64(
+        "detailed_target_dependency_of",
+        vec![manifest, workspace, target, name, kind],
+    )?;
+    record(machine.render_result("detailed_target_dependency_of", value)?)
 }
 
 fn intern_tree(machine: &mut Machine, tree: Tree) -> Result<i64, String> {
@@ -519,6 +585,34 @@ fn field_int(fields: &BTreeMap<String, RenderedValue>, name: &str) -> Result<i64
     match fields.get(name) {
         Some(RenderedValue::Int { value }) => Ok(*value),
         other => Err(format!("field {name} was {other:?}, not Int")),
+    }
+}
+
+fn field_doc_tag(fields: &BTreeMap<String, RenderedValue>, name: &str) -> Result<String, String> {
+    match fields.get(name) {
+        Some(RenderedValue::Doc {
+            variant,
+            value: Some(value),
+        }) if variant == "Map" => match &**value {
+            RenderedValue::Map { entries, .. } => entries
+                .iter()
+                .find_map(|entry| match (&entry.key, &entry.value) {
+                    (
+                        RenderedValue::String { value: key },
+                        RenderedValue::Doc {
+                            variant,
+                            value: Some(value),
+                        },
+                    ) if key == "tag" && variant == "String" => match &**value {
+                        RenderedValue::String { value } => Some(Ok(value.clone())),
+                        other => Some(Err(format!("cfg tag rendered as {other:?}"))),
+                    },
+                    _ => None,
+                })
+                .unwrap_or_else(|| Err("cfg doc had no tag".to_string())),
+            other => Err(format!("cfg doc map payload rendered as {other:?}")),
+        },
+        other => Err(format!("field {name} was {other:?}, not Doc::Map")),
     }
 }
 
@@ -633,7 +727,7 @@ struct RealWorkspaceProbeSummary {
     shards: usize,
     selected_oracle_deps: usize,
     probed: usize,
-    target_cfg_unmodeled: usize,
+    target_cfg_remainder: usize,
     name_kind_mismatches: usize,
     vix_errors: usize,
     examples: Vec<String>,

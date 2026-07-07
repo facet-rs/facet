@@ -541,6 +541,8 @@ enum DocParseKind {
     Toml,
     Json,
     BuildDirectives,
+    Cfg,
+    RustcCfg,
 }
 
 #[derive(Clone, Debug)]
@@ -3653,6 +3655,8 @@ impl Driver {
                     0 => DocParseKind::Toml,
                     1 => DocParseKind::Json,
                     2 => DocParseKind::BuildDirectives,
+                    3 => DocParseKind::Cfg,
+                    4 => DocParseKind::RustcCfg,
                     other => {
                         *host_error.borrow_mut() =
                             Some(format!("unknown document parser kind {other}"));
@@ -6288,6 +6292,8 @@ impl Driver {
             DocParseKind::Toml => crate::data::parse_toml(input)?,
             DocParseKind::Json => crate::data::parse_json(input)?,
             DocParseKind::BuildDirectives => crate::data::parse_build_directives(input)?,
+            DocParseKind::Cfg => crate::data::parse_cfg(input)?,
+            DocParseKind::RustcCfg => crate::data::parse_rustc_cfg(input)?,
         };
         let handle = alloc_doc_from_value(
             &self.store,

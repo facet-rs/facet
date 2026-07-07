@@ -1448,6 +1448,35 @@ fn direct_target_conditional_edge() {
     );
 }
 
+#[test]
+fn cfg_combinators_and_key_values_follow_target_cfg_facts() {
+    let fixture = Fixture::new("cfg-combinators-key-values", "app")
+        .krate(FixtureCrate::new("unix_x64"))
+        .krate(FixtureCrate::new("win_os"))
+        .krate(
+            FixtureCrate::new("app")
+                .dep(
+                    FixtureDep::new("unix_x64")
+                        .target(r#"cfg(all(unix, target_arch = "x86_64", not(windows)))"#),
+                )
+                .dep(FixtureDep::new("win_os").target(r#"cfg(target_os = "windows")"#)),
+        );
+
+    let linux = fixture.assert_selection_matches(LINUX).unwrap();
+    assert!(linux.contains("unix_x64"), "unix+x64 selected: {linux:?}");
+    assert!(!linux.contains("win_os"), "windows dep absent: {linux:?}");
+
+    let windows = fixture.assert_selection_matches(WINDOWS).unwrap();
+    assert!(
+        !windows.contains("unix_x64"),
+        "unix dep absent: {windows:?}"
+    );
+    assert!(
+        windows.contains("win_os"),
+        "target_os windows selected: {windows:?}"
+    );
+}
+
 /// 4. A build-dependency is part of the host graph and consumed on every target.
 #[test]
 fn build_dependency_is_consumed() {

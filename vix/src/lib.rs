@@ -372,6 +372,7 @@ pub mod support {
                         Some("--extern") if arg.contains("/m/") => Role::InputFlag,
                         Some("--extern") => Role::Flag,
                         Some("--env") => Role::Env,
+                        Some("--stdout") => Role::Stdout,
                         _ if arg.starts_with("/m/") => Role::Input,
                         _ if arg.starts_with("--emit=") && arg.contains('=') => Role::OutputFlag,
                         _ if arg.starts_with("-L") && arg.contains("/m/") => Role::SearchDirFlag,
