@@ -20,10 +20,13 @@ facet-value = { path = "../facet-value", default-features = false, features = ["
 hex.workspace = true
 blake3.workspace = true
 miniz_oxide = { version = "0.8.9", default-features = false, features = ["with-alloc"] }
+object.workspace = true
 phon = { path = "../phon/rust/phon", default-features = false }
+rustc-demangle = "0.1.26"
 semver = "1.0.28"
 sha2.workspace = true
 taxon.workspace = true
+tracing.workspace = true
 # vix lowers to weavy (portability is weavy's concern — constitution
 # A6); the dependency activates when the typed instruction vocabulary
 # lands via the fable-teeth work.

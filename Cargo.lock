@@ -8230,7 +8230,9 @@ dependencies = [
  "facet-value",
  "hex",
  "miniz_oxide",
+ "object 0.39.1",
  "phon",
+ "rustc-demangle",
  "semver 1.0.28",
  "sha2 0.10.9",
  "snark",
@@ -8238,6 +8240,7 @@ dependencies = [
  "taxon",
  "tempfile",
  "tokio",
+ "tracing",
  "weavy",
 ]
 
