@@ -19,7 +19,6 @@
 //!
 #![doc = include_str!("../readme-footer.md")]
 
-#[cfg(feature = "alloc")]
 extern crate alloc;
 
 // Core type definitions (merged from facet-core-types)
@@ -29,6 +28,9 @@ pub use types::*;
 // Write trait for serializers
 mod write;
 pub use write::Write;
+
+#[cfg(feature = "taxon")]
+pub mod taxon_bridge;
 
 // Implementations of the Shape trait
 mod impls;
