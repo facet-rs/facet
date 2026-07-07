@@ -1154,11 +1154,11 @@ fn tail_loop_interp_jit_trace_equal() {
 #[test]
 fn tail_loop_accumulator_stays_molten() {
     let src = r#"
-pub fn seed() -> Array {
+pub fn seed() -> [Int] {
     [0]
 }
 
-fn grow(n: Int, acc: Array) -> Array {
+fn grow(n: Int, acc: [Int]) -> [Int] {
     match n {
         0 => acc,
         _ => grow(n - 1, acc.push(n)),
@@ -1258,11 +1258,11 @@ fn tail_loop_countdown_handles_100k_iterations() {
 #[test]
 fn tail_loop_array_accumulator_handles_100k_iterations() {
     let src = r#"
-pub fn seed() -> Array {
+pub fn seed() -> [Int] {
     [0]
 }
 
-pub fn grow(n: Int, acc: Array) -> Array {
+pub fn grow(n: Int, acc: [Int]) -> [Int] {
     match n {
         0 => acc,
         _ => grow(n - 1, acc.push(n)),

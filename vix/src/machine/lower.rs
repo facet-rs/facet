@@ -830,6 +830,8 @@ fn schema_names_for(
         "Sealed".to_string(),
         "Tree".to_string(),
         "Array".to_string(),
+        "Array<Doc>".to_string(),
+        "Array<Path>".to_string(),
         "Map".to_string(),
         "Doc".to_string(),
         "Version".to_string(),
@@ -2247,8 +2249,18 @@ fn collect_expr_schemas(
             }
             match (call.name.value.as_str(), receiver_schema.as_deref()) {
                 ("with_ext", Some("Path")) => Ok(Some("Path".into())),
+                ("glob", Some("Tree")) => Ok(Some(array_schema("Path"))),
                 ("insert", Some(schema)) if map_schemas(schema).is_some() => {
                     Ok(Some(schema.to_string()))
+                }
+                ("len", Some(schema)) if tables.schemas.is_list(schema) => Ok(Some("Int".into())),
+                ("push" | "set" | "filter", Some(schema)) if tables.schemas.is_list(schema) => {
+                    Ok(Some(schema.to_string()))
+                }
+                ("pop", Some(schema)) if tables.schemas.is_list(schema) => {
+                    let tuple = tuple_schema(&["Int".to_string(), schema.to_string()]);
+                    push_schema_closure(&tuple, out);
+                    Ok(Some(tuple))
                 }
                 ("get", Some("Doc")) | ("get", Some("Realized<Doc>")) => {
                     Ok(Some(option_schema("Realized<Doc>")))
@@ -2258,7 +2270,12 @@ fn collect_expr_schemas(
                 }
                 ("get", Some(schema)) => Ok(map_value_schema(schema).map(option_schema)),
                 ("unwrap", Some(schema)) => Ok(option_value_schema(schema).map(str::to_string)),
-                ("join", Some("Array" | "Doc" | "Realized<Doc>")) => Ok(Some("String".into())),
+                ("join", Some(schema))
+                    if tables.schemas.is_list(schema)
+                        || matches!(schema, "Doc" | "Realized<Doc>") =>
+                {
+                    Ok(Some("String".into()))
+                }
                 ("union" | "intersect" | "complement", Some("VersionSet")) => {
                     Ok(Some("VersionSet".into()))
                 }
@@ -2338,12 +2355,20 @@ fn collect_expr_schemas(
             }
         }
         ast::Expr::Array(array) => {
+            let mut elem_schema = None::<String>;
             for elem in &array.elems {
                 if let ast::ArrayElem::Expr(expr) = elem {
-                    let _ = collect_expr_schemas(expr, out, tables, fn_returns, env)?;
+                    elem_schema =
+                        elem_schema.or(collect_expr_schemas(expr, out, tables, fn_returns, env)?);
                 }
             }
-            Ok(None)
+            if let Some(elem_schema) = elem_schema {
+                let schema = array_schema(&elem_schema);
+                push_schema_closure(&schema, out);
+                Ok(Some(schema))
+            } else {
+                Ok(None)
+            }
         }
         ast::Expr::Paren(paren) => collect_expr_schemas(&paren.inner, out, tables, fn_returns, env),
         ast::Expr::Closure(closure) => {
@@ -2460,7 +2485,7 @@ fn add_builtin_descriptors(descriptors: &mut DescriptorMap, schemas: &SchemaTabl
                 )],
                 vec![declared_mem::handle(
                     schemas.legacy_ref("DocArray"),
-                    schemas.legacy_ref("Array"),
+                    schemas.legacy_ref("Array<Doc>"),
                 )],
                 vec![declared_mem::handle(
                     schemas.legacy_ref("DocMap"),
@@ -2480,6 +2505,38 @@ fn add_builtin_descriptors(descriptors: &mut DescriptorMap, schemas: &SchemaTabl
 }
 
 fn derived_descriptor(schemas: &SchemaTables, schema: &str) -> Option<VixDescriptor> {
+    if schemas.is_list(schema)
+        && let Some(elem_schema) = array_element_schema(schema)
+    {
+        return Some(declared_mem::sequence(
+            schemas.legacy_ref(schema),
+            word_descriptor_for_schema(schemas, elem_schema),
+        ));
+    }
+    if schemas.is_map(schema)
+        && let Some((key_schema, value_schema)) = schemas.map_schema_names(schema)
+    {
+        return Some(declared_mem::map(
+            schemas.legacy_ref(schema),
+            word_descriptor_for_schema(schemas, &key_schema),
+            word_descriptor_for_schema(schemas, &value_schema),
+        ));
+    }
+    if schemas.is_option(schema)
+        && let Some(value_schema) = schemas.option_value_schema_name(schema)
+    {
+        return Some(declared_mem::option(
+            schemas.legacy_ref(schema),
+            declared_mem::declared_struct(
+                schemas.legacy_ref(&format!("{schema}::Some")),
+                vec![
+                    declared_mem::i64_(schemas.legacy_ref(&format!("{schema}::value_schema"))),
+                    word_descriptor_for_schema(schemas, &value_schema),
+                    declared_mem::i64_(schemas.legacy_ref(&format!("{schema}::realization"))),
+                ],
+            ),
+        ));
+    }
     if let Some(value_schema) = realized_value_schema(schema) {
         return Some(declared_mem::declared_struct(
             schemas.legacy_ref(schema),
@@ -3445,7 +3502,7 @@ impl<'a> FnLowerer<'a> {
             ast::Expr::Call(call) => self.call(call),
             ast::Expr::MethodCall(call) => self.method_call(call, expected),
             ast::Expr::Map(map) => self.map_literal(map, expected),
-            ast::Expr::Array(array) => self.array_literal(array),
+            ast::Expr::Array(array) => self.array_literal(array, expected),
             ast::Expr::Command(command) => self.command_block(command),
             ast::Expr::Match(m) => self.match_expr(m, expected),
             other => Err(format!(
@@ -4437,10 +4494,10 @@ impl<'a> FnLowerer<'a> {
                 let receiver = if self.tables.schemas.is_list(&receiver.schema) {
                     receiver
                 } else if self.tables.schemas.is_named_schema(&receiver.schema, "Doc") {
-                    self.coerce_doc_to_schema(receiver, "Array")?
+                    self.coerce_doc_to_schema(receiver, "Array<Doc>")?
                 } else if self.value_schema_is_realized_named(&receiver.schema, "Doc") {
                     let doc = self.coerce_to_schema(receiver, "Doc")?;
-                    self.coerce_doc_to_schema(doc, "Array")?
+                    self.coerce_doc_to_schema(doc, "Array<Doc>")?
                 } else {
                     return Err(format!("len called on {}", receiver.schema));
                 };
@@ -4466,10 +4523,10 @@ impl<'a> FnLowerer<'a> {
                 let receiver = if self.tables.schemas.is_list(&receiver.schema) {
                     receiver
                 } else if self.tables.schemas.is_named_schema(&receiver.schema, "Doc") {
-                    self.coerce_doc_to_schema(receiver, "Array")?
+                    self.coerce_doc_to_schema(receiver, "Array<Doc>")?
                 } else if self.value_schema_is_realized_named(&receiver.schema, "Doc") {
                     let doc = self.coerce_to_schema(receiver, "Doc")?;
-                    self.coerce_doc_to_schema(doc, "Array")?
+                    self.coerce_doc_to_schema(doc, "Array<Doc>")?
                 } else {
                     return Err(format!("join called on {}", receiver.schema));
                 };
@@ -5529,7 +5586,9 @@ impl<'a> FnLowerer<'a> {
     }
 
     fn expect_schema(&self, value: &ValueSlot, expected: &str) -> Result<u32, String> {
-        if value.schema == expected {
+        if value.schema == expected
+            || (expected == "Array" && self.tables.schemas.is_list(&value.schema))
+        {
             Ok(value.slot)
         } else {
             Err(format!(
@@ -6238,7 +6297,11 @@ impl<'a> FnLowerer<'a> {
         })
     }
 
-    fn array_literal(&mut self, array: &ast::Array) -> Result<ValueSlot, String> {
+    fn array_literal(
+        &mut self,
+        array: &ast::Array,
+        expected: Option<&str>,
+    ) -> Result<ValueSlot, String> {
         let mut elems = Vec::new();
         for elem in &array.elems {
             match elem {
@@ -6262,23 +6325,31 @@ impl<'a> FnLowerer<'a> {
                 }
             };
         }
+        let elem_schema = if let Some(first) = elems.first() {
+            for elem in &elems[1..] {
+                if elem.schema != first.schema {
+                    return Err(format!(
+                        "array literal mixes {} and {} in the machine slice-2 subset",
+                        first.schema, elem.schema
+                    ));
+                }
+            }
+            first.schema.clone()
+        } else {
+            expected
+                .and_then(array_element_schema)
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    "empty array literal needs an expected Array<T> schema".to_string()
+                })?
+        };
+        let schema = array_schema(&elem_schema);
         let dst = self.alloc();
         let region = self.primitive_region;
-        let elem_schema_ref = elems
-            .first()
-            .map(|elem| {
-                self.schema_words
-                    .get(&elem.schema)
-                    .copied()
-                    .ok_or_else(|| format!("no schema ref for {}", elem.schema))
-            })
-            .transpose()?
-            .unwrap_or_else(|| {
-                *self
-                    .schema_words
-                    .get("Sealed")
-                    .expect("Sealed is a builtin schema word")
-            });
+        let elem_schema_ref = *self
+            .schema_words
+            .get(&elem_schema)
+            .ok_or_else(|| format!("no schema ref for {elem_schema}"))?;
         self.code.push(Op::ConstI64 {
             dst: region,
             value: dst.into(),
@@ -6302,7 +6373,7 @@ impl<'a> FnLowerer<'a> {
         });
         Ok(ValueSlot {
             slot: dst,
-            schema: "Array".into(),
+            schema,
             realization: None,
             pending: None,
         })
@@ -6335,7 +6406,7 @@ impl<'a> FnLowerer<'a> {
         self.code.push(Op::HostCall { host: GLOB_HOST });
         Ok(ValueSlot {
             slot: dst,
-            schema: "Array".into(),
+            schema: array_schema("Path"),
             realization: None,
             pending: None,
         })
@@ -6384,7 +6455,7 @@ impl<'a> FnLowerer<'a> {
         });
         Ok(ValueSlot {
             slot: dst,
-            schema: "Array".into(),
+            schema: receiver.schema.clone(),
             realization: None,
             pending: None,
         })
@@ -6404,6 +6475,7 @@ impl<'a> FnLowerer<'a> {
             .fn_refs
             .get(fn_name)
             .ok_or_else(|| format!("unknown function {fn_name}"))?;
+        let pending_elem_schema = self.signatures.returns[fn_name].clone();
         let mut lowered_args = Vec::new();
         for arg in &args {
             match arg {
@@ -6458,7 +6530,7 @@ impl<'a> FnLowerer<'a> {
         });
         Ok(ValueSlot {
             slot: dst,
-            schema: "Array".into(),
+            schema: array_schema(&pending_elem_schema),
             realization: None,
             pending: None,
         })
@@ -6519,6 +6591,14 @@ impl<'a> FnLowerer<'a> {
 
     fn array_push(&mut self, receiver: &ValueSlot, value: &ValueSlot) -> Result<ValueSlot, String> {
         self.expect_schema(receiver, "Array")?;
+        let elem_schema = array_element_schema(&receiver.schema)
+            .ok_or_else(|| format!("{} is not an Array<T>", receiver.schema))?;
+        if value.schema != elem_schema {
+            return Err(format!(
+                "array push expected {elem_schema}, got {} in the machine slice-2 subset",
+                value.schema
+            ));
+        }
         let dst = self.alloc();
         let region = self.primitive_region;
         self.code.push(Op::ConstI64 {
@@ -6545,7 +6625,7 @@ impl<'a> FnLowerer<'a> {
         });
         Ok(ValueSlot {
             slot: dst,
-            schema: "Array".into(),
+            schema: receiver.schema.clone(),
             realization: None,
             pending: None,
         })
@@ -6572,7 +6652,7 @@ impl<'a> FnLowerer<'a> {
             host: ARRAY_POP_HOST,
         });
         self.store_alloc(
-            "Tuple<Int,Array>",
+            &tuple_schema(&["Int".to_string(), receiver.schema.clone()]),
             0,
             &[
                 ValueSlot {
@@ -6583,7 +6663,7 @@ impl<'a> FnLowerer<'a> {
                 },
                 ValueSlot {
                     slot: array_dst,
-                    schema: "Array".into(),
+                    schema: receiver.schema.clone(),
                     realization: None,
                     pending: None,
                 },
@@ -6599,6 +6679,14 @@ impl<'a> FnLowerer<'a> {
     ) -> Result<ValueSlot, String> {
         self.expect_schema(receiver, "Array")?;
         self.expect_schema(index, "Int")?;
+        let elem_schema = array_element_schema(&receiver.schema)
+            .ok_or_else(|| format!("{} is not an Array<T>", receiver.schema))?;
+        if value.schema != elem_schema {
+            return Err(format!(
+                "array set expected {elem_schema}, got {} in the machine slice-2 subset",
+                value.schema
+            ));
+        }
         let dst = self.alloc();
         let region = self.primitive_region;
         self.code.push(Op::ConstI64 {
@@ -6622,7 +6710,7 @@ impl<'a> FnLowerer<'a> {
         });
         Ok(ValueSlot {
             slot: dst,
-            schema: "Array".into(),
+            schema: receiver.schema.clone(),
             realization: None,
             pending: None,
         })
@@ -7652,8 +7740,9 @@ fn path_ref_segments(path: &ast::PathRef) -> Result<Vec<String>, String> {
 }
 
 fn map_schemas(schema: &str) -> Option<(&str, &str)> {
-    let inner = schema.strip_prefix("Map<")?.strip_suffix('>')?;
-    let (key, value) = inner.split_once(',')?;
+    let (base, args) = legacy_generic_schema(schema)?;
+    (base == "Map").then_some(())?;
+    let [key, value]: [&str; 2] = args.try_into().ok()?;
     Some((key, value))
 }
 
@@ -7663,6 +7752,23 @@ fn map_schema(key_schema: &str, value_schema: &str) -> String {
 
 fn map_value_schema(schema: &str) -> Option<&str> {
     map_schemas(schema).map(|(_, value)| value)
+}
+
+fn array_schema(elem_schema: &str) -> String {
+    format!("Array<{elem_schema}>")
+}
+
+fn array_element_schema(schema: &str) -> Option<&str> {
+    let (base, args) = legacy_generic_schema(schema)?;
+    (base == "Array" || base == "List").then_some(())?;
+    let [elem]: [&str; 1] = args.try_into().ok()?;
+    Some(elem)
+}
+
+fn legacy_generic_schema(schema: &str) -> Option<(&str, Vec<&str>)> {
+    let (base, rest) = schema.split_once('<')?;
+    let inner = rest.strip_suffix('>')?;
+    Some((base, split_top_level_schema_slices(inner)))
 }
 
 fn tuple_schema(fields: &[String]) -> String {
@@ -7678,6 +7784,13 @@ fn tuple_schema_fields(schema: &str) -> Option<Vec<String>> {
 }
 
 fn split_top_level_schemas(inner: &str) -> Vec<String> {
+    split_top_level_schema_slices(inner)
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+}
+
+fn split_top_level_schema_slices(inner: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut depth = 0usize;
     let mut start = 0usize;
@@ -7686,13 +7799,13 @@ fn split_top_level_schemas(inner: &str) -> Vec<String> {
             '<' => depth += 1,
             '>' => depth = depth.saturating_sub(1),
             ',' if depth == 0 => {
-                out.push(inner[start..index].to_string());
+                out.push(&inner[start..index]);
                 start = index + 1;
             }
             _ => {}
         }
     }
-    out.push(inner[start..].to_string());
+    out.push(&inner[start..]);
     out
 }
 
@@ -8619,6 +8732,36 @@ pub fn main() -> Int {
                 assert_eq!(reuse_trace, copy_trace, "{lane:?} {name}");
                 assert_eq!(reuse_bundle.values, copy_bundle.values, "{lane:?} {name}");
             }
+        }
+    }
+
+    #[test]
+    fn empty_arrays_keep_their_declared_element_identity() {
+        let src = r#"
+pub fn ints() -> [Int] { [] }
+pub fn strings() -> [String] { [] }
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let ints = machine.demand_i64("ints", vec![]).unwrap();
+            let strings = machine.demand_i64("strings", vec![]).unwrap();
+            assert_ne!(ints, strings, "{lane:?}");
+
+            let int_entry = machine.driver.store_entry(ints).expect("int array");
+            let string_entry = machine.driver.store_entry(strings).expect("string array");
+            assert_eq!(int_entry.schema, "Array<Int>", "{lane:?}");
+            assert_eq!(string_entry.schema, "Array<String>", "{lane:?}");
+            assert_ne!(
+                int_entry.content_hash, string_entry.content_hash,
+                "{lane:?}"
+            );
+
+            let (int_elem, int_words) = machine.driver.array_words(ints).unwrap();
+            let (string_elem, string_words) = machine.driver.array_words(strings).unwrap();
+            assert_eq!(int_elem, "Int", "{lane:?}");
+            assert_eq!(string_elem, "String", "{lane:?}");
+            assert!(int_words.is_empty(), "{lane:?}");
+            assert!(string_words.is_empty(), "{lane:?}");
         }
     }
 

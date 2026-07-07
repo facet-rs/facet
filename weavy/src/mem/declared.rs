@@ -26,8 +26,9 @@
 //!   language-managed memory; no Rust-side thunks exist for them.
 
 use super::{
-    Access, Construct, Descriptor, EnumAccess, FieldAccess, Layout, RecordAccess,
-    RecordByteOwnership, Tag, VariantAccess,
+    Access, Construct, Descriptor, EnumAccess, FieldAccess, Layout, MapAccess, MapStorage,
+    OptionAccess, Presence, RecordAccess, RecordByteOwnership, SequenceAccess, SequenceStorage,
+    Tag, Thunk, VariantAccess,
 };
 
 /// A scalar descriptor with the given process-local size/alignment.
@@ -95,6 +96,81 @@ pub fn array_of<SchemaRef>(
             count,
             stride,
         },
+    }
+}
+
+/// A dynamic homogeneous sequence owned by the language runtime. Its concrete
+/// byte encoding is runtime-defined; the descriptor records the element type
+/// and shape so generic consumers see a real sequence instead of an opaque
+/// marker.
+#[must_use]
+pub fn sequence<SchemaRef>(
+    schema: SchemaRef,
+    element: Descriptor<SchemaRef>,
+) -> Descriptor<SchemaRef> {
+    Descriptor {
+        schema,
+        layout: Layout { size: 0, align: 8 },
+        access: Access::Sequence(SequenceAccess {
+            element: Box::new(element),
+            storage: SequenceStorage::Thunk {
+                len: Thunk {
+                    name: "sequence.len".to_string(),
+                },
+                get: Thunk {
+                    name: "sequence.get".to_string(),
+                },
+                push: Thunk {
+                    name: "sequence.push".to_string(),
+                },
+            },
+        }),
+    }
+}
+
+/// A dynamic map owned by the language runtime.
+#[must_use]
+pub fn map<SchemaRef>(
+    schema: SchemaRef,
+    key: Descriptor<SchemaRef>,
+    value: Descriptor<SchemaRef>,
+) -> Descriptor<SchemaRef> {
+    Descriptor {
+        schema,
+        layout: Layout { size: 0, align: 8 },
+        access: Access::Map(MapAccess {
+            key: Box::new(key),
+            value: Box::new(value),
+            storage: MapStorage::Thunk {
+                len: Thunk {
+                    name: "map.len".to_string(),
+                },
+                iterate: Thunk {
+                    name: "map.iterate".to_string(),
+                },
+                insert: Thunk {
+                    name: "map.insert".to_string(),
+                },
+            },
+        }),
+    }
+}
+
+/// A fixed-width language option payload. Presence lives at byte 0; the
+/// `some` descriptor records the remaining payload layout.
+#[must_use]
+pub fn option<SchemaRef>(schema: SchemaRef, some: Descriptor<SchemaRef>) -> Descriptor<SchemaRef> {
+    Descriptor {
+        schema,
+        layout: Layout { size: 32, align: 8 },
+        access: Access::Option(OptionAccess {
+            presence: Presence::Tag {
+                offset: 0,
+                width: 8,
+                none_value: 0,
+            },
+            some: Box::new(some),
+        }),
     }
 }
 
