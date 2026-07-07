@@ -36,11 +36,10 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use facet::Facet;
-use sha2::{Digest, Sha256};
-use taxon::{Kind, Primitive};
+use taxon::{Kind, Primitive, SchemaRef};
 #[cfg(any(test, feature = "jit"))]
 use weavy::jit::task_lane::{JitProgram, JitTask};
-use weavy::mem::{Access, Tag};
+use weavy::mem::{Access, MapStorage, Presence, SequenceStorage, Tag};
 #[cfg(any(test, feature = "jit"))]
 use weavy::task::Op;
 use weavy::task::{FnId, HostFn, Program, Task, TaskStep};
@@ -729,8 +728,83 @@ impl fmt::Display for ContentHash {
     }
 }
 
-fn finish_hash(hasher: Sha256) -> ContentHash {
-    ContentHash(hasher.finalize().into())
+fn finish_hash(hasher: blake3::Hasher) -> ContentHash {
+    ContentHash(*hasher.finalize().as_bytes())
+}
+
+fn update_hash_len(hasher: &mut blake3::Hasher, len: usize) {
+    hasher.update(
+        &i64::try_from(len)
+            .expect("hash input length fits i64")
+            .to_le_bytes(),
+    );
+}
+
+fn update_schema_name(hasher: &mut blake3::Hasher, schemas: &SchemaTables, name: &str) {
+    hasher.update(&schemas.frame_id_for_name(name).as_u64().to_le_bytes());
+}
+
+fn update_schema_ref(hasher: &mut blake3::Hasher, schemas: &SchemaTables, schema_ref: &SchemaRef) {
+    match schema_ref {
+        SchemaRef::Concrete { id, args } => {
+            hasher.update(&id.as_u64().to_le_bytes());
+            update_hash_len(hasher, args.len());
+            for arg in args {
+                update_schema_ref(hasher, schemas, arg);
+            }
+        }
+        SchemaRef::Var { name } => update_schema_name(hasher, schemas, name),
+    }
+}
+
+fn start_array_element_hasher(
+    domain: &'static [u8],
+    schema_tables: &SchemaTables,
+    elem_schema: &str,
+) -> CarriedArrayHasher {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(domain);
+    update_schema_name(&mut hasher, schema_tables, elem_schema);
+    CarriedArrayHasher { hasher }
+}
+
+fn update_array_element_hash(hasher: &mut CarriedArrayHasher, element_hash: ContentHash) {
+    hasher.hasher.update(element_hash.as_ref());
+}
+
+fn recompute_array_element_hasher(
+    store: &ValueStore,
+    schemas: &SchemaTables,
+    schema_tables: &SchemaTables,
+    domain: &'static [u8],
+    elem_schema: &str,
+    words: &[i64],
+) -> CarriedArrayHasher {
+    let mut carried = start_array_element_hasher(domain, schema_tables, elem_schema);
+    for word in words {
+        update_array_element_hash(
+            &mut carried,
+            canonical_word_hash_in_store(store, schemas, elem_schema, *word),
+        );
+    }
+    carried
+}
+
+fn finish_array_element_hash(mut carried: CarriedArrayHasher, len: usize) -> ContentHash {
+    update_hash_len(&mut carried.hasher, len);
+    finish_hash(carried.hasher)
+}
+
+fn short_hash_bytes(domain: &[u8], bytes: &[u8]) -> u64 {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(domain);
+    hasher.update(bytes);
+    let hash = hasher.finalize();
+    u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("blake3 prefix"))
+}
+
+fn hash_u64_debug(value: impl fmt::Debug) -> u64 {
+    short_hash_bytes(b"vix-debug-u64", format!("{value:?}").as_bytes())
 }
 
 type CanonMemoKey = (u64, Vec<ContentHash>);
@@ -926,6 +1000,17 @@ struct OrderedMapPair {
     value_taint: Option<StructuralTaint>,
 }
 
+#[derive(Clone)]
+struct CarriedArrayHasher {
+    hasher: blake3::Hasher,
+}
+
+impl fmt::Debug for CarriedArrayHasher {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("CarriedArrayHasher(..)")
+    }
+}
+
 #[derive(Clone, Debug)]
 struct PendingInvocation {
     closure_hash: u64,
@@ -1004,6 +1089,7 @@ enum MoltenValue {
     ArrayWords {
         elem_schema: String,
         words: Vec<i64>,
+        carried_hash: Option<CarriedArrayHasher>,
     },
     Interned(i64),
 }
@@ -1032,7 +1118,9 @@ impl MoltenStore {
         match Handle::from_word(handle) {
             Handle::Molten(molten_handle) => {
                 match self.entry(molten_handle).map(|entry| &entry.value) {
-                    Some(MoltenValue::ArrayWords { elem_schema, words }) => Ok(ArrayEntry::Words {
+                    Some(MoltenValue::ArrayWords {
+                        elem_schema, words, ..
+                    }) => Ok(ArrayEntry::Words {
                         elem_schema: elem_schema.clone(),
                         words: words.clone(),
                     }),
@@ -1183,19 +1271,20 @@ impl ValueStore {
         (handle, false)
     }
 
-    fn alloc_raw(&mut self, schema: &str, bytes: Vec<u8>) -> (i64, bool) {
-        self.alloc_raw_tainted(schema, bytes, None)
+    fn alloc_raw(&mut self, schema: &str, bytes: Vec<u8>, schemas: &SchemaTables) -> (i64, bool) {
+        self.alloc_raw_tainted(schema, bytes, schemas, None)
     }
 
     fn alloc_raw_tainted(
         &mut self,
         schema: &str,
         bytes: Vec<u8>,
+        schemas: &SchemaTables,
         taint: Option<StructuralTaint>,
     ) -> (i64, bool) {
-        let mut hasher = Sha256::new();
+        let mut hasher = blake3::Hasher::new();
         hasher.update(b"vix-raw-value");
-        hasher.update(schema.as_bytes());
+        update_schema_name(&mut hasher, schemas, schema);
         hasher.update(&bytes);
         let content_hash = hash_with_taint(finish_hash(hasher), &taint);
         let key = (schema.to_string(), HandleTier::Ready, content_hash);
@@ -1225,7 +1314,7 @@ impl ValueStore {
         let ordered = canonical_map_pairs(self, pairs, descriptors, schemas, schema_tables)?;
         let bytes = encode_map_pairs(&ordered, schema_tables)?;
         let taint = taint_for_ordered_map_pairs(&ordered);
-        let content_hash = hash_with_taint(hash_map_pairs(schema, &ordered), &taint);
+        let content_hash = hash_with_taint(hash_map_pairs(schema, &ordered, schema_tables), &taint);
         Ok(self.alloc_with_hash_tainted(schema, bytes, content_hash, taint))
     }
 
@@ -1342,10 +1431,10 @@ impl ValueStore {
         bytes.extend_from_slice(&value_ref.to_le_bytes());
         bytes.extend_from_slice(&0i64.to_le_bytes());
         bytes.extend_from_slice(&(-1i64).to_le_bytes());
-        let mut hasher = Sha256::new();
+        let mut hasher = blake3::Hasher::new();
         hasher.update(b"vix-option");
-        hasher.update(option_schema.as_bytes());
-        hasher.update(0i64.to_le_bytes());
+        update_schema_name(&mut hasher, schema_tables, &option_schema);
+        hasher.update(&0i64.to_le_bytes());
         let content_hash = finish_hash(hasher);
         Ok(self.alloc_with_hash(&option_schema, bytes, content_hash))
     }
@@ -1377,16 +1466,16 @@ impl ValueStore {
                 .unwrap_or(-1)
                 .to_le_bytes(),
         );
-        let mut hasher = Sha256::new();
+        let mut hasher = blake3::Hasher::new();
         hasher.update(b"vix-option");
-        hasher.update(option_schema.as_bytes());
-        hasher.update(1i64.to_le_bytes());
-        hasher.update(value_schema.as_bytes());
+        update_schema_name(&mut hasher, schema_tables, &option_schema);
+        hasher.update(&1i64.to_le_bytes());
+        update_schema_name(&mut hasher, schema_tables, value_schema);
         // Realization is a declared type wrapper and stays in content identity; HandleTier is store scheduling state and stays out.
         if let Some(realization) = &realization {
-            hasher.update(realization.to_word().to_le_bytes());
+            hasher.update(&realization.to_word().to_le_bytes());
         }
-        hasher.update(value_hash);
+        hasher.update(value_hash.as_ref());
         let content_hash = finish_hash(hasher);
         Ok(self.alloc_with_hash(&option_schema, bytes, content_hash))
     }
@@ -1488,6 +1577,17 @@ impl ValueStore {
         schemas: &SchemaTables,
         schema_tables: &SchemaTables,
     ) -> Result<(i64, bool), String> {
+        self.alloc_array_words_with_carried_hash(elem_schema, words, None, schemas, schema_tables)
+    }
+
+    fn alloc_array_words_with_carried_hash(
+        &mut self,
+        elem_schema: &str,
+        words: Vec<i64>,
+        carried_hash: Option<CarriedArrayHasher>,
+        schemas: &SchemaTables,
+        schema_tables: &SchemaTables,
+    ) -> Result<(i64, bool), String> {
         let schema = array_schema(elem_schema);
         let mut bytes = Vec::with_capacity(24 + words.len() * 8);
         bytes.extend_from_slice(&0i64.to_le_bytes());
@@ -1500,29 +1600,24 @@ impl ValueStore {
         for word in &words {
             bytes.extend_from_slice(&word.to_le_bytes());
         }
-        let mut hasher = Sha256::new();
-        hasher.update(b"vix-array-words");
-        hasher.update(elem_schema.as_bytes());
         // Arrays hash declared element/value identity; HandleTier scheduling state never participates.
-        hasher.update(
-            i64::try_from(words.len())
-                .expect("array length fits i64")
-                .to_le_bytes(),
-        );
-        for word in &words {
-            hasher.update(canonical_word_hash_in_store(
+        let carried_hash = carried_hash.unwrap_or_else(|| {
+            recompute_array_element_hasher(
                 self,
                 schemas,
+                schema_tables,
+                b"vix-array-words",
                 elem_schema,
-                *word,
-            ));
-        }
+                &words,
+            )
+        });
         let taint = combine_taints(
             words
                 .iter()
                 .filter_map(|word| self.entry(*word).and_then(|entry| entry.taint.clone())),
         );
-        let content_hash = hash_with_taint(finish_hash(hasher), &taint);
+        let content_hash =
+            hash_with_taint(finish_array_element_hash(carried_hash, words.len()), &taint);
         Ok(self.alloc_with_hash_tainted(&schema, bytes, content_hash, taint))
     }
 
@@ -1569,24 +1664,20 @@ impl ValueStore {
         for word in &pending {
             bytes.extend_from_slice(&word.to_le_bytes());
         }
-        let mut hasher = Sha256::new();
-        hasher.update(b"vix-array-pending");
-        hasher.update(elem_schema.as_bytes());
         // Pending array handles contribute their declared value identity; HandleTier scheduling state stays out of the hash.
-        hasher.update(
-            i64::try_from(pending.len())
-                .expect("array length fits i64")
-                .to_le_bytes(),
+        let carried_hash = recompute_array_element_hasher(
+            self,
+            schemas,
+            schema_tables,
+            b"vix-array-pending",
+            elem_schema,
+            &pending,
         );
-        for word in &pending {
-            hasher.update(canonical_word_hash_in_store(
-                self,
-                schemas,
-                elem_schema,
-                *word,
-            ));
-        }
-        Ok(self.alloc_with_hash(&schema, bytes, finish_hash(hasher)))
+        Ok(self.alloc_with_hash(
+            &schema,
+            bytes,
+            finish_array_element_hash(carried_hash, pending.len()),
+        ))
     }
 
     fn array_entry(&self, handle: i64, schema_tables: &SchemaTables) -> Result<ArrayEntry, String> {
@@ -1637,9 +1728,9 @@ impl ValueStore {
         self.alloc_with_hash("Tree", bytes, content_hash)
     }
 
-    fn alloc_tree_merge(&mut self, pending: Vec<i64>) -> (i64, bool) {
+    fn alloc_tree_merge(&mut self, pending: Vec<i64>, schemas: &SchemaTables) -> (i64, bool) {
         let bytes = encode_handle_list(1, &pending);
-        let content_hash = hash_handle_list(b"vix-tree-merge", &pending, self);
+        let content_hash = hash_handle_list(b"vix-tree-merge", &pending, self, schemas);
         self.alloc_with_hash("Tree", bytes, content_hash)
     }
 
@@ -1778,6 +1869,7 @@ fn intern_molten_word(
         MoltenValue::ArrayWords {
             elem_schema,
             mut words,
+            mut carried_hash,
         } => {
             if !schemas.is_list(schema) {
                 return Err(format!("molten array cannot intern as {schema}"));
@@ -1787,8 +1879,9 @@ fn intern_molten_word(
                     "molten Array<{elem_schema}> cannot intern as {schema}"
                 ));
             }
+            let mut changed_words = false;
             for word in &mut words {
-                *word = intern_molten_word(
+                let interned = intern_molten_word(
                     store,
                     molten,
                     descriptors,
@@ -1798,8 +1891,19 @@ fn intern_molten_word(
                     *word,
                 )?
                 .0;
+                changed_words |= interned != *word;
+                *word = interned;
             }
-            store.alloc_array_words(&elem_schema, words, schemas, schema_tables)?
+            if changed_words {
+                carried_hash = None;
+            }
+            store.alloc_array_words_with_carried_hash(
+                &elem_schema,
+                words,
+                carried_hash,
+                schemas,
+                schema_tables,
+            )?
         }
         MoltenValue::Interned(_) => unreachable!("handled above"),
     };
@@ -2279,15 +2383,18 @@ impl Driver {
     }
 
     pub fn intern_raw_value(&self, schema: &str, bytes: Vec<u8>) -> (i64, bool) {
-        self.store.borrow_mut().alloc_raw(schema, bytes)
+        self.store
+            .borrow_mut()
+            .alloc_raw(schema, bytes, &self.schemas)
     }
 
     pub fn intern_version_value(&self, text: &str) -> Result<(i64, bool), String> {
         let version = super::version::parse(text)?;
-        Ok(self
-            .store
-            .borrow_mut()
-            .alloc_raw("Version", super::version::canonical_bytes(&version)))
+        Ok(self.store.borrow_mut().alloc_raw(
+            "Version",
+            super::version::canonical_bytes(&version),
+            &self.schemas,
+        ))
     }
 
     pub fn intern_version_set_req_value(&self, text: &str) -> Result<(i64, bool), String> {
@@ -2295,15 +2402,17 @@ impl Driver {
         Ok(self
             .store
             .borrow_mut()
-            .alloc_raw("VersionSet", set.canonical_bytes()))
+            .alloc_raw("VersionSet", set.canonical_bytes(), &self.schemas))
     }
 
     pub fn intern_linux_target(&self) -> (i64, bool) {
         self.intern_structured_target(OS_LINUX, host_arch_index())
             .unwrap_or_else(|_| {
-                self.store
-                    .borrow_mut()
-                    .alloc_raw("Target", 0x391c555cf0975f9cu64.to_le_bytes().to_vec())
+                self.store.borrow_mut().alloc_raw(
+                    "Target",
+                    0x391c555cf0975f9cu64.to_le_bytes().to_vec(),
+                    &self.schemas,
+                )
             })
     }
 
@@ -3349,7 +3458,7 @@ impl Driver {
                     } else {
                         let handle = store_cell
                             .borrow_mut()
-                            .alloc_raw(&kind, key.clone().into_bytes())
+                            .alloc_raw(&kind, key.clone().into_bytes(), schemas)
                             .0;
                         journal.insert(key.clone(), handle);
                         (handle, false)
@@ -3398,9 +3507,11 @@ impl Driver {
                         )?
                         .0;
                     }
-                    let handle = molten_cell
-                        .borrow_mut()
-                        .alloc(MoltenValue::ArrayWords { elem_schema, words });
+                    let handle = molten_cell.borrow_mut().alloc(MoltenValue::ArrayWords {
+                        elem_schema,
+                        words,
+                        carried_hash: None,
+                    });
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -3531,7 +3642,8 @@ impl Driver {
                     }
                     match array_entry {
                         ArrayEntry::Pending { pending, .. } => {
-                            let (handle, _) = store_cell.borrow_mut().alloc_tree_merge(pending);
+                            let (handle, _) =
+                                store_cell.borrow_mut().alloc_tree_merge(pending, schemas);
                             write_frame_word(frame, dst_slot, handle);
                         }
                         ArrayEntry::Words {
@@ -3554,7 +3666,7 @@ impl Driver {
                                 .expect("array collect comparison")
                             });
                             let (handle, _) = if schemas.is_external(&elem_schema, "Tree") {
-                                store_cell.borrow_mut().alloc_tree_merge(words)
+                                store_cell.borrow_mut().alloc_tree_merge(words, schemas)
                             } else {
                                 store_cell.borrow_mut().alloc_array_words(
                                     &elem_schema,
@@ -3831,9 +3943,11 @@ impl Driver {
                     let input = read_frame_word(frame, primitive_region + 8);
                     let text = store_cell.borrow().string_value(input, "String")?;
                     let version = super::version::parse(&text)?;
-                    let (handle, _) = store_cell
-                        .borrow_mut()
-                        .alloc_raw("Version", super::version::canonical_bytes(&version));
+                    let (handle, _) = store_cell.borrow_mut().alloc_raw(
+                        "Version",
+                        super::version::canonical_bytes(&version),
+                        schemas,
+                    );
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -3975,7 +4089,7 @@ impl Driver {
                     };
                     let handle = store_cell
                         .borrow_mut()
-                        .alloc_raw("String", part.as_bytes().to_vec())
+                        .alloc_raw("String", part.as_bytes().to_vec(), schemas)
                         .0;
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
@@ -4077,9 +4191,11 @@ impl Driver {
                     let input = read_frame_word(frame, primitive_region + 8);
                     let text = store_cell.borrow().string_value(input, "String")?;
                     let set = super::version_set::VersionSet::from_req(&text)?;
-                    let (handle, _) = store_cell
-                        .borrow_mut()
-                        .alloc_raw("VersionSet", set.canonical_bytes());
+                    let (handle, _) = store_cell.borrow_mut().alloc_raw(
+                        "VersionSet",
+                        set.canonical_bytes(),
+                        schemas,
+                    );
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -4124,7 +4240,7 @@ impl Driver {
                                     let set = left_set.union(&right_set);
                                     let handle = store_cell
                                         .borrow_mut()
-                                        .alloc_raw("VersionSet", set.canonical_bytes())
+                                        .alloc_raw("VersionSet", set.canonical_bytes(), schemas)
                                         .0;
                                     write_frame_word(frame, dst_slot, handle);
                                 }
@@ -4132,7 +4248,7 @@ impl Driver {
                                     let set = left_set.intersect(&right_set);
                                     let handle = store_cell
                                         .borrow_mut()
-                                        .alloc_raw("VersionSet", set.canonical_bytes())
+                                        .alloc_raw("VersionSet", set.canonical_bytes(), schemas)
                                         .0;
                                     write_frame_word(frame, dst_slot, handle);
                                 }
@@ -4151,7 +4267,7 @@ impl Driver {
                             let set = left_set.complement();
                             let handle = store_cell
                                 .borrow_mut()
-                                .alloc_raw("VersionSet", set.canonical_bytes())
+                                .alloc_raw("VersionSet", set.canonical_bytes(), schemas)
                                 .0;
                             write_frame_word(frame, dst_slot, handle);
                         }
@@ -4251,6 +4367,7 @@ impl Driver {
                         .alloc_raw_tainted(
                             "String",
                             [left.as_str(), right.as_str()].concat().into_bytes(),
+                            schemas,
                             taint,
                         )
                         .0;
@@ -4308,7 +4425,7 @@ impl Driver {
                     drop(store);
                     let handle = store_cell
                         .borrow_mut()
-                        .alloc_raw_tainted("String", joined.into_bytes(), taint)
+                        .alloc_raw_tainted("String", joined.into_bytes(), schemas, taint)
                         .0;
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
@@ -4408,7 +4525,7 @@ impl Driver {
                         .map(|path| {
                             store_cell
                                 .borrow_mut()
-                                .alloc_raw("Path", path.into_bytes())
+                                .alloc_raw("Path", path.into_bytes(), schemas)
                                 .0
                         })
                         .collect();
@@ -4443,6 +4560,7 @@ impl Driver {
                     let (handle, _) = store_cell.borrow_mut().alloc_raw_tainted(
                         "Path",
                         value.into_bytes(),
+                        schemas,
                         taint,
                     );
                     write_frame_word(frame, dst_slot, handle);
@@ -4464,6 +4582,7 @@ impl Driver {
                     let (handle, _) = store_cell.borrow_mut().alloc_raw_tainted(
                         "String",
                         value.into_bytes(),
+                        schemas,
                         taint,
                     );
                     write_frame_word(frame, dst_slot, handle);
@@ -4507,6 +4626,7 @@ impl Driver {
                     let (handle, _) = store_cell.borrow_mut().alloc_raw_tainted(
                         "Path",
                         value.into_bytes(),
+                        schemas,
                         taint,
                     );
                     write_frame_word(frame, dst_slot, handle);
@@ -4661,6 +4781,7 @@ impl Driver {
                     let (handle, deduped) = store_cell.borrow_mut().alloc_raw_tainted(
                         "String",
                         value.into_bytes(),
+                        schemas,
                         taint,
                     );
                     write_frame_word(frame, dst_slot, handle);
@@ -4686,6 +4807,7 @@ impl Driver {
                     let (handle, deduped) = store_cell.borrow_mut().alloc_raw_tainted(
                         "String",
                         value.into_bytes(),
+                        schemas,
                         taint,
                     );
                     write_frame_word(frame, dst_slot, handle);
@@ -4737,6 +4859,7 @@ impl Driver {
                     let (handle, deduped) = store_cell.borrow_mut().alloc_raw_tainted(
                         "Sealed",
                         encode_sealed_payload(&payload),
+                        schemas,
                         Some(taint),
                     );
                     write_frame_word(frame, dst_slot, handle);
@@ -4774,9 +4897,10 @@ impl Driver {
                             payload.taint.recipient
                         ));
                     }
-                    let (handle, deduped) = store_cell
-                        .borrow_mut()
-                        .alloc_raw("String", payload.ciphertext);
+                    let (handle, deduped) =
+                        store_cell
+                            .borrow_mut()
+                            .alloc_raw("String", payload.ciphertext, schemas);
                     write_frame_word(frame, dst_slot, handle);
                     store_events.borrow_mut().push(DriveEvent::StoreAlloc {
                         schema_ref: hash_u64("String"),
@@ -4810,7 +4934,7 @@ impl Driver {
                     let bytes = format!("sealed:{}", hex_bytes(&identity)).into_bytes();
                     let (handle, deduped) = store_cell
                         .borrow_mut()
-                        .alloc_raw_tainted("String", bytes, taint);
+                        .alloc_raw_tainted("String", bytes, schemas, taint);
                     write_frame_word(frame, dst_slot, handle);
                     store_events.borrow_mut().push(DriveEvent::StoreAlloc {
                         schema_ref: hash_u64("String"),
@@ -4875,15 +4999,13 @@ impl Driver {
                             molten
                                 .entry(array_handle)
                                 .and_then(|entry| match &entry.value {
-                                    MoltenValue::ArrayWords { elem_schema, words }
-                                        if entry.refs == 1 =>
-                                    {
-                                        Some(if words.is_empty() {
-                                            pushed_schema.clone()
-                                        } else {
-                                            elem_schema.clone()
-                                        })
-                                    }
+                                    MoltenValue::ArrayWords {
+                                        elem_schema, words, ..
+                                    } if entry.refs == 1 => Some(if words.is_empty() {
+                                        pushed_schema.clone()
+                                    } else {
+                                        elem_schema.clone()
+                                    }),
                                     _ => None,
                                 })
                         };
@@ -4905,10 +5027,35 @@ impl Driver {
                             if let MoltenValue::ArrayWords {
                                 elem_schema: stored_schema,
                                 words,
+                                carried_hash,
                             } = &mut entry.value
                             {
                                 if words.is_empty() {
-                                    *stored_schema = elem_schema;
+                                    *stored_schema = elem_schema.clone();
+                                    *carried_hash = Some(start_array_element_hasher(
+                                        b"vix-array-words",
+                                        schema_tables,
+                                        &elem_schema,
+                                    ));
+                                }
+                                if carried_hash.is_none() {
+                                    *carried_hash = Some(recompute_array_element_hasher(
+                                        &store_cell.borrow(),
+                                        schemas,
+                                        schema_tables,
+                                        b"vix-array-words",
+                                        stored_schema,
+                                        words,
+                                    ));
+                                }
+                                let element_hash = canonical_word_hash_in_store(
+                                    &store_cell.borrow(),
+                                    schemas,
+                                    stored_schema,
+                                    value,
+                                );
+                                if let Some(carried_hash) = carried_hash {
+                                    update_array_element_hash(carried_hash, element_hash);
                                 }
                                 words.push(value);
                                 #[cfg(test)]
@@ -4942,9 +5089,11 @@ impl Driver {
                     )?
                     .0;
                     words.push(value);
-                    let handle = molten_cell
-                        .borrow_mut()
-                        .alloc(MoltenValue::ArrayWords { elem_schema, words });
+                    let handle = molten_cell.borrow_mut().alloc(MoltenValue::ArrayWords {
+                        elem_schema,
+                        words,
+                        carried_hash: None,
+                    });
                     #[cfg(test)]
                     {
                         molten_stats.borrow_mut().array_push_copied += 1;
@@ -4977,10 +5126,16 @@ impl Driver {
                             let entry = molten
                                 .entry_mut(array_handle)
                                 .ok_or_else(|| format!("molten handle {array}"))?;
-                            if let MoltenValue::ArrayWords { words, .. } = &mut entry.value {
+                            if let MoltenValue::ArrayWords {
+                                words,
+                                carried_hash,
+                                ..
+                            } = &mut entry.value
+                            {
                                 let value = words
                                     .pop()
                                     .ok_or_else(|| "pop on empty array".to_string())?;
+                                *carried_hash = None;
                                 write_frame_word(frame, value_slot, value);
                                 write_frame_word(frame, dst_slot, array);
                                 return Ok(());
@@ -4999,9 +5154,11 @@ impl Driver {
                         .pop()
                         .ok_or_else(|| "pop on empty array".to_string())?;
                     write_frame_word(frame, value_slot, value);
-                    let handle = molten_cell
-                        .borrow_mut()
-                        .alloc(MoltenValue::ArrayWords { elem_schema, words });
+                    let handle = molten_cell.borrow_mut().alloc(MoltenValue::ArrayWords {
+                        elem_schema,
+                        words,
+                        carried_hash: None,
+                    });
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -5048,7 +5205,12 @@ impl Driver {
                             let entry = molten
                                 .entry_mut(array_handle)
                                 .ok_or_else(|| format!("molten handle {array}"))?;
-                            if let MoltenValue::ArrayWords { words, .. } = &mut entry.value {
+                            if let MoltenValue::ArrayWords {
+                                words,
+                                carried_hash,
+                                ..
+                            } = &mut entry.value
+                            {
                                 if index >= words.len() {
                                     return Err(format!(
                                         "array index {index} out of bounds {}",
@@ -5056,6 +5218,7 @@ impl Driver {
                                     ));
                                 }
                                 words[index] = value;
+                                *carried_hash = None;
                                 write_frame_word(frame, dst_slot, array);
                                 return Ok(());
                             }
@@ -5083,9 +5246,11 @@ impl Driver {
                         return Err(format!("array index {index} out of bounds {}", words.len()));
                     }
                     words[index] = value;
-                    let handle = molten_cell
-                        .borrow_mut()
-                        .alloc(MoltenValue::ArrayWords { elem_schema, words });
+                    let handle = molten_cell.borrow_mut().alloc(MoltenValue::ArrayWords {
+                        elem_schema,
+                        words,
+                        carried_hash: None,
+                    });
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -6271,7 +6436,7 @@ impl Driver {
             let pin_handle = self
                 .store
                 .borrow_mut()
-                .alloc_raw("String", pin.into_bytes())
+                .alloc_raw("String", pin.into_bytes(), &self.schemas)
                 .0;
             self.journal.insert(key.clone(), pin_handle);
         }
@@ -6414,7 +6579,7 @@ impl Driver {
             ));
         };
         let bytes = self.elf_input_bytes(*input)?;
-        let mut hasher = Sha256::new();
+        let mut hasher = blake3::Hasher::new();
         hasher.update(b"vix-elf-input");
         hasher.update(&bytes);
         let input_hash: ContentHash = finish_hash(hasher);
@@ -6677,7 +6842,7 @@ impl Driver {
             }
             other => return Err(format!("ast input must be String or Tree, got {other}")),
         };
-        let mut hasher = Sha256::new();
+        let mut hasher = blake3::Hasher::new();
         hasher.update(b"vix-ast-input");
         hasher.update(source.as_bytes());
         Ok((source, finish_hash(hasher)))
@@ -6725,10 +6890,8 @@ enum PendingForce {
     Ready { input_slot: usize, value: i64 },
 }
 
-fn hash_u64(value: impl Hash) -> u64 {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    value.hash(&mut h);
-    std::hash::Hasher::finish(&h)
+fn hash_u64(value: impl fmt::Debug) -> u64 {
+    hash_u64_debug(value)
 }
 
 #[derive(Clone, Debug)]
@@ -6764,11 +6927,14 @@ fn alloc_doc_from_value(
             &[super::value::TotalF64::new(value).get().to_bits() as i64],
         ),
         Value::Str(value) => {
-            let handle = store.borrow_mut().alloc_raw("String", value.into_bytes()).0;
+            let handle = store
+                .borrow_mut()
+                .alloc_raw("String", value.into_bytes(), schemas)
+                .0;
             alloc_doc_variant(store, descriptors, schemas, 4, &[handle])
         }
         Value::Blob(value) => {
-            let handle = store.borrow_mut().alloc_raw("Blob", value).0;
+            let handle = store.borrow_mut().alloc_raw("Blob", value, schemas).0;
             alloc_doc_variant(store, descriptors, schemas, 8, &[handle])
         }
         Value::Array(values) => {
@@ -6790,7 +6956,10 @@ fn alloc_doc_from_value(
                 let Value::Str(key) = key else {
                     return Err(format!("document object key must be a string, got {key:?}"));
                 };
-                let key_word = store.borrow_mut().alloc_raw("String", key.into_bytes()).0;
+                let key_word = store
+                    .borrow_mut()
+                    .alloc_raw("String", key.into_bytes(), schemas)
+                    .0;
                 let value_word =
                     alloc_doc_from_value(store, descriptors, schemas, schema_tables, value)?;
                 pairs.push(MapPair {
@@ -6923,7 +7092,7 @@ fn doc_get(
     };
     let key_word = store
         .borrow_mut()
-        .alloc_raw("String", key.as_bytes().to_vec())
+        .alloc_raw("String", key.as_bytes().to_vec(), schemas)
         .0;
     store.borrow_mut().map_get(
         map,
@@ -7279,7 +7448,7 @@ fn alloc_elf_doc(
     for projection in super::elf::Projection::ALL {
         let key = store
             .borrow_mut()
-            .alloc_raw("String", projection.name().as_bytes().to_vec())
+            .alloc_raw("String", projection.name().as_bytes().to_vec(), schemas)
             .0;
         let pending = elf_projection_pending(input, input_hash, projection);
         let pending = store.borrow_mut().alloc_pending("Doc", pending).0;
@@ -7320,7 +7489,7 @@ fn alloc_oci_doc(
     for projection in super::oci::Projection::ALL {
         let key = store
             .borrow_mut()
-            .alloc_raw("String", projection.name().as_bytes().to_vec())
+            .alloc_raw("String", projection.name().as_bytes().to_vec(), schemas)
             .0;
         let pending = oci_projection_pending(input, input_hash, projection);
         let pending = store.borrow_mut().alloc_pending("Doc", pending).0;
@@ -7355,7 +7524,7 @@ fn alloc_oci_files_doc(
     let marker = format!("oci-files:{}:{input}", hex_content_hash(&input_hash));
     let marker = store
         .borrow_mut()
-        .alloc_raw("String", marker.into_bytes())
+        .alloc_raw("String", marker.into_bytes(), schemas)
         .0;
     alloc_doc_variant(store, descriptors, schemas, 7, &[marker])
 }
@@ -7365,10 +7534,10 @@ fn elf_projection_pending(
     input_hash: ContentHash,
     projection: super::elf::Projection,
 ) -> PendingInvocation {
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hasher.update(b"vix-elf-projection");
     hasher.update(projection.name().as_bytes());
-    hasher.update(input_hash);
+    hasher.update(input_hash.as_ref());
     let identity_hash = finish_hash(hasher);
     PendingInvocation {
         closure_hash: hash_u64(("elf", projection.name())),
@@ -7438,7 +7607,7 @@ fn alloc_ast_fn_doc(
 ) -> Result<i64, String> {
     let name_handle = store
         .borrow_mut()
-        .alloc_raw("String", item.name.value.as_bytes().to_vec())
+        .alloc_raw("String", item.name.value.as_bytes().to_vec(), schemas)
         .0;
     let children = ast_projection_pending(
         input,
@@ -7487,12 +7656,12 @@ fn ast_projection_pending(
     projection: super::ast_probe::Projection,
     extra_args: Vec<i64>,
 ) -> PendingInvocation {
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hasher.update(b"vix-ast-projection");
     hasher.update(projection.name().as_bytes());
-    hasher.update(input_hash);
+    hasher.update(input_hash.as_ref());
     for arg in &extra_args {
-        hasher.update(arg.to_le_bytes());
+        hasher.update(&arg.to_le_bytes());
     }
     let mut args = Vec::with_capacity(1 + extra_args.len());
     args.push(input);
@@ -7517,7 +7686,10 @@ fn alloc_doc_object(
 ) -> Result<i64, String> {
     let mut pairs = Vec::with_capacity(rows.len());
     for (key, value_schema, value_word) in rows {
-        let key_word = store.borrow_mut().alloc_raw("String", key.into_bytes()).0;
+        let key_word = store
+            .borrow_mut()
+            .alloc_raw("String", key.into_bytes(), schemas)
+            .0;
         pairs.push(MapPair {
             key_schema: "String".to_string(),
             key_word,
@@ -7544,10 +7716,10 @@ fn oci_projection_pending(
     input_hash: ContentHash,
     projection: super::oci::Projection,
 ) -> PendingInvocation {
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hasher.update(b"vix-oci-projection");
     hasher.update(projection.name().as_bytes());
-    hasher.update(input_hash);
+    hasher.update(input_hash.as_ref());
     let identity_hash = finish_hash(hasher);
     PendingInvocation {
         closure_hash: hash_u64(("oci", projection.name())),
@@ -8687,12 +8859,14 @@ fn op_name(op: &Op) -> &'static str {
 }
 
 fn memo_key_hash(key: &CanonMemoKey) -> u64 {
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    key.0.hash(&mut h);
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"vix-memo-key-word");
+    hasher.update(&key.0.to_le_bytes());
     for arg in &key.1 {
-        arg.hash(&mut h);
+        hasher.update(arg.as_ref());
     }
-    std::hash::Hasher::finish(&h)
+    let hash = hasher.finalize();
+    u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("blake3 prefix"))
 }
 
 fn pending_invocation_for(
@@ -8718,17 +8892,17 @@ fn pending_identity_hash(
     schemas: &SchemaTables,
     args: &[i64],
 ) -> ContentHash {
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hasher.update(b"vix-pending-invocation");
-    hasher.update(lowered.hash.to_le_bytes());
+    hasher.update(&lowered.hash.to_le_bytes());
     hasher.update(
-        i64::try_from(lowered.arg_schemas.len().saturating_sub(args.len()))
+        &i64::try_from(lowered.arg_schemas.len().saturating_sub(args.len()))
             .expect("remaining arity fits i64")
             .to_le_bytes(),
     );
     for (&word, schema) in args.iter().zip(&lowered.arg_schemas) {
-        hasher.update(schema.as_bytes());
-        hasher.update(canonical_word_hash_in_store(store, schemas, schema, word));
+        update_schema_name(&mut hasher, schemas, schema);
+        hasher.update(canonical_word_hash_in_store(store, schemas, schema, word).as_ref());
     }
     finish_hash(hasher)
 }
@@ -8800,7 +8974,7 @@ fn decode_sealed_payload(bytes: &[u8]) -> Result<SealedPayload, String> {
 }
 
 fn sealed_identity_hash(ciphertext: &[u8]) -> ContentHash {
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hasher.update(b"vix-sealed-identity-v1");
     hasher.update(ciphertext);
     finish_hash(hasher)
@@ -8810,14 +8984,14 @@ fn hash_with_taint(base: ContentHash, taint: &Option<StructuralTaint>) -> Conten
     let Some(taint) = taint else {
         return base;
     };
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hasher.update(b"vix-tainted-identity-v1");
-    hasher.update(base);
+    hasher.update(base.as_ref());
     hash_taint_into(&mut hasher, taint);
     finish_hash(hasher)
 }
 
-fn hash_taint_into(hasher: &mut Sha256, taint: &StructuralTaint) {
+fn hash_taint_into(hasher: &mut blake3::Hasher, taint: &StructuralTaint) {
     hasher.update(taint.marker.as_bytes());
     hasher.update(taint.recipient.as_bytes());
     hasher.update(&taint.identity_hash);
@@ -8834,7 +9008,7 @@ fn combine_taints(taints: impl IntoIterator<Item = StructuralTaint>) -> Option<S
         [] => None,
         [single] => Some(single.clone()),
         many => {
-            let mut hasher = Sha256::new();
+            let mut hasher = blake3::Hasher::new();
             hasher.update(b"vix-combined-taint-v1");
             for taint in many {
                 hash_taint_into(&mut hasher, taint);
@@ -8853,7 +9027,7 @@ fn combine_taints(taints: impl IntoIterator<Item = StructuralTaint>) -> Option<S
                     .map(|taint| taint.recipient.as_str())
                     .collect::<Vec<_>>()
                     .join("&"),
-                identity_hash: hasher.finalize().to_vec(),
+                identity_hash: hasher.finalize().as_bytes().to_vec(),
                 content_tag: None,
             })
         }
@@ -8942,19 +9116,19 @@ fn canonical_word_hash_in_store(
         _ => {}
     }
     let word = canonicalize_word_for_schema(schemas, schema, word);
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hasher.update(b"vix-scalar-word");
-    hasher.update(schema.as_bytes());
-    hasher.update(word.to_le_bytes());
+    update_schema_name(&mut hasher, schemas, schema);
+    hasher.update(&word.to_le_bytes());
     finish_hash(hasher)
 }
 
 fn canonical_scalar_hash(schemas: &SchemaTables, schema: &str, word: i64) -> ContentHash {
     let word = canonicalize_word_for_schema(schemas, schema, word);
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hasher.update(b"vix-scalar-word");
-    hasher.update(schema.as_bytes());
-    hasher.update(word.to_le_bytes());
+    update_schema_name(&mut hasher, schemas, schema);
+    hasher.update(&word.to_le_bytes());
     finish_hash(hasher)
 }
 
@@ -9477,7 +9651,7 @@ fn ast_input_source_for_verify(
     match entry.schema.as_str() {
         "String" => {
             let source = String::from_utf8(entry.bytes).map_err(|err| err.to_string())?;
-            let mut hasher = Sha256::new();
+            let mut hasher = blake3::Hasher::new();
             hasher.update(b"vix-ast-input");
             hasher.update(source.as_bytes());
             Ok(Some((source, finish_hash(hasher))))
@@ -9490,7 +9664,7 @@ fn ast_input_source_for_verify(
                 return Ok(None);
             }
             let source = tree.entries.into_values().next().expect("one source entry");
-            let mut hasher = Sha256::new();
+            let mut hasher = blake3::Hasher::new();
             hasher.update(b"vix-ast-input");
             hasher.update(source.as_bytes());
             Ok(Some((source, finish_hash(hasher))))
@@ -9690,24 +9864,28 @@ fn decode_map_pairs(bytes: &[u8], schema_tables: &SchemaTables) -> Result<Vec<Ma
     Ok(pairs)
 }
 
-fn hash_map_pairs(schema: &str, pairs: &[OrderedMapPair]) -> ContentHash {
-    let mut hasher = Sha256::new();
+fn hash_map_pairs(
+    schema: &str,
+    pairs: &[OrderedMapPair],
+    schema_tables: &SchemaTables,
+) -> ContentHash {
+    let mut hasher = blake3::Hasher::new();
     hasher.update(b"vix-map");
-    hasher.update(schema.as_bytes());
+    update_schema_name(&mut hasher, schema_tables, schema);
     hasher.update(
-        i64::try_from(pairs.len())
+        &i64::try_from(pairs.len())
             .expect("map pair count fits i64")
             .to_le_bytes(),
     );
     for pair in pairs {
-        hasher.update(pair.pair.key_schema.as_bytes());
-        hasher.update(pair.key_hash);
-        hasher.update(pair.pair.value_schema.as_bytes());
+        update_schema_name(&mut hasher, schema_tables, &pair.pair.key_schema);
+        hasher.update(pair.key_hash.as_ref());
+        update_schema_name(&mut hasher, schema_tables, &pair.pair.value_schema);
         // Realization is a declared type wrapper and stays in content identity; HandleTier is store scheduling state and stays out.
         if let Some(realization) = &pair.pair.value_realization {
-            hasher.update(realization.to_word().to_le_bytes());
+            hasher.update(&realization.to_word().to_le_bytes());
         }
-        hasher.update(pair.value_hash);
+        hasher.update(pair.value_hash.as_ref());
     }
     finish_hash(hasher)
 }
@@ -9887,11 +10065,16 @@ fn decode_handle_list(bytes: &[u8]) -> Result<Vec<i64>, String> {
         .collect())
 }
 
-fn hash_handle_list(domain: &[u8], handles: &[i64], store: &ValueStore) -> ContentHash {
-    let mut hasher = Sha256::new();
+fn hash_handle_list(
+    domain: &[u8],
+    handles: &[i64],
+    store: &ValueStore,
+    schemas: &SchemaTables,
+) -> ContentHash {
+    let mut hasher = blake3::Hasher::new();
     hasher.update(domain);
     hasher.update(
-        i64::try_from(handles.len())
+        &i64::try_from(handles.len())
             .expect("handle length fits i64")
             .to_le_bytes(),
     );
@@ -9899,8 +10082,8 @@ fn hash_handle_list(domain: &[u8], handles: &[i64], store: &ValueStore) -> Conte
         let entry = store
             .entry(*handle)
             .unwrap_or_else(|| panic!("store handle {handle}"));
-        hasher.update(entry.schema.as_bytes());
-        hasher.update(entry.content_hash);
+        update_schema_name(&mut hasher, schemas, &entry.schema);
+        hasher.update(entry.content_hash.as_ref());
     }
     finish_hash(hasher)
 }
@@ -9962,33 +10145,33 @@ fn decode_concrete_tree(bytes: &[u8]) -> Result<crate::exec::Tree, String> {
 }
 
 fn hash_concrete_tree(tree: &crate::exec::Tree) -> ContentHash {
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hasher.update(b"vix-tree-concrete");
     for (path, contents) in &tree.entries {
-        hasher.update([0]);
+        hasher.update(&[0]);
         hasher.update(
-            i64::try_from(path.len())
+            &i64::try_from(path.len())
                 .expect("path length fits i64")
                 .to_le_bytes(),
         );
         hasher.update(path.as_bytes());
         hasher.update(
-            i64::try_from(contents.len())
+            &i64::try_from(contents.len())
                 .expect("contents length fits i64")
                 .to_le_bytes(),
         );
         hasher.update(contents.as_bytes());
     }
     for (path, contents) in &tree.blobs {
-        hasher.update([1]);
+        hasher.update(&[1]);
         hasher.update(
-            i64::try_from(path.len())
+            &i64::try_from(path.len())
                 .expect("path length fits i64")
                 .to_le_bytes(),
         );
         hasher.update(path.as_bytes());
         hasher.update(
-            i64::try_from(contents.len())
+            &i64::try_from(contents.len())
                 .expect("contents length fits i64")
                 .to_le_bytes(),
         );
@@ -10252,14 +10435,14 @@ fn pending_exec_identity_hash(
     capability: u64,
     mounts: &[crate::exec::Mount],
 ) -> ContentHash {
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hasher.update(b"vix-pending-exec");
     hasher.update(command.as_bytes());
-    hasher.update(plan.identity_hash().to_le_bytes());
-    hasher.update(capability.to_le_bytes());
+    hasher.update(plan.identity_hash().as_ref());
+    hasher.update(&capability.to_le_bytes());
     for mount in mounts {
         hasher.update(mount.at.as_bytes());
-        hasher.update(mount.tree.fingerprint().to_le_bytes());
+        hasher.update(mount.tree.fingerprint().as_ref());
     }
     finish_hash(hasher)
 }
@@ -10270,27 +10453,29 @@ fn hash_value_bytes(
     bytes: &[u8],
     store: &ValueStore,
 ) -> ContentHash {
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hash_value_into(schemas, &mut hasher, descriptor, bytes, store);
     finish_hash(hasher)
 }
 
 fn hash_value_into(
     schemas: &SchemaTables,
-    hasher: &mut Sha256,
+    hasher: &mut blake3::Hasher,
     descriptor: &VixDescriptor,
     bytes: &[u8],
     store: &ValueStore,
 ) {
     hasher.update(b"vix-value");
     let schema = schemas.display_ref(&descriptor.schema);
-    hasher.update(schema.as_bytes());
+    update_schema_ref(hasher, schemas, &descriptor.schema);
     match &descriptor.access {
         Access::Scalar if schemas.is_primitive(&schema, Primitive::F64) => {
             let word = read_frame_word(bytes, 0);
-            hasher.update(canonicalize_word_for_schema(schemas, &schema, word).to_le_bytes());
+            hasher.update(&canonicalize_word_for_schema(schemas, &schema, word).to_le_bytes());
         }
-        Access::Scalar => hasher.update(bytes),
+        Access::Scalar => {
+            hasher.update(bytes);
+        }
         Access::Handle { target } => {
             let handle = read_frame_word(bytes, 0);
             let entry = store
@@ -10298,7 +10483,7 @@ fn hash_value_into(
                 .unwrap_or_else(|| panic!("store handle {handle}"));
             let target = schemas.display_ref(target);
             assert_eq!(&entry.schema, &target, "handle target schema");
-            hasher.update(entry.content_hash);
+            hasher.update(entry.content_hash.as_ref());
         }
         Access::Record(record) => {
             hasher.update(b"record");
@@ -10317,7 +10502,7 @@ fn hash_value_into(
         Access::Enum(access) => {
             let selector = read_variant_tag(bytes, descriptor);
             hasher.update(b"enum");
-            hasher.update(selector.to_le_bytes());
+            hasher.update(&selector.to_le_bytes());
             let variant = access
                 .variants
                 .iter()
@@ -10347,12 +10532,121 @@ fn hash_value_into(
                 hash_value_into(schemas, hasher, element, &bytes[start..end], store);
             }
         }
+        Access::Sequence(sequence) => {
+            let SequenceStorage::Thunk { .. } = &sequence.storage else {
+                panic!(
+                    "sequence storage {:?} is outside vix store-byte canonicalization",
+                    sequence.storage
+                );
+            };
+            let kind = read_frame_word(bytes, 0);
+            let count = usize::try_from(read_frame_word(bytes, 16))
+                .unwrap_or_else(|_| panic!("sequence count for {schema}"));
+            hasher.update(b"sequence");
+            hasher.update(&kind.to_le_bytes());
+            update_hash_len(hasher, count);
+            for i in 0..count {
+                let word = read_frame_word(bytes, 24 + i * 8);
+                let elem_schema = descriptor_word_schema(schemas, &sequence.element);
+                hasher.update(
+                    canonical_word_hash_in_store(store, schemas, &elem_schema, word).as_ref(),
+                );
+            }
+        }
+        Access::Map(map) => {
+            let MapStorage::Thunk { .. } = &map.storage else {
+                panic!(
+                    "map storage {:?} is outside vix store-byte canonicalization",
+                    map.storage
+                );
+            };
+            hasher.update(b"map");
+            let pairs = decode_map_pairs(bytes, schemas).unwrap_or_else(|err| {
+                panic!("map descriptor hashing failed for `{schema}`: {err}")
+            });
+            let ordered = pairs
+                .into_iter()
+                .map(|pair| {
+                    let key_hash = canonical_word_hash_in_store(
+                        store,
+                        schemas,
+                        &pair.key_schema,
+                        pair.key_word,
+                    );
+                    let value_hash = canonical_word_hash_in_store(
+                        store,
+                        schemas,
+                        &pair.value_schema,
+                        pair.value_word,
+                    );
+                    OrderedMapPair {
+                        pair,
+                        key_hash,
+                        value_hash,
+                        key_taint: None,
+                        value_taint: None,
+                    }
+                })
+                .collect::<Vec<_>>();
+            hasher.update(hash_map_pairs(&schema, &ordered, schemas).as_ref());
+        }
+        Access::Option(option) => {
+            hasher.update(b"option");
+            match &option.presence {
+                Presence::Tag {
+                    offset,
+                    width,
+                    none_value,
+                } => {
+                    let tag = read_presence_tag(bytes, *offset, *width);
+                    hasher.update(&tag.to_le_bytes());
+                    if tag != *none_value {
+                        let payload_start = offset + width;
+                        let payload_end = payload_start + option.some.layout.size;
+                        hash_value_into(
+                            schemas,
+                            hasher,
+                            &option.some,
+                            &bytes[payload_start..payload_end],
+                            store,
+                        );
+                    }
+                }
+                Presence::Niche {
+                    offset,
+                    width,
+                    none_pattern,
+                } => {
+                    let end = offset + width;
+                    let is_some = &bytes[*offset..end] != none_pattern.as_slice();
+                    hasher.update(&u64::from(is_some).to_le_bytes());
+                    if is_some {
+                        hash_value_into(schemas, hasher, &option.some, bytes, store);
+                    }
+                }
+                Presence::Thunk { .. } | Presence::Vtable(_) => {
+                    panic!(
+                        "option presence {:?} is outside vix store-byte canonicalization",
+                        option.presence
+                    );
+                }
+            }
+        }
         other => {
-            // V2/blake3 rewires descriptor-driven hashing for real container access; keep sha2 loud instead of adding churn here.
             panic!(
                 "descriptor access {other:?} is outside vix machine value-store canonicalization"
             );
         }
+    }
+}
+
+fn read_presence_tag(bytes: &[u8], offset: usize, width: usize) -> u64 {
+    match width {
+        1 => bytes[offset].into(),
+        2 => u16::from_le_bytes(bytes[offset..offset + 2].try_into().expect("presence tag")).into(),
+        4 => u32::from_le_bytes(bytes[offset..offset + 4].try_into().expect("presence tag")).into(),
+        8 => u64::from_le_bytes(bytes[offset..offset + 8].try_into().expect("presence tag")),
+        _ => panic!("invalid option presence tag width {width}"),
     }
 }
 
@@ -10516,6 +10810,113 @@ mod tests {
                 read_set: ProjectionReadSet::default(),
             },
         );
+    }
+
+    fn carried_array_hash_for_test(
+        store: &ValueStore,
+        schemas: &SchemaTables,
+        carried_hash: Option<CarriedArrayHasher>,
+        words: &[i64],
+    ) -> ContentHash {
+        finish_array_element_hash(
+            carried_hash.unwrap_or_else(|| {
+                recompute_array_element_hasher(
+                    store,
+                    schemas,
+                    schemas,
+                    b"vix-array-words",
+                    "Int",
+                    words,
+                )
+            }),
+            words.len(),
+        )
+    }
+
+    fn assert_array_hash_matches_recomputed(
+        store: &ValueStore,
+        schemas: &SchemaTables,
+        carried_hash: &Option<CarriedArrayHasher>,
+        words: &[i64],
+    ) {
+        let carried = carried_array_hash_for_test(store, schemas, carried_hash.clone(), words);
+        let recomputed = finish_array_element_hash(
+            recompute_array_element_hasher(
+                store,
+                schemas,
+                schemas,
+                b"vix-array-words",
+                "Int",
+                words,
+            ),
+            words.len(),
+        );
+        assert_eq!(carried, recomputed, "carried array hash drift");
+
+        let mut allocated_store = ValueStore::default();
+        let (handle, _) = allocated_store
+            .alloc_array_words("Int", words.to_vec(), schemas, schemas)
+            .expect("array alloc");
+        let allocated = allocated_store
+            .entry(handle)
+            .expect("allocated array handle")
+            .content_hash;
+        assert_eq!(allocated, recomputed, "allocated array hash drift");
+    }
+
+    #[test]
+    fn carried_array_hash_matches_recomputed_after_random_ops() {
+        let store = ValueStore::default();
+        let schemas = SchemaTables::empty();
+        let mut words = Vec::new();
+        let mut carried_hash: Option<CarriedArrayHasher> = None;
+        let mut seed = 0x9e37_79b9_7f4a_7c15_u64;
+
+        for step in 0..256 {
+            seed = seed
+                .wrapping_mul(6_364_136_223_846_793_005)
+                .wrapping_add(1_442_695_040_888_963_407);
+            let op = if words.is_empty() { 0 } else { seed % 5 };
+            match op {
+                0 | 1 => {
+                    let word = (seed.rotate_left(17) as i64) ^ i64::from(step);
+                    if words.is_empty() {
+                        carried_hash = Some(start_array_element_hasher(
+                            b"vix-array-words",
+                            &schemas,
+                            "Int",
+                        ));
+                    } else if carried_hash.is_none() {
+                        carried_hash = Some(recompute_array_element_hasher(
+                            &store,
+                            &schemas,
+                            &schemas,
+                            b"vix-array-words",
+                            "Int",
+                            &words,
+                        ));
+                    }
+                    let element_hash = canonical_word_hash_in_store(&store, &schemas, "Int", word);
+                    update_array_element_hash(
+                        carried_hash.as_mut().expect("array hash seeded"),
+                        element_hash,
+                    );
+                    words.push(word);
+                }
+                2 => {
+                    words.pop().expect("non-empty array");
+                    carried_hash = None;
+                }
+                _ => {
+                    let index = usize::try_from(seed % u64::try_from(words.len()).unwrap())
+                        .expect("index fits usize");
+                    words[index] = (seed.rotate_right(11) as i64) ^ -i64::from(step);
+                    carried_hash = None;
+                }
+            }
+
+            assert_array_hash_matches_recomputed(&store, &schemas, &carried_hash, &words);
+        }
     }
 
     /// Build the classic: fib(n) = n < 2 ? n : fib(n-1) + fib(n-2),

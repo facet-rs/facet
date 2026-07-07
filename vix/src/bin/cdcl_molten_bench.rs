@@ -1,7 +1,7 @@
 use std::hint::black_box;
 use std::time::{Duration, Instant};
 
-use vix::machine::Machine;
+use vix::machine::{Machine, MachineArg, NamedArg};
 
 const PUSHES: usize = 128;
 const BURST: usize = 32;
@@ -25,7 +25,13 @@ fn run_vix(source: &str, force_copy: bool) -> Duration {
     let start = Instant::now();
     for seed in 0..RUNS {
         let value = machine
-            .demand_i64("main", vec![seed])
+            .call(
+                "main",
+                &[NamedArg {
+                    name: "seed".to_string(),
+                    value: MachineArg::Word(seed),
+                }],
+            )
             .expect("generated CDCL bench runs");
         black_box(value);
     }
@@ -61,5 +67,5 @@ fn cdcl_source() -> String {
             }
         }
     }
-    format!("pub fn main(seed: Int) -> Int {{\n    ({expr}).len() + seed - seed\n}}\n")
+    format!("pub fn main(seed: Int) -> [Int] {{\n    ({expr}).push(seed - seed)\n}}\n")
 }

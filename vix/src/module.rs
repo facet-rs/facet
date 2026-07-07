@@ -1,5 +1,4 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::hash::{DefaultHasher, Hash, Hasher};
 
 use taxon::{
     Field as TaxonField, Kind, Primitive, Schema, SchemaId, SchemaRef, Variant as TaxonVariant,
@@ -995,10 +994,21 @@ fn legacy_generic_schema(schema: &str) -> Option<(&str, Vec<String>)> {
 }
 
 fn legacy_marker_schema_id(name: &str) -> SchemaId {
-    let mut hasher = DefaultHasher::new();
-    "vix-legacy-schema-marker".hash(&mut hasher);
-    name.hash(&mut hasher);
-    SchemaId::from_raw(hasher.finish())
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"vix-legacy-schema-marker");
+    hasher.update(
+        &i64::try_from(name.len())
+            .expect("schema marker name length fits i64")
+            .to_le_bytes(),
+    );
+    hasher.update(name.as_bytes());
+    let digest = hasher.finalize();
+    let mut first8 = [0u8; 8];
+    first8.copy_from_slice(&digest.as_bytes()[..8]);
+    // This is only the stable marker for legacy generic/wrapper frame names
+    // that are not concrete taxon schemas; it is not taxon's canonical
+    // structural schema encoding.
+    SchemaId::from_raw(u64::from_le_bytes(first8))
 }
 
 pub(crate) fn type_schema_name(ty: &ast::Type) -> Result<String, String> {
@@ -1382,19 +1392,27 @@ fn graph_node_closure_hash(
         }
     }
 
-    let mut h = DefaultHasher::new();
-    "closure".hash(&mut h);
-    own_hashes[name].hash(&mut h);
-    scc_hash.hash(&mut h);
-    out_hashes.len().hash(&mut h);
+    let mut h = blake3::Hasher::new();
+    h.update(b"closure");
+    h.update(&own_hashes[name].to_le_bytes());
+    h.update(&scc_hash.to_le_bytes());
+    h.update(
+        &u64::try_from(out_hashes.len())
+            .expect("out hash count fits u64")
+            .to_le_bytes(),
+    );
     for hash in out_hashes {
-        hash.hash(&mut h);
+        h.update(&hash.to_le_bytes());
     }
-    extra_hashes.len().hash(&mut h);
+    h.update(
+        &u64::try_from(extra_hashes.len())
+            .expect("extra hash count fits u64")
+            .to_le_bytes(),
+    );
     for hash in extra_hashes {
-        hash.hash(&mut h);
+        h.update(&hash.to_le_bytes());
     }
-    h.finish()
+    first_u64(h)
 }
 
 fn strongly_connected_components(
@@ -1464,38 +1482,48 @@ fn strongly_connected_components(
 }
 
 fn hash_list(domain: &str, hashes: &[u64]) -> u64 {
-    let mut h = DefaultHasher::new();
-    domain.hash(&mut h);
-    hashes.len().hash(&mut h);
+    let mut h = blake3::Hasher::new();
+    h.update(domain.as_bytes());
+    h.update(
+        &u64::try_from(hashes.len())
+            .expect("hash list length fits u64")
+            .to_le_bytes(),
+    );
     for hash in hashes {
-        hash.hash(&mut h);
+        h.update(&hash.to_le_bytes());
     }
-    h.finish()
+    first_u64(h)
 }
 
 fn canon_fn_hash(item: &ast::FnItem) -> u64 {
     let mut canonical = item.clone();
     canonical.strip_spans();
     let bytes = phon::api::encode(&canonical).expect("AST serializes");
-    let mut h = DefaultHasher::new();
-    bytes.hash(&mut h);
-    h.finish()
+    hash_bytes_u64(b"vix-fn", &bytes)
 }
 
 fn canon_enum_hash(item: &EnumItem) -> u64 {
     let mut canonical = item.clone();
     canonical.strip_spans();
     let bytes = phon::api::encode(&canonical).expect("AST serializes");
-    let mut h = DefaultHasher::new();
-    bytes.hash(&mut h);
-    h.finish()
+    hash_bytes_u64(b"vix-enum", &bytes)
 }
 
 fn canon_struct_hash(item: &StructItem) -> u64 {
     let mut canonical = item.clone();
     canonical.strip_spans();
     let bytes = phon::api::encode(&canonical).expect("AST serializes");
-    let mut h = DefaultHasher::new();
-    bytes.hash(&mut h);
-    h.finish()
+    hash_bytes_u64(b"vix-struct", &bytes)
+}
+
+fn hash_bytes_u64(domain: &[u8], bytes: &[u8]) -> u64 {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(domain);
+    hasher.update(bytes);
+    first_u64(hasher)
+}
+
+fn first_u64(hasher: blake3::Hasher) -> u64 {
+    let hash = hasher.finalize();
+    u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("blake3 prefix"))
 }

@@ -17,11 +17,9 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use sha2::{Digest, Sha256};
 use taxon::Primitive;
 use weavy::mem::Layout;
 use weavy::mem::declared as declared_mem;
@@ -478,10 +476,10 @@ impl Machine {
 }
 
 fn module_hash(source: &str) -> Vec<u8> {
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hasher.update(b"vix-machine-module");
     hasher.update(source.as_bytes());
-    hasher.finalize().to_vec()
+    hasher.finalize().as_bytes().to_vec()
 }
 
 /// The interned handle tables for a compiled module set. Fresh (0-based) on a
@@ -796,15 +794,15 @@ fn module_set_hash(root: &str, modules: &BTreeMap<String, String>) -> Vec<u8> {
     {
         return module_hash(source);
     }
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hasher.update(b"vix-machine-module-set");
     hasher.update(root.as_bytes());
     for (path, source) in modules {
         hasher.update(path.as_bytes());
-        hasher.update((source.len() as u64).to_le_bytes());
+        hasher.update(&(source.len() as u64).to_le_bytes());
         hasher.update(source.as_bytes());
     }
-    hasher.finalize().to_vec()
+    hasher.finalize().as_bytes().to_vec()
 }
 
 fn schema_names_for(
@@ -2713,16 +2711,21 @@ fn hash_with_semantic_comparators(
     if comparators.is_empty() {
         return base;
     }
-    let mut hasher = DefaultHasher::new();
-    "vix-semantic-comparator-hash".hash(&mut hasher);
-    base.hash(&mut hasher);
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"vix-semantic-comparator-hash");
+    hasher.update(&base.to_le_bytes());
     for comparator in comparators {
-        comparator.arg_index.hash(&mut hasher);
+        hasher.update(
+            &u64::try_from(comparator.arg_index)
+                .expect("comparator arg index fits u64")
+                .to_le_bytes(),
+        );
         if let Some(name) = fn_names.get(comparator.fn_ref().index()) {
-            tables.fn_hashes[*name].hash(&mut hasher);
+            hasher.update(&tables.fn_hashes[*name].to_le_bytes());
         }
     }
-    hasher.finish()
+    let hash = hasher.finalize();
+    u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("blake3 prefix"))
 }
 
 struct LoweredInfo {
@@ -8160,7 +8163,6 @@ pub(crate) mod tests {
     use sha2::{Digest, Sha256};
     use std::cell::RefCell;
     use std::collections::{BTreeMap, BTreeSet};
-    use std::hash::{DefaultHasher, Hash, Hasher};
     use std::rc::Rc;
     use std::sync::Arc;
 
@@ -8908,6 +8910,54 @@ pub fn main() -> Int {
     }
 
     #[test]
+    fn molten_array_carried_hash_matches_from_scratch_after_many_updates() {
+        let mut expr = "[0, 1, 2, 3]".to_string();
+        let mut len = 4usize;
+        let mut seed = 0x1234_5678_u64;
+        for step in 0..32 {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            match seed % 3 {
+                0 => {
+                    expr = format!("({expr}).push({})", step + 10);
+                    len += 1;
+                }
+                1 if len > 0 => {
+                    let index = (seed as usize >> 8) % len;
+                    expr = format!("({expr}).set({index}, {})", step + 20);
+                }
+                _ if len > 1 => {
+                    expr = format!("(({expr}).pop()).1");
+                    len -= 1;
+                }
+                _ => {
+                    expr = format!("({expr}).push({})", step + 30);
+                    len += 1;
+                }
+            }
+        }
+        let src = format!("pub fn main() -> [Int] {{\n    {expr}\n}}\n");
+        for lane in lanes() {
+            let mut reuse = Machine::load_with_lane(&src, lane).unwrap();
+            reuse.driver.set_force_molten_copy(false);
+            let reuse_result = reuse.demand_i64("main", vec![]).unwrap();
+            let reuse_bundle = reuse
+                .driver
+                .export_value_bundle(reuse_result, Vec::new())
+                .unwrap();
+
+            let mut copy = Machine::load_with_lane(&src, lane).unwrap();
+            copy.driver.set_force_molten_copy(true);
+            let copy_result = copy.demand_i64("main", vec![]).unwrap();
+            let copy_bundle = copy
+                .driver
+                .export_value_bundle(copy_result, Vec::new())
+                .unwrap();
+
+            assert_eq!(reuse_bundle.values, copy_bundle.values, "{lane:?}");
+        }
+    }
+
+    #[test]
     fn recursive_enum_tree_evaluates_on_the_machine() {
         let src = r#"
 enum Expr {
@@ -9252,8 +9302,8 @@ pub fn main() -> String {
 
     #[test]
     fn types_vix_toolchain_acquires_capabilities_and_updates_records() {
-        const CC_PIN: &str = "acquire:Cc:a67daa6cb12f954f";
-        const AR_PIN: &str = "acquire:Ar:a67daa6cb12f954f";
+        const CC_PIN: &str = "acquire:Cc:7e66028935dab99";
+        const AR_PIN: &str = "acquire:Ar:7e66028935dab99";
 
         let src = include_str!("../../../playgrounds/snark/src/bundled/vix/samples/types.vix");
         let mut traces = Vec::new();
@@ -11632,13 +11682,18 @@ pub fn lazy(n: Int) -> Map<String, Float> {
     }
 
     fn trace_hash(value: &str) -> u64 {
-        let mut h = DefaultHasher::new();
-        value.hash(&mut h);
-        h.finish()
+        let mut h = blake3::Hasher::new();
+        h.update(b"vix-debug-u64");
+        h.update(format!("{value:?}").as_bytes());
+        let hash = h.finalize();
+        u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("blake3 prefix"))
     }
 
     fn expected_object() -> BTreeMap<String, String> {
-        BTreeMap::from([("wanted.o".to_string(), "obj(9259fea8a69f1945)".to_string())])
+        BTreeMap::from([(
+            "wanted.o".to_string(),
+            "obj(b1fc5679f1748a8f259a9d9ea09d1c81ef43028c7f65aba0ed7a947d04da7251)".to_string(),
+        )])
     }
 
     fn spawned_count(machine: &Machine, name: &str) -> usize {

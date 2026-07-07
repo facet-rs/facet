@@ -13,8 +13,6 @@ use std::process::Command;
 use std::sync::{Arc, Mutex};
 use std::thread::JoinHandle;
 
-use sha2::{Digest, Sha256};
-
 use crate::exec::{
     ExecCache, ExecEvent, ExecPlan, MountedWorld, ObservedWorld, Outcome, Role, Tool, Tree,
     role_embedded_paths, role_env_paths, role_input_paths, role_output_dir_paths,
@@ -439,8 +437,17 @@ fn stage_file(root: &Path, logical: &str, bytes: &[u8]) -> Result<(), String> {
             .map_err(|err| format!("real-process create staged parent `{logical}`: {err}"))?;
     }
 
-    let hash = Sha256::digest(bytes);
-    let cas_path = root.join(".vix-cas").join(hex::encode(hash));
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"vix-real-process-cas");
+    hasher.update(
+        &i64::try_from(bytes.len())
+            .expect("staged file length fits i64")
+            .to_le_bytes(),
+    );
+    hasher.update(bytes);
+    let cas_path = root
+        .join(".vix-cas")
+        .join(hex::encode(hasher.finalize().as_bytes()));
     if !cas_path.exists() {
         fs::write(&cas_path, bytes)
             .map_err(|err| format!("real-process write cas `{logical}`: {err}"))?;

@@ -1,7 +1,5 @@
 use std::collections::BTreeMap;
 
-use sha2::{Digest, Sha256};
-
 use crate::exec::Tree;
 use crate::value::Value;
 
@@ -179,39 +177,39 @@ pub(super) fn project_file(layout: &Layout, path: &str) -> Result<Option<FilePro
 }
 
 pub(super) fn input_hash(tree: &Tree) -> [u8; 32] {
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hasher.update(b"vix-oci-layout-tree");
     for (path, contents) in &tree.entries {
-        hasher.update([0]);
+        hasher.update(&[0]);
         hasher.update(
-            i64::try_from(path.len())
+            &i64::try_from(path.len())
                 .expect("path length fits i64")
                 .to_le_bytes(),
         );
         hasher.update(path.as_bytes());
         hasher.update(
-            i64::try_from(contents.len())
+            &i64::try_from(contents.len())
                 .expect("contents length fits i64")
                 .to_le_bytes(),
         );
         hasher.update(contents.as_bytes());
     }
     for (path, contents) in &tree.blobs {
-        hasher.update([1]);
+        hasher.update(&[1]);
         hasher.update(
-            i64::try_from(path.len())
+            &i64::try_from(path.len())
                 .expect("path length fits i64")
                 .to_le_bytes(),
         );
         hasher.update(path.as_bytes());
         hasher.update(
-            i64::try_from(contents.len())
+            &i64::try_from(contents.len())
                 .expect("contents length fits i64")
                 .to_le_bytes(),
         );
         hasher.update(contents);
     }
-    hasher.finalize().into()
+    *hasher.finalize().as_bytes()
 }
 
 fn parse_json_blob(tree: &Tree, path: &str) -> Result<Value, String> {

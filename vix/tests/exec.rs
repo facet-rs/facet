@@ -3,8 +3,8 @@
 //! (content reads, search-path probes, negative lookups).
 
 use vix::exec::{
-    ExecCache, ExecEvent, ExecPlan, FakeCc, Mount, MountedWorld, ReadObservation, ReadSet, Role,
-    Snapshot, Tree, verify,
+    ExecCache, ExecEvent, ExecPlan, FakeCc, Mount, MountedWorld, ObservedWorld, ReadObservation,
+    Role, Tree, verify,
 };
 
 const CC_FINGERPRINT: u64 = 0xcc_15_fa_5e;
@@ -225,19 +225,9 @@ fn listings_pin_additions_and_deletions() {
     }];
     let world = MountedWorld::new(&mounts);
 
-    let mut rs = ReadSet::default();
-    let names = world.list("/src").unwrap();
-    rs.entries.insert(
-        "/src/".into(),
-        ReadObservation::Listing({
-            use std::hash::{DefaultHasher, Hash, Hasher};
-            let mut h = DefaultHasher::new();
-            for n in &names {
-                n.hash(&mut h);
-            }
-            h.finish()
-        }),
-    );
+    let mut observed = ObservedWorld::new(&world);
+    observed.list("/src").unwrap();
+    let rs = observed.into_read_set();
     assert!(verify(&rs, &world));
 
     // Deletion diverges.

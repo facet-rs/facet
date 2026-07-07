@@ -19,6 +19,7 @@ vox = { path = "../vox/rust/vox" }
 vox-schema = { path = "../vox/rust/vox-schema" }
 facet = { path = "../facet" }
 phon = { path = "../phon/rust/phon", default-features = false }
+blake3.workspace = true
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "net"] }
 
 [dev-dependencies]

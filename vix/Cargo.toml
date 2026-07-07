@@ -18,6 +18,7 @@ facet-json = { path = "../facet-json" }
 facet-toml = { path = "../facet-toml" }
 facet-value = { path = "../facet-value", default-features = false, features = ["alloc"] }
 hex.workspace = true
+blake3.workspace = true
 miniz_oxide = { version = "0.8.9", default-features = false, features = ["with-alloc"] }
 phon = { path = "../phon/rust/phon", default-features = false }
 semver = "1.0.28"
