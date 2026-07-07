@@ -1,0 +1,149 @@
+[package]
+name = "facet"
+version = "0.50.0-rc.5"
+edition.workspace = true
+rust-version.workspace = true
+license.workspace = true
+repository.workspace = true
+description = "Reflection for Rust: introspect types at compile time with metadata for serialization, pretty-printing, CLIs, and more"
+keywords = ["reflection", "introspection", "serialization", "metadata", "derive"]
+categories = ["development-tools", "encoding", "rust-patterns"]
+homepage = "https://facet.rs"
+
+[package.metadata.docs.rs]
+features = ["std", "reflect", "camino", "ordered-float", "doc"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[package.metadata."docs.rs"]
+rustdoc-args = ["--html-in-header", "arborium-header.html"]
+
+[features]
+default = ["std", "helpful-derive", "doc"]
+auto-traits = ["facet-core/auto-traits"]
+function = ["facet-macros/function"] # Enable function shape introspection
+reflect = ["dep:facet-reflect"] # Enable reflection via Peek and Poke types
+std = ["facet-core/std", "alloc"] # Enable standard library support
+all-impls = [
+  "alloc",
+  "nonzero",
+  "net",
+  "bytes",
+  "bytestring",
+  "camino",
+  "compact_str",
+  "uuid",
+  "ulid",
+  "ordered-float",
+  "jiff02",
+  "time",
+  "chrono",
+  "url",
+  "indexmap",
+  "num-complex",
+  "smartstring",
+  "smol_str",
+  "rust_decimal",
+  "lock_api",
+  "iddqd",
+  "yoke",
+  "smallvec",
+  "semver",
+] # Enable all optional Facet trait implementations for third-party types
+alloc = ["facet-core/alloc"] # Enable allocation support for no_std environments
+nonzero = ["facet-core/nonzero"] # Provide Facet trait implementations for NonZero<T> types
+net = [
+  "facet-core/net",
+] # Provide Facet trait implementations for network types (SocketAddr, IpAddr, etc.)
+bytes = [
+  "facet-core/bytes",
+] # Provide Facet trait implementations for bytes::Bytes and bytes::BytesMut
+bytestring = [
+  "facet-core/bytestring",
+] # Provide Facet trait implementations for bytestring::ByteString
+camino = [
+  "facet-core/camino",
+] # Provide Facet trait implementations for camino::Utf8Path and camino::Utf8PathBuf
+compact_str = [
+  "facet-core/compact_str",
+] # Provide Facet trait implementations for compact_str::CompactString
+uuid = ["facet-core/uuid"] # Provide Facet trait implementations for uuid::Uuid
+ulid = ["facet-core/ulid"] # Provide Facet trait implementations for ulid::Ulid
+tendril = ["facet-core/tendril"] # Provide Facet trait implementations for tendril::Tendril
+ordered-float = [
+  "facet-core/ordered-float",
+] # Provide Facet trait implementations for ordered_float types
+jiff02 = ["facet-core/jiff02"] # Provide Facet trait implementations for jiff crate types
+time = ["facet-core/time"] # Provide Facet trait implementations for time crate types
+chrono = ["facet-core/chrono"] # Provide Facet trait implementations for chrono crate types
+url = ["facet-core/url"] # Provide Facet trait implementations for url::Url
+ruint = ["facet-core/ruint"] # Provide Facet trait implementations for ruint types
+indexmap = [
+  "facet-core/indexmap",
+] # Provide Facet trait implementations for indexmap::IndexMap and indexmap::IndexSet
+num-complex = [
+  "facet-core/num-complex",
+] # Provide Facet trait implementations for num_complex::Complex
+semver = ["facet-core/semver"] # Provide Facet trait implementations for semver::Version and semver::VersionReq
+smartstring = [
+  "facet-core/smartstring",
+] # Provide Facet trait implementations for smartstring::SmartString
+smol_str = ["facet-core/smol_str"] # Provide Facet trait implementations for smol_str::SmolStr
+rust_decimal = [
+  "facet-core/rust_decimal",
+] # Provide Facet trait implementations for rust_decimal::Decimal
+lock_api = [
+  "facet-core/lock_api",
+] # Provide Facet trait implementations for lock_api::Mutex and lock_api::RwLock
+iddqd = [
+  "facet-core/iddqd",
+] # Provide Facet trait implementations for iddqd collection types (IdHashMap, BiHashMap, TriHashMap, IdOrdMap)
+yoke = ["facet-core/yoke"] # Provide Facet trait implementations for yoke::Yoke
+smallvec = ["facet-core/smallvec"] # Provide Facet trait implementations for smallvec::SmallVec
+
+# Provide Facet trait implementations for tuples up to size 12. Without it,
+# Facet is only implemented for tuples up to size 4.
+tuples-12 = ["facet-core/tuples-12"]
+
+# Provide Facet trait implementations for function pointers.
+fn-ptr = ["facet-core/fn-ptr"]
+
+# Provide Facet trait implementations for portable SIMD types (requires nightly).
+# This adds 84 type implementations which increases compile time.
+simd = ["facet-core/simd"]
+
+# Include doc comments in generated Shape/Field/Variant definitions.
+# To strip docs globally (e.g., in release builds), set `--cfg facet_no_doc` in rustflags:
+#   [profile.release]
+#   rustflags = ["--cfg", "facet_no_doc"]
+doc = ["facet-macros/doc"]
+
+# Enable typo suggestions for unknown attributes/fields (uses strsim)
+helpful-derive = ["facet-macros/helpful-derive"]
+
+# Does nothing outside of tests; used to ensure cfg_attr handling keeps working.
+testfeat = []
+
+# Enable slow tests (compile tests)
+slow-tests = []
+
+[build-dependencies]
+autocfg = { workspace = true }
+
+[dependencies]
+facet-core = { path = "../facet-core", version = "=0.50.0-rc.5", default-features = false }
+facet-macros = { path = "../facet-macros", version = "0.50.0-rc.5", default-features = false }
+facet-reflect = { path = "../facet-reflect", version = "0.50.0-rc.5", optional = true }
+static_assertions = { workspace = true, optional = true }
+
+[dev-dependencies]
+facet-default = { path = "../facet-default" }
+facet-reflect = { path = "../facet-reflect" }
+facet-showcase = { path = "../facet-showcase" }
+facet-testhelpers = { path = "../facet-testhelpers" }
+facet-testattrs = { path = "../facet-testattrs" }
+num-complex = "0.4.6"
+owo-colors = "4.2.2"
+tempfile = { workspace = true }
+
+[lints]
+workspace = true

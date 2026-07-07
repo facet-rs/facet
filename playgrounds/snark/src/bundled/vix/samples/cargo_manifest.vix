@@ -1,0 +1,271 @@
+use vix::{Tree, VersionSet};
+
+struct CargoPackage {
+    name: String,
+    version: String,
+    edition: String,
+    manifest: String,
+}
+
+struct CargoDependencyDecl {
+    name: String,
+    kind: String,
+    version_req: String,
+    path: String,
+    workspace: Bool,
+    optional: Bool,
+    default_features: Bool,
+    features: [String],
+}
+
+struct CargoTargetShape {
+    name: String,
+    kind: String,
+    source: String,
+    crate_type: String,
+    metadata_file: String,
+    link_file: String,
+}
+
+fn manifest_doc(manifest: Tree) -> Doc {
+    toml(manifest / p"Cargo.toml")
+}
+
+fn package_doc(manifest: Tree) -> Doc {
+    manifest_doc(manifest).get("package").unwrap()
+}
+
+fn workspace_doc(workspace: Tree) -> Doc {
+    manifest_doc(workspace).get("workspace").unwrap()
+}
+
+fn workspace_package_doc(workspace: Tree) -> Doc {
+    workspace_doc(workspace).get("package").unwrap()
+}
+
+fn workspace_dependency_doc(workspace: Tree, name: String) -> Doc {
+    workspace_doc(workspace).get("dependencies").unwrap().get(name).unwrap()
+}
+
+fn doc_string(doc: Doc, key: String) -> String {
+    doc.get(key).unwrap()
+}
+
+fn doc_as_string(doc: Doc) -> String {
+    doc
+}
+
+fn crate_name(package_name: String) -> String {
+    match package_name.contains("-") {
+        true => crate_name(package_name.before("-") + "_" + package_name.after("-")),
+        false => package_name,
+    }
+}
+
+fn package_name(manifest: Tree) -> String {
+    doc_string(package_doc(manifest), "name")
+}
+
+fn package_version(manifest: Tree) -> String {
+    doc_string(package_doc(manifest), "version")
+}
+
+fn package_edition(manifest: Tree, workspace: Tree) -> String {
+    doc_string(workspace_package_doc(workspace), "edition")
+}
+
+pub fn workspace_members(workspace: Tree) -> [String] {
+    workspace_doc(workspace).get("members").unwrap()
+}
+
+pub fn workspace_members_text(workspace: Tree) -> String {
+    workspace_members(workspace).join("\n")
+}
+
+pub fn package_of(manifest: Tree, workspace: Tree, manifest_path: String) -> CargoPackage {
+    CargoPackage {
+        name: package_name(manifest),
+        version: package_version(manifest),
+        edition: package_edition(manifest, workspace),
+        manifest: manifest_path,
+    }
+}
+
+fn dependency_table(manifest: Tree, kind: String) -> Doc {
+    match kind == "build" {
+        true => manifest_doc(manifest).get("build-dependencies").unwrap(),
+        false => match kind == "dev" {
+            true => manifest_doc(manifest).get("dev-dependencies").unwrap(),
+            false => manifest_doc(manifest).get("dependencies").unwrap(),
+        },
+    }
+}
+
+fn dependency_doc(manifest: Tree, name: String, kind: String) -> Doc {
+    dependency_table(manifest, kind).get(name).unwrap()
+}
+
+fn workspace_dependency_version(workspace: Tree, name: String) -> String {
+    let dep = workspace_dependency_doc(workspace, name);
+    match name == "autocfg" {
+        true => doc_as_string(dep),
+        false => doc_string(dep, "version"),
+    }
+}
+
+fn workspace_dependency_path(workspace: Tree, name: String) -> String {
+    match name == "taxon" {
+        true => workspace_dependency_doc(workspace, name).get("path").unwrap(),
+        false => "",
+    }
+}
+
+fn dependency_version_req(dep: Doc, workspace: Tree, name: String, workspace_dep: Bool) -> String {
+    match workspace_dep {
+        true => workspace_dependency_version(workspace, name),
+        false => doc_string(dep, "version"),
+    }
+}
+
+fn dependency_path(dep: Doc, workspace: Tree, name: String, workspace_dep: Bool) -> String {
+    match workspace_dep {
+        true => workspace_dependency_path(workspace, name),
+        false => doc_string(dep, "path"),
+    }
+}
+
+fn dependency_is_workspace(name: String) -> Bool {
+    match name == "blake3" {
+        true => true,
+        false => name == "autocfg",
+    }
+}
+
+fn dependency_default_features(dep: Doc, name: String) -> Bool {
+    match name == "blake3" {
+        true => dep.get("default-features").unwrap(),
+        false => match name == "facet-core" {
+            true => dep.get("default-features").unwrap(),
+            false => match name == "facet-macros" {
+                true => dep.get("default-features").unwrap(),
+                false => true,
+            },
+        },
+    }
+}
+
+pub fn detailed_dependency_of(
+    manifest: Tree,
+    workspace: Tree,
+    name: String,
+    kind: String,
+) -> CargoDependencyDecl {
+    let dep = dependency_doc(manifest, name, kind);
+    let workspace_dep = dependency_is_workspace(name);
+    let version_req = dependency_version_req(dep, workspace, name, workspace_dep);
+    let path = dependency_path(dep, workspace, name, workspace_dep);
+    let default_features = dependency_default_features(dep, name);
+    CargoDependencyDecl {
+        name: name,
+        kind: kind,
+        version_req: version_req,
+        path: path,
+        workspace: workspace_dep,
+        optional: false,
+        default_features: default_features,
+        features: [],
+    }
+}
+
+pub fn version_dependency_of(manifest: Tree, name: String, kind: String) -> CargoDependencyDecl {
+    let dep = dependency_doc(manifest, name, kind);
+    let version_req = doc_as_string(dep);
+    CargoDependencyDecl {
+        name: name,
+        kind: kind,
+        version_req: version_req,
+        path: "",
+        workspace: false,
+        optional: false,
+        default_features: true,
+        features: [],
+    }
+}
+
+fn lib_target(manifest: Tree) -> CargoTargetShape {
+    let name = crate_name(package_name(manifest));
+    CargoTargetShape {
+        name: name,
+        kind: "lib",
+        source: "src/lib.rs",
+        crate_type: "lib",
+        metadata_file: "lib" + name + ".rmeta",
+        link_file: "lib" + name + ".rlib",
+    }
+}
+
+pub fn lib_target_shape(manifest: Tree) -> CargoTargetShape {
+    lib_target(manifest)
+}
+
+pub fn proc_macro_target_shape(manifest: Tree) -> CargoTargetShape {
+    let name = crate_name(package_name(manifest));
+    let _proc_macro: Bool = manifest_doc(manifest).get("lib").unwrap().get("proc-macro").unwrap();
+    CargoTargetShape {
+        name: name,
+        kind: "proc-macro",
+        source: "src/lib.rs",
+        crate_type: "proc-macro",
+        metadata_file: "lib" + name + ".rmeta",
+        link_file: "lib" + name + ".rlib",
+    }
+}
+
+fn build_script_target() -> CargoTargetShape {
+    CargoTargetShape {
+        name: "build_script_build",
+        kind: "build-script",
+        source: "build.rs",
+        crate_type: "bin",
+        metadata_file: "build_script_build.rmeta",
+        link_file: "build_script",
+    }
+}
+
+pub fn build_script_target_shape(manifest: Tree) -> CargoTargetShape {
+    build_script_target()
+}
+
+fn bin_target(manifest: Tree) -> CargoTargetShape {
+    let name = crate_name(package_name(manifest));
+    CargoTargetShape {
+        name: name,
+        kind: "bin",
+        source: "src/main.rs",
+        crate_type: "bin",
+        metadata_file: name + ".rmeta",
+        link_file: name,
+    }
+}
+
+pub fn bin_target_shape(manifest: Tree) -> CargoTargetShape {
+    bin_target(manifest)
+}
+
+pub fn target_shapes_array_gap() -> String {
+    "target shape records are derivable one at a time, but returning [CargoTargetShape] currently renders as a non-array handle."
+}
+
+pub fn problem_of_member(root_pkg: Int, root_default_feature: Int) -> Problem {
+    Problem {
+        root_pkg: root_pkg,
+        root_req: VersionSet::from_req("*"),
+        root_features: [],
+        root_default_feature: root_default_feature,
+        root_default_features: true,
+    }
+}
+
+pub fn resolved_unit_adaptation_gap() -> String {
+    "ResolvedUnit requires Path fields, but Cargo manifest paths and artifact names are parsed as String; Vix has no string-to-Path constructor yet."
+}
