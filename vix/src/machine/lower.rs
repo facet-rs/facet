@@ -2881,6 +2881,14 @@ struct FnLowerer<'a> {
     force_tail_invoke: bool,
 }
 
+struct FnLowererSnapshot {
+    slots: Bindings,
+    next: u32,
+    code: Vec<Op>,
+    next_input_slot: i64,
+    consume_receiver: Option<String>,
+}
+
 impl<'a> FnLowerer<'a> {
     fn lower(
         item: &ast::FnItem,
@@ -2992,6 +3000,24 @@ impl<'a> FnLowerer<'a> {
         let slot = self.next;
         self.next += 8;
         slot
+    }
+
+    fn snapshot(&self) -> FnLowererSnapshot {
+        FnLowererSnapshot {
+            slots: fork_bindings(&self.slots),
+            next: self.next,
+            code: self.code.clone(),
+            next_input_slot: self.next_input_slot,
+            consume_receiver: self.consume_receiver.clone(),
+        }
+    }
+
+    fn restore(&mut self, snapshot: FnLowererSnapshot) {
+        self.slots = snapshot.slots;
+        self.next = snapshot.next;
+        self.code = snapshot.code;
+        self.next_input_slot = snapshot.next_input_slot;
+        self.consume_receiver = snapshot.consume_receiver;
     }
 
     fn tail_block(
@@ -3706,6 +3732,12 @@ impl<'a> FnLowerer<'a> {
                 };
                 TailOutcome::Value(v)
             };
+            let outcome = match (outcome, expected) {
+                (TailOutcome::Value(v), Some(expected)) => {
+                    TailOutcome::Value(self.coerce_to_schema(v, expected)?)
+                }
+                (outcome, _) => outcome,
+            };
             match outcome {
                 TailOutcome::Value(v) => {
                     match &result_schema {
@@ -4003,6 +4035,7 @@ impl<'a> FnLowerer<'a> {
         if arg_list_has_partial(&call.args) {
             return Ok(None);
         }
+        let snapshot = self.snapshot();
         let tail_identifier_uses = identifier_uses_in_arg_list(&call.args);
         let bound = self.bind_call_args(
             &resolved_name,
@@ -4013,15 +4046,19 @@ impl<'a> FnLowerer<'a> {
             false,
             Some(&tail_identifier_uses),
         )?;
-        self.emit_self_tail_jump(bound.args, &param_schemas)?;
-        Ok(Some(TailOutcome::Jumped))
+        if self.emit_self_tail_jump(bound.args, &param_schemas)? {
+            Ok(Some(TailOutcome::Jumped))
+        } else {
+            self.restore(snapshot);
+            Ok(None)
+        }
     }
 
     fn emit_self_tail_jump(
         &mut self,
         args: Vec<ValueSlot>,
         param_schemas: &[String],
-    ) -> Result<(), String> {
+    ) -> Result<bool, String> {
         if args.len() != self.param_slots.len() || args.len() != param_schemas.len() {
             return Err(format!(
                 "self-tail-call argument count {} did not match parameter count {}",
@@ -4032,7 +4069,9 @@ impl<'a> FnLowerer<'a> {
         let mut temps = Vec::with_capacity(args.len());
         for (arg, schema) in args.into_iter().zip(param_schemas) {
             let arg = self.coerce_to_schema(arg, schema)?;
-            self.expect_schema(&arg, schema)?;
+            if arg.schema != *schema {
+                return Ok(false);
+            }
             temps.push(self.copy_value(&arg));
         }
         for (param, temp) in self.param_slots.clone().into_iter().zip(&temps) {
@@ -4044,7 +4083,7 @@ impl<'a> FnLowerer<'a> {
         self.code.push(Op::Jump {
             target: self.loop_header,
         });
-        Ok(())
+        Ok(true)
     }
 
     fn fn_name_for_ref(&self, fn_ref: usize) -> Result<&str, String> {
