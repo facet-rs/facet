@@ -39,13 +39,14 @@ use facet::Facet;
 use sha2::{Digest, Sha256};
 #[cfg(any(test, feature = "jit"))]
 use weavy::jit::task_lane::{JitProgram, JitTask};
-use weavy::mem::{Access, Descriptor, Tag};
+use weavy::mem::{Access, Tag};
 #[cfg(any(test, feature = "jit"))]
 use weavy::task::Op;
 use weavy::task::{FnId, HostFn, Program, Task, TaskStep};
 
 use crate::ast;
 use crate::fetch::{FetchBackend, NoFetchBackend};
+use crate::module::{DescriptorMap, SchemaTables, VixDescriptor};
 use crate::support::{PathMissing, assign_roles, subtree, tool_for};
 use crate::value::{Payload, Value};
 
@@ -1129,13 +1130,15 @@ impl ValueStore {
         &mut self,
         schema: &str,
         bytes: Vec<u8>,
-        descriptors: &HashMap<String, Descriptor<String>>,
+        descriptors: &DescriptorMap,
+        schemas: &SchemaTables,
     ) -> (i64, bool) {
         let descriptor = descriptors
             .get(schema)
             .unwrap_or_else(|| panic!("descriptor for schema `{schema}`"));
         let taint = taint_for_value_bytes(self, descriptor, &bytes);
-        let content_hash = hash_with_taint(hash_value_bytes(descriptor, &bytes, self), &taint);
+        let content_hash =
+            hash_with_taint(hash_value_bytes(schemas, descriptor, &bytes, self), &taint);
         let key = (schema.to_string(), content_hash);
         if let Some(handle) = self.by_content.get(&key).copied() {
             return (handle, true);
@@ -1186,9 +1189,10 @@ impl ValueStore {
         schema: &str,
         pairs: Vec<MapPair>,
         schema_refs: &[String],
-        descriptors: &HashMap<String, Descriptor<String>>,
+        descriptors: &DescriptorMap,
+        schemas: &SchemaTables,
     ) -> Result<(i64, bool), String> {
-        let ordered = canonical_map_pairs(self, pairs, descriptors, schema_refs)?;
+        let ordered = canonical_map_pairs(self, pairs, descriptors, schemas, schema_refs)?;
         let bytes = encode_map_pairs(&ordered, schema_refs)?;
         let taint = taint_for_ordered_map_pairs(&ordered);
         let content_hash = hash_with_taint(hash_map_pairs(schema, &ordered), &taint);
@@ -1218,7 +1222,7 @@ impl ValueStore {
         key_schema: &str,
         key_word: i64,
         value_schema: &str,
-        _descriptors: &HashMap<String, Descriptor<String>>,
+        _descriptors: &DescriptorMap,
         schema_refs: &[String],
     ) -> Result<(i64, bool), String> {
         let (_, pairs) = self.map_pairs(handle, schema_refs)?;
@@ -1581,7 +1585,8 @@ impl ValueStore {
 fn intern_molten_word(
     store: &mut ValueStore,
     molten: &mut MoltenStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     schema: &str,
     word: i64,
@@ -1612,11 +1617,12 @@ fn intern_molten_word(
                 store,
                 molten,
                 descriptors,
+                schemas,
                 schema_refs,
                 &record_schema,
                 &mut bytes,
             )?;
-            store.alloc(&record_schema, bytes, descriptors)
+            store.alloc(&record_schema, bytes, descriptors, schemas)
         }
         MoltenValue::Map {
             schema: map_schema,
@@ -1630,6 +1636,7 @@ fn intern_molten_word(
                     store,
                     molten,
                     descriptors,
+                    schemas,
                     schema_refs,
                     &pair.key_schema,
                     pair.key_word,
@@ -1639,13 +1646,14 @@ fn intern_molten_word(
                     store,
                     molten,
                     descriptors,
+                    schemas,
                     schema_refs,
                     &pair.value_schema,
                     pair.value_word,
                 )?
                 .0;
             }
-            store.alloc_map(&map_schema, pairs, schema_refs, descriptors)?
+            store.alloc_map(&map_schema, pairs, schema_refs, descriptors, schemas)?
         }
         MoltenValue::ArrayWords {
             elem_schema,
@@ -1659,6 +1667,7 @@ fn intern_molten_word(
                     store,
                     molten,
                     descriptors,
+                    schemas,
                     schema_refs,
                     &elem_schema,
                     *word,
@@ -1686,7 +1695,8 @@ fn map_schema_is_realized_projection(expected: &str, actual: &str) -> bool {
 fn intern_value_bytes_children(
     store: &mut ValueStore,
     molten: &mut MoltenStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     schema: &str,
     bytes: &mut [u8],
@@ -1697,12 +1707,13 @@ fn intern_value_bytes_children(
     match &descriptor.access {
         Access::Record(record) => {
             for field in &record.fields {
-                let field_schema = descriptor_word_schema(&field.descriptor);
+                let field_schema = descriptor_word_schema(schemas, &field.descriptor);
                 let word = read_frame_word(bytes, field.offset);
                 let (interned, _) = intern_molten_word(
                     store,
                     molten,
                     descriptors,
+                    schemas,
                     schema_refs,
                     &field_schema,
                     word,
@@ -1717,12 +1728,13 @@ fn intern_value_bytes_children(
                 return Ok(());
             };
             for field in &variant.payload.fields {
-                let field_schema = descriptor_word_schema(&field.descriptor);
+                let field_schema = descriptor_word_schema(schemas, &field.descriptor);
                 let word = read_frame_word(bytes, field.offset);
                 let (interned, _) = intern_molten_word(
                     store,
                     molten,
                     descriptors,
+                    schemas,
                     schema_refs,
                     &field_schema,
                     word,
@@ -1741,7 +1753,8 @@ pub struct Driver {
     lane_kind: Lane,
     lane: LaneRuntime,
     fns: Vec<LoweredFn>,
-    descriptors: HashMap<String, Descriptor<String>>,
+    descriptors: DescriptorMap,
+    schemas: SchemaTables,
     schema_refs: Vec<String>,
     memo: HashMap<CanonMemoKey, MemoEntry>,
     memo_candidates: HashMap<ProjectionCandidateKey, Vec<CanonMemoKey>>,
@@ -1774,22 +1787,32 @@ impl Driver {
     }
 
     pub fn new(program: Program, fns: Vec<LoweredFn>) -> Self {
-        Self::with_descriptors(program, fns, HashMap::new())
+        Self::with_descriptors(program, fns, DescriptorMap::new())
     }
 
-    pub fn with_descriptors(
+    pub(crate) fn with_descriptors(
         program: Program,
         fns: Vec<LoweredFn>,
-        descriptors: HashMap<String, Descriptor<String>>,
+        descriptors: DescriptorMap,
     ) -> Self {
         Self::try_with_descriptors(program, fns, descriptors, Lane::Interp)
             .expect("interp lane is always available")
     }
 
-    pub fn try_with_descriptors(
+    pub(crate) fn try_with_descriptors(
         program: Program,
         fns: Vec<LoweredFn>,
-        descriptors: HashMap<String, Descriptor<String>>,
+        descriptors: DescriptorMap,
+        lane: Lane,
+    ) -> Result<Self, String> {
+        Self::try_with_schema_tables(program, fns, descriptors, SchemaTables::empty(), lane)
+    }
+
+    pub(crate) fn try_with_schema_tables(
+        program: Program,
+        fns: Vec<LoweredFn>,
+        descriptors: DescriptorMap,
+        schemas: SchemaTables,
         lane: Lane,
     ) -> Result<Self, String> {
         let lane_runtime = LaneRuntime::new(lane, &program)?;
@@ -1799,6 +1822,7 @@ impl Driver {
             lane: lane_runtime,
             fns,
             descriptors,
+            schemas,
             schema_refs: Vec::new(),
             memo: HashMap::new(),
             memo_candidates: HashMap::new(),
@@ -1826,16 +1850,18 @@ impl Driver {
         })
     }
 
-    pub fn reload(
+    pub(crate) fn reload(
         &mut self,
         program: Program,
         fns: Vec<LoweredFn>,
-        descriptors: HashMap<String, Descriptor<String>>,
+        descriptors: DescriptorMap,
+        schemas: SchemaTables,
     ) -> Result<(), String> {
         self.lane = LaneRuntime::new(self.lane_kind, &program)?;
         self.program = program;
         self.fns = fns;
         self.descriptors = descriptors;
+        self.schemas = schemas;
         self.trace.clear();
         #[cfg(test)]
         {
@@ -2024,6 +2050,7 @@ impl Driver {
         compare_words(
             &self.store.borrow(),
             &self.descriptors,
+            &self.schemas,
             &self.schema_refs,
             schema,
             a,
@@ -2040,6 +2067,7 @@ impl Driver {
         render_word(
             &self.store.borrow(),
             &self.descriptors,
+            &self.schemas,
             &self.schema_refs,
             names,
             schema,
@@ -2081,7 +2109,7 @@ impl Driver {
         Ok(self
             .store
             .borrow_mut()
-            .alloc("Run", bytes, &self.descriptors)
+            .alloc("Run", bytes, &self.descriptors, &self.schemas)
             .0)
     }
 
@@ -2187,7 +2215,13 @@ impl Driver {
         os_index: u64,
         arch_index: u64,
     ) -> Result<(i64, bool), String> {
-        intern_structured_target(&self.store, &self.descriptors, os_index, arch_index)
+        intern_structured_target(
+            &self.store,
+            &self.descriptors,
+            &self.schemas,
+            os_index,
+            arch_index,
+        )
     }
 
     /// Demand one invocation's identity: the edge of the machine.
@@ -2243,6 +2277,7 @@ impl Driver {
                                 &mut self.store.borrow_mut(),
                                 &mut exec.molten,
                                 &self.descriptors,
+                                &self.schemas,
                                 &self.schema_refs,
                                 &return_schema,
                                 value,
@@ -2594,6 +2629,7 @@ impl Driver {
             let mut pending_coercions: Vec<PendingCoerceRequest> = Vec::new();
             let mut pending_invokes: Vec<PendingInvokeRequest> = Vec::new();
             let descriptors = &self.descriptors;
+            let schemas = &self.schemas;
             let schema_refs = &self.schema_refs;
             let store_cell = &self.store;
             let molten_cell = RefCell::new(&mut exec.molten);
@@ -2631,6 +2667,7 @@ impl Driver {
                         &mut store_cell.borrow_mut(),
                         &mut molten_cell.borrow_mut(),
                         descriptors,
+                        schemas,
                         schema_refs,
                         schema,
                         *arg,
@@ -2666,6 +2703,7 @@ impl Driver {
                 write_variant_tag(&mut bytes, descriptor, variant_index as u64);
                 write_alloc_fields(
                     &mut bytes,
+                    schemas,
                     descriptor,
                     usize::try_from(variant_index).expect("variant index non-negative"),
                     field_count,
@@ -2731,6 +2769,7 @@ impl Driver {
                             &mut store_cell.borrow_mut(),
                             &mut molten_cell.borrow_mut(),
                             descriptors,
+                            schemas,
                             schema_refs,
                             &schema,
                             handle,
@@ -2756,7 +2795,7 @@ impl Driver {
                 let offset = field_offset(descriptor, &entry.bytes, field_index);
                 let value = read_frame_word(&entry.bytes, offset);
                 let field = field_descriptor(descriptor, &entry.bytes, field_index);
-                let field_schema = descriptor_word_schema(field);
+                let field_schema = descriptor_word_schema(schemas, field);
                 let observed = canonical_word_hash_in_store(&store, &field_schema, value);
                 let projection_context = ProjectionRecordContext {
                     arg_schemas: &exec_arg_schemas,
@@ -2820,6 +2859,7 @@ impl Driver {
                             &mut store_cell.borrow_mut(),
                             &mut molten_cell.borrow_mut(),
                             descriptors,
+                            schemas,
                             schema_refs,
                             &schema,
                             handle,
@@ -2925,6 +2965,7 @@ impl Driver {
                         &mut store_cell.borrow_mut(),
                         &mut molten_cell.borrow_mut(),
                         descriptors,
+                        schemas,
                         schema_refs,
                         &key_schema,
                         key_word,
@@ -2934,6 +2975,7 @@ impl Driver {
                         &mut store_cell.borrow_mut(),
                         &mut molten_cell.borrow_mut(),
                         descriptors,
+                        schemas,
                         schema_refs,
                         &stored_value_schema,
                         value_word,
@@ -3070,6 +3112,7 @@ impl Driver {
                                 &mut store_cell.borrow_mut(),
                                 &mut molten_cell.borrow_mut(),
                                 descriptors,
+                                schemas,
                                 schema_refs,
                                 &map_schema,
                                 map_handle,
@@ -3148,6 +3191,7 @@ impl Driver {
                                 &mut store_cell.borrow_mut(),
                                 &mut molten_cell.borrow_mut(),
                                 descriptors,
+                                schemas,
                                 schema_refs,
                                 "Target",
                                 target,
@@ -3218,6 +3262,7 @@ impl Driver {
                             &mut store_cell.borrow_mut(),
                             &mut molten_cell.borrow_mut(),
                             descriptors,
+                            schemas,
                             schema_refs,
                             &elem_schema,
                             *word,
@@ -3293,6 +3338,7 @@ impl Driver {
                                     &mut store_cell.borrow_mut(),
                                     &mut molten_cell.borrow_mut(),
                                     descriptors,
+                                    schemas,
                                     schema_refs,
                                     schema,
                                     *arg,
@@ -3361,6 +3407,7 @@ impl Driver {
                                     compare_words(
                                         &store,
                                         descriptors,
+                                        schemas,
                                         schema_refs,
                                         &elem_schema,
                                         *a,
@@ -3500,6 +3547,7 @@ impl Driver {
                         &VirtualDocGetCtx {
                             store: store_cell,
                             descriptors,
+                            schemas,
                             schema_refs,
                             oci_file_memo: &oci_file_memo_cell,
                             store_events: &store_events,
@@ -3587,7 +3635,8 @@ impl Driver {
                         descriptors,
                         [input],
                     );
-                    let handle = alloc_elf_doc(store_cell, descriptors, schema_refs, input)?;
+                    let handle =
+                        alloc_elf_doc(store_cell, descriptors, schemas, schema_refs, input)?;
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -3600,7 +3649,8 @@ impl Driver {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let input = read_frame_word(frame, primitive_region + 8);
-                    let handle = alloc_ast_doc(store_cell, descriptors, schema_refs, input)?;
+                    let handle =
+                        alloc_ast_doc(store_cell, descriptors, schemas, schema_refs, input)?;
                     ast_roots_cell.borrow_mut().insert(handle, input);
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
@@ -3614,7 +3664,8 @@ impl Driver {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let input = read_frame_word(frame, primitive_region + 8);
-                    let handle = alloc_oci_doc(store_cell, descriptors, schema_refs, input)?;
+                    let handle =
+                        alloc_oci_doc(store_cell, descriptors, schemas, schema_refs, input)?;
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -3823,6 +3874,7 @@ impl Driver {
                     let ordering = compare_expression_words(
                         &store,
                         descriptors,
+                        schemas,
                         schema_refs,
                         &schema,
                         left,
@@ -4247,6 +4299,7 @@ impl Driver {
                             &mut store_cell.borrow_mut(),
                             &mut molten_cell.borrow_mut(),
                             descriptors,
+                            schemas,
                             schema_refs,
                             schema,
                             *arg,
@@ -4312,6 +4365,7 @@ impl Driver {
                             &mut store_cell.borrow_mut(),
                             &mut molten_cell.borrow_mut(),
                             descriptors,
+                            schemas,
                             schema_refs,
                             schema,
                             *arg,
@@ -4337,6 +4391,7 @@ impl Driver {
                     let (handle, _) = intern_structured_target(
                         store_cell,
                         descriptors,
+                        schemas,
                         host_os_index(),
                         host_arch_index(),
                     )?;
@@ -4537,6 +4592,7 @@ impl Driver {
                         &mut store_cell.borrow_mut(),
                         &mut molten_cell.borrow_mut(),
                         descriptors,
+                        schemas,
                         schema_refs,
                         &schema,
                         src,
@@ -4589,6 +4645,7 @@ impl Driver {
                                 &mut store_cell.borrow_mut(),
                                 &mut molten_cell.borrow_mut(),
                                 descriptors,
+                                schemas,
                                 schema_refs,
                                 &elem_schema,
                                 value,
@@ -4631,6 +4688,7 @@ impl Driver {
                         &mut store_cell.borrow_mut(),
                         &mut molten_cell.borrow_mut(),
                         descriptors,
+                        schemas,
                         schema_refs,
                         &elem_schema,
                         value,
@@ -4733,6 +4791,7 @@ impl Driver {
                                 &mut store_cell.borrow_mut(),
                                 &mut molten_cell.borrow_mut(),
                                 descriptors,
+                                schemas,
                                 schema_refs,
                                 &elem_schema,
                                 value,
@@ -4767,6 +4826,7 @@ impl Driver {
                         &mut store_cell.borrow_mut(),
                         &mut molten_cell.borrow_mut(),
                         descriptors,
+                        schemas,
                         schema_refs,
                         &elem_schema,
                         value,
@@ -4855,7 +4915,7 @@ impl Driver {
                                         ));
                                     }
                                     let value = canonicalize_word_for_schema(
-                                        &field.schema,
+                                        &schemas.display_ref(&field.schema),
                                         read_frame_word(
                                             frame,
                                             store_alloc_region + 48 + update_index * 16,
@@ -4953,7 +5013,7 @@ impl Driver {
                             ));
                         }
                         let value = canonicalize_word_for_schema(
-                            &field.schema,
+                            &schemas.display_ref(&field.schema),
                             read_frame_word(frame, store_alloc_region + 48 + update_index * 16),
                         );
                         bytes[field_offset..field_offset + field.layout.size]
@@ -5219,6 +5279,7 @@ impl Driver {
             let observed = projection_observation_hash(
                 &mut store,
                 &self.descriptors,
+                &self.schemas,
                 &self.schema_refs,
                 arg,
                 &read.path,
@@ -5972,8 +6033,13 @@ impl Driver {
             DocParseKind::Json => crate::data::parse_json(input)?,
             DocParseKind::BuildDirectives => crate::data::parse_build_directives(input)?,
         };
-        let handle =
-            alloc_doc_from_value(&self.store, &self.descriptors, &self.schema_refs, value)?;
+        let handle = alloc_doc_from_value(
+            &self.store,
+            &self.descriptors,
+            &self.schemas,
+            &self.schema_refs,
+            value,
+        )?;
         Ok((req.input_slot, handle))
     }
 
@@ -6102,8 +6168,13 @@ impl Driver {
             return Ok(handle);
         }
         let value = super::elf::project(&bytes, projection)?;
-        let handle =
-            alloc_doc_from_value(&self.store, &self.descriptors, &self.schema_refs, value)?;
+        let handle = alloc_doc_from_value(
+            &self.store,
+            &self.descriptors,
+            &self.schemas,
+            &self.schema_refs,
+            value,
+        )?;
         self.elf_projection_memo
             .insert((input_hash, projection), handle);
         let timestamp_us = self.next_timestamp();
@@ -6214,12 +6285,14 @@ impl Driver {
             super::ast_probe::Projection::Items => alloc_doc_from_value(
                 &self.store,
                 &self.descriptors,
+                &self.schemas,
                 &self.schema_refs,
                 super::ast_probe::items(&file),
             )?,
             super::ast_probe::Projection::Fns => alloc_doc_from_value(
                 &self.store,
                 &self.descriptors,
+                &self.schemas,
                 &self.schema_refs,
                 super::ast_probe::fns(&file),
             )?,
@@ -6228,6 +6301,7 @@ impl Driver {
                 alloc_ast_fn_doc(
                     &self.store,
                     &self.descriptors,
+                    &self.schemas,
                     &self.schema_refs,
                     input,
                     input_hash,
@@ -6239,6 +6313,7 @@ impl Driver {
                 alloc_doc_from_value(
                     &self.store,
                     &self.descriptors,
+                    &self.schemas,
                     &self.schema_refs,
                     super::ast_probe::fn_body_children(item),
                 )?
@@ -6282,11 +6357,23 @@ impl Driver {
             return Ok(handle);
         }
         let handle = if projection == super::oci::Projection::Files {
-            alloc_oci_files_doc(&self.store, &self.descriptors, input_hash, *input)?
+            alloc_oci_files_doc(
+                &self.store,
+                &self.descriptors,
+                &self.schemas,
+                input_hash,
+                *input,
+            )?
         } else {
             let layout = super::oci::parse_layout(tree)?;
             let value = super::oci::project(&layout, projection)?;
-            alloc_doc_from_value(&self.store, &self.descriptors, &self.schema_refs, value)?
+            alloc_doc_from_value(
+                &self.store,
+                &self.descriptors,
+                &self.schemas,
+                &self.schema_refs,
+                value,
+            )?
         };
         self.oci_projection_memo
             .insert((input_hash, projection), handle);
@@ -6397,37 +6484,41 @@ enum DocPayload {
 
 fn alloc_doc_from_value(
     store: &RefCell<ValueStore>,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     value: Value,
 ) -> Result<i64, String> {
     match value {
-        Value::Bool(value) => alloc_doc_variant(store, descriptors, 1, &[i64::from(value)]),
-        Value::Int(value) => alloc_doc_variant(store, descriptors, 2, &[value]),
+        Value::Bool(value) => {
+            alloc_doc_variant(store, descriptors, schemas, 1, &[i64::from(value)])
+        }
+        Value::Int(value) => alloc_doc_variant(store, descriptors, schemas, 2, &[value]),
         Value::Float(value) => alloc_doc_variant(
             store,
             descriptors,
+            schemas,
             3,
             &[super::value::TotalF64::new(value).get().to_bits() as i64],
         ),
         Value::Str(value) => {
             let handle = store.borrow_mut().alloc_raw("String", value.into_bytes()).0;
-            alloc_doc_variant(store, descriptors, 4, &[handle])
+            alloc_doc_variant(store, descriptors, schemas, 4, &[handle])
         }
         Value::Blob(value) => {
             let handle = store.borrow_mut().alloc_raw("Blob", value).0;
-            alloc_doc_variant(store, descriptors, 8, &[handle])
+            alloc_doc_variant(store, descriptors, schemas, 8, &[handle])
         }
         Value::Array(values) => {
             let words = values
                 .into_iter()
-                .map(|value| alloc_doc_from_value(store, descriptors, schema_refs, value))
+                .map(|value| alloc_doc_from_value(store, descriptors, schemas, schema_refs, value))
                 .collect::<Result<Vec<_>, _>>()?;
             let handle = store
                 .borrow_mut()
                 .alloc_array_words("Doc", words, schema_refs)?
                 .0;
-            alloc_doc_variant(store, descriptors, 5, &[handle])
+            alloc_doc_variant(store, descriptors, schemas, 5, &[handle])
         }
         Value::Map(entries) => {
             let mut pairs = Vec::new();
@@ -6436,7 +6527,8 @@ fn alloc_doc_from_value(
                     return Err(format!("document object key must be a string, got {key:?}"));
                 };
                 let key_word = store.borrow_mut().alloc_raw("String", key.into_bytes()).0;
-                let value_word = alloc_doc_from_value(store, descriptors, schema_refs, value)?;
+                let value_word =
+                    alloc_doc_from_value(store, descriptors, schemas, schema_refs, value)?;
                 pairs.push(MapPair {
                     key_schema: "String".to_string(),
                     key_word,
@@ -6447,9 +6539,9 @@ fn alloc_doc_from_value(
             }
             let handle = store
                 .borrow_mut()
-                .alloc_map("Map<String,Doc>", pairs, schema_refs, descriptors)?
+                .alloc_map("Map<String,Doc>", pairs, schema_refs, descriptors, schemas)?
                 .0;
-            alloc_doc_variant(store, descriptors, 6, &[handle])
+            alloc_doc_variant(store, descriptors, schemas, 6, &[handle])
         }
         Value::Variant {
             enum_name,
@@ -6457,7 +6549,7 @@ fn alloc_doc_from_value(
             index,
             ..
         } if enum_name == "Option" && name == "None" && index == 1 => {
-            alloc_doc_variant(store, descriptors, 0, &[])
+            alloc_doc_variant(store, descriptors, schemas, 0, &[])
         }
         other => Err(format!("document value {other:?} is outside the B5 subset")),
     }
@@ -6465,7 +6557,8 @@ fn alloc_doc_from_value(
 
 fn alloc_doc_variant(
     store: &RefCell<ValueStore>,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     variant_index: u64,
     fields: &[i64],
 ) -> Result<i64, String> {
@@ -6478,12 +6571,15 @@ fn alloc_doc_variant(
         let offset = field_offset(descriptor, &bytes, index);
         bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
     }
-    Ok(store.borrow_mut().alloc("Doc", bytes, descriptors).0)
+    Ok(store
+        .borrow_mut()
+        .alloc("Doc", bytes, descriptors, schemas)
+        .0)
 }
 
 fn doc_payload(
     store: &ValueStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
     handle: i64,
 ) -> Result<DocPayload, String> {
     let entry = store
@@ -6535,7 +6631,7 @@ fn doc_payload(
 
 fn doc_get(
     store: &RefCell<ValueStore>,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
     schema_refs: &[String],
     doc: i64,
     key: &str,
@@ -6560,7 +6656,8 @@ fn doc_get(
 
 struct VirtualDocGetCtx<'a> {
     store: &'a RefCell<ValueStore>,
-    descriptors: &'a HashMap<String, Descriptor<String>>,
+    descriptors: &'a DescriptorMap,
+    schemas: &'a SchemaTables,
     schema_refs: &'a [String],
     oci_file_memo: &'a RefCell<&'a mut HashMap<(ContentHash, String), Option<i64>>>,
     store_events: &'a RefCell<Vec<DriveEvent>>,
@@ -6584,7 +6681,7 @@ fn doc_get_with_virtual(
 
 fn doc_package(
     store: &RefCell<ValueStore>,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
     schema_refs: &[String],
     lock_doc: i64,
     wanted_name: &str,
@@ -6688,6 +6785,7 @@ fn oci_virtual_file_get(
             alloc_doc_from_value(
                 ctx.store,
                 ctx.descriptors,
+                ctx.schemas,
                 ctx.schema_refs,
                 Value::Map(BTreeMap::from([
                     (Value::Str("path".to_string()), Value::Str(path.to_string())),
@@ -6755,7 +6853,7 @@ fn emit_artifact_probe(
 
 fn doc_coerce(
     store: &RefCell<ValueStore>,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
     doc: i64,
     schema: &str,
 ) -> Result<i64, String> {
@@ -6777,7 +6875,8 @@ fn doc_coerce(
 
 fn alloc_elf_doc(
     store: &RefCell<ValueStore>,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     input: i64,
 ) -> Result<i64, String> {
@@ -6819,14 +6918,15 @@ fn alloc_elf_doc(
     }
     let map = store
         .borrow_mut()
-        .alloc_map("Map<String,Doc>", pairs, schema_refs, descriptors)?
+        .alloc_map("Map<String,Doc>", pairs, schema_refs, descriptors, schemas)?
         .0;
-    alloc_doc_variant(store, descriptors, 6, &[map])
+    alloc_doc_variant(store, descriptors, schemas, 6, &[map])
 }
 
 fn alloc_oci_doc(
     store: &RefCell<ValueStore>,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     input: i64,
 ) -> Result<i64, String> {
@@ -6853,14 +6953,15 @@ fn alloc_oci_doc(
     }
     let map = store
         .borrow_mut()
-        .alloc_map("Map<String,Doc>", pairs, schema_refs, descriptors)?
+        .alloc_map("Map<String,Doc>", pairs, schema_refs, descriptors, schemas)?
         .0;
-    alloc_doc_variant(store, descriptors, 6, &[map])
+    alloc_doc_variant(store, descriptors, schemas, 6, &[map])
 }
 
 fn alloc_oci_files_doc(
     store: &RefCell<ValueStore>,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     input_hash: ContentHash,
     input: i64,
 ) -> Result<i64, String> {
@@ -6869,7 +6970,7 @@ fn alloc_oci_files_doc(
         .borrow_mut()
         .alloc_raw("String", marker.into_bytes())
         .0;
-    alloc_doc_variant(store, descriptors, 7, &[marker])
+    alloc_doc_variant(store, descriptors, schemas, 7, &[marker])
 }
 
 fn elf_projection_pending(
@@ -6895,7 +6996,8 @@ fn elf_projection_pending(
 
 fn alloc_ast_doc(
     store: &RefCell<ValueStore>,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     input: i64,
 ) -> Result<i64, String> {
@@ -6935,12 +7037,13 @@ fn alloc_ast_doc(
         (key.to_string(), pending_schema("Doc"), pending)
     })
     .collect::<Vec<_>>();
-    alloc_doc_object(store, descriptors, schema_refs, rows)
+    alloc_doc_object(store, descriptors, schemas, schema_refs, rows)
 }
 
 fn alloc_ast_fn_doc(
     store: &RefCell<ValueStore>,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     input: i64,
     input_hash: ContentHash,
@@ -6960,6 +7063,7 @@ fn alloc_ast_fn_doc(
     let body = alloc_doc_object(
         store,
         descriptors,
+        schemas,
         schema_refs,
         vec![
             (
@@ -6968,6 +7072,7 @@ fn alloc_ast_fn_doc(
                 alloc_doc_from_value(
                     store,
                     descriptors,
+                    schemas,
                     schema_refs,
                     super::ast_probe::span_value(item.body.span),
                 )?,
@@ -6981,12 +7086,12 @@ fn alloc_ast_fn_doc(
             let Value::Str(key) = key else {
                 return Err(format!("ast fn key must be string, got {key:?}"));
             };
-            let handle = alloc_doc_from_value(store, descriptors, schema_refs, value)?;
+            let handle = alloc_doc_from_value(store, descriptors, schemas, schema_refs, value)?;
             Ok((key, "Doc".to_string(), handle))
         })
         .collect::<Result<Vec<_>, String>>()?;
     rows.push(("body".to_string(), "Doc".to_string(), body));
-    alloc_doc_object(store, descriptors, schema_refs, rows)
+    alloc_doc_object(store, descriptors, schemas, schema_refs, rows)
 }
 
 fn ast_projection_pending(
@@ -7018,7 +7123,8 @@ fn ast_projection_pending(
 
 fn alloc_doc_object(
     store: &RefCell<ValueStore>,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     rows: Vec<(String, String, i64)>,
 ) -> Result<i64, String> {
@@ -7035,9 +7141,9 @@ fn alloc_doc_object(
     }
     let map = store
         .borrow_mut()
-        .alloc_map("Map<String,Doc>", pairs, schema_refs, descriptors)?
+        .alloc_map("Map<String,Doc>", pairs, schema_refs, descriptors, schemas)?
         .0;
-    alloc_doc_variant(store, descriptors, 6, &[map])
+    alloc_doc_variant(store, descriptors, schemas, 6, &[map])
 }
 
 fn oci_projection_pending(
@@ -7063,7 +7169,7 @@ fn oci_projection_pending(
 
 fn oci_virtual_files_input(
     store: &ValueStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
     doc: i64,
 ) -> Result<Option<i64>, String> {
     let DocPayload::Virtual(marker) = doc_payload(store, descriptors, doc)? else {
@@ -7107,7 +7213,8 @@ fn oci_tree_from_entry(entry: &StoreEntry) -> Result<crate::exec::Tree, String> 
 
 fn compare_words(
     store: &ValueStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     schema: &str,
     a: i64,
@@ -7159,19 +7266,22 @@ fn compare_words(
             }
             Ok(a.bytes.cmp(&b.bytes))
         }
-        "Array" => compare_arrays(store, descriptors, schema_refs, a, b),
-        schema if schema.starts_with("Map<") => compare_maps(store, descriptors, schema_refs, a, b),
-        "Doc" => compare_docs(store, descriptors, schema_refs, a, b),
+        "Array" => compare_arrays(store, descriptors, schemas, schema_refs, a, b),
+        schema if schema.starts_with("Map<") => {
+            compare_maps(store, descriptors, schemas, schema_refs, a, b)
+        }
+        "Doc" => compare_docs(store, descriptors, schemas, schema_refs, a, b),
         "Tree" => Ok(canonical_word_hash_in_store(store, "Tree", a)
             .as_ref()
             .cmp(canonical_word_hash_in_store(store, "Tree", b).as_ref())),
-        schema => compare_declared_value(store, descriptors, schema_refs, schema, a, b),
+        schema => compare_declared_value(store, descriptors, schemas, schema_refs, schema, a, b),
     }
 }
 
 fn compare_expression_words(
     store: &ValueStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     schema: &str,
     a: i64,
@@ -7188,12 +7298,13 @@ fn compare_expression_words(
         }
         return super::version::cmp_precedence(&a.bytes, &b.bytes);
     }
-    compare_words(store, descriptors, schema_refs, schema, a, b)
+    compare_words(store, descriptors, schemas, schema_refs, schema, a, b)
 }
 
 fn compare_arrays(
     store: &ValueStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     a: i64,
     b: i64,
@@ -7213,6 +7324,7 @@ fn compare_arrays(
     compare_word_slices(
         store,
         descriptors,
+        schemas,
         schema_refs,
         &a_schema,
         &a_words,
@@ -7222,7 +7334,8 @@ fn compare_arrays(
 
 fn compare_maps(
     store: &ValueStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     a: i64,
     b: i64,
@@ -7241,6 +7354,7 @@ fn compare_maps(
         let key_order = compare_words(
             store,
             descriptors,
+            schemas,
             schema_refs,
             &a_pair.key_schema,
             a_pair.key_word,
@@ -7256,6 +7370,7 @@ fn compare_maps(
         let value_order = compare_words(
             store,
             descriptors,
+            schemas,
             schema_refs,
             &a_pair.value_schema,
             a_pair.value_word,
@@ -7270,7 +7385,8 @@ fn compare_maps(
 
 fn compare_docs(
     store: &ValueStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     a: i64,
     b: i64,
@@ -7297,22 +7413,28 @@ fn compare_docs(
         (DocPayload::Bool(a), DocPayload::Bool(b)) => Ok(a.cmp(&b)),
         (DocPayload::Int(a), DocPayload::Int(b)) => Ok(a.cmp(&b)),
         (DocPayload::Float(a), DocPayload::Float(b)) => {
-            compare_words(store, descriptors, schema_refs, "Float", a, b)
+            compare_words(store, descriptors, schemas, schema_refs, "Float", a, b)
         }
         (DocPayload::String(a), DocPayload::String(b)) => {
-            compare_words(store, descriptors, schema_refs, "String", a, b)
+            compare_words(store, descriptors, schemas, schema_refs, "String", a, b)
         }
         (DocPayload::Blob(a), DocPayload::Blob(b)) => {
-            compare_words(store, descriptors, schema_refs, "Blob", a, b)
+            compare_words(store, descriptors, schemas, schema_refs, "Blob", a, b)
         }
         (DocPayload::Array(a), DocPayload::Array(b)) => {
-            compare_words(store, descriptors, schema_refs, "Array", a, b)
+            compare_words(store, descriptors, schemas, schema_refs, "Array", a, b)
         }
-        (DocPayload::Map(a), DocPayload::Map(b)) => {
-            compare_words(store, descriptors, schema_refs, "Map<String,Doc>", a, b)
-        }
+        (DocPayload::Map(a), DocPayload::Map(b)) => compare_words(
+            store,
+            descriptors,
+            schemas,
+            schema_refs,
+            "Map<String,Doc>",
+            a,
+            b,
+        ),
         (DocPayload::Virtual(a), DocPayload::Virtual(b)) => {
-            compare_words(store, descriptors, schema_refs, "String", a, b)
+            compare_words(store, descriptors, schemas, schema_refs, "String", a, b)
         }
         _ => Ok(Ordering::Equal),
     }
@@ -7320,7 +7442,8 @@ fn compare_docs(
 
 fn compare_declared_value(
     store: &ValueStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     schema: &str,
     a: i64,
@@ -7340,6 +7463,7 @@ fn compare_declared_value(
     compare_descriptor_bytes(
         store,
         descriptors,
+        schemas,
         schema_refs,
         descriptor,
         &a_entry.bytes,
@@ -7349,16 +7473,18 @@ fn compare_declared_value(
 
 fn compare_descriptor_bytes(
     store: &ValueStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
-    descriptor: &Descriptor<String>,
+    descriptor: &VixDescriptor,
     a: &[u8],
     b: &[u8],
 ) -> Result<Ordering, String> {
     match &descriptor.access {
-        Access::Scalar if descriptor.schema == "Float" => compare_words(
+        Access::Scalar if schemas.display_ref(&descriptor.schema) == "Float" => compare_words(
             store,
             descriptors,
+            schemas,
             schema_refs,
             "Float",
             read_frame_word(a, 0),
@@ -7368,8 +7494,9 @@ fn compare_descriptor_bytes(
         Access::Handle { target } => compare_words(
             store,
             descriptors,
+            schemas,
             schema_refs,
-            target,
+            &schemas.display_ref(target),
             read_frame_word(a, 0),
             read_frame_word(b, 0),
         ),
@@ -7380,6 +7507,7 @@ fn compare_descriptor_bytes(
                 let order = compare_descriptor_bytes(
                     store,
                     descriptors,
+                    schemas,
                     schema_refs,
                     &field.descriptor,
                     &a[start..end],
@@ -7409,6 +7537,7 @@ fn compare_descriptor_bytes(
                 let order = compare_descriptor_bytes(
                     store,
                     descriptors,
+                    schemas,
                     schema_refs,
                     &field.descriptor,
                     &a[start..end],
@@ -7431,6 +7560,7 @@ fn compare_descriptor_bytes(
                 let order = compare_descriptor_bytes(
                     store,
                     descriptors,
+                    schemas,
                     schema_refs,
                     element,
                     &a[start..end],
@@ -7448,14 +7578,15 @@ fn compare_descriptor_bytes(
 
 fn compare_word_slices(
     store: &ValueStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     schema: &str,
     a: &[i64],
     b: &[i64],
 ) -> Result<Ordering, String> {
     for (a, b) in a.iter().zip(b) {
-        let order = compare_words(store, descriptors, schema_refs, schema, *a, *b)?;
+        let order = compare_words(store, descriptors, schemas, schema_refs, schema, *a, *b)?;
         if order != Ordering::Equal {
             return Ok(order);
         }
@@ -7465,7 +7596,8 @@ fn compare_word_slices(
 
 fn render_word(
     store: &ValueStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     names: &RenderNames,
     schema: &str,
@@ -7477,7 +7609,7 @@ fn render_word(
         });
     }
     if schema.starts_with("Option<") {
-        return render_option(store, descriptors, schema_refs, names, word);
+        return render_option(store, descriptors, schemas, schema_refs, names, word);
     }
     if schema != "Sealed"
         && let Some(entry) = store.entry(word)
@@ -7535,11 +7667,17 @@ fn render_word(
         }),
         "Tree" => render_tree(store, word),
         "Sealed" => render_sealed(store, word),
-        "Array" => render_array(store, descriptors, schema_refs, names, word),
-        "Doc" => render_doc(store, descriptors, schema_refs, names, word),
-        schema if schema.starts_with("Map<") => {
-            render_map(store, descriptors, schema_refs, names, schema, word)
-        }
+        "Array" => render_array(store, descriptors, schemas, schema_refs, names, word),
+        "Doc" => render_doc(store, descriptors, schemas, schema_refs, names, word),
+        schema if schema.starts_with("Map<") => render_map(
+            store,
+            descriptors,
+            schemas,
+            schema_refs,
+            names,
+            schema,
+            word,
+        ),
         schema => {
             if schema == "Blob" {
                 let entry = store
@@ -7556,14 +7694,23 @@ fn render_word(
                     bytes_utf8: Some(store.string_value(word, schema)?),
                 });
             }
-            render_declared(store, descriptors, schema_refs, names, schema, word)
+            render_declared(
+                store,
+                descriptors,
+                schemas,
+                schema_refs,
+                names,
+                schema,
+                word,
+            )
         }
     }
 }
 
 fn render_option(
     store: &ValueStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     names: &RenderNames,
     handle: i64,
@@ -7602,6 +7749,7 @@ fn render_option(
                     value: render_word(
                         store,
                         descriptors,
+                        schemas,
                         schema_refs,
                         names,
                         &render_schema,
@@ -7668,7 +7816,8 @@ fn render_sealed(store: &ValueStore, handle: i64) -> Result<RenderedValue, Strin
 
 fn render_array(
     store: &ValueStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     names: &RenderNames,
     handle: i64,
@@ -7678,7 +7827,17 @@ fn render_array(
             element_schema: elem_schema.clone(),
             items: words
                 .into_iter()
-                .map(|word| render_word(store, descriptors, schema_refs, names, &elem_schema, word))
+                .map(|word| {
+                    render_word(
+                        store,
+                        descriptors,
+                        schemas,
+                        schema_refs,
+                        names,
+                        &elem_schema,
+                        word,
+                    )
+                })
                 .collect::<Result<Vec<_>, _>>()?,
         }),
         ArrayEntry::Pending(handles) => Ok(RenderedValue::Array {
@@ -7689,6 +7848,7 @@ fn render_array(
                     render_word(
                         store,
                         descriptors,
+                        schemas,
                         schema_refs,
                         names,
                         "Pending<Tree>",
@@ -7702,7 +7862,8 @@ fn render_array(
 
 fn render_map(
     store: &ValueStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     names: &RenderNames,
     schema: &str,
@@ -7719,6 +7880,7 @@ fn render_map(
                     key: render_word(
                         store,
                         descriptors,
+                        schemas,
                         schema_refs,
                         names,
                         &pair.key_schema,
@@ -7732,6 +7894,7 @@ fn render_map(
                     value: render_word(
                         store,
                         descriptors,
+                        schemas,
                         schema_refs,
                         names,
                         &pair.value_schema,
@@ -7745,7 +7908,8 @@ fn render_map(
 
 fn render_doc(
     store: &ValueStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     names: &RenderNames,
     handle: i64,
@@ -7757,6 +7921,7 @@ fn render_doc(
             Some(Box::new(render_word(
                 store,
                 descriptors,
+                schemas,
                 schema_refs,
                 names,
                 "Bool",
@@ -7768,6 +7933,7 @@ fn render_doc(
             Some(Box::new(render_word(
                 store,
                 descriptors,
+                schemas,
                 schema_refs,
                 names,
                 "Int",
@@ -7779,6 +7945,7 @@ fn render_doc(
             Some(Box::new(render_word(
                 store,
                 descriptors,
+                schemas,
                 schema_refs,
                 names,
                 "Float",
@@ -7790,6 +7957,7 @@ fn render_doc(
             Some(Box::new(render_word(
                 store,
                 descriptors,
+                schemas,
                 schema_refs,
                 names,
                 "String",
@@ -7810,6 +7978,7 @@ fn render_doc(
             Some(Box::new(render_word(
                 store,
                 descriptors,
+                schemas,
                 schema_refs,
                 names,
                 "Array",
@@ -7821,6 +7990,7 @@ fn render_doc(
             Some(Box::new(render_word(
                 store,
                 descriptors,
+                schemas,
                 schema_refs,
                 names,
                 "Map<String,Doc>",
@@ -7832,6 +8002,7 @@ fn render_doc(
             Some(Box::new(render_word(
                 store,
                 descriptors,
+                schemas,
                 schema_refs,
                 names,
                 "String",
@@ -7844,7 +8015,8 @@ fn render_doc(
 
 fn render_declared(
     store: &ValueStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     names: &RenderNames,
     schema: &str,
@@ -7871,7 +8043,7 @@ fn render_declared(
                 .iter()
                 .enumerate()
                 .map(|(index, field)| {
-                    let field_schema = descriptor_word_schema(&field.descriptor);
+                    let field_schema = descriptor_word_schema(schemas, &field.descriptor);
                     let word =
                         read_word_at(&entry.bytes, field.offset, field.descriptor.layout.size);
                     let name = if tuple_fields.is_some() {
@@ -7887,6 +8059,7 @@ fn render_declared(
                         value: render_word(
                             store,
                             descriptors,
+                            schemas,
                             schema_refs,
                             names,
                             &field_schema,
@@ -7924,7 +8097,7 @@ fn render_declared(
                 .iter()
                 .enumerate()
                 .map(|(index, field)| {
-                    let field_schema = descriptor_word_schema(&field.descriptor);
+                    let field_schema = descriptor_word_schema(schemas, &field.descriptor);
                     let word =
                         read_word_at(&entry.bytes, field.offset, field.descriptor.layout.size);
                     Ok(RenderedField {
@@ -7935,6 +8108,7 @@ fn render_declared(
                         value: render_word(
                             store,
                             descriptors,
+                            schemas,
                             schema_refs,
                             names,
                             &field_schema,
@@ -7974,13 +8148,19 @@ fn render_pending(store: &ValueStore, handle: i64) -> Result<RenderedPending, St
     })
 }
 
-fn descriptor_word_schema(descriptor: &Descriptor<String>) -> String {
+fn descriptor_word_schema(schemas: &SchemaTables, descriptor: &VixDescriptor) -> String {
     match &descriptor.access {
-        Access::Handle { target } => target.clone(),
-        Access::Scalar if descriptor.schema.starts_with("Int") => "Int".to_string(),
-        Access::Scalar if descriptor.schema.starts_with("Float") => "Float".to_string(),
-        Access::Scalar if descriptor.schema.starts_with("Bool") => "Bool".to_string(),
-        _ => descriptor.schema.clone(),
+        Access::Handle { target } => schemas.display_ref(target),
+        Access::Scalar if schemas.display_ref(&descriptor.schema).starts_with("Int") => {
+            "Int".to_string()
+        }
+        Access::Scalar if schemas.display_ref(&descriptor.schema).starts_with("Float") => {
+            "Float".to_string()
+        }
+        Access::Scalar if schemas.display_ref(&descriptor.schema).starts_with("Bool") => {
+            "Bool".to_string()
+        }
+        _ => schemas.display_ref(&descriptor.schema),
     }
 }
 
@@ -8245,7 +8425,7 @@ fn taint_for_word(store: &ValueStore, word: i64) -> Option<StructuralTaint> {
 
 fn taint_for_value_bytes(
     store: &ValueStore,
-    descriptor: &Descriptor<String>,
+    descriptor: &VixDescriptor,
     bytes: &[u8],
 ) -> Option<StructuralTaint> {
     match &descriptor.access {
@@ -8332,10 +8512,7 @@ fn canonical_scalar_hash(schema: &str, word: i64) -> ContentHash {
     finish_hash(hasher)
 }
 
-fn is_projectable_schema_static(
-    schema: &str,
-    descriptors: &HashMap<String, Descriptor<String>>,
-) -> bool {
+fn is_projectable_schema_static(schema: &str, descriptors: &DescriptorMap) -> bool {
     schema == "Tree"
         || schema == "Array"
         || schema == "Doc"
@@ -8349,7 +8526,7 @@ fn is_projectable_arg_static(
     arg_schema: &str,
     arg: i64,
     store: &ValueStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
 ) -> bool {
     store.entry(arg).is_some_and(|entry| {
         entry.schema == arg_schema && is_projectable_schema_static(arg_schema, descriptors)
@@ -8360,7 +8537,7 @@ struct ProjectionRecordContext<'a> {
     arg_schemas: &'a [String],
     args: &'a [i64],
     store: &'a ValueStore,
-    descriptors: &'a HashMap<String, Descriptor<String>>,
+    descriptors: &'a DescriptorMap,
 }
 
 fn record_projection_for_matching_args_static(
@@ -8388,7 +8565,7 @@ fn record_whole_args_if_projectable_static(
     arg_schemas: &[String],
     args: &[i64],
     store: &ValueStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
     handles: impl IntoIterator<Item = i64>,
 ) {
     for handle in handles {
@@ -8412,7 +8589,7 @@ fn remap_read_set_for_caller(
     callee_args: &[i64],
     callee_read_set: &ProjectionReadSet,
     store: &ValueStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
 ) -> ProjectionReadSet {
     let mut remapped = ProjectionReadSet::default();
     for read in &callee_read_set.entries {
@@ -8438,7 +8615,8 @@ fn remap_read_set_for_caller(
 
 fn projection_observation_hash(
     store: &mut ValueStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     handle: i64,
     path: &ProjectionPath,
@@ -8462,7 +8640,7 @@ fn projection_observation_hash(
                 .get(schema)
                 .ok_or_else(|| format!("descriptor for schema `{schema}`"))?;
             let field = field_descriptor(descriptor, &entry.bytes, *field_index);
-            let field_schema = descriptor_word_schema(field);
+            let field_schema = descriptor_word_schema(schemas, field);
             let offset = field_offset(descriptor, &entry.bytes, *field_index);
             let value = read_frame_word(&entry.bytes, offset);
             Ok(canonical_word_hash_in_store(store, &field_schema, value))
@@ -8578,7 +8756,7 @@ fn projection_observation_hash(
             }
         }
         ProjectionPath::DocGet { key } => {
-            doc_get_observation_hash(store, descriptors, schema_refs, handle, key)
+            doc_get_observation_hash(store, descriptors, schemas, schema_refs, handle, key)
         }
         ProjectionPath::Elf { projection } => {
             let projection = super::elf::Projection::ALL
@@ -8619,7 +8797,7 @@ fn projection_observation_hash(
             };
             let value = super::elf::project(&bytes, projection)?;
             let scratch = RefCell::new(store.clone());
-            let handle = alloc_doc_from_value(&scratch, descriptors, schema_refs, value)?;
+            let handle = alloc_doc_from_value(&scratch, descriptors, schemas, schema_refs, value)?;
             Ok(scratch
                 .borrow()
                 .entry(handle)
@@ -8629,6 +8807,7 @@ fn projection_observation_hash(
         ProjectionPath::Ast { projection, name } => ast_projection_observation_hash(
             store,
             descriptors,
+            schemas,
             schema_refs,
             handle,
             projection,
@@ -8654,11 +8833,11 @@ fn projection_observation_hash(
             let input_hash = ContentHash::from(super::oci::input_hash(&tree));
             let scratch = RefCell::new(store.clone());
             let projected = if projection == super::oci::Projection::Files {
-                alloc_oci_files_doc(&scratch, descriptors, input_hash, handle)?
+                alloc_oci_files_doc(&scratch, descriptors, schemas, input_hash, handle)?
             } else {
                 let layout = super::oci::parse_layout(tree)?;
                 let value = super::oci::project(&layout, projection)?;
-                alloc_doc_from_value(&scratch, descriptors, schema_refs, value)?
+                alloc_doc_from_value(&scratch, descriptors, schemas, schema_refs, value)?
             };
             Ok(scratch
                 .borrow()
@@ -8671,7 +8850,8 @@ fn projection_observation_hash(
 
 fn doc_get_observation_hash(
     store: &mut ValueStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     handle: i64,
     key: &str,
@@ -8685,6 +8865,7 @@ fn doc_get_observation_hash(
             let doc = alloc_doc_from_value(
                 &scratch,
                 descriptors,
+                schemas,
                 schema_refs,
                 Value::Map(BTreeMap::from([
                     (Value::Str("path".to_string()), Value::Str(key.to_string())),
@@ -8731,7 +8912,8 @@ fn doc_get_observation_hash(
 
 fn ast_projection_observation_hash(
     store: &mut ValueStore,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     handle: i64,
     projection: &str,
@@ -8747,19 +8929,29 @@ fn ast_projection_observation_hash(
         super::ast_probe::Projection::Items => alloc_doc_from_value(
             &scratch,
             descriptors,
+            schemas,
             schema_refs,
             super::ast_probe::items(&file),
         )?,
         super::ast_probe::Projection::Fns => alloc_doc_from_value(
             &scratch,
             descriptors,
+            schemas,
             schema_refs,
             super::ast_probe::fns(&file),
         )?,
         super::ast_probe::Projection::Fn => {
             let name = name.ok_or_else(|| "ast projection fn missing function name".to_string())?;
             let item = super::ast_probe::fn_item(&file, name)?;
-            alloc_ast_fn_doc(&scratch, descriptors, schema_refs, handle, input_hash, item)?
+            alloc_ast_fn_doc(
+                &scratch,
+                descriptors,
+                schemas,
+                schema_refs,
+                handle,
+                input_hash,
+                item,
+            )?
         }
         super::ast_probe::Projection::FnBodyChildren => {
             let name = name.ok_or_else(|| {
@@ -8769,6 +8961,7 @@ fn ast_projection_observation_hash(
             alloc_doc_from_value(
                 &scratch,
                 descriptors,
+                schemas,
                 schema_refs,
                 super::ast_probe::fn_body_children(item),
             )?
@@ -8827,7 +9020,8 @@ fn ast_input_source_for_verify(
 fn canonical_map_pairs(
     store: &ValueStore,
     pairs: Vec<MapPair>,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
 ) -> Result<Vec<OrderedMapPair>, String> {
     let mut pairs: Vec<OrderedMapPair> = pairs
@@ -8857,6 +9051,7 @@ fn canonical_map_pairs(
         compare_words(
             store,
             descriptors,
+            schemas,
             schema_refs,
             &a.pair.key_schema,
             a.pair.key_word,
@@ -9363,7 +9558,8 @@ fn arch_variant_name(index: usize) -> &'static str {
 
 fn intern_structured_target(
     store: &RefCell<ValueStore>,
-    descriptors: &HashMap<String, Descriptor<String>>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     os_index: u64,
     arch_index: u64,
 ) -> Result<(i64, bool), String> {
@@ -9372,14 +9568,20 @@ fn intern_structured_target(
         .ok_or_else(|| "missing Os descriptor".to_string())?;
     let mut os_bytes = vec![0u8; os_descriptor.layout.size];
     write_variant_tag(&mut os_bytes, os_descriptor, os_index);
-    let os = store.borrow_mut().alloc("Os", os_bytes, descriptors).0;
+    let os = store
+        .borrow_mut()
+        .alloc("Os", os_bytes, descriptors, schemas)
+        .0;
 
     let arch_descriptor = descriptors
         .get("Arch")
         .ok_or_else(|| "missing Arch descriptor".to_string())?;
     let mut arch_bytes = vec![0u8; arch_descriptor.layout.size];
     write_variant_tag(&mut arch_bytes, arch_descriptor, arch_index);
-    let arch = store.borrow_mut().alloc("Arch", arch_bytes, descriptors).0;
+    let arch = store
+        .borrow_mut()
+        .alloc("Arch", arch_bytes, descriptors, schemas)
+        .0;
 
     let target_descriptor = descriptors
         .get("Target")
@@ -9391,7 +9593,7 @@ fn intern_structured_target(
     target_bytes[arch_offset..arch_offset + 8].copy_from_slice(&arch.to_le_bytes());
     Ok(store
         .borrow_mut()
-        .alloc("Target", target_bytes, descriptors))
+        .alloc("Target", target_bytes, descriptors, schemas))
 }
 
 fn target_hash(store: &RefCell<ValueStore>, handle: i64) -> Result<u64, String> {
@@ -9531,25 +9733,28 @@ fn pending_exec_identity_hash(
 }
 
 fn hash_value_bytes(
-    descriptor: &Descriptor<String>,
+    schemas: &SchemaTables,
+    descriptor: &VixDescriptor,
     bytes: &[u8],
     store: &ValueStore,
 ) -> ContentHash {
     let mut hasher = Sha256::new();
-    hash_value_into(&mut hasher, descriptor, bytes, store);
+    hash_value_into(schemas, &mut hasher, descriptor, bytes, store);
     finish_hash(hasher)
 }
 
 fn hash_value_into(
+    schemas: &SchemaTables,
     hasher: &mut Sha256,
-    descriptor: &Descriptor<String>,
+    descriptor: &VixDescriptor,
     bytes: &[u8],
     store: &ValueStore,
 ) {
     hasher.update(b"vix-value");
-    hasher.update(descriptor.schema.as_bytes());
+    let schema = schemas.display_ref(&descriptor.schema);
+    hasher.update(schema.as_bytes());
     match &descriptor.access {
-        Access::Scalar if descriptor.schema == "Float" => {
+        Access::Scalar if schema == "Float" => {
             let word = read_frame_word(bytes, 0);
             hasher.update(canonicalize_word_for_schema("Float", word).to_le_bytes());
         }
@@ -9559,7 +9764,8 @@ fn hash_value_into(
             let entry = store
                 .entry(handle)
                 .unwrap_or_else(|| panic!("store handle {handle}"));
-            assert_eq!(&entry.schema, target, "handle target schema");
+            let target = schemas.display_ref(target);
+            assert_eq!(&entry.schema, &target, "handle target schema");
             hasher.update(entry.content_hash);
         }
         Access::Record(record) => {
@@ -9567,7 +9773,13 @@ fn hash_value_into(
             for field in &record.fields {
                 let start = field.offset;
                 let end = start + field.descriptor.layout.size;
-                hash_value_into(hasher, &field.descriptor, &bytes[start..end], store);
+                hash_value_into(
+                    schemas,
+                    hasher,
+                    &field.descriptor,
+                    &bytes[start..end],
+                    store,
+                );
             }
         }
         Access::Enum(access) => {
@@ -9582,7 +9794,13 @@ fn hash_value_into(
             for field in &variant.payload.fields {
                 let start = field.offset;
                 let end = start + field.descriptor.layout.size;
-                hash_value_into(hasher, &field.descriptor, &bytes[start..end], store);
+                hash_value_into(
+                    schemas,
+                    hasher,
+                    &field.descriptor,
+                    &bytes[start..end],
+                    store,
+                );
             }
         }
         Access::Array {
@@ -9594,7 +9812,7 @@ fn hash_value_into(
             for i in 0..*count {
                 let start = i * *stride;
                 let end = start + element.layout.size;
-                hash_value_into(hasher, element, &bytes[start..end], store);
+                hash_value_into(schemas, hasher, element, &bytes[start..end], store);
             }
         }
         other => {
@@ -9605,7 +9823,7 @@ fn hash_value_into(
     }
 }
 
-fn write_variant_tag(bytes: &mut [u8], descriptor: &Descriptor<String>, selector: u64) {
+fn write_variant_tag(bytes: &mut [u8], descriptor: &VixDescriptor, selector: u64) {
     let Access::Enum(access) = &descriptor.access else {
         return;
     };
@@ -9630,9 +9848,12 @@ fn write_variant_tag(bytes: &mut [u8], descriptor: &Descriptor<String>, selector
     }
 }
 
-fn read_variant_tag(bytes: &[u8], descriptor: &Descriptor<String>) -> u64 {
+fn read_variant_tag(bytes: &[u8], descriptor: &VixDescriptor) -> u64 {
     let Access::Enum(access) = &descriptor.access else {
-        panic!("STORE_TAG used on non-enum schema `{}`", descriptor.schema);
+        panic!(
+            "STORE_TAG used on non-enum schema `{:?}`",
+            descriptor.schema
+        );
     };
     let Tag::Direct { offset, width } = access.tag else {
         panic!("vix machine value store only supports direct enum tags");
@@ -9649,7 +9870,8 @@ fn read_variant_tag(bytes: &[u8], descriptor: &Descriptor<String>) -> u64 {
 
 fn write_alloc_fields(
     bytes: &mut [u8],
-    descriptor: &Descriptor<String>,
+    schemas: &SchemaTables,
+    descriptor: &VixDescriptor,
     variant_index: usize,
     field_count: usize,
     frame: &[u8],
@@ -9670,7 +9892,7 @@ fn write_alloc_fields(
     assert_eq!(fields.len(), field_count, "STORE_ALLOC field count");
     for (i, field) in fields.iter().enumerate() {
         let value = canonicalize_word_for_schema(
-            &field.descriptor.schema,
+            &schemas.display_ref(&field.descriptor.schema),
             read_frame_word(frame, field_base + i * 8),
         );
         let dst = field.offset;
@@ -9685,7 +9907,7 @@ fn write_alloc_fields(
     }
 }
 
-fn field_offset(descriptor: &Descriptor<String>, bytes: &[u8], field_index: usize) -> usize {
+fn field_offset(descriptor: &VixDescriptor, bytes: &[u8], field_index: usize) -> usize {
     match &descriptor.access {
         Access::Record(record) => {
             record
@@ -9713,10 +9935,10 @@ fn field_offset(descriptor: &Descriptor<String>, bytes: &[u8], field_index: usiz
 }
 
 fn field_descriptor<'a>(
-    descriptor: &'a Descriptor<String>,
+    descriptor: &'a VixDescriptor,
     bytes: &[u8],
     field_index: usize,
-) -> &'a Descriptor<String> {
+) -> &'a VixDescriptor {
     match &descriptor.access {
         Access::Record(record) => {
             &record
@@ -9903,7 +10125,7 @@ mod tests {
         reset_jit_program_compile_count();
         let (program, fns) = fib_body_program();
         let mut driver =
-            Driver::try_with_descriptors(program, fns, HashMap::new(), Lane::Jit).unwrap();
+            Driver::try_with_descriptors(program, fns, DescriptorMap::new(), Lane::Jit).unwrap();
         assert_eq!(jit_program_compile_count(), 1, "cold load compiles once");
 
         let zero = driver.memo_key(FnRef::new(0), &[0]);
@@ -9933,7 +10155,12 @@ mod tests {
             ],
         });
         driver
-            .reload(reloaded_program, reloaded_fns, HashMap::new())
+            .reload(
+                reloaded_program,
+                reloaded_fns,
+                DescriptorMap::new(),
+                SchemaTables::empty(),
+            )
             .unwrap();
         assert_eq!(
             jit_program_compile_count(),
@@ -10048,22 +10275,23 @@ mod tests {
         assert_eq!(spawns, 1, "helper call is intra-task, not a driver spawn");
     }
 
-    fn tree_descriptor() -> Descriptor<String> {
+    fn tree_descriptor(schemas: &SchemaTables) -> VixDescriptor {
         declared_mem::declared_enum(
-            "Tree".to_string(),
+            schemas.legacy_ref("Tree"),
             vec![
-                vec![declared_mem::i64_("Int".to_string())],
+                vec![declared_mem::i64_(schemas.legacy_ref("Int"))],
                 vec![
-                    declared_mem::handle("TreeRef".to_string(), "Tree".to_string()),
-                    declared_mem::handle("TreeRef".to_string(), "Tree".to_string()),
+                    declared_mem::handle(schemas.legacy_ref("TreeRef"), schemas.legacy_ref("Tree")),
+                    declared_mem::handle(schemas.legacy_ref("TreeRef"), schemas.legacy_ref("Tree")),
                 ],
             ],
         )
     }
 
     fn store_driver_for(code: Vec<Op>, arg_offsets: Vec<u32>, arg_schemas: Vec<String>) -> Driver {
-        let mut descriptors = HashMap::new();
-        descriptors.insert("Tree".into(), tree_descriptor());
+        let schemas = SchemaTables::empty();
+        let mut descriptors = DescriptorMap::new();
+        descriptors.insert_named(&schemas, "Tree", tree_descriptor(&schemas));
         let mut driver = Driver::with_descriptors(
             Program {
                 fns: vec![TaskFn {
@@ -10209,7 +10437,11 @@ mod tests {
             Op::Ret { src: 16, size: 8 },
         ];
         let mut driver = store_driver_for(code, vec![0], vec!["Tree".into()]);
-        let tree = driver.descriptors["Tree"].clone();
+        let tree = driver
+            .descriptors
+            .get("Tree")
+            .expect("Tree descriptor")
+            .clone();
         let (h1, d1) = driver.store.borrow_mut().alloc(
             "Tree",
             {
@@ -10219,6 +10451,7 @@ mod tests {
                 bytes
             },
             &driver.descriptors,
+            &driver.schemas,
         );
         let (h2, d2) = driver.store.borrow_mut().alloc(
             "Tree",
@@ -10229,6 +10462,7 @@ mod tests {
                 bytes
             },
             &driver.descriptors,
+            &driver.schemas,
         );
         assert!(!d1);
         assert!(d2);

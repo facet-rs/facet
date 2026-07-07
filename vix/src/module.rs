@@ -31,13 +31,81 @@ pub(crate) struct StructInfo {
     pub(crate) is_unit: bool,
 }
 
+pub(crate) type VixDescriptor = Descriptor<SchemaRef>;
+
+#[derive(Clone, Default)]
+pub(crate) struct DescriptorMap {
+    by_id: HashMap<SchemaId, VixDescriptor>,
+    legacy_names: HashMap<String, SchemaId>,
+}
+
+impl DescriptorMap {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn insert_with_key(
+        &mut self,
+        name: impl Into<String>,
+        id: SchemaId,
+        descriptor: VixDescriptor,
+    ) -> Option<VixDescriptor> {
+        self.legacy_names.insert(name.into(), id);
+        self.by_id.insert(id, descriptor)
+    }
+
+    pub(crate) fn insert_named(
+        &mut self,
+        schemas: &SchemaTables,
+        name: &str,
+        descriptor: VixDescriptor,
+    ) -> Option<VixDescriptor> {
+        self.insert_with_key(
+            name.to_string(),
+            schemas.descriptor_key_for_name(name),
+            descriptor,
+        )
+    }
+
+    pub(crate) fn insert_named_if_absent(
+        &mut self,
+        schemas: &SchemaTables,
+        name: &str,
+        descriptor: impl FnOnce() -> VixDescriptor,
+    ) {
+        if !self.contains_key(name) {
+            self.insert_named(schemas, name, descriptor());
+        }
+    }
+
+    pub(crate) fn get(&self, name: &str) -> Option<&VixDescriptor> {
+        self.legacy_names
+            .get(name)
+            .and_then(|id| self.by_id.get(id))
+    }
+
+    pub(crate) fn contains_key(&self, name: &str) -> bool {
+        self.legacy_names
+            .get(name)
+            .is_some_and(|id| self.by_id.contains_key(id))
+    }
+
+    pub(crate) fn keys(&self) -> impl Iterator<Item = &String> {
+        self.legacy_names.keys()
+    }
+
+    pub(crate) fn values(&self) -> impl Iterator<Item = &VixDescriptor> {
+        self.by_id.values()
+    }
+}
+
 pub(crate) struct ModuleTables {
     pub(crate) fns: HashMap<String, ast::FnItem>,
     pub(crate) fn_modules: HashMap<String, String>,
     pub(crate) fn_hashes: HashMap<String, u64>,
     pub(crate) enums: HashMap<String, EnumInfo>,
     pub(crate) structs: HashMap<String, StructInfo>,
-    pub(crate) descriptors: HashMap<String, Descriptor<String>>,
+    pub(crate) descriptors: DescriptorMap,
     pub(crate) schemas: SchemaTables,
     modules: BTreeMap<String, ModuleInfo>,
 }
@@ -77,6 +145,14 @@ pub(crate) struct SchemaTables {
 }
 
 impl SchemaTables {
+    pub(crate) fn empty() -> Self {
+        Self {
+            by_name: HashMap::new(),
+            by_id: HashMap::new(),
+            display_names: HashMap::new(),
+        }
+    }
+
     pub(crate) fn ref_for_name(&self, name: &str) -> Option<&SchemaRef> {
         self.by_name.get(name)
     }
@@ -87,6 +163,48 @@ impl SchemaTables {
 
     pub(crate) fn display_name(&self, id: SchemaId) -> Option<&str> {
         self.display_names.get(&id).map(String::as_str)
+    }
+
+    pub(crate) fn legacy_ref(&self, name: &str) -> SchemaRef {
+        if let Some(schema_ref) = self.by_name.get(name) {
+            return schema_ref.clone();
+        }
+        if let Some((base, args)) = legacy_generic_schema(name)
+            && matches!(base, "Array" | "List" | "Map" | "Option")
+            && let Some(SchemaRef::Concrete { id, .. }) = self.by_name.get(base)
+        {
+            let args = args.iter().map(|arg| self.legacy_ref(arg)).collect();
+            return SchemaRef::generic(*id, args);
+        }
+        SchemaRef::var(name)
+    }
+
+    pub(crate) fn descriptor_key_for_name(&self, name: &str) -> SchemaId {
+        match self.legacy_ref(name) {
+            SchemaRef::Concrete { id, .. } => id,
+            SchemaRef::Var { .. } => legacy_marker_schema_id(name),
+        }
+    }
+
+    pub(crate) fn display_ref(&self, schema_ref: &SchemaRef) -> String {
+        match schema_ref {
+            SchemaRef::Var { name } => name.clone(),
+            SchemaRef::Concrete { id, args } => {
+                let base = self
+                    .display_name(*id)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| id.to_string());
+                if args.is_empty() {
+                    base
+                } else {
+                    let args = args
+                        .iter()
+                        .map(|arg| self.display_ref(arg))
+                        .collect::<Vec<_>>();
+                    format!("{base}<{}>", args.join(","))
+                }
+            }
+        }
     }
 }
 
@@ -437,7 +555,7 @@ pub(crate) fn load_module_tables_from_modules(
     }
 
     let schemas = schema_tables(&files)?;
-    let descriptors = declared_descriptors(&files)?;
+    let descriptors = declared_descriptors(&files, &schemas)?;
     let fn_hashes = closure_fn_hashes(
         &bindings,
         &bare_fn_hashes,
@@ -733,6 +851,34 @@ fn generic_param_names(generics: &Option<ast::GenericParams>) -> Vec<String> {
         .unwrap_or_default()
 }
 
+fn legacy_generic_schema(schema: &str) -> Option<(&str, Vec<String>)> {
+    let (base, rest) = schema.split_once('<')?;
+    let args = rest.strip_suffix('>')?;
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut depth = 0usize;
+    for (index, byte) in args.bytes().enumerate() {
+        match byte {
+            b'<' => depth += 1,
+            b'>' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => {
+                parts.push(args[start..index].to_string());
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(args[start..].to_string());
+    Some((base, parts))
+}
+
+fn legacy_marker_schema_id(name: &str) -> SchemaId {
+    let mut hasher = DefaultHasher::new();
+    "vix-legacy-schema-marker".hash(&mut hasher);
+    name.hash(&mut hasher);
+    SchemaId::from_raw(hasher.finish())
+}
+
 pub(crate) fn type_schema_name(ty: &ast::Type) -> Result<String, String> {
     match ty {
         ast::Type::Path(path) => type_path_schema_name(path),
@@ -813,11 +959,27 @@ fn insert_unique_span(
 
 fn declared_descriptors(
     files: &BTreeMap<String, SourceFile>,
-) -> Result<HashMap<String, Descriptor<String>>, String> {
-    let mut descriptors = HashMap::new();
-    descriptors.insert("Int".into(), declared_mem::i64_("Int".into()));
-    descriptors.insert("Float".into(), declared_mem::f64_("Float".into()));
-    descriptors.insert("Bool".into(), declared_mem::i64_("Bool".into()));
+    schemas: &SchemaTables,
+) -> Result<DescriptorMap, String> {
+    let mut descriptors = DescriptorMap::new();
+    insert_descriptor(
+        schemas,
+        &mut descriptors,
+        "Int",
+        declared_mem::i64_(schemas.legacy_ref("Int")),
+    );
+    insert_descriptor(
+        schemas,
+        &mut descriptors,
+        "Float",
+        declared_mem::f64_(schemas.legacy_ref("Float")),
+    );
+    insert_descriptor(
+        schemas,
+        &mut descriptors,
+        "Bool",
+        declared_mem::i64_(schemas.legacy_ref("Bool")),
+    );
 
     for file in files.values() {
         for item in &file.items {
@@ -827,20 +989,22 @@ fn declared_descriptors(
                         fields
                             .fields
                             .iter()
-                            .map(|field| descriptor_for_type(&field.ty))
+                            .map(|field| descriptor_for_type(schemas, &field.ty))
                             .collect::<Result<Vec<_>, _>>()?
                     } else if let Some(tuple) = &s.tuple {
                         tuple
                             .types
                             .iter()
-                            .map(descriptor_for_type)
+                            .map(|ty| descriptor_for_type(schemas, ty))
                             .collect::<Result<Vec<_>, _>>()?
                     } else {
                         Vec::new()
                     };
-                    descriptors.insert(
-                        s.name.value.clone(),
-                        declared_mem::declared_struct(s.name.value.clone(), fields),
+                    insert_descriptor(
+                        schemas,
+                        &mut descriptors,
+                        &s.name.value,
+                        declared_mem::declared_struct(schemas.legacy_ref(&s.name.value), fields),
                     );
                 }
                 Item::Enum(e) => {
@@ -852,22 +1016,24 @@ fn declared_descriptors(
                                 tuple
                                     .types
                                     .iter()
-                                    .map(descriptor_for_type)
+                                    .map(|ty| descriptor_for_type(schemas, ty))
                                     .collect::<Result<Vec<_>, _>>()
                             } else if let Some(fields) = &variant.fields {
                                 fields
                                     .fields
                                     .iter()
-                                    .map(|field| descriptor_for_type(&field.ty))
+                                    .map(|field| descriptor_for_type(schemas, &field.ty))
                                     .collect::<Result<Vec<_>, _>>()
                             } else {
                                 Ok(Vec::new())
                             }
                         })
                         .collect::<Result<Vec<_>, _>>()?;
-                    descriptors.insert(
-                        e.name.value.clone(),
-                        declared_mem::declared_enum(e.name.value.clone(), variants),
+                    insert_descriptor(
+                        schemas,
+                        &mut descriptors,
+                        &e.name.value,
+                        declared_mem::declared_enum(schemas.legacy_ref(&e.name.value), variants),
                     );
                 }
                 Item::Fn(_) | Item::Use(_) => {}
@@ -877,23 +1043,37 @@ fn declared_descriptors(
     Ok(descriptors)
 }
 
-fn descriptor_for_type(ty: &ast::Type) -> Result<Descriptor<String>, String> {
+fn insert_descriptor(
+    schemas: &SchemaTables,
+    descriptors: &mut DescriptorMap,
+    name: &str,
+    descriptor: VixDescriptor,
+) {
+    let key = schemas.descriptor_key_for_name(name);
+    descriptors.insert_with_key(name.to_string(), key, descriptor);
+}
+
+fn descriptor_for_type(schemas: &SchemaTables, ty: &ast::Type) -> Result<VixDescriptor, String> {
     let schema = type_schema_name(ty)?;
     Ok(match schema.as_str() {
-        "Int" => declared_mem::i64_("Int".into()),
-        "Float" => declared_mem::f64_("Float".into()),
-        "Bool" => declared_mem::i64_("Bool".into()),
-        "String" => handle_i64("StringRef", "String"),
-        other => handle_i64(format!("{other}Ref"), other.to_string()),
+        "Int" => declared_mem::i64_(schemas.legacy_ref("Int")),
+        "Float" => declared_mem::f64_(schemas.legacy_ref("Float")),
+        "Bool" => declared_mem::i64_(schemas.legacy_ref("Bool")),
+        "String" => handle_i64(schemas, "StringRef", "String"),
+        other => handle_i64(schemas, format!("{other}Ref"), other),
     })
 }
 
-fn handle_i64(schema: impl Into<String>, target: impl Into<String>) -> Descriptor<String> {
+fn handle_i64(
+    schemas: &SchemaTables,
+    schema: impl AsRef<str>,
+    target: impl AsRef<str>,
+) -> VixDescriptor {
     Descriptor {
-        schema: schema.into(),
+        schema: schemas.legacy_ref(schema.as_ref()),
         layout: Layout { size: 8, align: 8 },
         access: Access::Handle {
-            target: target.into(),
+            target: schemas.legacy_ref(target.as_ref()),
         },
     }
 }

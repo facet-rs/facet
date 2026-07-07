@@ -22,7 +22,6 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
-use weavy::mem::Descriptor;
 use weavy::mem::Layout;
 use weavy::mem::declared as declared_mem;
 use weavy::task::{Fn as TaskFn, FnId, Op, Program};
@@ -47,7 +46,8 @@ use super::driver::{
 use crate::ast;
 use crate::fetch::FetchBackend;
 use crate::module::{
-    ModuleTables, VariantShape, load_module_tables_from_modules, type_schema_name,
+    DescriptorMap, ModuleTables, SchemaTables, VariantShape, VixDescriptor,
+    load_module_tables_from_modules, type_schema_name,
 };
 
 /// The machine facade for this slice: load source, demand a function's
@@ -117,7 +117,8 @@ impl Machine {
         let lower_options = LowerOptions::from_env();
         let c = compile_module_set(root, &modules, RefSource::Fresh, lower_options)?;
 
-        let mut driver = Driver::try_with_descriptors(c.program, c.lowered, c.descriptors, lane)?;
+        let mut driver =
+            Driver::try_with_schema_tables(c.program, c.lowered, c.descriptors, c.schemas, lane)?;
         // The driver's own interning must reproduce the fresh 0-based assignment.
         for name in &c.schema_names {
             let actual = driver.intern_schema_ref(name.clone());
@@ -184,7 +185,8 @@ impl Machine {
             self.lower_options,
         )?;
 
-        self.driver.reload(c.program, c.lowered, c.descriptors)?;
+        self.driver
+            .reload(c.program, c.lowered, c.descriptors, c.schemas)?;
         self.fn_refs = c.fn_refs;
         self.fn_params = c.fn_params.into_iter().collect();
         self.fn_param_names = c.fn_param_names.into_iter().collect();
@@ -568,7 +570,8 @@ impl RefSource<'_> {
 struct Compiled {
     program: Program,
     lowered: Vec<LoweredFn>,
-    descriptors: HashMap<String, Descriptor<String>>,
+    descriptors: DescriptorMap,
+    schemas: SchemaTables,
     fn_refs: HashMap<String, usize>,
     fn_returns: HashMap<String, String>,
     fn_params: HashMap<String, Vec<String>>,
@@ -732,11 +735,12 @@ fn compile_module_set(
         });
     }
 
+    let schemas = tables.schemas.clone();
     let mut descriptors = tables.descriptors;
-    add_builtin_descriptors(&mut descriptors);
+    add_builtin_descriptors(&mut descriptors, &schemas);
     for name in &schema_names {
-        if let Some(descriptor) = derived_descriptor(name) {
-            descriptors.entry(name.clone()).or_insert(descriptor);
+        if let Some(descriptor) = derived_descriptor(&schemas, name) {
+            descriptors.insert_named_if_absent(&schemas, name, || descriptor);
         }
     }
 
@@ -744,6 +748,7 @@ fn compile_module_set(
         program: Program { fns: task_fns },
         lowered,
         descriptors,
+        schemas,
         fn_refs,
         fn_returns,
         fn_params,
@@ -868,7 +873,7 @@ fn schema_names_for(
         }
     }
     for descriptor in tables.descriptors.values() {
-        collect_descriptor_schemas(descriptor, &mut schema_names);
+        collect_descriptor_schemas(&tables.schemas, descriptor, &mut schema_names);
     }
     for item in tables.fns.values() {
         collect_block_type_schemas(&item.body, &mut schema_names)?;
@@ -954,20 +959,28 @@ fn push_schema_closure(schema: &str, schema_names: &mut Vec<String>) {
     }
 }
 
-fn collect_descriptor_schemas(descriptor: &Descriptor<String>, out: &mut Vec<String>) {
-    push_schema_closure(&descriptor.schema, out);
+fn collect_descriptor_schemas(
+    schemas: &SchemaTables,
+    descriptor: &VixDescriptor,
+    out: &mut Vec<String>,
+) {
+    push_schema_closure(&schemas.display_ref(&descriptor.schema), out);
     match &descriptor.access {
-        weavy::mem::Access::Handle { target } => push_schema_closure(target, out),
-        weavy::mem::Access::Array { element, .. } => collect_descriptor_schemas(element, out),
+        weavy::mem::Access::Handle { target } => {
+            push_schema_closure(&schemas.display_ref(target), out)
+        }
+        weavy::mem::Access::Array { element, .. } => {
+            collect_descriptor_schemas(schemas, element, out)
+        }
         weavy::mem::Access::Record(record) => {
             for field in &record.fields {
-                collect_descriptor_schemas(&field.descriptor, out);
+                collect_descriptor_schemas(schemas, &field.descriptor, out);
             }
         }
         weavy::mem::Access::Enum(access) => {
             for variant in &access.variants {
                 for field in &variant.payload.fields {
-                    collect_descriptor_schemas(&field.descriptor, out);
+                    collect_descriptor_schemas(schemas, &field.descriptor, out);
                 }
             }
         }
@@ -2418,99 +2431,122 @@ fn collect_type_schema(ty: &ast::Type, out: &mut Vec<String>) -> Result<(), Stri
     Ok(())
 }
 
-fn add_builtin_descriptors(descriptors: &mut HashMap<String, Descriptor<String>>) {
-    descriptors
-        .entry("Bool".into())
-        .or_insert_with(|| declared_mem::i64_("Bool".into()));
-    descriptors
-        .entry("Sealed".into())
-        .or_insert_with(|| declared_mem::handle("SealedRef".into(), "Sealed".into()));
-    descriptors.entry("Target".into()).or_insert_with(|| {
+fn add_builtin_descriptors(descriptors: &mut DescriptorMap, schemas: &SchemaTables) {
+    descriptors.insert_named_if_absent(schemas, "Bool", || {
+        declared_mem::i64_(schemas.legacy_ref("Bool"))
+    });
+    descriptors.insert_named_if_absent(schemas, "Sealed", || {
+        declared_mem::handle(
+            schemas.legacy_ref("SealedRef"),
+            schemas.legacy_ref("Sealed"),
+        )
+    });
+    descriptors.insert_named_if_absent(schemas, "Target", || {
         declared_mem::declared_struct(
-            "Target".into(),
+            schemas.legacy_ref("Target"),
             vec![
-                declared_mem::handle("OsRef".into(), "Os".into()),
-                declared_mem::handle("ArchRef".into(), "Arch".into()),
+                declared_mem::handle(schemas.legacy_ref("OsRef"), schemas.legacy_ref("Os")),
+                declared_mem::handle(schemas.legacy_ref("ArchRef"), schemas.legacy_ref("Arch")),
             ],
         )
     });
-    descriptors
-        .entry("Os".into())
-        .or_insert_with(|| declared_mem::declared_enum("Os".into(), vec![vec![], vec![], vec![]]));
-    descriptors.entry("Arch".into()).or_insert_with(|| {
+    descriptors.insert_named_if_absent(schemas, "Os", || {
+        declared_mem::declared_enum(schemas.legacy_ref("Os"), vec![vec![], vec![], vec![]])
+    });
+    descriptors.insert_named_if_absent(schemas, "Arch", || {
         declared_mem::declared_enum(
-            "Arch".into(),
+            schemas.legacy_ref("Arch"),
             vec![vec![], vec![], vec![], vec![], vec![], vec![]],
         )
     });
-    descriptors.entry("Run".into()).or_insert_with(|| {
+    descriptors.insert_named_if_absent(schemas, "Run", || {
         declared_mem::declared_struct(
-            "Run".into(),
+            schemas.legacy_ref("Run"),
             vec![
-                declared_mem::i64_("RunOk".into()),
-                declared_mem::handle("RunOut".into(), "Tree".into()),
+                declared_mem::i64_(schemas.legacy_ref("RunOk")),
+                declared_mem::handle(schemas.legacy_ref("RunOut"), schemas.legacy_ref("Tree")),
             ],
         )
     });
-    descriptors.entry("Doc".into()).or_insert_with(|| {
+    descriptors.insert_named_if_absent(schemas, "Doc", || {
         declared_mem::declared_enum(
-            "Doc".into(),
+            schemas.legacy_ref("Doc"),
             vec![
                 vec![],
-                vec![declared_mem::i64_("DocBool".into())],
-                vec![declared_mem::i64_("DocInt".into())],
-                vec![declared_mem::f64_("DocFloat".into())],
-                vec![declared_mem::handle("DocString".into(), "String".into())],
-                vec![declared_mem::handle("DocArray".into(), "Array".into())],
+                vec![declared_mem::i64_(schemas.legacy_ref("DocBool"))],
+                vec![declared_mem::i64_(schemas.legacy_ref("DocInt"))],
+                vec![declared_mem::f64_(schemas.legacy_ref("DocFloat"))],
                 vec![declared_mem::handle(
-                    "DocMap".into(),
-                    "Map<String,Doc>".into(),
+                    schemas.legacy_ref("DocString"),
+                    schemas.legacy_ref("String"),
                 )],
-                vec![declared_mem::handle("DocVirtual".into(), "String".into())],
-                vec![declared_mem::handle("DocBlob".into(), "Blob".into())],
+                vec![declared_mem::handle(
+                    schemas.legacy_ref("DocArray"),
+                    schemas.legacy_ref("Array"),
+                )],
+                vec![declared_mem::handle(
+                    schemas.legacy_ref("DocMap"),
+                    schemas.legacy_ref("Map<String,Doc>"),
+                )],
+                vec![declared_mem::handle(
+                    schemas.legacy_ref("DocVirtual"),
+                    schemas.legacy_ref("String"),
+                )],
+                vec![declared_mem::handle(
+                    schemas.legacy_ref("DocBlob"),
+                    schemas.legacy_ref("Blob"),
+                )],
             ],
         )
     });
 }
 
-fn derived_descriptor(schema: &str) -> Option<Descriptor<String>> {
+fn derived_descriptor(schemas: &SchemaTables, schema: &str) -> Option<VixDescriptor> {
     if let Some(value_schema) = realized_value_schema(schema) {
         return Some(declared_mem::declared_struct(
-            schema.to_string(),
+            schemas.legacy_ref(schema),
             vec![
-                word_descriptor_for_schema(value_schema),
-                declared_mem::i64_(format!("{schema}::realization_bitset")),
+                word_descriptor_for_schema(schemas, value_schema),
+                declared_mem::i64_(schemas.legacy_ref(&format!("{schema}::realization_bitset"))),
             ],
         ));
     }
     if let Some(fields) = tuple_schema_fields(schema) {
         return Some(declared_mem::declared_struct(
-            schema.to_string(),
+            schemas.legacy_ref(schema),
             fields
                 .into_iter()
                 .enumerate()
-                .map(|(index, field)| word_descriptor_for_schema_with_name(&field, index))
+                .map(|(index, field)| word_descriptor_for_schema_with_name(schemas, &field, index))
                 .collect(),
         ));
     }
     None
 }
 
-fn word_descriptor_for_schema(schema: &str) -> Descriptor<String> {
-    word_descriptor_for_schema_with_name(schema, 0)
+fn word_descriptor_for_schema(schemas: &SchemaTables, schema: &str) -> VixDescriptor {
+    word_descriptor_for_schema_with_name(schemas, schema, 0)
 }
 
-fn word_descriptor_for_schema_with_name(schema: &str, index: usize) -> Descriptor<String> {
+fn word_descriptor_for_schema_with_name(
+    schemas: &SchemaTables,
+    schema: &str,
+    index: usize,
+) -> VixDescriptor {
     match schema {
-        "Int" => declared_mem::i64_(format!("Int{index}")),
-        "Float" => declared_mem::f64_(format!("Float{index}")),
-        "Bool" => declared_mem::i64_(format!("Bool{index}")),
-        other => declared_mem::handle(format!("{other}Ref{index}"), other.to_string()),
+        "Int" => declared_mem::i64_(schemas.legacy_ref(&format!("Int{index}"))),
+        "Float" => declared_mem::f64_(schemas.legacy_ref(&format!("Float{index}"))),
+        "Bool" => declared_mem::i64_(schemas.legacy_ref(&format!("Bool{index}"))),
+        other => declared_mem::handle(
+            schemas.legacy_ref(&format!("{other}Ref{index}")),
+            schemas.legacy_ref(other),
+        ),
     }
 }
 
 fn descriptor_field_schema(
-    descriptor: &Descriptor<String>,
+    schemas: &SchemaTables,
+    descriptor: &VixDescriptor,
     field_index: usize,
 ) -> Result<String, String> {
     let field = match &descriptor.access {
@@ -2518,14 +2554,19 @@ fn descriptor_field_schema(
         other => {
             return Err(format!(
                 "descriptor `{}` has access {other:?}, not fields",
-                descriptor.schema
+                schemas.display_ref(&descriptor.schema)
             ));
         }
     }
-    .ok_or_else(|| format!("missing field {field_index} on `{}`", descriptor.schema))?;
+    .ok_or_else(|| {
+        format!(
+            "missing field {field_index} on `{}`",
+            schemas.display_ref(&descriptor.schema)
+        )
+    })?;
     match &field.descriptor.access {
-        weavy::mem::Access::Handle { target } => Ok(target.clone()),
-        _ => Ok(field.descriptor.schema.clone()),
+        weavy::mem::Access::Handle { target } => Ok(schemas.display_ref(target)),
+        _ => Ok(schemas.display_ref(&field.descriptor.schema)),
     }
 }
 
@@ -4868,7 +4909,7 @@ impl<'a> FnLowerer<'a> {
             .descriptors
             .get(struct_name)
             .ok_or_else(|| format!("missing descriptor for {struct_name}"))?;
-        descriptor_field_schema(descriptor, field_index)
+        descriptor_field_schema(&self.tables.schemas, descriptor, field_index)
     }
 
     fn variant_constructor_call(&mut self, call: &ast::Call) -> Result<Option<ValueSlot>, String> {
@@ -4994,8 +5035,8 @@ impl<'a> FnLowerer<'a> {
             .and_then(|variant| variant.payload.fields.get(field_index))
             .ok_or_else(|| format!("missing payload field {field_index} for {enum_name}"))?;
         match &field.descriptor.access {
-            weavy::mem::Access::Handle { target } => Ok(target.clone()),
-            _ => Ok(field.descriptor.schema.clone()),
+            weavy::mem::Access::Handle { target } => Ok(self.tables.schemas.display_ref(target)),
+            _ => Ok(self.tables.schemas.display_ref(&field.descriptor.schema)),
         }
     }
 
