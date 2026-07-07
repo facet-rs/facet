@@ -1513,6 +1513,39 @@ fn cargo_real_workspace_unit_graph_oracle() -> Result<CargoUnitGraph, String> {
     facet_json::from_str(&stdout).map_err(|err| err.to_string())
 }
 
+fn cargo_taxon_unit_graph_oracle() -> Result<CargoUnitGraph, String> {
+    if !Command::new("cargo")
+        .arg("+nightly")
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success())
+    {
+        return Ok(CargoUnitGraph { units: Vec::new() });
+    }
+
+    let output = Command::new("cargo")
+        .arg("+nightly")
+        .arg("build")
+        .arg("--unit-graph")
+        .arg("-Z")
+        .arg("unstable-options")
+        .arg("--locked")
+        .arg("-p")
+        .arg("taxon")
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo taxon unit graph oracle exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let stdout = String::from_utf8(output.stdout).map_err(|err| err.to_string())?;
+    facet_json::from_str(&stdout).map_err(|err| err.to_string())
+}
+
 #[derive(Debug, Facet)]
 struct CargoTarget {
     name: String,
@@ -1698,6 +1731,34 @@ fn real_workspace_resolved_profiles_match_cargo_unit_graph_oracle() -> Result<()
         "profile divergences over {checked} real-root override units: {divergences:#?}\nexamples: {examples:#?}"
     );
 
+    Ok(())
+}
+
+#[test]
+#[ignore = "demo boundary: blake3 1.8.5 default-features=false still has a custom-build unit via cc"]
+fn taxon_ladder_oracle_reveals_blake3_build_script_boundary() -> Result<(), String> {
+    let graph = cargo_taxon_unit_graph_oracle()?;
+    if graph.units.is_empty() {
+        return Ok(());
+    }
+
+    let has_blake3_build_script = graph.units.iter().any(|unit| {
+        unit.pkg_id.contains("#blake3@1.8.5")
+            && unit.target.kind.iter().any(|kind| kind == "custom-build")
+    });
+    let has_cc_build_dependency = graph
+        .units
+        .iter()
+        .any(|unit| unit.pkg_id.contains("#cc@") && unit.profile.debuginfo == 0);
+
+    assert!(
+        has_blake3_build_script,
+        "cargo unit graph for taxon did not expose blake3's custom-build unit: {graph:#?}"
+    );
+    assert!(
+        has_cc_build_dependency,
+        "cargo unit graph for taxon did not expose blake3's cc build dependency: {graph:#?}"
+    );
     Ok(())
 }
 
