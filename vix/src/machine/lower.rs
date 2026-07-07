@@ -2257,7 +2257,10 @@ fn collect_expr_schemas(
                     Ok(Some(schema.to_string()))
                 }
                 ("pop", Some(schema)) if tables.schemas.is_list(schema) => {
-                    let tuple = tuple_schema(&["Int".to_string(), schema.to_string()]);
+                    let elem_schema = array_element_schema(schema)
+                        .ok_or_else(|| format!("{schema} is not an Array<T>"))?
+                        .to_string();
+                    let tuple = tuple_schema(&[elem_schema, schema.to_string()]);
                     push_schema_closure(&tuple, out);
                     Ok(Some(tuple))
                 }
@@ -4283,7 +4286,7 @@ impl<'a> FnLowerer<'a> {
                     };
                     let value =
                         self.expr_expected_call_arg(expr, Some(expected), tail_identifier_uses)?;
-                    values[positional] = Some(self.coerce_scalar_arg(value, expected)?);
+                    values[positional] = Some(self.coerce_to_schema(value, expected)?);
                     positional += 1;
                 }
                 ast::Arg::Kwarg(kwarg) => {
@@ -4302,7 +4305,7 @@ impl<'a> FnLowerer<'a> {
                         Some(expected),
                         tail_identifier_uses,
                     )?;
-                    values[offset] = Some(self.coerce_scalar_arg(value, expected)?);
+                    values[offset] = Some(self.coerce_to_schema(value, expected)?);
                 }
             }
         }
@@ -4521,7 +4524,10 @@ impl<'a> FnLowerer<'a> {
                 let [arg] = call.args.args.as_slice() else {
                     return Err("Array.push takes one value".into());
                 };
-                let value = self.method_arg(arg, None)?;
+                let elem_schema = array_element_schema(&receiver.schema)
+                    .ok_or_else(|| format!("{} is not an Array<T>", receiver.schema))?
+                    .to_string();
+                let value = self.method_arg(arg, Some(&elem_schema))?;
                 self.array_push(&receiver, &value)
             }
             "pop" => {
@@ -4541,7 +4547,10 @@ impl<'a> FnLowerer<'a> {
                     return Err("Array.set takes index and value".into());
                 };
                 let index = self.method_arg(index_arg, Some("Int"))?;
-                let value = self.method_arg(value_arg, None)?;
+                let elem_schema = array_element_schema(&receiver.schema)
+                    .ok_or_else(|| format!("{} is not an Array<T>", receiver.schema))?
+                    .to_string();
+                let value = self.method_arg(value_arg, Some(&elem_schema))?;
                 self.array_set(&receiver, &index, &value)
             }
             "insert" => {
@@ -4745,7 +4754,14 @@ impl<'a> FnLowerer<'a> {
 
     fn method_arg(&mut self, arg: &ast::Arg, expected: Option<&str>) -> Result<ValueSlot, String> {
         match arg {
-            ast::Arg::Expr(expr) => self.expr_expected(expr, expected),
+            ast::Arg::Expr(expr) => {
+                let value = self.expr_expected(expr, expected)?;
+                if let Some(expected) = expected {
+                    self.coerce_to_schema(value, expected)
+                } else {
+                    Ok(value)
+                }
+            }
             other => Err(format!(
                 "method argument {other:?} is outside the machine slice-3 subset"
             )),
@@ -4759,7 +4775,19 @@ impl<'a> FnLowerer<'a> {
     ) -> Result<ValueSlot, String> {
         match arg {
             ast::Arg::Expr(ast::Expr::Call(call)) => self.pending_call_value(call, value_schema),
-            _ => self.method_arg(arg, Some(value_schema)),
+            ast::Arg::Expr(expr) => {
+                let value = self.expr_expected(expr, Some(value_schema))?;
+                if value.schema == realized_schema(value_schema)
+                    || value.schema == pending_schema(value_schema)
+                {
+                    Ok(value)
+                } else {
+                    self.coerce_to_schema(value, value_schema)
+                }
+            }
+            other => Err(format!(
+                "method argument {other:?} is outside the machine slice-3 subset"
+            )),
         }
     }
 
@@ -5200,14 +5228,6 @@ impl<'a> FnLowerer<'a> {
             return Ok(value);
         };
         self.coerce_to_schema(value, &inner)
-    }
-
-    fn coerce_scalar_arg(&mut self, value: ValueSlot, expected: &str) -> Result<ValueSlot, String> {
-        if matches!(expected, "Int" | "Float") {
-            self.coerce_to_schema(value, expected)
-        } else {
-            Ok(value)
-        }
     }
 
     fn coerce_to_schema(&mut self, value: ValueSlot, expected: &str) -> Result<ValueSlot, String> {
@@ -6629,13 +6649,16 @@ impl<'a> FnLowerer<'a> {
         self.code.push(Op::HostCall {
             host: ARRAY_POP_HOST,
         });
+        let elem_schema = array_element_schema(&receiver.schema)
+            .ok_or_else(|| format!("{} is not an Array<T>", receiver.schema))?
+            .to_string();
         self.store_alloc(
-            &tuple_schema(&["Int".to_string(), receiver.schema.clone()]),
+            &tuple_schema(&[elem_schema.clone(), receiver.schema.clone()]),
             0,
             &[
                 ValueSlot {
                     slot: value_dst,
-                    schema: "Int".into(),
+                    schema: elem_schema,
                     realization: None,
                     pending: None,
                 },
@@ -7482,10 +7505,29 @@ impl<'a> FnLowerer<'a> {
         self.code.push(Op::HostCall {
             host: OPTION_DESTRUCT_HOST,
         });
+        let realization = realized_value_schema(schema).map(|_| {
+            let slot = self.alloc();
+            self.code.push(Op::ConstI64 {
+                dst: region,
+                value: slot.into(),
+            });
+            self.code.push(Op::CopyI64 {
+                dst: region + 8,
+                src: scrut.slot,
+            });
+            self.code.push(Op::ConstI64 {
+                dst: region + 16,
+                value: 2,
+            });
+            self.code.push(Op::HostCall {
+                host: OPTION_DESTRUCT_HOST,
+            });
+            slot
+        });
         ValueSlot {
             slot: dst,
             schema: schema.into(),
-            realization: None,
+            realization,
             pending: None,
         }
     }

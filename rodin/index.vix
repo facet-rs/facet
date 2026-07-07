@@ -5,7 +5,7 @@
 // module parses those snapshots into row records and bridges them to rodin's
 // resolver Index.
 
-use vix::{Map, Tree, VersionSet};
+use vix::{Doc, Map, Tree, VersionSet};
 use rodin::{Index, Problem, solve_selected_versions_text};
 
 pub struct SparseDependency {
@@ -22,7 +22,7 @@ pub struct SparseDependency {
 pub struct SparseIndexRow {
     name: String,
     vers: String,
-    deps: Array,
+    deps: [Doc],
     cksum: String,
     features: Doc,
     features2: Doc,
@@ -143,18 +143,18 @@ fn parse_sparse_dep(dep: Doc) -> SparseDependency {
     }
 }
 
-fn doc_strings(values: Array) -> [String] {
+fn doc_strings(values: [String]) -> [String] {
     doc_strings_from(values, [])
 }
 
-fn doc_strings_from(values: Array, out: [String]) -> [String] {
+fn doc_strings_from(values: [String], out: [String]) -> [String] {
     match values.len() == 0 {
         true => out,
         false => doc_strings_tuple(values.pop(), out),
     }
 }
 
-fn doc_strings_tuple(popped: (Int, Array), out: [String]) -> [String] {
+fn doc_strings_tuple(popped: (String, [String]), out: [String]) -> [String] {
     doc_strings_from(popped.1, out).push(doc_string_value(popped.0))
 }
 
@@ -229,7 +229,7 @@ fn register_packages(rows: [SparseIndexRow], state: SparseBridgeState) -> Sparse
     }
 }
 
-fn register_packages_tuple(popped: (Int, [SparseIndexRow]), state: SparseBridgeState) -> SparseBridgeState {
+fn register_packages_tuple(popped: (SparseIndexRow, [SparseIndexRow]), state: SparseBridgeState) -> SparseBridgeState {
     register_packages(popped.1, register_package(state, sparse_row_name(popped.0)))
 }
 
@@ -253,7 +253,7 @@ fn bridge_versions(rows: [SparseIndexRow], state: SparseBridgeState) -> SparseBr
     }
 }
 
-fn bridge_versions_tuple(popped: (Int, [SparseIndexRow]), state: SparseBridgeState) -> SparseBridgeState {
+fn bridge_versions_tuple(popped: (SparseIndexRow, [SparseIndexRow]), state: SparseBridgeState) -> SparseBridgeState {
     bridge_versions(popped.1, bridge_row(state, popped.0))
 }
 
@@ -284,7 +284,7 @@ fn bridge_row_deps(deps: [SparseDependency], state: SparseBridgeState, parent_pk
     }
 }
 
-fn bridge_row_deps_tuple(popped: (Int, [SparseDependency]), state: SparseBridgeState, parent_pkg: Int, parent_version: String) -> SparseBridgeState {
+fn bridge_row_deps_tuple(popped: (SparseDependency, [SparseDependency]), state: SparseBridgeState, parent_pkg: Int, parent_version: String) -> SparseBridgeState {
     let dep: SparseDependency = popped.0;
     bridge_row_deps(popped.1, bridge_dep(state, parent_pkg, parent_version, dep), parent_pkg, parent_version)
 }
@@ -427,7 +427,7 @@ fn find_sparse_row_in(rows: [SparseIndexRow], name: String, vers: String, fallba
     }
 }
 
-fn find_sparse_row_tuple(popped: (Int, [SparseIndexRow]), name: String, vers: String, fallback: SparseIndexRow) -> SparseIndexRow {
+fn find_sparse_row_tuple(popped: (SparseIndexRow, [SparseIndexRow]), name: String, vers: String, fallback: SparseIndexRow) -> SparseIndexRow {
     match sparse_row_name(popped.0) == name && sparse_row_vers(popped.0) == vers {
         true => sparse_row_identity(popped.0),
         false => find_sparse_row_in(popped.1, name, vers, fallback),
@@ -441,7 +441,7 @@ fn first_sparse_dep(deps: [SparseDependency]) -> SparseDependency {
     }
 }
 
-fn first_sparse_dep_tuple(popped: (Int, [SparseDependency])) -> SparseDependency {
+fn first_sparse_dep_tuple(popped: (SparseDependency, [SparseDependency])) -> SparseDependency {
     match popped.1.len() == 0 {
         true => sparse_dep_identity(popped.0),
         false => first_sparse_dep(popped.1),
