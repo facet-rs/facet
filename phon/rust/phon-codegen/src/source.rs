@@ -42,7 +42,7 @@ impl Module {
         for &shape in roots {
             let derived = of_shape(shape)?;
             for s in derived.schemas {
-                by_id.entry(s.id.0).or_insert(s);
+                by_id.entry(s.id.as_u64()).or_insert(s);
             }
             root_list.push(Root {
                 name: shape.type_identifier.to_string(),

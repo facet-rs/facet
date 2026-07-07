@@ -871,7 +871,7 @@ mod tests {
 
     fn schema(id: u64, kind: SchemaKind) -> Schema {
         Schema {
-            id: SchemaId(id),
+            id: SchemaId::from_raw(id),
             type_params: Vec::new(),
             kind,
         }
@@ -921,34 +921,38 @@ mod tests {
             1,
             SchemaKind::Struct {
                 name: "Node".to_string(),
-                fields: vec![field("child", SchemaRef::concrete(SchemaId(2)), false)],
+                fields: vec![field(
+                    "child",
+                    SchemaRef::concrete(SchemaId::from_raw(2)),
+                    false,
+                )],
             },
         );
         let child = schema(
             2,
             SchemaKind::Option {
-                element: SchemaRef::concrete(SchemaId(1)),
+                element: SchemaRef::concrete(SchemaId::from_raw(1)),
             },
         );
         let reg = Registry::new([node, child]);
-        let plan = build_plan(SchemaId(1), SchemaId(1), &reg).unwrap();
+        let plan = build_plan(SchemaId::from_raw(1), SchemaId::from_raw(1), &reg).unwrap();
 
         let canonical = lower_canonical(&plan);
         match canonical.program.as_slice() {
             [WeavyOp::Control(ControlOp::CallBlock { block, base_offset })] => {
-                assert_eq!(*block, SchemaId(1));
+                assert_eq!(*block, SchemaId::from_raw(1));
                 assert_eq!(*base_offset, 0);
             }
             other => panic!("unexpected canonical root program: {other:?}"),
         }
         let option_block = canonical
             .blocks
-            .get(&SchemaId(2))
+            .get(&SchemaId::from_raw(2))
             .expect("recursive option block should be lowered");
         match option_block.as_slice() {
             [WeavyOp::Intrinsic(ValueIntrinsic::Option { some })] => match some.as_slice() {
                 [WeavyOp::Control(ControlOp::CallBlock { block, base_offset })] => {
-                    assert_eq!(*block, SchemaId(1));
+                    assert_eq!(*block, SchemaId::from_raw(1));
                     assert_eq!(*base_offset, 0);
                 }
                 other => panic!("unexpected option payload program: {other:?}"),
@@ -958,7 +962,7 @@ mod tests {
 
         let legacy = lower(&plan);
         match legacy.program.as_slice() {
-            [Op::CallBlock { schema }] => assert_eq!(*schema, SchemaId(1)),
+            [Op::CallBlock { schema }] => assert_eq!(*schema, SchemaId::from_raw(1)),
             other => panic!("unexpected legacy root program: {other:?}"),
         }
     }
@@ -984,11 +988,11 @@ mod tests {
         let reg = Registry::new([writer, reader]);
         let bytes = compact::to_bytes(
             &obj(&[("x", Value::from(7u32)), ("y", Value::from(9u32))]),
-            SchemaId(1),
+            SchemaId::from_raw(1),
             &reg,
         )
         .unwrap();
-        let got = decode_both(&bytes, SchemaId(1), SchemaId(2), &reg);
+        let got = decode_both(&bytes, SchemaId::from_raw(1), SchemaId::from_raw(2), &reg);
         assert_eq!(
             got,
             obj(&[("x", Value::from(7u32)), ("y", Value::from(9u32))])
@@ -1010,11 +1014,11 @@ mod tests {
         let reg = Registry::new([writer, reader]);
         let bytes = compact::to_bytes(
             &obj(&[("x", Value::from(7u32)), ("gone", Value::from("bye"))]),
-            SchemaId(1),
+            SchemaId::from_raw(1),
             &reg,
         )
         .unwrap();
-        let got = decode_both(&bytes, SchemaId(1), SchemaId(2), &reg);
+        let got = decode_both(&bytes, SchemaId::from_raw(1), SchemaId::from_raw(2), &reg);
         assert_eq!(got, obj(&[("x", Value::from(7u32))]));
     }
 
@@ -1040,21 +1044,25 @@ mod tests {
             ],
         );
         let reg = Registry::new([writer, optional, required]);
-        let bytes =
-            compact::to_bytes(&obj(&[("x", Value::from(7u32))]), SchemaId(1), &reg).unwrap();
+        let bytes = compact::to_bytes(
+            &obj(&[("x", Value::from(7u32))]),
+            SchemaId::from_raw(1),
+            &reg,
+        )
+        .unwrap();
 
-        let got = decode_both(&bytes, SchemaId(1), SchemaId(2), &reg);
+        let got = decode_both(&bytes, SchemaId::from_raw(1), SchemaId::from_raw(2), &reg);
         assert_eq!(
             got,
             obj(&[("x", Value::from(7u32)), ("extra", Value::NULL)])
         );
 
         assert!(matches!(
-            build_plan(SchemaId(1), SchemaId(3), &reg),
+            build_plan(SchemaId::from_raw(1), SchemaId::from_raw(3), &reg),
             Err(CompactError::Incompatible(_))
         ));
         assert!(matches!(
-            decode_via_ir(&bytes, SchemaId(1), SchemaId(3), &reg),
+            decode_via_ir(&bytes, SchemaId::from_raw(1), SchemaId::from_raw(3), &reg),
             Err(CompactError::Incompatible(_))
         ));
     }
@@ -1076,11 +1084,11 @@ mod tests {
         );
         let reg = Registry::new([writer, reader]);
         assert!(matches!(
-            build_plan(SchemaId(1), SchemaId(2), &reg),
+            build_plan(SchemaId::from_raw(1), SchemaId::from_raw(2), &reg),
             Err(CompactError::Incompatible(_))
         ));
         assert!(matches!(
-            decode_via_ir(&[], SchemaId(1), SchemaId(2), &reg),
+            decode_via_ir(&[], SchemaId::from_raw(1), SchemaId::from_raw(2), &reg),
             Err(CompactError::Incompatible(_))
         ));
     }
@@ -1145,24 +1153,30 @@ mod tests {
         let reg = Registry::new([writer, reader_more, reader_fewer]);
 
         let b = obj(&[("B", Value::from(42u32))]);
-        let bytes = compact::to_bytes(&b, SchemaId(1), &reg).unwrap();
+        let bytes = compact::to_bytes(&b, SchemaId::from_raw(1), &reg).unwrap();
 
         // reader_more can read B fine (C just goes unused).
-        assert_eq!(decode_both(&bytes, SchemaId(1), SchemaId(2), &reg), b);
+        assert_eq!(
+            decode_both(&bytes, SchemaId::from_raw(1), SchemaId::from_raw(2), &reg),
+            b
+        );
 
         // reader_fewer plans (A matches), but receiving B is a decode error.
         assert!(matches!(
-            decode(&bytes, SchemaId(1), SchemaId(3), &reg),
+            decode(&bytes, SchemaId::from_raw(1), SchemaId::from_raw(3), &reg),
             Err(CompactError::WriterOnlyVariant(1))
         ));
         assert!(matches!(
-            decode_via_ir(&bytes, SchemaId(1), SchemaId(3), &reg),
+            decode_via_ir(&bytes, SchemaId::from_raw(1), SchemaId::from_raw(3), &reg),
             Err(CompactError::WriterOnlyVariant(1))
         ));
         // an A value still decodes against reader_fewer.
         let a = obj(&[("A", Value::NULL)]);
-        let a_bytes = compact::to_bytes(&a, SchemaId(1), &reg).unwrap();
-        assert_eq!(decode_both(&a_bytes, SchemaId(1), SchemaId(3), &reg), a);
+        let a_bytes = compact::to_bytes(&a, SchemaId::from_raw(1), &reg).unwrap();
+        assert_eq!(
+            decode_both(&a_bytes, SchemaId::from_raw(1), SchemaId::from_raw(3), &reg),
+            a
+        );
     }
 
     #[test]
@@ -1180,24 +1194,32 @@ mod tests {
             1,
             SchemaKind::Struct {
                 name: "Outer".to_string(),
-                fields: vec![field("inner", SchemaRef::concrete(SchemaId(10)), true)],
+                fields: vec![field(
+                    "inner",
+                    SchemaRef::concrete(SchemaId::from_raw(10)),
+                    true,
+                )],
             },
         );
         let r_outer = schema(
             2,
             SchemaKind::Struct {
                 name: "Outer".to_string(),
-                fields: vec![field("inner", SchemaRef::concrete(SchemaId(20)), true)],
+                fields: vec![field(
+                    "inner",
+                    SchemaRef::concrete(SchemaId::from_raw(20)),
+                    true,
+                )],
             },
         );
         let reg = Registry::new([w_inner, r_inner, w_outer, r_outer]);
         let bytes = compact::to_bytes(
             &obj(&[("inner", obj(&[("a", Value::from(5u32))]))]),
-            SchemaId(1),
+            SchemaId::from_raw(1),
             &reg,
         )
         .unwrap();
-        let got = decode_both(&bytes, SchemaId(1), SchemaId(2), &reg);
+        let got = decode_both(&bytes, SchemaId::from_raw(1), SchemaId::from_raw(2), &reg);
         assert_eq!(
             got,
             obj(&[(
@@ -1229,15 +1251,15 @@ mod tests {
         let reg = Registry::new([older, newer_optional, newer_required, different]);
 
         assert_eq!(
-            compatibility_direction(SchemaId(1), SchemaId(2), &reg),
+            compatibility_direction(SchemaId::from_raw(1), SchemaId::from_raw(2), &reg),
             CompatDirection::Bidirectional
         );
         assert_eq!(
-            compatibility_direction(SchemaId(1), SchemaId(3), &reg),
+            compatibility_direction(SchemaId::from_raw(1), SchemaId::from_raw(3), &reg),
             CompatDirection::Forward
         );
         assert_eq!(
-            compatibility_direction(SchemaId(1), SchemaId(4), &reg),
+            compatibility_direction(SchemaId::from_raw(1), SchemaId::from_raw(4), &reg),
             CompatDirection::Incompatible
         );
     }
@@ -1256,7 +1278,7 @@ mod tests {
         let list = schema(
             2,
             SchemaKind::List {
-                element: SchemaRef::concrete(SchemaId(1)),
+                element: SchemaRef::concrete(SchemaId::from_raw(1)),
             },
         );
         let reg = Registry::new([inner, list]);
@@ -1267,11 +1289,11 @@ mod tests {
             arr.push(obj(&[]));
         }
         let value = Value::from(arr);
-        let bytes = compact::to_bytes(&value, SchemaId(2), &reg).unwrap();
+        let bytes = compact::to_bytes(&value, SchemaId::from_raw(2), &reg).unwrap();
         // The whole message is just the u32 count: 4 bytes.
         assert_eq!(bytes.len(), 4);
 
-        let got = decode_both(&bytes, SchemaId(2), SchemaId(2), &reg);
+        let got = decode_both(&bytes, SchemaId::from_raw(2), SchemaId::from_raw(2), &reg);
         assert_eq!(got, value);
     }
 
@@ -1295,10 +1317,10 @@ mod tests {
             arr.push(Value::NULL);
         }
         let value = Value::from(arr);
-        let bytes = compact::to_bytes(&value, SchemaId(1), &reg).unwrap();
+        let bytes = compact::to_bytes(&value, SchemaId::from_raw(1), &reg).unwrap();
         assert_eq!(bytes.len(), 0);
 
-        let got = decode_both(&bytes, SchemaId(1), SchemaId(1), &reg);
+        let got = decode_both(&bytes, SchemaId::from_raw(1), SchemaId::from_raw(1), &reg);
         assert_eq!(got, value);
     }
 }

@@ -1070,7 +1070,7 @@ mod tests {
 
     fn schema(id: u64, kind: SchemaKind) -> Schema {
         Schema {
-            id: SchemaId(id),
+            id: SchemaId::from_raw(id),
             type_params: Vec::new(),
             kind,
         }
@@ -1113,7 +1113,7 @@ mod tests {
             },
         );
         let mut resolved = resolve_ids(vec![unit]);
-        resolved[0].id = SchemaId(resolved[0].id.0 ^ 1);
+        resolved[0].id = SchemaId::from_raw(resolved[0].id.as_u64() ^ 1);
 
         assert!(matches!(
             Registry::try_new(resolved),
@@ -1131,17 +1131,19 @@ mod tests {
                 name: "Holder".to_string(),
                 fields: vec![Field {
                     name: "missing".to_string(),
-                    schema: SchemaRef::concrete(SchemaId(0xFEED_FACE_CAFE_BEEF)),
+                    schema: SchemaRef::concrete(SchemaId::from_raw(0xFEED_FACE_CAFE_BEEF)),
                     required: true,
                 }],
             },
         );
         let resolved = resolve_ids(vec![holder]);
 
-        assert!(matches!(
-            Registry::try_new(resolved),
-            Err(CompactError::UnknownSchema(SchemaId(0xFEED_FACE_CAFE_BEEF)))
-        ));
+        match Registry::try_new(resolved) {
+            Err(CompactError::UnknownSchema(id)) => {
+                assert_eq!(id, SchemaId::from_raw(0xFEED_FACE_CAFE_BEEF));
+            }
+            _ => panic!("expected unknown schema error"),
+        }
     }
 
     #[test]
@@ -1211,11 +1213,11 @@ mod tests {
         obj.insert(VString::new("y"), Value::from(2.5f64));
         let value: Value = obj.into();
 
-        let bytes = to_bytes(&value, SchemaId(1), &reg).unwrap();
+        let bytes = to_bytes(&value, SchemaId::from_raw(1), &reg).unwrap();
         // 4 bytes x, 4 bytes padding (to 8-align y), 8 bytes y.
         assert_eq!(bytes.len(), 16);
         assert_eq!(&bytes[4..8], &[0, 0, 0, 0]);
-        rt(value, SchemaId(1), &reg);
+        rt(value, SchemaId::from_raw(1), &reg);
     }
 
     #[test]
@@ -1232,10 +1234,10 @@ mod tests {
         arr.push(Value::from(1u64));
         arr.push(Value::from(2u64));
         let value: Value = arr.into();
-        let bytes = to_bytes(&value, SchemaId(1), &reg).unwrap();
+        let bytes = to_bytes(&value, SchemaId::from_raw(1), &reg).unwrap();
         // u32 count, 4 bytes pad to 8, then two contiguous u64s.
         assert_eq!(bytes.len(), 4 + 4 + 16);
-        rt(value, SchemaId(1), &reg);
+        rt(value, SchemaId::from_raw(1), &reg);
     }
 
     #[test]
@@ -1271,7 +1273,7 @@ mod tests {
         let opt = schema(
             2,
             SchemaKind::Option {
-                element: SchemaRef::concrete(SchemaId(1)),
+                element: SchemaRef::concrete(SchemaId::from_raw(1)),
             },
         );
         let arr = schema(
@@ -1286,31 +1288,31 @@ mod tests {
         // E::A
         let mut a = VObject::new();
         a.insert(VString::new("A"), Value::NULL);
-        rt(a.into(), SchemaId(1), &reg);
+        rt(a.into(), SchemaId::from_raw(1), &reg);
         // E::B(42)
         let mut b = VObject::new();
         b.insert(VString::new("B"), Value::from(42u32));
-        rt(b.into(), SchemaId(1), &reg);
+        rt(b.into(), SchemaId::from_raw(1), &reg);
         // E::C(1, 2)
         let mut cpay = VArray::new();
         cpay.push(Value::from(1u8));
         cpay.push(Value::from(2u8));
         let mut c = VObject::new();
         c.insert(VString::new("C"), Value::from(cpay));
-        rt(c.into(), SchemaId(1), &reg);
+        rt(c.into(), SchemaId::from_raw(1), &reg);
 
         // Option<E> = Some(E::A), None
         let mut some_inner = VObject::new();
         some_inner.insert(VString::new("A"), Value::NULL);
-        rt(some_inner.into(), SchemaId(2), &reg);
-        rt(Value::NULL, SchemaId(2), &reg);
+        rt(some_inner.into(), SchemaId::from_raw(2), &reg);
+        rt(Value::NULL, SchemaId::from_raw(2), &reg);
 
         // Array<u16, 3>
         let mut av = VArray::new();
         av.push(Value::from(10u16));
         av.push(Value::from(20u16));
         av.push(Value::from(30u16));
-        rt(av.into(), SchemaId(3), &reg);
+        rt(av.into(), SchemaId::from_raw(3), &reg);
     }
 
     #[test]
@@ -1334,15 +1336,15 @@ mod tests {
         let mut m = VObject::new();
         m.insert(VString::new("a"), Value::from(1u32));
         m.insert(VString::new("b"), Value::from(2u32));
-        rt(m.into(), SchemaId(1), &reg);
+        rt(m.into(), SchemaId::from_raw(1), &reg);
 
         let mut s = VArray::new();
         s.push(Value::from(1u32));
         s.push(Value::from(2u32));
-        rt(s.into(), SchemaId(2), &reg);
+        rt(s.into(), SchemaId::from_raw(2), &reg);
 
         // Dynamic carries an arbitrary value self-describing.
-        rt(Value::from("hello dynamic"), SchemaId(3), &reg);
+        rt(Value::from("hello dynamic"), SchemaId::from_raw(3), &reg);
     }
 
     #[test]
@@ -1351,7 +1353,7 @@ mod tests {
         let reg = Registry::new([]);
         // u32 primitive is intrinsic; a bogus composite id is unknown.
         assert!(matches!(
-            to_bytes(&Value::from(1u32), SchemaId(999), &reg),
+            to_bytes(&Value::from(1u32), SchemaId::from_raw(999), &reg),
             Err(CompactError::UnknownSchema(_))
         ));
         // a string where a u32 is expected
@@ -1367,14 +1369,14 @@ mod tests {
         // Pair<A, B> = (A, B); Holder<T> = { pair: Pair<T, u32>, tag: string };
         // Root = { h: Holder<u8> } (concrete).
         let pair = Schema {
-            id: SchemaId(10),
+            id: SchemaId::from_raw(10),
             type_params: vec!["A".to_string(), "B".to_string()],
             kind: SchemaKind::Tuple {
                 elements: vec![SchemaRef::var("A"), SchemaRef::var("B")],
             },
         };
         let holder = Schema {
-            id: SchemaId(11),
+            id: SchemaId::from_raw(11),
             type_params: vec!["T".to_string()],
             kind: SchemaKind::Struct {
                 name: "Holder".to_string(),
@@ -1382,7 +1384,7 @@ mod tests {
                     Field {
                         name: "pair".to_string(),
                         schema: SchemaRef::generic(
-                            SchemaId(10),
+                            SchemaId::from_raw(10),
                             vec![SchemaRef::var("T"), prim(Primitive::U32)],
                         ),
                         required: true,
@@ -1401,7 +1403,7 @@ mod tests {
                 name: "Root".to_string(),
                 fields: vec![Field {
                     name: "h".to_string(),
-                    schema: SchemaRef::generic(SchemaId(11), vec![prim(Primitive::U8)]),
+                    schema: SchemaRef::generic(SchemaId::from_raw(11), vec![prim(Primitive::U8)]),
                     required: true,
                 }],
             },
@@ -1417,7 +1419,7 @@ mod tests {
         let mut root_val = VObject::new();
         root_val.insert(VString::new("h"), Value::from(holder_val));
 
-        rt(root_val.into(), SchemaId(12), &reg);
+        rt(root_val.into(), SchemaId::from_raw(12), &reg);
 
         // wrong arity is rejected
         let bad = schema(
@@ -1426,14 +1428,14 @@ mod tests {
                 name: "Bad".to_string(),
                 fields: vec![Field {
                     name: "h".to_string(),
-                    schema: SchemaRef::concrete(SchemaId(11)), // Holder needs 1 arg
+                    schema: SchemaRef::concrete(SchemaId::from_raw(11)), // Holder needs 1 arg
                     required: true,
                 }],
             },
         );
         let reg2 = Registry::new([
             Schema {
-                id: SchemaId(11),
+                id: SchemaId::from_raw(11),
                 type_params: vec!["T".to_string()],
                 kind: SchemaKind::Option {
                     element: SchemaRef::var("T"),
@@ -1444,7 +1446,7 @@ mod tests {
         let mut bv = VObject::new();
         bv.insert(VString::new("h"), Value::NULL);
         assert!(matches!(
-            to_bytes(&bv.into(), SchemaId(13), &reg2),
+            to_bytes(&bv.into(), SchemaId::from_raw(13), &reg2),
             Err(CompactError::GenericArity { .. })
         ));
     }
@@ -1468,7 +1470,7 @@ mod tests {
         let list = schema(
             2,
             SchemaKind::List {
-                element: SchemaRef::concrete(SchemaId(1)),
+                element: SchemaRef::concrete(SchemaId::from_raw(1)),
             },
         );
         let set = schema(
@@ -1491,21 +1493,21 @@ mod tests {
         for _ in 0..5 {
             a.push(Value::from(VObject::new()));
         }
-        rt(Value::from(a), SchemaId(2), &reg);
+        rt(Value::from(a), SchemaId::from_raw(2), &reg);
 
         // list<unit> with several elements.
         let mut u = VArray::new();
         for _ in 0..3 {
             u.push(Value::NULL);
         }
-        rt(Value::from(u), SchemaId(3), &reg);
+        rt(Value::from(u), SchemaId::from_raw(3), &reg);
 
         // array<unit, 4>.
         let mut fa = VArray::new();
         for _ in 0..4 {
             fa.push(Value::NULL);
         }
-        rt(Value::from(fa), SchemaId(4), &reg);
+        rt(Value::from(fa), SchemaId::from_raw(4), &reg);
     }
 
     #[test]

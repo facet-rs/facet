@@ -273,7 +273,7 @@ impl Builder {
         let key = self.protos.len();
         self.by_shape.insert(ptr, key);
         self.protos.push(Schema {
-            id: SchemaId(key as u64),
+            id: SchemaId::from_raw(key as u64),
             type_params: Vec::new(),
             kind: SchemaKind::Dynamic, // placeholder, replaced once fields resolve
         });
@@ -327,7 +327,7 @@ impl Builder {
         // A self-describing dynamic `Value` field.
         if is_dynamic_value(shape) {
             let key = self.intern_dynamic(shape)?;
-            return Ok(SchemaRef::concrete(SchemaId(key as u64)));
+            return Ok(SchemaRef::concrete(SchemaId::from_raw(key as u64)));
         }
         if is_string(shape) {
             return Ok(SchemaRef::concrete(primitive_id(Primitive::String)));
@@ -347,28 +347,28 @@ impl Builder {
             Ok(SchemaRef::concrete(primitive_id(p)))
         } else if is_struct(shape) {
             let key = self.intern(shape)?;
-            Ok(SchemaRef::concrete(SchemaId(key as u64)))
+            Ok(SchemaRef::concrete(SchemaId::from_raw(key as u64)))
         } else if let Some(list_def) = list_def(shape) {
             let key = self.intern_list(list_def)?;
-            Ok(SchemaRef::concrete(SchemaId(key as u64)))
+            Ok(SchemaRef::concrete(SchemaId::from_raw(key as u64)))
         } else if let Some(array_def) = array_def(shape) {
             let key = self.intern_array(array_def)?;
-            Ok(SchemaRef::concrete(SchemaId(key as u64)))
+            Ok(SchemaRef::concrete(SchemaId::from_raw(key as u64)))
         } else if let Some(set_def) = set_def(shape) {
             let key = self.intern_set(set_def)?;
-            Ok(SchemaRef::concrete(SchemaId(key as u64)))
+            Ok(SchemaRef::concrete(SchemaId::from_raw(key as u64)))
         } else if let Some(opt) = option_def(shape) {
             let key = self.intern_option(opt)?;
-            Ok(SchemaRef::concrete(SchemaId(key as u64)))
+            Ok(SchemaRef::concrete(SchemaId::from_raw(key as u64)))
         } else if let Some(map_def) = map_def(shape) {
             let key = self.intern_map(map_def)?;
-            Ok(SchemaRef::concrete(SchemaId(key as u64)))
+            Ok(SchemaRef::concrete(SchemaId::from_raw(key as u64)))
         } else if let Some(rd) = result_def(shape) {
             let key = self.intern_result(rd, shape)?;
-            Ok(SchemaRef::concrete(SchemaId(key as u64)))
+            Ok(SchemaRef::concrete(SchemaId::from_raw(key as u64)))
         } else if let Some(et) = enum_type(shape) {
             let key = self.intern_enum(shape, et)?;
-            Ok(SchemaRef::concrete(SchemaId(key as u64)))
+            Ok(SchemaRef::concrete(SchemaId::from_raw(key as u64)))
         } else {
             Err(DeriveError::Unsupported(
                 "derive: only structs, lists, arrays, options, maps, results, enums, and fixed scalars so far",
@@ -389,7 +389,7 @@ impl Builder {
         let key = self.protos.len();
         self.by_shape.insert(ptr, key);
         self.protos.push(Schema {
-            id: SchemaId(key as u64),
+            id: SchemaId::from_raw(key as u64),
             type_params: Vec::new(),
             kind: SchemaKind::List { element },
         });
@@ -408,7 +408,7 @@ impl Builder {
         let key = self.protos.len();
         self.by_shape.insert(ptr, key);
         self.protos.push(Schema {
-            id: SchemaId(key as u64),
+            id: SchemaId::from_raw(key as u64),
             type_params: Vec::new(),
             kind: SchemaKind::Array {
                 element,
@@ -429,7 +429,7 @@ impl Builder {
         let key = self.protos.len();
         self.by_shape.insert(ptr, key);
         self.protos.push(Schema {
-            id: SchemaId(key as u64),
+            id: SchemaId::from_raw(key as u64),
             type_params: Vec::new(),
             kind: SchemaKind::Set { element },
         });
@@ -447,7 +447,7 @@ impl Builder {
         let key = self.protos.len();
         self.by_shape.insert(ptr, key);
         self.protos.push(Schema {
-            id: SchemaId(key as u64),
+            id: SchemaId::from_raw(key as u64),
             type_params: Vec::new(),
             kind: SchemaKind::Option { element },
         });
@@ -468,7 +468,7 @@ impl Builder {
         let slot = self.protos.len();
         self.by_shape.insert(ptr, slot);
         self.protos.push(Schema {
-            id: SchemaId(slot as u64),
+            id: SchemaId::from_raw(slot as u64),
             type_params: Vec::new(),
             kind: SchemaKind::Map { key, value },
         });
@@ -490,7 +490,7 @@ impl Builder {
         let key = self.protos.len();
         self.by_shape.insert(ptr, key);
         self.protos.push(Schema {
-            id: SchemaId(key as u64),
+            id: SchemaId::from_raw(key as u64),
             type_params: Vec::new(),
             kind: SchemaKind::Dynamic, // placeholder until arms resolve
         });
@@ -525,7 +525,7 @@ impl Builder {
         let key = self.protos.len();
         self.by_shape.insert(ptr, key);
         self.protos.push(Schema {
-            id: SchemaId(key as u64),
+            id: SchemaId::from_raw(key as u64),
             type_params: Vec::new(),
             kind: SchemaKind::Dynamic,
         });
@@ -553,7 +553,7 @@ impl Builder {
         let key = self.protos.len();
         self.by_shape.insert(ptr, key);
         self.protos.push(Schema {
-            id: SchemaId(key as u64),
+            id: SchemaId::from_raw(key as u64),
             type_params: Vec::new(),
             kind: SchemaKind::Dynamic, // placeholder until variants resolve
         });

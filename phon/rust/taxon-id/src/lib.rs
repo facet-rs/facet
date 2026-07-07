@@ -50,7 +50,7 @@ fn finalize(hasher: &blake3::Hasher) -> SchemaId {
     let bytes = hash.as_bytes();
     let mut first8 = [0u8; 8];
     first8.copy_from_slice(&bytes[..8]);
-    SchemaId(u64::from_le_bytes(first8))
+    SchemaId::from_raw(u64::from_le_bytes(first8))
 }
 
 /// The canonical id of a primitive schema (`Schema { kind: Primitive(p), .. }`).
@@ -355,7 +355,7 @@ impl Walk<'_> {
                 write_str(out, name);
             }
             SchemaRef::Concrete { id, args } => {
-                match self.key_to_index.get(&id.0) {
+                match self.key_to_index.get(&id.as_u64()) {
                     Some(&target) if self.component.contains(&target) => {
                         if let Some(depth) = path.iter().position(|&p| p == target) {
                             // Target is an ancestor on the current walk path: the
@@ -378,12 +378,12 @@ impl Walk<'_> {
                                 "dependency component must be assigned before its dependents",
                             );
                         write_str(out, "concrete");
-                        write_u64(out, rid.0);
+                        write_u64(out, rid.as_u64());
                     }
                     None => {
                         // External: the reference already carries a real id.
                         write_str(out, "concrete");
-                        write_u64(out, id.0);
+                        write_u64(out, id.as_u64());
                     }
                 }
                 write_u32(out, args.len() as u32);
@@ -403,7 +403,7 @@ fn remap_ref(r: &SchemaRef, map: &HashMap<u64, SchemaId>) -> SchemaRef {
     match r {
         SchemaRef::Var { name } => SchemaRef::Var { name: name.clone() },
         SchemaRef::Concrete { id, args } => SchemaRef::Concrete {
-            id: map.get(&id.0).copied().unwrap_or(*id),
+            id: map.get(&id.as_u64()).copied().unwrap_or(*id),
             args: args.iter().map(|a| remap_ref(a, map)).collect(),
         },
     }
@@ -509,7 +509,7 @@ pub fn resolve_ids(batch: Vec<Schema>) -> Vec<Schema> {
     // Provisional key -> node index.
     let mut key_to_index: HashMap<u64, NodeIx> = HashMap::with_capacity(n);
     for (i, s) in batch.iter().enumerate() {
-        key_to_index.insert(s.id.0, NodeIx::of(i));
+        key_to_index.insert(s.id.as_u64(), NodeIx::of(i));
     }
 
     // Reference graph: edge i -> j when schema i references in-batch schema j.
@@ -517,7 +517,7 @@ pub fn resolve_ids(batch: Vec<Schema>) -> Vec<Schema> {
     for (i, s) in batch.iter().enumerate() {
         let mut seen = HashSet::new();
         visit_kind_targets(&s.kind, &mut |id| {
-            if let Some(&j) = key_to_index.get(&id.0)
+            if let Some(&j) = key_to_index.get(&id.as_u64())
                 && seen.insert(j)
             {
                 adj[i].push(j);
@@ -554,7 +554,7 @@ pub fn resolve_ids(batch: Vec<Schema>) -> Vec<Schema> {
     // Provisional key -> real id, for rewriting references.
     let mut key_to_real: HashMap<u64, SchemaId> = HashMap::with_capacity(n);
     for (i, s) in batch.iter().enumerate() {
-        key_to_real.insert(s.id.0, assigned[&NodeIx::of(i)]);
+        key_to_real.insert(s.id.as_u64(), assigned[&NodeIx::of(i)]);
     }
 
     batch
@@ -579,14 +579,14 @@ pub fn recursive_schema_ids(schemas: &[Schema]) -> std::collections::BTreeSet<Sc
     let n = schemas.len();
     let mut id_to_index: HashMap<u64, NodeIx> = HashMap::with_capacity(n);
     for (i, s) in schemas.iter().enumerate() {
-        id_to_index.insert(s.id.0, NodeIx::of(i));
+        id_to_index.insert(s.id.as_u64(), NodeIx::of(i));
     }
     let mut adj: Vec<Vec<NodeIx>> = vec![Vec::new(); n];
     let mut self_edge = vec![false; n];
     for (i, s) in schemas.iter().enumerate() {
         let mut seen = HashSet::new();
         visit_kind_targets(&s.kind, &mut |id| {
-            if let Some(&j) = id_to_index.get(&id.0) {
+            if let Some(&j) = id_to_index.get(&id.as_u64()) {
                 if j.ix() == i {
                     self_edge[i] = true;
                 }
@@ -617,7 +617,7 @@ mod tests {
     /// A schema with a provisional key and the given kind, no type params.
     fn proto(key: u64, kind: Kind) -> Schema {
         Schema {
-            id: SchemaId(key),
+            id: SchemaId::from_raw(key),
             type_params: Vec::new(),
             kind,
         }
@@ -776,14 +776,14 @@ mod tests {
                 name: "Node".to_string(),
                 fields: vec![
                     field("value", SchemaRef::concrete(primitive_id(Primitive::U32))),
-                    field("next", SchemaRef::concrete(SchemaId(20))),
+                    field("next", SchemaRef::concrete(SchemaId::from_raw(20))),
                 ],
             },
         );
         let opt = proto(
             20,
             Kind::Option {
-                element: SchemaRef::concrete(SchemaId(10)),
+                element: SchemaRef::concrete(SchemaId::from_raw(10)),
             },
         );
         if node_first {
@@ -868,14 +868,14 @@ mod tests {
                 name: "Cell".to_string(),
                 fields: vec![
                     field("value", SchemaRef::concrete(primitive_id(Primitive::U32))),
-                    field("next", SchemaRef::concrete(SchemaId(20))),
+                    field("next", SchemaRef::concrete(SchemaId::from_raw(20))),
                 ],
             },
         );
         let opt2 = proto(
             20,
             Kind::Option {
-                element: SchemaRef::concrete(SchemaId(10)),
+                element: SchemaRef::concrete(SchemaId::from_raw(10)),
             },
         );
         let cell_id = resolve_ids(vec![node2, opt2])

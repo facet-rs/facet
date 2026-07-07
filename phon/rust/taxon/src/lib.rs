@@ -21,7 +21,21 @@ use core::fmt;
 ///
 /// Spec: `r[schema-identity.content-hash]`.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
-pub struct SchemaId(pub u64);
+pub struct SchemaId(u64);
+
+impl SchemaId {
+    /// Wrap a raw 64-bit id (a content hash from taxon-id, or an id received off the wire) — this does NOT compute a hash.
+    #[must_use]
+    pub const fn from_raw(raw: u64) -> Self {
+        Self(raw)
+    }
+
+    /// The raw 64-bit value, e.g. for a frame word or wire encoding.
+    #[must_use]
+    pub const fn as_u64(self) -> u64 {
+        self.0
+    }
+}
 
 impl fmt::Debug for SchemaId {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {

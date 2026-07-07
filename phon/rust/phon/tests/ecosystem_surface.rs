@@ -4039,7 +4039,7 @@ fn required_field(name: &str, schema: SchemaRef) -> Field {
 }
 
 fn temporary_ref(id: u64) -> SchemaRef {
-    SchemaRef::concrete(SchemaId(id))
+    SchemaRef::concrete(SchemaId::from_raw(id))
 }
 
 fn primitive_ref(primitive: Primitive) -> SchemaRef {
@@ -4056,7 +4056,7 @@ fn stax_external_fd_registry() -> (Registry, SchemaId, SchemaId) {
 
     let schemas = phon_schema::resolve_ids(vec![
         Schema {
-            id: SchemaId(FD),
+            id: SchemaId::from_raw(FD),
             type_params: Vec::new(),
             kind: SchemaKind::External {
                 kind: "fd".to_string(),
@@ -4064,21 +4064,21 @@ fn stax_external_fd_registry() -> (Registry, SchemaId, SchemaId) {
             },
         },
         Schema {
-            id: SchemaId(LIST_FD),
+            id: SchemaId::from_raw(LIST_FD),
             type_params: Vec::new(),
             kind: SchemaKind::List {
                 element: temporary_ref(FD),
             },
         },
         Schema {
-            id: SchemaId(LIST_U64),
+            id: SchemaId::from_raw(LIST_U64),
             type_params: Vec::new(),
             kind: SchemaKind::List {
                 element: primitive_ref(Primitive::U64),
             },
         },
         Schema {
-            id: SchemaId(WAKING_OFFSETS),
+            id: SchemaId::from_raw(WAKING_OFFSETS),
             type_params: Vec::new(),
             kind: SchemaKind::Struct {
                 name: "StaxLinuxWakingFieldOffsets".to_string(),
@@ -4089,14 +4089,14 @@ fn stax_external_fd_registry() -> (Registry, SchemaId, SchemaId) {
             },
         },
         Schema {
-            id: SchemaId(OPTION_WAKING_OFFSETS),
+            id: SchemaId::from_raw(OPTION_WAKING_OFFSETS),
             type_params: Vec::new(),
             kind: SchemaKind::Option {
                 element: temporary_ref(WAKING_OFFSETS),
             },
         },
         Schema {
-            id: SchemaId(PERF_SESSION_FDS),
+            id: SchemaId::from_raw(PERF_SESSION_FDS),
             type_params: Vec::new(),
             kind: SchemaKind::Struct {
                 name: "StaxLinuxPerfSessionFds".to_string(),
@@ -4142,7 +4142,7 @@ fn transport_capability_boundary_registry() -> (
 
     let schemas = phon_schema::resolve_ids(vec![
         Schema {
-            id: SchemaId(WRITER_ITEM),
+            id: SchemaId::from_raw(WRITER_ITEM),
             type_params: Vec::new(),
             kind: SchemaKind::Struct {
                 name: "DodecaTunnelItem".to_string(),
@@ -4154,7 +4154,7 @@ fn transport_capability_boundary_registry() -> (
             },
         },
         Schema {
-            id: SchemaId(READER_ITEM),
+            id: SchemaId::from_raw(READER_ITEM),
             type_params: Vec::new(),
             kind: SchemaKind::Struct {
                 name: "DodecaTunnelItem".to_string(),
@@ -4165,7 +4165,7 @@ fn transport_capability_boundary_registry() -> (
             },
         },
         Schema {
-            id: SchemaId(CHANNEL),
+            id: SchemaId::from_raw(CHANNEL),
             type_params: Vec::new(),
             kind: SchemaKind::Channel {
                 direction: ChannelDirection::Tx,
@@ -4173,7 +4173,7 @@ fn transport_capability_boundary_registry() -> (
             },
         },
         Schema {
-            id: SchemaId(WRITER_METADATA),
+            id: SchemaId::from_raw(WRITER_METADATA),
             type_params: Vec::new(),
             kind: SchemaKind::Struct {
                 name: "StaxFdMetadata".to_string(),
@@ -4185,7 +4185,7 @@ fn transport_capability_boundary_registry() -> (
             },
         },
         Schema {
-            id: SchemaId(READER_METADATA),
+            id: SchemaId::from_raw(READER_METADATA),
             type_params: Vec::new(),
             kind: SchemaKind::Struct {
                 name: "StaxFdMetadata".to_string(),
@@ -4196,7 +4196,7 @@ fn transport_capability_boundary_registry() -> (
             },
         },
         Schema {
-            id: SchemaId(EXTERNAL),
+            id: SchemaId::from_raw(EXTERNAL),
             type_params: Vec::new(),
             kind: SchemaKind::External {
                 kind: "fd".to_string(),
