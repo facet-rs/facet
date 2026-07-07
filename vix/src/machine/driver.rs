@@ -1377,6 +1377,7 @@ impl ValueStore {
         hasher.update(option_schema.as_bytes());
         hasher.update(1i64.to_le_bytes());
         hasher.update(value_schema.as_bytes());
+        // Realization is a declared type wrapper and stays in content identity; HandleTier is store scheduling state and stays out.
         if let Some(realization) = &realization {
             hasher.update(realization.to_word().to_le_bytes());
         }
@@ -1497,6 +1498,7 @@ impl ValueStore {
         let mut hasher = Sha256::new();
         hasher.update(b"vix-array-words");
         hasher.update(elem_schema.as_bytes());
+        // Arrays hash declared element/value identity; HandleTier scheduling state never participates.
         hasher.update(
             i64::try_from(words.len())
                 .expect("array length fits i64")
@@ -1565,6 +1567,7 @@ impl ValueStore {
         let mut hasher = Sha256::new();
         hasher.update(b"vix-array-pending");
         hasher.update(elem_schema.as_bytes());
+        // Pending array handles contribute their declared value identity; HandleTier scheduling state stays out of the hash.
         hasher.update(
             i64::try_from(pending.len())
                 .expect("array length fits i64")
@@ -9557,6 +9560,7 @@ fn hash_map_pairs(schema: &str, pairs: &[OrderedMapPair]) -> ContentHash {
         hasher.update(pair.pair.key_schema.as_bytes());
         hasher.update(pair.key_hash);
         hasher.update(pair.pair.value_schema.as_bytes());
+        // Realization is a declared type wrapper and stays in content identity; HandleTier is store scheduling state and stays out.
         if let Some(realization) = &pair.pair.value_realization {
             hasher.update(realization.to_word().to_le_bytes());
         }
@@ -10190,6 +10194,7 @@ fn hash_value_into(
             }
         }
         other => {
+            // V2/blake3 rewires descriptor-driven hashing for real container access; keep sha2 loud instead of adding churn here.
             panic!(
                 "descriptor access {other:?} is outside vix machine value-store canonicalization"
             );

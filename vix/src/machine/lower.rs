@@ -8705,6 +8705,46 @@ pub fn strings() -> [String] { [] }
     }
 
     #[test]
+    fn derived_container_descriptors_are_keyed_by_full_schema_ref() {
+        let modules = BTreeMap::from([(
+            "root".to_string(),
+            r#"
+pub fn ints() -> [Int] { [] }
+pub fn strings() -> [String] { [] }
+"#
+            .to_string(),
+        )]);
+        let compiled = compile_module_set(
+            "root",
+            &modules,
+            RefSource::Fresh,
+            LowerOptions {
+                force_tail_invoke: false,
+            },
+        )
+        .unwrap();
+
+        let int_descriptor = compiled
+            .descriptors
+            .get("Array<Int>")
+            .expect("Array<Int> descriptor");
+        let string_descriptor = compiled
+            .descriptors
+            .get("Array<String>")
+            .expect("Array<String> descriptor");
+
+        assert_eq!(
+            compiled.schemas.display_ref(&int_descriptor.schema),
+            "Array<Int>"
+        );
+        assert_eq!(
+            compiled.schemas.display_ref(&string_descriptor.schema),
+            "Array<String>"
+        );
+        assert_ne!(int_descriptor.schema, string_descriptor.schema);
+    }
+
+    #[test]
     fn molten_consuming_rebind_preserves_pending_aliases() {
         let src = r#"
 pub fn main() -> Int {
