@@ -325,6 +325,7 @@ impl Fixture {
             "guard_clause_ids: Map<Int, Int>",
             "guard_tags: Map<Int, String>",
             "guard_pkgs: Map<Int, Int>",
+            "guard_version_values: Map<Int, String>",
             "guard_features: Map<Int, Int>",
             "consequent_tags: Map<Int, String>",
             "consequent_pkgs: Map<Int, Int>",
@@ -340,7 +341,7 @@ impl Fixture {
         }
         writeln!(
             source,
-            "    Index {{ packages: [{packages}], names: names, version_ids: [{version_ids}], version_pkgs: version_pkgs, version_values: version_values, clause_ids: [{}], guard_ids: [{}], guard_clause_ids: guard_clause_ids, guard_tags: guard_tags, guard_pkgs: guard_pkgs, guard_features: guard_features, consequent_tags: consequent_tags, consequent_pkgs: consequent_pkgs, consequent_version_sets: consequent_version_sets, consequent_features: consequent_features, gate_kinds: gate_kinds, gate_targets: gate_targets }}",
+            "    Index {{ packages: [{packages}], names: names, version_ids: [{version_ids}], version_pkgs: version_pkgs, version_values: version_values, clause_ids: [{}], guard_ids: [{}], guard_clause_ids: guard_clause_ids, guard_tags: guard_tags, guard_pkgs: guard_pkgs, guard_version_values: guard_version_values, guard_features: guard_features, consequent_tags: consequent_tags, consequent_pkgs: consequent_pkgs, consequent_version_sets: consequent_version_sets, consequent_features: consequent_features, gate_kinds: gate_kinds, gate_targets: gate_targets }}",
             clauses.ids.join(", "),
             clauses.guard_ids.join(", ")
         )

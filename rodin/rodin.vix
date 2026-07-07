@@ -163,7 +163,7 @@ struct RootReq {
     default_features: Bool,
 }
 
-struct Index {
+pub struct Index {
     // Available versions per package domain, and the compiled clause set.
     packages: [Int],
     names: Map<Int, String>,
@@ -175,6 +175,7 @@ struct Index {
     guard_clause_ids: Map<Int, Int>,
     guard_tags: Map<Int, String>,
     guard_pkgs: Map<Int, Int>,
+    guard_version_values: Map<Int, String>,
     guard_features: Map<Int, Int>,
     consequent_tags: Map<Int, String>,
     consequent_pkgs: Map<Int, Int>,
@@ -184,7 +185,7 @@ struct Index {
     gate_targets: Map<Int, String>,
 }
 
-struct Problem {
+pub struct Problem {
     root_pkg: Int,
     root_req: VersionSet,
     root_features: [Int],
@@ -596,7 +597,10 @@ fn guard_id_holds(index: Index, state: State, guard_id: Int) -> Bool {
     let pkg = index.guard_pkgs.get(guard_id).unwrap();
     match tag == "in_graph" {
         true => domain_for(state, pkg).active,
-        false => feature_enabled(state, index.guard_features.get(guard_id).unwrap()),
+        false => match tag == "selected" {
+            true => selected_is(state, pkg, rodin_version(index.guard_version_values.get(guard_id).unwrap())),
+            false => feature_enabled(state, index.guard_features.get(guard_id).unwrap()),
+        },
     }
 }
 
@@ -868,6 +872,58 @@ fn selected_names_text_one(index: Index, pkg: Int, rest: [Int], selected: Map<In
 pub fn solve_selected_names_text(index: Index, problem: Problem, target: String) -> String {
     let result = solve(index, problem, target);
     selected_names_text_from(index, index.packages, result.selected, "")
+}
+
+fn append_selected_version(out: String, name: String, version: String) -> String {
+    append_selected_name(out, name + " " + version)
+}
+
+fn selected_versions_text_from(index: Index, packages: [Int], selected: Map<Int, Version>, out: String) -> String {
+    match packages.len() == 0 {
+        true => out,
+        false => selected_versions_text_tuple(index, packages.pop(), selected, out),
+    }
+}
+
+fn selected_versions_text_tuple(index: Index, popped: (Int, [Int]), selected: Map<Int, Version>, out: String) -> String {
+    selected_versions_text_one(index, popped.0, popped.1, selected, out)
+}
+
+fn selected_versions_text_one(index: Index, pkg: Int, rest: [Int], selected: Map<Int, Version>, out: String) -> String {
+    let next = match selected.get(pkg) {
+        Some(version) => append_selected_version(out, index.names.get(pkg).unwrap(), selected_version_text(index, pkg, version)),
+        None => out,
+    };
+    selected_versions_text_from(index, rest, selected, next)
+}
+
+fn selected_version_text(index: Index, pkg: Int, version: Version) -> String {
+    selected_version_text_from(index, pkg, version, index.version_ids)
+}
+
+fn selected_version_text_from(index: Index, pkg: Int, version: Version, version_ids: [Int]) -> String {
+    match version_ids.len() == 0 {
+        true => "",
+        false => selected_version_text_tuple(index, pkg, version, version_ids.pop()),
+    }
+}
+
+fn selected_version_text_tuple(index: Index, pkg: Int, version: Version, popped: (Int, [Int])) -> String {
+    selected_version_text_one_id(index, pkg, version, popped.0, popped.1)
+}
+
+fn selected_version_text_one_id(index: Index, pkg: Int, version: Version, version_id: Int, rest: [Int]) -> String {
+    let row_pkg = index.version_pkgs.get(version_id).unwrap();
+    let row_text = index.version_values.get(version_id).unwrap();
+    match row_pkg == pkg && rodin_version(row_text) == version {
+        true => row_text,
+        false => selected_version_text_from(index, pkg, version, rest),
+    }
+}
+
+pub fn solve_selected_versions_text(index: Index, problem: Problem, target: String) -> String {
+    let result = solve(index, problem, target);
+    selected_versions_text_from(index, index.packages, result.selected, "")
 }
 
 pub fn root_candidate_count(index: Index, problem: Problem) -> Int {

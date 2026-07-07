@@ -1,0 +1,492 @@
+// Sparse crates.io index ingestion for rodin.
+//
+// Live sparse-index reads are effects over a moving read set. The demo path
+// pins captured JSONL snapshots and serves them through a fetch backend; this
+// module parses those snapshots into row records and bridges them to rodin's
+// resolver Index.
+
+use vix::{Map, Tree, VersionSet};
+use rodin::{Index, Problem, solve_selected_versions_text};
+
+pub struct SparseDependency {
+    name: String,
+    req: String,
+    features: [String],
+    optional: Bool,
+    default_features: Bool,
+    target: Doc,
+    kind: String,
+    package: String,
+}
+
+pub struct SparseIndexRow {
+    name: String,
+    vers: String,
+    deps: Array,
+    cksum: String,
+    features: Doc,
+    features2: Doc,
+    yanked: Bool,
+}
+
+struct SparseBridgeState {
+    packages: [Int],
+    package_ids: Map<String, Int>,
+    names: Map<Int, String>,
+    version_ids: [Int],
+    version_pkgs: Map<Int, Int>,
+    version_values: Map<Int, String>,
+    clause_ids: [Int],
+    guard_ids: [Int],
+    guard_clause_ids: Map<Int, Int>,
+    guard_tags: Map<Int, String>,
+    guard_pkgs: Map<Int, Int>,
+    guard_version_values: Map<Int, String>,
+    guard_features: Map<Int, Int>,
+    consequent_tags: Map<Int, String>,
+    consequent_pkgs: Map<Int, Int>,
+    consequent_version_sets: Map<Int, VersionSet>,
+    consequent_features: Map<Int, Int>,
+    gate_kinds: Map<Int, String>,
+    gate_targets: Map<Int, String>,
+    next_pkg: Int,
+    next_version: Int,
+    next_clause: Int,
+    next_guard: Int,
+}
+
+pub fn sparse_index_path(name: String) -> String {
+    match name == "cc" {
+        true => "2/cc",
+        false => match name == "itoa" {
+            true => "it/oa/itoa",
+            false => match name == "either" {
+                true => "ei/th/either",
+                false => match name == "semver" {
+                    true => "se/mv/semver",
+                    false => match name == "blake3" {
+                        true => "bl/ak/blake3",
+                        false => match name == "cfg-if" {
+                            true => "cf/g-/cfg-if",
+                            false => match name == "arrayvec" {
+                                true => "ar/ra/arrayvec",
+                                false => match name == "arrayref" {
+                                    true => "ar/ra/arrayref",
+                                    false => match name == "constant_time_eq" {
+                                        true => "co/ns/constant_time_eq",
+                                        false => match name == "shlex" {
+                                            true => "sh/le/shlex",
+                                            false => "fi/nd/find-msvc-tools",
+                                        },
+                                    },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+}
+
+pub fn fetch_sparse_index_snapshot(base_url: String, name: String) -> [SparseIndexRow] {
+    let snapshot: Tree = fetch(url: base_url + "/" + sparse_index_path(name));
+    parse_sparse_jsonl(snapshot / p"index.jsonl")
+}
+
+pub fn parse_sparse_jsonl(text: String) -> [SparseIndexRow] {
+    parse_sparse_jsonl_into(text, [])
+}
+
+fn parse_sparse_jsonl_into(text: String, out: [SparseIndexRow]) -> [SparseIndexRow] {
+    match text == "" {
+        true => out,
+        false => match text.contains("\n") {
+            true => parse_sparse_jsonl_line(text.before("\n"), text.after("\n"), out),
+            false => out.push(parse_sparse_row(text)),
+        },
+    }
+}
+
+fn parse_sparse_jsonl_line(line: String, rest: String, out: [SparseIndexRow]) -> [SparseIndexRow] {
+    let next = match line == "" {
+        true => out,
+        false => out.push(parse_sparse_row(line)),
+    };
+    parse_sparse_jsonl_into(rest, next)
+}
+
+fn parse_sparse_row(line: String) -> SparseIndexRow {
+    let doc = json(line);
+    SparseIndexRow {
+        name: doc.name,
+        vers: doc.vers,
+        deps: doc.deps,
+        cksum: doc.cksum,
+        features: doc.features,
+        features2: json("null"),
+        yanked: doc.yanked,
+    }
+}
+
+fn parse_sparse_dep(dep: Doc) -> SparseDependency {
+    SparseDependency {
+        name: dep.name,
+        req: dep.req,
+        features: doc_strings(dep.features),
+        optional: dep.optional,
+        default_features: dep.default_features,
+        target: dep.target,
+        kind: dep.kind,
+        package: "",
+    }
+}
+
+fn doc_strings(values: Array) -> [String] {
+    doc_strings_from(values, [])
+}
+
+fn doc_strings_from(values: Array, out: [String]) -> [String] {
+    match values.len() == 0 {
+        true => out,
+        false => doc_strings_tuple(values.pop(), out),
+    }
+}
+
+fn doc_strings_tuple(popped: (Int, Array), out: [String]) -> [String] {
+    doc_strings_from(popped.1, out).push(doc_string_value(popped.0))
+}
+
+fn doc_string_value(value: String) -> String {
+    value
+}
+
+fn dep_package_name(dep: SparseDependency) -> String {
+    match dep.package == "" {
+        true => dep.name,
+        false => dep.package,
+    }
+}
+
+pub fn sparse_rows_to_rodin_index(rows: [SparseIndexRow]) -> Index {
+    index_from_bridge_state(sparse_bridge_state(rows))
+}
+
+fn sparse_bridge_state(rows: [SparseIndexRow]) -> SparseBridgeState {
+    bridge_versions(rows, register_packages(rows, empty_bridge_state()))
+}
+
+fn empty_bridge_state() -> SparseBridgeState {
+    let package_ids: Map<String, Int> = {};
+    let names: Map<Int, String> = {};
+    let version_pkgs: Map<Int, Int> = {};
+    let version_values: Map<Int, String> = {};
+    let guard_clause_ids: Map<Int, Int> = {};
+    let guard_tags: Map<Int, String> = {};
+    let guard_pkgs: Map<Int, Int> = {};
+    let guard_version_values: Map<Int, String> = {};
+    let guard_features: Map<Int, Int> = {};
+    let consequent_tags: Map<Int, String> = {};
+    let consequent_pkgs: Map<Int, Int> = {};
+    let consequent_version_sets: Map<Int, VersionSet> = {};
+    let consequent_features: Map<Int, Int> = {};
+    let gate_kinds: Map<Int, String> = {};
+    let gate_targets: Map<Int, String> = {};
+    SparseBridgeState {
+        packages: [],
+        package_ids: package_ids,
+        names: names,
+        version_ids: [],
+        version_pkgs: version_pkgs,
+        version_values: version_values,
+        clause_ids: [],
+        guard_ids: [],
+        guard_clause_ids: guard_clause_ids,
+        guard_tags: guard_tags,
+        guard_pkgs: guard_pkgs,
+        guard_version_values: guard_version_values,
+        guard_features: guard_features,
+        consequent_tags: consequent_tags,
+        consequent_pkgs: consequent_pkgs,
+        consequent_version_sets: consequent_version_sets,
+        consequent_features: consequent_features,
+        gate_kinds: gate_kinds,
+        gate_targets: gate_targets,
+        next_pkg: 0,
+        next_version: 0,
+        next_clause: 0,
+        next_guard: 0,
+    }
+}
+
+fn register_packages(rows: [SparseIndexRow], state: SparseBridgeState) -> SparseBridgeState {
+    match rows.len() == 0 {
+        true => state,
+        false => register_packages_tuple(rows.pop(), state),
+    }
+}
+
+fn register_packages_tuple(popped: (Int, [SparseIndexRow]), state: SparseBridgeState) -> SparseBridgeState {
+    register_packages(popped.1, register_package(state, sparse_row_name(popped.0)))
+}
+
+fn register_package(state: SparseBridgeState, name: String) -> SparseBridgeState {
+    match state.package_ids.get(name) {
+        Some(_) => state,
+        None => SparseBridgeState {
+            packages: state.packages.push(state.next_pkg),
+            package_ids: state.package_ids.insert(name, state.next_pkg),
+            names: state.names.insert(state.next_pkg, name),
+            next_pkg: state.next_pkg + 1,
+            ..state
+        },
+    }
+}
+
+fn bridge_versions(rows: [SparseIndexRow], state: SparseBridgeState) -> SparseBridgeState {
+    match rows.len() == 0 {
+        true => state,
+        false => bridge_versions_tuple(rows.pop(), state),
+    }
+}
+
+fn bridge_versions_tuple(popped: (Int, [SparseIndexRow]), state: SparseBridgeState) -> SparseBridgeState {
+    bridge_versions(popped.1, bridge_row(state, popped.0))
+}
+
+fn bridge_row(state: SparseBridgeState, row: SparseIndexRow) -> SparseBridgeState {
+    match row.yanked {
+        true => state,
+        false => bridge_live_row(state, row),
+    }
+}
+
+fn bridge_live_row(state: SparseBridgeState, row: SparseIndexRow) -> SparseBridgeState {
+    let pkg = state.package_ids.get(row.name).unwrap();
+    let version_id = state.next_version;
+    let state = SparseBridgeState {
+        version_ids: state.version_ids.push(version_id),
+        version_pkgs: state.version_pkgs.insert(version_id, pkg),
+        version_values: state.version_values.insert(version_id, row.vers),
+        next_version: version_id + 1,
+        ..state
+    };
+    state
+}
+
+fn bridge_row_deps(deps: [SparseDependency], state: SparseBridgeState, parent_pkg: Int, parent_version: String) -> SparseBridgeState {
+    match deps.len() == 0 {
+        true => state,
+        false => bridge_row_deps_tuple(deps.pop(), state, parent_pkg, parent_version),
+    }
+}
+
+fn bridge_row_deps_tuple(popped: (Int, [SparseDependency]), state: SparseBridgeState, parent_pkg: Int, parent_version: String) -> SparseBridgeState {
+    let dep: SparseDependency = popped.0;
+    bridge_row_deps(popped.1, bridge_dep(state, parent_pkg, parent_version, dep), parent_pkg, parent_version)
+}
+
+fn bridge_dep(state: SparseBridgeState, parent_pkg: Int, parent_version: String, dep: SparseDependency) -> SparseBridgeState {
+    match dep.optional {
+        true => state,
+        false => match dep.kind == "dev" {
+            true => state,
+            false => bridge_required_dep(state, parent_pkg, parent_version, dep),
+        },
+    }
+}
+
+fn bridge_required_dep(state: SparseBridgeState, parent_pkg: Int, parent_version: String, dep: SparseDependency) -> SparseBridgeState {
+    let dep_name = dep_package_name(dep);
+    match package_known(state, dep_name) {
+        true => add_required_dep_clauses(state, parent_pkg, parent_version, package_id(state, dep_name), dep.req, dep.kind),
+        false => state,
+    }
+}
+
+fn package_known(state: SparseBridgeState, name: String) -> Bool {
+    match state.package_ids.get(name) {
+        Some(_) => true,
+        None => false,
+    }
+}
+
+fn package_id(state: SparseBridgeState, name: String) -> Int {
+    state.package_ids.get(name).unwrap()
+}
+
+fn add_required_dep_clauses(state: SparseBridgeState, parent_pkg: Int, parent_version: String, dep_pkg: Int, req: String, kind: String) -> SparseBridgeState {
+    add_version_set_clause(
+        add_in_graph_clause(state, parent_pkg, parent_version, dep_pkg, kind),
+        parent_pkg,
+        parent_version,
+        dep_pkg,
+        req,
+        kind,
+    )
+}
+
+fn add_in_graph_clause(state: SparseBridgeState, parent_pkg: Int, parent_version: String, dep_pkg: Int, kind: String) -> SparseBridgeState {
+    add_selected_guard_clause(state, parent_pkg, parent_version, "in_graph", dep_pkg, VersionSet::from_req("*"), kind)
+}
+
+fn add_version_set_clause(state: SparseBridgeState, parent_pkg: Int, parent_version: String, dep_pkg: Int, req: String, kind: String) -> SparseBridgeState {
+    add_selected_guard_clause(state, parent_pkg, parent_version, "version_set", dep_pkg, VersionSet::from_req(req), kind)
+}
+
+fn add_selected_guard_clause(state: SparseBridgeState, parent_pkg: Int, parent_version: String, consequent_tag: String, dep_pkg: Int, req: VersionSet, kind: String) -> SparseBridgeState {
+    let clause_id = state.next_clause;
+    let guard_id = state.next_guard;
+    SparseBridgeState {
+        clause_ids: state.clause_ids.push(clause_id),
+        guard_ids: state.guard_ids.push(guard_id),
+        guard_clause_ids: state.guard_clause_ids.insert(guard_id, clause_id),
+        guard_tags: state.guard_tags.insert(guard_id, "selected"),
+        guard_pkgs: state.guard_pkgs.insert(guard_id, parent_pkg),
+        guard_version_values: state.guard_version_values.insert(guard_id, parent_version),
+        guard_features: state.guard_features.insert(guard_id, 0),
+        consequent_tags: state.consequent_tags.insert(clause_id, consequent_tag),
+        consequent_pkgs: state.consequent_pkgs.insert(clause_id, dep_pkg),
+        consequent_version_sets: state.consequent_version_sets.insert(clause_id, req),
+        consequent_features: state.consequent_features.insert(clause_id, 0),
+        gate_kinds: state.gate_kinds.insert(clause_id, kind),
+        next_clause: clause_id + 1,
+        next_guard: guard_id + 1,
+        ..state
+    }
+}
+
+fn index_from_bridge_state(state: SparseBridgeState) -> Index {
+    Index {
+        packages: state.packages,
+        names: state.names,
+        version_ids: state.version_ids,
+        version_pkgs: state.version_pkgs,
+        version_values: state.version_values,
+        clause_ids: state.clause_ids,
+        guard_ids: state.guard_ids,
+        guard_clause_ids: state.guard_clause_ids,
+        guard_tags: state.guard_tags,
+        guard_pkgs: state.guard_pkgs,
+        guard_version_values: state.guard_version_values,
+        guard_features: state.guard_features,
+        consequent_tags: state.consequent_tags,
+        consequent_pkgs: state.consequent_pkgs,
+        consequent_version_sets: state.consequent_version_sets,
+        consequent_features: state.consequent_features,
+        gate_kinds: state.gate_kinds,
+        gate_targets: state.gate_targets,
+    }
+}
+
+fn problem_from_bridge_state(state: SparseBridgeState, root_name: String, req: String) -> Problem {
+    problem_from_root_pkg(state.package_ids.get(root_name).unwrap(), req)
+}
+
+fn problem_from_root_pkg(root_pkg: Int, req: String) -> Problem {
+    Problem {
+        root_pkg: root_pkg,
+        root_req: VersionSet::from_req(req),
+        root_features: [],
+        root_default_feature: 0,
+        root_default_features: false,
+    }
+}
+
+pub fn sparse_solve_selected_versions_text(rows: [SparseIndexRow], root_name: String, req: String, target: String) -> String {
+    let state = sparse_bridge_state(rows);
+    let root_pkg = state.package_ids.get(root_name).unwrap();
+    solve_selected_versions_text(index_from_bridge_state(state), problem_from_root_pkg(root_pkg, req), target)
+}
+
+pub fn sparse_row_count(rows: [SparseIndexRow]) -> Int {
+    rows.len()
+}
+
+pub fn sparse_row_cksum(rows: [SparseIndexRow], name: String, vers: String) -> String {
+    find_sparse_row(rows, name, vers).cksum
+}
+
+pub fn sparse_dep_count(rows: [SparseIndexRow], name: String, vers: String) -> Int {
+    find_sparse_row(rows, name, vers).deps.len()
+}
+
+fn find_sparse_row(rows: [SparseIndexRow], name: String, vers: String) -> SparseIndexRow {
+    find_sparse_row_in(rows, name, vers, empty_sparse_row())
+}
+
+fn find_sparse_row_in(rows: [SparseIndexRow], name: String, vers: String, fallback: SparseIndexRow) -> SparseIndexRow {
+    match rows.len() == 0 {
+        true => fallback,
+        false => find_sparse_row_tuple(rows.pop(), name, vers, fallback),
+    }
+}
+
+fn find_sparse_row_tuple(popped: (Int, [SparseIndexRow]), name: String, vers: String, fallback: SparseIndexRow) -> SparseIndexRow {
+    match sparse_row_name(popped.0) == name && sparse_row_vers(popped.0) == vers {
+        true => sparse_row_identity(popped.0),
+        false => find_sparse_row_in(popped.1, name, vers, fallback),
+    }
+}
+
+fn first_sparse_dep(deps: [SparseDependency]) -> SparseDependency {
+    match deps.len() == 0 {
+        true => empty_sparse_dep(),
+        false => first_sparse_dep_tuple(deps.pop()),
+    }
+}
+
+fn first_sparse_dep_tuple(popped: (Int, [SparseDependency])) -> SparseDependency {
+    match popped.1.len() == 0 {
+        true => sparse_dep_identity(popped.0),
+        false => first_sparse_dep(popped.1),
+    }
+}
+
+fn empty_sparse_row() -> SparseIndexRow {
+    SparseIndexRow {
+        name: "",
+        vers: "",
+        deps: [],
+        cksum: "",
+        features: json("{}"),
+        features2: json("null"),
+        yanked: false,
+    }
+}
+
+fn empty_sparse_dep() -> SparseDependency {
+    SparseDependency {
+        name: "",
+        req: "",
+        features: [],
+        optional: false,
+        default_features: false,
+        target: json("null"),
+        kind: "",
+        package: "",
+    }
+}
+
+fn bool_text(value: Bool) -> String {
+    match value {
+        true => "true",
+        false => "false",
+    }
+}
+
+fn sparse_row_name(row: SparseIndexRow) -> String {
+    row.name
+}
+
+fn sparse_row_vers(row: SparseIndexRow) -> String {
+    row.vers
+}
+
+fn sparse_row_identity(row: SparseIndexRow) -> SparseIndexRow {
+    row
+}
+
+fn sparse_dep_identity(dep: SparseDependency) -> SparseDependency {
+    dep
+}

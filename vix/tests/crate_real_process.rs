@@ -349,6 +349,7 @@ fn fixture_index() -> Index {
     let guard_clause_ids: Map<Int, Int> = {};
     let guard_tags: Map<Int, String> = {};
     let guard_pkgs: Map<Int, Int> = {};
+    let guard_version_values: Map<Int, String> = {};
     let guard_features: Map<Int, Int> = {};
     let consequent_tags: Map<Int, String> = {};
     let consequent_pkgs: Map<Int, Int> = {};
@@ -428,6 +429,7 @@ fn fixture_index() -> Index {
         guard_clause_ids: guard_clause_ids,
         guard_tags: guard_tags,
         guard_pkgs: guard_pkgs,
+        guard_version_values: guard_version_values,
         guard_features: guard_features,
         consequent_tags: consequent_tags,
         consequent_pkgs: consequent_pkgs,
