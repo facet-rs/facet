@@ -1,0 +1,10 @@
+[package]
+name = "rmeta-hash-spike"
+version = "0.1.0"
+edition = "2024"
+
+[workspace]
+
+[lints.rust]
+unsafe_code = "forbid"
+

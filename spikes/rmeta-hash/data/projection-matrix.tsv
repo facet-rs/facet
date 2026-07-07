@@ -1,0 +1,36 @@
+plan	variant	edit_kind	expected_semantic	projection_changed	whole_hash	projection_hash	projection_bytes
+stable-default	top_comment	add a comment at the top	stable	no	b10298fc8b2b858b	d694d902072ead6c	3872
+stable-default	mid_whitespace	reformat whitespace mid-file	stable	no	5403ddc479d70237	d694d902072ead6c	3872
+stable-default	private_body	change a non-generic private fn body	stable	no	01e5bd40c4a3ee61	d694d902072ead6c	3872
+stable-default	pub_signature	change a pub fn signature	changes	yes	01906272cb2516d6	ecfae20b534395bb	3872
+stable-default	inline_generic_body	change a generic #[inline] fn body	changes	yes	3b1580771efa7d4e	62ca24c88d7642de	3872
+stable-remap-path-prefix	top_comment	add a comment at the top	stable	no	f47f9fa781df6b33	0d9031d0be16aba9	3696
+stable-remap-path-prefix	mid_whitespace	reformat whitespace mid-file	stable	no	1ed56223aedc8f13	0d9031d0be16aba9	3696
+stable-remap-path-prefix	private_body	change a non-generic private fn body	stable	no	6053164ecf737d0a	0d9031d0be16aba9	3696
+stable-remap-path-prefix	pub_signature	change a pub fn signature	changes	yes	e91aa4d1a8fc30b4	5214484d4beb158e	3696
+stable-remap-path-prefix	inline_generic_body	change a generic #[inline] fn body	changes	yes	a09662be46c360dc	960134394864d72f	3696
+nightly-default	top_comment	add a comment at the top	stable	no	fcbe3046737dec7b	c72673224e5f5ede	3878
+nightly-default	mid_whitespace	reformat whitespace mid-file	stable	no	5061c115faa6e6b5	c72673224e5f5ede	3878
+nightly-default	private_body	change a non-generic private fn body	stable	no	17fb914b4c4894c0	c72673224e5f5ede	3878
+nightly-default	pub_signature	change a pub fn signature	changes	yes	2e843b797d7790d9	2e2fe33147167103	3878
+nightly-default	inline_generic_body	change a generic #[inline] fn body	changes	yes	ca32a93cdca2991b	4d534c291b8f49c0	3878
+nightly-z-incremental-ignore-spans	top_comment	add a comment at the top	stable	no	c9dc10a82398a5f5	42babce1b92368e1	3918
+nightly-z-incremental-ignore-spans	mid_whitespace	reformat whitespace mid-file	stable	no	8fd33eec234343c7	42babce1b92368e1	3918
+nightly-z-incremental-ignore-spans	private_body	change a non-generic private fn body	stable	no	74be1454fedd14f0	42babce1b92368e1	3918
+nightly-z-incremental-ignore-spans	pub_signature	change a pub fn signature	changes	yes	4b3dad8765db907b	bc2b450092fbbf9c	3918
+nightly-z-incremental-ignore-spans	inline_generic_body	change a generic #[inline] fn body	changes	yes	848e687bffb68d69	77a7cbcf59830e1b	3918
+nightly-z-remap-cwd-prefix	top_comment	add a comment at the top	stable	no	23c32a902bf38242	90138cd462e24770	3774
+nightly-z-remap-cwd-prefix	mid_whitespace	reformat whitespace mid-file	stable	no	c3a143038cdebdca	90138cd462e24770	3774
+nightly-z-remap-cwd-prefix	private_body	change a non-generic private fn body	stable	no	4ce64c52b1e1bed9	90138cd462e24770	3774
+nightly-z-remap-cwd-prefix	pub_signature	change a pub fn signature	changes	yes	ec476ccb7776d4ec	cebb4d599e1b5331	3774
+nightly-z-remap-cwd-prefix	inline_generic_body	change a generic #[inline] fn body	changes	yes	4315c4b71204505c	43e0c2be9adf398a	3774
+nightly-z-location-detail-none	top_comment	add a comment at the top	stable	no	049ce71ed40f975e	8cc1a692a9a656f9	3910
+nightly-z-location-detail-none	mid_whitespace	reformat whitespace mid-file	stable	no	631137ce281e42e5	8cc1a692a9a656f9	3910
+nightly-z-location-detail-none	private_body	change a non-generic private fn body	stable	no	d85ae110e803e5c3	8cc1a692a9a656f9	3910
+nightly-z-location-detail-none	pub_signature	change a pub fn signature	changes	yes	41541b9a0cd1b392	a6fa8e65eb8833a0	3910
+nightly-z-location-detail-none	inline_generic_body	change a generic #[inline] fn body	changes	yes	1344f601149e9fd9	44d48a88f00f4dbb	3910
+nightly-z-span-free-formats	top_comment	add a comment at the top	stable	no	96cb10236a75a558	af4669362f072f63	3902
+nightly-z-span-free-formats	mid_whitespace	reformat whitespace mid-file	stable	no	f81fa67cd981d043	af4669362f072f63	3902
+nightly-z-span-free-formats	private_body	change a non-generic private fn body	stable	no	33ece389142e4236	af4669362f072f63	3902
+nightly-z-span-free-formats	pub_signature	change a pub fn signature	changes	yes	e22540a0b6319b91	16f4d82cf36d417a	3902
+nightly-z-span-free-formats	inline_generic_body	change a generic #[inline] fn body	changes	yes	4341666433ff0427	fba84ba390867655	3902
