@@ -1089,7 +1089,7 @@ enum MoltenValue {
     ArrayWords {
         elem_schema: String,
         words: Vec<i64>,
-        carried_hash: Option<CarriedArrayHasher>,
+        carried_hash: Option<Box<CarriedArrayHasher>>,
     },
     Interned(i64),
 }
@@ -1900,7 +1900,7 @@ fn intern_molten_word(
             store.alloc_array_words_with_carried_hash(
                 &elem_schema,
                 words,
-                carried_hash,
+                carried_hash.map(|hash| *hash),
                 schemas,
                 schema_tables,
             )?
@@ -5032,21 +5032,21 @@ impl Driver {
                             {
                                 if words.is_empty() {
                                     *stored_schema = elem_schema.clone();
-                                    *carried_hash = Some(start_array_element_hasher(
+                                    *carried_hash = Some(Box::new(start_array_element_hasher(
                                         b"vix-array-words",
                                         schema_tables,
                                         &elem_schema,
-                                    ));
+                                    )));
                                 }
                                 if carried_hash.is_none() {
-                                    *carried_hash = Some(recompute_array_element_hasher(
+                                    *carried_hash = Some(Box::new(recompute_array_element_hasher(
                                         &store_cell.borrow(),
                                         schemas,
                                         schema_tables,
                                         b"vix-array-words",
                                         stored_schema,
                                         words,
-                                    ));
+                                    )));
                                 }
                                 let element_hash = canonical_word_hash_in_store(
                                     &store_cell.borrow(),
@@ -5055,7 +5055,7 @@ impl Driver {
                                     value,
                                 );
                                 if let Some(carried_hash) = carried_hash {
-                                    update_array_element_hash(carried_hash, element_hash);
+                                    update_array_element_hash(carried_hash.as_mut(), element_hash);
                                 }
                                 words.push(value);
                                 #[cfg(test)]
