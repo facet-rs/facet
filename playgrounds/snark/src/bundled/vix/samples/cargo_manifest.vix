@@ -57,6 +57,12 @@ struct WorkspaceIndexState {
     next_guard: Int,
 }
 
+struct SparseIndexRow {
+    name: String,
+    vers: String,
+    yanked: Bool,
+}
+
 fn manifest_doc(manifest: Tree) -> Doc {
     toml(manifest / p"Cargo.toml")
 }
@@ -85,6 +91,13 @@ fn doc_string_or_empty(doc: Doc, key: String) -> String {
     match doc.get(key) {
         Some(value) => doc_as_string(value),
         None => "",
+    }
+}
+
+fn doc_string_or(doc: Doc, key: String, fallback: String) -> String {
+    match doc.get(key) {
+        Some(value) => doc_as_string(value),
+        None => fallback,
     }
 }
 
@@ -342,6 +355,74 @@ fn register_workspace_package_new(state: WorkspaceIndexState, name: String, vers
     }
 }
 
+fn register_sparse_package_name(state: WorkspaceIndexState, name: String) -> WorkspaceIndexState {
+    match state.package_ids.get(name) {
+        Some(_) => state,
+        None => register_sparse_package_name_new(state, name),
+    }
+}
+
+fn register_sparse_package_name_new(state: WorkspaceIndexState, name: String) -> WorkspaceIndexState {
+    let pkg = state.next_pkg;
+    WorkspaceIndexState {
+        packages: state.packages.push(pkg),
+        package_ids: state.package_ids.insert(name, pkg),
+        member_paths: state.member_paths.insert(pkg, ""),
+        names: state.names.insert(pkg, name),
+        next_pkg: pkg + 1,
+        ..state
+    }
+}
+
+fn register_sparse_version(state: WorkspaceIndexState, pkg: Int, version: String) -> WorkspaceIndexState {
+    let version_id = state.next_version;
+    WorkspaceIndexState {
+        version_ids: state.version_ids.push(version_id),
+        version_pkgs: state.version_pkgs.insert(version_id, pkg),
+        version_values: state.version_values.insert(version_id, version),
+        next_version: version_id + 1,
+        ..state
+    }
+}
+
+fn register_sparse_rows(rows: [SparseIndexRow], state: WorkspaceIndexState) -> WorkspaceIndexState {
+    match rows.len() == 0 {
+        true => state,
+        false => register_sparse_rows_tuple(rows.pop(), state),
+    }
+}
+
+fn register_sparse_rows_tuple(popped: (SparseIndexRow, [SparseIndexRow]), state: WorkspaceIndexState) -> WorkspaceIndexState {
+    register_sparse_rows(popped.1, register_sparse_row(state, popped.0))
+}
+
+fn register_sparse_row(state: WorkspaceIndexState, row: SparseIndexRow) -> WorkspaceIndexState {
+    let name = sparse_row_name(row);
+    let version = sparse_row_vers(row);
+    let yanked = sparse_row_yanked(row);
+    match state.package_ids.get(name) {
+        Some(pkg) => register_sparse_existing_row(state, pkg, version, yanked),
+        None => register_sparse_new_row(state, name, version, yanked),
+    }
+}
+
+fn register_sparse_existing_row(state: WorkspaceIndexState, pkg: Int, version: String, yanked: Bool) -> WorkspaceIndexState {
+    register_sparse_row_with_pkg(state, pkg, version, yanked)
+}
+
+fn register_sparse_new_row(state: WorkspaceIndexState, name: String, version: String, yanked: Bool) -> WorkspaceIndexState {
+    let pkg = state.next_pkg;
+    let state = register_sparse_package_name_new(state, name);
+    register_sparse_row_with_pkg(state, pkg, version, yanked)
+}
+
+fn register_sparse_row_with_pkg(state: WorkspaceIndexState, pkg: Int, version: String, yanked: Bool) -> WorkspaceIndexState {
+    match yanked {
+        true => state,
+        false => register_sparse_version(state, pkg, version),
+    }
+}
+
 fn add_workspace_root_member_clauses(state: WorkspaceIndexState, member_pkg_ids: [Int]) -> WorkspaceIndexState {
     match member_pkg_ids.len() == 0 {
         true => state,
@@ -444,6 +525,13 @@ fn workspace_index_state_for_members(workspace: Tree, workspace_root: Path, memb
     register_workspace_direct_deps(workspace, workspace_root, members, state)
 }
 
+fn workspace_index_state_with_sparse_rows_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int) -> WorkspaceIndexState {
+    let members = take_strings(workspace_members(workspace), limit, []);
+    let state = workspace_member_only_index_state_for_members(workspace, workspace_root, members);
+    let state = register_sparse_rows(parse_sparse_jsonl(sparse_jsonl), state);
+    register_workspace_direct_deps(workspace, workspace_root, members, state)
+}
+
 fn workspace_member_only_index_state(workspace: Tree, workspace_root: Path) -> WorkspaceIndexState {
     workspace_member_only_index_state_for_members(workspace, workspace_root, workspace_members(workspace))
 }
@@ -537,6 +625,14 @@ pub fn workspace_member_only_index_clause_count_limit(workspace: Tree, workspace
     workspace_member_only_index_state_limit(workspace, workspace_root, limit).clause_ids.len()
 }
 
+pub fn workspace_member_direct_sparse_index_package_count_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int) -> Int {
+    workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit).packages.len()
+}
+
+pub fn workspace_member_direct_sparse_index_clause_count_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int) -> Int {
+    workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit).clause_ids.len()
+}
+
 pub fn workspace_member_only_first_member_exact_candidate_count(workspace: Tree, workspace_root: Path) -> Int {
     let state = workspace_member_only_index_state_limit(workspace, workspace_root, 1);
     let member_pkg = state.packages.pop().0;
@@ -599,6 +695,11 @@ pub fn workspace_member_only_solve_selected_versions_text(workspace: Tree, works
 
 pub fn workspace_member_only_solve_selected_versions_text_limit(workspace: Tree, workspace_root: Path, target: String, limit: Int) -> String {
     let state = workspace_member_only_index_state_limit(workspace, workspace_root, limit);
+    solve_selected_versions_text_from_workspace_state(state, workspace_problem(), target)
+}
+
+pub fn workspace_member_direct_sparse_solve_selected_versions_text_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, target: String, limit: Int) -> String {
+    let state = workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit);
     solve_selected_versions_text_from_workspace_state(state, workspace_problem(), target)
 }
 
@@ -731,7 +832,9 @@ fn register_workspace_dep_names_tuple(workspace: Tree, manifest: Tree, popped: (
 }
 
 fn register_workspace_dep_name(workspace: Tree, manifest: Tree, state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, dep_name: String, kind: String) -> WorkspaceIndexState {
-    match state.package_ids.get(dep_name) {
+    let dep = dependency_doc(manifest, dep_name, kind);
+    let package_name = dependency_package_name(dep, dep_name);
+    match state.package_ids.get(package_name) {
         Some(dep_pkg) => register_workspace_known_dep(workspace, manifest, state, parent_pkg, parent_version, dep_name, dep_pkg, kind),
         None => state,
     }
@@ -824,6 +927,60 @@ fn dependency_optional(dep: Doc) -> Bool {
 
 fn dependency_features(dep: Doc) -> [String] {
     dependency_doc_strings_or_empty(dep, "features")
+}
+
+fn dependency_package_name(dep: Doc, name: String) -> String {
+    match dep.is_map() {
+        true => doc_string_or(dep, "package", name),
+        false => name,
+    }
+}
+
+fn parse_sparse_jsonl(text: String) -> [SparseIndexRow] {
+    parse_sparse_jsonl_into(text, [])
+}
+
+pub fn workspace_sparse_row_count(sparse_jsonl: String) -> Int {
+    parse_sparse_jsonl(sparse_jsonl).len()
+}
+
+fn parse_sparse_jsonl_into(text: String, out: [SparseIndexRow]) -> [SparseIndexRow] {
+    match text == "" {
+        true => out,
+        false => match text.contains("\n") {
+            true => parse_sparse_jsonl_line(text.before("\n"), text.after("\n"), out),
+            false => out.push(parse_sparse_row(text)),
+        },
+    }
+}
+
+fn parse_sparse_jsonl_line(line: String, rest: String, out: [SparseIndexRow]) -> [SparseIndexRow] {
+    let next = match line == "" {
+        true => out,
+        false => out.push(parse_sparse_row(line)),
+    };
+    parse_sparse_jsonl_into(rest, next)
+}
+
+fn parse_sparse_row(line: String) -> SparseIndexRow {
+    let doc = json(line);
+    SparseIndexRow {
+        name: doc.name,
+        vers: doc.vers,
+        yanked: doc.yanked,
+    }
+}
+
+fn sparse_row_name(row: SparseIndexRow) -> String {
+    row.name
+}
+
+fn sparse_row_vers(row: SparseIndexRow) -> String {
+    row.vers
+}
+
+fn sparse_row_yanked(row: SparseIndexRow) -> Bool {
+    row.yanked
 }
 
 pub fn detailed_dependency_of(

@@ -1,9 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::process::Command;
+use std::sync::OnceLock;
+use std::time::{Duration, Instant};
 
 use facet::Facet;
 use vix::exec::Tree;
+use vix::machine::driver::Lane;
 use vix::machine::{Machine, MachineArg, RenderedValue};
 
 const SOURCE: &str =
@@ -621,25 +624,72 @@ real_workspace_member_only_solve_ring_lock_diff_test!(
 );
 
 fn real_workspace_member_only_solve_ring_lock_diff(limit: i64) -> Result<(), String> {
-    let metadata = cargo_metadata_real_workspace()?;
-    let mut machine = manifest_machine()?;
-    let workspace = intern_tree(&mut machine, real_workspace_manifest_tree(&metadata)?)?;
+    real_workspace_member_only_solve_ring_lock_diff_on_lane(limit, Lane::Interp, None)
+}
+
+#[test]
+#[ignore = "tier-A measurement probe: real workspace member-only ring 32 interpreter lane"]
+fn real_workspace_member_only_solve_ring_lock_diff_32_interp_lane() -> Result<(), String> {
+    real_workspace_member_only_solve_ring_lock_diff_on_lane(32, Lane::Interp, Some("interp"))
+}
+
+#[cfg(feature = "jit")]
+#[test]
+#[ignore = "tier-A measurement probe: real workspace member-only ring 32 jit lane"]
+fn real_workspace_member_only_solve_ring_lock_diff_32_jit_lane() -> Result<(), String> {
+    real_workspace_member_only_solve_ring_lock_diff_on_lane(32, Lane::Jit, Some("jit"))
+}
+
+fn real_workspace_member_only_solve_ring_lock_diff_on_lane(
+    limit: i64,
+    lane: Lane,
+    lane_artifact: Option<&str>,
+) -> Result<(), String> {
+    let mut timings = Vec::new();
+    let metadata = timed_ring_step(
+        &mut timings,
+        "cargo_metadata_real_workspace",
+        cargo_metadata_real_workspace,
+    )?;
+    let mut machine = timed_ring_step(&mut timings, "manifest_machine_with_lane", || {
+        manifest_machine_with_lane(lane)
+    })?;
+    let workspace = timed_ring_step(&mut timings, "real_workspace_manifest_tree", || {
+        let tree = real_workspace_manifest_tree(&metadata)?;
+        intern_tree(&mut machine, tree)
+    })?;
     let root = intern_path(&mut machine, "")?;
     let target = intern_string(&mut machine, "x86_64-apple-darwin")?;
 
-    let selected = machine.demand_i64(
-        "workspace_member_only_solve_selected_versions_text_limit",
-        vec![workspace, root, target, limit],
-    )?;
-    let selected = rendered_string(
-        &machine,
-        "workspace_member_only_solve_selected_versions_text_limit",
-        selected,
-    )?;
-    let solve_rows = package_versions_from_solve_text(&selected)?;
-    let lock_rows = cargo_lock_package_rows(&workspace_root().join("Cargo.lock"))?;
-    let metadata_rows = metadata.package_rows();
-    let diff = diff_package_versions_against_lock(&solve_rows, &lock_rows, &metadata_rows);
+    let selected = timed_ring_step(&mut timings, "solve_demand", || {
+        machine.demand_i64(
+            "workspace_member_only_solve_selected_versions_text_limit",
+            vec![workspace, root, target, limit],
+        )
+    })?;
+    let selected = timed_ring_step(&mut timings, "render_selected_versions", || {
+        rendered_string(
+            &machine,
+            "workspace_member_only_solve_selected_versions_text_limit",
+            selected,
+        )
+    })?;
+    let solve_rows = timed_ring_step(&mut timings, "parse_solve_rows", || {
+        package_versions_from_solve_text(&selected)
+    })?;
+    let lock_rows = timed_ring_step(&mut timings, "read_lock_rows", || {
+        cargo_lock_package_rows(&workspace_root().join("Cargo.lock"))
+    })?;
+    let metadata_rows = timed_ring_step(&mut timings, "metadata_package_rows", || {
+        Ok(metadata.package_rows())
+    })?;
+    let diff = timed_ring_step(&mut timings, "diff_package_versions", || {
+        Ok(diff_package_versions_against_lock(
+            &solve_rows,
+            &lock_rows,
+            &metadata_rows,
+        ))
+    })?;
 
     assert_eq!(diff.solve_rows, limit as usize + 1, "{diff:#?}");
     assert_eq!(diff.matches, limit as usize, "{diff:#?}");
@@ -651,14 +701,108 @@ fn real_workspace_member_only_solve_ring_lock_diff(limit: i64) -> Result<(), Str
     );
     assert_eq!(diff.lock_only + diff.matches, diff.lock_rows, "{diff:#?}");
 
+    let artifact_prefix = match lane_artifact {
+        Some(lane) => format!("real-ring-{limit}-{lane}"),
+        None => format!("real-ring-{limit}"),
+    };
     write_tier_a_artifact(
-        &format!("real-ring-{limit}-solve-vs-lock-summary.tsv"),
+        &format!("{artifact_prefix}-solve-vs-lock-summary.tsv"),
         &package_diff_summary_table(&diff),
     )?;
     write_tier_a_artifact(
-        &format!("real-ring-{limit}-solve-vs-lock-solve-rows.tsv"),
+        &format!("{artifact_prefix}-solve-vs-lock-solve-rows.tsv"),
         &package_rows_table(&solve_rows),
     )?;
+    write_tier_a_artifact(
+        &format!("{artifact_prefix}-timings.tsv"),
+        &ring_timings_table(&timings),
+    )?;
+    Ok(())
+}
+
+macro_rules! real_workspace_member_direct_sparse_solve_ring_lock_diff_test {
+    ($name:ident, $limit:expr) => {
+        #[test]
+        #[ignore = "tier-A measurement probe: real workspace member + direct sparse dep solve ring lock diff"]
+        fn $name() -> Result<(), String> {
+            real_workspace_member_direct_sparse_solve_ring_lock_diff($limit)
+        }
+    };
+}
+
+real_workspace_member_direct_sparse_solve_ring_lock_diff_test!(
+    real_workspace_member_direct_sparse_solve_ring_lock_diff_8,
+    8
+);
+real_workspace_member_direct_sparse_solve_ring_lock_diff_test!(
+    real_workspace_member_direct_sparse_solve_ring_lock_diff_16,
+    16
+);
+
+#[test]
+#[ignore = "tier-A measurement repro: one pinned sparse row in cargo_manifest.vix"]
+fn pinned_sparse_row_parses_in_cargo_manifest_module() -> Result<(), String> {
+    let mut machine = manifest_machine()?;
+    let row = intern_string(
+        &mut machine,
+        r#"{"name":"blake3","vers":"0.0.0","deps":[],"cksum":"9497a07b1d377f7cd343cd729b12147fdad56935c6e18834e0aa1b412a1bae57","features":{},"yanked":false,"pubtime":"2019-09-17T19:59:37Z"}"#,
+    )?;
+    let count = machine.demand_i64("workspace_sparse_row_count", vec![row])?;
+    assert_eq!(count, 1);
+    Ok(())
+}
+
+fn real_workspace_member_direct_sparse_solve_ring_lock_diff(limit: i64) -> Result<(), String> {
+    let metadata = cargo_metadata_real_workspace()?;
+    let mut machine = manifest_machine()?;
+    let workspace = intern_tree(&mut machine, real_workspace_manifest_tree(&metadata)?)?;
+    let root = intern_path(&mut machine, "")?;
+    let target = intern_string(&mut machine, "x86_64-apple-darwin")?;
+    let sparse_jsonl =
+        direct_sparse_snapshot_jsonl_for_ring(&mut machine, &metadata, workspace, limit)?;
+    let sparse_jsonl = intern_string(&mut machine, &sparse_jsonl)?;
+    let sparse_row_count = machine.demand_i64("workspace_sparse_row_count", vec![sparse_jsonl])?;
+    let package_count = machine.demand_i64(
+        "workspace_member_direct_sparse_index_package_count_limit",
+        vec![workspace, root, sparse_jsonl, limit],
+    )?;
+    let clause_count = machine.demand_i64(
+        "workspace_member_direct_sparse_index_clause_count_limit",
+        vec![workspace, root, sparse_jsonl, limit],
+    )?;
+    write_tier_a_artifact(
+        &format!("real-direct-ring-{limit}-index-counts.tsv"),
+        &format!(
+            "metric\tcount\nsparse_rows\t{sparse_row_count}\npackages\t{package_count}\nclauses\t{clause_count}\n"
+        ),
+    )?;
+
+    let selected = machine.demand_i64(
+        "workspace_member_direct_sparse_solve_selected_versions_text_limit",
+        vec![workspace, root, sparse_jsonl, target, limit],
+    )?;
+    let selected = rendered_string(
+        &machine,
+        "workspace_member_direct_sparse_solve_selected_versions_text_limit",
+        selected,
+    )?;
+    let solve_rows = package_versions_from_solve_text(&selected)?;
+    let lock_rows = cargo_lock_package_rows(&workspace_root().join("Cargo.lock"))?;
+    let metadata_rows = metadata.package_rows();
+    let diff = diff_package_versions_against_lock(&solve_rows, &lock_rows, &metadata_rows);
+
+    write_tier_a_artifact(
+        &format!("real-direct-ring-{limit}-solve-vs-lock-summary.tsv"),
+        &package_diff_summary_table(&diff),
+    )?;
+    write_tier_a_artifact(
+        &format!("real-direct-ring-{limit}-solve-vs-lock-solve-rows.tsv"),
+        &package_rows_table(&solve_rows),
+    )?;
+    assert!(
+        diff.solve_rows > limit as usize,
+        "direct sparse ring {limit} produced no member-root solve: {diff:#?}"
+    );
     Ok(())
 }
 
@@ -880,7 +1024,11 @@ fn real_workspace_dependency_probe_shard(shard: usize, shards: usize) -> Result<
 }
 
 fn manifest_machine() -> Result<Machine, String> {
-    Machine::load(&format!("{RODIN_SOURCE}\n\n{SOURCE}"))
+    manifest_machine_with_lane(Lane::Interp)
+}
+
+fn manifest_machine_with_lane(lane: Lane) -> Result<Machine, String> {
+    Machine::load_with_lane(&format!("{RODIN_SOURCE}\n\n{SOURCE}"), lane)
 }
 
 fn detailed_dep(
@@ -1084,6 +1232,18 @@ fn cargo_metadata_oracle() -> Result<CargoMetadata, String> {
 }
 
 fn cargo_metadata_real_workspace() -> Result<CargoMetadata, String> {
+    static METADATA: OnceLock<Result<CargoMetadata, String>> = OnceLock::new();
+    METADATA
+        .get_or_init(load_cargo_metadata_real_workspace)
+        .clone()
+}
+
+fn load_cargo_metadata_real_workspace() -> Result<CargoMetadata, String> {
+    if let Ok(path) = std::env::var("TIER_A_CARGO_METADATA") {
+        let text = std::fs::read_to_string(&path)
+            .map_err(|err| format!("read TIER_A_CARGO_METADATA at {path}: {err}"))?;
+        return facet_json::from_str(&text).map_err(|err| err.to_string());
+    }
     cargo_metadata_for_manifest(&workspace_root().join("Cargo.toml"), false)
 }
 
@@ -1113,6 +1273,112 @@ fn workspace_root() -> std::path::PathBuf {
         .parent()
         .expect("vix crate has workspace parent")
         .to_path_buf()
+}
+
+fn direct_sparse_snapshot_jsonl_for_ring(
+    machine: &mut Machine,
+    metadata: &CargoMetadata,
+    workspace: i64,
+    limit: i64,
+) -> Result<String, String> {
+    let members = machine.demand_i64("workspace_members_text", vec![workspace])?;
+    let members = rendered_string(machine, "workspace_members_text", members)?;
+    let selected_members = members
+        .lines()
+        .take(limit as usize)
+        .map(str::to_owned)
+        .collect::<BTreeSet<_>>();
+    let root = workspace_root();
+    let workspace_members: BTreeSet<_> = metadata.workspace_members.iter().collect();
+    let mut crate_names = BTreeSet::new();
+
+    for package in metadata
+        .packages
+        .iter()
+        .filter(|package| workspace_members.contains(&package.id))
+    {
+        let manifest_path = Path::new(&package.manifest_path);
+        let relative = manifest_path.strip_prefix(&root).map_err(|err| {
+            format!(
+                "{} was not under {}: {err}",
+                package.manifest_path,
+                root.display()
+            )
+        })?;
+        let member = relative
+            .parent()
+            .ok_or_else(|| format!("manifest path had no parent: {}", relative.display()))?
+            .to_str()
+            .ok_or_else(|| format!("manifest path was not utf-8: {}", relative.display()))?;
+        if !selected_members.contains(member) {
+            continue;
+        }
+        for dependency in &package.dependencies {
+            crate_names.insert(dependency.name.clone());
+        }
+    }
+
+    let sparse_root = tier_a_sparse_snapshot_root();
+    let mut rows = String::new();
+    let mut input_crates = BTreeSet::new();
+    let only_crate = std::env::var("TIER_A_DIRECT_SPARSE_ONLY").ok();
+    let max_lines = std::env::var("TIER_A_DIRECT_SPARSE_MAX_LINES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok());
+    for name in crate_names {
+        if only_crate.as_deref().is_some_and(|only| only != name) {
+            continue;
+        }
+        let path = sparse_root
+            .join("index")
+            .join(sparse_index_path_for_crate(&name));
+        if !path.exists() {
+            continue;
+        }
+        let text = std::fs::read_to_string(&path)
+            .map_err(|err| format!("read sparse rows for {name} at {}: {err}", path.display()))?;
+        if !rows.is_empty() && !rows.ends_with('\n') {
+            rows.push('\n');
+        }
+        match max_lines {
+            Some(limit) => {
+                for line in text.lines().take(limit) {
+                    rows.push_str(line);
+                    rows.push('\n');
+                }
+            }
+            None => rows.push_str(&text),
+        }
+        if !rows.ends_with('\n') {
+            rows.push('\n');
+        }
+        input_crates.insert(PackageVersion::new(&name, "sparse-index"));
+    }
+
+    write_tier_a_artifact(
+        &format!("real-direct-ring-{limit}-sparse-input-crates.tsv"),
+        &package_rows_table(&input_crates),
+    )?;
+    Ok(rows)
+}
+
+fn tier_a_sparse_snapshot_root() -> std::path::PathBuf {
+    std::env::var("TIER_A_SPARSE_OUT")
+        .map(std::path::PathBuf::from)
+        .unwrap_or_else(|_| std::path::PathBuf::from("/tmp/tier-a-scale-measurement/sparse-index"))
+}
+
+fn sparse_index_path_for_crate(name: &str) -> std::path::PathBuf {
+    let len = name.len();
+    if len == 1 {
+        ["1", name].iter().collect()
+    } else if len == 2 {
+        ["2", name].iter().collect()
+    } else if len == 3 {
+        ["3", &name[..1], name].iter().collect()
+    } else {
+        [&name[..2], &name[2..4], name].iter().collect()
+    }
 }
 
 fn legacy_workspace_allowlist_failures(manifest: &str) -> usize {
@@ -1169,7 +1435,7 @@ struct RealWorkspaceProbeSummary {
     examples: Vec<String>,
 }
 
-#[derive(Debug, Facet)]
+#[derive(Clone, Debug, Facet)]
 struct CargoMetadata {
     packages: Vec<CargoPackage>,
     workspace_members: Vec<String>,
@@ -1204,7 +1470,7 @@ impl CargoMetadata {
     }
 }
 
-#[derive(Debug, Facet)]
+#[derive(Clone, Debug, Facet)]
 struct CargoPackage {
     id: String,
     name: String,
@@ -1370,6 +1636,28 @@ fn package_rows_table(rows: &BTreeSet<PackageVersion>) -> String {
     lines.join("\n")
 }
 
+fn timed_ring_step<T>(
+    timings: &mut Vec<(&'static str, Duration)>,
+    label: &'static str,
+    step: impl FnOnce() -> Result<T, String>,
+) -> Result<T, String> {
+    let start = Instant::now();
+    let result = step();
+    timings.push((label, start.elapsed()));
+    result
+}
+
+fn ring_timings_table(timings: &[(&'static str, Duration)]) -> String {
+    let mut lines = vec!["step\twall_ms".to_owned()];
+    lines.extend(
+        timings
+            .iter()
+            .map(|(step, duration)| format!("{step}\t{:.3}", duration.as_secs_f64() * 1000.0)),
+    );
+    lines.push(String::new());
+    lines.join("\n")
+}
+
 fn bump(map: &mut BTreeMap<&'static str, usize>, key: &'static str) {
     *map.entry(key).or_default() += 1;
 }
@@ -1385,7 +1673,7 @@ fn write_tier_a_artifact(relative: &str, contents: &str) -> Result<(), String> {
     std::fs::write(path, contents).map_err(|err| err.to_string())
 }
 
-#[derive(Debug, Facet)]
+#[derive(Clone, Debug, Facet)]
 struct CargoDependency {
     name: String,
     kind: Option<String>,
@@ -1399,7 +1687,7 @@ impl CargoDependency {
     }
 }
 
-#[derive(Debug, Facet)]
+#[derive(Clone, Debug, Facet)]
 struct CargoTarget {
     name: String,
     src_path: String,
