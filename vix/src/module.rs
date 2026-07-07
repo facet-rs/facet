@@ -35,8 +35,8 @@ pub(crate) type VixDescriptor = Descriptor<SchemaRef>;
 
 #[derive(Clone, Default)]
 pub(crate) struct DescriptorMap {
-    by_id: HashMap<SchemaId, VixDescriptor>,
-    legacy_names: HashMap<String, SchemaId>,
+    by_ref: HashMap<SchemaRef, VixDescriptor>,
+    legacy_names: HashMap<String, SchemaRef>,
 }
 
 impl DescriptorMap {
@@ -47,11 +47,11 @@ impl DescriptorMap {
     pub(crate) fn insert_with_key(
         &mut self,
         name: impl Into<String>,
-        id: SchemaId,
+        key: SchemaRef,
         descriptor: VixDescriptor,
     ) -> Option<VixDescriptor> {
-        self.legacy_names.insert(name.into(), id);
-        self.by_id.insert(id, descriptor)
+        self.legacy_names.insert(name.into(), key.clone());
+        self.by_ref.insert(key, descriptor)
     }
 
     pub(crate) fn insert_named(
@@ -81,13 +81,13 @@ impl DescriptorMap {
     pub(crate) fn get(&self, name: &str) -> Option<&VixDescriptor> {
         self.legacy_names
             .get(name)
-            .and_then(|id| self.by_id.get(id))
+            .and_then(|key| self.by_ref.get(key))
     }
 
     pub(crate) fn contains_key(&self, name: &str) -> bool {
         self.legacy_names
             .get(name)
-            .is_some_and(|id| self.by_id.contains_key(id))
+            .is_some_and(|key| self.by_ref.contains_key(key))
     }
 
     pub(crate) fn keys(&self) -> impl Iterator<Item = &String> {
@@ -95,7 +95,7 @@ impl DescriptorMap {
     }
 
     pub(crate) fn values(&self) -> impl Iterator<Item = &VixDescriptor> {
-        self.by_id.values()
+        self.by_ref.values()
     }
 }
 
@@ -168,8 +168,10 @@ impl SchemaTables {
     }
 
     pub(crate) fn frame_id_for_name(&self, name: &str) -> SchemaId {
-        if self.by_name.contains_key(name) {
-            return self.descriptor_key_for_name(name);
+        if self.by_name.contains_key(name)
+            && let SchemaRef::Concrete { id, .. } = self.legacy_ref(name)
+        {
+            return id;
         }
         legacy_marker_schema_id(name)
     }
@@ -211,10 +213,10 @@ impl SchemaTables {
         SchemaRef::var(name)
     }
 
-    pub(crate) fn descriptor_key_for_name(&self, name: &str) -> SchemaId {
+    pub(crate) fn descriptor_key_for_name(&self, name: &str) -> SchemaRef {
         match self.legacy_ref(name) {
-            SchemaRef::Concrete { id, .. } => id,
-            SchemaRef::Var { .. } => legacy_marker_schema_id(name),
+            SchemaRef::Concrete { id, args } => SchemaRef::Concrete { id, args },
+            SchemaRef::Var { .. } => SchemaRef::concrete(legacy_marker_schema_id(name)),
         }
     }
 
