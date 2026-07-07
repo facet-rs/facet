@@ -3867,7 +3867,7 @@ impl<'a> FnLowerer<'a> {
             let outcome = if tail {
                 self.tail_expr_expected(&arm.value, expected)?
             } else {
-                let v = self.expr(&arm.value)?;
+                let v = self.expr_expected(&arm.value, expected)?;
                 let v = if let Some(expected) = expected {
                     self.coerce_to_schema(v, expected)?
                 } else {
