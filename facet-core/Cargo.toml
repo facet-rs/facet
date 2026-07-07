@@ -126,5 +126,9 @@ facet = { path = "../facet" }
 facet-testhelpers = { path = "../facet-testhelpers" }
 parking_lot = "0.12"
 
+[[test]]
+name = "taxon_bridge"
+required-features = ["taxon"]
+
 [lints]
 workspace = true
