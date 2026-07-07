@@ -713,6 +713,71 @@ fn demand_with_rustc_trace(
         .map_err(|err| format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(machine)))
 }
 
+struct ArtifactExpectation {
+    path: &'static str,
+    archive: bool,
+}
+
+fn artifact_receipt_table(
+    machine: &mut Machine,
+    handle: i64,
+    artifacts: &[ArtifactExpectation],
+) -> Result<String, String> {
+    let mut rows = Vec::with_capacity(artifacts.len() + 1);
+    rows.push("path\tbytes\tblake3\tarchive".to_string());
+    for artifact in artifacts {
+        let bytes = tree_file_bytes(machine, handle, artifact.path)?;
+        if bytes.is_empty() {
+            return Err(format!("artifact `{}` was empty", artifact.path));
+        }
+        let archive = bytes.starts_with(b"!<arch>\n");
+        if artifact.archive && !archive {
+            return Err(format!(
+                "artifact `{}` was not an ar archive; first bytes: {:02x?}",
+                artifact.path,
+                &bytes[..bytes.len().min(16)]
+            ));
+        }
+        rows.push(format!(
+            "{}\t{}\t{}\t{}",
+            artifact.path,
+            bytes.len(),
+            blake3::hash(&bytes).to_hex(),
+            archive
+        ));
+    }
+    rows.push(String::new());
+    Ok(rows.join("\n"))
+}
+
+fn assert_rustc_requests_include_crates(
+    machine: &Machine,
+    expected: &[&str],
+) -> Result<(), String> {
+    let mut missing = Vec::new();
+    for crate_name in expected {
+        let seen = machine.trace().iter().any(|event| match event {
+            DriveEvent::RunRequested {
+                command_name, argv, ..
+            } if command_name == "rustc" => argv
+                .windows(2)
+                .any(|pair| pair[0] == "--crate-name" && pair[1] == *crate_name),
+            _ => false,
+        });
+        if !seen {
+            missing.push(*crate_name);
+        }
+    }
+    if missing.is_empty() {
+        Ok(())
+    } else {
+        Err(format!(
+            "missing rustc requests for crates {missing:?}; trace:\n{}",
+            rustc_argv_trace(machine)
+        ))
+    }
+}
+
 fn rustc_argv_trace(machine: &Machine) -> String {
     let mut out = String::new();
     for event in machine.trace() {
@@ -1768,8 +1833,8 @@ fn taxon_ladder_oracle_reveals_blake3_build_script_boundary() -> Result<(), Stri
 }
 
 #[test]
-#[ignore = "demo checkpoint: runs blake3's real build.rs and records whether it invokes C tooling"]
-fn taxon_ladder_runs_blake3_build_script_to_c_compiler_checkpoint() -> Result<(), String> {
+#[ignore = "demo checkpoint: runs blake3's real build.rs and verifies it stays Rust-only"]
+fn taxon_ladder_runs_blake3_build_script_rust_only_checkpoint() -> Result<(), String> {
     if !host_rustc_available() {
         return Ok(());
     }
@@ -1796,7 +1861,7 @@ fn taxon_ladder_runs_blake3_build_script_to_c_compiler_checkpoint() -> Result<()
                 "taxon-blake3-build-script-error.txt",
                 &format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(&machine)),
             )?;
-            return Ok(());
+            return Err(format!("blake3 build.rs attempted C tooling:\n{err}"));
         }
         Err(err) => {
             write_tier_a_artifact(
@@ -1811,13 +1876,55 @@ fn taxon_ladder_runs_blake3_build_script_to_c_compiler_checkpoint() -> Result<()
     let stdout = String::from_utf8_lossy(&stdout).into_owned();
     write_tier_a_artifact("taxon-blake3-build-stdout.txt", &stdout)?;
 
-    if stdout.contains("cargo:rustc-link-lib=") || stdout.contains("cargo:rustc-link-search=") {
+    if mentions_c_tooling(&stdout) {
+        return Err(format!("blake3 build.rs attempted C tooling:\n{stdout}"));
+    }
+
+    Ok(())
+}
+
+#[test]
+#[ignore = "demo checkpoint: builds the blake3 build-dependency host closure with real rustc"]
+fn taxon_ladder_builds_cc_host_unit_and_hashes_artifacts() -> Result<(), String> {
+    if !host_rustc_available() {
         return Ok(());
     }
 
-    Err(format!(
-        "blake3 build script stayed Rust-only on host {host}; stdout:\n{stdout}"
-    ))
+    let graph = cargo_taxon_unit_graph_oracle()?;
+    if graph.units.is_empty() {
+        return Ok(());
+    }
+
+    let host = host_triple()?;
+    let bridge = taxon_demo_bridge_source(&graph, &host)?;
+    write_tier_a_artifact("taxon-demo-bridge.vix", &bridge)?;
+    let source_tree = taxon_demo_source_tree(&graph)?;
+    let source = format!("{RODIN_SOURCE}\n\n{SOURCE}\n\n{bridge}");
+    let backend = Arc::new(RealProcessBackend::new());
+    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
+    let source_arg = machine.intern_arg("Tree", MachineArg::Tree(source_tree))?.0;
+
+    let built = demand_with_rustc_trace(&mut machine, "taxon_cc_host_unit", vec![source_arg])?;
+    assert_rustc_requests_include_crates(&machine, &["find_msvc_tools", "shlex", "cc"])?;
+
+    let receipts = artifact_receipt_table(
+        &mut machine,
+        built,
+        &[
+            ArtifactExpectation {
+                path: "libcc.rlib",
+                archive: true,
+            },
+            ArtifactExpectation {
+                path: "libcc.rmeta",
+                archive: false,
+            },
+        ],
+    )?;
+    write_tier_a_artifact("taxon-cc-host-artifact-receipts.tsv", &receipts)?;
+    write_tier_a_artifact("taxon-cc-host-rustc-trace.txt", &rustc_argv_trace(&machine))?;
+
+    Ok(())
 }
 
 fn taxon_demo_bridge_source(graph: &CargoUnitGraph, host: &str) -> Result<String, String> {
@@ -2010,6 +2117,14 @@ fn taxon_demo_bridge_source(graph: &CargoUnitGraph, host: &str) -> Result<String
     }
     out.push_str(&format!(
         "    UnitTargetTable {{ root: {root}, targets: targets }}\n"
+    ));
+    out.push_str("}\n\n");
+    out.push_str("pub fn taxon_cc_host_unit(source: Tree) -> Tree {\n");
+    out.push_str("    let index = taxon_index();\n");
+    out.push_str("    let result = solve(index, taxon_blake3_build_script_problem(), \"host\");\n");
+    out.push_str(&format!(
+        "    solution_unit_built(Target::host(), source, index, result, taxon_targets(), {}, {cc_unit}, \"link\")\n",
+        vix_string(host)
     ));
     out.push_str("}\n\n");
     out.push_str("pub fn taxon_blake3_build_script_run(source: Tree) -> Tree {\n");
