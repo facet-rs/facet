@@ -3825,12 +3825,39 @@ impl Driver {
                 };
                 let mut parts = Vec::with_capacity(part_count);
                 for index in 0..part_count {
-                    let at = primitive_region + 48 + index * 16;
+                    let at = primitive_region + 48 + index * 24;
                     let kind = read_frame_word(frame, at);
                     let word = read_frame_word(frame, at + 8);
                     let part = match kind {
                         0 => CommandRequestPart::Token(word),
-                        1 => CommandRequestPart::Splice(word),
+                        1 => {
+                            let schema = match schema_name_for(
+                                read_frame_word(frame, at + 16),
+                                schema_tables,
+                            ) {
+                                Ok(schema) => schema,
+                                Err(err) => {
+                                    *host_error.borrow_mut() = Some(err);
+                                    return;
+                                }
+                            };
+                            let word = match intern_molten_word(
+                                &mut store_cell.borrow_mut(),
+                                &mut molten_cell.borrow_mut(),
+                                descriptors,
+                                schemas,
+                                schema_tables,
+                                &schema,
+                                word,
+                            ) {
+                                Ok((word, _)) => word,
+                                Err(err) => {
+                                    *host_error.borrow_mut() = Some(err);
+                                    return;
+                                }
+                            };
+                            CommandRequestPart::Splice(word)
+                        }
                         other => {
                             *host_error.borrow_mut() =
                                 Some(format!("unknown command part kind {other}"));

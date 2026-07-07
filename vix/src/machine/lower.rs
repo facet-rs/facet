@@ -3185,7 +3185,9 @@ impl<'a> FnLowerer<'a> {
         this.store_tag_region = this.next;
         this.next += 8 * 2;
         this.primitive_region = this.next;
-        let primitive_words = max_store_fields.max(max_argc);
+        let primitive_words = max_store_fields
+            .max(max_argc)
+            .max(max_command_part_words(&item.body));
         this.next += 8 * (128 + u32::try_from(primitive_words).expect("primitive word count"));
         this.loop_header = u32::try_from(this.code.len()).expect("code len fits u32");
 
@@ -7148,7 +7150,7 @@ impl<'a> FnLowerer<'a> {
             value: command.span.end.into(),
         });
         for (index, part) in parts.iter().enumerate() {
-            let at = region + 48 + 16 * u32::try_from(index).expect("command part index");
+            let at = region + 48 + 24 * u32::try_from(index).expect("command part index");
             match part {
                 LoweredCommandPart::Token(handle) => {
                     self.code.push(Op::ConstI64 { dst: at, value: 0 });
@@ -7156,12 +7158,24 @@ impl<'a> FnLowerer<'a> {
                         dst: at + 8,
                         value: *handle,
                     });
+                    self.code.push(Op::ConstI64 {
+                        dst: at + 16,
+                        value: 0,
+                    });
                 }
                 LoweredCommandPart::Splice(value) => {
+                    let schema_ref = *self
+                        .schema_words
+                        .get(&value.schema)
+                        .ok_or_else(|| format!("no schema ref for {}", value.schema))?;
                     self.code.push(Op::ConstI64 { dst: at, value: 1 });
                     self.code.push(Op::CopyI64 {
                         dst: at + 8,
                         src: value.slot,
+                    });
+                    self.code.push(Op::ConstI64 {
+                        dst: at + 16,
+                        value: schema_ref,
                     });
                 }
             }
@@ -8375,6 +8389,69 @@ fn max_store_field_count(block: &ast::Block) -> usize {
         in_expr(tail, &mut max);
     }
     max.max(4)
+}
+
+fn max_command_part_words(block: &ast::Block) -> usize {
+    fn in_expr(e: &ast::Expr, max: &mut usize) {
+        match e {
+            ast::Expr::Call(c) => {
+                for arg in &c.args.args {
+                    if let ast::Arg::Expr(e) = arg {
+                        in_expr(e, max);
+                    }
+                }
+            }
+            ast::Expr::MethodCall(c) => {
+                in_expr(&c.receiver, max);
+                for arg in &c.args.args {
+                    if let ast::Arg::Expr(e) = arg {
+                        in_expr(e, max);
+                    }
+                }
+            }
+            ast::Expr::Map(m) => {
+                for entry in &m.entries {
+                    in_expr(&entry.key, max);
+                    in_expr(&entry.value, max);
+                }
+            }
+            ast::Expr::StructLit(lit) => {
+                for field in &lit.fields {
+                    in_expr(&field.value, max);
+                }
+            }
+            ast::Expr::Binary(b) => {
+                in_expr(&b.left, max);
+                in_expr(&b.right, max);
+            }
+            ast::Expr::Paren(p) => in_expr(&p.inner, max),
+            ast::Expr::Match(m) => {
+                in_expr(&m.scrutinee, max);
+                for arm in &m.arms {
+                    in_expr(&arm.value, max);
+                }
+            }
+            ast::Expr::Command(command) => {
+                *max = (*max).max(6 + command.parts.len() * 3);
+                for part in &command.parts {
+                    if let ast::CommandPart::Splice(splice) = part {
+                        in_expr(&splice.expr, max);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut max = 0;
+    for stmt in &block.stmts {
+        if let ast::Stmt::Let(l) = stmt {
+            in_expr(&l.value, &mut max);
+        }
+    }
+    if let Some(tail) = &block.tail {
+        in_expr(tail, &mut max);
+    }
+    max
 }
 
 #[cfg(test)]
