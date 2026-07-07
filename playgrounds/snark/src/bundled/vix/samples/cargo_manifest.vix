@@ -1,4 +1,4 @@
-use vix::{Tree, Path, VersionSet, Map};
+use vix::{Tree, Path, Version, VersionSet, Map};
 
 struct CargoPackage {
     name: String,
@@ -571,7 +571,65 @@ pub fn workspace_member_only_solve_selected_member_count_limit(workspace: Tree, 
 
 pub fn workspace_member_solve_selected_versions_text(workspace: Tree, workspace_root: Path, target: String) -> String {
     let state = workspace_index_state(workspace, workspace_root);
-    solve_selected_versions_text(workspace_index_from_state(state), workspace_problem(), target)
+    solve_selected_versions_text_from_workspace_state(state, workspace_problem(), target)
+}
+
+pub fn workspace_member_only_solve_selected_versions_text(workspace: Tree, workspace_root: Path, target: String) -> String {
+    let state = workspace_member_only_index_state(workspace, workspace_root);
+    solve_selected_versions_text_from_workspace_state(state, workspace_problem(), target)
+}
+
+fn solve_selected_versions_text_from_workspace_state(state: WorkspaceIndexState, problem: Problem, target: String) -> String {
+    let result = solve(workspace_index_from_state(state), problem, target);
+    selected_workspace_state_versions_text_from(state, state.packages, result.selected, "")
+}
+
+fn selected_workspace_state_versions_text_from(state: WorkspaceIndexState, packages: [Int], selected: Map<Int, Version>, out: String) -> String {
+    match packages.len() == 0 {
+        true => out,
+        false => selected_workspace_state_versions_text_tuple(state, packages.pop(), selected, out),
+    }
+}
+
+fn selected_workspace_state_versions_text_tuple(state: WorkspaceIndexState, popped: (Int, [Int]), selected: Map<Int, Version>, out: String) -> String {
+    selected_workspace_state_versions_text_one(state, popped.0, popped.1, selected, out)
+}
+
+fn selected_workspace_state_versions_text_one(state: WorkspaceIndexState, pkg: Int, rest: [Int], selected: Map<Int, Version>, out: String) -> String {
+    let next = match selected.get(pkg) {
+        Some(_) => append_selected_workspace_state_version(out, state.names.get(pkg).unwrap(), workspace_state_version_text(state, pkg)),
+        None => out,
+    };
+    selected_workspace_state_versions_text_from(state, rest, selected, next)
+}
+
+fn append_selected_workspace_state_version(out: String, name: String, version: String) -> String {
+    match out == "" {
+        true => name + " " + version,
+        false => out + "\n" + name + " " + version,
+    }
+}
+
+fn workspace_state_version_text(state: WorkspaceIndexState, pkg: Int) -> String {
+    workspace_state_version_text_from(state, pkg, state.version_ids)
+}
+
+fn workspace_state_version_text_from(state: WorkspaceIndexState, pkg: Int, version_ids: [Int]) -> String {
+    match version_ids.len() == 0 {
+        true => "",
+        false => workspace_state_version_text_tuple(state, pkg, version_ids.pop()),
+    }
+}
+
+fn workspace_state_version_text_tuple(state: WorkspaceIndexState, pkg: Int, popped: (Int, [Int])) -> String {
+    workspace_state_version_text_one(state, pkg, popped.0, popped.1)
+}
+
+fn workspace_state_version_text_one(state: WorkspaceIndexState, pkg: Int, version_id: Int, rest: [Int]) -> String {
+    match state.version_pkgs.get(version_id).unwrap() == pkg {
+        true => state.version_values.get(version_id).unwrap(),
+        false => workspace_state_version_text_from(state, pkg, rest),
+    }
 }
 
 pub fn package_of(manifest: Tree, workspace: Tree, manifest_path: String) -> CargoPackage {

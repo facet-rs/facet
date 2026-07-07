@@ -250,11 +250,20 @@ fn solution_walk_derives_units_from_rodin_and_matches_cargo_oracle() -> Result<(
 
     let machine_graph = machine_rustc_unit_graph(&machine)?;
     let cargo_graph = cargo_lock_graph_unit_graph_oracle()?;
-    if machine_graph != cargo_graph {
+    let diff = diff_unit_graphs(&machine_graph, &cargo_graph);
+    if !diff.is_exact_match() {
         return Err(format!(
-            "derived unit graph did not match cargo oracle\nmachine: {machine_graph:#?}\ncargo: {cargo_graph:#?}"
+            "derived unit graph did not match cargo oracle\nsummary: {diff:#?}\nmachine: {machine_graph:#?}\ncargo: {cargo_graph:#?}"
         ));
     }
+    assert_eq!(diff.machine_units, 4, "{diff:#?}");
+    assert_eq!(diff.cargo_units, 4, "{diff:#?}");
+    assert_eq!(diff.unit_matches, 4, "{diff:#?}");
+    assert!(diff.edge_matches > 0, "{diff:#?}");
+    write_tier_a_artifact(
+        "lock-fixture-unit-diff-summary.tsv",
+        &unit_graph_diff_summary_table(&diff),
+    )?;
 
     Ok(())
 }
@@ -647,6 +656,120 @@ struct UnitShape {
     edition: String,
     source_suffix: String,
     dependencies: Vec<String>,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct UnitKey {
+    name: String,
+    crate_type: String,
+    edition: String,
+    source_suffix: String,
+}
+
+impl From<&UnitShape> for UnitKey {
+    fn from(shape: &UnitShape) -> Self {
+        Self {
+            name: shape.name.clone(),
+            crate_type: shape.crate_type.clone(),
+            edition: shape.edition.clone(),
+            source_suffix: shape.source_suffix.clone(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct UnitEdge {
+    from: UnitKey,
+    extern_crate_name: String,
+}
+
+#[derive(Debug)]
+struct UnitGraphDiffSummary {
+    machine_units: usize,
+    cargo_units: usize,
+    unit_matches: usize,
+    machine_only_units: usize,
+    cargo_only_units: usize,
+    machine_edges: usize,
+    cargo_edges: usize,
+    edge_matches: usize,
+    machine_only_edges: usize,
+    cargo_only_edges: usize,
+}
+
+impl UnitGraphDiffSummary {
+    fn is_exact_match(&self) -> bool {
+        self.machine_only_units == 0
+            && self.cargo_only_units == 0
+            && self.machine_only_edges == 0
+            && self.cargo_only_edges == 0
+    }
+}
+
+fn diff_unit_graphs(machine: &[UnitShape], cargo: &[UnitShape]) -> UnitGraphDiffSummary {
+    let machine_units = unit_keys(machine);
+    let cargo_units = unit_keys(cargo);
+    let machine_edges = unit_edges(machine);
+    let cargo_edges = unit_edges(cargo);
+
+    UnitGraphDiffSummary {
+        machine_units: machine_units.len(),
+        cargo_units: cargo_units.len(),
+        unit_matches: machine_units.intersection(&cargo_units).count(),
+        machine_only_units: machine_units.difference(&cargo_units).count(),
+        cargo_only_units: cargo_units.difference(&machine_units).count(),
+        machine_edges: machine_edges.len(),
+        cargo_edges: cargo_edges.len(),
+        edge_matches: machine_edges.intersection(&cargo_edges).count(),
+        machine_only_edges: machine_edges.difference(&cargo_edges).count(),
+        cargo_only_edges: cargo_edges.difference(&machine_edges).count(),
+    }
+}
+
+fn unit_keys(shapes: &[UnitShape]) -> BTreeSet<UnitKey> {
+    shapes.iter().map(UnitKey::from).collect()
+}
+
+fn unit_edges(shapes: &[UnitShape]) -> BTreeSet<UnitEdge> {
+    shapes
+        .iter()
+        .flat_map(|shape| {
+            let from = UnitKey::from(shape);
+            shape.dependencies.iter().map(move |dependency| UnitEdge {
+                from: from.clone(),
+                extern_crate_name: dependency.clone(),
+            })
+        })
+        .collect()
+}
+
+fn unit_graph_diff_summary_table(diff: &UnitGraphDiffSummary) -> String {
+    [
+        "metric\tcount".to_owned(),
+        format!("machine_units\t{}", diff.machine_units),
+        format!("cargo_units\t{}", diff.cargo_units),
+        format!("unit_matches\t{}", diff.unit_matches),
+        format!("machine_only_units\t{}", diff.machine_only_units),
+        format!("cargo_only_units\t{}", diff.cargo_only_units),
+        format!("machine_edges\t{}", diff.machine_edges),
+        format!("cargo_edges\t{}", diff.cargo_edges),
+        format!("edge_matches\t{}", diff.edge_matches),
+        format!("machine_only_edges\t{}", diff.machine_only_edges),
+        format!("cargo_only_edges\t{}", diff.cargo_only_edges),
+        String::new(),
+    ]
+    .join("\n")
+}
+
+fn write_tier_a_artifact(relative: &str, contents: &str) -> Result<(), String> {
+    let Ok(root) = std::env::var("TIER_A_OUT") else {
+        return Ok(());
+    };
+    let path = Path::new(&root).join(relative);
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    fs::write(path, contents).map_err(|err| err.to_string())
 }
 
 fn machine_rustc_unit_graph(machine: &Machine) -> Result<Vec<UnitShape>, String> {
