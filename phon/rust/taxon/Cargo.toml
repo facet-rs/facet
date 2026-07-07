@@ -1,11 +1,12 @@
 [package]
-name = "phon-schema"
+name = "taxon"
 version = "0.2.0-rc.5"
 edition.workspace = true
 rust-version.workspace = true
 license.workspace = true
 repository.workspace = true
-description = "phon's wire contract: schema model, schema identity, Value, and the self-describing codec."
+description = "Layout-free abstract type vocabulary shared by schema-aware crates."
+publish = false
 
 [package.metadata]
 
@@ -13,7 +14,3 @@ description = "phon's wire contract: schema model, schema identity, Value, and t
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-blake3.workspace = true
-facet-value.workspace = true
-taxon.workspace = true
-taxon-id.workspace = true

@@ -5127,6 +5127,8 @@ version = "0.2.0-rc.5"
 dependencies = [
  "blake3",
  "facet-value",
+ "taxon",
+ "taxon-id",
 ]
 
 [[package]]
@@ -7211,6 +7213,18 @@ name = "target-triple"
 version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "591ef38edfb78ca4771ee32cf494cb8771944bee237a9b91fc9c1424ac4b777b"
+
+[[package]]
+name = "taxon"
+version = "0.2.0-rc.5"
+
+[[package]]
+name = "taxon-id"
+version = "0.2.0-rc.5"
+dependencies = [
+ "blake3",
+ "taxon",
+]
 
 [[package]]
 name = "tempfile"
