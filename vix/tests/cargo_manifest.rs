@@ -93,6 +93,34 @@ fn dependency_declarations_extract_workspace_and_detailed_forms() -> Result<(), 
     assert_eq!(field_string(&autocfg, "kind")?, "build");
     assert!(field_bool(&autocfg, "workspace")?);
 
+    let bytes = detailed_dep(&mut machine, facet_core, workspace, "bytes", "normal")?;
+    assert_eq!(field_string(&bytes, "version_req")?, "^1.11.0");
+    assert!(field_bool(&bytes, "workspace")?);
+    assert!(field_bool(&bytes, "optional")?);
+    assert!(!field_bool(&bytes, "default_features")?);
+
+    let time = detailed_dep(&mut machine, facet_core, workspace, "time", "normal")?;
+    assert_eq!(field_string(&time, "version_req")?, "^0.3.44");
+    assert!(field_bool(&time, "workspace")?);
+    assert!(field_bool(&time, "optional")?);
+    assert!(field_bool(&time, "default_features")?);
+
+    let static_assertions = detailed_dep(
+        &mut machine,
+        facet,
+        workspace,
+        "static_assertions",
+        "normal",
+    )?;
+    assert_eq!(field_string(&static_assertions, "version_req")?, "^1.1.0");
+    assert!(field_bool(&static_assertions, "workspace")?);
+    assert!(field_bool(&static_assertions, "optional")?);
+
+    let tempfile = detailed_dep(&mut machine, facet, workspace, "tempfile", "dev")?;
+    assert_eq!(field_string(&tempfile, "version_req")?, "^3.23.0");
+    assert!(field_bool(&tempfile, "workspace")?);
+    assert!(!field_bool(&tempfile, "optional")?);
+
     let facet_core_dep = detailed_dep(&mut machine, facet, workspace, "facet-core", "normal")?;
     assert_eq!(
         field_string(&facet_core_dep, "version_req")?,
@@ -115,6 +143,35 @@ fn dependency_declarations_extract_workspace_and_detailed_forms() -> Result<(), 
     let const_hash = record(machine.render_result("version_dependency_of", const_hash)?)?;
     assert_eq!(field_string(&const_hash, "version_req")?, "1");
     assert!(!field_bool(&const_hash, "workspace")?);
+
+    Ok(())
+}
+
+#[test]
+fn package_workspace_fields_are_inherited_generically() -> Result<(), String> {
+    let mut machine = manifest_machine()?;
+    let workspace = intern_tree(&mut machine, workspace_tree())?;
+    let facet_core = intern_tree(&mut machine, facet_core_tree())?;
+
+    for (function, expected) in [
+        ("package_rust_version", "1.92"),
+        ("package_license", "MIT OR Apache-2.0"),
+        ("package_repository", "https://github.com/facet-rs/facet"),
+    ] {
+        let value = machine.demand_i64(function, vec![facet_core, workspace])?;
+        assert_eq!(rendered_string(&machine, function, value)?, expected);
+    }
+
+    Ok(())
+}
+
+#[test]
+fn workspace_member_glob_gap_is_pinned() -> Result<(), String> {
+    let mut machine = manifest_machine()?;
+    let value = machine.demand_i64("workspace_member_glob_gap", vec![])?;
+    let gap = rendered_string(&machine, "workspace_member_glob_gap", value)?;
+    assert!(gap.contains("Array.pop"), "{gap}");
+    assert!(gap.contains("explicit facet-cc members"), "{gap}");
 
     Ok(())
 }
@@ -169,10 +226,167 @@ fn direct_resolved_unit_adapter_gap_is_pinned() -> Result<(), String> {
     let value = machine.demand_i64("resolved_unit_adaptation_gap", vec![])?;
     let gap = rendered_string(&machine, "resolved_unit_adaptation_gap", value)?;
     assert!(
-        gap.contains("ResolvedUnit requires Path fields")
-            && gap.contains("no string-to-Path constructor"),
+        gap.contains("String.to_path is available")
+            && gap.contains("dependency-table key enumeration"),
         "{gap}"
     );
+    Ok(())
+}
+
+#[test]
+fn real_workspace_metadata_baseline_is_counted() -> Result<(), String> {
+    let metadata = cargo_metadata_real_workspace()?;
+    let workspace_members: BTreeSet<_> = metadata.workspace_members.iter().collect();
+    let mut total_oracle_deps = 0usize;
+    let mut target_cfg_unmodeled = 0usize;
+    let mut before_workspace_allowlist_failures = 0usize;
+
+    for package in metadata
+        .packages
+        .iter()
+        .filter(|package| workspace_members.contains(&package.id))
+    {
+        let manifest_text = std::fs::read_to_string(&package.manifest_path).map_err(|err| {
+            format!(
+                "read manifest for {} at {}: {err}",
+                package.name, package.manifest_path
+            )
+        })?;
+        before_workspace_allowlist_failures += legacy_workspace_allowlist_failures(&manifest_text);
+        total_oracle_deps += package.dependencies.len();
+        target_cfg_unmodeled += package
+            .dependencies
+            .iter()
+            .filter(|dependency| dependency.target.is_some())
+            .count();
+    }
+
+    assert_eq!(workspace_members.len(), 145);
+    assert_eq!(total_oracle_deps, 1122);
+    assert_eq!(before_workspace_allowlist_failures, 760);
+    assert_eq!(target_cfg_unmodeled, 55);
+
+    Ok(())
+}
+
+#[test]
+fn real_workspace_dependency_probe_shard_0() -> Result<(), String> {
+    real_workspace_dependency_probe_shard(0, 4)
+}
+
+#[test]
+fn real_workspace_dependency_probe_shard_1() -> Result<(), String> {
+    real_workspace_dependency_probe_shard(1, 4)
+}
+
+#[test]
+fn real_workspace_dependency_probe_shard_2() -> Result<(), String> {
+    real_workspace_dependency_probe_shard(2, 4)
+}
+
+#[test]
+fn real_workspace_dependency_probe_shard_3() -> Result<(), String> {
+    real_workspace_dependency_probe_shard(3, 4)
+}
+
+fn real_workspace_dependency_probe_shard(shard: usize, shards: usize) -> Result<(), String> {
+    let metadata = cargo_metadata_real_workspace()?;
+    let workspace_root = workspace_root();
+    let workspace_manifest = std::fs::read_to_string(workspace_root.join("Cargo.toml"))
+        .map_err(|err| err.to_string())?;
+    let workspace = Tree::of(&[("Cargo.toml", workspace_manifest.as_str())]);
+    let mut machine = manifest_machine()?;
+    let workspace = intern_tree(&mut machine, workspace)?;
+
+    let workspace_members: BTreeSet<_> = metadata.workspace_members.iter().collect();
+    let mut selected_oracle_deps = 0usize;
+    let mut target_cfg_unmodeled = 0usize;
+    let mut name_kind_mismatches = 0usize;
+    let mut vix_errors = 0usize;
+    let mut probed = 0usize;
+    let mut examples = Vec::new();
+    let mut dep_index = 0usize;
+
+    for package in metadata
+        .packages
+        .iter()
+        .filter(|package| workspace_members.contains(&package.id))
+    {
+        let manifest_path = Path::new(&package.manifest_path);
+        let manifest_text = std::fs::read_to_string(manifest_path).map_err(|err| {
+            format!(
+                "read manifest for {} at {}: {err}",
+                package.name, package.manifest_path
+            )
+        })?;
+        let manifest = intern_tree(
+            &mut machine,
+            Tree::of(&[("Cargo.toml", manifest_text.as_str())]),
+        )?;
+
+        for dependency in &package.dependencies {
+            let selected = dep_index % shards == shard;
+            dep_index += 1;
+            if !selected {
+                continue;
+            }
+            selected_oracle_deps += 1;
+            if dependency.target.is_some() {
+                target_cfg_unmodeled += 1;
+                continue;
+            }
+            probed += 1;
+            let kind = dependency.kind.as_deref().unwrap_or("normal");
+            let key = dependency.key();
+            match detailed_dep(&mut machine, manifest, workspace, key, kind) {
+                Ok(actual) => {
+                    let actual_name = field_string(&actual, "name")?;
+                    let actual_kind = field_string(&actual, "kind")?;
+                    if actual_name != key || actual_kind != kind {
+                        name_kind_mismatches += 1;
+                        push_example(
+                            &mut examples,
+                            format!(
+                                "{}:{} expected {key}/{kind}, got {actual_name}/{actual_kind}",
+                                package.name, key
+                            ),
+                        );
+                    }
+                }
+                Err(err) => {
+                    vix_errors += 1;
+                    push_example(
+                        &mut examples,
+                        format!("{}:{}:{kind} -> {err}", package.name, key),
+                    );
+                }
+            }
+        }
+    }
+
+    let summary = RealWorkspaceProbeSummary {
+        shard,
+        shards,
+        selected_oracle_deps,
+        probed,
+        target_cfg_unmodeled,
+        name_kind_mismatches,
+        vix_errors,
+        examples,
+    };
+
+    assert!(summary.shard < summary.shards, "{summary:#?}");
+    assert!(summary.selected_oracle_deps > 0, "{summary:#?}");
+    assert!(summary.probed > 0, "{summary:#?}");
+    assert_eq!(
+        summary.selected_oracle_deps,
+        summary.probed + summary.target_cfg_unmodeled,
+        "{summary:#?}"
+    );
+    assert_eq!(summary.name_kind_mismatches, 0, "{summary:#?}");
+    assert_eq!(summary.vix_errors, 0, "{summary:#?}");
+    assert!(summary.examples.is_empty(), "{summary:#?}");
+
     Ok(())
 }
 
@@ -286,17 +500,24 @@ fn cargo_metadata_oracle() -> Result<CargoMetadata, String> {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR")).join(
         "../playgrounds/snark/src/bundled/vix/samples/fixtures/cargo_manifest_real/Cargo.toml",
     );
-    let output = Command::new("cargo")
-        .args([
-            "metadata",
-            "--format-version",
-            "1",
-            "--no-deps",
-            "--manifest-path",
-        ])
-        .arg(&manifest)
-        .output()
-        .map_err(|err| err.to_string())?;
+    cargo_metadata_for_manifest(&manifest, true)
+}
+
+fn cargo_metadata_real_workspace() -> Result<CargoMetadata, String> {
+    cargo_metadata_for_manifest(&workspace_root().join("Cargo.toml"), false)
+}
+
+fn cargo_metadata_for_manifest(manifest: &Path, no_deps: bool) -> Result<CargoMetadata, String> {
+    let mut command = Command::new("cargo");
+    command.args(["metadata", "--format-version", "1"]);
+    if !no_deps {
+        command.arg("--locked");
+    }
+    if no_deps {
+        command.arg("--no-deps");
+    }
+    command.arg("--manifest-path").arg(manifest);
+    let output = command.output().map_err(|err| err.to_string())?;
     if !output.status.success() {
         return Err(format!(
             "cargo metadata failed: {}",
@@ -307,9 +528,71 @@ fn cargo_metadata_oracle() -> Result<CargoMetadata, String> {
     facet_json::from_str(&stdout).map_err(|err| err.to_string())
 }
 
+fn workspace_root() -> std::path::PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("vix crate has workspace parent")
+        .to_path_buf()
+}
+
+fn legacy_workspace_allowlist_failures(manifest: &str) -> usize {
+    let mut section = "";
+    let mut failures = 0;
+    for line in manifest.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            section = trimmed;
+            continue;
+        }
+        let dependency_section = matches!(
+            section,
+            "[dependencies]" | "[build-dependencies]" | "[dev-dependencies]"
+        ) || (section.starts_with("[target.")
+            && section.contains(".dependencies]"));
+        if !dependency_section || !trimmed.contains("workspace = true") {
+            continue;
+        }
+        let key = trimmed
+            .split_once('=')
+            .map(|(key, _)| key.trim())
+            .unwrap_or(trimmed)
+            .strip_suffix(".workspace")
+            .unwrap_or_else(|| {
+                trimmed
+                    .split_once('=')
+                    .map(|(key, _)| key.trim())
+                    .unwrap_or(trimmed)
+            })
+            .trim();
+        if key != "blake3" && key != "autocfg" {
+            failures += 1;
+        }
+    }
+    failures
+}
+
+fn push_example(examples: &mut Vec<String>, example: String) {
+    if examples.len() < 8 {
+        examples.push(example);
+    }
+}
+
+#[derive(Debug)]
+struct RealWorkspaceProbeSummary {
+    shard: usize,
+    shards: usize,
+    selected_oracle_deps: usize,
+    probed: usize,
+    target_cfg_unmodeled: usize,
+    name_kind_mismatches: usize,
+    vix_errors: usize,
+    examples: Vec<String>,
+}
+
 #[derive(Debug, Facet)]
 struct CargoMetadata {
     packages: Vec<CargoPackage>,
+    workspace_members: Vec<String>,
 }
 
 impl CargoMetadata {
@@ -336,10 +619,27 @@ impl CargoMetadata {
 
 #[derive(Debug, Facet)]
 struct CargoPackage {
+    id: String,
     name: String,
     version: String,
     edition: String,
+    manifest_path: String,
+    dependencies: Vec<CargoDependency>,
     targets: Vec<CargoTarget>,
+}
+
+#[derive(Debug, Facet)]
+struct CargoDependency {
+    name: String,
+    kind: Option<String>,
+    rename: Option<String>,
+    target: Option<String>,
+}
+
+impl CargoDependency {
+    fn key(&self) -> &str {
+        self.rename.as_deref().unwrap_or(&self.name)
+    }
 }
 
 #[derive(Debug, Facet)]

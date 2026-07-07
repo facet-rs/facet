@@ -32,15 +32,16 @@ use super::driver::{
     ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_FILTER_EXCLUDE_HOST, ARRAY_JOIN_HOST,
     ARRAY_LEN_HOST, ARRAY_MAP_PENDING_HOST, ARRAY_POP_HOST, ARRAY_PUSH_HOST, ARRAY_SET_HOST,
     AST_DOC_HOST, AST_FN_HOST, CRATE_ARCHIVE_HOST, CodeBundle, DOC_COERCE_HOST, DOC_GET_HOST,
-    DOC_PACKAGE_HOST, DOC_PARSE_HOST, DriveEvent, DriveEventSink, Driver, ELF_DOC_HOST, EXEC_HOST,
-    FETCH_HOST, FnRef, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST,
-    MAP_INSERT_HOST, MOLTEN_DUP_HOST, MachineExecBackend, OCI_DOC_HOST, OPTION_CONSTRUCT_HOST,
-    OPTION_DESTRUCT_HOST, OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST,
-    PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RECORD_UPDATE_HOST, RenderNames, RenderVariant,
-    RenderedValue, SEALED_DECLASSIFY_HOST, SEALED_SEAL_HOST, SEALED_TO_STRING_HOST,
-    STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_CONTAINS_HOST,
-    STRING_DEFAULT_HOST, STRING_IS_NUMERIC_HOST, STRING_LOWER_HOST, STRING_PARSE_INT_HOST,
-    STRING_SPLIT_HOST, STRING_UPPER_HOST, SemanticComparator, StepMode, StoreHandle, TARGET_HOST,
+    DOC_IS_MAP_HOST, DOC_PACKAGE_HOST, DOC_PARSE_HOST, DriveEvent, DriveEventSink, Driver,
+    ELF_DOC_HOST, EXEC_HOST, FETCH_HOST, FnRef, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn,
+    MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST, MOLTEN_DUP_HOST, MachineExecBackend,
+    OCI_DOC_HOST, OPTION_CONSTRUCT_HOST, OPTION_DESTRUCT_HOST, OPTION_UNWRAP_HOST,
+    PATH_TO_STRING_HOST, PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, PENDING_COERCE_HOST,
+    PENDING_INVOKE_HOST, RECORD_UPDATE_HOST, RenderNames, RenderVariant, RenderedValue,
+    SEALED_DECLASSIFY_HOST, SEALED_SEAL_HOST, SEALED_TO_STRING_HOST, STORE_ALLOC_HOST,
+    STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_CONTAINS_HOST, STRING_DEFAULT_HOST,
+    STRING_IS_NUMERIC_HOST, STRING_LOWER_HOST, STRING_PARSE_INT_HOST, STRING_SPLIT_HOST,
+    STRING_TO_PATH_HOST, STRING_UPPER_HOST, SemanticComparator, StepMode, StoreHandle, TARGET_HOST,
     TREE_PROJECT_HOST, VALUE_COMPARE_HOST, VERSION_PARSE_HOST, VERSION_SET_OP_HOST,
     VERSION_SET_PARSE_HOST, ValueBundle,
 };
@@ -4415,6 +4416,27 @@ impl<'a> FnLowerer<'a> {
                 let ext = self.method_arg(arg, Some("String"))?;
                 self.path_with_ext(&receiver, &ext)
             }
+            "to_path" => {
+                if !call.args.args.is_empty() {
+                    return Err("String.to_path takes no arguments".into());
+                }
+                self.expect_schema(&receiver, "String")?;
+                self.raw_string_convert(&receiver, "Path", STRING_TO_PATH_HOST)
+            }
+            "to_string" => {
+                if !call.args.args.is_empty() {
+                    return Err("Path.to_string takes no arguments".into());
+                }
+                self.expect_schema(&receiver, "Path")?;
+                self.raw_string_convert(&receiver, "String", PATH_TO_STRING_HOST)
+            }
+            "is_map" => {
+                if !call.args.args.is_empty() {
+                    return Err("Doc.is_map takes no arguments".into());
+                }
+                self.expect_schema(&receiver, "Doc")?;
+                self.doc_is_map(&receiver)
+            }
             "len" => {
                 if !call.args.args.is_empty() {
                     return Err("len takes no arguments".into());
@@ -7543,6 +7565,53 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: dst,
             schema: "Path".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn raw_string_convert(
+        &mut self,
+        value: &ValueSlot,
+        schema: &str,
+        host: u32,
+    ) -> Result<ValueSlot, String> {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: value.slot,
+        });
+        self.code.push(Op::HostCall { host });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: schema.into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn doc_is_map(&mut self, doc: &ValueSlot) -> Result<ValueSlot, String> {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: doc.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: DOC_IS_MAP_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Bool".into(),
             realization: None,
             pending: None,
         })

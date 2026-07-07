@@ -1,4 +1,4 @@
-use vix::{Tree, VersionSet};
+use vix::{Tree, Path, VersionSet};
 
 struct CargoPackage {
     name: String,
@@ -51,7 +51,57 @@ fn doc_string(doc: Doc, key: String) -> String {
     doc.get(key).unwrap()
 }
 
+fn doc_string_or_empty(doc: Doc, key: String) -> String {
+    match doc.get(key) {
+        Some(value) => doc_as_string(value),
+        None => "",
+    }
+}
+
+fn doc_bool_or(doc: Doc, key: String, fallback: Bool) -> Bool {
+    match doc.get(key) {
+        Some(value) => doc_as_bool(value),
+        None => fallback,
+    }
+}
+
+fn doc_strings_or_empty(doc: Doc, key: String) -> [String] {
+    match doc.get(key) {
+        Some(value) => doc_as_strings(value),
+        None => [],
+    }
+}
+
+fn dependency_doc_string_or_empty(dep: Doc, key: String) -> String {
+    match dep.is_map() {
+        true => doc_string_or_empty(dep, key),
+        false => "",
+    }
+}
+
+fn dependency_doc_bool_or(dep: Doc, key: String, fallback: Bool) -> Bool {
+    match dep.is_map() {
+        true => doc_bool_or(dep, key, fallback),
+        false => fallback,
+    }
+}
+
+fn dependency_doc_strings_or_empty(dep: Doc, key: String) -> [String] {
+    match dep.is_map() {
+        true => doc_strings_or_empty(dep, key),
+        false => [],
+    }
+}
+
 fn doc_as_string(doc: Doc) -> String {
+    doc
+}
+
+fn doc_as_bool(doc: Doc) -> Bool {
+    doc
+}
+
+fn doc_as_strings(doc: Doc) -> [String] {
     doc
 }
 
@@ -70,8 +120,37 @@ fn package_version(manifest: Tree) -> String {
     doc_string(package_doc(manifest), "version")
 }
 
+fn inherited_workspace_package_string(field: Doc, workspace: Tree, key: String) -> String {
+    let _workspace: Bool = field.get("workspace").unwrap();
+    doc_string(workspace_package_doc(workspace), key)
+}
+
+fn inherited_package_string(manifest: Tree, workspace: Tree, key: String) -> String {
+    let field = package_doc(manifest).get(key).unwrap();
+    match field.is_map() {
+        true => inherited_workspace_package_string(field, workspace, key),
+        false => doc_as_string(field),
+    }
+}
+
 fn package_edition(manifest: Tree, workspace: Tree) -> String {
-    doc_string(workspace_package_doc(workspace), "edition")
+    inherited_package_string(manifest, workspace, "edition")
+}
+
+pub fn package_rust_version(manifest: Tree, workspace: Tree) -> String {
+    inherited_package_string(manifest, workspace, "rust-version")
+}
+
+pub fn package_license(manifest: Tree, workspace: Tree) -> String {
+    inherited_package_string(manifest, workspace, "license")
+}
+
+pub fn package_repository(manifest: Tree, workspace: Tree) -> String {
+    inherited_package_string(manifest, workspace, "repository")
+}
+
+fn member_from_manifest_path(path: Path) -> String {
+    path.to_string().before("/Cargo.toml")
 }
 
 pub fn workspace_members(workspace: Tree) -> [String] {
@@ -80,6 +159,10 @@ pub fn workspace_members(workspace: Tree) -> [String] {
 
 pub fn workspace_members_text(workspace: Tree) -> String {
     workspace_members(workspace).join("\n")
+}
+
+pub fn workspace_member_glob_gap() -> String {
+    "Root member globs need iteration over [String]/[Path], but Array.pop still lowers as Tuple<Int,Array>; explicit facet-cc members are enumerated from the root manifest."
 }
 
 pub fn package_of(manifest: Tree, workspace: Tree, manifest_path: String) -> CargoPackage {
@@ -107,51 +190,58 @@ fn dependency_doc(manifest: Tree, name: String, kind: String) -> Doc {
 
 fn workspace_dependency_version(workspace: Tree, name: String) -> String {
     let dep = workspace_dependency_doc(workspace, name);
-    match name == "autocfg" {
-        true => doc_as_string(dep),
-        false => doc_string(dep, "version"),
+    match dep.is_map() {
+        true => doc_string_or_empty(dep, "version"),
+        false => doc_as_string(dep),
     }
 }
 
 fn workspace_dependency_path(workspace: Tree, name: String) -> String {
-    match name == "taxon" {
-        true => workspace_dependency_doc(workspace, name).get("path").unwrap(),
-        false => "",
-    }
+    dependency_doc_string_or_empty(workspace_dependency_doc(workspace, name), "path")
+}
+
+fn workspace_dependency_default_features(workspace: Tree, name: String) -> Bool {
+    dependency_doc_bool_or(workspace_dependency_doc(workspace, name), "default-features", true)
 }
 
 fn dependency_version_req(dep: Doc, workspace: Tree, name: String, workspace_dep: Bool) -> String {
     match workspace_dep {
         true => workspace_dependency_version(workspace, name),
-        false => doc_string(dep, "version"),
+        false => match dep.is_map() {
+            true => doc_string_or_empty(dep, "version"),
+            false => doc_as_string(dep),
+        },
     }
 }
 
 fn dependency_path(dep: Doc, workspace: Tree, name: String, workspace_dep: Bool) -> String {
     match workspace_dep {
         true => workspace_dependency_path(workspace, name),
-        false => doc_string(dep, "path"),
+        false => dependency_doc_string_or_empty(dep, "path"),
     }
 }
 
-fn dependency_is_workspace(name: String) -> Bool {
-    match name == "blake3" {
-        true => true,
-        false => name == "autocfg",
+fn dependency_is_workspace(dep: Doc) -> Bool {
+    dependency_doc_bool_or(dep, "workspace", false)
+}
+
+fn inherited_default_features(workspace: Tree, name: String, workspace_dep: Bool) -> Bool {
+    match workspace_dep {
+        true => workspace_dependency_default_features(workspace, name),
+        false => true,
     }
 }
 
-fn dependency_default_features(dep: Doc, name: String) -> Bool {
-    match name == "blake3" {
-        true => dep.get("default-features").unwrap(),
-        false => match name == "facet-core" {
-            true => dep.get("default-features").unwrap(),
-            false => match name == "facet-macros" {
-                true => dep.get("default-features").unwrap(),
-                false => true,
-            },
-        },
-    }
+fn dependency_default_features(dep: Doc, workspace: Tree, name: String, workspace_dep: Bool) -> Bool {
+    dependency_doc_bool_or(dep, "default-features", inherited_default_features(workspace, name, workspace_dep))
+}
+
+fn dependency_optional(dep: Doc) -> Bool {
+    dependency_doc_bool_or(dep, "optional", false)
+}
+
+fn dependency_features(dep: Doc) -> [String] {
+    dependency_doc_strings_or_empty(dep, "features")
 }
 
 pub fn detailed_dependency_of(
@@ -161,19 +251,19 @@ pub fn detailed_dependency_of(
     kind: String,
 ) -> CargoDependencyDecl {
     let dep = dependency_doc(manifest, name, kind);
-    let workspace_dep = dependency_is_workspace(name);
+    let workspace_dep = dependency_is_workspace(dep);
     let version_req = dependency_version_req(dep, workspace, name, workspace_dep);
     let path = dependency_path(dep, workspace, name, workspace_dep);
-    let default_features = dependency_default_features(dep, name);
+    let default_features = dependency_default_features(dep, workspace, name, workspace_dep);
     CargoDependencyDecl {
         name: name,
         kind: kind,
         version_req: version_req,
         path: path,
         workspace: workspace_dep,
-        optional: false,
+        optional: dependency_optional(dep),
         default_features: default_features,
-        features: [],
+        features: dependency_features(dep),
     }
 }
 
@@ -267,5 +357,5 @@ pub fn problem_of_member(root_pkg: Int, root_default_feature: Int) -> Problem {
 }
 
 pub fn resolved_unit_adaptation_gap() -> String {
-    "ResolvedUnit requires Path fields, but Cargo manifest paths and artifact names are parsed as String; Vix has no string-to-Path constructor yet."
+    "String.to_path is available; generic ResolvedUnit emission remains blocked by dependency-table key enumeration and the demanded resolve-to-unit graph bridge."
 }

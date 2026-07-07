@@ -186,6 +186,9 @@ pub const STRING_SPLIT_HOST: u32 = 53;
 pub const STRING_PARSE_INT_HOST: u32 = 54;
 pub const STRING_CONTAINS_HOST: u32 = 55;
 pub const STRING_IS_NUMERIC_HOST: u32 = 56;
+pub const STRING_TO_PATH_HOST: u32 = 57;
+pub const PATH_TO_STRING_HOST: u32 = 58;
+pub const DOC_IS_MAP_HOST: u32 = 59;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -4286,13 +4289,10 @@ impl Driver {
                     let tree_handle = read_frame_word(frame, primitive_region + 8);
                     let pattern_handle = read_frame_word(frame, primitive_region + 16);
                     let pattern = store_cell.borrow().string_value(pattern_handle, "String")?;
-                    let suffix = pattern
-                        .strip_prefix('*')
-                        .ok_or_else(|| "glob v0 supports `*.ext` patterns".to_string())?;
                     let tree = match store_cell.borrow().tree_entry(tree_handle)? {
                         TreeEntry::Concrete(tree) => tree,
                         TreeEntry::Merge(_) | TreeEntry::Exec(_) => {
-                            return Err("glob on pending tree is outside B4".into());
+                            return Err("glob on pending tree is outside B5".into());
                         }
                     };
                     record_whole_args_if_projectable_static(
@@ -4307,7 +4307,7 @@ impl Driver {
                     let mut paths: Vec<String> = tree
                         .entries
                         .keys()
-                        .filter(|path| !path.contains('/') && path.ends_with(suffix))
+                        .filter(|path| simple_glob_match(&pattern, path))
                         .cloned()
                         .collect();
                     paths.sort();
@@ -4327,6 +4327,64 @@ impl Driver {
                         schema_tables,
                     )?;
                     write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut string_to_path = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let string = read_frame_word(frame, primitive_region + 8);
+                    let store = store_cell.borrow();
+                    let taint = store.entry(string).and_then(|entry| entry.taint.clone());
+                    let value = store.string_value(string, "String")?;
+                    drop(store);
+                    let (handle, _) = store_cell.borrow_mut().alloc_raw_tainted(
+                        "Path",
+                        value.into_bytes(),
+                        taint,
+                    );
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut path_to_string = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let path = read_frame_word(frame, primitive_region + 8);
+                    let store = store_cell.borrow();
+                    let taint = store.entry(path).and_then(|entry| entry.taint.clone());
+                    let value = store.string_value(path, "Path")?;
+                    drop(store);
+                    let (handle, _) = store_cell.borrow_mut().alloc_raw_tainted(
+                        "String",
+                        value.into_bytes(),
+                        taint,
+                    );
+                    write_frame_word(frame, dst_slot, handle);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut doc_is_map = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let doc = read_frame_word(frame, primitive_region + 8);
+                    let is_map = matches!(
+                        doc_payload(&store_cell.borrow(), descriptors, doc)?,
+                        DocPayload::Map(_)
+                    );
+                    write_frame_word(frame, dst_slot, i64::from(is_map));
                     Ok(())
                 })();
                 if let Err(err) = result {
@@ -5126,7 +5184,7 @@ impl Driver {
                 }
             };
 
-            let mut hosts: [HostFn<'_>; 57] = [
+            let mut hosts: [HostFn<'_>; 60] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -5184,6 +5242,9 @@ impl Driver {
                 &mut string_parse_int_host,
                 &mut string_contains_host,
                 &mut string_is_numeric_host,
+                &mut string_to_path,
+                &mut path_to_string,
+                &mut doc_is_map,
             ];
             let step = exec
                 .task
@@ -6744,9 +6805,19 @@ fn doc_get(
     doc: i64,
     key: &str,
 ) -> Result<(i64, bool), String> {
-    let map = match doc_payload(&store.borrow(), descriptors, doc)? {
+    let payload = {
+        let store_ref = store.borrow();
+        doc_payload(&store_ref, descriptors, doc)?
+    };
+    let map = match payload {
         DocPayload::Map(handle) => handle,
-        other => return Err(format!("Doc.get expected object, got {other:?}")),
+        _ => {
+            let none = store
+                .borrow_mut()
+                .alloc_option_none("Realized<Doc>", schema_tables)?
+                .0;
+            return Ok((none, false));
+        }
     };
     let key_word = store
         .borrow_mut()
@@ -9478,6 +9549,17 @@ fn hash_map_pairs(schema: &str, pairs: &[OrderedMapPair]) -> ContentHash {
 
 fn map_realization_bitset_words(count: usize) -> usize {
     count.div_ceil(64)
+}
+
+fn simple_glob_match(pattern: &str, path: &str) -> bool {
+    let Some((prefix, suffix)) = pattern.split_once('*') else {
+        return path == pattern;
+    };
+    if pattern[prefix.len() + 1..].contains('*') {
+        return false;
+    }
+    let scoped = pattern.contains('/');
+    (scoped || !path.contains('/')) && path.starts_with(prefix) && path.ends_with(suffix)
 }
 
 fn schema_ref_for(schema: &str, schema_tables: &SchemaTables) -> Result<i64, String> {
