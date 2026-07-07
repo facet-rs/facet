@@ -10567,6 +10567,31 @@ pub fn parse(input: String) -> (String, Int, Bool) {
     }
 
     #[test]
+    fn doc_array_coercion_allocates_the_declared_element_schema() {
+        let src = r#"
+pub fn strings(input: String) -> [String] {
+    json(input)
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let (input, _) = machine
+                .driver
+                .intern_raw_value("String", br#"["a","b"]"#.to_vec());
+            let strings = machine.demand_i64("strings", vec![input]).unwrap();
+            let entry = machine.driver.store_entry(strings).expect("string array");
+            assert_eq!(entry.schema, "Array<String>", "{lane:?}");
+            let (elem_schema, words) = machine.driver.array_words(strings).unwrap();
+            assert_eq!(elem_schema, "String", "{lane:?}");
+            let rendered = words
+                .into_iter()
+                .map(|word| machine.driver.raw_string(word, "String").unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(rendered, ["a", "b"], "{lane:?}");
+        }
+    }
+
+    #[test]
     fn elf_structural_projection_contracts_are_pinned() {
         let src = r#"
 pub fn arch(input: Blob) -> String { elf(input).arch }

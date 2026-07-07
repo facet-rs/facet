@@ -3753,7 +3753,14 @@ impl Driver {
                         schemas,
                         [doc],
                     );
-                    let word = doc_coerce(store_cell, descriptors, schemas, doc, &schema)?;
+                    let word = doc_coerce(
+                        store_cell,
+                        descriptors,
+                        schemas,
+                        schema_tables,
+                        doc,
+                        &schema,
+                    )?;
                     write_frame_word(frame, dst_slot, word);
                     Ok(())
                 })();
@@ -7152,6 +7159,7 @@ fn doc_coerce(
     store: &RefCell<ValueStore>,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
+    schema_tables: &SchemaTables,
     doc: i64,
     schema: &str,
 ) -> Result<i64, String> {
@@ -7165,7 +7173,9 @@ fn doc_coerce(
         DocPayload::Float(value) if schemas.is_primitive(schema, Primitive::F64) => Ok(value),
         DocPayload::String(value) if schemas.is_primitive(schema, Primitive::String) => Ok(value),
         DocPayload::Blob(value) if schemas.is_primitive(schema, Primitive::Bytes) => Ok(value),
-        DocPayload::Array(value) if schemas.is_list(schema) => Ok(value),
+        DocPayload::Array(value) if schemas.is_list(schema) => {
+            coerce_doc_array(store, descriptors, schemas, schema_tables, value, schema)
+        }
         DocPayload::Map(value)
             if schemas
                 .map_schema_names(schema)
@@ -7179,6 +7189,56 @@ fn doc_coerce(
         DocPayload::Virtual(_) => Err(format!("cannot coerce Doc::Virtual to {schema}")),
         payload => Err(format!("cannot coerce Doc::{payload:?} to {schema}")),
     }
+}
+
+fn coerce_doc_array(
+    store: &RefCell<ValueStore>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
+    schema_tables: &SchemaTables,
+    array: i64,
+    target_schema: &str,
+) -> Result<i64, String> {
+    let target_elem_schema = array_element_schema(target_schema)
+        .ok_or_else(|| format!("{target_schema} is not an Array<T>"))?;
+    if schemas.is_named_schema(target_elem_schema, "Doc") {
+        return Ok(array);
+    }
+    let words = {
+        let store = store.borrow();
+        match store.array_entry(array, schema_tables)? {
+            ArrayEntry::Words { elem_schema, words } => {
+                if !schemas.is_named_schema(&elem_schema, "Doc") {
+                    return Err(format!(
+                        "cannot coerce Array<{elem_schema}> inside Doc::Array to {target_schema}"
+                    ));
+                }
+                words
+            }
+            ArrayEntry::Pending { .. } => {
+                return Err(format!(
+                    "cannot coerce pending Doc::Array to {target_schema}"
+                ));
+            }
+        }
+    };
+    let coerced = words
+        .into_iter()
+        .map(|word| {
+            doc_coerce(
+                store,
+                descriptors,
+                schemas,
+                schema_tables,
+                word,
+                target_elem_schema,
+            )
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(store
+        .borrow_mut()
+        .alloc_array_words(target_elem_schema, coerced, schemas, schema_tables)?
+        .0)
 }
 
 fn alloc_elf_doc(
