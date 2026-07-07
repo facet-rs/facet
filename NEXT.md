@@ -54,7 +54,18 @@ Logged by the day's missions: no `sort` primitive (insertion sort hand-written t
 aggregates-in-containers hit Realized/Pending/molten barriers (workaround: Int ids + flat row
 maps); `Array.pop` surfaces as `Tuple<Int,Array>` (awkward for non-Int); returning `[String]`
 unstable; appended fixture code can't call imported std helpers; dynamic `--extern name={Tree}`
-splicing gap (from the generic walk); no block expressions in match arms.
+splicing gap (from the generic walk); no block expressions in match arms; Doc traversal
+ergonomics (optional projection without lowering failure; key enumeration over dependency
+tables — from manifest ingestion); no string→Path / path-join bridge (blocks vix-side
+ResolvedUnit emission).
+
+## Open investigation: JIT lane slower than interp
+Persists AFTER the compile-cache fix (spike D final: JIT ~2× interp at 10k and 100k tokens,
+no JitProgram::compile trunk in stax anymore). Something in the JIT lane's host-call/burst
+transition costs more than the interpreter's. Needs its own stax dig on a host-call-heavy
+workload. Related: spike D's residual profile = Task::run_hosted/Driver::burst (string clone,
+memmove, vector growth, hash, allocator) — the stringly part dies with V3; the burst/dispatch
+part is the post-V3 perf frontier (LR loop at 293× vs the ~50× bar).
 
 ## Later / owned elsewhere
 - V10 pull accessors (View API — archive doc 3), V4 host registry (~33 survivors), V5 parsers-
