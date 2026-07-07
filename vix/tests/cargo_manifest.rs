@@ -738,6 +738,41 @@ real_workspace_member_direct_sparse_solve_ring_lock_diff_test!(
     real_workspace_member_direct_sparse_solve_ring_lock_diff_16,
     16
 );
+real_workspace_member_direct_sparse_solve_ring_lock_diff_test!(
+    real_workspace_member_direct_sparse_solve_ring_lock_diff_32,
+    32
+);
+
+macro_rules! real_workspace_member_transitive_sparse_solve_ring_lock_diff_test {
+    ($name:ident, $limit:expr) => {
+        #[test]
+        #[ignore = "tier-A measurement probe: real workspace member + first transitive sparse dep solve ring lock diff"]
+        fn $name() -> Result<(), String> {
+            real_workspace_member_transitive_sparse_solve_ring_lock_diff($limit)
+        }
+    };
+}
+
+real_workspace_member_transitive_sparse_solve_ring_lock_diff_test!(
+    real_workspace_member_transitive_sparse_solve_ring_lock_diff_1,
+    1
+);
+real_workspace_member_transitive_sparse_solve_ring_lock_diff_test!(
+    real_workspace_member_transitive_sparse_solve_ring_lock_diff_2,
+    2
+);
+real_workspace_member_transitive_sparse_solve_ring_lock_diff_test!(
+    real_workspace_member_transitive_sparse_solve_ring_lock_diff_3,
+    3
+);
+real_workspace_member_transitive_sparse_solve_ring_lock_diff_test!(
+    real_workspace_member_transitive_sparse_solve_ring_lock_diff_4,
+    4
+);
+real_workspace_member_transitive_sparse_solve_ring_lock_diff_test!(
+    real_workspace_member_transitive_sparse_solve_ring_lock_diff_8,
+    8
+);
 
 #[test]
 #[ignore = "tier-A measurement repro: one pinned sparse row in cargo_manifest.vix"]
@@ -803,7 +838,7 @@ fn real_workspace_member_direct_sparse_solve_ring_lock_diff(limit: i64) -> Resul
         &format!("real-direct-ring-{limit}-tokio-candidates.txt"),
         &tokio_candidate_text,
     )?;
-    assert_eq!(tokio_req_text, "1", "direct sparse ring {limit}");
+    assert_all_req_lines(&tokio_req_text, "1", &format!("direct sparse ring {limit}"))?;
 
     let selected = machine.demand_i64(
         "workspace_member_direct_sparse_solve_selected_versions_text_limit",
@@ -830,6 +865,79 @@ fn real_workspace_member_direct_sparse_solve_ring_lock_diff(limit: i64) -> Resul
     assert!(
         diff.solve_rows > limit as usize,
         "direct sparse ring {limit} produced no member-root solve: {diff:#?}"
+    );
+    Ok(())
+}
+
+fn assert_all_req_lines(actual: &str, expected: &str, context: &str) -> Result<(), String> {
+    let lines = actual
+        .lines()
+        .filter(|line| !line.trim().is_empty())
+        .collect::<Vec<_>>();
+    if lines.is_empty() {
+        return Err(format!("{context}: no emitted req lines"));
+    }
+    for line in lines {
+        if line != expected {
+            return Err(format!(
+                "{context}: expected every emitted req to be {expected:?}, got {line:?} in {actual:?}"
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn real_workspace_member_transitive_sparse_solve_ring_lock_diff(limit: i64) -> Result<(), String> {
+    let metadata = cargo_metadata_real_workspace()?;
+    let mut machine = manifest_machine()?;
+    let workspace = intern_tree(&mut machine, real_workspace_manifest_tree(&metadata)?)?;
+    let root = intern_path(&mut machine, "")?;
+    let target = intern_string(&mut machine, "x86_64-apple-darwin")?;
+    let sparse_jsonl =
+        transitive_sparse_snapshot_jsonl_for_ring(&mut machine, &metadata, workspace, limit)?;
+    let sparse_jsonl = intern_string(&mut machine, &sparse_jsonl)?;
+    let sparse_row_count = machine.demand_i64("workspace_sparse_row_count", vec![sparse_jsonl])?;
+    let package_count = machine.demand_i64(
+        "workspace_member_transitive_sparse_index_package_count_limit",
+        vec![workspace, root, sparse_jsonl, limit],
+    )?;
+    let clause_count = machine.demand_i64(
+        "workspace_member_transitive_sparse_index_clause_count_limit",
+        vec![workspace, root, sparse_jsonl, limit],
+    )?;
+
+    write_tier_a_artifact(
+        &format!("real-transitive-ring-{limit}-index-counts.tsv"),
+        &format!(
+            "metric\tcount\nsparse_rows\t{sparse_row_count}\npackages\t{package_count}\nclauses\t{clause_count}\n"
+        ),
+    )?;
+
+    let selected = machine.demand_i64(
+        "workspace_member_transitive_sparse_solve_selected_versions_text_limit",
+        vec![workspace, root, sparse_jsonl, target, limit],
+    )?;
+    let selected = rendered_string(
+        &machine,
+        "workspace_member_transitive_sparse_solve_selected_versions_text_limit",
+        selected,
+    )?;
+    let solve_rows = package_versions_from_solve_text(&selected)?;
+    let lock_rows = cargo_lock_package_rows(&workspace_root().join("Cargo.lock"))?;
+    let metadata_rows = metadata.package_rows();
+    let diff = diff_package_versions_against_lock(&solve_rows, &lock_rows, &metadata_rows);
+
+    write_tier_a_artifact(
+        &format!("real-transitive-ring-{limit}-solve-vs-lock-summary.tsv"),
+        &package_diff_summary_table(&diff),
+    )?;
+    write_tier_a_artifact(
+        &format!("real-transitive-ring-{limit}-solve-vs-lock-solve-rows.tsv"),
+        &package_rows_table(&solve_rows),
+    )?;
+    assert!(
+        diff.solve_rows > limit as usize,
+        "transitive sparse ring {limit} produced no member-root solve: {diff:#?}"
     );
     Ok(())
 }
@@ -1309,6 +1417,38 @@ fn direct_sparse_snapshot_jsonl_for_ring(
     workspace: i64,
     limit: i64,
 ) -> Result<String, String> {
+    let crate_names = direct_sparse_crate_names_for_ring(machine, metadata, workspace, limit)?;
+    sparse_snapshot_jsonl_for_crates(
+        crate_names,
+        &format!("real-direct-ring-{limit}-sparse-input-crates.tsv"),
+    )
+}
+
+fn transitive_sparse_snapshot_jsonl_for_ring(
+    machine: &mut Machine,
+    metadata: &CargoMetadata,
+    workspace: i64,
+    limit: i64,
+) -> Result<String, String> {
+    let direct_crates = direct_sparse_crate_names_for_ring(machine, metadata, workspace, limit)?;
+    let mut crate_names = direct_crates.clone();
+    for name in direct_crates {
+        for dependency in sparse_snapshot_dependencies_for_crate(&name)? {
+            crate_names.insert(dependency.package_name());
+        }
+    }
+    sparse_snapshot_jsonl_for_crates(
+        crate_names,
+        &format!("real-transitive-ring-{limit}-sparse-input-crates.tsv"),
+    )
+}
+
+fn direct_sparse_crate_names_for_ring(
+    machine: &mut Machine,
+    metadata: &CargoMetadata,
+    workspace: i64,
+    limit: i64,
+) -> Result<BTreeSet<String>, String> {
     let members = machine.demand_i64("workspace_members_text", vec![workspace])?;
     let members = rendered_string(machine, "workspace_members_text", members)?;
     let selected_members = members
@@ -1345,7 +1485,13 @@ fn direct_sparse_snapshot_jsonl_for_ring(
             crate_names.insert(dependency.name.clone());
         }
     }
+    Ok(crate_names)
+}
 
+fn sparse_snapshot_jsonl_for_crates(
+    crate_names: BTreeSet<String>,
+    input_crates_artifact: &str,
+) -> Result<String, String> {
     let sparse_root = tier_a_sparse_snapshot_root();
     let mut rows = String::new();
     let mut input_crates = BTreeSet::new();
@@ -1368,14 +1514,14 @@ fn direct_sparse_snapshot_jsonl_for_ring(
         if !rows.is_empty() && !rows.ends_with('\n') {
             rows.push('\n');
         }
-        match max_lines {
-            Some(limit) => {
-                for line in text.lines().take(limit) {
-                    rows.push_str(line);
-                    rows.push('\n');
-                }
-            }
-            None => rows.push_str(&text),
+        for line in text.lines().take(max_lines.unwrap_or(usize::MAX)) {
+            let row: SparseIndexEntry = facet_json::from_str(line)
+                .map_err(|err| format!("parse sparse row for {name}: {err}"))?;
+            let row = SparseIndexRowForVix::from(row);
+            let line = facet_json::to_string(&row)
+                .map_err(|err| format!("serialize sparse row for {name}: {err}"))?;
+            rows.push_str(&line);
+            rows.push('\n');
         }
         if !rows.ends_with('\n') {
             rows.push('\n');
@@ -1383,11 +1529,35 @@ fn direct_sparse_snapshot_jsonl_for_ring(
         input_crates.insert(PackageVersion::new(&name, "sparse-index"));
     }
 
-    write_tier_a_artifact(
-        &format!("real-direct-ring-{limit}-sparse-input-crates.tsv"),
-        &package_rows_table(&input_crates),
-    )?;
+    write_tier_a_artifact(input_crates_artifact, &package_rows_table(&input_crates))?;
     Ok(rows)
+}
+
+fn sparse_snapshot_dependencies_for_crate(
+    name: &str,
+) -> Result<BTreeSet<SparseIndexDependency>, String> {
+    let sparse_root = tier_a_sparse_snapshot_root();
+    let path = sparse_root
+        .join("index")
+        .join(sparse_index_path_for_crate(name));
+    if !path.exists() {
+        return Ok(BTreeSet::new());
+    }
+    let text = std::fs::read_to_string(&path)
+        .map_err(|err| format!("read sparse rows for {name} at {}: {err}", path.display()))?;
+    let max_lines = std::env::var("TIER_A_DIRECT_SPARSE_MAX_LINES")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok());
+    let mut deps = BTreeSet::new();
+    for line in text.lines().take(max_lines.unwrap_or(usize::MAX)) {
+        let row: SparseIndexEntry = facet_json::from_str(line)
+            .map_err(|err| format!("parse sparse row for {name}: {err}"))?;
+        if row.yanked {
+            continue;
+        }
+        deps.extend(row.deps);
+    }
+    Ok(deps)
 }
 
 fn tier_a_sparse_snapshot_root() -> std::path::PathBuf {
@@ -1712,6 +1882,72 @@ struct CargoDependency {
 impl CargoDependency {
     fn key(&self) -> &str {
         self.rename.as_deref().unwrap_or(&self.name)
+    }
+}
+
+#[derive(Clone, Debug, Facet)]
+struct SparseIndexEntry {
+    name: String,
+    vers: String,
+    deps: Vec<SparseIndexDependency>,
+    yanked: bool,
+}
+
+#[derive(Clone, Debug, Facet, PartialEq, Eq, PartialOrd, Ord)]
+struct SparseIndexDependency {
+    name: String,
+    package: Option<String>,
+    req: String,
+    kind: String,
+    target: Option<String>,
+    optional: bool,
+}
+
+impl SparseIndexDependency {
+    fn package_name(&self) -> String {
+        self.package.clone().unwrap_or_else(|| self.name.clone())
+    }
+}
+
+#[derive(Clone, Debug, Facet)]
+struct SparseIndexRowForVix {
+    name: String,
+    vers: String,
+    deps: Vec<SparseIndexDependencyForVix>,
+    yanked: bool,
+}
+
+impl From<SparseIndexEntry> for SparseIndexRowForVix {
+    fn from(row: SparseIndexEntry) -> Self {
+        Self {
+            name: row.name,
+            vers: row.vers,
+            deps: row.deps.into_iter().map(Into::into).collect(),
+            yanked: row.yanked,
+        }
+    }
+}
+
+#[derive(Clone, Debug, Facet)]
+struct SparseIndexDependencyForVix {
+    name: String,
+    package: String,
+    req: String,
+    kind: String,
+    target: String,
+    optional: bool,
+}
+
+impl From<SparseIndexDependency> for SparseIndexDependencyForVix {
+    fn from(dep: SparseIndexDependency) -> Self {
+        Self {
+            name: dep.name,
+            package: dep.package.unwrap_or_default(),
+            req: dep.req,
+            kind: dep.kind,
+            target: dep.target.unwrap_or_default(),
+            optional: dep.optional,
+        }
     }
 }
 

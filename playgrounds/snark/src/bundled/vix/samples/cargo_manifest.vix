@@ -61,7 +61,17 @@ struct WorkspaceIndexState {
 struct SparseIndexRow {
     name: String,
     vers: String,
+    deps: [SparseIndexDep],
     yanked: Bool,
+}
+
+struct SparseIndexDep {
+    name: String,
+    package: String,
+    req: String,
+    kind: String,
+    target: String,
+    optional: Bool,
 }
 
 fn manifest_doc(manifest: Tree) -> Doc {
@@ -146,6 +156,10 @@ fn doc_as_bool(doc: Doc) -> Bool {
 }
 
 fn doc_as_strings(doc: Doc) -> [String] {
+    doc
+}
+
+fn doc_as_docs(doc: Doc) -> [Doc] {
     doc
 }
 
@@ -452,8 +466,12 @@ fn add_workspace_root_member_clause(state: WorkspaceIndexState, member_pkg: Int)
 }
 
 fn add_workspace_required_dep_clauses(state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, dep_pkg: Int, req: String, kind: String) -> WorkspaceIndexState {
-    workspace_add_selected_guard_clause(
-        workspace_add_selected_guard_clause(state, parent_pkg, parent_version, "in_graph", dep_pkg, VersionSet::from_req("*"), "*", kind),
+    add_workspace_required_dep_clauses_target(state, parent_pkg, parent_version, dep_pkg, req, kind, None)
+}
+
+fn add_workspace_required_dep_clauses_target(state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, dep_pkg: Int, req: String, kind: String, target: Option<String>) -> WorkspaceIndexState {
+    workspace_add_selected_guard_clause_target(
+        workspace_add_selected_guard_clause_target(state, parent_pkg, parent_version, "in_graph", dep_pkg, VersionSet::from_req("*"), "*", kind, target),
         parent_pkg,
         parent_version,
         "version_set",
@@ -461,6 +479,7 @@ fn add_workspace_required_dep_clauses(state: WorkspaceIndexState, parent_pkg: In
         VersionSet::from_req(req),
         req,
         kind,
+        target,
     )
 }
 
@@ -495,6 +514,10 @@ fn workspace_member_package_name_tuple(state: WorkspaceIndexState, member: Strin
 }
 
 fn workspace_add_selected_guard_clause(state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, consequent_tag: String, dep_pkg: Int, req: VersionSet, req_text: String, kind: String) -> WorkspaceIndexState {
+    workspace_add_selected_guard_clause_target(state, parent_pkg, parent_version, consequent_tag, dep_pkg, req, req_text, kind, None)
+}
+
+fn workspace_add_selected_guard_clause_target(state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, consequent_tag: String, dep_pkg: Int, req: VersionSet, req_text: String, kind: String, target: Option<String>) -> WorkspaceIndexState {
     let clause_id = state.next_clause;
     let guard_id = state.next_guard;
     WorkspaceIndexState {
@@ -512,9 +535,17 @@ fn workspace_add_selected_guard_clause(state: WorkspaceIndexState, parent_pkg: I
         consequent_req_texts: state.consequent_req_texts.insert(clause_id, req_text),
         consequent_features: state.consequent_features.insert(clause_id, 0),
         gate_kinds: state.gate_kinds.insert(clause_id, kind),
+        gate_targets: workspace_gate_targets_insert(state.gate_targets, clause_id, target),
         next_clause: clause_id + 1,
         next_guard: guard_id + 1,
         ..state
+    }
+}
+
+fn workspace_gate_targets_insert(gate_targets: Map<Int, String>, clause_id: Int, target: Option<String>) -> Map<Int, String> {
+    match target {
+        Some(expr) => gate_targets.insert(clause_id, expr),
+        None => gate_targets,
     }
 }
 
@@ -537,6 +568,89 @@ fn workspace_index_state_with_sparse_rows_limit(workspace: Tree, workspace_root:
     let state = workspace_member_only_index_state_for_members(workspace, workspace_root, members);
     let state = register_sparse_rows(parse_sparse_jsonl(sparse_jsonl), state);
     register_workspace_direct_deps(workspace, workspace_root, members, state)
+}
+
+fn workspace_index_state_with_transitive_sparse_rows_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int) -> WorkspaceIndexState {
+    let members = take_strings(workspace_members(workspace), limit, []);
+    let rows = parse_sparse_jsonl(sparse_jsonl);
+    let state = workspace_member_only_index_state_for_members(workspace, workspace_root, members);
+    let state = register_sparse_rows(rows, state);
+    let state = register_workspace_direct_deps(workspace, workspace_root, members, state);
+    add_sparse_dependency_clauses(rows, state)
+}
+
+fn add_sparse_dependency_clauses(rows: [SparseIndexRow], state: WorkspaceIndexState) -> WorkspaceIndexState {
+    match rows.len() == 0 {
+        true => state,
+        false => add_sparse_dependency_clauses_tuple(rows.pop(), state),
+    }
+}
+
+fn add_sparse_dependency_clauses_tuple(popped: (SparseIndexRow, [SparseIndexRow]), state: WorkspaceIndexState) -> WorkspaceIndexState {
+    add_sparse_dependency_clauses(popped.1, add_sparse_row_dependency_clauses(popped.0, state))
+}
+
+fn add_sparse_row_dependency_clauses(row: SparseIndexRow, state: WorkspaceIndexState) -> WorkspaceIndexState {
+    match sparse_row_yanked(row) {
+        true => state,
+        false => match state.package_ids.get(sparse_row_name(row)) {
+            Some(parent_pkg) => add_sparse_deps_for_row(parent_pkg, sparse_row_vers(row), sparse_row_deps(row), state),
+            None => state,
+        },
+    }
+}
+
+fn add_sparse_deps_for_row(parent_pkg: Int, parent_version: String, deps: [SparseIndexDep], state: WorkspaceIndexState) -> WorkspaceIndexState {
+    match deps.len() == 0 {
+        true => state,
+        false => add_sparse_deps_for_row_tuple(parent_pkg, parent_version, deps.pop(), state),
+    }
+}
+
+fn add_sparse_deps_for_row_tuple(parent_pkg: Int, parent_version: String, popped: (SparseIndexDep, [SparseIndexDep]), state: WorkspaceIndexState) -> WorkspaceIndexState {
+    add_sparse_deps_for_row(parent_pkg, parent_version, popped.1, add_sparse_dep_clause(parent_pkg, parent_version, popped.0, state))
+}
+
+fn add_sparse_dep_clause(parent_pkg: Int, parent_version: String, dep: SparseIndexDep, state: WorkspaceIndexState) -> WorkspaceIndexState {
+    match sparse_dep_consumed(dep) {
+        false => state,
+        true => match state.package_ids.get(sparse_dep_package_name(dep)) {
+            Some(dep_pkg) => add_workspace_required_dep_clauses_target(state, parent_pkg, parent_version, dep_pkg, sparse_dep_req(dep), sparse_dep_kind(dep), sparse_dep_target(dep)),
+            None => state,
+        },
+    }
+}
+
+fn sparse_dep_consumed(dep: SparseIndexDep) -> Bool {
+    match dep.optional {
+        true => false,
+        false => match dep.kind == "dev" {
+            true => false,
+            false => true,
+        },
+    }
+}
+
+fn sparse_dep_package_name(dep: SparseIndexDep) -> String {
+    match dep.package == "" {
+        true => dep.name,
+        false => dep.package,
+    }
+}
+
+fn sparse_dep_req(dep: SparseIndexDep) -> String {
+    dep.req
+}
+
+fn sparse_dep_kind(dep: SparseIndexDep) -> String {
+    dep.kind
+}
+
+fn sparse_dep_target(dep: SparseIndexDep) -> Option<String> {
+    match dep.target == "" {
+        true => None,
+        false => Some(dep.target),
+    }
 }
 
 fn workspace_member_only_index_state(workspace: Tree, workspace_root: Path) -> WorkspaceIndexState {
@@ -638,6 +752,14 @@ pub fn workspace_member_direct_sparse_index_package_count_limit(workspace: Tree,
 
 pub fn workspace_member_direct_sparse_index_clause_count_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int) -> Int {
     workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit).clause_ids.len()
+}
+
+pub fn workspace_member_transitive_sparse_index_package_count_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int) -> Int {
+    workspace_index_state_with_transitive_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit).packages.len()
+}
+
+pub fn workspace_member_transitive_sparse_index_clause_count_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int) -> Int {
+    workspace_index_state_with_transitive_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit).clause_ids.len()
 }
 
 pub fn workspace_member_direct_sparse_dep_req_text_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int, dep_name: String) -> String {
@@ -787,6 +909,11 @@ pub fn workspace_member_only_solve_selected_versions_text_limit(workspace: Tree,
 
 pub fn workspace_member_direct_sparse_solve_selected_versions_text_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, target: String, limit: Int) -> String {
     let state = workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit);
+    solve_selected_versions_text_from_workspace_state(state, workspace_problem(), target)
+}
+
+pub fn workspace_member_transitive_sparse_solve_selected_versions_text_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, target: String, limit: Int) -> String {
+    let state = workspace_index_state_with_transitive_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit);
     solve_selected_versions_text_from_workspace_state(state, workspace_problem(), target)
 }
 
@@ -1076,7 +1203,30 @@ fn parse_sparse_row(line: String) -> SparseIndexRow {
     SparseIndexRow {
         name: doc.name,
         vers: doc.vers,
+        deps: parse_sparse_deps(doc_as_docs(doc.deps), []),
         yanked: doc.yanked,
+    }
+}
+
+fn parse_sparse_deps(docs: [Doc], out: [SparseIndexDep]) -> [SparseIndexDep] {
+    match docs.len() == 0 {
+        true => out,
+        false => parse_sparse_deps_tuple(docs.pop(), out),
+    }
+}
+
+fn parse_sparse_deps_tuple(popped: (Doc, [Doc]), out: [SparseIndexDep]) -> [SparseIndexDep] {
+    parse_sparse_deps(popped.1, out.push(parse_sparse_dep(popped.0)))
+}
+
+fn parse_sparse_dep(doc: Doc) -> SparseIndexDep {
+    SparseIndexDep {
+        name: doc_string(doc, "name"),
+        package: doc_string_or_empty(doc, "package"),
+        req: doc_string(doc, "req"),
+        kind: doc_string_or(doc, "kind", "normal"),
+        target: doc_string_or_empty(doc, "target"),
+        optional: doc_bool_or(doc, "optional", false),
     }
 }
 
@@ -1086,6 +1236,10 @@ fn sparse_row_name(row: SparseIndexRow) -> String {
 
 fn sparse_row_vers(row: SparseIndexRow) -> String {
     row.vers
+}
+
+fn sparse_row_deps(row: SparseIndexRow) -> [SparseIndexDep] {
+    row.deps
 }
 
 fn sparse_row_yanked(row: SparseIndexRow) -> Bool {
