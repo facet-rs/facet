@@ -2639,11 +2639,12 @@ impl<'a> FnLowerer<'a> {
                 if b.op == "+" && a.schema == "String" && r.schema == "String" {
                     return self.string_concat(&a, &r);
                 }
-                if a.schema == "Version"
-                    && r.schema == "Version"
+                if a.schema == r.schema
+                    && matches!(a.schema.as_str(), "String" | "Version")
                     && matches!(b.op.as_str(), "==" | "!=" | "<" | "<=" | ">" | ">=")
                 {
-                    return self.compare_value(b.op.as_str(), &a, &r, "Version");
+                    let schema = a.schema.clone();
+                    return self.compare_value(b.op.as_str(), &a, &r, &schema);
                 }
                 let dst = self.alloc();
                 let (op, schema) = match (b.op.as_str(), a.schema.as_str(), r.schema.as_str()) {

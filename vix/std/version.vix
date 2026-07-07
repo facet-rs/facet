@@ -13,34 +13,143 @@ pub enum Ordering {
 //
 // A version is a records-at-offsets value, not a host primitive: `.major` is an
 // ordinary field read, parsing is vix code over the string primitives, and
-// comparison is vix over the fields. The machine knows nothing about it.
-// (pre/build deferred — see rodin/docs/30-versions-sets.md.)
+// comparison is vix over the fields. Build metadata is retained but ignored by
+// precedence.
 
 pub struct Version {
     major: Int,
     minor: Int,
     patch: Int,
+    prerelease: Option<String>,
+    build: Option<String>,
 }
 
 pub fn parse_version(s: String) -> Version {
+    let core = s.before("+");
+    let build = build_metadata(s);
+    let release = core.before("-");
+    let prerelease = prerelease_metadata(core);
     // Pad so 1- and 2-component versions ("2", "2.35") parse too: take the
     // component before each of the first three dots.
-    let padded = s + ".0.0";
+    let padded = release + ".0.0";
     let major = padded.before(".").parse_int();
     let after_major = padded.after(".");
     let minor = after_major.before(".").parse_int();
     let after_minor = after_major.after(".");
     let patch = after_minor.before(".").parse_int();
-    Version { major: major, minor: minor, patch: patch }
+    Version {
+        major: major,
+        minor: minor,
+        patch: patch,
+        prerelease: prerelease,
+        build: build,
+    }
 }
 
-// a <= b by semver precedence over major.minor.patch.
-pub fn version_lte(a: Version, b: Version) -> Bool {
-    match a.major != b.major {
-        true => a.major < b.major,
-        false => match a.minor != b.minor {
-            true => a.minor < b.minor,
-            false => a.patch <= b.patch,
+fn prerelease_metadata(s: String) -> Option<String> {
+    match s.contains("-") {
+        true => Some(s.after("-")),
+        false => none_string(),
+    }
+}
+
+fn build_metadata(s: String) -> Option<String> {
+    match s.contains("+") {
+        true => Some(s.after("+")),
+        false => none_string(),
+    }
+}
+
+fn none_string() -> Option<String> {
+    None
+}
+
+fn int_cmp(a: Int, b: Int) -> Ordering {
+    match a < b {
+        true => Ordering::Less,
+        false => match a > b {
+            true => Ordering::Greater,
+            false => Ordering::Equal,
         },
+    }
+}
+
+fn prerelease_cmp(a: Option<String>, b: Option<String>) -> Ordering {
+    match a {
+        None => match b {
+            None => Ordering::Equal,
+            Some(_) => Ordering::Greater,
+        },
+        Some(apre) => match b {
+            None => Ordering::Less,
+            Some(bpre) => prerelease_tail_cmp(apre, bpre),
+        },
+    }
+}
+
+fn prerelease_tail_cmp(a: String, b: String) -> Ordering {
+    let aid = a.before(".");
+    let bid = b.before(".");
+    match prerelease_id_cmp(aid, bid) {
+        Ordering::Less => Ordering::Less,
+        Ordering::Greater => Ordering::Greater,
+        Ordering::Equal => match a.contains(".") {
+            false => match b.contains(".") {
+                false => Ordering::Equal,
+                true => Ordering::Less,
+            },
+            true => match b.contains(".") {
+                false => Ordering::Greater,
+                true => prerelease_tail_cmp(a.after("."), b.after(".")),
+            },
+        },
+    }
+}
+
+fn prerelease_id_cmp(a: String, b: String) -> Ordering {
+    let a_numeric = a.is_numeric();
+    let b_numeric = b.is_numeric();
+    match a_numeric {
+        true => match b_numeric {
+            true => int_cmp(a.parse_int(), b.parse_int()),
+            false => Ordering::Less,
+        },
+        false => match b_numeric {
+            true => Ordering::Greater,
+            false => string_cmp(a, b),
+        },
+    }
+}
+
+fn string_cmp(a: String, b: String) -> Ordering {
+    match a < b {
+        true => Ordering::Less,
+        false => match a > b {
+            true => Ordering::Greater,
+            false => Ordering::Equal,
+        },
+    }
+}
+
+// Compare by SemVer 2.0 precedence. Build metadata is ignored.
+pub fn version_cmp(a: Version, b: Version) -> Ordering {
+    match a.major != b.major {
+        true => int_cmp(a.major, b.major),
+        false => match a.minor != b.minor {
+            true => int_cmp(a.minor, b.minor),
+            false => match a.patch != b.patch {
+                true => int_cmp(a.patch, b.patch),
+                false => prerelease_cmp(a.prerelease, b.prerelease),
+            },
+        },
+    }
+}
+
+// a <= b by SemVer 2.0 precedence.
+pub fn version_lte(a: Version, b: Version) -> Bool {
+    match version_cmp(a, b) {
+        Ordering::Less => true,
+        Ordering::Equal => true,
+        Ordering::Greater => false,
     }
 }
