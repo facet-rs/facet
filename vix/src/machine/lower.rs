@@ -22,6 +22,7 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 use sha2::{Digest, Sha256};
+use taxon::Primitive;
 use weavy::mem::Layout;
 use weavy::mem::declared as declared_mem;
 use weavy::task::{Fn as TaskFn, FnId, Op, Program};
@@ -2533,14 +2534,17 @@ fn word_descriptor_for_schema_with_name(
     schema: &str,
     index: usize,
 ) -> VixDescriptor {
-    match schema {
-        "Int" => declared_mem::i64_(schemas.legacy_ref(&format!("Int{index}"))),
-        "Float" => declared_mem::f64_(schemas.legacy_ref(&format!("Float{index}"))),
-        "Bool" => declared_mem::i64_(schemas.legacy_ref(&format!("Bool{index}"))),
-        other => declared_mem::handle(
-            schemas.legacy_ref(&format!("{other}Ref{index}")),
-            schemas.legacy_ref(other),
-        ),
+    if schemas.is_primitive(schema, Primitive::I64) {
+        declared_mem::i64_(schemas.legacy_ref(schema))
+    } else if schemas.is_primitive(schema, Primitive::F64) {
+        declared_mem::f64_(schemas.legacy_ref(schema))
+    } else if schemas.is_primitive(schema, Primitive::Bool) {
+        declared_mem::i64_(schemas.legacy_ref(schema))
+    } else {
+        declared_mem::handle(
+            schemas.legacy_ref(&format!("{schema}Ref{index}")),
+            schemas.legacy_ref(schema),
+        )
     }
 }
 
@@ -3138,7 +3142,11 @@ impl<'a> FnLowerer<'a> {
     ) -> Result<ValueSlot, String> {
         match e {
             ast::Expr::Number(n) => {
-                if n.value.contains('.') || expected == Some("Float") {
+                if n.value.contains('.')
+                    || expected.is_some_and(|schema| {
+                        self.tables.schemas.is_primitive(schema, Primitive::F64)
+                    })
+                {
                     let value: f64 = n
                         .value
                         .parse()
@@ -3285,32 +3293,52 @@ impl<'a> FnLowerer<'a> {
                     }
                 }
                 if b.op == "+"
-                    && matches!(a.schema.as_str(), "String" | "Sealed")
-                    && matches!(r.schema.as_str(), "String" | "Sealed")
+                    && self.schema_is_stringish(&a.schema)
+                    && self.schema_is_stringish(&r.schema)
                 {
                     a = self.coerce_to_schema(a, "String")?;
                     r = self.coerce_to_schema(r, "String")?;
                     return self.string_concat(&a, &r);
                 }
                 if let Some(schema) =
-                    strict_binary_operand_schema(&b.op, &a.schema, &r.schema).map(str::to_string)
+                    strict_binary_operand_schema(&self.tables.schemas, &b.op, &a.schema, &r.schema)
+                        .map(str::to_string)
                 {
                     a = self.coerce_to_schema(a, &schema)?;
                     r = self.coerce_to_schema(r, &schema)?;
                 }
-                if b.op == "+" && a.schema == "String" && r.schema == "String" {
+                if b.op == "+"
+                    && self
+                        .tables
+                        .schemas
+                        .is_primitive(&a.schema, Primitive::String)
+                    && self
+                        .tables
+                        .schemas
+                        .is_primitive(&r.schema, Primitive::String)
+                {
                     return self.string_concat(&a, &r);
                 }
                 if a.schema == r.schema
-                    && matches!(a.schema.as_str(), "String" | "Version")
+                    && (self
+                        .tables
+                        .schemas
+                        .is_primitive(&a.schema, Primitive::String)
+                        || self.tables.schemas.is_external(&a.schema, "Version"))
                     && matches!(b.op.as_str(), "==" | "!=" | "<" | "<=" | ">" | ">=")
                 {
                     let schema = a.schema.clone();
                     return self.compare_value(b.op.as_str(), &a, &r, &schema);
                 }
                 let dst = self.alloc();
-                let (op, schema) = match (b.op.as_str(), a.schema.as_str(), r.schema.as_str()) {
-                    ("+", "Int", "Int") => (
+                let a_int = self.tables.schemas.is_primitive(&a.schema, Primitive::I64);
+                let r_int = self.tables.schemas.is_primitive(&r.schema, Primitive::I64);
+                let a_float = self.tables.schemas.is_primitive(&a.schema, Primitive::F64);
+                let r_float = self.tables.schemas.is_primitive(&r.schema, Primitive::F64);
+                let a_bool = self.tables.schemas.is_primitive(&a.schema, Primitive::Bool);
+                let r_bool = self.tables.schemas.is_primitive(&r.schema, Primitive::Bool);
+                let (op, schema) = match b.op.as_str() {
+                    "+" if a_int && r_int => (
                         Op::AddI64 {
                             dst,
                             a: a.slot,
@@ -3318,7 +3346,7 @@ impl<'a> FnLowerer<'a> {
                         },
                         "Int",
                     ),
-                    ("-", "Int", "Int") => (
+                    "-" if a_int && r_int => (
                         Op::SubI64 {
                             dst,
                             a: a.slot,
@@ -3326,7 +3354,7 @@ impl<'a> FnLowerer<'a> {
                         },
                         "Int",
                     ),
-                    ("*", "Int", "Int") => (
+                    "*" if a_int && r_int => (
                         Op::MulI64 {
                             dst,
                             a: a.slot,
@@ -3334,7 +3362,7 @@ impl<'a> FnLowerer<'a> {
                         },
                         "Int",
                     ),
-                    ("+", "Float", "Float") => (
+                    "+" if a_float && r_float => (
                         Op::AddF64 {
                             dst,
                             a: a.slot,
@@ -3342,7 +3370,7 @@ impl<'a> FnLowerer<'a> {
                         },
                         "Float",
                     ),
-                    ("*", "Float", "Float") => (
+                    "*" if a_float && r_float => (
                         Op::MulF64 {
                             dst,
                             a: a.slot,
@@ -3350,7 +3378,7 @@ impl<'a> FnLowerer<'a> {
                         },
                         "Float",
                     ),
-                    ("==", _, _) => {
+                    "==" => {
                         if a.schema != r.schema {
                             return Err(format!(
                                 "cannot compare {} to {} in the machine slice-2 subset",
@@ -3366,7 +3394,7 @@ impl<'a> FnLowerer<'a> {
                             "Bool",
                         )
                     }
-                    ("!=", _, _) => {
+                    "!=" => {
                         if a.schema != r.schema {
                             return Err(format!(
                                 "cannot compare {} to {} in the machine B4 subset",
@@ -3382,7 +3410,7 @@ impl<'a> FnLowerer<'a> {
                             "Bool",
                         )
                     }
-                    ("<", "Int", "Int") => (
+                    "<" if a_int && r_int => (
                         Op::LtI64 {
                             dst,
                             a: a.slot,
@@ -3390,7 +3418,7 @@ impl<'a> FnLowerer<'a> {
                         },
                         "Bool",
                     ),
-                    ("<=", "Int", "Int") => (
+                    "<=" if a_int && r_int => (
                         Op::LeI64 {
                             dst,
                             a: a.slot,
@@ -3398,7 +3426,7 @@ impl<'a> FnLowerer<'a> {
                         },
                         "Bool",
                     ),
-                    (">", "Int", "Int") => (
+                    ">" if a_int && r_int => (
                         Op::GtI64 {
                             dst,
                             a: a.slot,
@@ -3406,7 +3434,7 @@ impl<'a> FnLowerer<'a> {
                         },
                         "Bool",
                     ),
-                    (">=", "Int", "Int") => (
+                    ">=" if a_int && r_int => (
                         Op::GeI64 {
                             dst,
                             a: a.slot,
@@ -3414,7 +3442,7 @@ impl<'a> FnLowerer<'a> {
                         },
                         "Bool",
                     ),
-                    ("&&", "Bool", "Bool") => (
+                    "&&" if a_bool && r_bool => (
                         Op::MulI64 {
                             dst,
                             a: a.slot,
@@ -3422,7 +3450,7 @@ impl<'a> FnLowerer<'a> {
                         },
                         "Bool",
                     ),
-                    (other, _, _) => {
+                    other => {
                         return Err(format!(
                             "operator {other:?} on {} and {} is outside the machine slice-3 subset",
                             a.schema, r.schema
@@ -3556,10 +3584,19 @@ impl<'a> FnLowerer<'a> {
     }
 
     fn schema_can_be_molten(&self, schema: &str) -> bool {
-        schema == "Array"
-            || schema.starts_with("Map<")
-            || self.tables.structs.contains_key(schema)
-            || self.tables.enums.contains_key(schema)
+        self.tables.schemas.is_list(schema)
+            || self.tables.schemas.is_map(schema)
+            || self.tables.schemas.is_struct_or_enum(schema)
+    }
+
+    fn schema_is_stringish(&self, schema: &str) -> bool {
+        self.tables.schemas.is_primitive(schema, Primitive::String)
+            || self.tables.schemas.is_external(schema, "Sealed")
+    }
+
+    fn value_schema_is_realized_named(&self, schema: &str, name: &str) -> bool {
+        realized_value_schema(schema)
+            .is_some_and(|inner| self.tables.schemas.is_named_schema(inner, name))
     }
 
     /// Match on scalars: literal arms compile to EqI64 + JumpIfZero
@@ -3669,13 +3706,22 @@ impl<'a> FnLowerer<'a> {
                     let (enum_name, variant_index, _) = self.resolve_scoped_variant(path)?;
                     self.variant_match_test(&scrut, &enum_name, variant_index, &mut skip_patches)?;
                 }
-                ast::Pattern::Variant(p) if scrut.schema.starts_with("Option<") => {
+                ast::Pattern::Variant(p)
+                    if self
+                        .tables
+                        .schemas
+                        .option_value_schema_name(&scrut.schema)
+                        .is_some() =>
+                {
                     let segments = path_ref_segments(&p.path)?;
                     let variant = segments.last().map(String::as_str).unwrap_or_default();
                     if variant != "Some" {
                         return Err(format!("Option pattern `{variant}` is not Some or None"));
                     }
-                    let value_schema = option_value_schema(&scrut.schema)
+                    let value_schema = self
+                        .tables
+                        .schemas
+                        .option_value_schema_name(&scrut.schema)
                         .ok_or_else(|| format!("scrutinee {} is not an Option", scrut.schema))?
                         .to_string();
                     self.option_tag_test(&scrut, 1, &mut skip_patches);
@@ -3735,7 +3781,12 @@ impl<'a> FnLowerer<'a> {
                     }
                 }
                 ast::Pattern::Identifier(name)
-                    if scrut.schema.starts_with("Option<") && name.value == "None" =>
+                    if self
+                        .tables
+                        .schemas
+                        .option_value_schema_name(&scrut.schema)
+                        .is_some()
+                        && name.value == "None" =>
                 {
                     self.option_tag_test(&scrut, 0, &mut skip_patches);
                 }
@@ -3768,7 +3819,10 @@ impl<'a> FnLowerer<'a> {
                     value: self.expect_schema(&guard, "Bool")?,
                     target: 0,
                 });
-            } else if scrut.schema == "Bool"
+            } else if self
+                .tables
+                .schemas
+                .is_primitive(&scrut.schema, Primitive::Bool)
                 && let Some(value) = bool_pattern
             {
                 bool_covered.insert(value);
@@ -3832,7 +3886,14 @@ impl<'a> FnLowerer<'a> {
             }
             self.slots = saved_slots;
         }
-        if matches!(scrut.schema.as_str(), "Int" | "String")
+        if (self
+            .tables
+            .schemas
+            .is_primitive(&scrut.schema, Primitive::I64)
+            || self
+                .tables
+                .schemas
+                .is_primitive(&scrut.schema, Primitive::String))
             && !matches!(
                 m.arms.last().map(|a| &a.pattern),
                 Some(ast::Pattern::Wildcard(_) | ast::Pattern::Identifier(_))
@@ -3844,7 +3905,10 @@ impl<'a> FnLowerer<'a> {
                     .into(),
             );
         }
-        if scrut.schema == "Bool"
+        if self
+            .tables
+            .schemas
+            .is_primitive(&scrut.schema, Primitive::Bool)
             && !matches!(
                 m.arms.last().map(|a| &a.pattern),
                 Some(ast::Pattern::Wildcard(_) | ast::Pattern::Identifier(_))
@@ -4361,12 +4425,12 @@ impl<'a> FnLowerer<'a> {
         expected: Option<&str>,
     ) -> Result<ValueSlot, String> {
         let mut receiver = self.method_receiver(call)?;
-        if receiver.schema == "Realized<Doc>" {
+        if self.value_schema_is_realized_named(&receiver.schema, "Doc") {
             receiver = self.coerce_to_schema(receiver, "Doc")?;
         }
         match call.name.value.as_str() {
             "with_ext" => {
-                if receiver.schema != "Path" {
+                if !self.tables.schemas.is_external(&receiver.schema, "Path") {
                     return Err(format!("with_ext called on {}", receiver.schema));
                 }
                 let [arg] = call.args.args.as_slice() else {
@@ -4379,14 +4443,15 @@ impl<'a> FnLowerer<'a> {
                 if !call.args.args.is_empty() {
                     return Err("len takes no arguments".into());
                 }
-                let receiver = match receiver.schema.as_str() {
-                    "Array" => receiver,
-                    "Doc" => self.coerce_doc_to_schema(receiver, "Array")?,
-                    "Realized<Doc>" => {
-                        let doc = self.coerce_to_schema(receiver, "Doc")?;
-                        self.coerce_doc_to_schema(doc, "Array")?
-                    }
-                    _ => return Err(format!("len called on {}", receiver.schema)),
+                let receiver = if self.tables.schemas.is_list(&receiver.schema) {
+                    receiver
+                } else if self.tables.schemas.is_named_schema(&receiver.schema, "Doc") {
+                    self.coerce_doc_to_schema(receiver, "Array")?
+                } else if self.value_schema_is_realized_named(&receiver.schema, "Doc") {
+                    let doc = self.coerce_to_schema(receiver, "Doc")?;
+                    self.coerce_doc_to_schema(doc, "Array")?
+                } else {
+                    return Err(format!("len called on {}", receiver.schema));
                 };
                 self.array_len(&receiver)
             }
@@ -4400,14 +4465,15 @@ impl<'a> FnLowerer<'a> {
                 self.array_collect(&receiver, expected)
             }
             "join" => {
-                let receiver = match receiver.schema.as_str() {
-                    "Array" => receiver,
-                    "Doc" => self.coerce_doc_to_schema(receiver, "Array")?,
-                    "Realized<Doc>" => {
-                        let doc = self.coerce_to_schema(receiver, "Doc")?;
-                        self.coerce_doc_to_schema(doc, "Array")?
-                    }
-                    _ => return Err(format!("join called on {}", receiver.schema)),
+                let receiver = if self.tables.schemas.is_list(&receiver.schema) {
+                    receiver
+                } else if self.tables.schemas.is_named_schema(&receiver.schema, "Doc") {
+                    self.coerce_doc_to_schema(receiver, "Array")?
+                } else if self.value_schema_is_realized_named(&receiver.schema, "Doc") {
+                    let doc = self.coerce_to_schema(receiver, "Doc")?;
+                    self.coerce_doc_to_schema(doc, "Array")?
+                } else {
+                    return Err(format!("join called on {}", receiver.schema));
                 };
                 let [arg] = call.args.args.as_slice() else {
                     return Err("Array.join takes one separator".into());
@@ -4416,7 +4482,7 @@ impl<'a> FnLowerer<'a> {
                 self.array_join(&receiver, &separator)
             }
             "push" => {
-                if receiver.schema != "Array" {
+                if !self.tables.schemas.is_list(&receiver.schema) {
                     return Err(format!("push called on {}", receiver.schema));
                 }
                 let [arg] = call.args.args.as_slice() else {
@@ -4426,7 +4492,7 @@ impl<'a> FnLowerer<'a> {
                 self.array_push(&receiver, &value)
             }
             "pop" => {
-                if receiver.schema != "Array" {
+                if !self.tables.schemas.is_list(&receiver.schema) {
                     return Err(format!("pop called on {}", receiver.schema));
                 }
                 if !call.args.args.is_empty() {
@@ -4435,7 +4501,7 @@ impl<'a> FnLowerer<'a> {
                 self.array_pop(&receiver)
             }
             "set" => {
-                if receiver.schema != "Array" {
+                if !self.tables.schemas.is_list(&receiver.schema) {
                     return Err(format!("set called on {}", receiver.schema));
                 }
                 let [index_arg, value_arg] = call.args.args.as_slice() else {
@@ -4446,37 +4512,41 @@ impl<'a> FnLowerer<'a> {
                 self.array_set(&receiver, &index, &value)
             }
             "insert" => {
-                let Some((key_schema, value_schema)) = map_schemas(&receiver.schema) else {
+                let Some((key_schema, value_schema)) =
+                    self.tables.schemas.map_schema_names(&receiver.schema)
+                else {
                     return Err(format!("insert called on {}", receiver.schema));
                 };
                 let logical_value_schema =
-                    realized_value_schema(value_schema).unwrap_or(value_schema);
+                    realized_value_schema(&value_schema).unwrap_or(&value_schema);
                 if call.args.args.len() != 2 {
                     return Err("Map.insert takes key and value".into());
                 }
-                let key = self.method_arg(&call.args.args[0], Some(key_schema))?;
+                let key = self.method_arg(&call.args.args[0], Some(&key_schema))?;
                 let value = self.map_insert_value(&call.args.args[1], logical_value_schema)?;
-                self.map_insert(&receiver, key, value, key_schema, logical_value_schema)
+                self.map_insert(&receiver, key, value, &key_schema, logical_value_schema)
             }
             "get" => {
-                if receiver.schema == "Doc" {
+                if self.tables.schemas.is_named_schema(&receiver.schema, "Doc") {
                     if call.args.args.len() != 1 {
                         return Err("Doc.get takes one key".into());
                     }
                     let key = self.method_arg(&call.args.args[0], Some("String"))?;
                     return self.doc_get(&receiver, &key);
                 }
-                let Some((key_schema, value_schema)) = map_schemas(&receiver.schema) else {
+                let Some((key_schema, value_schema)) =
+                    self.tables.schemas.map_schema_names(&receiver.schema)
+                else {
                     return Err(format!("get called on {}", receiver.schema));
                 };
                 let logical_value_schema =
-                    realized_value_schema(value_schema).unwrap_or(value_schema);
+                    realized_value_schema(&value_schema).unwrap_or(&value_schema);
                 let result_value_schema = realized_schema(logical_value_schema);
                 if call.args.args.len() != 1 {
                     return Err("Map.get takes one key".into());
                 }
-                let key = self.method_arg(&call.args.args[0], Some(key_schema))?;
-                self.map_get(&receiver, key, key_schema, &result_value_schema)
+                let key = self.method_arg(&call.args.args[0], Some(&key_schema))?;
+                self.map_get(&receiver, key, &key_schema, &result_value_schema)
             }
             "package" => {
                 if call.args.args.len() != 1 {
@@ -4495,7 +4565,11 @@ impl<'a> FnLowerer<'a> {
                 self.ast_fn(&receiver, &name)
             }
             "union" | "intersect" => {
-                if receiver.schema != "VersionSet" {
+                if !self
+                    .tables
+                    .schemas
+                    .is_external(&receiver.schema, "VersionSet")
+                {
                     return Err(format!("{} called on {}", call.name.value, receiver.schema));
                 }
                 let [arg] = call.args.args.as_slice() else {
@@ -4509,7 +4583,11 @@ impl<'a> FnLowerer<'a> {
                 self.version_set_op(op, &receiver, Some(&right), "VersionSet")
             }
             "complement" => {
-                if receiver.schema != "VersionSet" {
+                if !self
+                    .tables
+                    .schemas
+                    .is_external(&receiver.schema, "VersionSet")
+                {
                     return Err(format!("complement called on {}", receiver.schema));
                 }
                 if !call.args.args.is_empty() {
@@ -4518,7 +4596,11 @@ impl<'a> FnLowerer<'a> {
                 self.version_set_op(2, &receiver, None, "VersionSet")
             }
             "subset" => {
-                if receiver.schema != "VersionSet" {
+                if !self
+                    .tables
+                    .schemas
+                    .is_external(&receiver.schema, "VersionSet")
+                {
                     return Err(format!("subset called on {}", receiver.schema));
                 }
                 let [arg] = call.args.args.as_slice() else {
@@ -4527,7 +4609,12 @@ impl<'a> FnLowerer<'a> {
                 let right = self.method_arg(arg, Some("VersionSet"))?;
                 self.version_set_op(3, &receiver, Some(&right), "Bool")
             }
-            "contains" if receiver.schema == "String" => {
+            "contains"
+                if self
+                    .tables
+                    .schemas
+                    .is_primitive(&receiver.schema, Primitive::String) =>
+            {
                 let [arg] = call.args.args.as_slice() else {
                     return Err("String.contains takes one needle".into());
                 };
@@ -4535,7 +4622,11 @@ impl<'a> FnLowerer<'a> {
                 Ok(self.string_query(&receiver, Some(&needle), STRING_CONTAINS_HOST))
             }
             "contains" => {
-                if receiver.schema != "VersionSet" {
+                if !self
+                    .tables
+                    .schemas
+                    .is_external(&receiver.schema, "VersionSet")
+                {
                     return Err(format!("contains called on {}", receiver.schema));
                 }
                 let [arg] = call.args.args.as_slice() else {
@@ -4548,13 +4639,21 @@ impl<'a> FnLowerer<'a> {
                 if !call.args.args.is_empty() {
                     return Err("Option.unwrap takes no arguments".into());
                 }
-                let Some(value_schema) = option_value_schema(&receiver.schema) else {
+                let Some(value_schema) = self
+                    .tables
+                    .schemas
+                    .option_value_schema_name(&receiver.schema)
+                else {
                     return Err(format!("unwrap called on {}", receiver.schema));
                 };
-                Ok(self.option_unwrap(&receiver, value_schema))
+                Ok(self.option_unwrap(&receiver, &value_schema))
             }
             "before" | "after" | "strip_prefix" => {
-                if receiver.schema != "String" {
+                if !self
+                    .tables
+                    .schemas
+                    .is_primitive(&receiver.schema, Primitive::String)
+                {
                     return Err(format!("{} called on {}", call.name.value, receiver.schema));
                 }
                 let [arg] = call.args.args.as_slice() else {
@@ -4569,7 +4668,11 @@ impl<'a> FnLowerer<'a> {
                 Ok(self.string_split(&receiver, &delim, selector))
             }
             "parse_int" => {
-                if receiver.schema != "String" {
+                if !self
+                    .tables
+                    .schemas
+                    .is_primitive(&receiver.schema, Primitive::String)
+                {
                     return Err(format!("parse_int called on {}", receiver.schema));
                 }
                 if !call.args.args.is_empty() {
@@ -4578,7 +4681,11 @@ impl<'a> FnLowerer<'a> {
                 Ok(self.string_parse_int(&receiver))
             }
             "is_numeric" => {
-                if receiver.schema != "String" {
+                if !self
+                    .tables
+                    .schemas
+                    .is_primitive(&receiver.schema, Primitive::String)
+                {
                     return Err(format!("is_numeric called on {}", receiver.schema));
                 }
                 if !call.args.args.is_empty() {
@@ -4629,11 +4736,14 @@ impl<'a> FnLowerer<'a> {
         expected: Option<&str>,
     ) -> Result<ValueSlot, String> {
         let schema = expected
-            .filter(|schema| schema.starts_with("Map"))
+            .filter(|schema| self.tables.schemas.is_map(schema))
             .unwrap_or("Map");
         let mut value = self.map_empty(schema)?;
-        let (key_schema, value_schema) = map_schemas(schema)
-            .map(|(key, value)| (Some(key.to_string()), Some(value.to_string())))
+        let (key_schema, value_schema) = self
+            .tables
+            .schemas
+            .map_schema_names(schema)
+            .map(|(key, value)| (Some(key), Some(value)))
             .unwrap_or((None, None));
         for entry in &map.entries {
             let key = self.expr_expected(&entry.key, key_schema.as_deref())?;
@@ -4700,17 +4810,27 @@ impl<'a> FnLowerer<'a> {
                 Ok(self.store_read(&receiver, field_index, schema))
             }
             ast::Member::Identifier(name) => {
-                if receiver.schema == "Realized<Doc>" {
+                if self.value_schema_is_realized_named(&receiver.schema, "Doc") {
                     let receiver = self.coerce_to_schema(receiver, "Doc")?;
                     return self.doc_field_access(receiver, name.value.as_str(), expected);
                 }
-                if receiver.schema == "Doc" {
+                if self.tables.schemas.is_named_schema(&receiver.schema, "Doc") {
                     return self.doc_field_access(receiver, name.value.as_str(), expected);
                 }
-                if receiver.schema == "Target" && name.value == "os" {
+                if self
+                    .tables
+                    .schemas
+                    .is_named_schema(&receiver.schema, "Target")
+                    && name.value == "os"
+                {
                     return Ok(self.store_read(&receiver, 0, "Os".into()));
                 }
-                if receiver.schema == "Target" && name.value == "arch" {
+                if self
+                    .tables
+                    .schemas
+                    .is_named_schema(&receiver.schema, "Target")
+                    && name.value == "arch"
+                {
                     return Ok(self.store_read(&receiver, 1, "Arch".into()));
                 }
                 let info = self
@@ -4758,7 +4878,9 @@ impl<'a> FnLowerer<'a> {
         let Some(expected) = expected else {
             return Ok(value);
         };
-        if expected == "Realized<Doc>" {
+        if realized_value_schema(expected)
+            .is_some_and(|schema| self.tables.schemas.is_named_schema(schema, "Doc"))
+        {
             return Ok(value);
         }
         let doc = self.coerce_to_schema(value, "Doc")?;
@@ -5059,32 +5181,59 @@ impl<'a> FnLowerer<'a> {
         if value.schema == expected {
             return Ok(value);
         }
-        if value.schema == pending_schema(expected) {
+        if pending_value_schema(&value.schema) == Some(expected) {
             return self.coerce_pending_to_schema(value, expected);
         }
-        if value.schema == realized_schema(expected) {
+        if realized_value_schema(&value.schema) == Some(expected) {
             return self.coerce_realized_to_schema(value, expected);
         }
-        if value.schema == "Realized<Sealed>" && expected == "String" {
+        if self.value_schema_is_realized_named(&value.schema, "Sealed")
+            && self
+                .tables
+                .schemas
+                .is_primitive(expected, Primitive::String)
+        {
             let sealed = self.coerce_realized_to_schema(value, "Sealed")?;
             return self.sealed_to_string(&sealed);
         }
-        if value.schema == "Realized<Doc>" && expected != "Realized<Doc>" {
+        if self.value_schema_is_realized_named(&value.schema, "Doc")
+            && !realized_value_schema(expected)
+                .is_some_and(|schema| self.tables.schemas.is_named_schema(schema, "Doc"))
+        {
             let doc = self.coerce_realized_to_schema(value, "Doc")?;
             return self.coerce_to_schema(doc, expected);
         }
-        if value.schema == "Sealed" && expected == "String" {
+        if self.tables.schemas.is_external(&value.schema, "Sealed")
+            && self
+                .tables
+                .schemas
+                .is_primitive(expected, Primitive::String)
+        {
             return self.sealed_to_string(&value);
         }
-        if value.schema == "Doc"
-            && matches!(
-                expected,
-                "String" | "Int" | "Bool" | "Float" | "Blob" | "Array" | "Map<String,Doc>"
-            )
+        if self.tables.schemas.is_named_schema(&value.schema, "Doc")
+            && self.schema_accepts_doc_coercion(expected)
         {
             return self.coerce_doc_to_schema(value, expected);
         }
         Ok(value)
+    }
+
+    fn schema_accepts_doc_coercion(&self, schema: &str) -> bool {
+        self.tables.schemas.is_primitive(schema, Primitive::String)
+            || self.tables.schemas.is_primitive(schema, Primitive::I64)
+            || self.tables.schemas.is_primitive(schema, Primitive::Bool)
+            || self.tables.schemas.is_primitive(schema, Primitive::F64)
+            || self.tables.schemas.is_primitive(schema, Primitive::Bytes)
+            || self.tables.schemas.is_list(schema)
+            || self.tables.schemas.map_schema_names(schema).is_some_and(
+                |(key_schema, value_schema)| {
+                    self.tables
+                        .schemas
+                        .is_primitive(&key_schema, Primitive::String)
+                        && self.tables.schemas.is_named_schema(&value_schema, "Doc")
+                },
+            )
     }
 
     fn coerce_doc_to_schema(
@@ -5254,21 +5403,28 @@ impl<'a> FnLowerer<'a> {
     }
 
     fn template_binding(&mut self, bindings: &ValueSlot, name: &str) -> Result<ValueSlot, String> {
-        if bindings.schema == "Realized<Doc>" {
+        if self.value_schema_is_realized_named(&bindings.schema, "Doc") {
             let doc = self.coerce_to_schema(bindings.clone(), "Doc")?;
             return self.doc_field_access(doc, name, Some("String"));
         }
-        if bindings.schema == "Doc" {
+        if self.tables.schemas.is_named_schema(&bindings.schema, "Doc") {
             return self.doc_field_access(bindings.clone(), name, Some("String"));
         }
-        if let Some((key_schema, value_schema)) = map_schemas(&bindings.schema) {
-            if key_schema != "String" {
+        if let Some((key_schema, value_schema)) =
+            self.tables.schemas.map_schema_names(&bindings.schema)
+        {
+            if !self
+                .tables
+                .schemas
+                .is_primitive(&key_schema, Primitive::String)
+            {
                 return Err(format!(
                     "template bindings map keys must be String, got {key_schema}"
                 ));
             }
             let key = self.string_literal(name)?;
-            let logical_value_schema = realized_value_schema(value_schema).unwrap_or(value_schema);
+            let logical_value_schema =
+                realized_value_schema(&value_schema).unwrap_or(&value_schema);
             let result_value_schema = realized_schema(logical_value_schema);
             let option = self.map_get(bindings, key, "String", &result_value_schema)?;
             return Ok(self.option_unwrap(&option, &result_value_schema));
@@ -6326,7 +6482,7 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: dst,
             schema: expected
-                .filter(|schema| *schema == "Array")
+                .filter(|schema| self.tables.schemas.is_list(schema))
                 .unwrap_or("Tree")
                 .into(),
             realization: None,
@@ -6805,7 +6961,16 @@ impl<'a> FnLowerer<'a> {
             return Err("crate_archive takes one Blob, String, or single-file Tree".into());
         };
         let input = self.expr(arg)?;
-        if !matches!(input.schema.as_str(), "Blob" | "String" | "Tree") {
+        if !(self
+            .tables
+            .schemas
+            .is_primitive(&input.schema, Primitive::Bytes)
+            || self
+                .tables
+                .schemas
+                .is_primitive(&input.schema, Primitive::String)
+            || self.tables.schemas.is_external(&input.schema, "Tree"))
+        {
             return Err(format!("crate_archive called on {}", input.schema));
         }
         let input_slot = self.next_input_slot;
@@ -6847,13 +7012,22 @@ impl<'a> FnLowerer<'a> {
             return Err("elf takes one Blob, String, or single-blob Tree".into());
         };
         let mut input = self.expr(arg)?;
-        if input.schema == "Realized<Doc>" {
+        if self.value_schema_is_realized_named(&input.schema, "Doc") {
             input = self.coerce_to_schema(input, "Doc")?;
         }
-        if input.schema == "Doc" {
+        if self.tables.schemas.is_named_schema(&input.schema, "Doc") {
             input = self.coerce_to_schema(input, "Blob")?;
         }
-        if !matches!(input.schema.as_str(), "Blob" | "String" | "Tree") {
+        if !(self
+            .tables
+            .schemas
+            .is_primitive(&input.schema, Primitive::Bytes)
+            || self
+                .tables
+                .schemas
+                .is_primitive(&input.schema, Primitive::String)
+            || self.tables.schemas.is_external(&input.schema, "Tree"))
+        {
             return Err(format!("elf called on {}", input.schema));
         }
         let dst = self.alloc();
@@ -7469,19 +7643,41 @@ fn value_schema_inside_barrier(schema: &str) -> Option<&str> {
     pending_value_schema(schema).or_else(|| realized_value_schema(schema))
 }
 
-fn strict_binary_operand_schema<'a>(op: &str, left: &'a str, right: &'a str) -> Option<&'a str> {
+fn strict_binary_operand_schema<'a>(
+    schemas: &SchemaTables,
+    op: &str,
+    left: &'a str,
+    right: &'a str,
+) -> Option<&'a str> {
     let left = value_schema_inside_barrier(left).unwrap_or(left);
     let right = value_schema_inside_barrier(right).unwrap_or(right);
     if left != right {
         return None;
     }
-    match (op, left) {
-        ("+" | "-" | "*", "Int")
-        | ("+" | "*", "Float")
-        | ("+", "String")
-        | ("==" | "!=", "Int" | "Float" | "String" | "Path" | "Bool" | "Version" | "VersionSet")
-        | ("<" | "<=" | ">" | ">=", "Int" | "String" | "Version")
-        | ("&&", "Bool") => Some(left),
+    let is_int = schemas.is_primitive(left, Primitive::I64);
+    let is_float = schemas.is_primitive(left, Primitive::F64);
+    let is_string = schemas.is_primitive(left, Primitive::String);
+    let is_bool = schemas.is_primitive(left, Primitive::Bool);
+    let is_path = schemas.is_external(left, "Path");
+    let is_version = schemas.is_external(left, "Version");
+    let is_version_set = schemas.is_external(left, "VersionSet");
+    match op {
+        "+" | "-" | "*" if is_int => Some(left),
+        "+" | "*" if is_float => Some(left),
+        "+" if is_string => Some(left),
+        "==" | "!="
+            if is_int
+                || is_float
+                || is_string
+                || is_path
+                || is_bool
+                || is_version
+                || is_version_set =>
+        {
+            Some(left)
+        }
+        "<" | "<=" | ">" | ">=" if is_int || is_string || is_version => Some(left),
+        "&&" if is_bool => Some(left),
         _ => None,
     }
 }

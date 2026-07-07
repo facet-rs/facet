@@ -206,6 +206,93 @@ impl SchemaTables {
             }
         }
     }
+
+    pub(crate) fn kind_for_ref(&self, schema_ref: &SchemaRef) -> Option<&Kind> {
+        let SchemaRef::Concrete { id, .. } = schema_ref else {
+            return None;
+        };
+        self.schema(*id).map(|schema| &schema.kind)
+    }
+
+    pub(crate) fn kind_for_name(&self, name: &str) -> Option<&Kind> {
+        self.kind_for_ref(&self.legacy_ref(name))
+    }
+
+    pub(crate) fn is_primitive(&self, name: &str, primitive: Primitive) -> bool {
+        matches!(
+            self.kind_for_name(name),
+            Some(Kind::Primitive(candidate)) if *candidate == primitive
+        )
+    }
+
+    pub(crate) fn is_list(&self, name: &str) -> bool {
+        matches!(self.kind_for_name(name), Some(Kind::List { .. }))
+    }
+
+    pub(crate) fn is_map(&self, name: &str) -> bool {
+        matches!(self.kind_for_name(name), Some(Kind::Map { .. }))
+    }
+
+    pub(crate) fn is_option(&self, name: &str) -> bool {
+        matches!(self.kind_for_name(name), Some(Kind::Option { .. }))
+    }
+
+    pub(crate) fn is_struct_or_enum(&self, name: &str) -> bool {
+        matches!(
+            self.kind_for_name(name),
+            Some(Kind::Struct { .. } | Kind::Enum { .. })
+        )
+    }
+
+    pub(crate) fn is_external(&self, name: &str, external_kind: &str) -> bool {
+        let namespaced = format!("vix.{external_kind}");
+        matches!(
+            self.kind_for_name(name),
+            Some(Kind::External { kind, .. }) if kind == external_kind || kind == &namespaced
+        )
+    }
+
+    pub(crate) fn is_named_schema(&self, name: &str, expected: &str) -> bool {
+        match self.kind_for_name(name) {
+            Some(Kind::Struct { name, .. } | Kind::Enum { name, .. }) => name == expected,
+            Some(Kind::External { kind, .. }) => {
+                let namespaced = format!("vix.{expected}");
+                kind == expected || kind == &namespaced
+            }
+            _ => self
+                .ref_for_name(expected)
+                .is_some_and(|expected_ref| *expected_ref == self.legacy_ref(name)),
+        }
+    }
+
+    pub(crate) fn generic_arg_names(&self, name: &str) -> Option<Vec<String>> {
+        match self.legacy_ref(name) {
+            SchemaRef::Concrete { args, .. } => Some(
+                args.iter()
+                    .map(|arg| self.display_ref(arg))
+                    .collect::<Vec<_>>(),
+            ),
+            SchemaRef::Var { .. } => None,
+        }
+    }
+
+    pub(crate) fn map_schema_names(&self, name: &str) -> Option<(String, String)> {
+        if !self.is_map(name) {
+            return None;
+        }
+        let args = self.generic_arg_names(name)?;
+        let [key, value]: [String; 2] = args.try_into().ok()?;
+        Some((key, value))
+    }
+
+    pub(crate) fn option_value_schema_name(&self, name: &str) -> Option<String> {
+        if !self.is_option(name) {
+            return None;
+        }
+        let args = self.generic_arg_names(name)?;
+        let [value]: [String; 1] = args.try_into().ok()?;
+        Some(value)
+    }
 }
 
 struct PendingSchema {

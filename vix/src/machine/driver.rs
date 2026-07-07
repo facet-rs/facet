@@ -37,6 +37,7 @@ use std::sync::Arc;
 
 use facet::Facet;
 use sha2::{Digest, Sha256};
+use taxon::{Kind, Primitive};
 #[cfg(any(test, feature = "jit"))]
 use weavy::jit::task_lane::{JitProgram, JitTask};
 use weavy::mem::{Access, Tag};
@@ -1202,12 +1203,13 @@ impl ValueStore {
     fn map_pairs(
         &self,
         handle: i64,
+        schemas: &SchemaTables,
         schema_refs: &[String],
     ) -> Result<(String, Vec<MapPair>), String> {
         let entry = self
             .entry(handle)
             .ok_or_else(|| format!("store handle {handle}"))?;
-        if !entry.schema.starts_with("Map") {
+        if !schemas.is_map(&entry.schema) {
             return Err(format!("handle {handle} is `{}`, not a Map", entry.schema));
         }
         Ok((
@@ -1222,14 +1224,15 @@ impl ValueStore {
         key_schema: &str,
         key_word: i64,
         value_schema: &str,
-        _descriptors: &DescriptorMap,
+        schemas: &SchemaTables,
         schema_refs: &[String],
     ) -> Result<(i64, bool), String> {
-        let (_, pairs) = self.map_pairs(handle, schema_refs)?;
-        let key_hash = canonical_word_hash_in_store(self, key_schema, key_word);
+        let (_, pairs) = self.map_pairs(handle, schemas, schema_refs)?;
+        let key_hash = canonical_word_hash_in_store(self, schemas, key_schema, key_word);
         for pair in pairs {
             if pair.key_schema != key_schema
-                || canonical_word_hash_in_store(self, &pair.key_schema, pair.key_word) != key_hash
+                || canonical_word_hash_in_store(self, schemas, &pair.key_schema, pair.key_word)
+                    != key_hash
             {
                 continue;
             }
@@ -1238,6 +1241,7 @@ impl ValueStore {
                     &pair.value_schema,
                     pair.value_word,
                     pair.value_realization,
+                    schemas,
                     schema_refs,
                 );
             }
@@ -1249,6 +1253,7 @@ impl ValueStore {
                                 value_schema,
                                 pair.value_word,
                                 Some(Realization::Ready),
+                                schemas,
                                 schema_refs,
                             );
                         }
@@ -1257,6 +1262,7 @@ impl ValueStore {
                                 value_schema,
                                 pair.value_word,
                                 Some(Realization::Pending),
+                                schemas,
                                 schema_refs,
                             );
                         }
@@ -1268,6 +1274,7 @@ impl ValueStore {
                         value_schema,
                         pair.value_word,
                         Some(Realization::Ready),
+                        schemas,
                         schema_refs,
                     );
                 }
@@ -1276,6 +1283,7 @@ impl ValueStore {
                         value_schema,
                         pair.value_word,
                         Some(Realization::Pending),
+                        schemas,
                         schema_refs,
                     );
                 }
@@ -1285,6 +1293,7 @@ impl ValueStore {
                     &pair.value_schema,
                     pair.value_word,
                     pair.value_realization,
+                    schemas,
                     schema_refs,
                 );
             }
@@ -1316,6 +1325,7 @@ impl ValueStore {
         value_schema: &str,
         value_word: i64,
         realization: Option<Realization>,
+        schemas: &SchemaTables,
         schema_refs: &[String],
     ) -> Result<(i64, bool), String> {
         let option_schema = option_schema(value_schema);
@@ -1325,8 +1335,8 @@ impl ValueStore {
             Some(Realization::Pending) => pending_schema(hash_schema),
             _ => hash_schema.to_string(),
         };
-        let value_word = canonicalize_word_for_schema(&canonical_schema, value_word);
-        let value_hash = canonical_word_hash_in_store(self, &canonical_schema, value_word);
+        let value_word = canonicalize_word_for_schema(schemas, &canonical_schema, value_word);
+        let value_hash = canonical_word_hash_in_store(self, schemas, &canonical_schema, value_word);
         let mut bytes = Vec::with_capacity(32);
         bytes.extend_from_slice(&1i64.to_le_bytes());
         bytes.extend_from_slice(&value_ref.to_le_bytes());
@@ -1347,11 +1357,16 @@ impl ValueStore {
         Ok(self.alloc_with_hash(&option_schema, bytes, content_hash))
     }
 
-    fn option_payload(&self, handle: i64, schema_refs: &[String]) -> Result<OptionPayload, String> {
+    fn option_payload(
+        &self,
+        handle: i64,
+        schemas: &SchemaTables,
+        schema_refs: &[String],
+    ) -> Result<OptionPayload, String> {
         let entry = self
             .entry(handle)
             .ok_or_else(|| format!("store handle {handle}"))?;
-        if !entry.schema.starts_with("Option<") {
+        if !schemas.is_option(&entry.schema) {
             return Err(format!(
                 "handle {handle} is `{}`, not an Option",
                 entry.schema
@@ -1379,7 +1394,11 @@ impl ValueStore {
             realized_value_schema(schema).unwrap_or(schema).to_string()
         };
         Ok(OptionPayload::Some {
-            word: canonicalize_word_for_schema(&word_schema, read_frame_word(&entry.bytes, 16)),
+            word: canonicalize_word_for_schema(
+                schemas,
+                &word_schema,
+                read_frame_word(&entry.bytes, 16),
+            ),
             realization,
         })
     }
@@ -1419,6 +1438,7 @@ impl ValueStore {
         &mut self,
         elem_schema: &str,
         words: Vec<i64>,
+        schemas: &SchemaTables,
         schema_refs: &[String],
     ) -> Result<(i64, bool), String> {
         let mut bytes = Vec::with_capacity(24 + words.len() * 8);
@@ -1441,7 +1461,12 @@ impl ValueStore {
                 .to_le_bytes(),
         );
         for word in &words {
-            hasher.update(canonical_word_hash_in_store(self, elem_schema, *word));
+            hasher.update(canonical_word_hash_in_store(
+                self,
+                schemas,
+                elem_schema,
+                *word,
+            ));
         }
         let taint = combine_taints(
             words
@@ -1674,7 +1699,7 @@ fn intern_molten_word(
                 )?
                 .0;
             }
-            store.alloc_array_words(&elem_schema, words, schema_refs)?
+            store.alloc_array_words(&elem_schema, words, schemas, schema_refs)?
         }
         MoltenValue::Interned(_) => unreachable!("handled above"),
     };
@@ -2022,7 +2047,10 @@ impl Driver {
 
     #[cfg(test)]
     pub fn map_words(&self, handle: i64) -> Result<Vec<MapWordRow>, String> {
-        let (_, pairs) = self.store.borrow().map_pairs(handle, &self.schema_refs)?;
+        let (_, pairs) = self
+            .store
+            .borrow()
+            .map_pairs(handle, &self.schemas, &self.schema_refs)?;
         Ok(pairs
             .into_iter()
             .map(|pair| {
@@ -2138,7 +2166,7 @@ impl Driver {
                 lowered.arg_schemas.len()
             ));
         }
-        let invocation = pending_invocation_for(lowered, &self.store, args);
+        let invocation = pending_invocation_for(lowered, &self.store, &self.schemas, args);
         let schema = lowered.return_schema.clone();
         let handle = self.store.borrow_mut().alloc_pending(&schema, invocation).0;
         Ok((handle, pending_schema(&schema)))
@@ -2323,6 +2351,7 @@ impl Driver {
                                 &done_entry.read_set,
                                 &self.store.borrow(),
                                 &self.descriptors,
+                                &self.schemas,
                             );
                             w.read_set.extend(&remapped);
                             runnable.push(waiter_ix);
@@ -2530,6 +2559,7 @@ impl Driver {
                                 &entry.read_set,
                                 &self.store.borrow(),
                                 &self.descriptors,
+                                &self.schemas,
                             );
                             exec.read_set.extend(&remapped);
                         } else {
@@ -2719,6 +2749,7 @@ impl Driver {
                     &exec_args,
                     &store_cell.borrow(),
                     descriptors,
+                    schemas,
                     fields,
                 );
                 let handle = molten_cell.borrow_mut().alloc(MoltenValue::Record {
@@ -2796,12 +2827,13 @@ impl Driver {
                 let value = read_frame_word(&entry.bytes, offset);
                 let field = field_descriptor(descriptor, &entry.bytes, field_index);
                 let field_schema = descriptor_word_schema(schemas, field);
-                let observed = canonical_word_hash_in_store(&store, &field_schema, value);
+                let observed = canonical_word_hash_in_store(&store, schemas, &field_schema, value);
                 let projection_context = ProjectionRecordContext {
                     arg_schemas: &exec_arg_schemas,
                     args: &exec_args,
                     store: &store,
                     descriptors,
+                    schemas,
                 };
                 record_projection_for_matching_args_static(
                     &mut projection_reads.borrow_mut(),
@@ -2883,12 +2915,13 @@ impl Driver {
                     .get(&entry.schema)
                     .unwrap_or_else(|| panic!("descriptor for schema `{}`", entry.schema));
                 let tag = read_variant_tag(&entry.bytes, descriptor);
-                let observed = canonical_scalar_hash("Int", tag as i64);
+                let observed = canonical_scalar_hash(schemas, "Int", tag as i64);
                 let projection_context = ProjectionRecordContext {
                     arg_schemas: &exec_arg_schemas,
                     args: &exec_args,
                     store: &store,
                     descriptors,
+                    schemas,
                 };
                 record_projection_for_matching_args_static(
                     &mut projection_reads.borrow_mut(),
@@ -2940,6 +2973,7 @@ impl Driver {
                         schema_refs,
                     )?;
                     let key_word = canonicalize_word_for_schema(
+                        schemas,
                         &key_schema,
                         read_frame_word(frame, store_alloc_region + 32),
                     );
@@ -2956,6 +2990,7 @@ impl Driver {
                         Realization::Pending => pending_schema(logical_value_schema),
                     };
                     let value_word = canonicalize_word_for_schema(
+                        schemas,
                         &stored_value_schema,
                         read_frame_word(frame, store_alloc_region + 48),
                     );
@@ -2990,6 +3025,7 @@ impl Driver {
                                 &exec_args,
                                 &store_cell.borrow(),
                                 descriptors,
+                                schemas,
                                 [map_handle, key_word, value_word],
                             );
                         }
@@ -3001,9 +3037,9 @@ impl Driver {
                                     MoltenValue::Map { schema, pairs } => {
                                         (schema.clone(), pairs.clone())
                                     }
-                                    MoltenValue::Interned(handle) => {
-                                        store_cell.borrow().map_pairs(*handle, schema_refs)?
-                                    }
+                                    MoltenValue::Interned(handle) => store_cell
+                                        .borrow()
+                                        .map_pairs(*handle, schemas, schema_refs)?,
                                     _ => {
                                         return Err(format!(
                                             "molten handle {map_handle} is not a Map"
@@ -3011,12 +3047,16 @@ impl Driver {
                                     }
                                 }
                             } else {
-                                store_cell.borrow().map_pairs(map_handle, schema_refs)?
+                                store_cell
+                                    .borrow()
+                                    .map_pairs(map_handle, schemas, schema_refs)?
                             }
                         }
-                        Handle::Store(store_ix) => store_cell
-                            .borrow()
-                            .map_pairs(store_ix.to_word(), schema_refs)?,
+                        Handle::Store(store_ix) => store_cell.borrow().map_pairs(
+                            store_ix.to_word(),
+                            schemas,
+                            schema_refs,
+                        )?,
                     };
                     if stored_schema != map_schema {
                         pairs = promote_map_pairs_to_realized(&stored_schema, &map_schema, pairs)?;
@@ -3070,6 +3110,7 @@ impl Driver {
                         schema_refs,
                     )?;
                     let key_word = canonicalize_word_for_schema(
+                        schemas,
                         &key_schema,
                         read_frame_word(frame, store_alloc_region + 32),
                     );
@@ -3132,7 +3173,7 @@ impl Driver {
                         &key_schema,
                         key_word,
                         &value_schema,
-                        descriptors,
+                        schemas,
                         schema_refs,
                     )?;
                     let observed = store_cell
@@ -3141,12 +3182,14 @@ impl Driver {
                         .expect("map_get allocated option")
                         .content_hash;
                     let store = store_cell.borrow();
-                    let key_hash = canonical_word_hash_in_store(&store, &key_schema, key_word);
+                    let key_hash =
+                        canonical_word_hash_in_store(&store, schemas, &key_schema, key_word);
                     let projection_context = ProjectionRecordContext {
                         arg_schemas: &exec_arg_schemas,
                         args: &exec_args,
                         store: &store,
                         descriptors,
+                        schemas,
                     };
                     record_projection_for_matching_args_static(
                         &mut projection_reads.borrow_mut(),
@@ -3212,6 +3255,7 @@ impl Driver {
                         &exec_args,
                         &store_cell.borrow(),
                         descriptors,
+                        schemas,
                         [target],
                     );
                     let target_hash = target_hash(store_cell, target)?;
@@ -3315,6 +3359,7 @@ impl Driver {
                                 &exec_args,
                                 &store_cell.borrow(),
                                 descriptors,
+                                schemas,
                                 [array_handle],
                             );
                         }
@@ -3348,6 +3393,7 @@ impl Driver {
                             let invocation = pending_invocation_for(
                                 &lowered_fns[fn_ref.index()],
                                 store_cell,
+                                schemas,
                                 args,
                             );
                             Ok::<i64, String>(
@@ -3388,6 +3434,7 @@ impl Driver {
                                 &exec_args,
                                 &store_cell.borrow(),
                                 descriptors,
+                                schemas,
                                 [array_handle],
                             );
                         }
@@ -3416,12 +3463,13 @@ impl Driver {
                                 }
                                 .expect("array collect comparison")
                             });
-                            let (handle, _) = if elem_schema == "Tree" {
+                            let (handle, _) = if schemas.is_external(&elem_schema, "Tree") {
                                 store_cell.borrow_mut().alloc_tree_merge(words)
                             } else {
                                 store_cell.borrow_mut().alloc_array_words(
                                     &elem_schema,
                                     words,
+                                    schemas,
                                     schema_refs,
                                 )?
                             };
@@ -3567,6 +3615,7 @@ impl Driver {
                         args: &exec_args,
                         store: &store,
                         descriptors,
+                        schemas,
                     };
                     record_projection_for_matching_args_static(
                         &mut projection_reads.borrow_mut(),
@@ -3589,7 +3638,8 @@ impl Driver {
                     let doc = read_frame_word(frame, primitive_region + 8);
                     let name = read_frame_word(frame, primitive_region + 16);
                     let name = store_cell.borrow().string_value(name, "String")?;
-                    let handle = doc_package(store_cell, descriptors, schema_refs, doc, &name)?;
+                    let handle =
+                        doc_package(store_cell, descriptors, schemas, schema_refs, doc, &name)?;
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -3612,9 +3662,10 @@ impl Driver {
                         &exec_args,
                         &store_cell.borrow(),
                         descriptors,
+                        schemas,
                         [doc],
                     );
-                    let word = doc_coerce(store_cell, descriptors, doc, &schema)?;
+                    let word = doc_coerce(store_cell, descriptors, schemas, doc, &schema)?;
                     write_frame_word(frame, dst_slot, word);
                     Ok(())
                 })();
@@ -3633,6 +3684,7 @@ impl Driver {
                         &exec_args,
                         &store_cell.borrow(),
                         descriptors,
+                        schemas,
                         [input],
                     );
                     let handle =
@@ -3740,6 +3792,7 @@ impl Driver {
                             &value_schema,
                             value_word,
                             None,
+                            schemas,
                             schema_refs,
                         )?,
                         other => return Err(format!("unknown Option tag {other}")),
@@ -3759,7 +3812,10 @@ impl Driver {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let handle = read_frame_word(frame, primitive_region + 8);
                     let selector = read_frame_word(frame, primitive_region + 16);
-                    let payload = store_cell.borrow().option_payload(handle, schema_refs)?;
+                    let payload =
+                        store_cell
+                            .borrow()
+                            .option_payload(handle, schemas, schema_refs)?;
                     let value = match (selector, payload) {
                         (0, OptionPayload::None) => 0,
                         (0, OptionPayload::Some { .. }) => 1,
@@ -4110,7 +4166,7 @@ impl Driver {
                             words
                                 .into_iter()
                                 .map(|word| {
-                                    if elem_schema == "String" {
+                                    if schemas.is_primitive(&elem_schema, Primitive::String) {
                                         store.string_value(word, "String")
                                     } else {
                                         let DocPayload::String(handle) =
@@ -4175,6 +4231,7 @@ impl Driver {
                                 &exec_args,
                                 &store_cell.borrow(),
                                 descriptors,
+                                schemas,
                                 [array_handle],
                             );
                         }
@@ -4189,6 +4246,7 @@ impl Driver {
                     let (handle, _) = store_cell.borrow_mut().alloc_array_words(
                         &elem_schema,
                         kept,
+                        schemas,
                         schema_refs,
                     )?;
                     write_frame_word(frame, dst_slot, handle);
@@ -4220,6 +4278,7 @@ impl Driver {
                         &exec_args,
                         &store_cell.borrow(),
                         descriptors,
+                        schemas,
                         [tree_handle],
                     );
                     let mut paths: Vec<String> = tree
@@ -4238,10 +4297,12 @@ impl Driver {
                                 .0
                         })
                         .collect();
-                    let (handle, _) =
-                        store_cell
-                            .borrow_mut()
-                            .alloc_array_words("Path", words, schema_refs)?;
+                    let (handle, _) = store_cell.borrow_mut().alloc_array_words(
+                        "Path",
+                        words,
+                        schemas,
+                        schema_refs,
+                    )?;
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -4312,10 +4373,15 @@ impl Driver {
                         &exec_args,
                         &store_cell.borrow(),
                         descriptors,
+                        schemas,
                         args.iter().copied(),
                     );
-                    let invocation =
-                        pending_invocation_for(&lowered_fns[fn_ref.index()], store_cell, args);
+                    let invocation = pending_invocation_for(
+                        &lowered_fns[fn_ref.index()],
+                        store_cell,
+                        schemas,
+                        args,
+                    );
                     let (handle, _) = store_cell
                         .borrow_mut()
                         .alloc_pending(&value_schema, invocation);
@@ -4915,6 +4981,7 @@ impl Driver {
                                         ));
                                     }
                                     let value = canonicalize_word_for_schema(
+                                        schemas,
                                         &schemas.display_ref(&field.schema),
                                         read_frame_word(
                                             frame,
@@ -4964,6 +5031,7 @@ impl Driver {
                                     &exec_args,
                                     &store_cell.borrow(),
                                     descriptors,
+                                    schemas,
                                     [base],
                                 );
                                 store_cell
@@ -4981,6 +5049,7 @@ impl Driver {
                                 &exec_args,
                                 &store_cell.borrow(),
                                 descriptors,
+                                schemas,
                                 [store_ix.to_word()],
                             );
                             store_cell
@@ -5013,6 +5082,7 @@ impl Driver {
                             ));
                         }
                         let value = canonicalize_word_for_schema(
+                            schemas,
                             &schemas.display_ref(&field.schema),
                             read_frame_word(frame, store_alloc_region + 48 + update_index * 16),
                         );
@@ -5299,11 +5369,11 @@ impl Driver {
     }
 
     fn is_projectable_schema(&self, schema: &str) -> bool {
-        schema == "Tree"
-            || schema == "Array"
-            || schema == "Doc"
-            || schema == "Blob"
-            || schema.starts_with("Map<")
+        self.schemas.is_external(schema, "Tree")
+            || self.schemas.is_list(schema)
+            || self.schemas.is_named_schema(schema, "Doc")
+            || self.schemas.is_primitive(schema, Primitive::Bytes)
+            || self.schemas.is_map(schema)
             || pending_value_schema(schema).is_some()
             || self.descriptors.contains_key(schema)
     }
@@ -5345,7 +5415,7 @@ impl Driver {
                     path: ProjectionPath::Whole {
                         schema: schema.clone(),
                     },
-                    observed: canonical_word_hash_in_store(&store, schema, arg),
+                    observed: canonical_word_hash_in_store(&store, &self.schemas, schema, arg),
                 });
             }
         }
@@ -5365,12 +5435,15 @@ impl Driver {
 
     fn canonical_word_hash(&self, schema: &str, word: i64) -> ContentHash {
         let store = self.store.borrow();
-        canonical_word_hash_in_store(&store, schema, word)
+        canonical_word_hash_in_store(&store, &self.schemas, schema, word)
     }
 
     fn canonicalize_return_word(&self, fn_ref: FnRef, word: i64) -> i64 {
-        if self.lowered(fn_ref).return_schema == "Float" {
-            canonicalize_word_for_schema("Float", word)
+        if self
+            .schemas
+            .is_primitive(&self.lowered(fn_ref).return_schema, Primitive::F64)
+        {
+            canonicalize_word_for_schema(&self.schemas, "Float", word)
         } else {
             word
         }
@@ -5448,7 +5521,7 @@ impl Driver {
             .ok_or_else(|| format!("store handle {handle}"))?
             .schema
             .clone();
-        if schema == "Tree" {
+        if self.schemas.is_external(&schema, "Tree") {
             return Ok(handle);
         }
         if schema != pending_schema("Tree") {
@@ -5644,7 +5717,7 @@ impl Driver {
         match self
             .store
             .borrow()
-            .option_payload(req.option, &self.schema_refs)?
+            .option_payload(req.option, &self.schemas, &self.schema_refs)?
         {
             OptionPayload::None => Err("unwrap on None".into()),
             OptionPayload::Some { word, realization } => {
@@ -6426,7 +6499,7 @@ impl Driver {
         let entry = store
             .entry(handle)
             .ok_or_else(|| format!("store handle {handle}"))?;
-        if entry.schema == "Tree" {
+        if self.schemas.is_external(&entry.schema, "Tree") {
             drop(store);
             {
                 let forced = self.force_tree_handle(handle)?;
@@ -6436,7 +6509,7 @@ impl Driver {
                 Ok(tree)
             }
         } else {
-            oci_tree_from_entry(entry)
+            oci_tree_from_entry(&self.schemas, entry)
         }
     }
 }
@@ -6516,7 +6589,7 @@ fn alloc_doc_from_value(
                 .collect::<Result<Vec<_>, _>>()?;
             let handle = store
                 .borrow_mut()
-                .alloc_array_words("Doc", words, schema_refs)?
+                .alloc_array_words("Doc", words, schemas, schema_refs)?
                 .0;
             alloc_doc_variant(store, descriptors, schemas, 5, &[handle])
         }
@@ -6632,6 +6705,7 @@ fn doc_payload(
 fn doc_get(
     store: &RefCell<ValueStore>,
     descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     doc: i64,
     key: &str,
@@ -6649,7 +6723,7 @@ fn doc_get(
         "String",
         key_word,
         "Realized<Doc>",
-        descriptors,
+        schemas,
         schema_refs,
     )
 }
@@ -6676,18 +6750,36 @@ fn doc_get_with_virtual(
     if let Some(input) = virtual_input {
         return oci_virtual_file_get(ctx, input, key);
     }
-    doc_get(ctx.store, ctx.descriptors, ctx.schema_refs, doc, key)
+    doc_get(
+        ctx.store,
+        ctx.descriptors,
+        ctx.schemas,
+        ctx.schema_refs,
+        doc,
+        key,
+    )
 }
 
 fn doc_package(
     store: &RefCell<ValueStore>,
     descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     schema_refs: &[String],
     lock_doc: i64,
     wanted_name: &str,
 ) -> Result<i64, String> {
-    let (package_option, _) = doc_get(store, descriptors, schema_refs, lock_doc, "package")?;
-    let packages = match store.borrow().option_payload(package_option, schema_refs)? {
+    let (package_option, _) = doc_get(
+        store,
+        descriptors,
+        schemas,
+        schema_refs,
+        lock_doc,
+        "package",
+    )?;
+    let packages = match store
+        .borrow()
+        .option_payload(package_option, schemas, schema_refs)?
+    {
         OptionPayload::Some { word, .. } => {
             match doc_payload(&store.borrow(), descriptors, word)? {
                 DocPayload::Array(array) => array,
@@ -6706,15 +6798,22 @@ fn doc_package(
         }
     };
     let package_words = match store.borrow().array_entry(packages, schema_refs)? {
-        ArrayEntry::Words { elem_schema, words } if elem_schema == "Doc" => words,
+        ArrayEntry::Words { elem_schema, words }
+            if schemas.is_named_schema(&elem_schema, "Doc") =>
+        {
+            words
+        }
         ArrayEntry::Words { elem_schema, .. } => {
             return Err(format!("Cargo.lock `package` array contains {elem_schema}"));
         }
         ArrayEntry::Pending(_) => return Err("Cargo.lock `package` array is pending".into()),
     };
     for package in package_words {
-        let (name_option, _) = doc_get(store, descriptors, schema_refs, package, "name")?;
-        let name = match store.borrow().option_payload(name_option, schema_refs)? {
+        let (name_option, _) = doc_get(store, descriptors, schemas, schema_refs, package, "name")?;
+        let name = match store
+            .borrow()
+            .option_payload(name_option, schemas, schema_refs)?
+        {
             OptionPayload::Some { word, .. } => {
                 match doc_payload(&store.borrow(), descriptors, word)? {
                     DocPayload::String(handle) => store.borrow().string_value(handle, "String")?,
@@ -6734,6 +6833,7 @@ fn doc_package(
                     "Realized<Doc>",
                     package,
                     Some(Realization::Ready),
+                    schemas,
                     schema_refs,
                 )?
                 .0);
@@ -6752,7 +6852,7 @@ fn oci_virtual_file_get(
 ) -> Result<(i64, bool), String> {
     let tree = {
         let store = ctx.store.borrow();
-        oci_tree_from_store(&store, input)?
+        oci_tree_from_store(&store, ctx.schemas, input)?
     };
     let input_hash = ContentHash::from(super::oci::input_hash(&tree));
     let key = (input_hash, path.to_string());
@@ -6770,6 +6870,7 @@ fn oci_virtual_file_get(
                 "Realized<Doc>",
                 handle,
                 Some(Realization::Ready),
+                ctx.schemas,
                 ctx.schema_refs,
             ),
             None => ctx
@@ -6819,6 +6920,7 @@ fn oci_virtual_file_get(
             "Realized<Doc>",
             handle,
             Some(Realization::Ready),
+            ctx.schemas,
             ctx.schema_refs,
         ),
         None => ctx
@@ -6854,22 +6956,33 @@ fn emit_artifact_probe(
 fn doc_coerce(
     store: &RefCell<ValueStore>,
     descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     doc: i64,
     schema: &str,
 ) -> Result<i64, String> {
-    if schema == "Doc" {
+    if schemas.is_named_schema(schema, "Doc") {
         return Ok(doc);
     }
-    match (doc_payload(&store.borrow(), descriptors, doc)?, schema) {
-        (DocPayload::Bool(value), "Bool") => Ok(value),
-        (DocPayload::Int(value), "Int") => Ok(value),
-        (DocPayload::Float(value), "Float") => Ok(value),
-        (DocPayload::String(value), "String") => Ok(value),
-        (DocPayload::Blob(value), "Blob") => Ok(value),
-        (DocPayload::Array(value), "Array") => Ok(value),
-        (DocPayload::Map(value), "Map<String,Doc>") => Ok(value),
-        (DocPayload::Virtual(_), schema) => Err(format!("cannot coerce Doc::Virtual to {schema}")),
-        (payload, schema) => Err(format!("cannot coerce Doc::{payload:?} to {schema}")),
+    let payload = doc_payload(&store.borrow(), descriptors, doc)?;
+    match payload {
+        DocPayload::Bool(value) if schemas.is_primitive(schema, Primitive::Bool) => Ok(value),
+        DocPayload::Int(value) if schemas.is_primitive(schema, Primitive::I64) => Ok(value),
+        DocPayload::Float(value) if schemas.is_primitive(schema, Primitive::F64) => Ok(value),
+        DocPayload::String(value) if schemas.is_primitive(schema, Primitive::String) => Ok(value),
+        DocPayload::Blob(value) if schemas.is_primitive(schema, Primitive::Bytes) => Ok(value),
+        DocPayload::Array(value) if schemas.is_list(schema) => Ok(value),
+        DocPayload::Map(value)
+            if schemas
+                .map_schema_names(schema)
+                .is_some_and(|(key_schema, value_schema)| {
+                    schemas.is_primitive(&key_schema, Primitive::String)
+                        && schemas.is_named_schema(&value_schema, "Doc")
+                }) =>
+        {
+            Ok(value)
+        }
+        DocPayload::Virtual(_) => Err(format!("cannot coerce Doc::Virtual to {schema}")),
+        payload => Err(format!("cannot coerce Doc::{payload:?} to {schema}")),
     }
 }
 
@@ -6885,19 +6998,20 @@ fn alloc_elf_doc(
         let entry = store
             .entry(input)
             .ok_or_else(|| format!("store handle {input}"))?;
-        match entry.schema.as_str() {
-            "Blob" | "String" => entry.content_hash,
-            "Tree" => {
-                let TreeEntry::Concrete(_) = store.tree_entry(input)? else {
-                    return Err("elf input tree must be concrete at probe creation".into());
-                };
-                entry.content_hash
-            }
-            other => {
-                return Err(format!(
-                    "elf input must be Blob, String, or Tree, got {other}"
-                ));
-            }
+        if schemas.is_primitive(&entry.schema, Primitive::Bytes)
+            || schemas.is_primitive(&entry.schema, Primitive::String)
+        {
+            entry.content_hash
+        } else if schemas.is_external(&entry.schema, "Tree") {
+            let TreeEntry::Concrete(_) = store.tree_entry(input)? else {
+                return Err("elf input tree must be concrete at probe creation".into());
+            };
+            entry.content_hash
+        } else {
+            return Err(format!(
+                "elf input must be Blob, String, or Tree, got {}",
+                entry.schema
+            ));
         }
     };
     let mut pairs = Vec::new();
@@ -6932,7 +7046,7 @@ fn alloc_oci_doc(
 ) -> Result<i64, String> {
     let input_hash = {
         let store = store.borrow();
-        let tree = oci_tree_from_store(&store, input)?;
+        let tree = oci_tree_from_store(&store, schemas, input)?;
         ContentHash::from(super::oci::input_hash(&tree))
     };
     let mut pairs = Vec::new();
@@ -7188,26 +7302,37 @@ fn oci_virtual_files_input(
         .map_err(|err| format!("bad OCI files marker `{marker}`: {err}"))
 }
 
-fn oci_tree_from_store(store: &ValueStore, input: i64) -> Result<crate::exec::Tree, String> {
+fn oci_tree_from_store(
+    store: &ValueStore,
+    schemas: &SchemaTables,
+    input: i64,
+) -> Result<crate::exec::Tree, String> {
     let entry = store
         .entry(input)
         .ok_or_else(|| format!("store handle {input}"))?;
-    if entry.schema == "Tree" {
+    if schemas.is_external(&entry.schema, "Tree") {
         let TreeEntry::Concrete(tree) = store.tree_entry(input)? else {
             return Err("OCI input tree must be concrete".into());
         };
         Ok(tree)
     } else {
-        oci_tree_from_entry(entry)
+        oci_tree_from_entry(schemas, entry)
     }
 }
 
-fn oci_tree_from_entry(entry: &StoreEntry) -> Result<crate::exec::Tree, String> {
-    match entry.schema.as_str() {
-        "Blob" | "String" => super::oci::archive_to_tree(&entry.bytes),
-        other => Err(format!(
-            "OCI input must be Blob, String, or Tree, got {other}"
-        )),
+fn oci_tree_from_entry(
+    schemas: &SchemaTables,
+    entry: &StoreEntry,
+) -> Result<crate::exec::Tree, String> {
+    if schemas.is_primitive(&entry.schema, Primitive::Bytes)
+        || schemas.is_primitive(&entry.schema, Primitive::String)
+    {
+        super::oci::archive_to_tree(&entry.bytes)
+    } else {
+        Err(format!(
+            "OCI input must be Blob, String, or Tree, got {}",
+            entry.schema
+        ))
     }
 }
 
@@ -7220,61 +7345,69 @@ fn compare_words(
     a: i64,
     b: i64,
 ) -> Result<Ordering, String> {
-    if a == b && schema != "Float" {
+    if a == b && !schemas.is_primitive(schema, Primitive::F64) {
         return Ok(Ordering::Equal);
     }
-    match schema {
-        "Int" | "Bool" => Ok(a.cmp(&b)),
-        "Float" => {
-            let a = super::value::TotalF64::new(f64::from_bits(canonicalize_word_for_schema(
-                "Float", a,
-            ) as u64));
-            let b = super::value::TotalF64::new(f64::from_bits(canonicalize_word_for_schema(
-                "Float", b,
-            ) as u64));
-            Ok(a.cmp(&b))
+    if schemas.is_primitive(schema, Primitive::I64) || schemas.is_primitive(schema, Primitive::Bool)
+    {
+        Ok(a.cmp(&b))
+    } else if schemas.is_primitive(schema, Primitive::F64) {
+        let a = super::value::TotalF64::new(f64::from_bits(canonicalize_word_for_schema(
+            schemas, schema, a,
+        ) as u64));
+        let b = super::value::TotalF64::new(f64::from_bits(canonicalize_word_for_schema(
+            schemas, schema, b,
+        ) as u64));
+        Ok(a.cmp(&b))
+    } else if schemas.is_primitive(schema, Primitive::Bytes) {
+        let a = store.entry(a).ok_or_else(|| format!("store handle {a}"))?;
+        let b = store.entry(b).ok_or_else(|| format!("store handle {b}"))?;
+        Ok(a.bytes.cmp(&b.bytes))
+    } else if schemas.is_primitive(schema, Primitive::String)
+        || schemas.is_external(schema, "Path")
+        || schemas.is_external(schema, "Flag")
+        || schemas.is_external(schema, "Cc")
+        || schemas.is_external(schema, "Ar")
+        || schemas.is_external(schema, "Rustc")
+    {
+        let a = store.string_value(a, schema)?;
+        let b = store.string_value(b, schema)?;
+        Ok(a.cmp(&b))
+    } else if schemas.is_external(schema, "Version") {
+        let a = store.entry(a).ok_or_else(|| format!("store handle {a}"))?;
+        let b = store.entry(b).ok_or_else(|| format!("store handle {b}"))?;
+        if !schemas.is_external(&a.schema, "Version") || !schemas.is_external(&b.schema, "Version")
+        {
+            return Err(format!(
+                "compare expected Version, got {} and {}",
+                a.schema, b.schema
+            ));
         }
-        "Blob" => {
-            let a = store.entry(a).ok_or_else(|| format!("store handle {a}"))?;
-            let b = store.entry(b).ok_or_else(|| format!("store handle {b}"))?;
-            Ok(a.bytes.cmp(&b.bytes))
+        super::version::cmp_total(&a.bytes, &b.bytes)
+    } else if schemas.is_external(schema, "VersionSet") {
+        let a = store.entry(a).ok_or_else(|| format!("store handle {a}"))?;
+        let b = store.entry(b).ok_or_else(|| format!("store handle {b}"))?;
+        if !schemas.is_external(&a.schema, "VersionSet")
+            || !schemas.is_external(&b.schema, "VersionSet")
+        {
+            return Err(format!(
+                "compare expected VersionSet, got {} and {}",
+                a.schema, b.schema
+            ));
         }
-        "String" | "Path" | "Flag" | "Cc" | "Ar" | "Rustc" => {
-            let a = store.string_value(a, schema)?;
-            let b = store.string_value(b, schema)?;
-            Ok(a.cmp(&b))
-        }
-        "Version" => {
-            let a = store.entry(a).ok_or_else(|| format!("store handle {a}"))?;
-            let b = store.entry(b).ok_or_else(|| format!("store handle {b}"))?;
-            if a.schema != "Version" || b.schema != "Version" {
-                return Err(format!(
-                    "compare expected Version, got {} and {}",
-                    a.schema, b.schema
-                ));
-            }
-            super::version::cmp_total(&a.bytes, &b.bytes)
-        }
-        "VersionSet" => {
-            let a = store.entry(a).ok_or_else(|| format!("store handle {a}"))?;
-            let b = store.entry(b).ok_or_else(|| format!("store handle {b}"))?;
-            if a.schema != "VersionSet" || b.schema != "VersionSet" {
-                return Err(format!(
-                    "compare expected VersionSet, got {} and {}",
-                    a.schema, b.schema
-                ));
-            }
-            Ok(a.bytes.cmp(&b.bytes))
-        }
-        "Array" => compare_arrays(store, descriptors, schemas, schema_refs, a, b),
-        schema if schema.starts_with("Map<") => {
-            compare_maps(store, descriptors, schemas, schema_refs, a, b)
-        }
-        "Doc" => compare_docs(store, descriptors, schemas, schema_refs, a, b),
-        "Tree" => Ok(canonical_word_hash_in_store(store, "Tree", a)
+        Ok(a.bytes.cmp(&b.bytes))
+    } else if schemas.is_list(schema) {
+        compare_arrays(store, descriptors, schemas, schema_refs, a, b)
+    } else if schemas.is_map(schema) {
+        compare_maps(store, descriptors, schemas, schema_refs, a, b)
+    } else if schemas.is_named_schema(schema, "Doc") {
+        compare_docs(store, descriptors, schemas, schema_refs, a, b)
+    } else if schemas.is_external(schema, "Tree") {
+        Ok(canonical_word_hash_in_store(store, schemas, schema, a)
             .as_ref()
-            .cmp(canonical_word_hash_in_store(store, "Tree", b).as_ref())),
-        schema => compare_declared_value(store, descriptors, schemas, schema_refs, schema, a, b),
+            .cmp(canonical_word_hash_in_store(store, schemas, schema, b).as_ref()))
+    } else {
+        compare_declared_value(store, descriptors, schemas, schema_refs, schema, a, b)
     }
 }
 
@@ -7287,10 +7420,11 @@ fn compare_expression_words(
     a: i64,
     b: i64,
 ) -> Result<Ordering, String> {
-    if schema == "Version" {
+    if schemas.is_external(schema, "Version") {
         let a = store.entry(a).ok_or_else(|| format!("store handle {a}"))?;
         let b = store.entry(b).ok_or_else(|| format!("store handle {b}"))?;
-        if a.schema != "Version" || b.schema != "Version" {
+        if !schemas.is_external(&a.schema, "Version") || !schemas.is_external(&b.schema, "Version")
+        {
             return Err(format!(
                 "compare expected Version, got {} and {}",
                 a.schema, b.schema
@@ -7340,8 +7474,8 @@ fn compare_maps(
     a: i64,
     b: i64,
 ) -> Result<Ordering, String> {
-    let (a_schema, a_pairs) = store.map_pairs(a, schema_refs)?;
-    let (b_schema, b_pairs) = store.map_pairs(b, schema_refs)?;
+    let (a_schema, a_pairs) = store.map_pairs(a, schemas, schema_refs)?;
+    let (b_schema, b_pairs) = store.map_pairs(b, schemas, schema_refs)?;
     let schema_order = a_schema.cmp(&b_schema);
     if schema_order != Ordering::Equal {
         return Ok(schema_order);
@@ -7481,15 +7615,23 @@ fn compare_descriptor_bytes(
     b: &[u8],
 ) -> Result<Ordering, String> {
     match &descriptor.access {
-        Access::Scalar if schemas.display_ref(&descriptor.schema) == "Float" => compare_words(
-            store,
-            descriptors,
-            schemas,
-            schema_refs,
-            "Float",
-            read_frame_word(a, 0),
-            read_frame_word(b, 0),
-        ),
+        Access::Scalar
+            if matches!(
+                schemas.kind_for_ref(&descriptor.schema),
+                Some(Kind::Primitive(Primitive::F64))
+            ) =>
+        {
+            let schema = schemas.display_ref(&descriptor.schema);
+            compare_words(
+                store,
+                descriptors,
+                schemas,
+                schema_refs,
+                &schema,
+                read_frame_word(a, 0),
+                read_frame_word(b, 0),
+            )
+        }
         Access::Scalar => Ok(a.cmp(b)),
         Access::Handle { target } => compare_words(
             store,
@@ -7608,10 +7750,10 @@ fn render_word(
             pending: render_pending(store, word)?,
         });
     }
-    if schema.starts_with("Option<") {
+    if schemas.is_option(schema) {
         return render_option(store, descriptors, schemas, schema_refs, names, word);
     }
-    if schema != "Sealed"
+    if !schemas.is_external(schema, "Sealed")
         && let Some(entry) = store.entry(word)
         && let Some(taint) = &entry.taint
     {
@@ -7620,56 +7762,65 @@ fn render_word(
             taint.marker
         ));
     }
-    match schema {
-        "Int" => Ok(RenderedValue::Int { value: word }),
-        "Float" => {
-            let bits = canonicalize_word_for_schema("Float", word) as u64;
-            let value = f64::from_bits(bits);
-            Ok(RenderedValue::Float {
-                bits: format!("{bits:016x}"),
-                value: if value.is_nan() {
-                    "NaN".to_string()
-                } else {
-                    value.to_string()
-                },
-            })
-        }
-        "Bool" => Ok(RenderedValue::Bool { value: word != 0 }),
-        "String" => Ok(RenderedValue::String {
-            value: store.string_value(word, "String")?,
-        }),
-        "Template" => Ok(RenderedValue::Raw {
+    if schemas.is_primitive(schema, Primitive::I64) {
+        Ok(RenderedValue::Int { value: word })
+    } else if schemas.is_primitive(schema, Primitive::F64) {
+        let bits = canonicalize_word_for_schema(schemas, schema, word) as u64;
+        let value = f64::from_bits(bits);
+        Ok(RenderedValue::Float {
+            bits: format!("{bits:016x}"),
+            value: if value.is_nan() {
+                "NaN".to_string()
+            } else {
+                value.to_string()
+            },
+        })
+    } else if schemas.is_primitive(schema, Primitive::Bool) {
+        Ok(RenderedValue::Bool { value: word != 0 })
+    } else if schemas.is_primitive(schema, Primitive::String) {
+        Ok(RenderedValue::String {
+            value: store.string_value(word, schema)?,
+        })
+    } else if schemas.is_external(schema, "Template") {
+        Ok(RenderedValue::Raw {
             schema: "Template".to_string(),
-            bytes_utf8: Some(store.string_value(word, "Template")?),
-        }),
-        "Path" => Ok(RenderedValue::Path {
-            value: store.string_value(word, "Path")?,
-        }),
-        "Version" => Ok(RenderedValue::Version {
-            value: store.string_value(word, "Version")?,
-        }),
-        "VersionSet" => {
-            let entry = store
-                .entry(word)
-                .ok_or_else(|| format!("store handle {word}"))?;
-            if entry.schema != "VersionSet" {
-                return Err(format!(
-                    "handle {word} is `{}`, not VersionSet",
-                    entry.schema
-                ));
-            }
-            Ok(RenderedValue::VersionSet {
-                value: super::version_set::VersionSet::parse_bytes(&entry.bytes)?.render(),
-            })
+            bytes_utf8: Some(store.string_value(word, schema)?),
+        })
+    } else if schemas.is_external(schema, "Path") {
+        Ok(RenderedValue::Path {
+            value: store.string_value(word, schema)?,
+        })
+    } else if schemas.is_external(schema, "Version") {
+        Ok(RenderedValue::Version {
+            value: store.string_value(word, schema)?,
+        })
+    } else if schemas.is_external(schema, "VersionSet") {
+        let entry = store
+            .entry(word)
+            .ok_or_else(|| format!("store handle {word}"))?;
+        if !schemas.is_external(&entry.schema, "VersionSet") {
+            return Err(format!(
+                "handle {word} is `{}`, not VersionSet",
+                entry.schema
+            ));
         }
-        "Flag" => Ok(RenderedValue::Flag {
-            value: store.string_value(word, "Flag")?,
-        }),
-        "Tree" => render_tree(store, word),
-        "Sealed" => render_sealed(store, word),
-        "Array" => render_array(store, descriptors, schemas, schema_refs, names, word),
-        "Doc" => render_doc(store, descriptors, schemas, schema_refs, names, word),
-        schema if schema.starts_with("Map<") => render_map(
+        Ok(RenderedValue::VersionSet {
+            value: super::version_set::VersionSet::parse_bytes(&entry.bytes)?.render(),
+        })
+    } else if schemas.is_external(schema, "Flag") {
+        Ok(RenderedValue::Flag {
+            value: store.string_value(word, schema)?,
+        })
+    } else if schemas.is_external(schema, "Tree") {
+        render_tree(store, word)
+    } else if schemas.is_external(schema, "Sealed") {
+        render_sealed(store, word)
+    } else if schemas.is_list(schema) {
+        render_array(store, descriptors, schemas, schema_refs, names, word)
+    } else if schemas.is_named_schema(schema, "Doc") {
+        render_doc(store, descriptors, schemas, schema_refs, names, word)
+    } else if schemas.is_map(schema) {
+        render_map(
             store,
             descriptors,
             schemas,
@@ -7677,33 +7828,33 @@ fn render_word(
             names,
             schema,
             word,
-        ),
-        schema => {
-            if schema == "Blob" {
-                let entry = store
-                    .entry(word)
-                    .ok_or_else(|| format!("store handle {word}"))?;
-                return Ok(RenderedValue::Raw {
-                    schema: schema.to_string(),
-                    bytes_utf8: String::from_utf8(entry.bytes.clone()).ok(),
-                });
-            }
-            if matches!(schema, "Cc" | "Ar" | "Rustc") {
-                return Ok(RenderedValue::Raw {
-                    schema: schema.to_string(),
-                    bytes_utf8: Some(store.string_value(word, schema)?),
-                });
-            }
-            render_declared(
-                store,
-                descriptors,
-                schemas,
-                schema_refs,
-                names,
-                schema,
-                word,
-            )
-        }
+        )
+    } else if schemas.is_primitive(schema, Primitive::Bytes) {
+        let entry = store
+            .entry(word)
+            .ok_or_else(|| format!("store handle {word}"))?;
+        Ok(RenderedValue::Raw {
+            schema: schema.to_string(),
+            bytes_utf8: String::from_utf8(entry.bytes.clone()).ok(),
+        })
+    } else if schemas.is_external(schema, "Cc")
+        || schemas.is_external(schema, "Ar")
+        || schemas.is_external(schema, "Rustc")
+    {
+        Ok(RenderedValue::Raw {
+            schema: schema.to_string(),
+            bytes_utf8: Some(store.string_value(word, schema)?),
+        })
+    } else {
+        render_declared(
+            store,
+            descriptors,
+            schemas,
+            schema_refs,
+            names,
+            schema,
+            word,
+        )
     }
 }
 
@@ -7718,12 +7869,10 @@ fn render_option(
     let entry = store
         .entry(handle)
         .ok_or_else(|| format!("store handle {handle}"))?;
-    let value_schema = entry
-        .schema
-        .strip_prefix("Option<")
-        .and_then(|inner| inner.strip_suffix('>'))
+    let value_schema = schemas
+        .option_value_schema_name(&entry.schema)
         .ok_or_else(|| format!("handle {handle} is `{}`, not an Option", entry.schema))?;
-    match store.option_payload(handle, schema_refs)? {
+    match store.option_payload(handle, schemas, schema_refs)? {
         OptionPayload::None => Ok(RenderedValue::Enum {
             schema: entry.schema.clone(),
             variant_index: 0,
@@ -7731,6 +7880,7 @@ fn render_option(
             fields: Vec::new(),
         }),
         OptionPayload::Some { word, realization } => {
+            let value_schema = value_schema.as_str();
             let render_schema = match realization {
                 Some(Realization::Pending) => {
                     pending_schema(realized_value_schema(value_schema).unwrap_or(value_schema))
@@ -7869,7 +8019,7 @@ fn render_map(
     schema: &str,
     handle: i64,
 ) -> Result<RenderedValue, String> {
-    let (_, pairs) = store.map_pairs(handle, schema_refs)?;
+    let (_, pairs) = store.map_pairs(handle, schemas, schema_refs)?;
     Ok(RenderedValue::Map {
         schema: schema.to_string(),
         entries: pairs
@@ -8151,15 +8301,12 @@ fn render_pending(store: &ValueStore, handle: i64) -> Result<RenderedPending, St
 fn descriptor_word_schema(schemas: &SchemaTables, descriptor: &VixDescriptor) -> String {
     match &descriptor.access {
         Access::Handle { target } => schemas.display_ref(target),
-        Access::Scalar if schemas.display_ref(&descriptor.schema).starts_with("Int") => {
-            "Int".to_string()
-        }
-        Access::Scalar if schemas.display_ref(&descriptor.schema).starts_with("Float") => {
-            "Float".to_string()
-        }
-        Access::Scalar if schemas.display_ref(&descriptor.schema).starts_with("Bool") => {
-            "Bool".to_string()
-        }
+        Access::Scalar => match schemas.kind_for_ref(&descriptor.schema) {
+            Some(Kind::Primitive(Primitive::I64)) => "Int".to_string(),
+            Some(Kind::Primitive(Primitive::F64)) => "Float".to_string(),
+            Some(Kind::Primitive(Primitive::Bool)) => "Bool".to_string(),
+            _ => schemas.display_ref(&descriptor.schema),
+        },
         _ => schemas.display_ref(&descriptor.schema),
     }
 }
@@ -8263,10 +8410,11 @@ fn memo_key_hash(key: &CanonMemoKey) -> u64 {
 fn pending_invocation_for(
     lowered: &LoweredFn,
     store: &RefCell<ValueStore>,
+    schemas: &SchemaTables,
     args: Vec<i64>,
 ) -> PendingInvocation {
     let store = store.borrow();
-    let identity_hash = pending_identity_hash(lowered, &store, &args);
+    let identity_hash = pending_identity_hash(lowered, &store, schemas, &args);
     PendingInvocation {
         closure_hash: lowered.hash,
         primitive: None,
@@ -8276,7 +8424,12 @@ fn pending_invocation_for(
     }
 }
 
-fn pending_identity_hash(lowered: &LoweredFn, store: &ValueStore, args: &[i64]) -> ContentHash {
+fn pending_identity_hash(
+    lowered: &LoweredFn,
+    store: &ValueStore,
+    schemas: &SchemaTables,
+    args: &[i64],
+) -> ContentHash {
     let mut hasher = Sha256::new();
     hasher.update(b"vix-pending-invocation");
     hasher.update(lowered.hash.to_le_bytes());
@@ -8287,7 +8440,7 @@ fn pending_identity_hash(lowered: &LoweredFn, store: &ValueStore, args: &[i64]) 
     );
     for (&word, schema) in args.iter().zip(&lowered.arg_schemas) {
         hasher.update(schema.as_bytes());
-        hasher.update(canonical_word_hash_in_store(store, schema, word));
+        hasher.update(canonical_word_hash_in_store(store, schemas, schema, word));
     }
     finish_hash(hasher)
 }
@@ -8477,8 +8630,8 @@ fn taint_for_ordered_map_pairs(pairs: &[OrderedMapPair]) -> Option<StructuralTai
     }))
 }
 
-fn canonicalize_word_for_schema(schema: &str, word: i64) -> i64 {
-    if schema == "Float" {
+fn canonicalize_word_for_schema(schemas: &SchemaTables, schema: &str, word: i64) -> i64 {
+    if schemas.is_primitive(schema, Primitive::F64) {
         let value = super::value::TotalF64::new(f64::from_bits(word as u64)).get();
         if value == 0.0 {
             0.0f64.to_bits() as i64
@@ -8490,12 +8643,17 @@ fn canonicalize_word_for_schema(schema: &str, word: i64) -> i64 {
     }
 }
 
-fn canonical_word_hash_in_store(store: &ValueStore, schema: &str, word: i64) -> ContentHash {
+fn canonical_word_hash_in_store(
+    store: &ValueStore,
+    schemas: &SchemaTables,
+    schema: &str,
+    word: i64,
+) -> ContentHash {
     match store.entry(word) {
         Some(entry) if entry.schema == schema => return entry.content_hash,
         _ => {}
     }
-    let word = canonicalize_word_for_schema(schema, word);
+    let word = canonicalize_word_for_schema(schemas, schema, word);
     let mut hasher = Sha256::new();
     hasher.update(b"vix-scalar-word");
     hasher.update(schema.as_bytes());
@@ -8503,8 +8661,8 @@ fn canonical_word_hash_in_store(store: &ValueStore, schema: &str, word: i64) -> 
     finish_hash(hasher)
 }
 
-fn canonical_scalar_hash(schema: &str, word: i64) -> ContentHash {
-    let word = canonicalize_word_for_schema(schema, word);
+fn canonical_scalar_hash(schemas: &SchemaTables, schema: &str, word: i64) -> ContentHash {
+    let word = canonicalize_word_for_schema(schemas, schema, word);
     let mut hasher = Sha256::new();
     hasher.update(b"vix-scalar-word");
     hasher.update(schema.as_bytes());
@@ -8512,12 +8670,16 @@ fn canonical_scalar_hash(schema: &str, word: i64) -> ContentHash {
     finish_hash(hasher)
 }
 
-fn is_projectable_schema_static(schema: &str, descriptors: &DescriptorMap) -> bool {
-    schema == "Tree"
-        || schema == "Array"
-        || schema == "Doc"
-        || schema == "Blob"
-        || schema.starts_with("Map<")
+fn is_projectable_schema_static(
+    schema: &str,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
+) -> bool {
+    schemas.is_external(schema, "Tree")
+        || schemas.is_list(schema)
+        || schemas.is_named_schema(schema, "Doc")
+        || schemas.is_primitive(schema, Primitive::Bytes)
+        || schemas.is_map(schema)
         || pending_value_schema(schema).is_some()
         || descriptors.contains_key(schema)
 }
@@ -8527,9 +8689,10 @@ fn is_projectable_arg_static(
     arg: i64,
     store: &ValueStore,
     descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
 ) -> bool {
     store.entry(arg).is_some_and(|entry| {
-        entry.schema == arg_schema && is_projectable_schema_static(arg_schema, descriptors)
+        entry.schema == arg_schema && is_projectable_schema_static(arg_schema, descriptors, schemas)
     })
 }
 
@@ -8538,6 +8701,7 @@ struct ProjectionRecordContext<'a> {
     args: &'a [i64],
     store: &'a ValueStore,
     descriptors: &'a DescriptorMap,
+    schemas: &'a SchemaTables,
 }
 
 fn record_projection_for_matching_args_static(
@@ -8549,7 +8713,13 @@ fn record_projection_for_matching_args_static(
 ) {
     for (arg_index, (&arg, schema)) in context.args.iter().zip(context.arg_schemas).enumerate() {
         if arg == handle
-            && is_projectable_arg_static(schema, arg, context.store, context.descriptors)
+            && is_projectable_arg_static(
+                schema,
+                arg,
+                context.store,
+                context.descriptors,
+                context.schemas,
+            )
         {
             reads.push(ProjectionRead {
                 arg_index,
@@ -8566,17 +8736,19 @@ fn record_whole_args_if_projectable_static(
     args: &[i64],
     store: &ValueStore,
     descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
     handles: impl IntoIterator<Item = i64>,
 ) {
     for handle in handles {
         for (arg_index, (&arg, schema)) in args.iter().zip(arg_schemas).enumerate() {
-            if arg == handle && is_projectable_arg_static(schema, arg, store, descriptors) {
+            if arg == handle && is_projectable_arg_static(schema, arg, store, descriptors, schemas)
+            {
                 reads.push(ProjectionRead {
                     arg_index,
                     path: ProjectionPath::Whole {
                         schema: schema.clone(),
                     },
-                    observed: canonical_word_hash_in_store(store, schema, arg),
+                    observed: canonical_word_hash_in_store(store, schemas, schema, arg),
                 });
             }
         }
@@ -8590,6 +8762,7 @@ fn remap_read_set_for_caller(
     callee_read_set: &ProjectionReadSet,
     store: &ValueStore,
     descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
 ) -> ProjectionReadSet {
     let mut remapped = ProjectionReadSet::default();
     for read in &callee_read_set.entries {
@@ -8600,7 +8773,7 @@ fn remap_read_set_for_caller(
             caller_args.iter().zip(caller_arg_schemas).enumerate()
         {
             if caller_arg == callee_arg
-                && is_projectable_arg_static(schema, caller_arg, store, descriptors)
+                && is_projectable_arg_static(schema, caller_arg, store, descriptors, schemas)
             {
                 remapped.record(ProjectionRead {
                     arg_index,
@@ -8622,7 +8795,9 @@ fn projection_observation_hash(
     path: &ProjectionPath,
 ) -> Result<ContentHash, String> {
     match path {
-        ProjectionPath::Whole { schema } => Ok(canonical_word_hash_in_store(store, schema, handle)),
+        ProjectionPath::Whole { schema } => {
+            Ok(canonical_word_hash_in_store(store, schemas, schema, handle))
+        }
         ProjectionPath::Field {
             schema,
             field_index,
@@ -8643,7 +8818,12 @@ fn projection_observation_hash(
             let field_schema = descriptor_word_schema(schemas, field);
             let offset = field_offset(descriptor, &entry.bytes, *field_index);
             let value = read_frame_word(&entry.bytes, offset);
-            Ok(canonical_word_hash_in_store(store, &field_schema, value))
+            Ok(canonical_word_hash_in_store(
+                store,
+                schemas,
+                &field_schema,
+                value,
+            ))
         }
         ProjectionPath::Tag { schema } => {
             let entry = store
@@ -8659,6 +8839,7 @@ fn projection_observation_hash(
                 .get(schema)
                 .ok_or_else(|| format!("descriptor for schema `{schema}`"))?;
             Ok(canonical_scalar_hash(
+                schemas,
                 "Int",
                 read_variant_tag(&entry.bytes, descriptor) as i64,
             ))
@@ -8678,10 +8859,10 @@ fn projection_observation_hash(
                     entry.schema
                 ));
             }
-            let (_, pairs) = store.map_pairs(handle, schema_refs)?;
+            let (_, pairs) = store.map_pairs(handle, schemas, schema_refs)?;
             for pair in pairs {
                 if pair.key_schema == key_schema.as_str()
-                    && canonical_word_hash_in_store(store, &pair.key_schema, pair.key_word)
+                    && canonical_word_hash_in_store(store, schemas, &pair.key_schema, pair.key_word)
                         == *key_hash
                 {
                     let (option, _) = if pair.value_schema == value_schema.as_str() {
@@ -8689,6 +8870,7 @@ fn projection_observation_hash(
                             &pair.value_schema,
                             pair.value_word,
                             pair.value_realization,
+                            schemas,
                             schema_refs,
                         )?
                     } else if let Some(inner) = realized_value_schema(value_schema) {
@@ -8699,6 +8881,7 @@ fn projection_observation_hash(
                                         value_schema,
                                         pair.value_word,
                                         Some(Realization::Ready),
+                                        schemas,
                                         schema_refs,
                                     )?,
                                 Realization::Pending
@@ -8708,6 +8891,7 @@ fn projection_observation_hash(
                                         value_schema,
                                         pair.value_word,
                                         Some(Realization::Pending),
+                                        schemas,
                                         schema_refs,
                                     )?
                                 }
@@ -8718,6 +8902,7 @@ fn projection_observation_hash(
                                 value_schema,
                                 pair.value_word,
                                 Some(Realization::Ready),
+                                schemas,
                                 schema_refs,
                             )?
                         } else if pair.value_schema == pending_schema(inner) {
@@ -8725,6 +8910,7 @@ fn projection_observation_hash(
                                 value_schema,
                                 pair.value_word,
                                 Some(Realization::Pending),
+                                schemas,
                                 schema_refs,
                             )?
                         } else {
@@ -8735,6 +8921,7 @@ fn projection_observation_hash(
                             &pair.value_schema,
                             pair.value_word,
                             pair.value_realization,
+                            schemas,
                             schema_refs,
                         )?
                     } else {
@@ -8748,11 +8935,11 @@ fn projection_observation_hash(
         }
         ProjectionPath::TreePath { path } => {
             let TreeEntry::Concrete(tree) = store.tree_entry(handle)? else {
-                return Ok(canonical_word_hash_in_store(store, "Tree", handle));
+                return Ok(canonical_word_hash_in_store(store, schemas, "Tree", handle));
             };
             match subtree(&tree, path) {
                 Ok(projected) => Ok(hash_concrete_tree(&projected)),
-                Err(_) => Ok(canonical_scalar_hash("Missing", 0)),
+                Err(_) => Ok(canonical_scalar_hash(schemas, "Missing", 0)),
             }
         }
         ProjectionPath::DocGet { key } => {
@@ -8773,14 +8960,18 @@ fn projection_observation_hash(
                     bytes,
                     content_hash: _,
                     taint: _,
-                } if schema == "Blob" || schema == "String" => bytes,
-                StoreEntry { schema, .. } if schema == "Tree" => {
+                } if schemas.is_primitive(&schema, Primitive::Bytes)
+                    || schemas.is_primitive(&schema, Primitive::String) =>
+                {
+                    bytes
+                }
+                StoreEntry { schema, .. } if schemas.is_external(&schema, "Tree") => {
                     let TreeEntry::Concrete(tree) = store.tree_entry(handle)? else {
-                        return Ok(canonical_word_hash_in_store(store, "Tree", handle));
+                        return Ok(canonical_word_hash_in_store(store, schemas, "Tree", handle));
                     };
                     let count = tree.entries.len() + tree.blobs.len();
                     if count != 1 {
-                        return Ok(canonical_word_hash_in_store(store, "Tree", handle));
+                        return Ok(canonical_word_hash_in_store(store, schemas, "Tree", handle));
                     }
                     tree.entries
                         .into_values()
@@ -8818,15 +9009,15 @@ fn projection_observation_hash(
                 .into_iter()
                 .find(|candidate| candidate.name() == projection)
                 .ok_or_else(|| format!("unknown OCI projection {projection}"))?;
-            let tree = match oci_tree_from_store(store, handle) {
+            let tree = match oci_tree_from_store(store, schemas, handle) {
                 Ok(tree) => tree,
                 Err(err)
                     if store
                         .entry(handle)
-                        .is_some_and(|entry| entry.schema == "Tree") =>
+                        .is_some_and(|entry| schemas.is_external(&entry.schema, "Tree")) =>
                 {
                     let _ = err;
-                    return Ok(canonical_word_hash_in_store(store, "Tree", handle));
+                    return Ok(canonical_word_hash_in_store(store, schemas, "Tree", handle));
                 }
                 Err(err) => return Err(err),
             };
@@ -8857,7 +9048,7 @@ fn doc_get_observation_hash(
     key: &str,
 ) -> Result<ContentHash, String> {
     if let Some(input) = oci_virtual_files_input(store, descriptors, handle)? {
-        let tree = oci_tree_from_store(store, input)?;
+        let tree = oci_tree_from_store(store, schemas, input)?;
         let layout = super::oci::parse_layout(tree)?;
         let projected = super::oci::project_file(&layout, key)?;
         let scratch = RefCell::new(store.clone());
@@ -8887,6 +9078,7 @@ fn doc_get_observation_hash(
                 "Realized<Doc>",
                 doc,
                 Some(Realization::Ready),
+                schemas,
                 schema_refs,
             )?
         } else {
@@ -8902,7 +9094,7 @@ fn doc_get_observation_hash(
     }
 
     let scratch = RefCell::new(store.clone());
-    let (option, _) = doc_get(&scratch, descriptors, schema_refs, handle, key)?;
+    let (option, _) = doc_get(&scratch, descriptors, schemas, schema_refs, handle, key)?;
     Ok(scratch
         .borrow()
         .entry(option)
@@ -8921,7 +9113,7 @@ fn ast_projection_observation_hash(
 ) -> Result<ContentHash, String> {
     let projection = ast_projection_by_name(projection)?;
     let Some((source, input_hash)) = ast_input_source_for_verify(store, handle)? else {
-        return Ok(canonical_word_hash_in_store(store, "Tree", handle));
+        return Ok(canonical_word_hash_in_store(store, schemas, "Tree", handle));
     };
     let file = super::ast_probe::parse(&source)?;
     let scratch = RefCell::new(store.clone());
@@ -9027,11 +9219,13 @@ fn canonical_map_pairs(
     let mut pairs: Vec<OrderedMapPair> = pairs
         .into_iter()
         .map(|mut pair| {
-            pair.key_word = canonicalize_word_for_schema(&pair.key_schema, pair.key_word);
-            pair.value_word = canonicalize_word_for_schema(&pair.value_schema, pair.value_word);
-            let key_hash = canonical_word_hash_in_store(store, &pair.key_schema, pair.key_word);
+            pair.key_word = canonicalize_word_for_schema(schemas, &pair.key_schema, pair.key_word);
+            pair.value_word =
+                canonicalize_word_for_schema(schemas, &pair.value_schema, pair.value_word);
+            let key_hash =
+                canonical_word_hash_in_store(store, schemas, &pair.key_schema, pair.key_word);
             let value_hash =
-                canonical_word_hash_in_store(store, &pair.value_schema, pair.value_word);
+                canonical_word_hash_in_store(store, schemas, &pair.value_schema, pair.value_word);
             let key_taint = taint_for_word(store, pair.key_word);
             let value_taint = taint_for_word(store, pair.value_word);
             OrderedMapPair {
@@ -9754,9 +9948,9 @@ fn hash_value_into(
     let schema = schemas.display_ref(&descriptor.schema);
     hasher.update(schema.as_bytes());
     match &descriptor.access {
-        Access::Scalar if schema == "Float" => {
+        Access::Scalar if schemas.is_primitive(&schema, Primitive::F64) => {
             let word = read_frame_word(bytes, 0);
-            hasher.update(canonicalize_word_for_schema("Float", word).to_le_bytes());
+            hasher.update(canonicalize_word_for_schema(schemas, &schema, word).to_le_bytes());
         }
         Access::Scalar => hasher.update(bytes),
         Access::Handle { target } => {
@@ -9892,6 +10086,7 @@ fn write_alloc_fields(
     assert_eq!(fields.len(), field_count, "STORE_ALLOC field count");
     for (i, field) in fields.iter().enumerate() {
         let value = canonicalize_word_for_schema(
+            schemas,
             &schemas.display_ref(&field.descriptor.schema),
             read_frame_word(frame, field_base + i * 8),
         );
