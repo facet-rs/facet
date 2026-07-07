@@ -1,3 +1,5 @@
+#![cfg(feature = "taxon")]
+
 use std::{
     collections::{HashMap, HashSet},
     sync::Arc,
