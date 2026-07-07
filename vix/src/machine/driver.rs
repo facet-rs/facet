@@ -186,7 +186,7 @@ pub const STRING_SPLIT_HOST: u32 = 53;
 pub const STRING_PARSE_INT_HOST: u32 = 54;
 pub const STRING_CONTAINS_HOST: u32 = 55;
 pub const STRING_IS_NUMERIC_HOST: u32 = 56;
-pub const STRING_TO_PATH_HOST: u32 = 57;
+pub const PATH_JOIN_HOST: u32 = 57;
 pub const PATH_TO_STRING_HOST: u32 = 58;
 pub const DOC_IS_MAP_HOST: u32 = 59;
 
@@ -4334,14 +4334,20 @@ impl Driver {
                 }
             };
 
-            let mut string_to_path = |frame: &mut [u8]| {
+            let mut path_join = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
-                    let string = read_frame_word(frame, primitive_region + 8);
+                    let root = read_frame_word(frame, primitive_region + 8);
+                    let segment = read_frame_word(frame, primitive_region + 16);
                     let store = store_cell.borrow();
-                    let taint = store.entry(string).and_then(|entry| entry.taint.clone());
-                    let value = store.string_value(string, "String")?;
+                    let taint = combine_taints([root, segment].into_iter().filter_map(|word| {
+                        store.entry(word).and_then(|entry| entry.taint.clone())
+                    }));
+                    let root = store.string_value(root, "Path")?;
+                    let segment = store.string_value(segment, "String")?;
                     drop(store);
+                    let root = root.strip_suffix('/').unwrap_or(&root);
+                    let value = format!("{root}/{segment}");
                     let (handle, _) = store_cell.borrow_mut().alloc_raw_tainted(
                         "Path",
                         value.into_bytes(),
@@ -5242,7 +5248,7 @@ impl Driver {
                 &mut string_parse_int_host,
                 &mut string_contains_host,
                 &mut string_is_numeric_host,
-                &mut string_to_path,
+                &mut path_join,
                 &mut path_to_string,
                 &mut doc_is_map,
             ];

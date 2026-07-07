@@ -75,6 +75,20 @@ fn workspace_members_and_package_identity_come_from_real_manifest_copies() -> Re
 }
 
 #[test]
+fn member_manifest_paths_are_derived_from_granted_root() -> Result<(), String> {
+    let mut machine = manifest_machine()?;
+    let root = intern_path(&mut machine, "/workspace")?;
+    let member = intern_string(&mut machine, "facet-core")?;
+
+    let value = machine.demand_i64("member_manifest_path", vec![root, member])?;
+    assert_eq!(
+        rendered_string(&machine, "member_manifest_path", value)?,
+        "/workspace/facet-core/Cargo.toml"
+    );
+    Ok(())
+}
+
+#[test]
 fn dependency_declarations_extract_workspace_and_detailed_forms() -> Result<(), String> {
     let mut machine = manifest_machine()?;
     let workspace = intern_tree(&mut machine, workspace_tree())?;
@@ -226,7 +240,7 @@ fn direct_resolved_unit_adapter_gap_is_pinned() -> Result<(), String> {
     let value = machine.demand_i64("resolved_unit_adaptation_gap", vec![])?;
     let gap = rendered_string(&machine, "resolved_unit_adaptation_gap", value)?;
     assert!(
-        gap.contains("String.to_path is available")
+        gap.contains("Path construction is join-only from a granted root")
             && gap.contains("dependency-table key enumeration"),
         "{gap}"
     );
@@ -417,6 +431,12 @@ fn intern_tree(machine: &mut Machine, tree: Tree) -> Result<i64, String> {
 fn intern_string(machine: &mut Machine, value: &str) -> Result<i64, String> {
     Ok(machine
         .intern_arg("String", MachineArg::String(value.to_owned()))?
+        .0)
+}
+
+fn intern_path(machine: &mut Machine, value: &str) -> Result<i64, String> {
+    Ok(machine
+        .intern_arg("Path", MachineArg::Path(value.to_owned()))?
         .0)
 }
 

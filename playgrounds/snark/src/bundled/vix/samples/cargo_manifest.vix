@@ -153,6 +153,10 @@ fn member_from_manifest_path(path: Path) -> String {
     path.to_string().before("/Cargo.toml")
 }
 
+pub fn member_manifest_path(workspace_root: Path, member: String) -> String {
+    workspace_root.join(member).join("Cargo.toml").to_string()
+}
+
 pub fn workspace_members(workspace: Tree) -> [String] {
     workspace_doc(workspace).get("members").unwrap()
 }
@@ -357,5 +361,5 @@ pub fn problem_of_member(root_pkg: Int, root_default_feature: Int) -> Problem {
 }
 
 pub fn resolved_unit_adaptation_gap() -> String {
-    "String.to_path is available; generic ResolvedUnit emission remains blocked by dependency-table key enumeration and the demanded resolve-to-unit graph bridge."
+    "Path construction is join-only from a granted root; generic ResolvedUnit emission remains blocked by dependency-table key enumeration and the demanded resolve-to-unit graph bridge."
 }

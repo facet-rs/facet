@@ -35,15 +35,15 @@ use super::driver::{
     DOC_IS_MAP_HOST, DOC_PACKAGE_HOST, DOC_PARSE_HOST, DriveEvent, DriveEventSink, Driver,
     ELF_DOC_HOST, EXEC_HOST, FETCH_HOST, FnRef, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn,
     MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST, MOLTEN_DUP_HOST, MachineExecBackend,
-    OCI_DOC_HOST, OPTION_CONSTRUCT_HOST, OPTION_DESTRUCT_HOST, OPTION_UNWRAP_HOST,
+    OCI_DOC_HOST, OPTION_CONSTRUCT_HOST, OPTION_DESTRUCT_HOST, OPTION_UNWRAP_HOST, PATH_JOIN_HOST,
     PATH_TO_STRING_HOST, PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, PENDING_COERCE_HOST,
     PENDING_INVOKE_HOST, RECORD_UPDATE_HOST, RenderNames, RenderVariant, RenderedValue,
     SEALED_DECLASSIFY_HOST, SEALED_SEAL_HOST, SEALED_TO_STRING_HOST, STORE_ALLOC_HOST,
     STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_CONTAINS_HOST, STRING_DEFAULT_HOST,
     STRING_IS_NUMERIC_HOST, STRING_LOWER_HOST, STRING_PARSE_INT_HOST, STRING_SPLIT_HOST,
-    STRING_TO_PATH_HOST, STRING_UPPER_HOST, SemanticComparator, StepMode, StoreHandle, TARGET_HOST,
-    TREE_PROJECT_HOST, VALUE_COMPARE_HOST, VERSION_PARSE_HOST, VERSION_SET_OP_HOST,
-    VERSION_SET_PARSE_HOST, ValueBundle,
+    STRING_UPPER_HOST, SemanticComparator, StepMode, StoreHandle, TARGET_HOST, TREE_PROJECT_HOST,
+    VALUE_COMPARE_HOST, VERSION_PARSE_HOST, VERSION_SET_OP_HOST, VERSION_SET_PARSE_HOST,
+    ValueBundle,
 };
 use crate::ast;
 use crate::fetch::FetchBackend;
@@ -4416,13 +4416,6 @@ impl<'a> FnLowerer<'a> {
                 let ext = self.method_arg(arg, Some("String"))?;
                 self.path_with_ext(&receiver, &ext)
             }
-            "to_path" => {
-                if !call.args.args.is_empty() {
-                    return Err("String.to_path takes no arguments".into());
-                }
-                self.expect_schema(&receiver, "String")?;
-                self.raw_string_convert(&receiver, "Path", STRING_TO_PATH_HOST)
-            }
             "to_string" => {
                 if !call.args.args.is_empty() {
                     return Err("Path.to_string takes no arguments".into());
@@ -4463,6 +4456,13 @@ impl<'a> FnLowerer<'a> {
                 self.array_collect(&receiver, expected)
             }
             "join" => {
+                if self.tables.schemas.is_external(&receiver.schema, "Path") {
+                    let [arg] = call.args.args.as_slice() else {
+                        return Err("Path.join takes one segment".into());
+                    };
+                    let segment = self.method_arg(arg, Some("String"))?;
+                    return self.path_join(&receiver, &segment);
+                }
                 let receiver = if self.tables.schemas.is_list(&receiver.schema) {
                     receiver
                 } else if self.tables.schemas.is_named_schema(&receiver.schema, "Doc") {
@@ -7561,6 +7561,32 @@ impl<'a> FnLowerer<'a> {
         });
         self.code.push(Op::HostCall {
             host: PATH_WITH_EXT_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Path".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn path_join(&mut self, path: &ValueSlot, segment: &ValueSlot) -> Result<ValueSlot, String> {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: path.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: segment.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: PATH_JOIN_HOST,
         });
         Ok(ValueSlot {
             slot: dst,
