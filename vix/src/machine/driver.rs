@@ -741,7 +741,7 @@ fn update_hash_len(hasher: &mut blake3::Hasher, len: usize) {
 }
 
 fn update_schema_name(hasher: &mut blake3::Hasher, schemas: &SchemaTables, name: &str) {
-    hasher.update(&schemas.frame_id_for_name(name).as_u64().to_le_bytes());
+    update_schema_ref(hasher, schemas, &schemas.legacy_ref(name));
 }
 
 fn update_schema_ref(hasher: &mut blake3::Hasher, schemas: &SchemaTables, schema_ref: &SchemaRef) {
@@ -753,7 +753,14 @@ fn update_schema_ref(hasher: &mut blake3::Hasher, schemas: &SchemaTables, schema
                 update_schema_ref(hasher, schemas, arg);
             }
         }
-        SchemaRef::Var { name } => update_schema_name(hasher, schemas, name),
+        SchemaRef::Var { name } => {
+            hasher.update(
+                &crate::module::legacy_marker_schema_id(name)
+                    .as_u64()
+                    .to_le_bytes(),
+            );
+            update_hash_len(hasher, 0);
+        }
     }
 }
 
@@ -1253,8 +1260,10 @@ impl ValueStore {
             .get(schema)
             .unwrap_or_else(|| panic!("descriptor for schema `{schema}`"));
         let taint = taint_for_value_bytes(self, descriptor, &bytes);
-        let content_hash =
-            hash_with_taint(hash_value_bytes(schemas, descriptor, &bytes, self), &taint);
+        let content_hash = hash_with_taint(
+            hash_value_bytes(descriptors, schemas, descriptor, &bytes, self),
+            &taint,
+        );
         let key = (schema.to_string(), HandleTier::Ready, content_hash);
         if let Some(handle) = self.by_content.get(&key).copied() {
             return (handle, true);
@@ -8992,11 +9001,21 @@ fn hash_with_taint(base: ContentHash, taint: &Option<StructuralTaint>) -> Conten
 }
 
 fn hash_taint_into(hasher: &mut blake3::Hasher, taint: &StructuralTaint) {
+    update_hash_len(hasher, taint.marker.len());
     hasher.update(taint.marker.as_bytes());
+    update_hash_len(hasher, taint.recipient.len());
     hasher.update(taint.recipient.as_bytes());
+    update_hash_len(hasher, taint.identity_hash.len());
     hasher.update(&taint.identity_hash);
-    if let Some(tag) = &taint.content_tag {
-        hasher.update(tag.as_bytes());
+    match &taint.content_tag {
+        Some(tag) => {
+            hasher.update(&[1]);
+            update_hash_len(hasher, tag.len());
+            hasher.update(tag.as_bytes());
+        }
+        None => {
+            hasher.update(&[0]);
+        }
     }
 }
 
@@ -10448,17 +10467,19 @@ fn pending_exec_identity_hash(
 }
 
 fn hash_value_bytes(
+    descriptors: &DescriptorMap,
     schemas: &SchemaTables,
     descriptor: &VixDescriptor,
     bytes: &[u8],
     store: &ValueStore,
 ) -> ContentHash {
     let mut hasher = blake3::Hasher::new();
-    hash_value_into(schemas, &mut hasher, descriptor, bytes, store);
+    hash_value_into(descriptors, schemas, &mut hasher, descriptor, bytes, store);
     finish_hash(hasher)
 }
 
 fn hash_value_into(
+    descriptors: &DescriptorMap,
     schemas: &SchemaTables,
     hasher: &mut blake3::Hasher,
     descriptor: &VixDescriptor,
@@ -10491,6 +10512,7 @@ fn hash_value_into(
                 let start = field.offset;
                 let end = start + field.descriptor.layout.size;
                 hash_value_into(
+                    descriptors,
                     schemas,
                     hasher,
                     &field.descriptor,
@@ -10512,6 +10534,7 @@ fn hash_value_into(
                 let start = field.offset;
                 let end = start + field.descriptor.layout.size;
                 hash_value_into(
+                    descriptors,
                     schemas,
                     hasher,
                     &field.descriptor,
@@ -10529,7 +10552,14 @@ fn hash_value_into(
             for i in 0..*count {
                 let start = i * *stride;
                 let end = start + element.layout.size;
-                hash_value_into(schemas, hasher, element, &bytes[start..end], store);
+                hash_value_into(
+                    descriptors,
+                    schemas,
+                    hasher,
+                    element,
+                    &bytes[start..end],
+                    store,
+                );
             }
         }
         Access::Sequence(sequence) => {
@@ -10564,30 +10594,10 @@ fn hash_value_into(
             let pairs = decode_map_pairs(bytes, schemas).unwrap_or_else(|err| {
                 panic!("map descriptor hashing failed for `{schema}`: {err}")
             });
-            let ordered = pairs
-                .into_iter()
-                .map(|pair| {
-                    let key_hash = canonical_word_hash_in_store(
-                        store,
-                        schemas,
-                        &pair.key_schema,
-                        pair.key_word,
-                    );
-                    let value_hash = canonical_word_hash_in_store(
-                        store,
-                        schemas,
-                        &pair.value_schema,
-                        pair.value_word,
-                    );
-                    OrderedMapPair {
-                        pair,
-                        key_hash,
-                        value_hash,
-                        key_taint: None,
-                        value_taint: None,
-                    }
-                })
-                .collect::<Vec<_>>();
+            let ordered = canonical_map_pairs(store, pairs, descriptors, schemas, schemas)
+                .unwrap_or_else(|err| {
+                    panic!("map descriptor canonicalization failed for `{schema}`: {err}")
+                });
             hasher.update(hash_map_pairs(&schema, &ordered, schemas).as_ref());
         }
         Access::Option(option) => {
@@ -10604,6 +10614,7 @@ fn hash_value_into(
                         let payload_start = offset + width;
                         let payload_end = payload_start + option.some.layout.size;
                         hash_value_into(
+                            descriptors,
                             schemas,
                             hasher,
                             &option.some,
@@ -10621,7 +10632,7 @@ fn hash_value_into(
                     let is_some = &bytes[*offset..end] != none_pattern.as_slice();
                     hasher.update(&u64::from(is_some).to_le_bytes());
                     if is_some {
-                        hash_value_into(schemas, hasher, &option.some, bytes, store);
+                        hash_value_into(descriptors, schemas, hasher, &option.some, bytes, store);
                     }
                 }
                 Presence::Thunk { .. } | Presence::Vtable(_) => {

@@ -993,7 +993,7 @@ fn legacy_generic_schema(schema: &str) -> Option<(&str, Vec<String>)> {
     Some((base, parts))
 }
 
-fn legacy_marker_schema_id(name: &str) -> SchemaId {
+pub(crate) fn legacy_marker_schema_id(name: &str) -> SchemaId {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"vix-legacy-schema-marker");
     hasher.update(

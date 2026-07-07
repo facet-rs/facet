@@ -252,8 +252,6 @@ fn bundle_hash(bundle: &ValueBundle) -> Blake3Hash {
     update_len(&mut hasher, bundle.values.len());
     for value in &bundle.values {
         hasher.update(&value.handle.to_le_bytes());
-        update_len(&mut hasher, value.schema.len());
-        hasher.update(value.schema.as_bytes());
         update_len(&mut hasher, value.bytes.len());
         hasher.update(&value.bytes);
         update_len(&mut hasher, value.content_hash.len());
@@ -272,7 +270,7 @@ fn bundle_hash(bundle: &ValueBundle) -> Blake3Hash {
 fn computation_identity(plan: &ExecPlan, capability: u64) -> Blake3Hash {
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"vix-wire-computation-identity");
-    hasher.update(plan.hash().as_ref());
+    hasher.update(plan.identity_hash().as_ref());
     hasher.update(&capability.to_le_bytes());
     finish_hash(hasher)
 }
