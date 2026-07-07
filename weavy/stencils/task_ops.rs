@@ -33,7 +33,7 @@ pub struct Ctx {
     /// the driver performs all allocation between entries.
     pub frame: *mut u8,
     /// Host readiness array: `ready[i] != 0` ⇒ await #i's value is present.
-    pub ready: *const i64,
+    pub ready: *mut i64,
     /// Host value array, indexed by await index.
     pub awaited: *const i64,
     /// On any driver exit (park/call/ret), the chain offset to re-enter.
@@ -236,15 +236,17 @@ pub unsafe extern "C" fn weavy_task_store_ix(cx: *mut Ctx) {
 }
 
 /// AWAIT — immediates: [resume_off, index, dst], NOT consumed on the
-/// pending path so a resume re-reads the same descriptor (idempotent
-/// per suspend point, exactly the proven async-lane protocol).
+/// pending path so a resume re-reads the same descriptor. The ready token is
+/// consumed on the successful read path.
 #[no_mangle]
 pub unsafe extern "C" fn weavy_task_await(cx: *mut Ctx) {
     let c = &mut *cx;
     let resume_off = *c.prog;
     let index = *c.prog.add(1) as usize;
     let dst = *c.prog.add(2);
-    if *c.ready.add(index) != 0 {
+    let ready = c.ready.add(index);
+    if *ready != 0 {
+        *ready = 0;
         c.prog = c.prog.add(3);
         write_i64(c.frame, dst, *c.awaited.add(index));
         cont!(cx);

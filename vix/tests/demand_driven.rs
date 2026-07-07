@@ -1154,23 +1154,25 @@ fn tail_loop_interp_jit_trace_equal() {
 #[test]
 fn tail_loop_accumulator_stays_molten() {
     let src = r#"
+pub fn seed() -> Array {
+    [0]
+}
+
 fn grow(n: Int, acc: Array) -> Array {
     match n {
         0 => acc,
         _ => grow(n - 1, acc.push(n)),
     }
 }
-
-pub fn main(n: Int) -> Array {
-    grow(n, [0])
-}
 "#;
     for lane in lanes() {
         let mut machine = load_with_lane(src, lane);
-        let result = machine.demand_i64("main", vec![24]).unwrap();
-        let RenderedValue::Array { items, .. } = machine.render_result("main", result).unwrap()
+        let seed = machine.demand_i64("seed", vec![]).unwrap();
+        machine.clear_trace();
+        let result = machine.demand_i64("grow", vec![24, seed]).unwrap();
+        let RenderedValue::Array { items, .. } = machine.render_result("grow", result).unwrap()
         else {
-            panic!("main did not render as an Array on {lane:?}");
+            panic!("grow did not render as an Array on {lane:?}");
         };
         assert_eq!(items.len(), 25, "{lane:?}");
         assert_eq!(

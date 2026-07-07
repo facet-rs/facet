@@ -110,8 +110,8 @@ pub enum Op {
     /// pop the frame.
     Ret { src: u32, size: u32 },
     /// ASYNC await point (numbered in task order of first arrival):
-    /// if `input` is ready, write its value (i64 in this slice) to
-    /// `frame[dst]` and continue; otherwise PARK the task. Sync host
+    /// if `input` is ready, consume that ready token, write its value
+    /// (i64 in this slice) to `frame[dst]`, and continue; otherwise PARK the task. Sync host
     /// calls are deliberately NOT this op.
     Await { dst: u32, input: u32 },
     /// `frame[dst] = frame[base + frame[index]*stride]` — dynamic
@@ -289,9 +289,9 @@ impl Task {
 
     /// Drive until the root returns or the task parks. `ready` and
     /// `awaited` are indexed by await input, exactly as in the proven
-    /// suspend protocol. Programs containing [`Op::HostCall`] must use
-    /// [`Task::run_hosted`].
-    pub fn run(&mut self, program: &Program, ready: &[bool], awaited: &[i64]) -> TaskStep {
+    /// suspend protocol. A ready slot is consumed when its await reads
+    /// it. Programs containing [`Op::HostCall`] must use [`Task::run_hosted`].
+    pub fn run(&mut self, program: &Program, ready: &mut [bool], awaited: &[i64]) -> TaskStep {
         self.run_hosted(program, ready, awaited, &mut [])
     }
 
@@ -299,7 +299,7 @@ impl Task {
     pub fn run_hosted(
         &mut self,
         program: &Program,
-        ready: &[bool],
+        ready: &mut [bool],
         awaited: &[i64],
         hosts: &mut [HostFn<'_>],
     ) -> TaskStep {
@@ -484,7 +484,10 @@ impl Task {
                 }
                 Op::Await { dst, input } => {
                     let idx = input as usize;
-                    if ready.get(idx).copied().unwrap_or(false) {
+                    if let Some(is_ready) = ready.get_mut(idx)
+                        && *is_ready
+                    {
+                        *is_ready = false;
                         if self.parked_on == Some(input) {
                             self.parked_on = None;
                             self.trace.push(TaskEvent::Resumed);
@@ -511,7 +514,12 @@ impl Task {
 /// executor driver below (and vix's demand driver later) can hold
 /// either without caring which.
 pub trait Advance {
-    fn advance(&mut self, ready: &[bool], awaited: &[i64], hosts: &mut [HostFn<'_>]) -> TaskStep;
+    fn advance(
+        &mut self,
+        ready: &mut [bool],
+        awaited: &[i64],
+        hosts: &mut [HostFn<'_>],
+    ) -> TaskStep;
     fn result_bytes(&self) -> &[u8];
 }
 
@@ -522,7 +530,12 @@ pub struct Running<'p> {
 }
 
 impl Advance for Running<'_> {
-    fn advance(&mut self, ready: &[bool], awaited: &[i64], hosts: &mut [HostFn<'_>]) -> TaskStep {
+    fn advance(
+        &mut self,
+        ready: &mut [bool],
+        awaited: &[i64],
+        hosts: &mut [HostFn<'_>],
+    ) -> TaskStep {
         self.task.run_hosted(self.program, ready, awaited, hosts)
     }
 
@@ -604,7 +617,7 @@ impl<A: Advance + Unpin> Future for TaskExec<'_, A> {
             .collect();
         match this
             .lane
-            .advance(&this.ready, &this.awaited, &mut host_refs)
+            .advance(&mut this.ready, &this.awaited, &mut host_refs)
         {
             TaskStep::Done => Poll::Ready(this.lane.result_bytes().to_vec()),
             TaskStep::Parked { input } => {
@@ -695,7 +708,7 @@ mod tests {
             ],
         };
         let mut task = Task::spawn(&program, FnId(0));
-        assert_eq!(task.run(&program, &[], &[]), TaskStep::Done);
+        assert_eq!(task.run(&program, &mut [], &[]), TaskStep::Done);
         // (6*7)+6 = 48, +6 again in the caller = 54.
         assert_eq!(task.result_i64(), 54);
         assert_eq!(
@@ -741,16 +754,18 @@ mod tests {
             ],
         };
         let mut task = Task::spawn(&program, FnId(0));
+        let mut ready = [false];
 
         assert_eq!(
-            task.run(&program, &[false], &[0]),
+            task.run(&program, &mut ready, &[0]),
             TaskStep::Parked { input: 0 }
         );
         assert_eq!(task.depth(), 2, "both frames live while parked");
         assert!(task.trace.contains(&TaskEvent::Parked { input: 0 }));
 
         // The task struct IS the suspended state; nothing else exists.
-        assert_eq!(task.run(&program, &[true], &[21]), TaskStep::Done);
+        ready[0] = true;
+        assert_eq!(task.run(&program, &mut ready, &[21]), TaskStep::Done);
         assert_eq!(task.result_i64(), 21 * 2 + 100);
         assert!(task.trace.contains(&TaskEvent::Resumed));
         let exits: Vec<_> = task
@@ -770,7 +785,8 @@ mod tests {
             }],
         };
         let mut task = Task::spawn(&program, FnId(0));
-        assert_eq!(task.run(&program, &[true], &[42]), TaskStep::Done);
+        let mut ready = [true];
+        assert_eq!(task.run(&program, &mut ready, &[42]), TaskStep::Done);
         assert_eq!(task.result_i64(), 42);
         assert!(
             !task
@@ -833,7 +849,7 @@ mod tests {
             ],
         };
         let mut task = Task::spawn(&program, FnId(0));
-        assert_eq!(task.run(&program, &[], &[]), TaskStep::Done);
+        assert_eq!(task.run(&program, &mut [], &[]), TaskStep::Done);
         assert_eq!(task.result_i64(), 54);
     }
 
@@ -993,8 +1009,9 @@ mod tests {
             ],
         };
         let mut task = Task::spawn(&program, FnId(0));
+        let mut ready = [false];
         assert_eq!(
-            task.run(&program, &[false], &[0]),
+            task.run(&program, &mut ready, &[0]),
             TaskStep::Parked { input: 0 }
         );
         assert_eq!(
@@ -1006,7 +1023,8 @@ mod tests {
         // ix=2: a=arr[2]=30, b=arr[3]=40, sum=70; caller adds its own
         // UNMUTATED arr[2]=30 → 100. (If by-value copying were shared,
         // the callee's 999 would bleed through and this would be 1069.)
-        assert_eq!(task.run(&program, &[true], &[2]), TaskStep::Done);
+        ready[0] = true;
+        assert_eq!(task.run(&program, &mut ready, &[2]), TaskStep::Done);
         assert_eq!(task.result_i64(), 100);
     }
 
@@ -1070,7 +1088,7 @@ mod tests {
             ],
         };
         let mut task = Task::spawn(&program, FnId(0));
-        assert_eq!(task.run(&program, &[], &[]), TaskStep::Done);
+        assert_eq!(task.run(&program, &mut [], &[]), TaskStep::Done);
         assert_eq!(
             task.result_i64(),
             6,
@@ -1216,7 +1234,7 @@ mod tests {
             fns: vec![root, mid, leaf],
         };
         let mut task = Task::spawn(&program, FnId(0));
-        assert_eq!(task.run(&program, &[], &[]), TaskStep::Done);
+        assert_eq!(task.run(&program, &mut [], &[]), TaskStep::Done);
         // leaf: 10+1=11; mid: 11+10=21.
         assert_eq!(task.result_i64(), 21);
         assert_eq!(task.depth(), 0);
@@ -1262,7 +1280,7 @@ mod tests {
         let mut task = Task::spawn_with_mode(&program, FnId(0), TraceMode::Production);
         task.write_i64(0, 100_000);
 
-        assert_eq!(task.run(&program, &[], &[]), TaskStep::Done);
+        assert_eq!(task.run(&program, &mut [], &[]), TaskStep::Done);
         assert_eq!(task.result_i64(), 0);
         assert_eq!(task.depth(), 0);
     }
@@ -1341,7 +1359,7 @@ mod tests {
         let mut task = Task::spawn(&program, FnId(0));
         task.write_i64(0, 101);
 
-        assert_eq!(task.run(&program, &[], &[]), TaskStep::Done);
+        assert_eq!(task.run(&program, &mut [], &[]), TaskStep::Done);
         assert_eq!(task.result_i64(), 0);
     }
 }

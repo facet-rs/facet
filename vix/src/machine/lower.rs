@@ -681,10 +681,13 @@ fn compile_module_set(
                 item,
                 &tables,
                 &tables.fn_modules[*name],
+                name,
+                ix,
                 &fn_refs,
                 signatures,
                 &schema_refs,
                 literal_handles,
+                lower_options,
             )
             .map_err(|e| format!("lowering {name}: {e}"))?
         };
@@ -1956,22 +1959,23 @@ fn expr_span(expr: &ast::Expr) -> ast::Span {
 }
 
 fn consuming_rebind_receiver(binding_name: &str, value: &ast::Expr) -> Option<String> {
-    let value = unparen_expr(value);
-    match value {
-        ast::Expr::MethodCall(call)
-            if aggregate_update_method(call.name.value.as_str())
-                && plain_identifier_expr(&call.receiver) == Some(binding_name) =>
-        {
-            Some(binding_name.to_string())
+    consuming_update_receiver(value)
+        .filter(|receiver| *receiver == binding_name)
+        .map(str::to_string)
+}
+
+fn consuming_update_receiver(value: &ast::Expr) -> Option<&str> {
+    match unparen_expr(value) {
+        ast::Expr::MethodCall(call) if aggregate_update_method(call.name.value.as_str()) => {
+            plain_identifier_expr(&call.receiver)
         }
         ast::Expr::Field(field) if matches!(&field.name, ast::Member::Index(index) if index.value == "1") =>
         {
             let receiver = unparen_expr(&field.receiver);
             if let ast::Expr::MethodCall(call) = receiver
                 && call.name.value == "pop"
-                && plain_identifier_expr(&call.receiver) == Some(binding_name)
             {
-                return Some(binding_name.to_string());
+                return plain_identifier_expr(&call.receiver);
             }
             None
         }
@@ -1988,6 +1992,99 @@ fn plain_identifier_expr(expr: &ast::Expr) -> Option<&str> {
         ast::Expr::Identifier(name) => Some(name.value.as_str()),
         _ => None,
     }
+}
+
+fn identifier_uses_in_arg_list(args: &ast::ArgList) -> HashMap<String, usize> {
+    let mut uses = HashMap::new();
+    count_identifier_uses_in_args(args, &mut uses);
+    uses
+}
+
+fn count_identifier_uses_in_args(args: &ast::ArgList, uses: &mut HashMap<String, usize>) {
+    for arg in &args.args {
+        match arg {
+            ast::Arg::Expr(expr) => count_identifier_uses_in_expr(expr, uses),
+            ast::Arg::Kwarg(kwarg) => count_identifier_uses_in_expr(&kwarg.value, uses),
+            ast::Arg::Partial(_) => {}
+        }
+    }
+}
+
+fn count_identifier_uses_in_expr(expr: &ast::Expr, uses: &mut HashMap<String, usize>) {
+    match expr {
+        ast::Expr::Identifier(name) => {
+            *uses.entry(name.value.clone()).or_default() += 1;
+        }
+        ast::Expr::Paren(paren) => count_identifier_uses_in_expr(&paren.inner, uses),
+        ast::Expr::Binary(binary) => {
+            count_identifier_uses_in_expr(&binary.left, uses);
+            count_identifier_uses_in_expr(&binary.right, uses);
+        }
+        ast::Expr::Unary(unary) => count_identifier_uses_in_expr(&unary.operand, uses),
+        ast::Expr::Call(call) => count_identifier_uses_in_args(&call.args, uses),
+        ast::Expr::MethodCall(call) => {
+            count_identifier_uses_in_expr(&call.receiver, uses);
+            count_identifier_uses_in_args(&call.args, uses);
+        }
+        ast::Expr::Field(field) => count_identifier_uses_in_expr(&field.receiver, uses),
+        ast::Expr::Match(m) => {
+            count_identifier_uses_in_expr(&m.scrutinee, uses);
+            for arm in &m.arms {
+                if let Some(guard) = &arm.guard {
+                    count_identifier_uses_in_expr(guard, uses);
+                }
+                count_identifier_uses_in_expr(&arm.value, uses);
+            }
+        }
+        ast::Expr::StructLit(lit) => {
+            for field in &lit.fields {
+                count_identifier_uses_in_expr(&field.value, uses);
+            }
+            for spread in &lit.spreads {
+                if let Some(base) = &spread.base {
+                    count_identifier_uses_in_expr(base, uses);
+                }
+            }
+        }
+        ast::Expr::Map(map) => {
+            for entry in &map.entries {
+                count_identifier_uses_in_expr(&entry.key, uses);
+                count_identifier_uses_in_expr(&entry.value, uses);
+            }
+        }
+        ast::Expr::Tuple(tuple) => {
+            for elem in &tuple.elems {
+                count_identifier_uses_in_expr(elem, uses);
+            }
+        }
+        ast::Expr::Array(array) => {
+            for elem in &array.elems {
+                if let ast::ArrayElem::Expr(expr) = elem {
+                    count_identifier_uses_in_expr(expr, uses);
+                }
+            }
+        }
+        ast::Expr::Closure(closure) => count_identifier_uses_in_expr(&closure.body, uses),
+        ast::Expr::Command(command) => {
+            for part in &command.parts {
+                if let ast::CommandPart::Splice(splice) = part {
+                    count_identifier_uses_in_expr(&splice.expr, uses);
+                }
+            }
+        }
+        ast::Expr::Scoped(_)
+        | ast::Expr::Template(_)
+        | ast::Expr::Str(_)
+        | ast::Expr::Path(_)
+        | ast::Expr::Number(_)
+        | ast::Expr::Bool(_) => {}
+    }
+}
+
+fn arg_list_has_partial(args: &ast::ArgList) -> bool {
+    args.args
+        .iter()
+        .any(|arg| matches!(arg, ast::Arg::Partial(_)))
 }
 
 fn unparen_expr(mut expr: &ast::Expr) -> &ast::Expr {
@@ -2580,6 +2677,11 @@ struct BoundCall {
     given: usize,
 }
 
+enum TailOutcome {
+    Value(ValueSlot),
+    Jumped,
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum TemplatePart {
     Text(String),
@@ -2758,13 +2860,17 @@ fn fork_binding_cell(cell: &BindingCell) -> BindingCell {
 struct FnLowerer<'a> {
     tables: &'a ModuleTables,
     current_module: &'a str,
+    current_fn_name: &'a str,
+    current_fn_ref: usize,
     fn_refs: &'a HashMap<String, usize>,
     signatures: FnSignatures<'a>,
     schema_refs: &'a HashMap<String, i64>,
     literal_handles: LiteralHandles<'a>,
     slots: Bindings,
+    param_slots: Vec<ValueSlot>,
     next: u32,
     code: Vec<Op>,
+    loop_header: u32,
     invoke_region: u32,
     store_alloc_region: u32,
     store_read_region: u32,
@@ -2772,6 +2878,7 @@ struct FnLowerer<'a> {
     primitive_region: u32,
     next_input_slot: i64,
     consume_receiver: Option<String>,
+    force_tail_invoke: bool,
 }
 
 impl<'a> FnLowerer<'a> {
@@ -2779,21 +2886,28 @@ impl<'a> FnLowerer<'a> {
         item: &ast::FnItem,
         tables: &'a ModuleTables,
         current_module: &'a str,
+        current_fn_name: &'a str,
+        current_fn_ref: usize,
         fn_refs: &'a HashMap<String, usize>,
         signatures: FnSignatures<'a>,
         schema_refs: &'a HashMap<String, i64>,
         literal_handles: LiteralHandles<'a>,
+        lower_options: LowerOptions,
     ) -> Result<(TaskFn, LoweredInfo), String> {
         let mut this = FnLowerer {
             tables,
             current_module,
+            current_fn_name,
+            current_fn_ref,
             fn_refs,
             signatures,
             schema_refs,
             literal_handles,
             slots: HashMap::new(),
+            param_slots: Vec::new(),
             next: 0,
             code: Vec::new(),
+            loop_header: 0,
             invoke_region: 0,
             store_alloc_region: 0,
             store_read_region: 0,
@@ -2801,21 +2915,22 @@ impl<'a> FnLowerer<'a> {
             primitive_region: 0,
             next_input_slot: 0,
             consume_receiver: None,
+            force_tail_invoke: lower_options.force_tail_invoke,
         };
 
         let mut arg_offsets = Vec::new();
         for param in &item.params.params {
             let slot = this.alloc();
             let schema = type_schema_name(&param.ty)?;
-            this.slots.insert(
-                param.name.value.clone(),
-                BindingCell::value(ValueSlot {
-                    slot,
-                    schema,
-                    realization: None,
-                    pending: None,
-                }),
-            );
+            let value = ValueSlot {
+                slot,
+                schema,
+                realization: None,
+                pending: None,
+            };
+            this.slots
+                .insert(param.name.value.clone(), BindingCell::value(value.clone()));
+            this.param_slots.push(value);
             arg_offsets.push(slot);
         }
 
@@ -2834,6 +2949,7 @@ impl<'a> FnLowerer<'a> {
         this.primitive_region = this.next;
         let primitive_words = max_store_fields.max(max_argc);
         this.next += 8 * (128 + u32::try_from(primitive_words).expect("primitive word count"));
+        this.loop_header = u32::try_from(this.code.len()).expect("code len fits u32");
 
         let return_schema = item
             .return_type
@@ -2841,12 +2957,16 @@ impl<'a> FnLowerer<'a> {
             .map(type_schema_name)
             .transpose()?
             .unwrap_or_else(|| "Int".into());
-        let result = this.block(&item.body, Some(&return_schema))?;
-        let result = this.coerce_to_schema(result, &return_schema)?;
-        this.code.push(Op::Ret {
-            src: result.slot,
-            size: 8,
-        });
+        match this.tail_block(&item.body, Some(&return_schema))? {
+            TailOutcome::Value(result) => {
+                let result = this.coerce_to_schema(result, &return_schema)?;
+                this.code.push(Op::Ret {
+                    src: result.slot,
+                    size: 8,
+                });
+            }
+            TailOutcome::Jumped => {}
+        }
 
         let frame = Layout {
             size: this.next as usize,
@@ -2874,11 +2994,11 @@ impl<'a> FnLowerer<'a> {
         slot
     }
 
-    fn block(
+    fn tail_block(
         &mut self,
         block: &ast::Block,
         tail_expected: Option<&str>,
-    ) -> Result<ValueSlot, String> {
+    ) -> Result<TailOutcome, String> {
         for stmt in &block.stmts {
             match stmt {
                 ast::Stmt::Let(l) => {
@@ -2903,12 +3023,31 @@ impl<'a> FnLowerer<'a> {
             .tail
             .as_ref()
             .ok_or("slice-1 functions must end in a tail expression")?;
-        self.expr_expected(tail, tail_expected)
+        self.tail_expr_expected(tail, tail_expected)
     }
 
     /// Compile an expression; returns the frame slot holding its value.
     fn expr(&mut self, e: &ast::Expr) -> Result<ValueSlot, String> {
         self.expr_expected(e, None)
+    }
+
+    fn tail_expr_expected(
+        &mut self,
+        e: &ast::Expr,
+        expected: Option<&str>,
+    ) -> Result<TailOutcome, String> {
+        match e {
+            ast::Expr::Paren(paren) => self.tail_expr_expected(&paren.inner, expected),
+            ast::Expr::Match(m) => self.tail_match_expr(m, expected),
+            ast::Expr::Call(call) => {
+                if let Some(outcome) = self.self_tail_call(call)? {
+                    Ok(outcome)
+                } else {
+                    self.expr_expected(e, expected).map(TailOutcome::Value)
+                }
+            }
+            _ => self.expr_expected(e, expected).map(TailOutcome::Value),
+        }
     }
 
     fn expr_expected(
@@ -3353,10 +3492,30 @@ impl<'a> FnLowerer<'a> {
         m: &ast::MatchExpr,
         expected: Option<&str>,
     ) -> Result<ValueSlot, String> {
+        match self.match_expr_outcome(m, expected, false)? {
+            TailOutcome::Value(value) => Ok(value),
+            TailOutcome::Jumped => Err("non-tail match arm unexpectedly jumped".into()),
+        }
+    }
+
+    fn tail_match_expr(
+        &mut self,
+        m: &ast::MatchExpr,
+        expected: Option<&str>,
+    ) -> Result<TailOutcome, String> {
+        self.match_expr_outcome(m, expected, true)
+    }
+
+    fn match_expr_outcome(
+        &mut self,
+        m: &ast::MatchExpr,
+        expected: Option<&str>,
+        tail: bool,
+    ) -> Result<TailOutcome, String> {
         let scrut = self.expr(&m.scrutinee)?;
         let scrut = self.coerce_inner(scrut)?;
         self.hoist_bindings_used_by_multiple_arms(m)?;
-        let result = self.alloc();
+        let mut result = None;
         let mut result_schema: Option<String> = None;
         let mut jump_to_end: Vec<usize> = Vec::new();
         let mut bool_covered = BTreeSet::new();
@@ -3536,29 +3695,40 @@ impl<'a> FnLowerer<'a> {
             if skip_patches.is_empty() && i != last {
                 return Err("irrefutable arm before the last arm".into());
             }
-            let v = self.expr(&arm.value)?;
-            let v = if let Some(expected) = expected {
-                self.coerce_to_schema(v, expected)?
+            let outcome = if tail {
+                self.tail_expr_expected(&arm.value, expected)?
             } else {
-                v
+                let v = self.expr(&arm.value)?;
+                let v = if let Some(expected) = expected {
+                    self.coerce_to_schema(v, expected)?
+                } else {
+                    v
+                };
+                TailOutcome::Value(v)
             };
-            match &result_schema {
-                Some(schema) if schema != &v.schema => {
-                    return Err(format!(
-                        "match arm returned {}, previous arm returned {schema}",
-                        v.schema
-                    ));
+            match outcome {
+                TailOutcome::Value(v) => {
+                    match &result_schema {
+                        Some(schema) if schema != &v.schema => {
+                            return Err(format!(
+                                "match arm returned {}, previous arm returned {schema}",
+                                v.schema
+                            ));
+                        }
+                        None => result_schema = Some(v.schema.clone()),
+                        _ => {}
+                    }
+                    let result = *result.get_or_insert_with(|| self.alloc());
+                    self.code.push(Op::CopyI64 {
+                        dst: result,
+                        src: v.slot,
+                    });
+                    if i != last {
+                        jump_to_end.push(self.code.len());
+                        self.code.push(Op::Jump { target: 0 });
+                    }
                 }
-                None => result_schema = Some(v.schema.clone()),
-                _ => {}
-            }
-            self.code.push(Op::CopyI64 {
-                dst: result,
-                src: v.slot,
-            });
-            if i != last {
-                jump_to_end.push(self.code.len());
-                self.code.push(Op::Jump { target: 0 });
+                TailOutcome::Jumped => {}
             }
             for at in skip_patches {
                 let next = u32::try_from(self.code.len()).expect("code len fits u32");
@@ -3608,12 +3778,18 @@ impl<'a> FnLowerer<'a> {
         for at in jump_to_end {
             self.code[at] = Op::Jump { target: end };
         }
-        Ok(ValueSlot {
-            slot: result,
-            schema: result_schema.unwrap_or_else(|| "Int".into()),
-            realization: None,
-            pending: None,
-        })
+        if let Some(result) = result {
+            Ok(TailOutcome::Value(ValueSlot {
+                slot: result,
+                schema: result_schema.unwrap_or_else(|| "Int".into()),
+                realization: None,
+                pending: None,
+            }))
+        } else if tail {
+            Ok(TailOutcome::Jumped)
+        } else {
+            Err("non-tail match produced no value".into())
+        }
     }
 
     fn hoist_bindings_used_by_multiple_arms(&mut self, m: &ast::MatchExpr) -> Result<(), String> {
@@ -3698,6 +3874,7 @@ impl<'a> FnLowerer<'a> {
                 &call.args,
                 0,
                 true,
+                None,
             )?;
             let return_schema = self.signatures.returns[&resolved_name].clone();
             if bound.partial {
@@ -3738,6 +3915,7 @@ impl<'a> FnLowerer<'a> {
             &call.args,
             pending.given,
             false,
+            None,
         )?;
         let value_schema = pending_value_schema(&callee.schema)
             .ok_or_else(|| format!("callee {name} is `{}`, not pending", callee.schema))?
@@ -3790,6 +3968,85 @@ impl<'a> FnLowerer<'a> {
         })
     }
 
+    fn self_tail_call(&mut self, call: &ast::Call) -> Result<Option<TailOutcome>, String> {
+        if self.force_tail_invoke {
+            return Ok(None);
+        }
+        let name = match &call.callee {
+            ast::PathRef::Identifier(name) => name.value.as_str(),
+            _ => return Ok(None),
+        };
+        let Some(resolved_name) = self.resolve_function_name(name).map(str::to_string) else {
+            return Ok(None);
+        };
+        if resolved_name != self.current_fn_name {
+            return Ok(None);
+        }
+        let Some(&fn_ref) = self.fn_refs.get(&resolved_name) else {
+            return Ok(None);
+        };
+        if fn_ref != self.current_fn_ref {
+            return Ok(None);
+        }
+        let param_names = self
+            .signatures
+            .param_names
+            .get(&resolved_name)
+            .ok_or_else(|| format!("missing param names for {resolved_name}"))?
+            .clone();
+        let param_schemas = self
+            .signatures
+            .params
+            .get(&resolved_name)
+            .ok_or_else(|| format!("missing param schemas for {resolved_name}"))?
+            .clone();
+        if arg_list_has_partial(&call.args) {
+            return Ok(None);
+        }
+        let tail_identifier_uses = identifier_uses_in_arg_list(&call.args);
+        let bound = self.bind_call_args(
+            &resolved_name,
+            &param_names,
+            &param_schemas,
+            &call.args,
+            0,
+            false,
+            Some(&tail_identifier_uses),
+        )?;
+        self.emit_self_tail_jump(bound.args, &param_schemas)?;
+        Ok(Some(TailOutcome::Jumped))
+    }
+
+    fn emit_self_tail_jump(
+        &mut self,
+        args: Vec<ValueSlot>,
+        param_schemas: &[String],
+    ) -> Result<(), String> {
+        if args.len() != self.param_slots.len() || args.len() != param_schemas.len() {
+            return Err(format!(
+                "self-tail-call argument count {} did not match parameter count {}",
+                args.len(),
+                self.param_slots.len()
+            ));
+        }
+        let mut temps = Vec::with_capacity(args.len());
+        for (arg, schema) in args.into_iter().zip(param_schemas) {
+            let arg = self.coerce_to_schema(arg, schema)?;
+            self.expect_schema(&arg, schema)?;
+            temps.push(self.copy_value(&arg));
+        }
+        for (param, temp) in self.param_slots.clone().into_iter().zip(&temps) {
+            self.code.push(Op::CopyI64 {
+                dst: param.slot,
+                src: temp.slot,
+            });
+        }
+        self.code.push(Op::Jump {
+            target: self.loop_header,
+        });
+        Ok(())
+    }
+
     fn fn_name_for_ref(&self, fn_ref: usize) -> Result<&str, String> {
         self.fn_refs
             .iter()
@@ -3805,6 +4062,7 @@ impl<'a> FnLowerer<'a> {
         args: &ast::ArgList,
         start: usize,
         allow_partial: bool,
+        tail_identifier_uses: Option<&HashMap<String, usize>>,
     ) -> Result<BoundCall, String> {
         if start > param_names.len() || param_names.len() != param_schemas.len() {
             return Err(format!("bad parameter table for `{fn_name}`"));
@@ -3832,7 +4090,8 @@ impl<'a> FnLowerer<'a> {
                     let Some(expected) = param_schemas.get(start + positional) else {
                         return Err(format!("too many arguments for `{fn_name}`"));
                     };
-                    let value = self.expr_expected(expr, Some(expected))?;
+                    let value =
+                        self.expr_expected_call_arg(expr, Some(expected), tail_identifier_uses)?;
                     values[positional] = Some(self.coerce_scalar_arg(value, expected)?);
                     positional += 1;
                 }
@@ -3847,7 +4106,11 @@ impl<'a> FnLowerer<'a> {
                         return Err(format!("duplicate argument `{}`", kwarg.name.value));
                     }
                     let expected = &param_schemas[start + offset];
-                    let value = self.expr_expected(&kwarg.value, Some(expected))?;
+                    let value = self.expr_expected_call_arg(
+                        &kwarg.value,
+                        Some(expected),
+                        tail_identifier_uses,
+                    )?;
                     values[offset] = Some(self.coerce_scalar_arg(value, expected)?);
                 }
             }
@@ -3885,6 +4148,28 @@ impl<'a> FnLowerer<'a> {
             partial: false,
             given: param_names.len(),
         })
+    }
+
+    fn expr_expected_call_arg(
+        &mut self,
+        expr: &ast::Expr,
+        expected: Option<&str>,
+        tail_identifier_uses: Option<&HashMap<String, usize>>,
+    ) -> Result<ValueSlot, String> {
+        let Some(identifier_uses) = tail_identifier_uses else {
+            return self.expr_expected(expr, expected);
+        };
+        let Some(receiver) = consuming_update_receiver(expr) else {
+            return self.expr_expected(expr, expected);
+        };
+        if identifier_uses.get(receiver).copied() != Some(1) {
+            return self.expr_expected(expr, expected);
+        }
+        let saved_consume_receiver =
+            std::mem::replace(&mut self.consume_receiver, Some(receiver.to_string()));
+        let result = self.expr_expected(expr, expected);
+        self.consume_receiver = saved_consume_receiver;
+        result
     }
 
     fn builtin_scoped_call(&mut self, call: &ast::Call) -> Result<Option<ValueSlot>, String> {
@@ -5461,8 +5746,15 @@ impl<'a> FnLowerer<'a> {
             .get(name)
             .ok_or_else(|| format!("missing param schemas for {name}"))?
             .clone();
-        let bound =
-            self.bind_call_args(name, &param_names, &param_schemas, &call.args, 0, false)?;
+        let bound = self.bind_call_args(
+            name,
+            &param_names,
+            &param_schemas,
+            &call.args,
+            0,
+            false,
+            None,
+        )?;
         self.pending_alloc_for_fn(fn_ref, value_schema, bound.args, None)
     }
 

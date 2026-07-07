@@ -26,7 +26,7 @@ use crate::task::{Advance, ArgCopy, FnId, HostFn, Op, Program, TaskEvent, TaskSt
 struct Ctx {
     prog: *const u64,
     frame: *mut u8,
-    ready: *const i64,
+    ready: *mut i64,
     awaited: *const i64,
     resume: *mut u64,
     await_index: *mut u64,
@@ -499,14 +499,14 @@ impl JitTask {
         base
     }
 
-    pub fn run(&mut self, program: &JitProgram, ready: &[bool], awaited: &[i64]) -> TaskStep {
+    pub fn run(&mut self, program: &JitProgram, ready: &mut [bool], awaited: &[i64]) -> TaskStep {
         self.run_hosted(program, ready, awaited, &mut [])
     }
 
     pub fn run_hosted(
         &mut self,
         program: &JitProgram,
-        ready: &[bool],
+        ready: &mut [bool],
         awaited: &[i64],
         hosts: &mut [HostFn<'_>],
     ) -> TaskStep {
@@ -535,7 +535,7 @@ impl JitTask {
             let mut ctx = Ctx {
                 prog: unsafe { entry_prog.add(frame.prog_pos) },
                 frame: unsafe { arena_base.add(frame.base) },
-                ready: self.ready_scratch.as_ptr(),
+                ready: self.ready_scratch.as_mut_ptr(),
                 awaited: awaited.as_ptr(),
                 resume: &mut resume_scratch,
                 await_index: &mut index_scratch,
@@ -547,6 +547,9 @@ impl JitTask {
             // happens while the chain runs (driver-only allocation).
             let f = unsafe { compiled.native.chain_fn::<Ctx>(frame.resume) };
             unsafe { f(&mut ctx) };
+            for (dst, &src) in ready.iter_mut().zip(&self.ready_scratch) {
+                *dst = src != 0;
+            }
             let new_prog_pos = (ctx.prog as usize - entry_prog as usize) / size_of::<u64>();
             {
                 let top = self.frames.last_mut().expect("frame");
@@ -638,7 +641,12 @@ pub struct JitRunning<'p> {
 }
 
 impl Advance for JitRunning<'_> {
-    fn advance(&mut self, ready: &[bool], awaited: &[i64], hosts: &mut [HostFn<'_>]) -> TaskStep {
+    fn advance(
+        &mut self,
+        ready: &mut [bool],
+        awaited: &[i64],
+        hosts: &mut [HostFn<'_>],
+    ) -> TaskStep {
         self.task.run_hosted(self.program, ready, awaited, hosts)
     }
 
@@ -722,7 +730,7 @@ mod tests {
 
         // Innards: marks appear, in program order, in BOTH lanes.
         let mut interp = Task::spawn(&program, FnId(0));
-        assert_eq!(interp.run(&program, &[], &[]), TaskStep::Done);
+        assert_eq!(interp.run(&program, &mut [], &[]), TaskStep::Done);
         assert_eq!(interp.result_i64(), 10);
         let marks: Vec<_> = interp
             .trace
@@ -736,7 +744,7 @@ mod tests {
 
         // Production: marks are GONE, everything else identical.
         let mut prod = Task::spawn_with_mode(&program, FnId(0), TraceMode::Production);
-        assert_eq!(prod.run(&program, &[], &[]), TaskStep::Done);
+        assert_eq!(prod.run(&program, &mut [], &[]), TaskStep::Done);
         assert_eq!(prod.result_i64(), 10);
         assert!(!prod.trace.iter().any(|e| matches!(e, TaskEvent::Mark(_))));
         let stripped_of_marks: Vec<_> = interp
@@ -750,13 +758,13 @@ mod tests {
         // JIT, both modes, matching the interpreter exactly.
         if let Some(jit) = JitProgram::compile(&program) {
             let mut t = JitTask::spawn(&jit, FnId(0));
-            assert_eq!(t.run(&jit, &[], &[]), TaskStep::Done);
+            assert_eq!(t.run(&jit, &mut [], &[]), TaskStep::Done);
             assert_eq!(t.result_i64(), 10);
             assert_eq!(t.trace, interp.trace);
         }
         if let Some(jit) = JitProgram::compile_with_mode(&program, TraceMode::Production) {
             let mut t = JitTask::spawn(&jit, FnId(0));
-            assert_eq!(t.run(&jit, &[], &[]), TaskStep::Done);
+            assert_eq!(t.run(&jit, &mut [], &[]), TaskStep::Done);
             assert_eq!(t.result_i64(), 10);
             assert_eq!(t.trace, prod.trace);
         }
@@ -802,7 +810,8 @@ mod tests {
         );
         // And the value itself is what IEEE says.
         let mut interp = Task::spawn(&program, FnId(0));
-        interp.run(&program, &[true], &[awaited_bits]);
+        let mut ready = [true];
+        interp.run(&program, &mut ready, &[awaited_bits]);
         let bits = interp.result_i64() as u64;
         assert_eq!(f64::from_bits(bits), 2.5 * 3.25 + 0.125);
     }
@@ -834,7 +843,7 @@ mod tests {
         };
         let mut interp = Task::spawn(&program, FnId(0));
         assert_eq!(
-            interp.run_hosted(&program, &[], &[], &mut [&mut interp_host]),
+            interp.run_hosted(&program, &mut [], &[], &mut [&mut interp_host]),
             TaskStep::Done
         );
         assert_eq!(interp.result_i64(), 61);
@@ -856,7 +865,7 @@ mod tests {
         };
         let mut task = JitTask::spawn(&jit, FnId(0));
         assert_eq!(
-            task.run_hosted(&jit, &[], &[], &mut [&mut jit_host]),
+            task.run_hosted(&jit, &mut [], &[], &mut [&mut jit_host]),
             TaskStep::Done
         );
         assert_eq!(task.result_i64(), 61);
@@ -879,7 +888,8 @@ mod tests {
         let mut interp = Task::spawn_with_mode(program, entry, mode);
         let mut interp_steps = Vec::new();
         for (ready, awaited) in schedule {
-            let step = interp.run(program, ready, awaited);
+            let mut ready = ready.to_vec();
+            let step = interp.run(program, &mut ready, awaited);
             interp_steps.push(step);
             if step == TaskStep::Done {
                 break;
@@ -896,7 +906,8 @@ mod tests {
         let mut task = JitTask::spawn(&jit, entry);
         let mut jit_steps = Vec::new();
         for (ready, awaited) in schedule {
-            let step = task.run(&jit, ready, awaited);
+            let mut ready = ready.to_vec();
+            let step = task.run(&jit, &mut ready, awaited);
             jit_steps.push(step);
             if step == TaskStep::Done {
                 break;
@@ -953,7 +964,7 @@ mod tests {
         interp.write_i64(0, 11);
         interp.write_i64(8, 4);
         interp.write_i64(16, 3);
-        let interp_steps = vec![interp.run(&program, &[], &[])];
+        let interp_steps = vec![interp.run(&program, &mut [], &[])];
 
         let Some(jit) = JitProgram::compile(&program) else {
             assert!(
@@ -966,7 +977,7 @@ mod tests {
         task.write_i64(0, 11);
         task.write_i64(8, 4);
         task.write_i64(16, 3);
-        let jit_steps = vec![task.run(&jit, &[], &[])];
+        let jit_steps = vec![task.run(&jit, &mut [], &[])];
 
         assert_eq!(jit_steps.len(), interp_steps.len(), "step counts diverge");
         assert_eq!(jit_steps, interp_steps, "step sequences diverge");
@@ -1046,7 +1057,7 @@ mod tests {
         differential(&program, FnId(0), &[(&[], &[])]);
 
         let mut interp = Task::spawn(&program, FnId(0));
-        assert_eq!(interp.run(&program, &[], &[]), TaskStep::Done);
+        assert_eq!(interp.run(&program, &mut [], &[]), TaskStep::Done);
         assert_eq!(interp.result_i64(), 6);
     }
 
@@ -1100,7 +1111,7 @@ mod tests {
         differential(&program, FnId(0), &[(&[], &[])]);
 
         let mut interp = Task::spawn(&program, FnId(0));
-        assert_eq!(interp.run(&program, &[], &[]), TaskStep::Done);
+        assert_eq!(interp.run(&program, &mut [], &[]), TaskStep::Done);
         assert_eq!(interp.result_i64(), 15);
     }
 

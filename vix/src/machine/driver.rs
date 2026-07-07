@@ -628,7 +628,7 @@ impl LaneTask {
     fn advance(
         &mut self,
         program: &Program,
-        ready: &[bool],
+        ready: &mut [bool],
         awaited: &[i64],
         hosts: &mut [HostFn<'_>],
     ) -> TaskStep {
@@ -5032,7 +5032,7 @@ impl Driver {
             ];
             let step = exec
                 .task
-                .advance(&self.program, &exec.ready, &exec.awaited, &mut hosts);
+                .advance(&self.program, &mut exec.ready, &exec.awaited, &mut hosts);
             drop(hosts);
             for event in store_events.into_inner() {
                 self.emit(event);
