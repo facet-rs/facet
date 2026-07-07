@@ -160,3 +160,128 @@ automaton. Direct-threaded dispatch, projection-candidate bypass, array get, and
 bounds-check elision are then the next gates. Until those are measured on the
 same LR shape, Snark parse kernels should stay behind Rust/FFI rather than being
 lowered wholesale into vix.
+
+## Rematch after `0b62d0ec1`
+
+Rebased this branch onto `origin/rodin` at:
+
+```text
+0b62d0ec1 vix: consume rebound molten update receivers
+```
+
+The focused benchmark tests still pass after the rebase:
+
+```text
+cargo nextest list -p vix -E 'binary(lr_loop_bench)'
+cargo nextest run -p vix -E 'binary(lr_loop_bench)'
+```
+
+Result: the same 2 benchmark tests passed.
+
+Important correction to the original attribution: the committed LR benchmark
+does not actually use the fixed shadowing idiom. Its generated vix source uses
+helper-call arguments such as `parse(next.1, stack.push(action), ...)` and
+`parse(tokens, base.push(next_state), ...)`. The consuming-move predicate added
+by `0b62d0ec1` applies to `let x = x.push(v)` and `let x = x.pop().1`, so this
+unchanged LR artifact is a rematch of the old non-shadowing shape, not a proof
+of the named-rebind ceiling.
+
+### Unchanged LR Suite
+
+Release build:
+
+```text
+cargo build --release -p vix --bin lr_loop_bench
+```
+
+10k tokens / 15k LR actions:
+
+| lane | before, ns/action | after, ns/action | factor vs current Rust | note |
+|---|---:|---:|---:|---|
+| Rust | 2.898 | 1.040 | 1.0x | current rerun is faster; use after factor for current base |
+| vix interp, `--molten-reuse` | 672,316.678 | 679,732.614 | 653,589x | effectively unchanged for this non-shadowing source |
+| vix JIT, `--molten-reuse` | 3,779,842.308 | 1,753,279.183 | 1,685,845x | improved, but still much slower than interp |
+
+If normalized against the original Rust baseline of 2.898 ns/action, the after
+interpreter factor is `234,552x`, essentially the same headline as the original
+`231,993x`. The apparent current-base factor is larger because the native Rust
+baseline reran at ~1.04 ns/action.
+
+100k-token probe:
+
+| run | result |
+|---|---|
+| Rust, 100k tokens / 150k actions, 1000 runs | 1.031 ns/action |
+| vix interp, 100k tokens / 150k actions, `--molten-reuse` | did not finish within a 120s alarm |
+
+That remains a lower bound of `>800,000 ns/action`, or `>775,946x` against the
+current 100k-token Rust baseline.
+
+### Reuse Control After Rebase
+
+The fresh-temporary control remains in the same range:
+
+```text
+./target/release/lr_loop_bench --mode array-control \
+  --array-pushes 1024 --array-burst 32 --array-pops 16 --array-runs 100
+```
+
+| lane | before, ns/op | after, ns/op |
+|---|---:|---:|
+| Rust `Vec` | 1.149 | 1.309 |
+| vix interp, forced copy | 204.621 | 191.429 |
+| vix interp, reuse enabled | 77.520 | 73.383 |
+| vix JIT, forced copy | 432.585 | 394.716 |
+| vix JIT, reuse enabled | 284.445 | 265.830 |
+
+That confirms the existing fresh-temporary reuse path still works and was not
+the missing piece for the unchanged LR benchmark. The folded fix should be
+measured with a new LR source that deliberately shadows `stack`/`tokens` as
+`let stack = stack.push(...)` and `let stack = stack.pop().1`; the committed
+source here is not that shape.
+
+### stax Rematch
+
+Profiled command:
+
+```text
+stax record -- ./target/release/lr_loop_bench \
+  --terms 5000 --runs 1 --mode vix-interp --molten-reuse
+stax flame -d 20 --threshold-pct 0.5 --run 7
+stax top -n 25 --sort self --run 7
+stax threads -n 20 --run 7
+```
+
+The profiled run printed `vix_interp_ns_per_action=719143.992`; stax reported
+1.450s total active CPU and 130.021s off-CPU in run 7. Active trunk:
+
+| stack / frame | active share |
+|---|---:|
+| `Machine::demand_i64 -> Driver::demand` | 98.3% |
+| `weavy::task::Task::run_hosted` | 84.5% |
+| `Driver::burst::{closure}` | 84.5% |
+| `intern_molten_word` | 84.4% |
+| `ValueStore::alloc_array_words` under `intern_molten_word` | 63.4% |
+| `sha2::sha256::compress256` under allocation/canonical hashing | dominant leaf |
+| generic iterator fold under `Driver::demand` | 11.9% |
+| vix source parse/load | 1.6% |
+
+So the new decomposition for the unchanged benchmark is still allocation and
+canonical hashing under `intern_molten_word`, not host-call dispatch. The earlier
+visible `projection_memo_hit -> projection_candidate_key` trunk is no longer a
+large visible sibling in this rematch profile; it has been replaced by a generic
+iterator-fold slice under `Driver::demand`, while SHA-256 remains the hot leaf.
+
+### JIT Anomaly
+
+The JIT-slower-than-interp anomaly persists:
+
+| run | ns/action |
+|---|---:|
+| vix interp, 10k tokens | 679,732.614 |
+| vix JIT, 10k tokens | 1,753,279.183 |
+
+JIT is `2.58x` slower than interpreter on the rebased tree for this unchanged
+recursive/memo-heavy LR source. That is less severe than the original `5.6x`,
+but still a real finding: this workload is dominated by host/store/canonical
+hashing paths, and JITting the weavy task lane does not remove that cost.
