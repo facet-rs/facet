@@ -1,6 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::hash::{DefaultHasher, Hash, Hasher};
 
+use taxon::{
+    Field as TaxonField, Kind, Primitive, Schema, SchemaId, SchemaRef, Variant as TaxonVariant,
+    VariantPayload,
+};
 use weavy::mem::declared as declared_mem;
 use weavy::mem::{Access, Descriptor, Layout};
 
@@ -34,10 +38,18 @@ pub(crate) struct ModuleTables {
     pub(crate) enums: HashMap<String, EnumInfo>,
     pub(crate) structs: HashMap<String, StructInfo>,
     pub(crate) descriptors: HashMap<String, Descriptor<String>>,
+    pub(crate) schemas: SchemaTables,
     modules: BTreeMap<String, ModuleInfo>,
 }
 
 impl ModuleTables {
+    pub(crate) fn has_schema(&self, name: &str) -> bool {
+        let Some(SchemaRef::Concrete { id, .. }) = self.schemas.ref_for_name(name) else {
+            return false;
+        };
+        self.schemas.schema(*id).is_some() && self.schemas.display_name(*id).is_some()
+    }
+
     pub(crate) fn resolve_fn(&self, module: &str, name: &str) -> Option<&str> {
         let info = self.modules.get(module)?;
         if let Some(local) = info.fns.get(name) {
@@ -54,6 +66,225 @@ impl ModuleTables {
         }
         let imported = info.imports.get(name)?;
         (imported.kind == ImportKind::Type).then_some(imported.module.as_str())
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct SchemaTables {
+    by_name: HashMap<String, SchemaRef>,
+    by_id: HashMap<SchemaId, Schema>,
+    display_names: HashMap<SchemaId, String>,
+}
+
+impl SchemaTables {
+    pub(crate) fn ref_for_name(&self, name: &str) -> Option<&SchemaRef> {
+        self.by_name.get(name)
+    }
+
+    pub(crate) fn schema(&self, id: SchemaId) -> Option<&Schema> {
+        self.by_id.get(&id)
+    }
+
+    pub(crate) fn display_name(&self, id: SchemaId) -> Option<&str> {
+        self.display_names.get(&id).map(String::as_str)
+    }
+}
+
+struct PendingSchema {
+    name: Option<String>,
+    schema: Schema,
+}
+
+struct SchemaBuilder {
+    next_key: u64,
+    keys: HashMap<String, SchemaId>,
+    defined: BTreeSet<String>,
+    batch: Vec<PendingSchema>,
+}
+
+impl SchemaBuilder {
+    fn new() -> Self {
+        Self {
+            next_key: 1,
+            keys: HashMap::new(),
+            defined: BTreeSet::new(),
+            batch: Vec::new(),
+        }
+    }
+
+    fn reserve_named(&mut self, name: &str) -> SchemaId {
+        if let Some(id) = self.keys.get(name) {
+            return *id;
+        }
+        let id = SchemaId::from_raw(self.next_key);
+        self.next_key += 1;
+        self.keys.insert(name.to_string(), id);
+        id
+    }
+
+    fn named_ref(&self, name: &str) -> Result<SchemaRef, String> {
+        self.keys
+            .get(name)
+            .copied()
+            .map(SchemaRef::concrete)
+            .ok_or_else(|| format!("unknown type `{name}`"))
+    }
+
+    fn generic_ref(&self, name: &str, args: Vec<SchemaRef>) -> Result<SchemaRef, String> {
+        let id = self
+            .keys
+            .get(name)
+            .copied()
+            .ok_or_else(|| format!("unknown generic type `{name}`"))?;
+        Ok(SchemaRef::generic(id, args))
+    }
+
+    fn add_named(
+        &mut self,
+        name: &str,
+        type_params: Vec<String>,
+        kind: Kind,
+    ) -> Result<(), String> {
+        let id = self.reserve_named(name);
+        if !self.defined.insert(name.to_string()) {
+            return Err(format!("duplicate schema model entry `{name}`"));
+        }
+        self.batch.push(PendingSchema {
+            name: Some(name.to_string()),
+            schema: Schema {
+                id,
+                type_params,
+                kind,
+            },
+        });
+        Ok(())
+    }
+
+    fn add_builtin_if_absent(
+        &mut self,
+        name: &str,
+        type_params: Vec<String>,
+        kind: impl FnOnce(&mut Self) -> Result<Kind, String>,
+    ) -> Result<(), String> {
+        if self.keys.contains_key(name) {
+            return Ok(());
+        }
+        self.reserve_named(name);
+        let kind = kind(self)?;
+        self.add_named(name, type_params, kind)
+    }
+
+    fn add_tuple(&mut self, elements: Vec<SchemaRef>) -> SchemaRef {
+        let id = SchemaId::from_raw(self.next_key);
+        self.next_key += 1;
+        self.batch.push(PendingSchema {
+            name: None,
+            schema: Schema {
+                id,
+                type_params: Vec::new(),
+                kind: Kind::Tuple { elements },
+            },
+        });
+        SchemaRef::concrete(id)
+    }
+
+    fn type_ref(
+        &mut self,
+        ty: &ast::Type,
+        type_params: &BTreeSet<String>,
+    ) -> Result<SchemaRef, String> {
+        match ty {
+            ast::Type::Path(path) => {
+                let name = type_path_schema_name(path)?;
+                if type_params.contains(&name) {
+                    return Ok(SchemaRef::var(name));
+                }
+                self.named_ref(&name)
+            }
+            ast::Type::Generic(generic) => {
+                let base = type_path_schema_name(&generic.base)?;
+                if type_params.contains(&base) {
+                    return Err(format!(
+                        "generic type parameter `{base}` cannot take arguments"
+                    ));
+                }
+                let args = generic
+                    .args
+                    .iter()
+                    .map(|arg| self.type_ref(arg, type_params))
+                    .collect::<Result<Vec<_>, _>>()?;
+                match base.as_str() {
+                    "Map" => {
+                        if args.len() != 2 {
+                            return Err("Map expects two type arguments".into());
+                        }
+                        self.generic_ref("Map", args)
+                    }
+                    "Option" => {
+                        if args.len() != 1 {
+                            return Err("Option expects one type argument".into());
+                        }
+                        self.generic_ref("Option", args)
+                    }
+                    "Array" | "List" => {
+                        if args.len() != 1 {
+                            return Err(format!("{base} expects one type argument"));
+                        }
+                        self.generic_ref("Array", args)
+                    }
+                    "Tuple" => Ok(self.add_tuple(args)),
+                    "Pending" | "Realized" => {
+                        let [inner]: [SchemaRef; 1] = args
+                            .try_into()
+                            .map_err(|_| format!("{base} expects one type argument"))?;
+                        Ok(inner)
+                    }
+                    _ => self.generic_ref(&base, args),
+                }
+            }
+            ast::Type::Array(array) => {
+                let element = self.type_ref(&array.elem, type_params)?;
+                self.generic_ref("Array", vec![element])
+            }
+            ast::Type::Tuple(tuple) => {
+                let elements = tuple
+                    .elems
+                    .iter()
+                    .map(|elem| self.type_ref(elem, type_params))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(self.add_tuple(elements))
+            }
+            ast::Type::Fn(_) => self.named_ref("Fn"),
+        }
+    }
+
+    fn finish(self) -> SchemaTables {
+        let pending = self.batch;
+        let names = pending
+            .iter()
+            .map(|schema| schema.name.clone())
+            .collect::<Vec<_>>();
+        let resolved = taxon::resolve_ids(
+            pending
+                .into_iter()
+                .map(|pending| pending.schema)
+                .collect::<Vec<_>>(),
+        );
+        let mut by_name = HashMap::new();
+        let mut by_id = HashMap::new();
+        let mut display_names = HashMap::new();
+        for (name, schema) in names.into_iter().zip(resolved) {
+            if let Some(name) = name {
+                by_name.insert(name.clone(), SchemaRef::concrete(schema.id));
+                display_names.entry(schema.id).or_insert(name);
+            }
+            by_id.insert(schema.id, schema);
+        }
+        SchemaTables {
+            by_name,
+            by_id,
+            display_names,
+        }
     }
 }
 
@@ -205,6 +436,7 @@ pub(crate) fn load_module_tables_from_modules(
             .insert(imported_name.clone(), resolved);
     }
 
+    let schemas = schema_tables(&files)?;
     let descriptors = declared_descriptors(&files)?;
     let fn_hashes = closure_fn_hashes(
         &bindings,
@@ -223,8 +455,282 @@ pub(crate) fn load_module_tables_from_modules(
         enums,
         structs,
         descriptors,
+        schemas,
         modules: module_infos,
     })
+}
+
+fn schema_tables(files: &BTreeMap<String, SourceFile>) -> Result<SchemaTables, String> {
+    let mut builder = SchemaBuilder::new();
+    for file in files.values() {
+        for item in &file.items {
+            match item {
+                Item::Struct(s) => {
+                    builder.reserve_named(&s.name.value);
+                }
+                Item::Enum(e) => {
+                    builder.reserve_named(&e.name.value);
+                }
+                Item::Fn(_) | Item::Use(_) => {}
+            }
+        }
+    }
+
+    add_builtin_schemas(&mut builder)?;
+    for file in files.values() {
+        for item in &file.items {
+            match item {
+                Item::Struct(s) => add_struct_schema(&mut builder, s)?,
+                Item::Enum(e) => add_enum_schema(&mut builder, e)?,
+                Item::Fn(_) | Item::Use(_) => {}
+            }
+        }
+    }
+    Ok(builder.finish())
+}
+
+fn add_builtin_schemas(builder: &mut SchemaBuilder) -> Result<(), String> {
+    builder.add_builtin_if_absent("Int", Vec::new(), |_| Ok(Kind::Primitive(Primitive::I64)))?;
+    builder.add_builtin_if_absent("Float", Vec::new(), |_| Ok(Kind::Primitive(Primitive::F64)))?;
+    builder.add_builtin_if_absent("Bool", Vec::new(), |_| Ok(Kind::Primitive(Primitive::Bool)))?;
+    builder.add_builtin_if_absent("String", Vec::new(), |_| {
+        Ok(Kind::Primitive(Primitive::String))
+    })?;
+    builder.add_builtin_if_absent("Blob", Vec::new(), |_| {
+        Ok(Kind::Primitive(Primitive::Bytes))
+    })?;
+    for name in ["Path", "Flag", "Template", "Sealed", "Tree", "Fn"] {
+        builder.add_builtin_if_absent(name, Vec::new(), |builder| {
+            Ok(external_schema_kind(builder, name))
+        })?;
+    }
+
+    builder.add_builtin_if_absent("Array", vec!["T".into()], |_| {
+        Ok(Kind::List {
+            element: SchemaRef::var("T"),
+        })
+    })?;
+    builder.add_builtin_if_absent("Map", vec!["K".into(), "V".into()], |_| {
+        Ok(Kind::Map {
+            key: SchemaRef::var("K"),
+            value: SchemaRef::var("V"),
+        })
+    })?;
+    builder.add_builtin_if_absent("Option", vec!["T".into()], |_| {
+        Ok(Kind::Option {
+            element: SchemaRef::var("T"),
+        })
+    })?;
+
+    builder.add_builtin_if_absent("Os", Vec::new(), |_| {
+        Ok(Kind::Enum {
+            name: "Os".into(),
+            variants: unit_variants(["Linux", "Macos", "Windows"]),
+        })
+    })?;
+    builder.add_builtin_if_absent("Arch", Vec::new(), |_| {
+        Ok(Kind::Enum {
+            name: "Arch".into(),
+            variants: unit_variants(["X86_64", "Aarch64", "Arm", "Riscv64", "Wasm32", "Unknown"]),
+        })
+    })?;
+    builder.add_builtin_if_absent("Target", Vec::new(), |builder| {
+        Ok(Kind::Struct {
+            name: "Target".into(),
+            fields: vec![
+                taxon_field("os", builder.named_ref("Os")?, true),
+                taxon_field("arch", builder.named_ref("Arch")?, true),
+            ],
+        })
+    })?;
+    builder.add_builtin_if_absent("Run", Vec::new(), |builder| {
+        Ok(Kind::Struct {
+            name: "Run".into(),
+            fields: vec![
+                taxon_field("ok", builder.named_ref("Int")?, true),
+                taxon_field("out", builder.named_ref("Tree")?, true),
+            ],
+        })
+    })?;
+    builder.add_builtin_if_absent("Doc", Vec::new(), |builder| {
+        let doc = builder.named_ref("Doc")?;
+        let string = builder.named_ref("String")?;
+        let array_doc = builder.generic_ref("Array", vec![doc.clone()])?;
+        let map_string_doc = builder.generic_ref("Map", vec![string.clone(), doc.clone()])?;
+        Ok(Kind::Enum {
+            name: "Doc".into(),
+            variants: vec![
+                taxon_variant("Null", 0, VariantPayload::Unit),
+                taxon_variant(
+                    "Bool",
+                    1,
+                    VariantPayload::Newtype(builder.named_ref("Bool")?),
+                ),
+                taxon_variant("Int", 2, VariantPayload::Newtype(builder.named_ref("Int")?)),
+                taxon_variant(
+                    "Float",
+                    3,
+                    VariantPayload::Newtype(builder.named_ref("Float")?),
+                ),
+                taxon_variant("String", 4, VariantPayload::Newtype(string.clone())),
+                taxon_variant("Array", 5, VariantPayload::Newtype(array_doc)),
+                taxon_variant("Map", 6, VariantPayload::Newtype(map_string_doc)),
+                taxon_variant("Virtual", 7, VariantPayload::Newtype(string)),
+                taxon_variant(
+                    "Blob",
+                    8,
+                    VariantPayload::Newtype(builder.named_ref("Blob")?),
+                ),
+            ],
+        })
+    })?;
+    for name in ["Cc", "Ar", "Rustc", "Version", "VersionSet", "Ordering"] {
+        builder.add_builtin_if_absent(name, Vec::new(), |builder| {
+            Ok(external_schema_kind(builder, name))
+        })?;
+    }
+    Ok(())
+}
+
+fn add_struct_schema(builder: &mut SchemaBuilder, item: &StructItem) -> Result<(), String> {
+    let type_params = generic_param_names(&item.generics);
+    let type_param_scope = type_params.iter().cloned().collect::<BTreeSet<_>>();
+    let fields = if let Some(fields) = &item.fields {
+        fields
+            .fields
+            .iter()
+            .map(|field| {
+                Ok(taxon_field(
+                    &field.name.value,
+                    builder.type_ref(&field.ty, &type_param_scope)?,
+                    field.default.is_none(),
+                ))
+            })
+            .collect::<Result<Vec<_>, String>>()?
+    } else if let Some(tuple) = &item.tuple {
+        tuple
+            .types
+            .iter()
+            .enumerate()
+            .map(|(index, ty)| {
+                Ok(taxon_field(
+                    index.to_string(),
+                    builder.type_ref(ty, &type_param_scope)?,
+                    true,
+                ))
+            })
+            .collect::<Result<Vec<_>, String>>()?
+    } else {
+        Vec::new()
+    };
+    builder.add_named(
+        &item.name.value,
+        type_params,
+        Kind::Struct {
+            name: item.name.value.clone(),
+            fields,
+        },
+    )
+}
+
+fn add_enum_schema(builder: &mut SchemaBuilder, item: &EnumItem) -> Result<(), String> {
+    let type_params = generic_param_names(&item.generics);
+    let type_param_scope = type_params.iter().cloned().collect::<BTreeSet<_>>();
+    let variants = item
+        .variants
+        .iter()
+        .enumerate()
+        .map(|(index, variant)| {
+            let payload = if let Some(tuple) = &variant.tuple {
+                VariantPayload::Tuple(
+                    tuple
+                        .types
+                        .iter()
+                        .map(|ty| builder.type_ref(ty, &type_param_scope))
+                        .collect::<Result<Vec<_>, _>>()?,
+                )
+            } else if let Some(fields) = &variant.fields {
+                VariantPayload::Struct(
+                    fields
+                        .fields
+                        .iter()
+                        .map(|field| {
+                            Ok(taxon_field(
+                                &field.name.value,
+                                builder.type_ref(&field.ty, &type_param_scope)?,
+                                field.default.is_none(),
+                            ))
+                        })
+                        .collect::<Result<Vec<_>, String>>()?,
+                )
+            } else {
+                VariantPayload::Unit
+            };
+            Ok(taxon_variant(
+                &variant.name.value,
+                u32::try_from(index).expect("variant count fits u32"),
+                payload,
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    builder.add_named(
+        &item.name.value,
+        type_params,
+        Kind::Enum {
+            name: item.name.value.clone(),
+            variants,
+        },
+    )
+}
+
+fn external_schema_kind(_builder: &SchemaBuilder, name: &str) -> Kind {
+    Kind::External {
+        kind: format!("vix.{name}"),
+        metadata: None,
+    }
+}
+
+fn taxon_field(name: impl Into<String>, schema: SchemaRef, required: bool) -> TaxonField {
+    TaxonField {
+        name: name.into(),
+        schema,
+        required,
+    }
+}
+
+fn taxon_variant(name: impl Into<String>, index: u32, payload: VariantPayload) -> TaxonVariant {
+    TaxonVariant {
+        name: name.into(),
+        index,
+        payload,
+    }
+}
+
+fn unit_variants<const N: usize>(names: [&str; N]) -> Vec<TaxonVariant> {
+    names
+        .into_iter()
+        .enumerate()
+        .map(|(index, name)| {
+            taxon_variant(
+                name,
+                u32::try_from(index).expect("variant count fits u32"),
+                VariantPayload::Unit,
+            )
+        })
+        .collect()
+}
+
+fn generic_param_names(generics: &Option<ast::GenericParams>) -> Vec<String> {
+    generics
+        .as_ref()
+        .map(|generics| {
+            generics
+                .params
+                .iter()
+                .map(|param| param.value.clone())
+                .collect()
+        })
+        .unwrap_or_default()
 }
 
 pub(crate) fn type_schema_name(ty: &ast::Type) -> Result<String, String> {

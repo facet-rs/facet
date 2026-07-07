@@ -22,6 +22,7 @@ miniz_oxide = { version = "0.8.9", default-features = false, features = ["with-a
 phon = { path = "../phon/rust/phon", default-features = false }
 semver = "1.0.28"
 sha2.workspace = true
+taxon.workspace = true
 # vix lowers to weavy (portability is weavy's concern — constitution
 # A6); the dependency activates when the typed instruction vocabulary
 # lands via the fable-teeth work.

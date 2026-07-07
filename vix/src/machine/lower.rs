@@ -593,6 +593,8 @@ fn compile_module_set(
 ) -> Result<Compiled, String> {
     let module_hash = module_set_hash(root, modules);
     let tables = load_module_tables_from_modules(root, modules)?;
+    debug_assert!(tables.has_schema("Int"));
+    debug_assert!(tables.has_schema("Map"));
 
     // Deterministic fn_ref assignment: sorted names.
     let mut names: Vec<&String> = tables.fns.keys().collect();

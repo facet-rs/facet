@@ -8234,6 +8234,7 @@ dependencies = [
  "sha2 0.10.9",
  "snark",
  "snark-dsl",
+ "taxon",
  "tempfile",
  "tokio",
  "weavy",
