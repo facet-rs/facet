@@ -31,19 +31,18 @@ use super::TotalF64;
 use super::driver::{
     ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_FILTER_EXCLUDE_HOST, ARRAY_JOIN_HOST,
     ARRAY_LEN_HOST, ARRAY_MAP_PENDING_HOST, ARRAY_POP_HOST, ARRAY_PUSH_HOST, ARRAY_SET_HOST,
-    AST_DOC_HOST, AST_FN_HOST, CRATE_ARCHIVE_HOST, CodeBundle, DOC_COERCE_HOST, DOC_GET_HOST, DOC_PACKAGE_HOST,
-    DOC_PARSE_HOST, DriveEvent, DriveEventSink, Driver, ELF_DOC_HOST, EXEC_HOST, FETCH_HOST,
-    FnRef, MOLTEN_DUP_HOST, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST,
-    MAP_INSERT_HOST, MachineExecBackend, OCI_DOC_HOST, OPTION_CONSTRUCT_HOST, OPTION_DESTRUCT_HOST,
-    OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST,
-    PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RECORD_UPDATE_HOST, RenderNames,
-    RenderVariant, RenderedValue, SEALED_DECLASSIFY_HOST, SEALED_SEAL_HOST, SEALED_TO_STRING_HOST,
+    AST_DOC_HOST, AST_FN_HOST, CRATE_ARCHIVE_HOST, CodeBundle, DOC_COERCE_HOST, DOC_GET_HOST,
+    DOC_PACKAGE_HOST, DOC_PARSE_HOST, DriveEvent, DriveEventSink, Driver, ELF_DOC_HOST, EXEC_HOST,
+    FETCH_HOST, FnRef, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST,
+    MAP_INSERT_HOST, MOLTEN_DUP_HOST, MachineExecBackend, OCI_DOC_HOST, OPTION_CONSTRUCT_HOST,
+    OPTION_DESTRUCT_HOST, OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST,
+    PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RECORD_UPDATE_HOST, RenderNames, RenderVariant,
+    RenderedValue, SEALED_DECLASSIFY_HOST, SEALED_SEAL_HOST, SEALED_TO_STRING_HOST,
     STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_CONTAINS_HOST,
     STRING_DEFAULT_HOST, STRING_IS_NUMERIC_HOST, STRING_LOWER_HOST, STRING_PARSE_INT_HOST,
     STRING_SPLIT_HOST, STRING_UPPER_HOST, SemanticComparator, StepMode, StoreHandle, TARGET_HOST,
     TREE_PROJECT_HOST, VALUE_COMPARE_HOST, VERSION_PARSE_HOST, VERSION_SET_OP_HOST,
     VERSION_SET_PARSE_HOST, ValueBundle,
-
 };
 use crate::ast;
 use crate::fetch::FetchBackend;
@@ -113,8 +112,7 @@ impl Machine {
         inject_std_modules(&mut modules);
         let c = compile_module_set(root, &modules, RefSource::Fresh)?;
 
-        let mut driver =
-            Driver::try_with_descriptors(c.program, c.lowered, c.descriptors, lane)?;
+        let mut driver = Driver::try_with_descriptors(c.program, c.lowered, c.descriptors, lane)?;
         // The driver's own interning must reproduce the fresh 0-based assignment.
         for name in &c.schema_names {
             let actual = driver.intern_schema_ref(name.clone());
@@ -485,7 +483,12 @@ impl RefSource<'_> {
             RefSource::Fresh => schema_names
                 .iter()
                 .enumerate()
-                .map(|(ix, name)| (name.clone(), i64::try_from(ix).expect("schema ref fits i64")))
+                .map(|(ix, name)| {
+                    (
+                        name.clone(),
+                        i64::try_from(ix).expect("schema ref fits i64"),
+                    )
+                })
                 .collect(),
             RefSource::Existing(driver) => driver.schema_ref_map_for(schema_names),
         }
@@ -497,8 +500,7 @@ impl RefSource<'_> {
                 let strings = string_handles(tables);
                 let paths = path_handles(tables, strings.len());
                 let flags = flag_handles(tables, strings.len() + paths.len());
-                let templates =
-                    template_handles(tables, strings.len() + paths.len() + flags.len());
+                let templates = template_handles(tables, strings.len() + paths.len() + flags.len());
                 LiteralHandleMaps {
                     strings,
                     paths,
@@ -3049,9 +3051,7 @@ impl<'a> FnLowerer<'a> {
                     let segments = path_ref_segments(&p.path)?;
                     let variant = segments.last().map(String::as_str).unwrap_or_default();
                     if variant != "Some" {
-                        return Err(format!(
-                            "Option pattern `{variant}` is not Some or None"
-                        ));
+                        return Err(format!("Option pattern `{variant}` is not Some or None"));
                     }
                     let value_schema = option_value_schema(&scrut.schema)
                         .ok_or_else(|| format!("scrutinee {} is not an Option", scrut.schema))?
@@ -6251,7 +6251,12 @@ impl<'a> FnLowerer<'a> {
         })
     }
 
-    fn string_split(&mut self, receiver: &ValueSlot, delim: &ValueSlot, selector: i64) -> ValueSlot {
+    fn string_split(
+        &mut self,
+        receiver: &ValueSlot,
+        delim: &ValueSlot,
+        selector: i64,
+    ) -> ValueSlot {
         let dst = self.alloc();
         let region = self.primitive_region;
         self.code.push(Op::ConstI64 {
@@ -6320,7 +6325,12 @@ impl<'a> FnLowerer<'a> {
     }
 
     /// A String -> Bool query (contains needs an argument, is_numeric does not).
-    fn string_query(&mut self, receiver: &ValueSlot, arg: Option<&ValueSlot>, host: u32) -> ValueSlot {
+    fn string_query(
+        &mut self,
+        receiver: &ValueSlot,
+        arg: Option<&ValueSlot>,
+        host: u32,
+    ) -> ValueSlot {
         let dst = self.alloc();
         let region = self.primitive_region;
         self.code.push(Op::ConstI64 {

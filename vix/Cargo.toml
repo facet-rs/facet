@@ -12,6 +12,7 @@ publish = false
 description = "The vix build language: grammar-derived typed AST over snark."
 
 [dependencies]
+blake3.workspace = true
 snark = { path = "../snark", features = ["json-import"] }
 facet = { path = "../facet" }
 facet-json = { path = "../facet-json" }

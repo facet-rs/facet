@@ -101,8 +101,10 @@ impl FixtureCrate {
     }
 
     fn feature(mut self, name: impl Into<String>, enables: &[&str]) -> Self {
-        self.features
-            .insert(name.into(), enables.iter().map(|s| (*s).to_owned()).collect());
+        self.features.insert(
+            name.into(),
+            enables.iter().map(|s| (*s).to_owned()).collect(),
+        );
         self
     }
 
@@ -203,7 +205,8 @@ impl Fixture {
         }
 
         // Group deps by (target, kind) into the correct cargo table.
-        let mut tables: BTreeMap<(Option<String>, &'static str), Vec<&FixtureDep>> = BTreeMap::new();
+        let mut tables: BTreeMap<(Option<String>, &'static str), Vec<&FixtureDep>> =
+            BTreeMap::new();
         for dep in &krate.deps {
             tables
                 .entry((dep.target.clone(), dep.kind.cargo_table()))
@@ -251,7 +254,15 @@ fn dep_line(dep: &FixtureDep) -> String {
 fn cargo_selected(workspace: &Path, root: &str, triple: &str) -> Result<BTreeSet<String>, String> {
     let output = Command::new("cargo")
         .args([
-            "tree", "-e", "normal,build", "--target", triple, "--prefix", "none", "--offline", "-p",
+            "tree",
+            "-e",
+            "normal,build",
+            "--target",
+            triple,
+            "--prefix",
+            "none",
+            "--offline",
+            "-p",
             root,
         ])
         .current_dir(workspace)
@@ -275,7 +286,10 @@ fn cargo_selected(workspace: &Path, root: &str, triple: &str) -> Result<BTreeSet
 fn unique_temp_dir(name: &str) -> PathBuf {
     static COUNTER: AtomicU64 = AtomicU64::new(0);
     let nonce = COUNTER.fetch_add(1, Ordering::Relaxed);
-    std::env::temp_dir().join(format!("rodin-fixture-{name}-{}-{nonce}", std::process::id()))
+    std::env::temp_dir().join(format!(
+        "rodin-fixture-{name}-{}-{nonce}",
+        std::process::id()
+    ))
 }
 
 // ---------------------------------------------------------------------------
@@ -321,8 +335,13 @@ fn cfg_any_and_weak_feature_never_pull_optional_dep() {
         .krate(FixtureCrate::new("app").dep(FixtureDep::new("lib")));
 
     for target in [LINUX, WINDOWS] {
-        let selected = fixture.assert_selection_matches(target).expect("selection matches");
-        assert!(!selected.contains("helper"), "no helper on {target}: {selected:?}");
+        let selected = fixture
+            .assert_selection_matches(target)
+            .expect("selection matches");
+        assert!(
+            !selected.contains("helper"),
+            "no helper on {target}: {selected:?}"
+        );
     }
 }
 
@@ -337,12 +356,26 @@ fn feature_activated_target_conditional_optional_dep() {
             FixtureCrate::new("lib")
                 .feature("default", &["bundle-platform"])
                 .feature("bundle-platform", &["dep:platform"])
-                .dep(FixtureDep::new("platform").optional().target("cfg(windows)")),
+                .dep(
+                    FixtureDep::new("platform")
+                        .optional()
+                        .target("cfg(windows)"),
+                ),
         )
         .krate(FixtureCrate::new("app").dep(FixtureDep::new("lib")));
 
-    assert!(fixture.assert_selection_matches(WINDOWS).unwrap().contains("platform"));
-    assert!(!fixture.assert_selection_matches(LINUX).unwrap().contains("platform"));
+    assert!(
+        fixture
+            .assert_selection_matches(WINDOWS)
+            .unwrap()
+            .contains("platform")
+    );
+    assert!(
+        !fixture
+            .assert_selection_matches(LINUX)
+            .unwrap()
+            .contains("platform")
+    );
 }
 
 /// 3. A plain `cfg(windows)` dependency edge (winapi shape): present on windows,
@@ -354,8 +387,18 @@ fn direct_target_conditional_edge() {
         .krate(FixtureCrate::new("winthing"))
         .krate(FixtureCrate::new("app").dep(FixtureDep::new("winthing").target("cfg(windows)")));
 
-    assert!(fixture.assert_selection_matches(WINDOWS).unwrap().contains("winthing"));
-    assert!(!fixture.assert_selection_matches(LINUX).unwrap().contains("winthing"));
+    assert!(
+        fixture
+            .assert_selection_matches(WINDOWS)
+            .unwrap()
+            .contains("winthing")
+    );
+    assert!(
+        !fixture
+            .assert_selection_matches(LINUX)
+            .unwrap()
+            .contains("winthing")
+    );
 }
 
 /// 4. A build-dependency is part of the host graph and consumed on every target.
@@ -366,7 +409,12 @@ fn build_dependency_is_consumed() {
         .krate(FixtureCrate::new("gen"))
         .krate(FixtureCrate::new("app").dep(FixtureDep::new("gen").kind(DepKind::Build)));
 
-    assert!(fixture.assert_selection_matches(LINUX).unwrap().contains("gen"));
+    assert!(
+        fixture
+            .assert_selection_matches(LINUX)
+            .unwrap()
+            .contains("gen")
+    );
 }
 
 /// 5. A dev-dependency of a non-root crate is not consumed by a normal build of
@@ -380,5 +428,8 @@ fn transitive_dev_dependency_is_not_consumed() {
         .krate(FixtureCrate::new("app").dep(FixtureDep::new("lib")));
 
     let selected = fixture.assert_selection_matches(LINUX).unwrap();
-    assert!(!selected.contains("testonly"), "dev dep of lib not built: {selected:?}");
+    assert!(
+        !selected.contains("testonly"),
+        "dev dep of lib not built: {selected:?}"
+    );
 }
