@@ -5,8 +5,36 @@ use flate2::read::GzDecoder;
 use vix::exec::Tree;
 use vix::fetch::{FetchBackend, FetchOutput};
 
-#[derive(Clone, Default)]
-pub struct HttpArchiveFetchBackend;
+#[derive(Clone)]
+pub struct HttpArchiveFetchBackend {
+    output: ArchiveFetchOutput,
+}
+
+#[derive(Clone)]
+enum ArchiveFetchOutput {
+    ExtractedTree,
+    SingleFile { path: String },
+}
+
+impl Default for HttpArchiveFetchBackend {
+    fn default() -> Self {
+        Self::extracted_tree()
+    }
+}
+
+impl HttpArchiveFetchBackend {
+    pub fn extracted_tree() -> Self {
+        Self {
+            output: ArchiveFetchOutput::ExtractedTree,
+        }
+    }
+
+    pub fn single_file(path: impl Into<String>) -> Self {
+        Self {
+            output: ArchiveFetchOutput::SingleFile { path: path.into() },
+        }
+    }
+}
 
 impl FetchBackend for HttpArchiveFetchBackend {
     fn fetch(&self, url: &str, expected_sha256: Option<&str>) -> Result<FetchOutput, String> {
@@ -17,7 +45,7 @@ impl FetchBackend for HttpArchiveFetchBackend {
             .body_mut()
             .read_to_vec()
             .map_err(|err| format!("fetch `{url}` body read failed: {err}"))?;
-        fetch_archive_bytes(url, expected_sha256, &bytes)
+        fetch_archive_bytes_with_output(url, expected_sha256, &bytes, &self.output)
     }
 }
 
@@ -25,6 +53,20 @@ pub fn fetch_archive_bytes(
     url: &str,
     expected_sha256: Option<&str>,
     archive_bytes: &[u8],
+) -> Result<FetchOutput, String> {
+    fetch_archive_bytes_with_output(
+        url,
+        expected_sha256,
+        archive_bytes,
+        &ArchiveFetchOutput::ExtractedTree,
+    )
+}
+
+fn fetch_archive_bytes_with_output(
+    url: &str,
+    expected_sha256: Option<&str>,
+    archive_bytes: &[u8],
+    output: &ArchiveFetchOutput,
 ) -> Result<FetchOutput, String> {
     let actual_sha256 = vix::fetch::sha256_hex(archive_bytes);
     if let Some(expected) = expected_sha256
@@ -34,8 +76,17 @@ pub fn fetch_archive_bytes(
             "fetch checksum mismatch for `{url}`: expected {expected}, got {actual_sha256}"
         ));
     }
+    let tree = match output {
+        ArchiveFetchOutput::ExtractedTree => extract_gzip_tar(url, archive_bytes)?,
+        ArchiveFetchOutput::SingleFile { path } => {
+            if path.is_empty() {
+                return Err("single-file archive fetch path is empty".to_string());
+            }
+            Tree::of_blobs(&[(path.as_str(), archive_bytes)])
+        }
+    };
     Ok(FetchOutput {
-        tree: extract_gzip_tar(url, archive_bytes)?,
+        tree,
         actual_sha256,
     })
 }
