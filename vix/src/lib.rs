@@ -27,6 +27,7 @@ pub mod machine;
 pub(crate) mod module;
 #[cfg(all(feature = "real-process", not(target_arch = "wasm32")))]
 pub mod real_process;
+pub mod reloc_selection;
 pub mod value;
 
 /// The tree-sitter grammar.json emitted from grammar.js at build time, embedded so
