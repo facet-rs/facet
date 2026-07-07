@@ -204,7 +204,6 @@ edition = "2024"
 }
 
 #[test]
-#[ignore = "tier-A measurement repro: prerelease workspace member solve is semantically empty"]
 fn tiny_workspace_prerelease_member_solve_selects_member() -> Result<(), String> {
     let mut machine = manifest_machine()?;
     let workspace = intern_tree(
@@ -694,6 +693,51 @@ fn real_workspace_member_only_solve_ring(limit: i64) -> Result<(), String> {
 
     assert_eq!(package_count, limit + 1);
     assert_eq!(selected_member_count, limit);
+    Ok(())
+}
+
+#[test]
+#[ignore = "tier-A measurement probe: real workspace member-only ring 16 lock diff"]
+fn real_workspace_member_only_solve_ring_16_lock_diff() -> Result<(), String> {
+    let limit = 16;
+    let metadata = cargo_metadata_real_workspace()?;
+    let mut machine = manifest_machine()?;
+    let workspace = intern_tree(&mut machine, real_workspace_manifest_tree(&metadata)?)?;
+    let root = intern_path(&mut machine, "")?;
+    let target = intern_string(&mut machine, "x86_64-apple-darwin")?;
+
+    let selected = machine.demand_i64(
+        "workspace_member_only_solve_selected_versions_text_limit",
+        vec![workspace, root, target, limit],
+    )?;
+    let selected = rendered_string(
+        &machine,
+        "workspace_member_only_solve_selected_versions_text_limit",
+        selected,
+    )?;
+    let solve_rows = package_versions_from_solve_text(&selected)?;
+    let lock_rows = cargo_lock_package_rows(&workspace_root().join("Cargo.lock"))?;
+    let metadata_rows = metadata.package_rows();
+    let diff = diff_package_versions_against_lock(&solve_rows, &lock_rows, &metadata_rows);
+
+    assert_eq!(diff.solve_rows, 17, "{diff:#?}");
+    assert_eq!(diff.matches, 16, "{diff:#?}");
+    assert_eq!(diff.solve_only, 1, "{diff:#?}");
+    assert_eq!(
+        diff.solve_only_categories.get("workspace-pseudo-root"),
+        Some(&1),
+        "{diff:#?}"
+    );
+    assert_eq!(diff.lock_only + diff.matches, diff.lock_rows, "{diff:#?}");
+
+    write_tier_a_artifact(
+        "real-ring-16-solve-vs-lock-summary.tsv",
+        &package_diff_summary_table(&diff),
+    )?;
+    write_tier_a_artifact(
+        "real-ring-16-solve-vs-lock-solve-rows.tsv",
+        &package_rows_table(&solve_rows),
+    )?;
     Ok(())
 }
 

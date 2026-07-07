@@ -358,9 +358,23 @@ fn selected_allowed(selected: Option<Version>, allowed: VersionSet) -> Bool {
     }
 }
 
+fn domain_unconstrained(domain: Domain) -> Bool {
+    domain.allowed == universe() && match domain.selected {
+        Some(_) => false,
+        None => true,
+    }
+}
+
+fn narrowed_allowed(old: Domain, allowed: VersionSet) -> VersionSet {
+    match domain_unconstrained(old) {
+        true => allowed,
+        false => old.allowed.intersect(allowed),
+    }
+}
+
 fn narrow(index: Index, state: State, pkg: Int, allowed: VersionSet) -> Step {
     let old = domain_for(state, pkg);
-    let next_allowed = old.allowed.intersect(allowed);
+    let next_allowed = narrowed_allowed(old, allowed);
     match selected_allowed(old.selected, next_allowed) {
         false => Step::Conflict(conflict_info(state, pkg, no_clause_id())),
         true => narrow_success(state, pkg, old, next_allowed),
@@ -381,7 +395,14 @@ fn narrow_success(state: State, pkg: Int, old: Domain, next_allowed: VersionSet)
 }
 
 fn activate(index: Index, state: State, pkg: Int) -> Step {
-    narrow(index, state, pkg, universe())
+    let old = domain_for(state, pkg);
+    match old.active {
+        true => Step::Pass { state: state, changed: false },
+        false => Step::Pass {
+            state: put_domain(state, pkg, Domain { active: true, allowed: old.allowed, selected: old.selected }),
+            changed: true,
+        },
+    }
 }
 
 fn enable_feature(state: State, feature: Int) -> Step {

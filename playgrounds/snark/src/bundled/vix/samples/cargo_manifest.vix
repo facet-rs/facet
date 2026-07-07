@@ -649,6 +649,11 @@ pub fn workspace_member_only_solve_selected_versions_text(workspace: Tree, works
     solve_selected_versions_text_from_workspace_state(state, workspace_problem(), target)
 }
 
+pub fn workspace_member_only_solve_selected_versions_text_limit(workspace: Tree, workspace_root: Path, target: String, limit: Int) -> String {
+    let state = workspace_member_only_index_state_limit(workspace, workspace_root, limit);
+    solve_selected_versions_text_from_workspace_state(state, workspace_problem(), target)
+}
+
 fn solve_selected_versions_text_from_workspace_state(state: WorkspaceIndexState, problem: Problem, target: String) -> String {
     let result = solve(workspace_index_from_state(state), problem, target);
     selected_workspace_state_versions_text_from(state, state.packages, result.selected, "")
