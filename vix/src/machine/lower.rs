@@ -2077,6 +2077,98 @@ fn count_identifier_uses_in_expr(expr: &ast::Expr, uses: &mut HashMap<String, us
     }
 }
 
+fn collect_consuming_update_receivers_in_expr(expr: &ast::Expr, out: &mut BTreeSet<String>) {
+    if let Some(receiver) = consuming_update_receiver(expr) {
+        out.insert(receiver.to_string());
+    }
+    match expr {
+        ast::Expr::Identifier(_)
+        | ast::Expr::Scoped(_)
+        | ast::Expr::Template(_)
+        | ast::Expr::Str(_)
+        | ast::Expr::Path(_)
+        | ast::Expr::Number(_)
+        | ast::Expr::Bool(_) => {}
+        ast::Expr::Paren(paren) => collect_consuming_update_receivers_in_expr(&paren.inner, out),
+        ast::Expr::Binary(binary) => {
+            collect_consuming_update_receivers_in_expr(&binary.left, out);
+            collect_consuming_update_receivers_in_expr(&binary.right, out);
+        }
+        ast::Expr::Unary(unary) => collect_consuming_update_receivers_in_expr(&unary.operand, out),
+        ast::Expr::Call(call) => {
+            for arg in &call.args.args {
+                match arg {
+                    ast::Arg::Expr(expr) => collect_consuming_update_receivers_in_expr(expr, out),
+                    ast::Arg::Kwarg(kwarg) => {
+                        collect_consuming_update_receivers_in_expr(&kwarg.value, out)
+                    }
+                    ast::Arg::Partial(_) => {}
+                }
+            }
+        }
+        ast::Expr::MethodCall(call) => {
+            collect_consuming_update_receivers_in_expr(&call.receiver, out);
+            for arg in &call.args.args {
+                match arg {
+                    ast::Arg::Expr(expr) => collect_consuming_update_receivers_in_expr(expr, out),
+                    ast::Arg::Kwarg(kwarg) => {
+                        collect_consuming_update_receivers_in_expr(&kwarg.value, out)
+                    }
+                    ast::Arg::Partial(_) => {}
+                }
+            }
+        }
+        ast::Expr::Field(field) => collect_consuming_update_receivers_in_expr(&field.receiver, out),
+        ast::Expr::Match(m) => {
+            collect_consuming_update_receivers_in_expr(&m.scrutinee, out);
+            for arm in &m.arms {
+                if let Some(guard) = &arm.guard {
+                    collect_consuming_update_receivers_in_expr(guard, out);
+                }
+                collect_consuming_update_receivers_in_expr(&arm.value, out);
+            }
+        }
+        ast::Expr::StructLit(lit) => {
+            for field in &lit.fields {
+                collect_consuming_update_receivers_in_expr(&field.value, out);
+            }
+            for spread in &lit.spreads {
+                if let Some(base) = &spread.base {
+                    collect_consuming_update_receivers_in_expr(base, out);
+                }
+            }
+        }
+        ast::Expr::Map(map) => {
+            for entry in &map.entries {
+                collect_consuming_update_receivers_in_expr(&entry.key, out);
+                collect_consuming_update_receivers_in_expr(&entry.value, out);
+            }
+        }
+        ast::Expr::Tuple(tuple) => {
+            for elem in &tuple.elems {
+                collect_consuming_update_receivers_in_expr(elem, out);
+            }
+        }
+        ast::Expr::Array(array) => {
+            for elem in &array.elems {
+                if let ast::ArrayElem::Expr(expr) = elem {
+                    collect_consuming_update_receivers_in_expr(expr, out);
+                }
+            }
+        }
+        ast::Expr::Closure(closure) => {
+            collect_consuming_update_receivers_in_expr(&closure.body, out)
+        }
+        ast::Expr::Command(command) => {
+            for part in &command.parts {
+                if let ast::CommandPart::Splice(splice) = part {
+                    collect_consuming_update_receivers_in_expr(&splice.expr, out);
+                }
+            }
+        }
+    }
+}
+
 fn arg_list_has_partial(args: &ast::ArgList) -> bool {
     args.args
         .iter()
@@ -3982,7 +4074,9 @@ impl<'a> FnLowerer<'a> {
 
     fn hoist_bindings_used_by_multiple_arms(&mut self, m: &ast::MatchExpr) -> Result<(), String> {
         let mut counts: HashMap<String, usize> = HashMap::new();
+        let mut consumed_receivers = BTreeSet::new();
         for arm in &m.arms {
+            collect_consuming_update_receivers_in_expr(&arm.value, &mut consumed_receivers);
             let mut names = BTreeSet::new();
             collect_expr_identifiers(&arm.value, &mut names);
             if let Some(guard) = &arm.guard {
@@ -3999,7 +4093,8 @@ impl<'a> FnLowerer<'a> {
         let hoist: Vec<String> = counts
             .into_iter()
             .filter_map(|(name, count)| {
-                (count > 1 && self.slots.contains_key(&name)).then_some(name)
+                (count > 1 && self.slots.contains_key(&name) && !consumed_receivers.contains(&name))
+                    .then_some(name)
             })
             .collect();
         for name in hoist {
@@ -8904,6 +8999,59 @@ pub fn main() -> Int {
             assert_eq!(reuse_stats.array_push_copied, 0, "{lane:?}");
             assert_eq!(copy_stats.array_push_reused, 0, "{lane:?}");
             assert_eq!(copy_stats.array_push_copied, 3, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn molten_tail_loop_array_accumulator_reuses_push_receiver() {
+        let src = r#"
+pub fn seed() -> [Int] {
+    [0]
+}
+
+pub fn grow(n: Int, acc: [Int]) -> [Int] {
+    match n {
+        0 => acc,
+        _ => grow(n - 1, acc.push(n)),
+    }
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let grow = FnRef::new(*machine.fn_refs.get("grow").expect("grow fn ref"));
+            let ops = machine.driver.fn_ops(grow).to_vec();
+            let dup_hosts = ops
+                .iter()
+                .filter(|op| {
+                    matches!(
+                        op,
+                        Op::HostCall {
+                            host: MOLTEN_DUP_HOST
+                        }
+                    )
+                })
+                .count();
+            let push_hosts = ops
+                .iter()
+                .filter(|op| {
+                    matches!(
+                        op,
+                        Op::HostCall {
+                            host: ARRAY_PUSH_HOST
+                        }
+                    )
+                })
+                .count();
+            let seed = machine.demand_i64("seed", vec![]).unwrap();
+            let result = machine.demand_i64("grow", vec![256, seed]).unwrap();
+            let (_elem, words) = machine.driver.array_words(result).unwrap();
+            let stats = machine.driver.molten_stats();
+
+            assert_eq!(push_hosts, 1, "{lane:?}");
+            assert_eq!(dup_hosts, 1, "{lane:?}: {ops:#?}");
+            assert_eq!(words.len(), 257, "{lane:?}");
+            assert_eq!(stats.array_push_reused, 255, "{lane:?}");
+            assert_eq!(stats.array_push_copied, 1, "{lane:?}");
         }
     }
 
