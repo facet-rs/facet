@@ -55,6 +55,7 @@ use crate::value::{Payload, Value};
 pub struct StoreValue {
     pub handle: u64,
     pub schema: String,
+    pub tier: HandleTier,
     pub bytes: Vec<u8>,
     pub content_hash: Vec<u8>,
     pub taint: Option<StructuralTaint>,
@@ -81,6 +82,20 @@ pub struct ValueBundle {
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub struct StoreHandle(pub i64);
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Hash, Facet)]
+#[repr(u8)]
+pub enum HandleTier {
+    #[default]
+    Ready,
+    Pending,
+}
+
+impl HandleTier {
+    fn is_pending(self) -> bool {
+        matches!(self, Self::Pending)
+    }
+}
 
 #[derive(Clone, Debug)]
 pub struct MachineExecRequest {
@@ -817,6 +832,7 @@ enum ProjectionPath {
 #[derive(Clone, Debug)]
 pub struct StoreEntry {
     pub schema: String,
+    pub tier: HandleTier,
     pub bytes: Vec<u8>,
     pub content_hash: ContentHash,
     pub taint: Option<StructuralTaint>,
@@ -839,7 +855,7 @@ struct SealedPayload {
 #[derive(Clone, Debug, Default)]
 pub struct ValueStore {
     entries: Vec<StoreEntry>,
-    by_content: HashMap<(String, ContentHash), i64>,
+    by_content: HashMap<(String, HandleTier, ContentHash), i64>,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1101,9 +1117,10 @@ impl ValueStore {
     }
 
     fn insert_at(&mut self, handle: usize, entry: StoreEntry) -> Result<(), String> {
-        let key = (entry.schema.clone(), entry.content_hash);
+        let key = (entry.schema.clone(), entry.tier, entry.content_hash);
         if let Some(existing) = self.entries.get(handle) {
             if existing.schema == entry.schema
+                && existing.tier == entry.tier
                 && existing.bytes == entry.bytes
                 && existing.content_hash == entry.content_hash
                 && existing.taint == entry.taint
@@ -1140,13 +1157,14 @@ impl ValueStore {
         let taint = taint_for_value_bytes(self, descriptor, &bytes);
         let content_hash =
             hash_with_taint(hash_value_bytes(schemas, descriptor, &bytes, self), &taint);
-        let key = (schema.to_string(), content_hash);
+        let key = (schema.to_string(), HandleTier::Ready, content_hash);
         if let Some(handle) = self.by_content.get(&key).copied() {
             return (handle, true);
         }
         let handle = i64::try_from(self.entries.len()).expect("store handle fits i64");
         self.entries.push(StoreEntry {
             schema: schema.to_string(),
+            tier: HandleTier::Ready,
             bytes,
             content_hash,
             taint,
@@ -1170,13 +1188,14 @@ impl ValueStore {
         hasher.update(schema.as_bytes());
         hasher.update(&bytes);
         let content_hash = hash_with_taint(finish_hash(hasher), &taint);
-        let key = (schema.to_string(), content_hash);
+        let key = (schema.to_string(), HandleTier::Ready, content_hash);
         if let Some(handle) = self.by_content.get(&key).copied() {
             return (handle, true);
         }
         let handle = i64::try_from(self.entries.len()).expect("store handle fits i64");
         self.entries.push(StoreEntry {
             schema: schema.to_string(),
+            tier: HandleTier::Ready,
             bytes,
             content_hash,
             taint,
@@ -1409,7 +1428,7 @@ impl ValueStore {
         bytes: Vec<u8>,
         content_hash: ContentHash,
     ) -> (i64, bool) {
-        self.alloc_with_hash_tainted(schema, bytes, content_hash, None)
+        self.alloc_with_hash_tier_tainted(schema, HandleTier::Ready, bytes, content_hash, None)
     }
 
     fn alloc_with_hash_tainted(
@@ -1419,13 +1438,25 @@ impl ValueStore {
         content_hash: ContentHash,
         taint: Option<StructuralTaint>,
     ) -> (i64, bool) {
-        let key = (schema.to_string(), content_hash);
+        self.alloc_with_hash_tier_tainted(schema, HandleTier::Ready, bytes, content_hash, taint)
+    }
+
+    fn alloc_with_hash_tier_tainted(
+        &mut self,
+        schema: &str,
+        tier: HandleTier,
+        bytes: Vec<u8>,
+        content_hash: ContentHash,
+        taint: Option<StructuralTaint>,
+    ) -> (i64, bool) {
+        let key = (schema.to_string(), tier, content_hash);
         if let Some(handle) = self.by_content.get(&key).copied() {
             return (handle, true);
         }
         let handle = i64::try_from(self.entries.len()).expect("store handle fits i64");
         self.entries.push(StoreEntry {
             schema: schema.to_string(),
+            tier,
             bytes,
             content_hash,
             taint,
@@ -1479,10 +1510,12 @@ impl ValueStore {
 
     fn alloc_pending(&mut self, value_schema: &str, invocation: PendingInvocation) -> (i64, bool) {
         let bytes = encode_pending_invocation(&invocation);
-        self.alloc_with_hash(
-            &pending_schema(value_schema),
+        self.alloc_with_hash_tier_tainted(
+            value_schema,
+            HandleTier::Pending,
             bytes,
             invocation.identity_hash,
+            None,
         )
     }
 
@@ -1490,7 +1523,7 @@ impl ValueStore {
         let entry = self
             .entry(handle)
             .ok_or_else(|| format!("store handle {handle}"))?;
-        if pending_value_schema(&entry.schema).is_none() {
+        if !entry.tier.is_pending() {
             return Err(format!(
                 "handle {handle} is `{}`, not Pending",
                 entry.schema
@@ -1560,6 +1593,7 @@ impl ValueStore {
         let handle = i64::try_from(self.entries.len()).expect("store handle fits i64");
         self.entries.push(StoreEntry {
             schema: "Tree".to_string(),
+            tier: HandleTier::Ready,
             bytes,
             content_hash: identity,
             taint: None,
@@ -1981,6 +2015,7 @@ impl Driver {
             .map(|(handle, entry)| StoreValue {
                 handle: u64::try_from(handle).expect("store handle fits u64"),
                 schema: entry.schema,
+                tier: entry.tier,
                 bytes: entry.bytes,
                 content_hash: entry.content_hash.to_vec(),
                 taint: entry.taint,
@@ -2004,6 +2039,7 @@ impl Driver {
                 usize::try_from(value.handle).map_err(|_| format!("handle {}", value.handle))?,
                 StoreEntry {
                     schema: value.schema,
+                    tier: value.tier,
                     bytes: value.bytes,
                     content_hash,
                     taint: value.taint,
@@ -2169,7 +2205,7 @@ impl Driver {
         let invocation = pending_invocation_for(lowered, &self.store, &self.schemas, args);
         let schema = lowered.return_schema.clone();
         let handle = self.store.borrow_mut().alloc_pending(&schema, invocation).0;
-        Ok((handle, pending_schema(&schema)))
+        Ok((handle, schema))
     }
 
     pub fn invoke_pending_handle(&mut self, pending: i64, args: Vec<i64>) -> Result<i64, String> {
@@ -5514,19 +5550,19 @@ impl Driver {
     }
 
     fn merge_child_tree_value(&mut self, handle: i64) -> Result<i64, String> {
-        let schema = self
+        let entry = self
             .store
             .borrow()
             .entry(handle)
             .ok_or_else(|| format!("store handle {handle}"))?
-            .schema
             .clone();
-        if self.schemas.is_external(&schema, "Tree") {
+        if self.schemas.is_external(&entry.schema, "Tree") && !entry.tier.is_pending() {
             return Ok(handle);
         }
-        if schema != pending_schema("Tree") {
+        if !entry.tier.is_pending() || !self.schemas.is_external(&entry.schema, "Tree") {
             return Err(format!(
-                "merge child handle {handle} is `{schema}`, not Tree"
+                "merge child handle {handle} is `{}`, not Tree",
+                entry.schema
             ));
         }
         let invocation = self.store.borrow().pending_invocation(handle)?;
@@ -5597,18 +5633,19 @@ impl Driver {
         args: &[i64],
         read_set: &mut ProjectionReadSet,
     ) -> Result<PendingForce, String> {
-        let entry_schema = self
+        let entry = self
             .store
             .borrow()
             .entry(req.pending)
             .ok_or_else(|| format!("store handle {}", req.pending))?
-            .schema
             .clone();
-        let Some(value_schema) = pending_value_schema(&entry_schema) else {
+        if !entry.tier.is_pending() {
             return Err(format!(
-                "pending coercion expected Pending<T>, got {entry_schema}"
+                "pending coercion expected Pending<T>, got {}",
+                entry.schema
             ));
-        };
+        }
+        let value_schema = entry.schema;
         let invocation = self.store.borrow().pending_invocation(req.pending)?;
         if invocation.remaining_arity != 0 {
             return Err(format!(
@@ -8957,6 +8994,7 @@ fn projection_observation_hash(
             {
                 StoreEntry {
                     schema,
+                    tier: _,
                     bytes,
                     content_hash: _,
                     taint: _,
