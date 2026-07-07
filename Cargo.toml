@@ -525,6 +525,14 @@ opt-level = 3
 [profile.dev.package.aho-corasick]
 opt-level = 3
 
+# The machine itself: measured 6.8x on solve-heavy tests (ring 64: 20.3s -> 3.0s
+# fully optimized). opt-level 2 trades a little rebuild time for most of that.
+[profile.dev.package.vix]
+opt-level = 2
+
+[profile.dev.package.weavy]
+opt-level = 2
+
 [profile.dev.package.blake3]
 opt-level = 3
 
