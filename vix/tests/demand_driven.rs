@@ -1242,6 +1242,50 @@ pub fn sum_child(n: Int, acc: Int) -> Int {
 }
 
 #[test]
+fn tail_loop_countdown_handles_100k_iterations() {
+    for lane in lanes() {
+        let mut machine = load_with_lane(countdown_tail_source(), lane);
+        assert_eq!(
+            machine.demand_i64("countdown", vec![100_000, 0]).unwrap(),
+            100_000,
+            "{lane:?}"
+        );
+        assert_eq!(spawned_count(&machine, "countdown"), 1, "{lane:?}");
+        assert_eq!(completed_count(&machine, "countdown"), 1, "{lane:?}");
+    }
+}
+
+#[test]
+fn tail_loop_array_accumulator_handles_100k_iterations() {
+    let src = r#"
+pub fn seed() -> Array {
+    [0]
+}
+
+pub fn grow(n: Int, acc: Array) -> Array {
+    match n {
+        0 => acc,
+        _ => grow(n - 1, acc.push(n)),
+    }
+}
+"#;
+    for lane in lanes() {
+        let mut machine = load_with_lane(src, lane);
+        let seed = machine.demand_i64("seed", vec![]).unwrap();
+        machine.clear_trace();
+        let result = machine.demand_i64("grow", vec![100_000, seed]).unwrap();
+        let RenderedValue::Array { items, .. } = machine.render_result("grow", result).unwrap()
+        else {
+            panic!("grow did not render as an Array on {lane:?}");
+        };
+        assert_eq!(items.len(), 100_001, "{lane:?}");
+        assert_eq!(store_alloc_count(&machine), 1, "{lane:?}");
+        assert_eq!(spawned_count(&machine, "grow"), 1, "{lane:?}");
+        assert_eq!(completed_count(&machine, "grow"), 1, "{lane:?}");
+    }
+}
+
+#[test]
 fn warm_reload_cross_module_leaf_edit_misses_transitive_users_only() {
     let initial = modules(&[
         (
