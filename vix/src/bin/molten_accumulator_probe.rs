@@ -25,7 +25,9 @@ fn main() {
     let mut machine = Machine::load(SOURCE).expect("probe source loads");
     let seed = machine.demand_i64("seed", vec![]).expect("seed runs");
     machine.clear_trace();
-    let result = machine.demand_i64("grow", vec![n, seed]).expect("grow runs");
+    let result = machine
+        .demand_i64("grow", vec![n, seed])
+        .expect("grow runs");
     println!("n={n}");
     println!("store_len={}", machine.store_len());
     println!("trace_len={}", machine.trace().len());
@@ -43,6 +45,9 @@ fn main() {
     println!("molten_carried_hashes={molten_carried_hashes}");
     println!("molten_refs_gt_one={molten_refs_gt_one}");
     println!("molten_max_refs={molten_max_refs}");
+    let stats = machine.molten_stats();
+    println!("array_push_reused={}", stats.array_push_reused);
+    println!("array_push_copied={}", stats.array_push_copied);
     if render {
         let RenderedValue::Array { items, .. } = machine
             .render_result("grow", result)

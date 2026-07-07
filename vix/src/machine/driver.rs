@@ -349,9 +349,8 @@ pub enum DriveEvent {
     },
 }
 
-#[cfg(test)]
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
-pub(crate) struct MoltenStats {
+pub struct MoltenStats {
     pub array_push_reused: usize,
     pub array_push_copied: usize,
 }
@@ -741,16 +740,16 @@ fn update_hash_len(hasher: &mut blake3::Hasher, len: usize) {
 }
 
 fn update_schema_name(hasher: &mut blake3::Hasher, schemas: &SchemaTables, name: &str) {
-    update_schema_ref(hasher, schemas, &schemas.legacy_ref(name));
+    update_schema_ref(hasher, &schemas.legacy_ref(name));
 }
 
-fn update_schema_ref(hasher: &mut blake3::Hasher, schemas: &SchemaTables, schema_ref: &SchemaRef) {
+fn update_schema_ref(hasher: &mut blake3::Hasher, schema_ref: &SchemaRef) {
     match schema_ref {
         SchemaRef::Concrete { id, args } => {
             hasher.update(&id.as_u64().to_le_bytes());
             update_hash_len(hasher, args.len());
             for arg in args {
-                update_schema_ref(hasher, schemas, arg);
+                update_schema_ref(hasher, arg);
             }
         }
         SchemaRef::Var { name } => {
@@ -1847,6 +1846,9 @@ fn intern_molten_word(
     schema: &str,
     word: i64,
 ) -> Result<(i64, bool), String> {
+    if schema_is_inline_word(schemas, schema) {
+        return Ok((word, true));
+    }
     let molten_handle = match Handle::from_word(word) {
         Handle::Molten(handle) => handle,
         Handle::Store(_) => return Ok((word, true)),
@@ -2055,7 +2057,6 @@ pub struct Driver {
     step_mode: StepMode,
     force_molten_copy: bool,
     last_molten_debug_counts: (usize, usize, usize, usize, usize, usize),
-    #[cfg(test)]
     molten_stats: MoltenStats,
     store: RefCell<ValueStore>,
 }
@@ -2123,7 +2124,6 @@ impl Driver {
             step_mode: StepMode::Run,
             force_molten_copy: std::env::var_os("VIX_FORCE_MOLTEN_COPY").is_some(),
             last_molten_debug_counts: (0, 0, 0, 0, 0, 0),
-            #[cfg(test)]
             molten_stats: MoltenStats::default(),
             store: RefCell::new(ValueStore::default()),
         })
@@ -2143,10 +2143,7 @@ impl Driver {
         self.schemas = schemas;
         self.trace.clear();
         self.last_molten_debug_counts = (0, 0, 0, 0, 0, 0);
-        #[cfg(test)]
-        {
-            self.molten_stats = MoltenStats::default();
-        }
+        self.molten_stats = MoltenStats::default();
         Ok(())
     }
 
@@ -2170,8 +2167,7 @@ impl Driver {
         self.force_molten_copy = force;
     }
 
-    #[cfg(test)]
-    pub(crate) fn molten_stats(&self) -> MoltenStats {
+    pub fn molten_stats(&self) -> MoltenStats {
         self.molten_stats
     }
 
@@ -2547,25 +2543,27 @@ impl Driver {
                 Burst::Done(value) => {
                     let done_key = exec.key.clone();
                     let mut value = value;
-                    match Handle::from_word(value) {
-                        Handle::Molten(_) => {
-                            let return_schema = self.lowered(exec.fn_ref).return_schema.clone();
-                            let (interned, deduped) = intern_molten_word(
-                                &mut self.store.borrow_mut(),
-                                &mut exec.molten,
-                                &self.descriptors,
-                                &self.schemas,
-                                &self.schemas,
-                                &return_schema,
-                                value,
-                            )?;
-                            self.emit(DriveEvent::StoreAlloc {
-                                schema_ref: hash_u64(&return_schema),
-                                deduped,
-                            });
-                            value = interned;
+                    let return_schema = self.lowered(exec.fn_ref).return_schema.clone();
+                    if !schema_is_inline_word(&self.schemas, &return_schema) {
+                        match Handle::from_word(value) {
+                            Handle::Molten(_) => {
+                                let (interned, deduped) = intern_molten_word(
+                                    &mut self.store.borrow_mut(),
+                                    &mut exec.molten,
+                                    &self.descriptors,
+                                    &self.schemas,
+                                    &self.schemas,
+                                    &return_schema,
+                                    value,
+                                )?;
+                                self.emit(DriveEvent::StoreAlloc {
+                                    schema_ref: hash_u64(&return_schema),
+                                    deduped,
+                                });
+                                value = interned;
+                            }
+                            Handle::Store(_) => {}
                         }
-                        Handle::Store(_) => {}
                     }
                     let value = self.canonicalize_return_word(exec.fn_ref, value);
                     self.record_whole_arg_if_projectable(
@@ -2917,7 +2915,6 @@ impl Driver {
             let oci_file_memo_cell = RefCell::new(&mut self.oci_file_memo);
             let journal_cell = RefCell::new(&mut self.journal);
             let clock_cell = RefCell::new(&mut self.trace_clock);
-            #[cfg(test)]
             let molten_stats = RefCell::new(&mut self.molten_stats);
             let lowered_fns = &self.fns;
             let store_events = RefCell::new(Vec::new());
@@ -2939,10 +2936,8 @@ impl Driver {
                 let mut args = (0..argc).map(|k| word(3 + k)).collect::<Vec<_>>();
                 let arg_schemas = &lowered_fns[fn_ref.index()].arg_schemas;
                 for (arg, schema) in args.iter_mut().zip(arg_schemas) {
-                    let was_molten = match Handle::from_word(*arg) {
-                        Handle::Molten(_) => true,
-                        Handle::Store(_) => false,
-                    };
+                    let was_molten = !schema_is_inline_word(schemas, schema)
+                        && matches!(Handle::from_word(*arg), Handle::Molten(_));
                     let (interned, deduped) = intern_molten_word(
                         &mut store_cell.borrow_mut(),
                         &mut molten_cell.borrow_mut(),
@@ -3565,10 +3560,9 @@ impl Driver {
                         )?
                         .0;
                     }
-                    let handle = molten_cell.borrow_mut().alloc(MoltenValue::ArrayWords {
-                        elem_schema,
-                        words,
-                    });
+                    let handle = molten_cell
+                        .borrow_mut()
+                        .alloc(MoltenValue::ArrayWords { elem_schema, words });
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -5012,10 +5006,8 @@ impl Driver {
                         read_frame_word(frame, primitive_region + 16),
                         schema_tables,
                     )?;
-                    let was_molten = match Handle::from_word(src) {
-                        Handle::Molten(_) => true,
-                        Handle::Store(_) => false,
-                    };
+                    let was_molten = !schema_is_inline_word(schemas, &schema)
+                        && matches!(Handle::from_word(src), Handle::Molten(_));
                     let (handle, deduped) = intern_molten_word(
                         &mut store_cell.borrow_mut(),
                         &mut molten_cell.borrow_mut(),
@@ -5048,6 +5040,7 @@ impl Driver {
                         read_frame_word(frame, primitive_region + 24),
                         schema_tables,
                     )?;
+                    let consuming_receiver = read_frame_word(frame, primitive_region + 32) != 0;
                     if !force_molten_copy
                         && let Handle::Molten(array_handle) = Handle::from_word(array)
                     {
@@ -5057,12 +5050,12 @@ impl Driver {
                                 .entry(array_handle)
                                 .and_then(|entry| match &entry.value {
                                     MoltenValue::ArrayWords { elem_schema, words }
-                                        if entry.refs == 1 =>
+                                        if entry.refs == 1 || consuming_receiver =>
                                     {
                                         Some(if words.is_empty() {
-                                        pushed_schema.clone()
-                                    } else {
-                                        elem_schema.clone()
+                                            pushed_schema.clone()
+                                        } else {
+                                            elem_schema.clone()
                                         })
                                     }
                                     _ => None,
@@ -5097,14 +5090,15 @@ impl Driver {
                                     ));
                                 }
                                 if entry.carried_array_hash.is_none() {
-                                    entry.carried_array_hash = Some(recompute_array_element_hasher(
-                                        &store_cell.borrow(),
-                                        schemas,
-                                        schema_tables,
-                                        b"vix-array-words",
-                                        stored_schema,
-                                        words,
-                                    ));
+                                    entry.carried_array_hash =
+                                        Some(recompute_array_element_hasher(
+                                            &store_cell.borrow(),
+                                            schemas,
+                                            schema_tables,
+                                            b"vix-array-words",
+                                            stored_schema,
+                                            words,
+                                        ));
                                 }
                                 let element_hash = canonical_word_hash_in_store(
                                     &store_cell.borrow(),
@@ -5116,10 +5110,7 @@ impl Driver {
                                     update_array_element_hash(carried_hash, element_hash);
                                 }
                                 words.push(value);
-                                #[cfg(test)]
-                                {
-                                    molten_stats.borrow_mut().array_push_reused += 1;
-                                }
+                                molten_stats.borrow_mut().array_push_reused += 1;
                                 write_frame_word(frame, dst_slot, array);
                                 return Ok(());
                             }
@@ -5147,14 +5138,10 @@ impl Driver {
                     )?
                     .0;
                     words.push(value);
-                    let handle = molten_cell.borrow_mut().alloc(MoltenValue::ArrayWords {
-                        elem_schema,
-                        words,
-                    });
-                    #[cfg(test)]
-                    {
-                        molten_stats.borrow_mut().array_push_copied += 1;
-                    }
+                    let handle = molten_cell
+                        .borrow_mut()
+                        .alloc(MoltenValue::ArrayWords { elem_schema, words });
+                    molten_stats.borrow_mut().array_push_copied += 1;
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -5183,8 +5170,7 @@ impl Driver {
                             let entry = molten
                                 .entry_mut(array_handle)
                                 .ok_or_else(|| format!("molten handle {array}"))?;
-                            if let MoltenValue::ArrayWords { words, .. } = &mut entry.value
-                            {
+                            if let MoltenValue::ArrayWords { words, .. } = &mut entry.value {
                                 let value = words
                                     .pop()
                                     .ok_or_else(|| "pop on empty array".to_string())?;
@@ -5207,10 +5193,9 @@ impl Driver {
                         .pop()
                         .ok_or_else(|| "pop on empty array".to_string())?;
                     write_frame_word(frame, value_slot, value);
-                    let handle = molten_cell.borrow_mut().alloc(MoltenValue::ArrayWords {
-                        elem_schema,
-                        words,
-                    });
+                    let handle = molten_cell
+                        .borrow_mut()
+                        .alloc(MoltenValue::ArrayWords { elem_schema, words });
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -5257,8 +5242,7 @@ impl Driver {
                             let entry = molten
                                 .entry_mut(array_handle)
                                 .ok_or_else(|| format!("molten handle {array}"))?;
-                            if let MoltenValue::ArrayWords { words, .. } = &mut entry.value
-                            {
+                            if let MoltenValue::ArrayWords { words, .. } = &mut entry.value {
                                 if index >= words.len() {
                                     return Err(format!(
                                         "array index {index} out of bounds {}",
@@ -5294,10 +5278,9 @@ impl Driver {
                         return Err(format!("array index {index} out of bounds {}", words.len()));
                     }
                     words[index] = value;
-                    let handle = molten_cell.borrow_mut().alloc(MoltenValue::ArrayWords {
-                        elem_schema,
-                        words,
-                    });
+                    let handle = molten_cell
+                        .borrow_mut()
+                        .alloc(MoltenValue::ArrayWords { elem_schema, words });
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -9162,6 +9145,12 @@ fn canonicalize_word_for_schema(schemas: &SchemaTables, schema: &str, word: i64)
     }
 }
 
+fn schema_is_inline_word(schemas: &SchemaTables, schema: &str) -> bool {
+    schemas.is_primitive(schema, Primitive::I64)
+        || schemas.is_primitive(schema, Primitive::Bool)
+        || schemas.is_primitive(schema, Primitive::F64)
+}
+
 fn canonical_word_hash_in_store(
     store: &ValueStore,
     schemas: &SchemaTables,
@@ -10565,7 +10554,7 @@ fn hash_value_into(
 ) {
     hasher.update(b"vix-value");
     let schema = schemas.display_ref(&descriptor.schema);
-    update_schema_ref(hasher, schemas, &descriptor.schema);
+    update_schema_ref(hasher, &descriptor.schema);
     match &descriptor.access {
         Access::Scalar if schemas.is_primitive(&schema, Primitive::F64) => {
             let word = read_frame_word(bytes, 0);

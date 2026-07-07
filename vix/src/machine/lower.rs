@@ -33,15 +33,15 @@ use super::driver::{
     DOC_IS_MAP_HOST, DOC_PACKAGE_HOST, DOC_PARSE_HOST, DriveEvent, DriveEventSink, Driver,
     ELF_DOC_HOST, EXEC_HOST, FETCH_HOST, FnRef, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn,
     MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST, MOLTEN_DUP_HOST, MachineExecBackend,
-    OCI_DOC_HOST, OPTION_CONSTRUCT_HOST, OPTION_DESTRUCT_HOST, OPTION_UNWRAP_HOST, PATH_JOIN_HOST,
-    PATH_TO_STRING_HOST, PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, PENDING_COERCE_HOST,
-    PENDING_INVOKE_HOST, RECORD_UPDATE_HOST, RenderNames, RenderVariant, RenderedValue,
-    SEALED_DECLASSIFY_HOST, SEALED_SEAL_HOST, SEALED_TO_STRING_HOST, STORE_ALLOC_HOST,
-    STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_CONTAINS_HOST, STRING_DEFAULT_HOST,
-    STRING_IS_NUMERIC_HOST, STRING_LOWER_HOST, STRING_PARSE_INT_HOST, STRING_SPLIT_HOST,
-    STRING_UPPER_HOST, SemanticComparator, StepMode, StoreHandle, TARGET_HOST, TREE_PROJECT_HOST,
-    VALUE_COMPARE_HOST, VERSION_PARSE_HOST, VERSION_SET_OP_HOST, VERSION_SET_PARSE_HOST,
-    ValueBundle,
+    MoltenStats, OCI_DOC_HOST, OPTION_CONSTRUCT_HOST, OPTION_DESTRUCT_HOST, OPTION_UNWRAP_HOST,
+    PATH_JOIN_HOST, PATH_TO_STRING_HOST, PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST,
+    PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RECORD_UPDATE_HOST, RenderNames, RenderVariant,
+    RenderedValue, SEALED_DECLASSIFY_HOST, SEALED_SEAL_HOST, SEALED_TO_STRING_HOST,
+    STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_CONTAINS_HOST,
+    STRING_DEFAULT_HOST, STRING_IS_NUMERIC_HOST, STRING_LOWER_HOST, STRING_PARSE_INT_HOST,
+    STRING_SPLIT_HOST, STRING_UPPER_HOST, SemanticComparator, StepMode, StoreHandle, TARGET_HOST,
+    TREE_PROJECT_HOST, VALUE_COMPARE_HOST, VERSION_PARSE_HOST, VERSION_SET_OP_HOST,
+    VERSION_SET_PARSE_HOST, ValueBundle,
 };
 use crate::ast;
 use crate::fetch::FetchBackend;
@@ -430,6 +430,10 @@ impl Machine {
 
     pub fn molten_debug_counts(&self) -> (usize, usize, usize, usize, usize, usize) {
         self.driver.molten_debug_counts()
+    }
+
+    pub fn molten_stats(&self) -> MoltenStats {
+        self.driver.molten_stats()
     }
 
     pub fn tree_entries(
@@ -4470,7 +4474,7 @@ impl<'a> FnLowerer<'a> {
         call: &ast::MethodCall,
         expected: Option<&str>,
     ) -> Result<ValueSlot, String> {
-        let mut receiver = self.method_receiver(call)?;
+        let (mut receiver, consuming_receiver) = self.method_receiver(call)?;
         if self.value_schema_is_realized_named(&receiver.schema, "Doc") {
             receiver = self.coerce_to_schema(receiver, "Doc")?;
         }
@@ -4559,7 +4563,7 @@ impl<'a> FnLowerer<'a> {
                     .ok_or_else(|| format!("{} is not an Array<T>", receiver.schema))?
                     .to_string();
                 let value = self.method_arg(arg, Some(&elem_schema))?;
-                self.array_push(&receiver, &value)
+                self.array_push(&receiver, &value, consuming_receiver)
             }
             "pop" => {
                 if !self.tables.schemas.is_list(&receiver.schema) {
@@ -4772,15 +4776,15 @@ impl<'a> FnLowerer<'a> {
         }
     }
 
-    fn method_receiver(&mut self, call: &ast::MethodCall) -> Result<ValueSlot, String> {
+    fn method_receiver(&mut self, call: &ast::MethodCall) -> Result<(ValueSlot, bool), String> {
         if aggregate_update_method(call.name.value.as_str())
             && let Some(name) = plain_identifier_expr(&call.receiver)
             && self.consume_receiver.as_deref() == Some(name)
             && !self.pending_lazy_alias_reads(name)
         {
-            return self.resolve_binding_consuming_move(name, None);
+            return Ok((self.resolve_binding_consuming_move(name, None)?, true));
         }
-        self.expr(&call.receiver)
+        Ok((self.expr(&call.receiver)?, false))
     }
 
     fn method_arg(&mut self, arg: &ast::Arg, expected: Option<&str>) -> Result<ValueSlot, String> {
@@ -6618,7 +6622,12 @@ impl<'a> FnLowerer<'a> {
         })
     }
 
-    fn array_push(&mut self, receiver: &ValueSlot, value: &ValueSlot) -> Result<ValueSlot, String> {
+    fn array_push(
+        &mut self,
+        receiver: &ValueSlot,
+        value: &ValueSlot,
+        consuming_receiver: bool,
+    ) -> Result<ValueSlot, String> {
         self.expect_schema(receiver, "Array")?;
         let elem_schema = array_element_schema(&receiver.schema)
             .ok_or_else(|| format!("{} is not an Array<T>", receiver.schema))?;
@@ -6648,6 +6657,10 @@ impl<'a> FnLowerer<'a> {
                 .schema_words
                 .get(&value.schema)
                 .ok_or_else(|| format!("no schema ref for {}", value.schema))?,
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 32,
+            value: i64::from(consuming_receiver),
         });
         self.code.push(Op::HostCall {
             host: ARRAY_PUSH_HOST,
@@ -8589,6 +8602,30 @@ pub fn opened() -> String {
             let mut m = load_with_lane(CORPUS, lane);
             // poly(3): square(4)=16 twice -> 32; 32 - 3 = 29.
             assert_eq!(m.demand_i64("poly", vec![3]).unwrap(), 29, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn negative_int_words_are_not_molten_handles() {
+        let src = r#"
+fn id(n: Int) -> Int { n }
+
+fn negative() -> Int { 0 - 1 }
+
+fn pass_negative() -> Int { id(negative()) }
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            assert_eq!(
+                machine.demand_i64("negative", vec![]).unwrap(),
+                -1,
+                "{lane:?}"
+            );
+            assert_eq!(
+                machine.demand_i64("pass_negative", vec![]).unwrap(),
+                -1,
+                "{lane:?}"
+            );
         }
     }
 
