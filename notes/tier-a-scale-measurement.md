@@ -4,12 +4,48 @@ Base: `tier-a-scale-measurement` at `d27e2478f` (`Model target cfg facts in vix`
 
 Question: how close is "vixen resolves and plans the entire monorepo, verified against cargo" as a number?
 
-Answer: **not numerically close yet at full resolve/plan scale, because the full real-workspace resolve-to-unit bridge is not present.** The current measurable vix frontier is:
+Answer after the gap-closer pass: **the bridge is no longer purely absent, but full real-workspace resolve/plan scale is still not numerically close.** The composed path now exists for the first ring in vix, but it reaches a new scale/runtime frontier before producing a Cargo-diffable full-workspace solve.
 
-- Manifest ingestion at real scale: **closed for the direct-dependency oracle**. Current tests assert 145 workspace members, 1,122 direct deps, 55 cfg/target deps, 760 legacy allowlist failures retired, and zero name/kind/target mismatches across 16 shards.
-- Resolve at real scale: **0 / 863 Cargo-resolved package-version rows measured through a real workspace vix solve**, because there is no vix entrypoint that composes real workspace manifests + sparse rows into one `Index`/`Problem`.
+- Before this pass, resolve at real scale was **0 / 863 Cargo-resolved package-version rows measured** because there was no vix entrypoint composing workspace manifests into a Rodin `Index`.
+- After this pass, the largest default-gated real workspace ring is **16 / 145 workspace members -> 17 Rodin package domains + 16 root clauses** through `workspace -> Index` in `.vix`.
+- A tiny composed solve now passes: **1 / 1 workspace member selected** through manifest tree -> Rodin `Index`/`Problem` -> `solve`.
+- Real-workspace solve remains **0 / 863 Cargo-resolved package-version rows diffed against Cargo.lock**. The 16-member real workspace solve currently hits `molten handle -1`; full 145-member member-only index construction exceeds nextest's default timeout; full 145-member solve remains over the interpreted-vix frontier.
+- Manifest ingestion at real scale remains **closed for the direct-dependency oracle**. Current tests assert 145 workspace members, 1,122 direct deps, 55 cfg/target deps, 760 legacy allowlist failures retired, and zero name/kind/target mismatches across 16 shards.
 - Unit derivation at real scale: **0 / 880 Cargo unit-graph units measured through recursive `unit()` at real scale**, for the same missing composition plus the still-pinned `ResolvedUnit` adaptation gap.
 - Largest fully wired solve-to-unit path: **4 packages / 4 units** in the `lock_graph` fixture, verified against Cargo `--unit-graph`.
+
+## Gap-Closer Delta
+
+New vix/Rust surfaces:
+
+- Added pure host/lowerer support for `Doc.keys() -> [String]`, sorted for deterministic dependency-table enumeration.
+- Fixed `Path.join` for an empty granted root so `Path("") .join("member")` yields relative `member` instead of absolute `/member`.
+- Added `cargo_manifest.vix` workspace bridge state that derives Rodin `Index` fields from real manifests: pseudo workspace root, member package/version rows, root `selected -> in_graph` clauses, and a direct-dependency clause bridge for required workspace-known deps.
+- Added member-only and member+direct ring entrypoints so the harness can measure the frontier without Rust-side composition bypasses.
+- Added sparse-index fetch/pin script: `scripts/fetch-tier-a-sparse-index.sh`.
+
+After-run ring table:
+
+| Ring | Cargo / input scale | Vix/Rodin result | Status |
+|---|---:|---:|---|
+| Tiny composed solve | 1 workspace member | 1 / 1 selected | passes |
+| Real workspace member-only index, bounded | 16 workspace members | 17 package domains, 16 root clauses | passes |
+| Real workspace member-only solve, bounded | 16 workspace members | 0 selected diffable rows | blocked: `molten handle -1` |
+| Real workspace member-only index, full | 145 workspace members | not completed under default nextest timeout | blocked: interpreted-vix scale |
+| Real workspace member+direct deps | 145 members, 1,122 direct deps | required workspace-known direct clauses implemented but not measured full-scale | blocked: direct-clause construction timeout / bounded direct solve `molten handle -1` |
+| Crates.io sparse closure | 644 unique sparse files for 718 registry package-version rows | fetched and pinned; not yet composed into the workspace `Index` | next ring |
+
+Sparse snapshot fetched from `https://index.crates.io`:
+
+| Measure | Value |
+|---|---:|
+| unique sparse files fetched | 644 + `config.json` |
+| registry package-version rows in Cargo metadata | 718 |
+| snapshot size | 32M |
+| manifest | `/tmp/tier-a-scale-measurement/sparse-index/snapshot-manifest.tsv` |
+| manifest sha256 | `fdc863bfc1e7bb1bf043090d770b2f13cc070ca1ad316c5363c8daa29240bd80` |
+
+The snapshot manifest records each fetched URL, sparse path, byte count, and sha256.
 
 ## Oracles Captured
 
@@ -25,7 +61,7 @@ Artifacts from the first oracle capture:
 - `/tmp/tier-a-metadata.json`
 - `/tmp/tier-a-unit-graph.json`
 
-The reusable harness writes the same captures under `${TIER_A_OUT:-/tmp/tier-a-scale-measurement}`. I did not fetch a new sparse-index snapshot in this pass because the vix-side full-workspace `Index` composition is the first blocker; the Cargo oracles used the local locked workspace and Cargo cache.
+The reusable harness writes the same captures under `${TIER_A_OUT:-/tmp/tier-a-scale-measurement}`. This pass fetched and pinned a sparse-index snapshot under `/tmp/tier-a-scale-measurement/sparse-index`.
 
 Cargo metadata stats:
 
@@ -105,16 +141,17 @@ wordfreq 0.2.3
 
 | Projection | Cargo | Vix/Rodin measured | Match | Divergence |
 |---|---:|---:|---:|---:|
-| Selected package-version rows vs Cargo.lock | 863 selected / 893 locked | 0 full-workspace rows | 0 | 863 unmeasured selected rows |
+| Selected package-version rows vs Cargo.lock | 863 selected / 893 locked | 0 full-workspace solve rows | 0 | 863 unmeasured selected rows |
 | Registry selected rows | 718 selected / 748 locked | 0 full-workspace rows | 0 | 718 unmeasured selected rows |
 | Lock residue relative to Cargo metadata | 30 | n/a | n/a | 30 lock-only rows |
+| Workspace member-only index ring | 145 members | 16 bounded members measured by default; 1 tiny solve | n/a | full 145-member solve not reached |
 
-No divergence categories can be assigned to rodin-selected rows yet, because there are no rodin-selected full-workspace rows to diff. The first blocker is not a bad solver answer; it is the absent vix composition from ingested manifests and sparse-index rows into one workspace `Index`/`Problem`.
+No divergence categories can be assigned to rodin-selected full-workspace rows yet, because there are no rodin-selected full-workspace rows to diff. The first blocker is no longer total absence of a workspace `Index` bridge; it is now the language/runtime and interpreted-scale frontier hit while carrying that bridge past the bounded member ring.
 
 Current source frontier:
 
-- `cargo_manifest.vix` can derive member counts, dependency declarations, cfg data, target shapes one at a time, and `problem_of_member`.
-- It still exposes `resolved_unit_adaptation_gap()` as: "Path construction is join-only from a granted root; generic ResolvedUnit emission remains blocked by dependency-table key enumeration and the demanded resolve-to-unit graph bridge."
+- `cargo_manifest.vix` can derive member counts, dependency declarations, cfg data, target shapes one at a time, `problem_of_member`, and a workspace-member Rodin `Index` ring.
+- It now exposes `resolved_unit_adaptation_gap()` as: "Path construction is join-only from a granted root; generic ResolvedUnit emission remains blocked by sparse-index composition, UnitTargetTable derivation, and the demanded resolve-to-unit graph bridge."
 - `rodin/index.vix` can parse sparse rows and bridge them to an `Index`, but `sparse_index_path` is still a demo hardcoded path table for a small crate set, and the bridge skips optional/dev deps.
 - `crate.vix` has `crate_solution_bin[_check]`, but it requires a pre-built `Index`, `Problem`, and `UnitTargetTable`.
 
@@ -122,8 +159,9 @@ Categorization for the current resolve frontier:
 
 | Category | Count / Blast Radius | Evidence |
 |---|---:|---|
-| Missing workspace manifest-to-Index composition | 863 Cargo-resolved package-version rows unreachable | no `workspace -> Index` entrypoint; `problem_of_member` only accepts already-known ids |
-| Sparse-index live path not generic | 718 registry rows need lookup/snapshot plumbing | `sparse_index_path` hardcodes demo crates |
+| Workspace manifest-to-Index composition, bounded | 16 / 145 workspace members index-built; 1 / 1 tiny solve | new `workspace_member_only_*` entrypoints |
+| Workspace manifest-to-Index composition, full solve | 863 Cargo-resolved package-version rows still undiffed | 16-member solve hits `molten handle -1`; full interpreted build/solve exceeds default nextest timeout |
+| Sparse-index live path not generic in vix | 718 registry rows need lookup/snapshot composition | snapshot fetched/pinned externally; `sparse_index_path` still hardcodes demo crates |
 | Optional/dev/features in sparse bridge incomplete | 61 workspace feature sections, 299 cfg-gated dep-kinds in metadata; registry feature closure unmeasured | `bridge_dep` skips optional and dev; feature maps are present but not populated by sparse rows |
 | Cargo.lock residue | 30 lock-only rows | lock-vs-metadata diff above |
 | Index snapshot skew | not measured | no new live snapshot was fetched; used local Cargo cache/oracles only |
@@ -135,10 +173,12 @@ Performance:
 |---|---:|---:|
 | Cargo metadata oracle | 2.83s | 188,416,000 bytes |
 | Cargo unit-graph oracle | 1.12s | 169,164,800 bytes |
-| Vix real-workspace dependency shard 0/16, warm artifacts | 20.207s test time / 23.22s wall | 215,793,664 bytes |
-| Vix same shard in the 3-probe run | 89.810s test time | not captured |
+| Vix real-workspace dependency shard 0/16, before bridge growth | 20.207s test time / 23.22s wall | 215,793,664 bytes |
+| Vix shard 0 after bridge growth, in script | 164.427s test time | not captured |
+| Vix composed member ring after bridge growth | 58.092s for 16-member index probe | not captured |
+| Vix tiny composed solve sentinel | included in `projected_member_manifests_are_read_from_granted_root`, 42.363s | not captured |
 
-The vix performance number is not a solve-at-scale number. It is the largest current real-workspace manifest probe. Full interpreted-vix solve over 863 packages is unreachable until the bridge exists.
+The vix performance number is not a solve-at-scale number. The bridge now exists for the member-only ring, and the measured frontier moved to interpreted-vix scale/runtime behavior before full Cargo-diffable solve output.
 
 ## Unit Derivation At Scale vs --unit-graph
 
@@ -171,10 +211,20 @@ cargo nextest run -p vix --features real-process -E 'test(=solution_walk_derives
 
 Results:
 
-- `real_workspace_metadata_baseline_is_counted`, `real_workspace_dependency_probe_shard_0`, `direct_resolved_unit_adapter_gap_is_pinned`: 3 passed, 189 skipped; shard 0 took 89.810s in that run.
-- `solution_walk_derives_units_from_rodin_and_matches_cargo_oracle`: 1 passed, 199 skipped; 11.165s.
+- `real_workspace_metadata_baseline_is_counted`, `real_workspace_dependency_probe_shard_0`, `direct_resolved_unit_adapter_gap_is_pinned`: 3 passed, 196 skipped; shard 0 took 164.427s in the final script run.
+- `projected_member_manifests_are_read_from_granted_root`, `dependency_declarations_extract_workspace_and_detailed_forms`, `real_workspace_member_only_index_builds_bounded_ring`: 3 passed, 196 skipped; bounded member ring took 58.092s.
+- `solution_walk_derives_units_from_rodin_and_matches_cargo_oracle`: 1 passed, 206 skipped; 19.783s.
 - Escalated `/usr/bin/time -l cargo nextest run -p vix -E 'test(=real_workspace_dependency_probe_shard_0)'`: 1 passed, 191 skipped; 20.207s test time; 215,793,664-byte max RSS.
-- `scripts/tier-a-scale-measurement.sh`: completed end to end after stderr capture was fixed; frontier set 3 passed, 189 skipped with shard 0 at 72.482s; derived-unit fixture 1 passed, 199 skipped at 32.146s.
+- `scripts/tier-a-scale-measurement.sh`: completed end to end after adding the nextest measurement timeout override; sparse refetch was disabled for the final rerun because `/tmp/tier-a-scale-measurement/sparse-index` was already fetched and pinned.
+
+Gate status from the gap-closer pass:
+
+| Gate | Result |
+|---|---|
+| `cargo check --workspace --all-targets` | passed after cleaning generated Cargo artifacts to recover disk space |
+| `cargo nextest run -p vix --features real-process` | 198 passed, then existing stress test `tail_loop_array_accumulator_handles_100k_iterations` was SIGKILLed; rerunning that test alone SIGKILLed again |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | blocked by filesystem capacity before clippy diagnostics; linker/build scripts reported `No space left on device` |
+| `git diff --check` | passed |
 
 Reusable harness:
 
@@ -189,14 +239,15 @@ It writes captures and derived diffs under `${TIER_A_OUT:-/tmp/tier-a-scale-meas
 Largest reachable subgraph today:
 
 - Cargo oracle scale: 863 package-version rows, 880 units.
-- Vix real-manifest probe scale: 145 workspace members and 1,122 direct deps, sharded; this is ingestion/projection, not solve.
+- Vix real-manifest ingestion/projection scale: 145 workspace members and 1,122 direct deps, sharded.
+- Vix composed workspace-member `Index` ring: 16 / 145 members by default gate; 1 / 1 tiny member solve.
 - Vix solve-to-unit scale: 4 package fixture, Cargo unit-graph matched.
 
-The next ring is blocked by a vix-side composition gap, not by a measured Cargo divergence:
+The next ring is blocked by vix runtime/scale gaps while exercising the new composition path, not by a measured Cargo divergence:
 
-1. Add vix dependency-table key enumeration / package id assignment so real workspace manifests can produce the package/version/clause rows for `Index`.
-2. Generalize sparse-index lookup/snapshot ingestion beyond the demo path table, pin the fetched snapshot, and record the row set.
-3. Compose workspace path packages and crates.io rows into one `Index`, with features/cfg gates populated from the manifest ingestion layer.
+1. Minimize `molten handle -1` from `workspace_member_solve_selected_member_count_limit` on the real 16-member ring.
+2. Carry full 145-member member-only index construction through interpreted-vix scale or the incoming carried-hasher fold.
+3. Compose the pinned sparse snapshot rows into the workspace `Index`, replacing the demo hardcoded `sparse_index_path` surface.
 4. Emit `UnitTargetTable` from real manifests using join-only `Path` provenance, then rerun `crate_solution_*` against the full Cargo unit graph.
 
 Until those exist, the numeric answer remains:
@@ -204,6 +255,8 @@ Until those exist, the numeric answer remains:
 ```text
 resolve match at real scale: 0 / 863 selected Cargo packages measured
 unit-graph match at real scale: 0 / 880 Cargo units measured
+composed workspace-member index ring: 16 / 145 members measured by default gate
+composed tiny workspace solve: 1 / 1 member selected
 largest solve-to-unit match: 4 / 4 fixture units
 manifest ingestion match: 1,122 / 1,122 direct workspace deps
 ```

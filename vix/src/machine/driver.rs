@@ -189,6 +189,7 @@ pub const PATH_JOIN_HOST: u32 = 57;
 pub const PATH_TO_STRING_HOST: u32 = 58;
 pub const DOC_IS_MAP_HOST: u32 = 59;
 pub const TREE_TEXT_HOST: u32 = 60;
+pub const DOC_KEYS_HOST: u32 = 61;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -4653,7 +4654,10 @@ impl Driver {
                     let segment = store.string_value(segment, "String")?;
                     drop(store);
                     let root = root.strip_suffix('/').unwrap_or(&root);
-                    let value = format!("{root}/{segment}");
+                    let value = match root.is_empty() {
+                        true => segment,
+                        false => format!("{root}/{segment}"),
+                    };
                     let (handle, _) = store_cell.borrow_mut().alloc_raw_tainted(
                         "Path",
                         value.into_bytes(),
@@ -4699,6 +4703,53 @@ impl Driver {
                         DocPayload::Map(_)
                     );
                     write_frame_word(frame, dst_slot, i64::from(is_map));
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
+            let mut doc_keys = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let doc = read_frame_word(frame, primitive_region + 8);
+                    let map_handle = match doc_payload(&store_cell.borrow(), descriptors, doc)? {
+                        DocPayload::Map(handle) => handle,
+                        DocPayload::Virtual(_) => {
+                            return Err("Doc.keys on virtual Doc is not enumerable".into());
+                        }
+                        payload => return Err(format!("Doc.keys called on Doc::{payload:?}")),
+                    };
+                    let (_, pairs) =
+                        store_cell
+                            .borrow()
+                            .map_pairs(map_handle, schemas, schema_tables)?;
+                    let mut keys = pairs
+                        .into_iter()
+                        .map(|pair| {
+                            store_cell
+                                .borrow()
+                                .string_value(pair.key_word, &pair.key_schema)
+                        })
+                        .collect::<Result<Vec<_>, _>>()?;
+                    keys.sort();
+                    let words = keys
+                        .into_iter()
+                        .map(|key| {
+                            store_cell
+                                .borrow_mut()
+                                .alloc_raw("String", key.into_bytes())
+                                .0
+                        })
+                        .collect();
+                    let (handle, _) = store_cell.borrow_mut().alloc_array_words(
+                        "String",
+                        words,
+                        schemas,
+                        schema_tables,
+                    )?;
+                    write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
                 if let Err(err) = result {
@@ -5523,7 +5574,7 @@ impl Driver {
                 }
             };
 
-            let mut hosts: [HostFn<'_>; 61] = [
+            let mut hosts: [HostFn<'_>; 62] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -5585,6 +5636,7 @@ impl Driver {
                 &mut path_to_string,
                 &mut doc_is_map,
                 &mut tree_text,
+                &mut doc_keys,
             ];
             let step = exec
                 .task

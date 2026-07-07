@@ -30,8 +30,8 @@ use super::driver::{
     ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_FILTER_EXCLUDE_HOST, ARRAY_JOIN_HOST,
     ARRAY_LEN_HOST, ARRAY_MAP_PENDING_HOST, ARRAY_POP_HOST, ARRAY_PUSH_HOST, ARRAY_SET_HOST,
     AST_DOC_HOST, AST_FN_HOST, CRATE_ARCHIVE_HOST, CodeBundle, DOC_COERCE_HOST, DOC_GET_HOST,
-    DOC_IS_MAP_HOST, DOC_PACKAGE_HOST, DOC_PARSE_HOST, DriveEvent, DriveEventSink, Driver,
-    ELF_DOC_HOST, EXEC_HOST, FETCH_HOST, FnRef, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn,
+    DOC_IS_MAP_HOST, DOC_KEYS_HOST, DOC_PACKAGE_HOST, DOC_PARSE_HOST, DriveEvent, DriveEventSink,
+    Driver, ELF_DOC_HOST, EXEC_HOST, FETCH_HOST, FnRef, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn,
     MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST, MOLTEN_DUP_HOST, MachineExecBackend,
     MoltenStats, OCI_DOC_HOST, OPTION_CONSTRUCT_HOST, OPTION_DESTRUCT_HOST, OPTION_UNWRAP_HOST,
     PATH_JOIN_HOST, PATH_TO_STRING_HOST, PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST,
@@ -2369,6 +2369,9 @@ fn collect_expr_schemas(
                 ("get", Some("Doc")) | ("get", Some("Realized<Doc>")) => {
                     Ok(Some(option_schema("Realized<Doc>")))
                 }
+                ("keys", Some("Doc")) | ("keys", Some("Realized<Doc>")) => {
+                    Ok(Some(array_schema("String")))
+                }
                 ("package", Some("Doc")) | ("package", Some("Realized<Doc>")) => {
                     Ok(Some(option_schema("Realized<Doc>")))
                 }
@@ -4625,6 +4628,13 @@ impl<'a> FnLowerer<'a> {
                 }
                 self.expect_schema(&receiver, "Doc")?;
                 self.doc_is_map(&receiver)
+            }
+            "keys" => {
+                if !call.args.args.is_empty() {
+                    return Err("Doc.keys takes no arguments".into());
+                }
+                self.expect_schema(&receiver, "Doc")?;
+                self.doc_keys(&receiver)
             }
             "len" => {
                 if !call.args.args.is_empty() {
@@ -7955,6 +7965,28 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: dst,
             schema: "Bool".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn doc_keys(&mut self, doc: &ValueSlot) -> Result<ValueSlot, String> {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: doc.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: DOC_KEYS_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: array_schema("String"),
             realization: None,
             pending: None,
         })
