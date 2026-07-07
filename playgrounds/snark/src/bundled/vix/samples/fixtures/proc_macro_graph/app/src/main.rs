@@ -1,5 +1,8 @@
-use emit_answer_macro::emit_answer;
+use emit_answer_macro::EmitAnswer;
+
+#[derive(EmitAnswer)]
+struct MacroAnswer;
 
 fn main() {
-    println!("{}", emit_answer!());
+    println!("{}", MacroAnswer::PROC_MACRO_MESSAGE);
 }

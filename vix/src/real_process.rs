@@ -122,12 +122,13 @@ fn run_real_process_request(
     cache: Arc<Mutex<ExecCache>>,
     request: MachineExecRequest,
 ) -> Result<(Outcome, ExecEvent), String> {
+    let capability = real_process_capability(&request.command, request.capability)?;
     if let Some((outcome, event)) = {
         let mut cache = cache
             .lock()
             .map_err(|_| "real-process exec cache poisoned".to_string())?;
         cache
-            .lookup(&request.plan, request.capability, &request.mounts)
+            .lookup(&request.plan, capability, &request.mounts)
             .map(|outcome| {
                 let event = cache
                     .events
@@ -154,18 +155,44 @@ fn run_real_process_request(
     let mut cache = cache
         .lock()
         .map_err(|_| "real-process exec cache poisoned".to_string())?;
-    cache.record_ran(
-        &request.plan,
-        request.capability,
-        &request.mounts,
-        outcome.clone(),
-    );
+    cache.record_ran(&request.plan, capability, &request.mounts, outcome.clone());
     let event = cache
         .events
         .last()
         .cloned()
         .ok_or_else(|| "real-process cache did not record an event".to_string())?;
     Ok((outcome, event))
+}
+
+fn real_process_capability(command: &str, capability: u64) -> Result<u64, String> {
+    if command != "rustc" {
+        return Ok(capability);
+    }
+
+    let output = Command::new("rustc")
+        .arg("-vV")
+        .output()
+        .map_err(|err| format!("real-process rustc -vV failed: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "real-process rustc -vV exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    // Proc-macro crates produce dylibs that the consumer rustc loads into its
+    // own process. Cargo's unit graph keeps these as host units; recording
+    // `rustc -vV` in the native backend key keeps producer/consumer artifacts
+    // tied to the exact compiler binary behind the `rustc` command.
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"vix-real-process-rustc-capability");
+    hasher.update(&capability.to_le_bytes());
+    hasher.update(&output.stdout);
+    let hash = hasher.finalize();
+    Ok(u64::from_le_bytes(
+        hash.as_bytes()[..8].try_into().expect("blake3 prefix"),
+    ))
 }
 
 fn has_child<T>(entries: &BTreeMap<String, T>, path: &str) -> bool {
