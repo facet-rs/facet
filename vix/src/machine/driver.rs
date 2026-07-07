@@ -31,6 +31,8 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::fmt;
 use std::hash::Hash;
+#[cfg(any(test, feature = "jit"))]
+use std::rc::Rc;
 use std::sync::Arc;
 
 use facet::Facet;
@@ -560,7 +562,9 @@ struct Execution {
 enum LaneRuntime {
     Interp,
     #[cfg(any(test, feature = "jit"))]
-    Jit,
+    Jit {
+        program: Rc<JitProgram>,
+    },
 }
 
 impl LaneRuntime {
@@ -569,13 +573,15 @@ impl LaneRuntime {
             Lane::Interp => Ok(Self::Interp),
             #[cfg(any(test, feature = "jit"))]
             Lane::Jit => {
-                let Some(_) = JitProgram::compile(_program) else {
+                let Some(program) = compile_jit_program(_program) else {
                     return Err(format!(
                         "weavy JIT task lane could not compile program; ops: {}",
                         program_op_set(_program)
                     ));
                 };
-                Ok(Self::Jit)
+                Ok(Self::Jit {
+                    program: Rc::new(program),
+                })
             }
         }
     }
@@ -595,18 +601,15 @@ impl LaneRuntime {
                 Ok(LaneTask::Interp(task))
             }
             #[cfg(any(test, feature = "jit"))]
-            Self::Jit => {
-                let Some(jit) = JitProgram::compile(program) else {
-                    return Err(format!(
-                        "weavy JIT task lane could not compile program; ops: {}",
-                        program_op_set(program)
-                    ));
-                };
-                let mut task = JitTask::spawn(&jit, lowered.task_fn);
+            Self::Jit { program: jit } => {
+                let mut task = JitTask::spawn(jit.as_ref(), lowered.task_fn);
                 for (offset, value) in lowered.arg_offsets.iter().zip(args) {
                     task.write_i64(*offset, *value);
                 }
-                Ok(LaneTask::Jit { program: jit, task })
+                Ok(LaneTask::Jit {
+                    program: Rc::clone(jit),
+                    task,
+                })
             }
         }
     }
@@ -616,7 +619,7 @@ enum LaneTask {
     Interp(Task),
     #[cfg(any(test, feature = "jit"))]
     Jit {
-        program: JitProgram,
+        program: Rc<JitProgram>,
         task: JitTask,
     },
 }
@@ -632,7 +635,7 @@ impl LaneTask {
         match self {
             Self::Interp(task) => task.run_hosted(program, ready, awaited, hosts),
             #[cfg(any(test, feature = "jit"))]
-            Self::Jit { program, task } => task.run_hosted(program, ready, awaited, hosts),
+            Self::Jit { program, task } => task.run_hosted(program.as_ref(), ready, awaited, hosts),
         }
     }
 
@@ -643,6 +646,28 @@ impl LaneTask {
             Self::Jit { task, .. } => task.result_i64(),
         }
     }
+}
+
+#[cfg(any(test, feature = "jit"))]
+fn compile_jit_program(program: &Program) -> Option<JitProgram> {
+    #[cfg(test)]
+    JIT_PROGRAM_COMPILE_COUNT.with(|count| count.set(count.get() + 1));
+    JitProgram::compile(program)
+}
+
+#[cfg(test)]
+thread_local! {
+    static JIT_PROGRAM_COMPILE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+#[cfg(test)]
+fn reset_jit_program_compile_count() {
+    JIT_PROGRAM_COMPILE_COUNT.with(|count| count.set(0));
+}
+
+#[cfg(test)]
+fn jit_program_compile_count() -> usize {
+    JIT_PROGRAM_COMPILE_COUNT.with(std::cell::Cell::get)
 }
 
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
@@ -9832,6 +9857,54 @@ mod tests {
                 DriveEvent::MemoHit { fn_hash: 0xF1B },
             ],
             "the whole warm trace is one demand and one hit"
+        );
+    }
+
+    #[test]
+    fn jit_program_is_compiled_once_per_loaded_program_not_per_spawn() {
+        if !weavy::jit::task_lane::available() {
+            return;
+        }
+
+        reset_jit_program_compile_count();
+        let (program, fns) = fib_body_program();
+        let mut driver =
+            Driver::try_with_descriptors(program, fns, HashMap::new(), Lane::Jit).unwrap();
+        assert_eq!(jit_program_compile_count(), 1, "cold load compiles once");
+
+        let zero = driver.memo_key(FnRef::new(0), &[0]);
+        let one = driver.memo_key(FnRef::new(0), &[1]);
+        seed_memo(&mut driver, zero, 0);
+        seed_memo(&mut driver, one, 1);
+        assert_eq!(driver.demand(FnRef::new(0), vec![20]).unwrap(), 6765);
+
+        let spawns = driver
+            .trace
+            .iter()
+            .filter(|e| matches!(e, DriveEvent::Spawned { .. }))
+            .count();
+        assert_eq!(spawns, 19, "fixture must remain spawn-heavy");
+        assert_eq!(
+            jit_program_compile_count(),
+            1,
+            "spawns reuse the lane's compiled program"
+        );
+
+        let (mut reloaded_program, reloaded_fns) = fib_body_program();
+        reloaded_program.fns.push(TaskFn {
+            frame: Layout { size: 16, align: 8 },
+            code: vec![
+                Op::ConstI64 { dst: 0, value: 42 },
+                Op::Ret { src: 0, size: 8 },
+            ],
+        });
+        driver
+            .reload(reloaded_program, reloaded_fns, HashMap::new())
+            .unwrap();
+        assert_eq!(
+            jit_program_compile_count(),
+            2,
+            "reload replaces the cached compiled program"
         );
     }
 
