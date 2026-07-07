@@ -297,6 +297,13 @@ fn bool_or4(a: Bool, b: Bool, c: Bool, d: Bool) -> Bool {
     bool_or(bool_or(a, b), bool_or(c, d))
 }
 
+fn bool_not(value: Bool) -> Bool {
+    match value {
+        true => false,
+        false => true,
+    }
+}
+
 fn no_clause_id() -> Int {
     999999
 }
@@ -559,14 +566,80 @@ fn gate_kind_active(kind: String) -> Bool {
     }
 }
 
+fn target_is_unix(target: String) -> Bool {
+    bool_or(target.contains("linux"), target.contains("darwin"))
+}
+
+fn target_is_windows(target: String) -> Bool {
+    target.contains("windows")
+}
+
+fn target_atom_matches(expr: String, target: String) -> Bool {
+    match expr.contains("windows") {
+        true => target_is_windows(target),
+        false => match expr.contains("unix") {
+            true => target_is_unix(target),
+            false => match expr.contains("target_family = \"unix\"") {
+                true => target_is_unix(target),
+                false => match expr.contains("target_family = \"windows\"") {
+                    true => target_is_windows(target),
+                    false => match expr.contains("target_os = \"linux\"") {
+                        true => target.contains("linux"),
+                        false => match expr.contains("target_os = \"macos\"") {
+                            true => target.contains("darwin"),
+                            false => match expr.contains("target_arch = \"x86_64\"") {
+                                true => target.contains("x86_64"),
+                                false => expr == target,
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+}
+
+fn target_any_matches(expr: String, target: String) -> Bool {
+    match expr == "" {
+        true => false,
+        false => bool_or4(
+            expr.contains("windows") && target_is_windows(target),
+            expr.contains("unix") && target_is_unix(target),
+            expr.contains("target_os = \"linux\"") && target.contains("linux"),
+            bool_or(
+                expr.contains("target_os = \"macos\"") && target.contains("darwin"),
+                expr.contains("target_arch = \"x86_64\"") && target.contains("x86_64"),
+            ),
+        ),
+    }
+}
+
+fn target_all_matches(expr: String, target: String) -> Bool {
+    target_required_atom_matches(expr, target, "windows", target_is_windows(target))
+        && target_required_atom_matches(expr, target, "unix", target_is_unix(target))
+        && target_required_atom_matches(expr, target, "target_os = \"linux\"", target.contains("linux"))
+        && target_required_atom_matches(expr, target, "target_os = \"macos\"", target.contains("darwin"))
+        && target_required_atom_matches(expr, target, "target_arch = \"x86_64\"", target.contains("x86_64"))
+}
+
+fn target_required_atom_matches(expr: String, target: String, atom: String, matches: Bool) -> Bool {
+    match expr.contains(atom) {
+        true => matches,
+        false => true,
+    }
+}
+
 fn target_matches(expr: String, target: String) -> Bool {
     match expr == "cfg(any())" {
         true => false,
-        false => match expr == "cfg(windows)" {
-            true => target.contains("windows"),
-            false => match expr == "cfg(unix)" {
-                true => bool_or(target.contains("linux"), target.contains("darwin")),
-                false => expr == target,
+        false => match expr.contains("any(") {
+            true => target_any_matches(expr.after("any(").before(")"), target),
+            false => match expr.contains("all(") {
+                true => target_all_matches(expr.after("all(").before(")"), target),
+                false => match expr.contains("not(") {
+                    true => bool_not(target_atom_matches(expr.after("not(").before(")"), target)),
+                    false => target_atom_matches(expr, target),
+                },
             },
         },
     }

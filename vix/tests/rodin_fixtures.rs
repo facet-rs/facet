@@ -86,6 +86,16 @@ impl FixtureDep {
         self
     }
 
+    fn default_features(mut self, enabled: bool) -> Self {
+        self.default_features = enabled;
+        self
+    }
+
+    fn feature(mut self, feature: impl Into<String>) -> Self {
+        self.features.push(feature.into());
+        self
+    }
+
     fn target(mut self, target: impl Into<String>) -> Self {
         self.target = Some(target.into());
         self
@@ -217,7 +227,10 @@ impl Fixture {
             .map_err(|err| format!("render fixture_selected: {err}"))?;
         let selected = rendered_name_set(rendered)?;
         if selected.is_empty() {
-            return Err(format!("rodin.vix selected no packages\n{}", trace_tail(&machine)));
+            return Err(format!(
+                "rodin.vix selected no packages\n{}",
+                trace_tail(&machine)
+            ));
         }
         Ok(selected)
     }
@@ -234,7 +247,12 @@ impl Fixture {
                     value: MachineArg::String(triple.to_owned()),
                 }],
             )
-            .map_err(|err| format!("call fixture_learned_count: {err}\n{}", trace_tail(&machine)))?;
+            .map_err(|err| {
+                format!(
+                    "call fixture_learned_count: {err}\n{}",
+                    trace_tail(&machine)
+                )
+            })?;
         let RenderedValue::Int { value } = machine
             .render_result("fixture_learned_count", learned.0)
             .map_err(|err| format!("render fixture_learned_count: {err}"))?
@@ -464,116 +482,47 @@ impl Fixture {
         let mut next_id = 0;
 
         for krate in &self.crates {
-            for dep in &krate.deps {
-                if !dep.optional {
-                    clauses.push(vix_clause(
-                        next_id,
-                        &[guard_in_graph(&krate.name)],
-                        consequent_in_graph(&dep.name),
-                        Some(dep_gate(krate, dep)),
-                    ));
-                    next_id += 1;
-                }
-
-                let version_guards = if dep.optional {
-                    vec![guard_in_graph(&krate.name), guard_in_graph(&dep.name)]
-                } else {
-                    vec![guard_in_graph(&krate.name)]
-                };
-                clauses.push(vix_clause(
-                    next_id,
-                    &version_guards,
-                    consequent_version(&dep.name, &dep.req),
-                    Some(dep_gate(krate, dep)),
-                ));
-                next_id += 1;
-
-                if dep.default_features {
-                    clauses.push(vix_clause(
-                        next_id,
-                        &[guard_in_graph(&krate.name), guard_in_graph(&dep.name)],
-                        consequent_feature(&dep.name, "default"),
-                        Some(dep_gate(krate, dep)),
-                    ));
-                    next_id += 1;
-                }
-
-                for feature in &dep.features {
-                    clauses.push(vix_clause(
-                        next_id,
-                        &[guard_in_graph(&krate.name), guard_in_graph(&dep.name)],
-                        consequent_feature(&dep.name, feature),
-                        Some(dep_gate(krate, dep)),
-                    ));
-                    next_id += 1;
-                }
-            }
-
-            for (version, deps) in &krate.vix_version_deps {
-                for dep in deps {
-                    let selected_guard = guard_selected(&krate.name, version);
-                    if !dep.optional {
-                        clauses.push(vix_clause(
-                            next_id,
-                            &[guard_in_graph(&krate.name), selected_guard.clone()],
-                            consequent_in_graph(&dep.name),
-                            Some(dep_gate(krate, dep)),
-                        ));
-                        next_id += 1;
+            let explicit_optional_deps = explicit_optional_dep_features(krate);
+            for version in &krate.vix_versions {
+                for dep in &krate.deps {
+                    for clause in self.dependency_edge_clauses(krate, version, dep) {
+                        push_generated_clause(&mut clauses, &mut next_id, clause);
                     }
-
-                    let version_guards = if dep.optional {
-                        vec![
-                            guard_in_graph(&krate.name),
-                            selected_guard.clone(),
-                            guard_in_graph(&dep.name),
-                        ]
-                    } else {
-                        vec![guard_in_graph(&krate.name), selected_guard.clone()]
-                    };
-                    clauses.push(vix_clause(
-                        next_id,
-                        &version_guards,
-                        consequent_version(&dep.name, &dep.req),
-                        Some(dep_gate(krate, dep)),
-                    ));
-                    next_id += 1;
-
-                    if dep.default_features {
-                        clauses.push(vix_clause(
-                            next_id,
-                            &[
-                                guard_in_graph(&krate.name),
-                                selected_guard.clone(),
-                                guard_in_graph(&dep.name),
-                            ],
-                            consequent_feature(&dep.name, "default"),
-                            Some(dep_gate(krate, dep)),
-                        ));
-                        next_id += 1;
-                    }
-
-                    for feature in &dep.features {
-                        clauses.push(vix_clause(
-                            next_id,
-                            &[
-                                guard_in_graph(&krate.name),
-                                selected_guard.clone(),
-                                guard_in_graph(&dep.name),
-                            ],
-                            consequent_feature(&dep.name, feature),
-                            Some(dep_gate(krate, dep)),
-                        ));
-                        next_id += 1;
+                    if dep.optional && !explicit_optional_deps.contains(&dep.name) {
+                        let enable = format!("dep:{}", dep.name);
+                        for clause in self
+                            .feature_enable_clauses(krate, version, dep.kind, &dep.name, &enable)
+                        {
+                            push_generated_clause(&mut clauses, &mut next_id, clause);
+                        }
                     }
                 }
-            }
 
-            for (feature, enables) in &krate.features {
-                for enable in enables {
-                    for clause in self.feature_enable_clauses(next_id, krate, feature, enable) {
-                        clauses.push(clause);
-                        next_id += 1;
+                if let Some(deps) = krate.vix_version_deps.get(version) {
+                    for dep in deps {
+                        for clause in self.dependency_edge_clauses(krate, version, dep) {
+                            push_generated_clause(&mut clauses, &mut next_id, clause);
+                        }
+                        if dep.optional && !explicit_optional_deps.contains(&dep.name) {
+                            let enable = format!("dep:{}", dep.name);
+                            for clause in self.feature_enable_clauses(
+                                krate, version, dep.kind, &dep.name, &enable,
+                            ) {
+                                push_generated_clause(&mut clauses, &mut next_id, clause);
+                            }
+                        }
+                    }
+                }
+
+                for (feature, enables) in &krate.features {
+                    for scope in feature_scopes() {
+                        for enable in enables {
+                            for clause in
+                                self.feature_enable_clauses(krate, version, scope, feature, enable)
+                            {
+                                push_generated_clause(&mut clauses, &mut next_id, clause);
+                            }
+                        }
                     }
                 }
             }
@@ -582,79 +531,159 @@ impl Fixture {
         clauses
     }
 
+    fn dependency_edge_clauses(
+        &self,
+        krate: &FixtureCrate,
+        version: &str,
+        dep: &FixtureDep,
+    ) -> Vec<VixClause> {
+        if dep.optional {
+            return Vec::new();
+        }
+        let guards = vec![
+            guard_in_graph(&krate.name),
+            guard_selected(&krate.name, version),
+        ];
+        self.dependency_activation_clauses(krate, dep, &guards, None)
+    }
+
+    fn dependency_activation_clauses(
+        &self,
+        krate: &FixtureCrate,
+        dep: &FixtureDep,
+        guards: &[VixGuard],
+        requested_feature: Option<&str>,
+    ) -> Vec<VixClause> {
+        let gate = Some(dep_gate(krate, dep));
+        let mut clauses = vec![
+            vix_clause(0, guards, consequent_in_graph(&dep.name), gate.clone()),
+            vix_clause(
+                0,
+                guards,
+                consequent_version(&dep.name, &dep.req),
+                gate.clone(),
+            ),
+        ];
+        self.push_dependency_requested_feature_clauses(krate, dep, guards, &mut clauses);
+        if let Some(feature) = requested_feature {
+            let scoped = scoped_feature_name(dep.kind, feature);
+            clauses.push(vix_clause(
+                0,
+                guards,
+                consequent_feature(&dep.name, &scoped),
+                gate,
+            ));
+        }
+        clauses
+    }
+
+    fn push_dependency_requested_feature_clauses(
+        &self,
+        krate: &FixtureCrate,
+        dep: &FixtureDep,
+        guards: &[VixGuard],
+        clauses: &mut Vec<VixClause>,
+    ) {
+        let gate = Some(dep_gate(krate, dep));
+        if dep.default_features {
+            let default = scoped_feature_name(dep.kind, "default");
+            clauses.push(vix_clause(
+                0,
+                guards,
+                consequent_feature(&dep.name, &default),
+                gate.clone(),
+            ));
+        }
+        for feature in &dep.features {
+            let scoped = scoped_feature_name(dep.kind, feature);
+            clauses.push(vix_clause(
+                0,
+                guards,
+                consequent_feature(&dep.name, &scoped),
+                gate.clone(),
+            ));
+        }
+    }
+
     fn feature_enable_clauses(
         &self,
-        id: i32,
         krate: &FixtureCrate,
+        version: &str,
+        scope: DepKind,
         feature: &str,
         enable: &str,
     ) -> Vec<VixClause> {
+        let scoped_feature = scoped_feature_name(scope, feature);
         let base_guards = vec![
             guard_in_graph(&krate.name),
-            guard_feature(&krate.name, feature),
+            guard_selected(&krate.name, version),
+            guard_feature(&krate.name, &scoped_feature),
         ];
         if let Some(dep_name) = enable.strip_prefix("dep:") {
-            let gate = self
-                .feature_dep(krate, dep_name)
-                .map(|dep| dep_gate(krate, dep));
-            return vec![vix_clause(
-                id,
-                &base_guards,
-                consequent_in_graph(dep_name),
-                gate,
-            )];
+            let Some(dep) = self.feature_dep(krate, version, dep_name, scope) else {
+                return Vec::new();
+            };
+            return self.dependency_activation_clauses(krate, dep, &base_guards, None);
         }
 
         if let Some((dep_name, dep_feature)) = enable.split_once("?/") {
+            let Some(dep) = self.feature_dep(krate, version, dep_name, scope) else {
+                return Vec::new();
+            };
             let mut guards = base_guards;
             guards.push(guard_in_graph(dep_name));
-            let gate = self
-                .feature_dep(krate, dep_name)
-                .map(|dep| dep_gate(krate, dep));
+            let scoped_dep_feature = scoped_feature_name(scope, dep_feature);
             return vec![vix_clause(
-                id,
+                0,
                 &guards,
-                consequent_feature(dep_name, dep_feature),
-                gate,
+                consequent_feature(dep_name, &scoped_dep_feature),
+                Some(dep_gate(krate, dep)),
             )];
         }
 
         if let Some((dep_name, dep_feature)) = enable.split_once('/') {
-            let gate = self
-                .feature_dep(krate, dep_name)
-                .map(|dep| dep_gate(krate, dep));
-            let mut feature_guards = base_guards.clone();
-            feature_guards.push(guard_in_graph(dep_name));
-            return vec![
-                vix_clause(
-                    id,
-                    &base_guards,
-                    consequent_in_graph(dep_name),
-                    gate.clone(),
-                ),
-                vix_clause(
-                    id + 1,
-                    &feature_guards,
-                    consequent_feature(dep_name, dep_feature),
-                    gate,
-                ),
-            ];
+            let Some(dep) = self.feature_dep(krate, version, dep_name, scope) else {
+                return Vec::new();
+            };
+            return self.dependency_activation_clauses(krate, dep, &base_guards, Some(dep_feature));
         }
 
+        let local_feature = scoped_feature_name(scope, enable);
         vec![vix_clause(
-            id,
+            0,
             &base_guards,
-            consequent_feature(&krate.name, enable),
+            consequent_feature(&krate.name, &local_feature),
             None,
         )]
     }
 
-    fn feature_dep<'a>(&'a self, krate: &'a FixtureCrate, name: &str) -> Option<&'a FixtureDep> {
+    fn feature_dep<'a>(
+        &'a self,
+        krate: &'a FixtureCrate,
+        version: &str,
+        name: &str,
+        scope: DepKind,
+    ) -> Option<&'a FixtureDep> {
         krate
             .deps
             .iter()
-            .find(|dep| dep.name == name && dep.optional)
-            .or_else(|| krate.deps.iter().find(|dep| dep.name == name))
+            .find(|dep| dep.name == name && dep.kind == scope && dep.optional)
+            .or_else(|| {
+                krate
+                    .deps
+                    .iter()
+                    .find(|dep| dep.name == name && dep.kind == scope)
+            })
+            .or_else(|| {
+                krate.vix_version_deps.get(version).and_then(|deps| {
+                    deps.iter()
+                        .find(|dep| dep.name == name && dep.kind == scope && dep.optional)
+                        .or_else(|| {
+                            deps.iter()
+                                .find(|dep| dep.name == name && dep.kind == scope)
+                        })
+                })
+            })
     }
 
     fn package_indices(&self) -> BTreeMap<String, usize> {
@@ -668,38 +697,88 @@ impl Fixture {
     fn feature_indices(&self) -> BTreeMap<(String, String), usize> {
         let mut features = BTreeMap::new();
         for krate in &self.crates {
-            register_feature(&mut features, &krate.name, "default");
-            for feature in krate.features.keys() {
-                register_feature(&mut features, &krate.name, feature);
-            }
-            for dep in &krate.deps {
-                if dep.default_features {
-                    register_feature(&mut features, &dep.name, "default");
+            for scope in feature_scopes() {
+                register_feature(
+                    &mut features,
+                    &krate.name,
+                    &scoped_feature_name(scope, "default"),
+                );
+                for feature in krate.features.keys() {
+                    register_feature(
+                        &mut features,
+                        &krate.name,
+                        &scoped_feature_name(scope, feature),
+                    );
                 }
-                for feature in &dep.features {
-                    register_feature(&mut features, &dep.name, feature);
-                }
             }
-            for deps in krate.vix_version_deps.values() {
-                for dep in deps {
+            let explicit_optional_deps = explicit_optional_dep_features(krate);
+            for dep in krate
+                .deps
+                .iter()
+                .chain(krate.vix_version_deps.values().flatten())
+            {
+                if dep.optional && !explicit_optional_deps.contains(&dep.name) {
+                    register_feature(
+                        &mut features,
+                        &krate.name,
+                        &scoped_feature_name(dep.kind, &dep.name),
+                    );
+                }
+                if !dep.optional {
                     if dep.default_features {
-                        register_feature(&mut features, &dep.name, "default");
+                        register_feature(
+                            &mut features,
+                            &dep.name,
+                            &scoped_feature_name(dep.kind, "default"),
+                        );
                     }
                     for feature in &dep.features {
-                        register_feature(&mut features, &dep.name, feature);
+                        register_feature(
+                            &mut features,
+                            &dep.name,
+                            &scoped_feature_name(dep.kind, feature),
+                        );
                     }
                 }
             }
-            for enables in krate.features.values() {
-                for enable in enables {
-                    if let Some(dep_name) = enable.strip_prefix("dep:") {
-                        register_feature(&mut features, dep_name, "default");
-                    } else if let Some((dep_name, dep_feature)) = enable.split_once("?/") {
-                        register_feature(&mut features, dep_name, dep_feature);
-                    } else if let Some((dep_name, dep_feature)) = enable.split_once('/') {
-                        register_feature(&mut features, dep_name, dep_feature);
-                    } else {
-                        register_feature(&mut features, &krate.name, enable);
+            for version in &krate.vix_versions {
+                for (feature, enables) in &krate.features {
+                    for scope in feature_scopes() {
+                        register_feature(
+                            &mut features,
+                            &krate.name,
+                            &scoped_feature_name(scope, feature),
+                        );
+                        for enable in enables {
+                            if let Some(dep_name) = enable.strip_prefix("dep:") {
+                                if let Some(dep) = self.feature_dep(krate, version, dep_name, scope)
+                                {
+                                    register_activation_features(&mut features, dep);
+                                }
+                            } else if let Some((dep_name, dep_feature)) = enable.split_once("?/") {
+                                register_feature(
+                                    &mut features,
+                                    dep_name,
+                                    &scoped_feature_name(scope, dep_feature),
+                                );
+                            } else if let Some((dep_name, dep_feature)) = enable.split_once('/') {
+                                if let Some(dep) = self.feature_dep(krate, version, dep_name, scope)
+                                {
+                                    register_activation_features(&mut features, dep);
+                                    register_feature(
+                                        &mut features,
+                                        dep_name,
+                                        &scoped_feature_name(scope, dep_feature),
+                                    );
+                                }
+                            } else {
+                                register_feature(
+                                    &mut features,
+                                    &krate.name,
+                                    &scoped_feature_name(scope, enable),
+                                );
+                            }
+                        }
                     }
                 }
             }
@@ -716,6 +795,44 @@ fn register_feature(
     let key = (package.to_owned(), feature.to_owned());
     if !features.contains_key(&key) {
         features.insert(key, features.len());
+    }
+}
+
+fn register_activation_features(
+    features: &mut BTreeMap<(String, String), usize>,
+    dep: &FixtureDep,
+) {
+    if dep.default_features {
+        register_feature(
+            features,
+            &dep.name,
+            &scoped_feature_name(dep.kind, "default"),
+        );
+    }
+    for feature in &dep.features {
+        register_feature(features, &dep.name, &scoped_feature_name(dep.kind, feature));
+    }
+}
+
+fn explicit_optional_dep_features(krate: &FixtureCrate) -> BTreeSet<String> {
+    krate
+        .features
+        .values()
+        .flat_map(|enables| enables.iter())
+        .filter_map(|enable| enable.strip_prefix("dep:"))
+        .map(str::to_owned)
+        .collect()
+}
+
+fn feature_scopes() -> [DepKind; 3] {
+    [DepKind::Normal, DepKind::Build, DepKind::Dev]
+}
+
+fn scoped_feature_name(scope: DepKind, feature: &str) -> String {
+    match scope {
+        DepKind::Normal => feature.to_owned(),
+        DepKind::Build => format!("build:{feature}"),
+        DepKind::Dev => format!("dev:{feature}"),
     }
 }
 
@@ -1158,6 +1275,11 @@ fn vix_clause(
     }
 }
 
+fn push_generated_clause(clauses: &mut VixClauses, next_id: &mut i32, clause: VixClause) {
+    clauses.push(clause);
+    *next_id += 1;
+}
+
 // ---------------------------------------------------------------------------
 // The harness smoke test: prove the ported DSL -> workspace -> cargo -> parse
 // path works end to end against the real cargo oracle (independent of rodin.vix).
@@ -1186,7 +1308,6 @@ fn harness_materializes_workspace_and_cargo_resolves() {
 ///    (`helper?/tz-fat`), and an always-false `cfg(any())` edge. `helper` must be
 ///    selected on no target.
 #[test]
-#[ignore = "pending optional weak feature activation fix in rodin.vix"]
 fn cfg_any_and_weak_feature_never_pull_optional_dep() {
     let fixture = Fixture::new("cfg-any-never-dep", "app")
         .krate(FixtureCrate::new("helper").feature("tz-fat", &[]))
@@ -1209,6 +1330,68 @@ fn cfg_any_and_weak_feature_never_pull_optional_dep() {
             "no helper on {target}: {selected:?}"
         );
     }
+}
+
+#[test]
+fn weak_feature_never_pulls_optional_dep_without_activation() {
+    let fixture = Fixture::new("weak-feature-suppression", "app")
+        .krate(FixtureCrate::new("helper").feature("extra", &[]))
+        .krate(
+            FixtureCrate::new("lib")
+                .feature("default", &["weak"])
+                .feature("weak", &["helper?/extra"])
+                .dep(FixtureDep::new("helper").optional()),
+        )
+        .krate(FixtureCrate::new("app").dep(FixtureDep::new("lib")));
+
+    let selected = fixture.assert_selection_matches(LINUX).unwrap();
+    assert!(
+        !selected.contains("helper"),
+        "weak feature alone must not activate helper: {selected:?}"
+    );
+}
+
+#[test]
+fn feature_unification_pulls_superset_optional_deps() {
+    let fixture = Fixture::new("feature-unification-superset", "app")
+        .krate(FixtureCrate::new("left_dep"))
+        .krate(FixtureCrate::new("right_dep"))
+        .krate(
+            FixtureCrate::new("shared")
+                .feature("left", &["dep:left_dep"])
+                .feature("right", &["dep:right_dep"])
+                .dep(FixtureDep::new("left_dep").optional())
+                .dep(FixtureDep::new("right_dep").optional()),
+        )
+        .krate(
+            FixtureCrate::new("a").dep(
+                FixtureDep::new("shared")
+                    .default_features(false)
+                    .feature("left"),
+            ),
+        )
+        .krate(
+            FixtureCrate::new("b").dep(
+                FixtureDep::new("shared")
+                    .default_features(false)
+                    .feature("right"),
+            ),
+        )
+        .krate(
+            FixtureCrate::new("app")
+                .dep(FixtureDep::new("a"))
+                .dep(FixtureDep::new("b")),
+        );
+
+    let selected = fixture.assert_selection_matches(LINUX).unwrap();
+    assert!(
+        selected.contains("left_dep"),
+        "left feature activation selected: {selected:?}"
+    );
+    assert!(
+        selected.contains("right_dep"),
+        "right feature activation selected: {selected:?}"
+    );
 }
 
 /// 2. A default-on feature (`bundle-platform`) references an optional dep
