@@ -3369,11 +3369,15 @@ impl Driver {
                                 }
                                 .expect("array collect comparison")
                             });
-                            let (handle, _) = store_cell.borrow_mut().alloc_array_words(
-                                &elem_schema,
-                                words,
-                                schema_refs,
-                            )?;
+                            let (handle, _) = if elem_schema == "Tree" {
+                                store_cell.borrow_mut().alloc_tree_merge(words)
+                            } else {
+                                store_cell.borrow_mut().alloc_array_words(
+                                    &elem_schema,
+                                    words,
+                                    schema_refs,
+                                )?
+                            };
                             write_frame_word(frame, dst_slot, handle);
                         }
                     }
@@ -4556,6 +4560,10 @@ impl Driver {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let array = read_frame_word(frame, primitive_region + 8);
                     let mut value = read_frame_word(frame, primitive_region + 16);
+                    let pushed_schema = schema_name_for(
+                        read_frame_word(frame, primitive_region + 24),
+                        schema_refs,
+                    )?;
                     if !force_molten_copy
                         && let Handle::Molten(array_handle) = Handle::from_word(array)
                     {
@@ -4564,10 +4572,14 @@ impl Driver {
                             molten
                                 .entry(array_handle)
                                 .and_then(|entry| match &entry.value {
-                                    MoltenValue::ArrayWords { elem_schema, .. }
+                                    MoltenValue::ArrayWords { elem_schema, words }
                                         if entry.refs == 1 =>
                                     {
-                                        Some(elem_schema.clone())
+                                        Some(if words.is_empty() {
+                                            pushed_schema.clone()
+                                        } else {
+                                            elem_schema.clone()
+                                        })
                                     }
                                     _ => None,
                                 })
@@ -4586,7 +4598,14 @@ impl Driver {
                             let entry = molten
                                 .entry_mut(array_handle)
                                 .ok_or_else(|| format!("molten handle {array}"))?;
-                            if let MoltenValue::ArrayWords { words, .. } = &mut entry.value {
+                            if let MoltenValue::ArrayWords {
+                                elem_schema: stored_schema,
+                                words,
+                            } = &mut entry.value
+                            {
+                                if words.is_empty() {
+                                    *stored_schema = elem_schema;
+                                }
                                 words.push(value);
                                 #[cfg(test)]
                                 {
@@ -4597,7 +4616,7 @@ impl Driver {
                             }
                         }
                     }
-                    let (elem_schema, mut words) = match molten_cell.borrow().array_entry(
+                    let (mut elem_schema, mut words) = match molten_cell.borrow().array_entry(
                         &store_cell.borrow(),
                         array,
                         schema_refs,
@@ -4605,6 +4624,9 @@ impl Driver {
                         ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
                         ArrayEntry::Pending(_) => return Err("push on pending array".into()),
                     };
+                    if words.is_empty() {
+                        elem_schema = pushed_schema;
+                    }
                     value = intern_molten_word(
                         &mut store_cell.borrow_mut(),
                         &mut molten_cell.borrow_mut(),
@@ -5336,12 +5358,7 @@ impl Driver {
             }
             TreeEntry::Merge(pending) => {
                 for handle in pending.into_iter().rev() {
-                    let invocation = self.store.borrow().pending_invocation(handle)?;
-                    if invocation.primitive.is_some() {
-                        return Err("primitive pending value cannot produce a tree".into());
-                    }
-                    let fn_ref = self.fn_ref_for_hash(invocation.closure_hash)?;
-                    let value = self.demand(fn_ref, invocation.args)?;
+                    let value = self.merge_child_tree_value(handle)?;
                     if let Some(found) = self.project_tree_path_optional(value, path)? {
                         return Ok(found);
                     }
@@ -5362,6 +5379,30 @@ impl Driver {
         }
     }
 
+    fn merge_child_tree_value(&mut self, handle: i64) -> Result<i64, String> {
+        let schema = self
+            .store
+            .borrow()
+            .entry(handle)
+            .ok_or_else(|| format!("store handle {handle}"))?
+            .schema
+            .clone();
+        if schema == "Tree" {
+            return Ok(handle);
+        }
+        if schema != pending_schema("Tree") {
+            return Err(format!(
+                "merge child handle {handle} is `{schema}`, not Tree"
+            ));
+        }
+        let invocation = self.store.borrow().pending_invocation(handle)?;
+        if invocation.primitive.is_some() {
+            return Err("primitive pending value cannot produce a tree".into());
+        }
+        let fn_ref = self.fn_ref_for_hash(invocation.closure_hash)?;
+        self.demand(fn_ref, invocation.args)
+    }
+
     fn force_tree_handle(&mut self, tree_handle: i64) -> Result<i64, String> {
         let tree = self.store.borrow().tree_entry(tree_handle)?;
         match tree {
@@ -5370,12 +5411,7 @@ impl Driver {
                 let mut merged = crate::exec::Tree::default();
                 let mut values = Vec::with_capacity(pending.len());
                 for handle in pending {
-                    let invocation = self.store.borrow().pending_invocation(handle)?;
-                    if invocation.primitive.is_some() {
-                        return Err("primitive pending value cannot produce a tree".into());
-                    }
-                    let fn_ref = self.fn_ref_for_hash(invocation.closure_hash)?;
-                    values.push(self.demand(fn_ref, invocation.args)?);
+                    values.push(self.merge_child_tree_value(handle)?);
                 }
                 for &value in &values {
                     self.start_tree_runs(value)?;
@@ -5409,12 +5445,7 @@ impl Driver {
             TreeEntry::Merge(pending) => {
                 let mut values = Vec::with_capacity(pending.len());
                 for handle in pending {
-                    let invocation = self.store.borrow().pending_invocation(handle)?;
-                    if invocation.primitive.is_some() {
-                        return Err("primitive pending value cannot produce a tree".into());
-                    }
-                    let fn_ref = self.fn_ref_for_hash(invocation.closure_hash)?;
-                    values.push(self.demand(fn_ref, invocation.args)?);
+                    values.push(self.merge_child_tree_value(handle)?);
                 }
                 for value in values {
                     self.start_tree_runs(value)?;
@@ -7131,6 +7162,9 @@ fn compare_words(
         "Array" => compare_arrays(store, descriptors, schema_refs, a, b),
         schema if schema.starts_with("Map<") => compare_maps(store, descriptors, schema_refs, a, b),
         "Doc" => compare_docs(store, descriptors, schema_refs, a, b),
+        "Tree" => Ok(canonical_word_hash_in_store(store, "Tree", a)
+            .as_ref()
+            .cmp(canonical_word_hash_in_store(store, "Tree", b).as_ref())),
         schema => compare_declared_value(store, descriptors, schema_refs, schema, a, b),
     }
 }

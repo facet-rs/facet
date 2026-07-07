@@ -5606,6 +5606,13 @@ impl<'a> FnLowerer<'a> {
             dst: region + 16,
             src: value.slot,
         });
+        self.code.push(Op::ConstI64 {
+            dst: region + 24,
+            value: *self
+                .schema_refs
+                .get(&value.schema)
+                .ok_or_else(|| format!("no schema ref for {}", value.schema))?,
+        });
         self.code.push(Op::HostCall {
             host: ARRAY_PUSH_HOST,
         });

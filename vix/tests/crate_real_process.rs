@@ -13,6 +13,7 @@ use vix::machine::{DriveEvent, Machine, MachineArg};
 use vix::real_process::RealProcessBackend;
 
 const SOURCE: &str = include_str!("../../playgrounds/snark/src/bundled/vix/samples/crate.vix");
+const RODIN_SOURCE: &str = include_str!("../../rodin/rodin.vix");
 const APP_MANIFEST: &str = include_str!(
     "../../playgrounds/snark/src/bundled/vix/samples/fixtures/two_crate_graph/app/Cargo.toml"
 );
@@ -179,6 +180,45 @@ fn real_process_rustc_builds_lockfile_graph_and_matches_cargo_unit_graph_oracle(
 }
 
 #[test]
+fn generic_walk_builds_resolved_graph_and_matches_cargo_oracle() -> Result<(), String> {
+    if !host_rustc_available() {
+        return Ok(());
+    }
+
+    let source = generic_lock_graph_source();
+    let backend = Arc::new(RealProcessBackend::new());
+    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
+    let target = machine.linux_target_handle();
+    let graph = machine
+        .intern_arg("Tree", MachineArg::Tree(lock_graph_tree()))?
+        .0;
+
+    let checked =
+        demand_with_rustc_trace(&mut machine, "generic_lock_bin_check", vec![target, graph])?;
+    let _rmeta = tree_file_bytes(&mut machine, checked, "mini_app.rmeta")?;
+
+    let built = demand_with_rustc_trace(&mut machine, "generic_lock_bin", vec![target, graph])?;
+    let bin = tree_file_bytes(&mut machine, built, "mini_app")?;
+    let stdout = run_binary_bytes(&bin)?;
+    if stdout != LOCK_GRAPH_EXPECTED_STDOUT {
+        return Err(format!(
+            "unexpected generic lock graph stdout: {:?}",
+            String::from_utf8_lossy(&stdout)
+        ));
+    }
+
+    let machine_graph = machine_rustc_unit_graph(&machine)?;
+    let cargo_graph = cargo_lock_graph_unit_graph_oracle()?;
+    if machine_graph != cargo_graph {
+        return Err(format!(
+            "generic walk unit graph did not match cargo oracle\nmachine: {machine_graph:#?}\ncargo: {cargo_graph:#?}"
+        ));
+    }
+
+    Ok(())
+}
+
+#[test]
 fn real_process_runs_build_script_threads_directives_and_out_dir_into_parent_rustc()
 -> Result<(), String> {
     if !host_rustc_available() {
@@ -282,6 +322,159 @@ fn build_script_tree() -> Tree {
     ])
 }
 
+fn generic_lock_graph_source() -> String {
+    format!("{SOURCE}\n\n{RODIN_SOURCE}\n\n{GENERIC_LOCK_GRAPH_BRIDGE}")
+}
+
+const GENERIC_LOCK_GRAPH_BRIDGE: &str = r#"
+fn fixture_index() -> Index {
+    let names: Map<Int, String> = {};
+    let names = names.insert(0, "alpha_lib");
+    let names = names.insert(1, "core_lib");
+    let names = names.insert(2, "formatting_lib");
+    let names = names.insert(3, "mini_app");
+
+    let version_pkgs: Map<Int, Int> = {};
+    let version_pkgs = version_pkgs.insert(0, 0);
+    let version_pkgs = version_pkgs.insert(1, 1);
+    let version_pkgs = version_pkgs.insert(2, 2);
+    let version_pkgs = version_pkgs.insert(3, 3);
+
+    let version_values: Map<Int, String> = {};
+    let version_values = version_values.insert(0, "0.1.0");
+    let version_values = version_values.insert(1, "0.1.0");
+    let version_values = version_values.insert(2, "0.1.0");
+    let version_values = version_values.insert(3, "0.1.0");
+
+    let guard_clause_ids: Map<Int, Int> = {};
+    let guard_tags: Map<Int, String> = {};
+    let guard_pkgs: Map<Int, Int> = {};
+    let guard_features: Map<Int, Int> = {};
+    let consequent_tags: Map<Int, String> = {};
+    let consequent_pkgs: Map<Int, Int> = {};
+    let consequent_version_sets: Map<Int, VersionSet> = {};
+    let consequent_features: Map<Int, Int> = {};
+    let gate_kinds: Map<Int, String> = {};
+    let gate_targets: Map<Int, String> = {};
+
+    let guard_clause_ids = guard_clause_ids.insert(0, 0);
+    let guard_tags = guard_tags.insert(0, "in_graph");
+    let guard_pkgs = guard_pkgs.insert(0, 3);
+    let guard_features = guard_features.insert(0, 0);
+    let consequent_tags = consequent_tags.insert(0, "in_graph");
+    let consequent_pkgs = consequent_pkgs.insert(0, 0);
+    let consequent_version_sets = consequent_version_sets.insert(0, VersionSet::from_req("*"));
+    let consequent_features = consequent_features.insert(0, 0);
+    let gate_kinds = gate_kinds.insert(0, "normal");
+
+    let guard_clause_ids = guard_clause_ids.insert(1, 1);
+    let guard_tags = guard_tags.insert(1, "in_graph");
+    let guard_pkgs = guard_pkgs.insert(1, 3);
+    let guard_features = guard_features.insert(1, 0);
+    let consequent_tags = consequent_tags.insert(1, "version_set");
+    let consequent_pkgs = consequent_pkgs.insert(1, 0);
+    let consequent_version_sets = consequent_version_sets.insert(1, VersionSet::from_req("0.1.0"));
+    let consequent_features = consequent_features.insert(1, 0);
+    let gate_kinds = gate_kinds.insert(1, "normal");
+
+    let guard_clause_ids = guard_clause_ids.insert(2, 2);
+    let guard_tags = guard_tags.insert(2, "in_graph");
+    let guard_pkgs = guard_pkgs.insert(2, 3);
+    let guard_features = guard_features.insert(2, 0);
+    let consequent_tags = consequent_tags.insert(2, "in_graph");
+    let consequent_pkgs = consequent_pkgs.insert(2, 2);
+    let consequent_version_sets = consequent_version_sets.insert(2, VersionSet::from_req("*"));
+    let consequent_features = consequent_features.insert(2, 0);
+    let gate_kinds = gate_kinds.insert(2, "normal");
+
+    let guard_clause_ids = guard_clause_ids.insert(3, 3);
+    let guard_tags = guard_tags.insert(3, "in_graph");
+    let guard_pkgs = guard_pkgs.insert(3, 3);
+    let guard_features = guard_features.insert(3, 0);
+    let consequent_tags = consequent_tags.insert(3, "version_set");
+    let consequent_pkgs = consequent_pkgs.insert(3, 2);
+    let consequent_version_sets = consequent_version_sets.insert(3, VersionSet::from_req("0.1.0"));
+    let consequent_features = consequent_features.insert(3, 0);
+    let gate_kinds = gate_kinds.insert(3, "normal");
+
+    let guard_clause_ids = guard_clause_ids.insert(4, 4);
+    let guard_tags = guard_tags.insert(4, "in_graph");
+    let guard_pkgs = guard_pkgs.insert(4, 0);
+    let guard_features = guard_features.insert(4, 0);
+    let consequent_tags = consequent_tags.insert(4, "in_graph");
+    let consequent_pkgs = consequent_pkgs.insert(4, 1);
+    let consequent_version_sets = consequent_version_sets.insert(4, VersionSet::from_req("*"));
+    let consequent_features = consequent_features.insert(4, 0);
+    let gate_kinds = gate_kinds.insert(4, "normal");
+
+    let guard_clause_ids = guard_clause_ids.insert(5, 5);
+    let guard_tags = guard_tags.insert(5, "in_graph");
+    let guard_pkgs = guard_pkgs.insert(5, 0);
+    let guard_features = guard_features.insert(5, 0);
+    let consequent_tags = consequent_tags.insert(5, "version_set");
+    let consequent_pkgs = consequent_pkgs.insert(5, 1);
+    let consequent_version_sets = consequent_version_sets.insert(5, VersionSet::from_req("0.1.0"));
+    let consequent_features = consequent_features.insert(5, 0);
+    let gate_kinds = gate_kinds.insert(5, "normal");
+
+    Index {
+        packages: [0, 1, 2, 3],
+        names: names,
+        version_ids: [0, 1, 2, 3],
+        version_pkgs: version_pkgs,
+        version_values: version_values,
+        clause_ids: [0, 1, 2, 3, 4, 5],
+        guard_ids: [0, 1, 2, 3, 4, 5],
+        guard_clause_ids: guard_clause_ids,
+        guard_tags: guard_tags,
+        guard_pkgs: guard_pkgs,
+        guard_features: guard_features,
+        consequent_tags: consequent_tags,
+        consequent_pkgs: consequent_pkgs,
+        consequent_version_sets: consequent_version_sets,
+        consequent_features: consequent_features,
+        gate_kinds: gate_kinds,
+        gate_targets: gate_targets,
+    }
+}
+
+fn fixture_problem() -> Problem {
+    Problem {
+        root_pkg: 3,
+        root_req: VersionSet::from_req("*"),
+        root_features: [],
+        root_default_feature: 0,
+        root_default_features: false,
+    }
+}
+
+fn selected_insert_unit(units: Map<Int, ResolvedUnit>, selected: Map<Int, Version>, pkg: Int, unit: ResolvedUnit) -> Map<Int, ResolvedUnit> {
+    match selected.get(pkg) {
+        Some(_) => units.insert(pkg, unit),
+        None => units,
+    }
+}
+
+fn fixture_resolved_graph(target: String) -> ResolvedGraph {
+    let result = solve(fixture_index(), fixture_problem(), target);
+    let units: Map<Int, ResolvedUnit> = {};
+    let units = selected_insert_unit(units, result.selected, 0, ResolvedUnit { name: "alpha_lib", kind: "lib", manifest: p"crates/alpha_lib", source: p"src/lib.rs", deps: [1], metadata: p"libalpha_lib.rmeta", link: p"libalpha_lib.rlib", metadata_file: "libalpha_lib.rmeta", link_file: "libalpha_lib.rlib" });
+    let units = selected_insert_unit(units, result.selected, 1, ResolvedUnit { name: "core_lib", kind: "lib", manifest: p"crates/core_lib", source: p"src/lib.rs", deps: [], metadata: p"libcore_lib.rmeta", link: p"libcore_lib.rlib", metadata_file: "libcore_lib.rmeta", link_file: "libcore_lib.rlib" });
+    let units = selected_insert_unit(units, result.selected, 2, ResolvedUnit { name: "formatting_lib", kind: "lib", manifest: p"crates/formatting_lib", source: p"src/lib.rs", deps: [], metadata: p"libformatting_lib.rmeta", link: p"libformatting_lib.rlib", metadata_file: "libformatting_lib.rmeta", link_file: "libformatting_lib.rlib" });
+    let units = selected_insert_unit(units, result.selected, 3, ResolvedUnit { name: "mini_app", kind: "bin", manifest: p"app", source: p"src/main.rs", deps: [0, 2], metadata: p"mini_app.rmeta", link: p"mini_app", metadata_file: "mini_app.rmeta", link_file: "mini_app" });
+    ResolvedGraph { root: 3, units: units }
+}
+
+pub fn generic_lock_bin_check(target: Target, graph: Tree) -> Tree {
+    crate_resolved_bin_check(target, graph, fixture_resolved_graph("x86_64-unknown-linux-gnu"))
+}
+
+pub fn generic_lock_bin(target: Target, graph: Tree) -> Tree {
+    crate_resolved_bin(target, graph, fixture_resolved_graph("x86_64-unknown-linux-gnu"))
+}
+
+"#;
+
 fn run_binary_bytes(bytes: &[u8]) -> Result<Vec<u8>, String> {
     run_named_binary_bytes(bytes, "mini_app")
 }
@@ -324,6 +517,38 @@ fn tree_snapshot(machine: &mut Machine, handle: i64) -> Result<Tree, String> {
         entries: machine.tree_entries(handle)?,
         blobs: machine.tree_blob_entries(handle)?,
     })
+}
+
+fn demand_with_rustc_trace(
+    machine: &mut Machine,
+    name: &str,
+    args: Vec<i64>,
+) -> Result<i64, String> {
+    machine
+        .demand_i64(name, args)
+        .map_err(|err| format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(machine)))
+}
+
+fn rustc_argv_trace(machine: &Machine) -> String {
+    let mut out = String::new();
+    for event in machine.trace() {
+        match event {
+            DriveEvent::RunRequested {
+                command_name, argv, ..
+            } if command_name == "rustc" => {
+                out.push_str(&format!("requested {argv:?}\n"));
+            }
+            DriveEvent::RunCompleted {
+                command_name,
+                outputs,
+                ..
+            } if command_name == "rustc" => {
+                out.push_str(&format!("completed {outputs:?}\n"));
+            }
+            _ => {}
+        }
+    }
+    out
 }
 
 #[cfg(unix)]

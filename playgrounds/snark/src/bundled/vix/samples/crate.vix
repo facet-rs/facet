@@ -1,4 +1,4 @@
-use vix::{Tree, Target, Path, Os};
+use vix::{Tree, Target, Path, Os, Map};
 use caps::Rustc;
 
 fn doc_string(doc: Doc, key: String) -> String {
@@ -257,6 +257,389 @@ pub fn crate_lock_bin(target: Target, graph: Tree) -> Tree {
 pub fn crate_lock_root_version(graph: Tree) -> String {
     let lock = lock_doc(graph);
     lock_package_version(lock, "mini_app")
+}
+
+struct ResolvedUnit {
+    name: String,
+    kind: String,
+    manifest: Path,
+    source: Path,
+    deps: [Int],
+    metadata: Path,
+    link: Path,
+    metadata_file: String,
+    link_file: String,
+}
+
+struct ResolvedGraph {
+    root: Int,
+    units: Map<Int, ResolvedUnit>,
+}
+
+fn resolved_unit(graph: ResolvedGraph, ix: Int) -> ResolvedUnit {
+    graph.units.get(ix).unwrap()
+}
+
+fn extern_file(unit: ResolvedUnit, mode: String) -> String {
+    unit.link_file
+}
+
+fn direct_extern_args(graph: ResolvedGraph, deps: [Int], mode: String, out: [String]) -> [String] {
+    match deps.len() == 0 {
+        true => out,
+        false => direct_extern_args_tuple(graph, deps.pop(), mode, out),
+    }
+}
+
+fn direct_extern_args_tuple(graph: ResolvedGraph, popped: (Int, [Int]), mode: String, out: [String]) -> [String] {
+    direct_extern_args_one(graph, popped.0, popped.1, mode, out)
+}
+
+fn direct_extern_args_one(graph: ResolvedGraph, dep: Int, rest: [Int], mode: String, out: [String]) -> [String] {
+    let unit = resolved_unit(graph, dep);
+    let arg = unit.name + "=/m/0/" + extern_file(unit, mode);
+    direct_extern_args(graph, rest, mode, out.push("--extern").push(arg))
+}
+
+fn dependency_artifacts(target: Target, source: Tree, graph: ResolvedGraph, deps: [Int], mode: String, out: [Tree]) -> [Tree] {
+    match deps.len() == 0 {
+        true => out,
+        false => dependency_artifacts_tuple(target, source, graph, deps.pop(), mode, out),
+    }
+}
+
+fn dependency_artifacts_tuple(target: Target, source: Tree, graph: ResolvedGraph, popped: (Int, [Int]), mode: String, out: [Tree]) -> [Tree] {
+    dependency_artifacts_one(target, source, graph, popped.0, popped.1, mode, out)
+}
+
+fn dependency_artifacts_one(target: Target, source: Tree, graph: ResolvedGraph, dep: Int, rest: [Int], mode: String, out: [Tree]) -> [Tree] {
+    let unit = resolved_unit(graph, dep);
+    let nested = dependency_artifacts(target, source, graph, unit.deps, mode, out);
+    let built = resolved_unit_built(target, source, graph, unit, mode);
+    dependency_artifacts(target, source, graph, rest, mode, nested.push(built))
+}
+
+fn dependency_tree(target: Target, source: Tree, graph: ResolvedGraph, unit: ResolvedUnit, mode: String) -> Tree {
+    let artifacts: [Tree] = dependency_artifacts(target, source, graph, unit.deps, mode, []);
+    artifacts.collect()
+}
+
+fn generic_lib_no_deps(target: Target, source: Tree, unit: ResolvedUnit) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let manifest = source / unit.manifest;
+    let edition = doc_string(package_doc(manifest), "edition");
+
+    rustc! {
+        --crate-name {unit.name}
+        --edition {edition}
+        --crate-type lib
+        --emit=metadata={unit.metadata},link={unit.link}
+        {manifest / unit.source}
+    }
+}
+
+fn generic_lib_with_deps(target: Target, source: Tree, graph: ResolvedGraph, unit: ResolvedUnit, mode: String) -> Tree {
+    match unit.deps.len() == 1 {
+        true => generic_lib_with_one_dep(target, source, graph, unit, mode, unit.deps.pop().0),
+        false => generic_lib_with_dynamic_deps(target, source, graph, unit, mode),
+    }
+}
+
+fn generic_lib_with_one_dep(target: Target, source: Tree, graph: ResolvedGraph, unit: ResolvedUnit, mode: String, dep: Int) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let manifest = source / unit.manifest;
+    let edition = doc_string(package_doc(manifest), "edition");
+    let deps = dependency_tree(target, source, graph, unit, mode);
+    let dep_unit = resolved_unit(graph, dep);
+    let dep_artifact = resolved_unit_artifact(target, source, graph, dep, mode);
+    let dep_extern = dep_unit.name + "=";
+
+    rustc! {
+        --crate-name {unit.name}
+        --edition {edition}
+        --crate-type lib
+        --emit=metadata={unit.metadata},link={unit.link}
+        -L dependency={deps}
+        --extern {dep_extern}{dep_artifact}
+        {manifest / unit.source}
+    }
+}
+
+fn generic_lib_with_dynamic_deps(target: Target, source: Tree, graph: ResolvedGraph, unit: ResolvedUnit, mode: String) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let manifest = source / unit.manifest;
+    let edition = doc_string(package_doc(manifest), "edition");
+    let deps = dependency_tree(target, source, graph, unit, mode);
+    let externs = direct_extern_args(graph, unit.deps, mode, []);
+
+    rustc! {
+        --crate-name {unit.name}
+        --edition {edition}
+        --crate-type lib
+        --emit=metadata={unit.metadata},link={unit.link}
+        -L dependency={deps}
+        {externs}
+        {manifest / unit.source}
+    }
+}
+
+fn generic_lib(target: Target, source: Tree, graph: ResolvedGraph, unit: ResolvedUnit, mode: String) -> Tree {
+    match unit.deps.len() == 0 {
+        true => generic_lib_no_deps(target, source, unit),
+        false => generic_lib_with_deps(target, source, graph, unit, mode),
+    }
+}
+
+fn generic_bin_check_no_deps(target: Target, source: Tree, unit: ResolvedUnit) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let manifest = source / unit.manifest;
+    let edition = doc_string(package_doc(manifest), "edition");
+
+    rustc! {
+        --crate-name {unit.name}
+        --edition {edition}
+        --crate-type bin
+        --emit=metadata={unit.metadata}
+        {manifest / unit.source}
+    }
+}
+
+fn generic_bin_check_with_deps(target: Target, source: Tree, graph: ResolvedGraph, unit: ResolvedUnit) -> Tree {
+    match unit.deps.len() == 1 {
+        true => generic_bin_check_with_one_dep(target, source, graph, unit, unit.deps.pop().0),
+        false => match unit.deps.len() == 2 {
+            true => generic_bin_check_with_two_deps(target, source, graph, unit, unit.deps.pop()),
+            false => generic_bin_check_with_dynamic_deps(target, source, graph, unit),
+        },
+    }
+}
+
+fn generic_bin_check_with_one_dep(target: Target, source: Tree, graph: ResolvedGraph, unit: ResolvedUnit, dep: Int) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let manifest = source / unit.manifest;
+    let edition = doc_string(package_doc(manifest), "edition");
+    let deps = dependency_tree(target, source, graph, unit, "metadata");
+    let dep_unit = resolved_unit(graph, dep);
+    let dep_artifact = resolved_unit_artifact(target, source, graph, dep, "metadata");
+    let dep_extern = dep_unit.name + "=";
+
+    rustc! {
+        --crate-name {unit.name}
+        --edition {edition}
+        --crate-type bin
+        --emit=metadata={unit.metadata}
+        -L dependency={deps}
+        --extern {dep_extern}{dep_artifact}
+        {manifest / unit.source}
+    }
+}
+
+fn generic_bin_check_with_two_deps(target: Target, source: Tree, graph: ResolvedGraph, unit: ResolvedUnit, popped: (Int, [Int])) -> Tree {
+    generic_bin_check_with_two_dep_ids(target, source, graph, unit, popped.0, popped.1.pop().0)
+}
+
+fn generic_bin_check_with_two_dep_ids(target: Target, source: Tree, graph: ResolvedGraph, unit: ResolvedUnit, dep_a: Int, dep_b: Int) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let manifest = source / unit.manifest;
+    let edition = doc_string(package_doc(manifest), "edition");
+    let deps = dependency_tree(target, source, graph, unit, "metadata");
+    let dep_a_unit = resolved_unit(graph, dep_a);
+    let dep_b_unit = resolved_unit(graph, dep_b);
+    let dep_a_artifact = resolved_unit_artifact(target, source, graph, dep_a, "metadata");
+    let dep_b_artifact = resolved_unit_artifact(target, source, graph, dep_b, "metadata");
+    let dep_a_extern = dep_a_unit.name + "=";
+    let dep_b_extern = dep_b_unit.name + "=";
+
+    rustc! {
+        --crate-name {unit.name}
+        --edition {edition}
+        --crate-type bin
+        --emit=metadata={unit.metadata}
+        -L dependency={deps}
+        --extern {dep_a_extern}{dep_a_artifact}
+        --extern {dep_b_extern}{dep_b_artifact}
+        {manifest / unit.source}
+    }
+}
+
+fn generic_bin_check_with_dynamic_deps(target: Target, source: Tree, graph: ResolvedGraph, unit: ResolvedUnit) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let manifest = source / unit.manifest;
+    let edition = doc_string(package_doc(manifest), "edition");
+    let deps = dependency_tree(target, source, graph, unit, "metadata");
+    let externs = direct_extern_args(graph, unit.deps, "metadata", []);
+
+    rustc! {
+        --crate-name {unit.name}
+        --edition {edition}
+        --crate-type bin
+        --emit=metadata={unit.metadata}
+        -L dependency={deps}
+        {externs}
+        {manifest / unit.source}
+    }
+}
+
+fn generic_bin_link_no_deps(target: Target, source: Tree, unit: ResolvedUnit) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let manifest = source / unit.manifest;
+    let edition = doc_string(package_doc(manifest), "edition");
+
+    rustc! {
+        --crate-name {unit.name}
+        --edition {edition}
+        --crate-type bin
+        --emit=link={unit.link}
+        {manifest / unit.source}
+    }
+}
+
+fn generic_bin_link_with_deps(target: Target, source: Tree, graph: ResolvedGraph, unit: ResolvedUnit) -> Tree {
+    match unit.deps.len() == 1 {
+        true => generic_bin_link_with_one_dep(target, source, graph, unit, unit.deps.pop().0),
+        false => match unit.deps.len() == 2 {
+            true => generic_bin_link_with_two_deps(target, source, graph, unit, unit.deps.pop()),
+            false => generic_bin_link_with_dynamic_deps(target, source, graph, unit),
+        },
+    }
+}
+
+fn generic_bin_link_with_one_dep(target: Target, source: Tree, graph: ResolvedGraph, unit: ResolvedUnit, dep: Int) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let manifest = source / unit.manifest;
+    let edition = doc_string(package_doc(manifest), "edition");
+    let deps = dependency_tree(target, source, graph, unit, "link");
+    let dep_unit = resolved_unit(graph, dep);
+    let dep_artifact = resolved_unit_artifact(target, source, graph, dep, "link");
+    let dep_extern = dep_unit.name + "=";
+
+    rustc! {
+        --crate-name {unit.name}
+        --edition {edition}
+        --crate-type bin
+        --emit=link={unit.link}
+        -L dependency={deps}
+        --extern {dep_extern}{dep_artifact}
+        {manifest / unit.source}
+    }
+}
+
+fn generic_bin_link_with_two_deps(target: Target, source: Tree, graph: ResolvedGraph, unit: ResolvedUnit, popped: (Int, [Int])) -> Tree {
+    generic_bin_link_with_two_dep_ids(target, source, graph, unit, popped.0, popped.1.pop().0)
+}
+
+fn generic_bin_link_with_two_dep_ids(target: Target, source: Tree, graph: ResolvedGraph, unit: ResolvedUnit, dep_a: Int, dep_b: Int) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let manifest = source / unit.manifest;
+    let edition = doc_string(package_doc(manifest), "edition");
+    let deps = dependency_tree(target, source, graph, unit, "link");
+    let dep_a_unit = resolved_unit(graph, dep_a);
+    let dep_b_unit = resolved_unit(graph, dep_b);
+    let dep_a_artifact = resolved_unit_artifact(target, source, graph, dep_a, "link");
+    let dep_b_artifact = resolved_unit_artifact(target, source, graph, dep_b, "link");
+    let dep_a_extern = dep_a_unit.name + "=";
+    let dep_b_extern = dep_b_unit.name + "=";
+
+    rustc! {
+        --crate-name {unit.name}
+        --edition {edition}
+        --crate-type bin
+        --emit=link={unit.link}
+        -L dependency={deps}
+        --extern {dep_a_extern}{dep_a_artifact}
+        --extern {dep_b_extern}{dep_b_artifact}
+        {manifest / unit.source}
+    }
+}
+
+fn generic_bin_link_with_dynamic_deps(target: Target, source: Tree, graph: ResolvedGraph, unit: ResolvedUnit) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let manifest = source / unit.manifest;
+    let edition = doc_string(package_doc(manifest), "edition");
+    let deps = dependency_tree(target, source, graph, unit, "link");
+    let externs = direct_extern_args(graph, unit.deps, "link", []);
+
+    rustc! {
+        --crate-name {unit.name}
+        --edition {edition}
+        --crate-type bin
+        --emit=link={unit.link}
+        -L dependency={deps}
+        {externs}
+        {manifest / unit.source}
+    }
+}
+
+fn generic_bin(target: Target, source: Tree, graph: ResolvedGraph, unit: ResolvedUnit, mode: String) -> Tree {
+    match mode == "metadata" {
+        true => match unit.deps.len() == 0 {
+            true => generic_bin_check_no_deps(target, source, unit),
+            false => generic_bin_check_with_deps(target, source, graph, unit),
+        },
+        false => match unit.deps.len() == 0 {
+            true => generic_bin_link_no_deps(target, source, unit),
+            false => generic_bin_link_with_deps(target, source, graph, unit),
+        },
+    }
+}
+
+fn generic_proc_macro(source: Tree, unit: ResolvedUnit) -> Tree {
+    let host = Target::host();
+    let rustc = Rustc::acquire(host);
+    let manifest = source / unit.manifest;
+    let edition = doc_string(package_doc(manifest), "edition");
+
+    rustc! {
+        --crate-name {unit.name}
+        --edition {edition}
+        --crate-type proc-macro
+        --emit=link={unit.link}
+        {manifest / unit.source}
+    }
+}
+
+fn generic_build_script_compile(source: Tree, unit: ResolvedUnit) -> Tree {
+    let rustc = Rustc::acquire(Target::host());
+    let manifest = source / unit.manifest;
+    let edition = doc_string(package_doc(manifest), "edition");
+
+    rustc! {
+        --crate-name {unit.name}
+        --edition {edition}
+        --crate-type bin
+        --emit=link={unit.link}
+        {manifest / unit.source}
+    }
+}
+
+fn resolved_unit_built(target: Target, source: Tree, graph: ResolvedGraph, unit: ResolvedUnit, mode: String) -> Tree {
+    match unit.kind == "lib" {
+        true => generic_lib(target, source, graph, unit, mode),
+        false => match unit.kind == "bin" {
+            true => generic_bin(target, source, graph, unit, mode),
+            false => match unit.kind == "proc-macro" {
+                true => generic_proc_macro(source, unit),
+                false => generic_build_script_compile(source, unit),
+            },
+        },
+    }
+}
+
+fn resolved_unit_artifact(target: Target, source: Tree, graph: ResolvedGraph, ix: Int, mode: String) -> Tree {
+    let unit = resolved_unit(graph, ix);
+    let built = resolved_unit_built(target, source, graph, unit, mode);
+    match mode == "metadata" {
+        true => built / unit.metadata,
+        false => built / unit.link,
+    }
+}
+
+pub fn crate_resolved_bin_check(target: Target, source: Tree, graph: ResolvedGraph) -> Tree {
+    resolved_unit_artifact(target, source, graph, graph.root, "metadata")
+}
+
+pub fn crate_resolved_bin(target: Target, source: Tree, graph: ResolvedGraph) -> Tree {
+    resolved_unit_artifact(target, source, graph, graph.root, "link")
 }
 
 fn build_script_compile(manifest: Tree) -> Tree {

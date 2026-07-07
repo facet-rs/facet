@@ -81,10 +81,11 @@ impl Tree {
     }
 
     pub fn bytes(&self, path: &str) -> Option<Vec<u8>> {
-        self.entries
-            .get(path)
-            .map(|contents| contents.as_bytes().to_vec())
-            .or_else(|| self.blobs.get(path).cloned())
+        self.blobs.get(path).cloned().or_else(|| {
+            self.entries
+                .get(path)
+                .map(|contents| contents.as_bytes().to_vec())
+        })
     }
 
     pub fn display_entries(&self) -> Vec<(String, String)> {
@@ -485,11 +486,11 @@ impl Snapshot for MountedWorld<'_> {
         for m in self.mounts {
             if let Some(rest) = path.strip_prefix(&m.at) {
                 let key = rest.trim_start_matches('/');
-                if let Some(contents) = m.tree.entries.get(key) {
-                    return Some(contents.as_bytes().to_vec());
-                }
                 if let Some(contents) = m.tree.blobs.get(key) {
                     return Some(contents.clone());
+                }
+                if let Some(contents) = m.tree.entries.get(key) {
+                    return Some(contents.as_bytes().to_vec());
                 }
             }
         }
