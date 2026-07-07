@@ -22,7 +22,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
-use vix::machine::{Machine, MachineArg, NamedArg, RenderedValue};
+use vix::machine::{DriveEvent, Machine, MachineArg, NamedArg, RenderedValue};
 
 const LINUX: &str = "x86_64-unknown-linux-gnu";
 const WINDOWS: &str = "x86_64-pc-windows-msvc";
@@ -49,6 +49,7 @@ impl DepKind {
 #[derive(Clone, Debug)]
 struct FixtureDep {
     name: String,
+    req: String,
     kind: DepKind,
     optional: bool,
     default_features: bool,
@@ -61,6 +62,7 @@ impl FixtureDep {
     fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            req: "0.1.0".to_owned(),
             kind: DepKind::Normal,
             optional: false,
             default_features: true,
@@ -71,6 +73,11 @@ impl FixtureDep {
 
     fn kind(mut self, kind: DepKind) -> Self {
         self.kind = kind;
+        self
+    }
+
+    fn req(mut self, req: impl Into<String>) -> Self {
+        self.req = req.into();
         self
     }
 
@@ -89,6 +96,9 @@ impl FixtureDep {
 #[derive(Clone, Debug)]
 struct FixtureCrate {
     name: String,
+    version: String,
+    vix_versions: Vec<String>,
+    vix_version_deps: BTreeMap<String, Vec<FixtureDep>>,
     features: BTreeMap<String, Vec<String>>,
     deps: Vec<FixtureDep>,
 }
@@ -97,9 +107,31 @@ impl FixtureCrate {
     fn new(name: impl Into<String>) -> Self {
         Self {
             name: name.into(),
+            version: "0.1.0".to_owned(),
+            vix_versions: vec!["0.1.0".to_owned()],
+            vix_version_deps: BTreeMap::new(),
             features: BTreeMap::new(),
             deps: Vec::new(),
         }
+    }
+
+    fn version(mut self, version: impl Into<String>) -> Self {
+        let version = version.into();
+        self.version = version.clone();
+        if self.vix_versions == ["0.1.0"] && version != "0.1.0" {
+            self.vix_versions = vec![version];
+        } else if !self.vix_versions.contains(&version) {
+            self.vix_versions.push(version);
+        }
+        self
+    }
+
+    fn vix_version(mut self, version: impl Into<String>) -> Self {
+        let version = version.into();
+        if !self.vix_versions.contains(&version) {
+            self.vix_versions.push(version);
+        }
+        self
     }
 
     fn feature(mut self, name: impl Into<String>, enables: &[&str]) -> Self {
@@ -112,6 +144,15 @@ impl FixtureCrate {
 
     fn dep(mut self, dep: FixtureDep) -> Self {
         self.deps.push(dep);
+        self
+    }
+
+    fn vix_version_dep(mut self, version: impl Into<String>, dep: FixtureDep) -> Self {
+        let version = version.into();
+        if !self.vix_versions.contains(&version) {
+            self.vix_versions.push(version.clone());
+        }
+        self.vix_version_deps.entry(version).or_default().push(dep);
         self
     }
 }
@@ -170,37 +211,71 @@ impl Fixture {
                     value: MachineArg::String(triple.to_owned()),
                 }],
             )
-            .map_err(|err| format!("call fixture_selected: {err}"))?;
+            .map_err(|err| format!("call fixture_selected: {err}\n{}", trace_tail(&machine)))?;
         let rendered = machine
             .render_result("fixture_selected", selected.0)
             .map_err(|err| format!("render fixture_selected: {err}"))?;
         let selected = rendered_name_set(rendered)?;
         if selected.is_empty() {
-            let root_candidates = machine
-                .call("fixture_root_candidate_count", &[])
-                .map_err(|err| format!("call fixture_root_candidate_count: {err}"))?;
-            let root_versions = machine
-                .call("fixture_root_version_count", &[])
-                .map_err(|err| format!("call fixture_root_version_count: {err}"))?;
-            let RenderedValue::Int { value } = machine
-                .render_result("fixture_root_candidate_count", root_candidates.0)
-                .map_err(|err| format!("render fixture_root_candidate_count: {err}"))?
-            else {
-                return Err("fixture_root_candidate_count did not render as Int".to_owned());
-            };
-            let RenderedValue::Int {
-                value: version_count,
-            } = machine
-                .render_result("fixture_root_version_count", root_versions.0)
-                .map_err(|err| format!("render fixture_root_version_count: {err}"))?
-            else {
-                return Err("fixture_root_version_count did not render as Int".to_owned());
-            };
-            return Err(format!(
-                "rodin.vix selected no packages; root version count = {version_count}; root candidate count = {value}"
-            ));
+            return Err(format!("rodin.vix selected no packages\n{}", trace_tail(&machine)));
         }
         Ok(selected)
+    }
+
+    fn vix_learned_count(&self, triple: &str) -> Result<i64, String> {
+        let source = format!("{}\n\n{}", rodin_source()?, self.vix_fixture_source());
+        let mut machine = Machine::load(&source)?;
+        machine.set_force_molten_copy(true);
+        let learned = machine
+            .call(
+                "fixture_learned_count",
+                &[NamedArg {
+                    name: "target".to_owned(),
+                    value: MachineArg::String(triple.to_owned()),
+                }],
+            )
+            .map_err(|err| format!("call fixture_learned_count: {err}\n{}", trace_tail(&machine)))?;
+        let RenderedValue::Int { value } = machine
+            .render_result("fixture_learned_count", learned.0)
+            .map_err(|err| format!("render fixture_learned_count: {err}"))?
+        else {
+            return Err("fixture_learned_count did not render as Int".to_owned());
+        };
+        Ok(value)
+    }
+
+    fn rodin_trace_counts(
+        &self,
+        triple: &str,
+        force_tail_invoke: bool,
+    ) -> Result<TraceCounts, String> {
+        let source = format!("{}\n\n{}", rodin_source()?, self.vix_fixture_source());
+        let mut machine = Machine::load(&source)?;
+        machine.set_force_molten_copy(true);
+        if force_tail_invoke {
+            machine
+                .set_force_tail_invoke(true)
+                .map_err(|err| format!("force tail invoke: {err}"))?;
+        }
+        machine
+            .call(
+                "fixture_selected",
+                &[NamedArg {
+                    name: "target".to_owned(),
+                    value: MachineArg::String(triple.to_owned()),
+                }],
+            )
+            .map_err(|err| format!("call fixture_selected: {err}\n{}", trace_tail(&machine)))?;
+        trace_counts(
+            &machine,
+            &[
+                "propagate",
+                "filter_allowed",
+                "candidates_from_rows",
+                "force_singletons_over",
+                "selected_from_state",
+            ],
+        )
     }
 
     /// Write the fixture as a real path-dependency Cargo workspace in a fresh
@@ -229,7 +304,7 @@ impl Fixture {
         let mut toml = String::new();
         writeln!(toml, "[package]").ok();
         writeln!(toml, "name = \"{}\"", krate.name).ok();
-        writeln!(toml, "version = \"0.1.0\"").ok();
+        writeln!(toml, "version = \"{}\"", krate.version).ok();
         writeln!(toml, "edition = \"2021\"").ok();
 
         if !krate.features.is_empty() {
@@ -270,6 +345,7 @@ impl Fixture {
         let mut source = String::new();
         let package_indices = self.package_indices();
         let feature_indices = self.feature_indices();
+        let version_rows = self.vix_version_rows();
 
         writeln!(source, "use vix::{{Version, VersionSet, Map}};").ok();
 
@@ -297,8 +373,8 @@ impl Fixture {
         }
         writeln!(source, "    let version_pkgs: Map<Int, Int> = {{}};").ok();
         writeln!(source, "    let version_values: Map<Int, String> = {{}};").ok();
-        for (version_id, krate) in self.crates.iter().enumerate() {
-            let pkg_id = package_indices[&krate.name];
+        for (version_id, (krate_name, version)) in version_rows.iter().enumerate() {
+            let pkg_id = package_indices[krate_name];
             writeln!(
                 source,
                 "    let version_pkgs = version_pkgs.insert({version_id}, {pkg_id});"
@@ -306,11 +382,12 @@ impl Fixture {
             .ok();
             writeln!(
                 source,
-                "    let version_values = version_values.insert({version_id}, \"0.1.0\");"
+                "    let version_values = version_values.insert({version_id}, {});",
+                vix_string(version)
             )
             .ok();
         }
-        let version_ids = (0..self.crates.len())
+        let version_ids = (0..version_rows.len())
             .map(|id| id.to_string())
             .collect::<Vec<_>>()
             .join(", ");
@@ -324,7 +401,9 @@ impl Fixture {
         for declaration in [
             "guard_clause_ids: Map<Int, Int>",
             "guard_tags: Map<Int, String>",
+            "guard_kinds: Map<Int, Int>",
             "guard_pkgs: Map<Int, Int>",
+            "guard_versions: Map<Int, String>",
             "guard_features: Map<Int, Int>",
             "consequent_tags: Map<Int, String>",
             "consequent_pkgs: Map<Int, Int>",
@@ -340,7 +419,7 @@ impl Fixture {
         }
         writeln!(
             source,
-            "    Index {{ packages: [{packages}], names: names, version_ids: [{version_ids}], version_pkgs: version_pkgs, version_values: version_values, clause_ids: [{}], guard_ids: [{}], guard_clause_ids: guard_clause_ids, guard_tags: guard_tags, guard_pkgs: guard_pkgs, guard_features: guard_features, consequent_tags: consequent_tags, consequent_pkgs: consequent_pkgs, consequent_version_sets: consequent_version_sets, consequent_features: consequent_features, gate_kinds: gate_kinds, gate_targets: gate_targets }}",
+            "    Index {{ packages: [{packages}], names: names, version_ids: [{version_ids}], version_pkgs: version_pkgs, version_values: version_values, clause_ids: [{}], guard_ids: [{}], guard_clause_ids: guard_clause_ids, guard_tags: guard_tags, guard_kinds: guard_kinds, guard_pkgs: guard_pkgs, guard_versions: guard_versions, guard_features: guard_features, consequent_tags: consequent_tags, consequent_pkgs: consequent_pkgs, consequent_version_sets: consequent_version_sets, consequent_features: consequent_features, gate_kinds: gate_kinds, gate_targets: gate_targets }}",
             clauses.ids.join(", "),
             clauses.guard_ids.join(", ")
         )
@@ -364,16 +443,20 @@ impl Fixture {
         .ok();
         writeln!(
             source,
-            "\npub fn fixture_root_candidate_count() -> Int {{\n    root_candidate_count(fixture_index(), fixture_problem())\n}}"
+            "\npub fn fixture_learned_count(target: String) -> Int {{\n    solve_learned_count(fixture_index(), fixture_problem(), target)\n}}"
         )
         .ok();
-        writeln!(
-            source,
-            "\npub fn fixture_root_version_count() -> Int {{\n    root_version_count(fixture_index(), fixture_problem())\n}}"
-        )
-        .ok();
-
         source
+    }
+
+    fn vix_version_rows(&self) -> Vec<(String, String)> {
+        let mut rows = Vec::new();
+        for krate in &self.crates {
+            for version in &krate.vix_versions {
+                rows.push((krate.name.clone(), version.clone()));
+            }
+        }
+        rows
     }
 
     fn vix_clauses(&self) -> VixClauses {
@@ -400,7 +483,7 @@ impl Fixture {
                 clauses.push(vix_clause(
                     next_id,
                     &version_guards,
-                    consequent_version(&dep.name, "0.1.0"),
+                    consequent_version(&dep.name, &dep.req),
                     Some(dep_gate(krate, dep)),
                 ));
                 next_id += 1;
@@ -423,6 +506,66 @@ impl Fixture {
                         Some(dep_gate(krate, dep)),
                     ));
                     next_id += 1;
+                }
+            }
+
+            for (version, deps) in &krate.vix_version_deps {
+                for dep in deps {
+                    let selected_guard = guard_selected(&krate.name, version);
+                    if !dep.optional {
+                        clauses.push(vix_clause(
+                            next_id,
+                            &[guard_in_graph(&krate.name), selected_guard.clone()],
+                            consequent_in_graph(&dep.name),
+                            Some(dep_gate(krate, dep)),
+                        ));
+                        next_id += 1;
+                    }
+
+                    let version_guards = if dep.optional {
+                        vec![
+                            guard_in_graph(&krate.name),
+                            selected_guard.clone(),
+                            guard_in_graph(&dep.name),
+                        ]
+                    } else {
+                        vec![guard_in_graph(&krate.name), selected_guard.clone()]
+                    };
+                    clauses.push(vix_clause(
+                        next_id,
+                        &version_guards,
+                        consequent_version(&dep.name, &dep.req),
+                        Some(dep_gate(krate, dep)),
+                    ));
+                    next_id += 1;
+
+                    if dep.default_features {
+                        clauses.push(vix_clause(
+                            next_id,
+                            &[
+                                guard_in_graph(&krate.name),
+                                selected_guard.clone(),
+                                guard_in_graph(&dep.name),
+                            ],
+                            consequent_feature(&dep.name, "default"),
+                            Some(dep_gate(krate, dep)),
+                        ));
+                        next_id += 1;
+                    }
+
+                    for feature in &dep.features {
+                        clauses.push(vix_clause(
+                            next_id,
+                            &[
+                                guard_in_graph(&krate.name),
+                                selected_guard.clone(),
+                                guard_in_graph(&dep.name),
+                            ],
+                            consequent_feature(&dep.name, feature),
+                            Some(dep_gate(krate, dep)),
+                        ));
+                        next_id += 1;
+                    }
                 }
             }
 
@@ -537,6 +680,16 @@ impl Fixture {
                     register_feature(&mut features, &dep.name, feature);
                 }
             }
+            for deps in krate.vix_version_deps.values() {
+                for dep in deps {
+                    if dep.default_features {
+                        register_feature(&mut features, &dep.name, "default");
+                    }
+                    for feature in &dep.features {
+                        register_feature(&mut features, &dep.name, feature);
+                    }
+                }
+            }
             for enables in krate.features.values() {
                 for enable in enables {
                     if let Some(dep_name) = enable.strip_prefix("dep:") {
@@ -605,9 +758,19 @@ impl VixClauses {
                 vix_string(guard.tag())
             ));
             self.inserts.push(format!(
+                "let guard_kinds = guard_kinds.insert({guard_id}, {});",
+                guard.kind()
+            ));
+            self.inserts.push(format!(
                 "let guard_pkgs = guard_pkgs.insert({guard_id}, {});",
                 self.pkg_id(guard.pkg())
             ));
+            if let Some(version) = guard.version() {
+                self.inserts.push(format!(
+                    "let guard_versions = guard_versions.insert({guard_id}, {});",
+                    vix_string(version)
+                ));
+            }
             self.inserts.push(format!(
                 "let guard_features = guard_features.insert({guard_id}, {});",
                 self.feature_id_or_zero(guard.pkg(), guard.feature())
@@ -677,27 +840,46 @@ struct VixClause {
 #[derive(Clone)]
 enum VixGuard {
     InGraph { name: String },
+    Selected { name: String, version: String },
     Feature { name: String, feature: String },
 }
 
 impl VixGuard {
+    fn kind(&self) -> i32 {
+        match self {
+            Self::InGraph { .. } => 0,
+            Self::Selected { .. } => 1,
+            Self::Feature { .. } => 2,
+        }
+    }
+
     fn tag(&self) -> &'static str {
         match self {
             Self::InGraph { .. } => "in_graph",
+            Self::Selected { .. } => "selected",
             Self::Feature { .. } => "feature",
         }
     }
 
     fn pkg(&self) -> &str {
         match self {
-            Self::InGraph { name } | Self::Feature { name, .. } => name,
+            Self::InGraph { name } | Self::Selected { name, .. } | Self::Feature { name, .. } => {
+                name
+            }
+        }
+    }
+
+    fn version(&self) -> Option<&str> {
+        match self {
+            Self::Selected { version, .. } => Some(version),
+            Self::InGraph { .. } | Self::Feature { .. } => None,
         }
     }
 
     fn feature(&self) -> &str {
         match self {
             Self::Feature { feature, .. } => feature,
-            Self::InGraph { .. } => "",
+            Self::InGraph { .. } | Self::Selected { .. } => "",
         }
     }
 }
@@ -750,7 +932,7 @@ struct VixGate {
 fn dep_line(dep: &FixtureDep) -> String {
     let mut attrs = vec![
         format!("path = \"../{}\"", dep.name),
-        "version = \"0.1.0\"".to_owned(),
+        format!("version = \"{}\"", dep.req),
     ];
     if dep.optional {
         attrs.push("optional = true".to_owned());
@@ -830,6 +1012,71 @@ fn rendered_name_set(value: RenderedValue) -> Result<BTreeSet<String>, String> {
         .collect())
 }
 
+#[derive(Clone, Copy, Debug)]
+struct TraceCounts {
+    demanded: usize,
+    spawned_invocations: usize,
+}
+
+impl TraceCounts {
+    fn total(self) -> usize {
+        self.demanded + self.spawned_invocations
+    }
+}
+
+fn trace_counts(machine: &Machine, names: &[&str]) -> Result<TraceCounts, String> {
+    let hashes = names
+        .iter()
+        .map(|name| {
+            machine
+                .fn_hash(name)
+                .ok_or_else(|| format!("missing function hash for {name}"))
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    let mut demanded = 0;
+    let mut spawned_invocations = 0;
+    for event in machine.trace() {
+        match event {
+            DriveEvent::Demanded { fn_hash } if hashes.contains(fn_hash) => demanded += 1,
+            DriveEvent::SpawnedInvocation { fn_hash, .. } if hashes.contains(fn_hash) => {
+                spawned_invocations += 1;
+            }
+            _ => {}
+        }
+    }
+    Ok(TraceCounts {
+        demanded,
+        spawned_invocations,
+    })
+}
+
+fn trace_tail(machine: &Machine) -> String {
+    let names = machine
+        .fn_hashes()
+        .into_iter()
+        .map(|(name, hash)| (hash, name))
+        .collect::<BTreeMap<_, _>>();
+    let trace = machine.trace();
+    let start = trace.len().saturating_sub(180);
+    let mut out = String::from("trace tail:");
+    for (index, event) in trace.iter().enumerate().skip(start) {
+        let name = match event {
+            DriveEvent::Demanded { fn_hash }
+            | DriveEvent::Spawned { fn_hash }
+            | DriveEvent::ParkedOn { fn_hash }
+            | DriveEvent::Completed { fn_hash }
+            | DriveEvent::SpawnedInvocation { fn_hash, .. }
+            | DriveEvent::MemoHit { fn_hash }
+            | DriveEvent::MemoProjectionHit { fn_hash, .. }
+            | DriveEvent::MemoSemanticHit { fn_hash, .. } => names.get(fn_hash).map(String::as_str),
+            _ => None,
+        }
+        .unwrap_or("<unknown>");
+        write!(out, "\n  {index}: {name}: {event:?}").ok();
+    }
+    out
+}
+
 fn pkg_fn(name: &str) -> String {
     let mut out = String::from("pkg_");
     for ch in name.chars() {
@@ -849,6 +1096,13 @@ fn vix_string(value: &str) -> String {
 fn guard_in_graph(name: &str) -> VixGuard {
     VixGuard::InGraph {
         name: name.to_owned(),
+    }
+}
+
+fn guard_selected(name: &str, version: &str) -> VixGuard {
+    VixGuard::Selected {
+        name: name.to_owned(),
+        version: version.to_owned(),
     }
 }
 
@@ -1039,5 +1293,42 @@ fn transitive_dev_dependency_is_not_consumed() {
     assert!(
         !selected.contains("testonly"),
         "dev dep of lib not built: {selected:?}"
+    );
+}
+
+#[test]
+fn version_conflict_backtracks_and_installs_learned_no_good() {
+    let fixture = Fixture::new("version-conflict-learn", "app")
+        .krate(FixtureCrate::new("shared").version("1.0.0"))
+        .krate(
+            FixtureCrate::new("app")
+                .version("0.1.0")
+                .vix_version("0.2.0")
+                .dep(FixtureDep::new("shared").req("=1.0.0"))
+                .vix_version_dep("0.2.0", FixtureDep::new("shared").req("=2.0.0")),
+        );
+
+    let selected = fixture.assert_selection_matches(LINUX).unwrap();
+    assert!(selected.contains("app"), "app selected: {selected:?}");
+    assert!(selected.contains("shared"), "shared selected: {selected:?}");
+    assert_eq!(
+        fixture.vix_learned_count(LINUX).unwrap(),
+        1,
+        "the failed high lib candidate should install one active no-good"
+    );
+}
+
+#[test]
+fn rodin_linear_interiors_use_tail_loops() {
+    let fixture = Fixture::new("tail-loop-trace", "app")
+        .krate(FixtureCrate::new("leaf"))
+        .krate(FixtureCrate::new("mid").dep(FixtureDep::new("leaf")))
+        .krate(FixtureCrate::new("app").dep(FixtureDep::new("mid")));
+
+    let enabled = fixture.rodin_trace_counts(LINUX, false).unwrap();
+    let forced = fixture.rodin_trace_counts(LINUX, true).unwrap();
+    assert!(
+        enabled.total() < forced.total(),
+        "tail-loop trace should shrink linear recursion events: enabled={enabled:?} forced={forced:?}"
     );
 }

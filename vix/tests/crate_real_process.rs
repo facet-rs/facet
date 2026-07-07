@@ -348,7 +348,9 @@ fn fixture_index() -> Index {
 
     let guard_clause_ids: Map<Int, Int> = {};
     let guard_tags: Map<Int, String> = {};
+    let guard_kinds: Map<Int, Int> = {};
     let guard_pkgs: Map<Int, Int> = {};
+    let guard_versions: Map<Int, String> = {};
     let guard_features: Map<Int, Int> = {};
     let consequent_tags: Map<Int, String> = {};
     let consequent_pkgs: Map<Int, Int> = {};
@@ -359,6 +361,7 @@ fn fixture_index() -> Index {
 
     let guard_clause_ids = guard_clause_ids.insert(0, 0);
     let guard_tags = guard_tags.insert(0, "in_graph");
+    let guard_kinds = guard_kinds.insert(0, 0);
     let guard_pkgs = guard_pkgs.insert(0, 3);
     let guard_features = guard_features.insert(0, 0);
     let consequent_tags = consequent_tags.insert(0, "in_graph");
@@ -369,6 +372,7 @@ fn fixture_index() -> Index {
 
     let guard_clause_ids = guard_clause_ids.insert(1, 1);
     let guard_tags = guard_tags.insert(1, "in_graph");
+    let guard_kinds = guard_kinds.insert(1, 0);
     let guard_pkgs = guard_pkgs.insert(1, 3);
     let guard_features = guard_features.insert(1, 0);
     let consequent_tags = consequent_tags.insert(1, "version_set");
@@ -379,6 +383,7 @@ fn fixture_index() -> Index {
 
     let guard_clause_ids = guard_clause_ids.insert(2, 2);
     let guard_tags = guard_tags.insert(2, "in_graph");
+    let guard_kinds = guard_kinds.insert(2, 0);
     let guard_pkgs = guard_pkgs.insert(2, 3);
     let guard_features = guard_features.insert(2, 0);
     let consequent_tags = consequent_tags.insert(2, "in_graph");
@@ -389,6 +394,7 @@ fn fixture_index() -> Index {
 
     let guard_clause_ids = guard_clause_ids.insert(3, 3);
     let guard_tags = guard_tags.insert(3, "in_graph");
+    let guard_kinds = guard_kinds.insert(3, 0);
     let guard_pkgs = guard_pkgs.insert(3, 3);
     let guard_features = guard_features.insert(3, 0);
     let consequent_tags = consequent_tags.insert(3, "version_set");
@@ -399,6 +405,7 @@ fn fixture_index() -> Index {
 
     let guard_clause_ids = guard_clause_ids.insert(4, 4);
     let guard_tags = guard_tags.insert(4, "in_graph");
+    let guard_kinds = guard_kinds.insert(4, 0);
     let guard_pkgs = guard_pkgs.insert(4, 0);
     let guard_features = guard_features.insert(4, 0);
     let consequent_tags = consequent_tags.insert(4, "in_graph");
@@ -409,6 +416,7 @@ fn fixture_index() -> Index {
 
     let guard_clause_ids = guard_clause_ids.insert(5, 5);
     let guard_tags = guard_tags.insert(5, "in_graph");
+    let guard_kinds = guard_kinds.insert(5, 0);
     let guard_pkgs = guard_pkgs.insert(5, 0);
     let guard_features = guard_features.insert(5, 0);
     let consequent_tags = consequent_tags.insert(5, "version_set");
@@ -427,7 +435,9 @@ fn fixture_index() -> Index {
         guard_ids: [0, 1, 2, 3, 4, 5],
         guard_clause_ids: guard_clause_ids,
         guard_tags: guard_tags,
+        guard_kinds: guard_kinds,
         guard_pkgs: guard_pkgs,
+        guard_versions: guard_versions,
         guard_features: guard_features,
         consequent_tags: consequent_tags,
         consequent_pkgs: consequent_pkgs,

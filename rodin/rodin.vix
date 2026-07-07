@@ -132,6 +132,7 @@ struct State {
     features: Map<Int, Bool>,
     hypotheses: [Hypothesis],
     applied: Map<Int, Bool>,
+    learned: [LearnedNoGood],
 }
 
 // ---------------------------------------------------------------------------
@@ -143,6 +144,7 @@ struct State {
 // ---------------------------------------------------------------------------
 
 struct Region {
+    packages: [Int],
     versions: Map<Int, VersionSet>,
     features: Map<FeaturePolarity, Bool>,
 }
@@ -174,7 +176,9 @@ struct Index {
     guard_ids: [Int],
     guard_clause_ids: Map<Int, Int>,
     guard_tags: Map<Int, String>,
+    guard_kinds: Map<Int, Int>,
     guard_pkgs: Map<Int, Int>,
+    guard_versions: Map<Int, String>,
     guard_features: Map<Int, Int>,
     consequent_tags: Map<Int, String>,
     consequent_pkgs: Map<Int, Int>,
@@ -199,21 +203,28 @@ struct Problem {
 struct SolveResult {
     selected: Map<Int, Version>,
     enabled_features: Map<Int, Map<String, Bool>>,
+    learned_count: Int,
 }
 
 enum Step {
-    Conflict,
+    Conflict(ConflictInfo),
     Pass { state: State, changed: Bool },
 }
 
 enum SearchResult {
-    Failed,
+    Failed(State),
     Solved(State),
 }
 
 enum PackageChoice {
     NoPackage,
     Picked(Int),
+}
+
+struct ConflictInfo {
+    state: State,
+    pkg: Int,
+    clause_id: Int,
 }
 
 fn universe() -> VersionSet {
@@ -254,17 +265,25 @@ fn stored_clause(clause: Clause) -> Clause {
     values.insert("clause", clause).get("clause").unwrap()
 }
 
+fn learned_no_good_from_realized(fact: LearnedNoGood) -> LearnedNoGood {
+    fact
+}
+
+fn hypothesis_from_realized(hypothesis: Hypothesis) -> Hypothesis {
+    hypothesis
+}
+
 fn empty_state() -> State {
     let domains: Map<Int, Domain> = {};
     let features: Map<Int, Bool> = {};
     let applied: Map<Int, Bool> = {};
-    stored_state(State { domains: domains, features: features, hypotheses: [], applied: applied })
+    stored_state(State { domains: domains, features: features, hypotheses: [], applied: applied, learned: [] })
 }
 
 fn empty_result() -> SolveResult {
     let selected: Map<Int, Version> = {};
     let enabled_features: Map<Int, Map<String, Bool>> = {};
-    SolveResult { selected: selected, enabled_features: enabled_features }
+    SolveResult { selected: selected, enabled_features: enabled_features, learned_count: 0 }
 }
 
 fn bool_or(left: Bool, right: Bool) -> Bool {
@@ -278,12 +297,32 @@ fn bool_or4(a: Bool, b: Bool, c: Bool, d: Bool) -> Bool {
     bool_or(bool_or(a, b), bool_or(c, d))
 }
 
+fn no_clause_id() -> Int {
+    999999
+}
+
+fn conflict_info(state: State, pkg: Int, clause_id: Int) -> ConflictInfo {
+    ConflictInfo { state: state, pkg: pkg, clause_id: clause_id }
+}
+
 fn default_domain() -> Domain {
     stored_domain(Domain { active: false, allowed: universe(), selected: None })
 }
 
 fn domain_from_realized(domain: Domain) -> Domain {
     domain
+}
+
+fn version_set_from_realized(versions: VersionSet) -> VersionSet {
+    versions
+}
+
+fn region_versions_for(region: Region, pkg: Int) -> VersionSet {
+    version_set_from_realized(region.versions.get(pkg).unwrap())
+}
+
+fn consequent_version_set_for(index: Index, clause_id: Int) -> VersionSet {
+    version_set_from_realized(index.consequent_version_sets.get(clause_id).unwrap())
 }
 
 fn domain_for(state: State, pkg: Int) -> Domain {
@@ -315,8 +354,15 @@ fn narrow(index: Index, state: State, pkg: Int, allowed: VersionSet) -> Step {
     let old = domain_for(state, pkg);
     let next_allowed = old.allowed.intersect(allowed);
     match selected_allowed(old.selected, next_allowed) {
-        false => Step::Conflict,
+        false => Step::Conflict(conflict_info(state, pkg, no_clause_id())),
         true => narrow_success(state, pkg, old, next_allowed),
+    }
+}
+
+fn narrow_for_clause(index: Index, state: State, pkg: Int, allowed: VersionSet, clause_id: Int) -> Step {
+    match narrow(index, state, pkg, allowed) {
+        Step::Conflict(_) => Step::Conflict(conflict_info(state, pkg, clause_id)),
+        Step::Pass { state: next, changed: changed } => Step::Pass { state: next, changed: changed },
     }
 }
 
@@ -349,6 +395,14 @@ fn select_version(state: State, pkg: Int, version: Version) -> State {
     )
 }
 
+fn hypothesize_version(state: State, pkg: Int, version: Version) -> State {
+    let selected = select_version(state, pkg, version);
+    stored_state(State {
+        hypotheses: selected.hypotheses.push(Hypothesis { pkg: pkg, version: version }),
+        ..selected
+    })
+}
+
 fn version_gt(left: Version, right: Version) -> Bool {
     version_lte(right, left) && (left != right)
 }
@@ -365,9 +419,12 @@ fn insert_asc_after_tuple(version: Version, popped: (Int, [Version])) -> [Versio
 }
 
 fn insert_asc_after_pop(version: Version, last: Version, rest: [Version]) -> [Version] {
-    match version_lte(last, version) {
-        true => rest.push(last).push(version),
-        false => insert_asc(version, rest).push(last),
+    let versions: Map<String, Version> = {};
+    let versions = versions.insert("last", last);
+    let versions = versions.insert("version", version);
+    match version_lte(versions.get("last").unwrap(), versions.get("version").unwrap()) {
+        true => rest.push(versions.get("last").unwrap()).push(versions.get("version").unwrap()),
+        false => insert_asc(versions.get("version").unwrap(), rest).push(versions.get("last").unwrap()),
     }
 }
 
@@ -389,45 +446,48 @@ fn sort_versions_after_tuple(popped: (Int, [Version]), sorted: [Version]) -> [Ve
 fn filter_allowed(versions: [Version], allowed: VersionSet, out: [Version]) -> [Version] {
     match versions.len() == 0 {
         true => out,
-        false => filter_allowed_tuple(versions.pop(), allowed, out),
+        false => match versions.pop() {
+            popped => match allowed.contains(popped.0) {
+                true => filter_allowed(popped.1, allowed, out.push(popped.0)),
+                false => filter_allowed(popped.1, allowed, out),
+            },
+        },
     }
 }
 
-fn filter_allowed_tuple(popped: (Int, [Version]), allowed: VersionSet, out: [Version]) -> [Version] {
-    filter_allowed_one(popped.0, popped.1, allowed, out)
-}
-
-fn filter_allowed_one(version: Version, rest: [Version], allowed: VersionSet, out: [Version]) -> [Version] {
-    let next = match allowed.contains(version) {
-        true => out.push(version),
-        false => out,
-    };
-    filter_allowed(rest, allowed, next)
-}
-
 fn candidates_for(index: Index, pkg: Int, allowed: VersionSet) -> [Version] {
-    sort_versions(candidates_from_rows(index, pkg, allowed, index.version_ids, []))
+    reverse_versions(candidates_from_rows(index, pkg, allowed, index.version_ids, []), [])
+}
+
+fn reverse_versions(versions: [Version], out: [Version]) -> [Version] {
+    match versions.len() == 0 {
+        true => out,
+        false => match versions.pop() {
+            popped => reverse_versions(popped.1, out.push(popped.0)),
+        },
+    }
 }
 
 fn candidates_from_rows(index: Index, pkg: Int, allowed: VersionSet, version_ids: [Int], out: [Version]) -> [Version] {
     match version_ids.len() == 0 {
         true => out,
-        false => candidates_from_rows_tuple(index, pkg, allowed, version_ids.pop(), out),
+        false => match version_ids.pop() {
+            popped => match candidate_row_allowed(index, pkg, allowed, popped.0) {
+                true => candidates_from_rows(index, pkg, allowed, popped.1, out.push(candidate_row_version(index, popped.0))),
+                false => candidates_from_rows(index, pkg, allowed, popped.1, out),
+            },
+        },
     }
 }
 
-fn candidates_from_rows_tuple(index: Index, pkg: Int, allowed: VersionSet, popped: (Int, [Int]), out: [Version]) -> [Version] {
-    candidates_from_row(index, pkg, allowed, popped.0, popped.1, out)
+fn candidate_row_version(index: Index, version_id: Int) -> Version {
+    rodin_version(index.version_values.get(version_id).unwrap())
 }
 
-fn candidates_from_row(index: Index, pkg: Int, allowed: VersionSet, version_id: Int, rest: [Int], out: [Version]) -> [Version] {
+fn candidate_row_allowed(index: Index, pkg: Int, allowed: VersionSet, version_id: Int) -> Bool {
     let row_pkg = index.version_pkgs.get(version_id).unwrap();
-    let version = rodin_version(index.version_values.get(version_id).unwrap());
-    let next = match row_pkg == pkg && allowed.contains(version) {
-        true => out.push(version),
-        false => out,
-    };
-    candidates_from_rows(index, pkg, allowed, rest, next)
+    let version = candidate_row_version(index, version_id);
+    row_pkg == pkg && allowed.contains(version)
 }
 
 fn force_singletons(index: Index, state: State) -> Step {
@@ -437,35 +497,57 @@ fn force_singletons(index: Index, state: State) -> Step {
 fn force_singletons_over(index: Index, state: State, packages: [Int], changed: Bool) -> Step {
     match packages.len() == 0 {
         true => Step::Pass { state: state, changed: changed },
-        false => force_singleton_tuple(index, state, packages.pop(), changed),
-    }
-}
-
-fn force_singleton_tuple(index: Index, state: State, popped: (Int, [Int]), changed: Bool) -> Step {
-    force_singleton_package(index, state, popped.0, popped.1, changed)
-}
-
-fn force_singleton_package(index: Index, state: State, pkg: Int, rest: [Int], changed: Bool) -> Step {
-    let domain = domain_for(state, pkg);
-    match domain.active {
-        false => force_singletons_over(index, state, rest, changed),
-        true => match domain.selected {
-            Some(version) => match domain.allowed.contains(version) {
-                true => force_singletons_over(index, state, rest, changed),
-                false => Step::Conflict,
+        false => match packages.pop() {
+            popped => match force_singleton_step(index, state, popped.0, changed) {
+                Step::Conflict(conflict) => Step::Conflict(conflict),
+                Step::Pass { state: next, changed: next_changed } =>
+                    force_singletons_over(index, next, popped.1, next_changed),
             },
-            None => force_undecided_singleton(index, state, pkg, rest, changed, domain.allowed),
         },
     }
 }
 
-fn force_undecided_singleton(index: Index, state: State, pkg: Int, rest: [Int], changed: Bool, allowed: VersionSet) -> Step {
+fn force_singleton_step(index: Index, state: State, pkg: Int, changed: Bool) -> Step {
+    let domain = domain_for(state, pkg);
+    match domain.active {
+        false => Step::Pass { state: state, changed: changed },
+        true => match domain.selected {
+            Some(version) => match domain.allowed.contains(version) {
+                true => Step::Pass { state: state, changed: changed },
+                false => Step::Conflict(conflict_info(state, pkg, no_clause_id())),
+            },
+            None => force_undecided_singleton(index, state, pkg, changed, domain.allowed),
+        },
+    }
+}
+
+fn force_undecided_singleton(index: Index, state: State, pkg: Int, changed: Bool, allowed: VersionSet) -> Step {
     let candidates = candidates_for(index, pkg, allowed);
     match candidates.len() == 0 {
-        true => Step::Conflict,
+        true => Step::Conflict(conflict_info(state, pkg, no_clause_id())),
         false => match candidates.len() == 1 {
-            true => force_singletons_over(index, select_version(state, pkg, candidates.pop().0), rest, true),
-            false => force_singletons_over(index, state, rest, changed),
+            true => match package_has_selected_guard(index, pkg, index.guard_ids) {
+                true => Step::Pass { state: state, changed: changed },
+                false => match candidates.pop() {
+                    popped => Step::Pass { state: select_version(state, pkg, popped.0), changed: true },
+                },
+            },
+            false => Step::Pass { state: state, changed: changed },
+        },
+    }
+}
+
+fn package_has_selected_guard(index: Index, pkg: Int, guard_ids: [Int]) -> Bool {
+    match guard_ids.len() == 0 {
+        true => false,
+        false => match guard_ids.pop() {
+            popped => match index.guard_versions.get(popped.0) {
+                Some(_) => match index.guard_pkgs.get(popped.0).unwrap() == pkg {
+                    true => true,
+                    false => package_has_selected_guard(index, pkg, popped.1),
+                },
+                None => package_has_selected_guard(index, pkg, popped.1),
+            },
         },
     }
 }
@@ -508,6 +590,14 @@ fn selected_is(state: State, pkg: Int, version: Version) -> Bool {
     let domain = domain_for(state, pkg);
     match domain.selected {
         Some(selected) => selected == version,
+        None => false,
+    }
+}
+
+fn selected_matches_version_text(state: State, pkg: Int, version: String) -> Bool {
+    let domain = domain_for(state, pkg);
+    match domain.selected {
+        Some(selected) => VersionSet::from_req("=" + version).contains(selected),
         None => false,
     }
 }
@@ -558,7 +648,7 @@ fn apply_clause_id(index: Index, state: State, target: String, clause_id: Int, r
     match gate_active_id(index, clause_id, target) && guard_ids_hold_for_clause(index, state, clause_id, index.guard_ids) {
         false => apply_clause_id_list(index, state, target, rest, changed),
         true => match apply_consequent_id(index, state, clause_id) {
-            Step::Conflict => Step::Conflict,
+            Step::Conflict(conflict) => Step::Conflict(conflict),
             Step::Pass { state: next, changed: clause_changed } =>
                 apply_clause_id_list(index, next, target, rest, bool_or(changed, clause_changed)),
         },
@@ -576,27 +666,26 @@ fn gate_active_id(index: Index, clause_id: Int, target: String) -> Bool {
 fn guard_ids_hold_for_clause(index: Index, state: State, clause_id: Int, guard_ids: [Int]) -> Bool {
     match guard_ids.len() == 0 {
         true => true,
-        false => guard_ids_hold_for_clause_tuple(index, state, clause_id, guard_ids.pop()),
-    }
-}
-
-fn guard_ids_hold_for_clause_tuple(index: Index, state: State, clause_id: Int, popped: (Int, [Int])) -> Bool {
-    guard_id_for_clause_holds(index, state, clause_id, popped.0) && guard_ids_hold_for_clause(index, state, clause_id, popped.1)
-}
-
-fn guard_id_for_clause_holds(index: Index, state: State, clause_id: Int, guard_id: Int) -> Bool {
-    match index.guard_clause_ids.get(guard_id).unwrap() == clause_id {
-        true => guard_id_holds(index, state, guard_id),
-        false => true,
+        false => match guard_ids.pop() {
+            popped => match index.guard_clause_ids.get(popped.0).unwrap() == clause_id {
+                true => match guard_id_holds(index, state, popped.0) {
+                    true => guard_ids_hold_for_clause(index, state, clause_id, popped.1),
+                    false => false,
+                },
+                false => guard_ids_hold_for_clause(index, state, clause_id, popped.1),
+            },
+        },
     }
 }
 
 fn guard_id_holds(index: Index, state: State, guard_id: Int) -> Bool {
-    let tag = index.guard_tags.get(guard_id).unwrap();
     let pkg = index.guard_pkgs.get(guard_id).unwrap();
-    match tag == "in_graph" {
-        true => domain_for(state, pkg).active,
-        false => feature_enabled(state, index.guard_features.get(guard_id).unwrap()),
+    match index.guard_versions.get(guard_id) {
+        Some(version) => selected_matches_version_text(state, pkg, version),
+        None => match index.guard_kinds.get(guard_id).unwrap() == 2 {
+            true => feature_enabled(state, index.guard_features.get(guard_id).unwrap()),
+            false => domain_for(state, pkg).active,
+        },
     }
 }
 
@@ -606,14 +695,376 @@ fn apply_consequent_id(index: Index, state: State, clause_id: Int) -> Step {
     match tag == "in_graph" {
         true => activate(index, state, pkg),
         false => match tag == "version_set" {
-            true => narrow(index, state, pkg, index.consequent_version_sets.get(clause_id).unwrap()),
+            true => narrow_for_clause(index, state, pkg, consequent_version_set_for(index, clause_id), clause_id),
             false => enable_feature(state, index.consequent_features.get(clause_id).unwrap()),
         },
     }
 }
 
-fn apply_learned_no_goods(state: State) -> Step {
-    Step::Pass { state: state, changed: false }
+fn empty_region() -> Region {
+    let versions: Map<Int, VersionSet> = {};
+    let features: Map<FeaturePolarity, Bool> = {};
+    Region { packages: [], versions: versions, features: features }
+}
+
+fn int_array_contains(values: [Int], value: Int) -> Bool {
+    match values.len() == 0 {
+        true => false,
+        false => match values.pop() {
+            popped => match popped.0 == value {
+                true => true,
+                false => int_array_contains(popped.1, value),
+            },
+        },
+    }
+}
+
+fn push_unique_int(values: [Int], value: Int) -> [Int] {
+    match int_array_contains(values, value) {
+        true => values,
+        false => values.push(value),
+    }
+}
+
+fn region_with_versions(region: Region, pkg: Int, versions: VersionSet) -> Region {
+    Region {
+        packages: push_unique_int(region.packages, pkg),
+        versions: region.versions.insert(pkg, versions),
+        features: region.features,
+    }
+}
+
+fn empty_version_set() -> VersionSet {
+    VersionSet::from_req("<0.0.0")
+}
+
+fn exact_version_set(index: Index, pkg: Int, version: Version) -> VersionSet {
+    exact_version_set_rows(index, pkg, version, index.version_ids)
+}
+
+fn exact_version_set_rows(index: Index, pkg: Int, version: Version, version_ids: [Int]) -> VersionSet {
+    match version_ids.len() == 0 {
+        true => empty_version_set(),
+        false => match version_ids.pop() {
+            popped => match index.version_pkgs.get(popped.0).unwrap() == pkg
+                && VersionSet::from_req("=" + index.version_values.get(popped.0).unwrap()).contains(version) {
+                true => VersionSet::from_req("=" + index.version_values.get(popped.0).unwrap()),
+                false => exact_version_set_rows(index, pkg, version, popped.1),
+            },
+        },
+    }
+}
+
+fn selected_version_set(index: Index, state: State, pkg: Int) -> Option<VersionSet> {
+    match domain_for(state, pkg).selected {
+        Some(version) => Some(exact_version_set(index, pkg, version)),
+        None => None,
+    }
+}
+
+fn region_with_selected_pkg(index: Index, state: State, region: Region, pkg: Int) -> Region {
+    match selected_version_set(index, state, pkg) {
+        Some(versions) => region_with_versions(region, pkg, versions),
+        None => region,
+    }
+}
+
+fn region_from_support(index: Index, state: State, packages: [Int], region: Region) -> Region {
+    match packages.len() == 0 {
+        true => region,
+        false => match packages.pop() {
+            popped => region_from_support(
+                index,
+                state,
+                popped.1,
+                region_with_selected_pkg(index, state, region, popped.0),
+            ),
+        },
+    }
+}
+
+fn last_hypothesis(state: State) -> Option<Hypothesis> {
+    match state.hypotheses.len() == 0 {
+        true => None,
+        false => last_hypothesis_after_pop(state.hypotheses.pop()),
+    }
+}
+
+fn last_hypothesis_after_pop(popped: (Int, [Hypothesis])) -> Option<Hypothesis> {
+    Some(hypothesis_from_realized(popped.0))
+}
+
+fn selected_guard_for_clause(index: Index, clause_id: Int, guard_ids: [Int]) -> Option<Int> {
+    match guard_ids.len() == 0 {
+        true => None,
+        false => match guard_ids.pop() {
+            popped => match index.guard_clause_ids.get(popped.0).unwrap() == clause_id {
+                true => match index.guard_versions.get(popped.0) {
+                    Some(_) => Some(popped.0),
+                    None => selected_guard_for_clause(index, clause_id, popped.1),
+                },
+                false => selected_guard_for_clause(index, clause_id, popped.1),
+            },
+        },
+    }
+}
+
+fn conflict_support(index: Index, pkg: Int, clause_id: Int) -> [Int] {
+    let support = push_unique_int([], pkg);
+    match selected_guard_for_clause(index, clause_id, index.guard_ids) {
+        Some(guard_id) => push_unique_int(support, index.guard_pkgs.get(guard_id).unwrap()),
+        None => support,
+    }
+}
+
+fn point_region_for_conflict(index: Index, state: State, pkg: Int, clause_id: Int) -> Region {
+    let region = region_from_support(index, state, conflict_support(index, pkg, clause_id), empty_region());
+    match last_hypothesis(state) {
+        Some(hypothesis) => match int_array_contains(region.packages, hypothesis.pkg) {
+            true => region,
+            false => region_with_versions(region, hypothesis.pkg, exact_version_set(index, hypothesis.pkg, hypothesis.version)),
+        },
+        None => region,
+    }
+}
+
+fn matching_selected_clause_exists(index: Index, reference_clause: Int, parent_pkg: Int, version: String, clause_ids: [Int]) -> Bool {
+    match clause_ids.len() == 0 {
+        true => false,
+        false => match clause_ids.pop() {
+            popped => match selected_guard_for_clause(index, popped.0, index.guard_ids) {
+                Some(guard_id) => match index.guard_pkgs.get(guard_id).unwrap() == parent_pkg
+                    && index.guard_versions.get(guard_id).unwrap() == version
+                    && clause_same_effect(index, reference_clause, popped.0) {
+                    true => true,
+                    false => matching_selected_clause_exists(index, reference_clause, parent_pkg, version, popped.1),
+                },
+                None => matching_selected_clause_exists(index, reference_clause, parent_pkg, version, popped.1),
+            },
+        },
+    }
+}
+
+fn clause_same_effect(index: Index, left: Int, right: Int) -> Bool {
+    index.consequent_tags.get(left).unwrap() == index.consequent_tags.get(right).unwrap()
+        && index.consequent_pkgs.get(left).unwrap() == index.consequent_pkgs.get(right).unwrap()
+        && consequent_version_set_for(index, left) == consequent_version_set_for(index, right)
+        && index.consequent_features.get(left).unwrap() == index.consequent_features.get(right).unwrap()
+        && index.gate_kinds.get(left).unwrap() == index.gate_kinds.get(right).unwrap()
+        && gate_target_same(index, left, right)
+}
+
+fn gate_target_same(index: Index, left: Int, right: Int) -> Bool {
+    match index.gate_targets.get(left) {
+        Some(_) => false,
+        None => match index.gate_targets.get(right) {
+            Some(_) => false,
+            None => true,
+        },
+    }
+}
+
+fn widen_versions_for_clause(index: Index, reference_clause: Int, parent_pkg: Int, version_ids: [Int], out: VersionSet) -> VersionSet {
+    match version_ids.len() == 0 {
+        true => out,
+        false => match version_ids.pop() {
+            popped => match index.version_pkgs.get(popped.0).unwrap() == parent_pkg
+                && matching_selected_clause_exists(index, reference_clause, parent_pkg, index.version_values.get(popped.0).unwrap(), index.clause_ids) {
+                true => widen_versions_for_clause(
+                    index,
+                    reference_clause,
+                    parent_pkg,
+                    popped.1,
+                    out.union(VersionSet::from_req("=" + index.version_values.get(popped.0).unwrap())),
+                ),
+                false => widen_versions_for_clause(index, reference_clause, parent_pkg, popped.1, out),
+            },
+        },
+    }
+}
+
+fn widen_region(index: Index, clause_id: Int, region: Region) -> Region {
+    match selected_guard_for_clause(index, clause_id, index.guard_ids) {
+        Some(guard_id) => widen_region_for_parent(index, clause_id, region, index.guard_pkgs.get(guard_id).unwrap()),
+        None => region,
+    }
+}
+
+fn widen_region_for_parent(index: Index, clause_id: Int, region: Region, parent_pkg: Int) -> Region {
+    let widened = widen_versions_for_clause(index, clause_id, parent_pkg, index.version_ids, empty_version_set());
+    match widened == empty_version_set() {
+        true => region,
+        false => region_with_versions(region, parent_pkg, widened),
+    }
+}
+
+fn region_contains_region(outer: Region, inner: Region) -> Bool {
+    region_contains_packages(outer, inner, outer.packages)
+}
+
+fn region_contains_packages(outer: Region, inner: Region, packages: [Int]) -> Bool {
+    match packages.len() == 0 {
+        true => true,
+        false => match packages.pop() {
+            popped => match inner.versions.get(popped.0) {
+                Some(inner_versions) => version_set_from_realized(inner_versions).subset(region_versions_for(outer, popped.0))
+                    && region_contains_packages(outer, inner, popped.1),
+                None => false,
+            },
+        },
+    }
+}
+
+fn learned_contains_region(learned: [LearnedNoGood], region: Region) -> Bool {
+    match learned.len() == 0 {
+        true => false,
+        false => learned_contains_region_after_pop(learned.pop(), region),
+    }
+}
+
+fn learned_contains_region_after_pop(popped: (Int, [LearnedNoGood]), region: Region) -> Bool {
+    let fact = learned_no_good_from_realized(popped.0);
+    match fact.active && region_contains_region(fact.region, region) {
+        true => true,
+        false => learned_contains_region(popped.1, region),
+    }
+}
+
+fn deactivate_contained(learned: [LearnedNoGood], region: Region, out: [LearnedNoGood]) -> [LearnedNoGood] {
+    match learned.len() == 0 {
+        true => out,
+        false => deactivate_contained_after_pop(learned.pop(), region, out),
+    }
+}
+
+fn deactivate_contained_after_pop(popped: (Int, [LearnedNoGood]), region: Region, out: [LearnedNoGood]) -> [LearnedNoGood] {
+    deactivate_contained(popped.1, region, out.push(deactivate_if_contained(learned_no_good_from_realized(popped.0), region)))
+}
+
+fn deactivate_if_contained(fact: LearnedNoGood, region: Region) -> LearnedNoGood {
+    match fact.active && region_contains_region(region, fact.region) {
+        true => LearnedNoGood { active: false, ..fact },
+        false => fact,
+    }
+}
+
+fn install_learned_fact(state: State, fact: LearnedNoGood) -> State {
+    match bool_or(fact.region.packages.len() == 0, learned_contains_region(state.learned, fact.region)) {
+        true => state,
+        false => stored_state(State {
+            learned: deactivate_contained(state.learned, fact.region, []).push(fact),
+            ..state
+        }),
+    }
+}
+
+fn learn(index: Index, conflict: ConflictInfo) -> State {
+    let pkg = conflict.pkg;
+    let clause_id = conflict.clause_id;
+    let state = stored_state(conflict.state);
+    let point = point_region_for_conflict(index, state, pkg, clause_id);
+    let widened = widen_region(index, clause_id, point);
+    install_learned_fact(state, LearnedNoGood { region: widened, active: true })
+}
+
+enum NoGoodStatus {
+    Disjoint,
+    FullyEntered,
+    Unit(Int, VersionSet),
+    Pending,
+}
+
+fn region_unsatisfied_count(state: State, region: Region, packages: [Int], count: Int) -> Int {
+    match packages.len() == 0 {
+        true => count,
+        false => match packages.pop() {
+            popped => match domain_for(state, popped.0).selected {
+                Some(version) => match region_versions_for(region, popped.0).contains(version) {
+                    true => region_unsatisfied_count(state, region, popped.1, count),
+                    false => disjoint_count(),
+                },
+                None => region_unsatisfied_count(state, region, popped.1, count + 1),
+            },
+        },
+    }
+}
+
+fn disjoint_count() -> Int {
+    999998
+}
+
+fn first_unsatisfied_region_pkg(state: State, region: Region, packages: [Int]) -> Int {
+    match packages.len() == 0 {
+        true => no_clause_id(),
+        false => match packages.pop() {
+            popped => match domain_for(state, popped.0).selected {
+                Some(_) => first_unsatisfied_region_pkg(state, region, popped.1),
+                None => popped.0,
+            },
+        },
+    }
+}
+
+fn no_good_status(state: State, region: Region) -> NoGoodStatus {
+    let count = region_unsatisfied_count(state, region, region.packages, 0);
+    match count == disjoint_count() {
+        true => NoGoodStatus::Disjoint,
+        false => match count == 0 {
+            true => NoGoodStatus::FullyEntered,
+            false => match count == 1 {
+                true => no_good_unit_status(state, region),
+                false => NoGoodStatus::Pending,
+            },
+        },
+    }
+}
+
+fn no_good_unit_status(state: State, region: Region) -> NoGoodStatus {
+    let pkg = first_unsatisfied_region_pkg(state, region, region.packages);
+    match domain_for(state, pkg).active {
+        true => NoGoodStatus::Unit(pkg, region_versions_for(region, pkg)),
+        false => NoGoodStatus::Pending,
+    }
+}
+
+fn apply_one_learned_no_good(index: Index, state: State, fact: LearnedNoGood) -> Step {
+    match fact.active {
+        false => Step::Pass { state: state, changed: false },
+        true => match no_good_status(state, fact.region) {
+            NoGoodStatus::Disjoint => Step::Pass { state: state, changed: false },
+            NoGoodStatus::Pending => Step::Pass { state: state, changed: false },
+            NoGoodStatus::FullyEntered => Step::Conflict(conflict_info(state, no_clause_id(), no_clause_id())),
+            NoGoodStatus::Unit(pkg, excluded) => apply_learned_unit(index, state, pkg, excluded),
+        },
+    }
+}
+
+fn apply_learned_unit(index: Index, state: State, pkg: Int, excluded: VersionSet) -> Step {
+    let domain = domain_for(state, pkg);
+    let next_allowed = domain.allowed.intersect(excluded.complement());
+    match next_allowed == domain.allowed {
+        true => Step::Pass { state: state, changed: false },
+        false => narrow(index, state, pkg, next_allowed),
+    }
+}
+
+fn apply_learned_no_goods(index: Index, state: State) -> Step {
+    apply_learned_no_goods_from(index, state, state.learned, false)
+}
+
+fn apply_learned_no_goods_from(index: Index, state: State, facts: [LearnedNoGood], changed: Bool) -> Step {
+    match facts.len() == 0 {
+        true => Step::Pass { state: state, changed: changed },
+        false => apply_learned_no_goods_after_pop(index, state, facts.pop(), changed),
+    }
+}
+
+fn apply_learned_no_goods_after_pop(index: Index, state: State, popped: (Int, [LearnedNoGood]), changed: Bool) -> Step {
+    match apply_one_learned_no_good(index, state, learned_no_good_from_realized(popped.0)) {
+        Step::Conflict(conflict) => Step::Conflict(conflict),
+        Step::Pass { state: next, changed: fact_changed } =>
+            apply_learned_no_goods_from(index, next, popped.1, bool_or(changed, fact_changed)),
+    }
 }
 
 fn check_feature_exclusions(state: State) -> Step {
@@ -621,14 +1072,14 @@ fn check_feature_exclusions(state: State) -> Step {
 }
 
 fn propagate_pass(index: Index, state: State, target: String) -> Step {
-    match apply_learned_no_goods(state) {
-        Step::Conflict => Step::Conflict,
+    match apply_learned_no_goods(index, state) {
+        Step::Conflict(conflict) => Step::Conflict(conflict),
         Step::Pass { state: learned, changed: learned_changed } => match force_singletons(index, learned) {
-            Step::Conflict => Step::Conflict,
+            Step::Conflict(conflict) => Step::Conflict(conflict),
             Step::Pass { state: forced, changed: forced_changed } => match apply_clauses(index, forced, target) {
-                Step::Conflict => Step::Conflict,
+                Step::Conflict(conflict) => Step::Conflict(conflict),
                 Step::Pass { state: clauses, changed: clauses_changed } => match check_feature_exclusions(clauses) {
-                    Step::Conflict => Step::Conflict,
+                    Step::Conflict(conflict) => Step::Conflict(conflict),
                     Step::Pass { state: checked, changed: exclusions_changed } => Step::Pass {
                         state: checked,
                         changed: bool_or4(learned_changed, forced_changed, clauses_changed, exclusions_changed),
@@ -641,7 +1092,7 @@ fn propagate_pass(index: Index, state: State, target: String) -> Step {
 
 fn propagate(index: Index, state: State, target: String) -> SearchResult {
     match propagate_pass(index, state, target) {
-        Step::Conflict => SearchResult::Failed,
+        Step::Conflict(conflict) => SearchResult::Failed(learn(index, conflict)),
         Step::Pass { state: next, changed: changed } => match changed {
             true => propagate(index, next, target),
             false => SearchResult::Solved(next),
@@ -699,7 +1150,7 @@ fn next_undecided_after_pop(state: State, pkg: Int, rest: [Int]) -> PackageChoic
 
 fn try_candidates(index: Index, state: State, target: String, pkg: Int, candidates: [Version]) -> SearchResult {
     match candidates.len() == 0 {
-        true => SearchResult::Failed,
+        true => SearchResult::Failed(state),
         false => try_candidate_tuple(index, state, target, pkg, candidates.pop()),
     }
 }
@@ -709,16 +1160,26 @@ fn try_candidate_tuple(index: Index, state: State, target: String, pkg: Int, pop
 }
 
 fn try_candidate(index: Index, state: State, target: String, pkg: Int, version: Version, rest: [Version]) -> SearchResult {
-    let branch = select_version(state, pkg, version);
+    let branch = hypothesize_version(state, pkg, version);
     match search(index, branch, target) {
         SearchResult::Solved(solution) => SearchResult::Solved(solution),
-        SearchResult::Failed => try_candidates(index, state, target, pkg, rest),
+        SearchResult::Failed(failed) => try_candidates(index, state_with_learned(state, failed), target, pkg, rest),
     }
+}
+
+fn state_with_learned(state: State, learned_state: State) -> State {
+    stored_state(State {
+        domains: state.domains,
+        features: state.features,
+        hypotheses: state.hypotheses,
+        applied: state.applied,
+        learned: learned_state.learned,
+    })
 }
 
 fn search(index: Index, state: State, target: String) -> SearchResult {
     match propagate(index, state, target) {
-        SearchResult::Failed => SearchResult::Failed,
+        SearchResult::Failed(failed) => SearchResult::Failed(failed),
         SearchResult::Solved(propagated) => match all_decided(index, propagated) {
             true => SearchResult::Solved(propagated),
             false => match next_undecided(propagated, index.packages) {
@@ -747,7 +1208,7 @@ fn enable_named_feature_tuple(state: State, popped: (Int, [Int]), changed: Bool)
 
 fn enable_named_feature_after_pop(state: State, feature: Int, rest: [Int], changed: Bool) -> Step {
     match enable_feature(state, feature) {
-        Step::Conflict => Step::Conflict,
+        Step::Conflict(conflict) => Step::Conflict(conflict),
         Step::Pass { state: next, changed: feature_changed } =>
             enable_named_features(next, rest, bool_or(changed, feature_changed)),
     }
@@ -755,7 +1216,7 @@ fn enable_named_feature_after_pop(state: State, feature: Int, rest: [Int], chang
 
 fn seed_root(index: Index, state: State, problem: Problem) -> Step {
     match narrow(index, state, problem.root_pkg, problem.root_req) {
-        Step::Conflict => Step::Conflict,
+        Step::Conflict(conflict) => Step::Conflict(conflict),
         Step::Pass { state: narrowed, changed: narrowed_changed } =>
             seed_root_features(narrowed, problem, narrowed_changed),
     }
@@ -767,7 +1228,7 @@ fn seed_root_features(state: State, problem: Problem, changed: Bool) -> Step {
         false => Step::Pass { state: state, changed: false },
     };
     match with_default {
-        Step::Conflict => Step::Conflict,
+        Step::Conflict(conflict) => Step::Conflict(conflict),
         Step::Pass { state: featured, changed: default_changed } =>
             enable_named_features(featured, problem.root_features, bool_or(changed, default_changed)),
     }
@@ -776,24 +1237,16 @@ fn seed_root_features(state: State, problem: Problem, changed: Bool) -> Step {
 fn selected_from_state(packages: [Int], state: State, selected: Map<Int, Version>) -> Map<Int, Version> {
     match packages.len() == 0 {
         true => selected,
-        false => selected_from_state_tuple(packages.pop(), state, selected),
-    }
-}
-
-fn selected_from_state_tuple(popped: (Int, [Int]), state: State, selected: Map<Int, Version>) -> Map<Int, Version> {
-    selected_from_state_one(popped.0, popped.1, state, selected)
-}
-
-fn selected_from_state_one(pkg: Int, rest: [Int], state: State, selected: Map<Int, Version>) -> Map<Int, Version> {
-    let domain = domain_for(state, pkg);
-    let next = match domain.active {
-        false => selected,
-        true => match domain.selected {
-            Some(version) => selected.insert(pkg, version),
-            None => selected,
+        false => match packages.pop() {
+            popped => match domain_for(state, popped.0).active {
+                false => selected_from_state(popped.1, state, selected),
+                true => match domain_for(state, popped.0).selected {
+                    Some(version) => selected_from_state(popped.1, state, selected.insert(popped.0, version)),
+                    None => selected_from_state(popped.1, state, selected),
+                },
+            },
         },
-    };
-    selected_from_state(rest, state, next)
+    }
 }
 
 fn solve_result(index: Index, state: State) -> SolveResult {
@@ -802,16 +1255,49 @@ fn solve_result(index: Index, state: State) -> SolveResult {
     SolveResult {
         selected: selected_from_state(index.packages, state, selected),
         enabled_features: enabled_features,
+        learned_count: active_learned_count(state.learned, 0),
+    }
+}
+
+fn failed_result(state: State) -> SolveResult {
+    let selected: Map<Int, Version> = {};
+    let enabled_features: Map<Int, Map<String, Bool>> = {};
+    SolveResult {
+        selected: selected,
+        enabled_features: enabled_features,
+        learned_count: active_learned_count(state.learned, 0),
+    }
+}
+
+fn active_learned_count(learned: [LearnedNoGood], count: Int) -> Int {
+    match learned.len() == 0 {
+        true => count,
+        false => active_learned_count_after_pop(learned.pop(), count),
+    }
+}
+
+fn active_learned_count_after_pop(popped: (Int, [LearnedNoGood]), count: Int) -> Int {
+    let fact = learned_no_good_from_realized(popped.0);
+    match fact.active {
+        true => active_learned_count(popped.1, count + 1),
+        false => active_learned_count(popped.1, count),
     }
 }
 
 pub fn solve(index: Index, problem: Problem, target: String) -> SolveResult {
     match seed_root(index, empty_state(), problem) {
-        Step::Conflict => empty_result(),
+        Step::Conflict(_) => empty_result(),
         Step::Pass { state: seeded, .. } => match search(index, seeded, target) {
-            SearchResult::Failed => empty_result(),
+            SearchResult::Failed(failed) => retry_with_learned(index, seeded, failed, target),
             SearchResult::Solved(solution) => solve_result(index, solution),
         },
+    }
+}
+
+fn retry_with_learned(index: Index, seeded: State, failed: State, target: String) -> SolveResult {
+    match search(index, state_with_learned(seeded, failed), target) {
+        SearchResult::Failed(retried) => failed_result(retried),
+        SearchResult::Solved(solution) => solve_result(index, solution),
     }
 }
 
@@ -837,6 +1323,10 @@ fn selected_names_one(index: Index, pkg: Int, rest: [Int], selected: Map<Int, Ve
 pub fn solve_selected_names(index: Index, problem: Problem, target: String) -> [String] {
     let result = solve(index, problem, target);
     selected_names_from(index, index.packages, result.selected, [])
+}
+
+pub fn solve_learned_count(index: Index, problem: Problem, target: String) -> Int {
+    solve(index, problem, target).learned_count
 }
 
 fn append_selected_name(out: String, name: String) -> String {
@@ -868,30 +1358,6 @@ fn selected_names_text_one(index: Index, pkg: Int, rest: [Int], selected: Map<In
 pub fn solve_selected_names_text(index: Index, problem: Problem, target: String) -> String {
     let result = solve(index, problem, target);
     selected_names_text_from(index, index.packages, result.selected, "")
-}
-
-pub fn root_candidate_count(index: Index, problem: Problem) -> Int {
-    candidates_for(index, problem.root_pkg, problem.root_req).len()
-}
-
-pub fn root_version_count(index: Index, problem: Problem) -> Int {
-    root_version_count_rows(index, problem.root_pkg, index.version_ids, 0)
-}
-
-fn root_version_count_rows(index: Index, pkg: Int, version_ids: [Int], count: Int) -> Int {
-    match version_ids.len() == 0 {
-        true => count,
-        false => root_version_count_rows_tuple(index, pkg, version_ids.pop(), count),
-    }
-}
-
-fn root_version_count_rows_tuple(index: Index, pkg: Int, popped: (Int, [Int]), count: Int) -> Int {
-    let row_pkg = index.version_pkgs.get(popped.0).unwrap();
-    let next = match row_pkg == pkg {
-        true => count + 1,
-        false => count,
-    };
-    root_version_count_rows(index, pkg, popped.1, next)
 }
 
 // ---------------------------------------------------------------------------
