@@ -654,7 +654,7 @@ fn real_workspace_member_only_index_builds_bounded_ring() -> Result<(), String> 
 }
 
 #[test]
-#[ignore = "tier-A measurement probe: real workspace member-only solve is semantically empty"]
+#[ignore = "tier-A measurement probe: real workspace member-only solve bounded ring"]
 fn real_workspace_member_index_solves_bounded_ring() -> Result<(), String> {
     real_workspace_member_only_solve_ring(16)
 }
@@ -662,7 +662,7 @@ fn real_workspace_member_index_solves_bounded_ring() -> Result<(), String> {
 macro_rules! real_workspace_member_only_solve_ring_test {
     ($name:ident, $limit:expr) => {
         #[test]
-        #[ignore = "tier-A measurement probe: real workspace member-only solve ring is semantically empty"]
+        #[ignore = "tier-A measurement probe: real workspace member-only solve ring"]
         fn $name() -> Result<(), String> {
             real_workspace_member_only_solve_ring($limit)
         }
@@ -674,6 +674,9 @@ real_workspace_member_only_solve_ring_test!(real_workspace_member_only_solve_rin
 real_workspace_member_only_solve_ring_test!(real_workspace_member_only_solve_ring_4, 4);
 real_workspace_member_only_solve_ring_test!(real_workspace_member_only_solve_ring_8, 8);
 real_workspace_member_only_solve_ring_test!(real_workspace_member_only_solve_ring_16, 16);
+real_workspace_member_only_solve_ring_test!(real_workspace_member_only_solve_ring_32, 32);
+real_workspace_member_only_solve_ring_test!(real_workspace_member_only_solve_ring_64, 64);
+real_workspace_member_only_solve_ring_test!(real_workspace_member_only_solve_ring_145, 145);
 
 fn real_workspace_member_only_solve_ring(limit: i64) -> Result<(), String> {
     let metadata = cargo_metadata_real_workspace()?;
@@ -696,10 +699,34 @@ fn real_workspace_member_only_solve_ring(limit: i64) -> Result<(), String> {
     Ok(())
 }
 
-#[test]
-#[ignore = "tier-A measurement probe: real workspace member-only ring 16 lock diff"]
-fn real_workspace_member_only_solve_ring_16_lock_diff() -> Result<(), String> {
-    let limit = 16;
+macro_rules! real_workspace_member_only_solve_ring_lock_diff_test {
+    ($name:ident, $limit:expr) => {
+        #[test]
+        #[ignore = "tier-A measurement probe: real workspace member-only solve ring lock diff"]
+        fn $name() -> Result<(), String> {
+            real_workspace_member_only_solve_ring_lock_diff($limit)
+        }
+    };
+}
+
+real_workspace_member_only_solve_ring_lock_diff_test!(
+    real_workspace_member_only_solve_ring_lock_diff_16,
+    16
+);
+real_workspace_member_only_solve_ring_lock_diff_test!(
+    real_workspace_member_only_solve_ring_lock_diff_32,
+    32
+);
+real_workspace_member_only_solve_ring_lock_diff_test!(
+    real_workspace_member_only_solve_ring_lock_diff_64,
+    64
+);
+real_workspace_member_only_solve_ring_lock_diff_test!(
+    real_workspace_member_only_solve_ring_lock_diff_145,
+    145
+);
+
+fn real_workspace_member_only_solve_ring_lock_diff(limit: i64) -> Result<(), String> {
     let metadata = cargo_metadata_real_workspace()?;
     let mut machine = manifest_machine()?;
     let workspace = intern_tree(&mut machine, real_workspace_manifest_tree(&metadata)?)?;
@@ -720,8 +747,8 @@ fn real_workspace_member_only_solve_ring_16_lock_diff() -> Result<(), String> {
     let metadata_rows = metadata.package_rows();
     let diff = diff_package_versions_against_lock(&solve_rows, &lock_rows, &metadata_rows);
 
-    assert_eq!(diff.solve_rows, 17, "{diff:#?}");
-    assert_eq!(diff.matches, 16, "{diff:#?}");
+    assert_eq!(diff.solve_rows, limit as usize + 1, "{diff:#?}");
+    assert_eq!(diff.matches, limit as usize, "{diff:#?}");
     assert_eq!(diff.solve_only, 1, "{diff:#?}");
     assert_eq!(
         diff.solve_only_categories.get("workspace-pseudo-root"),
@@ -731,11 +758,11 @@ fn real_workspace_member_only_solve_ring_16_lock_diff() -> Result<(), String> {
     assert_eq!(diff.lock_only + diff.matches, diff.lock_rows, "{diff:#?}");
 
     write_tier_a_artifact(
-        "real-ring-16-solve-vs-lock-summary.tsv",
+        &format!("real-ring-{limit}-solve-vs-lock-summary.tsv"),
         &package_diff_summary_table(&diff),
     )?;
     write_tier_a_artifact(
-        "real-ring-16-solve-vs-lock-solve-rows.tsv",
+        &format!("real-ring-{limit}-solve-vs-lock-solve-rows.tsv"),
         &package_rows_table(&solve_rows),
     )?;
     Ok(())

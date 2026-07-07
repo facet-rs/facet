@@ -13,6 +13,11 @@ nextest_timeout=(
   --config 'profile.default.slow-timeout.terminate-after = 2'
 )
 
+member_solve_expr='test(=real_workspace_member_only_solve_ring_1) | test(=real_workspace_member_only_solve_ring_2) | test(=real_workspace_member_only_solve_ring_4) | test(=real_workspace_member_only_solve_ring_8) | test(=real_workspace_member_only_solve_ring_16) | test(=real_workspace_member_index_solves_bounded_ring) | test(=real_workspace_member_only_solve_ring_lock_diff_16) | test(=real_workspace_member_only_solve_ring_lock_diff_32) | test(=real_workspace_member_only_solve_ring_lock_diff_64)'
+if [[ "${TIER_A_FULL_MEMBER_RING:-0}" == "1" ]]; then
+  member_solve_expr="$member_solve_expr | test(=real_workspace_member_only_solve_ring_lock_diff_145)"
+fi
+
 metadata="$OUT/metadata.json"
 unit_graph="$OUT/unit-graph.json"
 sparse_out="$OUT/sparse-index"
@@ -62,9 +67,9 @@ cargo nextest list "${nextest_timeout[@]}" -p vix -E 'test(=projected_member_man
 cargo nextest run "${nextest_timeout[@]}" -p vix -E 'test(=projected_member_manifests_are_read_from_granted_root) | test(=dependency_declarations_extract_workspace_and_detailed_forms) | test(=real_workspace_member_only_index_builds_bounded_ring)' \
   > "$OUT/vix-composed-member-ring-run.txt" 2>&1
 
-cargo nextest list "${nextest_timeout[@]}" -p vix --run-ignored only -E 'test(real_workspace_member_only_solve_ring_) | test(=real_workspace_member_index_solves_bounded_ring) | test(=real_workspace_member_only_solve_ring_16_lock_diff)' \
+cargo nextest list "${nextest_timeout[@]}" -p vix --run-ignored only -E "$member_solve_expr" \
   > "$OUT/vix-member-solve-rings-list.txt" 2>&1
-cargo nextest run "${nextest_timeout[@]}" -p vix --run-ignored only --no-fail-fast -E 'test(real_workspace_member_only_solve_ring_) | test(=real_workspace_member_index_solves_bounded_ring) | test(=real_workspace_member_only_solve_ring_16_lock_diff)' \
+cargo nextest run "${nextest_timeout[@]}" -p vix --run-ignored only --no-fail-fast -E "$member_solve_expr" \
   > "$OUT/vix-member-solve-rings-run.txt" 2>&1
 
 cargo nextest list "${nextest_timeout[@]}" -p vix -E 'test(=tiny_workspace_solve_diff_is_categorized_against_real_cargo_lock)' \
@@ -95,7 +100,7 @@ cargo nextest run "${nextest_timeout[@]}" -p vix --features real-process -E 'tes
     du -sh "$sparse_out"
     shasum -a 256 "$sparse_out/snapshot-manifest.tsv"
   fi
-  for artifact in tiny-solve-vs-lock-summary.tsv real-ring-16-solve-vs-lock-summary.tsv lock-fixture-unit-diff-summary.tsv; do
+  for artifact in tiny-solve-vs-lock-summary.tsv real-ring-16-solve-vs-lock-summary.tsv real-ring-32-solve-vs-lock-summary.tsv real-ring-64-solve-vs-lock-summary.tsv real-ring-145-solve-vs-lock-summary.tsv lock-fixture-unit-diff-summary.tsv; do
     if [[ -f "$OUT/$artifact" ]]; then
       echo
       echo "$artifact:"
