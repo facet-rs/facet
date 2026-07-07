@@ -1,6 +1,6 @@
 #![cfg(all(feature = "real-process", not(target_arch = "wasm32")))]
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -9,7 +9,7 @@ use std::time::Instant;
 
 use facet::Facet;
 use vix::exec::Tree;
-use vix::machine::{DriveEvent, Machine, MachineArg};
+use vix::machine::{DriveEvent, Machine, MachineArg, RenderedValue};
 use vix::real_process::RealProcessBackend;
 
 const SOURCE: &str = include_str!("../../playgrounds/snark/src/bundled/vix/samples/crate.vix");
@@ -523,10 +523,10 @@ fn fixture_unit_targets() -> UnitTargetTable {
 fn fixture_resolved_graph(target: String) -> ResolvedGraph {
     let result = solve(fixture_index(), fixture_problem(), target);
     let units: Map<Int, ResolvedUnit> = {};
-    let units = selected_insert_unit(units, result.selected, 0, ResolvedUnit { name: "alpha_lib", kind: "lib", manifest: p"crates/alpha_lib", source: p"src/lib.rs", deps: [1], metadata: p"libalpha_lib.rmeta", link: p"libalpha_lib.rlib", metadata_file: "libalpha_lib.rmeta", link_file: "libalpha_lib.rlib" });
-    let units = selected_insert_unit(units, result.selected, 1, ResolvedUnit { name: "core_lib", kind: "lib", manifest: p"crates/core_lib", source: p"src/lib.rs", deps: [], metadata: p"libcore_lib.rmeta", link: p"libcore_lib.rlib", metadata_file: "libcore_lib.rmeta", link_file: "libcore_lib.rlib" });
-    let units = selected_insert_unit(units, result.selected, 2, ResolvedUnit { name: "formatting_lib", kind: "lib", manifest: p"crates/formatting_lib", source: p"src/lib.rs", deps: [], metadata: p"libformatting_lib.rmeta", link: p"libformatting_lib.rlib", metadata_file: "libformatting_lib.rmeta", link_file: "libformatting_lib.rlib" });
-    let units = selected_insert_unit(units, result.selected, 3, ResolvedUnit { name: "mini_app", kind: "bin", manifest: p"app", source: p"src/main.rs", deps: [0, 2], metadata: p"mini_app.rmeta", link: p"mini_app", metadata_file: "mini_app.rmeta", link_file: "mini_app" });
+    let units = selected_insert_unit(units, result.selected, 0, ResolvedUnit { name: "alpha_lib", kind: "lib", manifest: p"crates/alpha_lib", source: p"src/lib.rs", deps: [1], metadata: p"libalpha_lib.rmeta", link: p"libalpha_lib.rlib", metadata_file: "libalpha_lib.rmeta", link_file: "libalpha_lib.rlib", profile: default_resolved_profile("lib", "alpha_lib") });
+    let units = selected_insert_unit(units, result.selected, 1, ResolvedUnit { name: "core_lib", kind: "lib", manifest: p"crates/core_lib", source: p"src/lib.rs", deps: [], metadata: p"libcore_lib.rmeta", link: p"libcore_lib.rlib", metadata_file: "libcore_lib.rmeta", link_file: "libcore_lib.rlib", profile: default_resolved_profile("lib", "core_lib") });
+    let units = selected_insert_unit(units, result.selected, 2, ResolvedUnit { name: "formatting_lib", kind: "lib", manifest: p"crates/formatting_lib", source: p"src/lib.rs", deps: [], metadata: p"libformatting_lib.rmeta", link: p"libformatting_lib.rlib", metadata_file: "libformatting_lib.rmeta", link_file: "libformatting_lib.rlib", profile: default_resolved_profile("lib", "formatting_lib") });
+    let units = selected_insert_unit(units, result.selected, 3, ResolvedUnit { name: "mini_app", kind: "bin", manifest: p"app", source: p"src/main.rs", deps: [0, 2], metadata: p"mini_app.rmeta", link: p"mini_app", metadata_file: "mini_app.rmeta", link_file: "mini_app", profile: default_resolved_profile("bin", "mini_app") });
     ResolvedGraph { root: 3, units: units }
 }
 
@@ -647,6 +647,18 @@ struct UnitShape {
     edition: String,
     source_suffix: String,
     dependencies: Vec<String>,
+    profile: ProfileShape,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct ProfileShape {
+    opt_level: String,
+    debuginfo: String,
+    debug_assertions: bool,
+    overflow_checks: bool,
+    panic: String,
+    lto: String,
+    codegen_units: Option<i64>,
 }
 
 fn machine_rustc_unit_graph(machine: &Machine) -> Result<Vec<UnitShape>, String> {
@@ -688,13 +700,62 @@ fn machine_unit_shape(argv: &[String]) -> Result<UnitShape, String> {
         .collect::<BTreeSet<_>>()
         .into_iter()
         .collect();
+    let name = arg_after("--crate-name")?;
+    let crate_type = arg_after("--crate-type")?;
+    let source_suffix = source_suffix(source)?;
     Ok(UnitShape {
-        name: arg_after("--crate-name")?,
-        crate_type: arg_after("--crate-type")?,
+        name: name.clone(),
+        crate_type: crate_type.clone(),
         edition: arg_after("--edition")?,
-        source_suffix: source_suffix(source)?,
+        source_suffix: source_suffix.clone(),
         dependencies,
+        profile: machine_profile_shape(argv, &crate_type, &source_suffix),
     })
+}
+
+fn machine_profile_shape(argv: &[String], crate_type: &str, source_suffix: &str) -> ProfileShape {
+    let fallback = default_profile_shape(crate_type, source_suffix);
+    ProfileShape {
+        opt_level: codegen_option(argv, "opt-level=").unwrap_or(fallback.opt_level),
+        debuginfo: codegen_option(argv, "debuginfo=").unwrap_or(fallback.debuginfo),
+        debug_assertions: codegen_bool(argv, "debug-assertions=")
+            .unwrap_or(fallback.debug_assertions),
+        overflow_checks: codegen_bool(argv, "overflow-checks=").unwrap_or(fallback.overflow_checks),
+        panic: codegen_option(argv, "panic=").unwrap_or(fallback.panic),
+        lto: codegen_option(argv, "lto=").unwrap_or(fallback.lto),
+        codegen_units: codegen_option(argv, "codegen-units=")
+            .and_then(|value| value.parse::<i64>().ok())
+            .or(fallback.codegen_units),
+    }
+}
+
+fn codegen_option(argv: &[String], prefix: &str) -> Option<String> {
+    argv.windows(2).find_map(|pair| {
+        (pair[0] == "-C")
+            .then(|| pair[1].strip_prefix(prefix).map(str::to_owned))
+            .flatten()
+    })
+}
+
+fn codegen_bool(argv: &[String], prefix: &str) -> Option<bool> {
+    codegen_option(argv, prefix).and_then(|value| match value.as_str() {
+        "true" | "yes" | "on" => Some(true),
+        "false" | "no" | "off" => Some(false),
+        _ => None,
+    })
+}
+
+fn default_profile_shape(_crate_type: &str, source_suffix: &str) -> ProfileShape {
+    let host_debuginfo = source_suffix == "build.rs";
+    ProfileShape {
+        opt_level: "0".to_owned(),
+        debuginfo: if host_debuginfo { "0" } else { "2" }.to_owned(),
+        debug_assertions: true,
+        overflow_checks: true,
+        panic: "unwind".to_owned(),
+        lto: "false".to_owned(),
+        codegen_units: None,
+    }
 }
 
 fn source_suffix(source: &str) -> Result<String, String> {
@@ -961,6 +1022,7 @@ fn unit_shapes_from_graph(
                 edition: unit.target.edition.clone(),
                 source_suffix: source_suffix(&unit.target.src_path)?,
                 dependencies,
+                profile: unit.profile.shape(),
             })
         })
         .collect::<Result<Vec<_>, String>>()?;
@@ -976,10 +1038,254 @@ struct CargoUnitGraph {
 
 #[derive(Debug, Facet)]
 struct CargoUnit {
+    pkg_id: String,
     target: CargoTarget,
     mode: String,
     platform: Option<String>,
+    profile: CargoProfile,
     dependencies: Vec<CargoDependency>,
+}
+
+#[derive(Debug, Facet)]
+struct CargoProfile {
+    name: String,
+    opt_level: String,
+    lto: String,
+    codegen_units: Option<i64>,
+    debuginfo: i64,
+    debug_assertions: bool,
+    overflow_checks: bool,
+    panic: String,
+}
+
+impl CargoProfile {
+    fn shape(&self) -> ProfileShape {
+        ProfileShape {
+            opt_level: self.opt_level.clone(),
+            debuginfo: self.debuginfo.to_string(),
+            debug_assertions: self.debug_assertions,
+            overflow_checks: self.overflow_checks,
+            panic: self.panic.clone(),
+            lto: self.lto.clone(),
+            codegen_units: self.codegen_units,
+        }
+    }
+}
+
+#[derive(Debug, Default)]
+struct ProfileDivergenceCounts {
+    package: usize,
+    opt_level: usize,
+    debuginfo: usize,
+    debug_assertions: usize,
+    overflow_checks: usize,
+    panic: usize,
+    lto: usize,
+    codegen_units: usize,
+}
+
+impl ProfileDivergenceCounts {
+    fn total(&self) -> usize {
+        self.package
+            + self.opt_level
+            + self.debuginfo
+            + self.debug_assertions
+            + self.overflow_checks
+            + self.panic
+            + self.lto
+            + self.codegen_units
+    }
+
+    fn record(
+        &mut self,
+        package: &str,
+        unit_kind: &str,
+        vix: &ProfileShape,
+        cargo: &ProfileShape,
+        examples: &mut Vec<String>,
+    ) {
+        macro_rules! check_field {
+            ($field:ident) => {
+                if vix.$field != cargo.$field {
+                    self.$field += 1;
+                    push_profile_example(
+                        examples,
+                        format!(
+                            "{package}:{unit_kind}:{} vix={:?} cargo={:?}",
+                            stringify!($field),
+                            vix.$field,
+                            cargo.$field
+                        ),
+                    );
+                }
+            };
+        }
+
+        check_field!(opt_level);
+        check_field!(debuginfo);
+        check_field!(debug_assertions);
+        check_field!(overflow_checks);
+        check_field!(panic);
+        check_field!(lto);
+        check_field!(codegen_units);
+    }
+}
+
+fn profile_shape_from_rendered(
+    fields: &BTreeMap<String, RenderedValue>,
+) -> Result<ProfileShape, String> {
+    Ok(ProfileShape {
+        opt_level: rendered_field_string(fields, "opt_level")?,
+        debuginfo: rendered_field_string(fields, "debuginfo")?,
+        debug_assertions: rendered_field_bool_string(fields, "debug_assertions")?,
+        overflow_checks: rendered_field_bool_string(fields, "overflow_checks")?,
+        panic: rendered_field_string(fields, "panic")?,
+        lto: rendered_field_string(fields, "lto")?,
+        codegen_units: match rendered_field_string(fields, "codegen_units")?.as_str() {
+            "" => None,
+            value => Some(value.parse::<i64>().map_err(|err| err.to_string())?),
+        },
+    })
+}
+
+fn rendered_field_string(
+    fields: &BTreeMap<String, RenderedValue>,
+    name: &str,
+) -> Result<String, String> {
+    match fields.get(name) {
+        Some(RenderedValue::String { value }) => Ok(value.clone()),
+        other => Err(format!("field {name} was {other:?}, not String")),
+    }
+}
+
+fn rendered_field_bool_string(
+    fields: &BTreeMap<String, RenderedValue>,
+    name: &str,
+) -> Result<bool, String> {
+    match rendered_field_string(fields, name)?.as_str() {
+        "true" => Ok(true),
+        "false" => Ok(false),
+        other => Err(format!("field {name} was {other:?}, not bool string")),
+    }
+}
+
+fn record(value: RenderedValue) -> Result<BTreeMap<String, RenderedValue>, String> {
+    let RenderedValue::Record { fields, .. } = value else {
+        return Err(format!("value rendered as {value:?}, not Record"));
+    };
+    Ok(fields
+        .into_iter()
+        .map(|field| (field.name, field.value))
+        .collect())
+}
+
+fn intern_string(machine: &mut Machine, value: &str) -> Result<i64, String> {
+    Ok(machine
+        .intern_arg("String", MachineArg::String(value.to_owned()))?
+        .0)
+}
+
+fn package_name_from_pkg_id(pkg_id: &str) -> Option<String> {
+    let after_hash = pkg_id.rsplit_once('#')?.1;
+    let (name, _) = after_hash.rsplit_once('@')?;
+    Some(name.to_owned())
+}
+
+fn cargo_unit_kind(unit: &CargoUnit, host_dependency: bool) -> Result<String, String> {
+    let kind = unit
+        .target
+        .kind
+        .first()
+        .ok_or_else(|| format!("target {:?} had no kind", unit.target.name))?;
+    Ok(match kind.as_str() {
+        "custom-build" => "build-script".to_owned(),
+        "proc-macro" => "proc-macro".to_owned(),
+        _ if host_dependency => "build-dependency".to_owned(),
+        other => other.to_owned(),
+    })
+}
+
+fn host_dependency_indices(graph: &CargoUnitGraph) -> BTreeSet<usize> {
+    let mut roots = Vec::new();
+    for (index, unit) in graph.units.iter().enumerate() {
+        if unit.mode == "run-custom-build" {
+            continue;
+        }
+        if unit.target.kind.iter().any(|kind| kind == "custom-build") {
+            roots.push(index);
+        }
+    }
+
+    let mut out = BTreeSet::new();
+    let mut stack = roots;
+    while let Some(index) = stack.pop() {
+        let Some(unit) = graph.units.get(index) else {
+            continue;
+        };
+        for dep in &unit.dependencies {
+            if out.insert(dep.index) {
+                stack.push(dep.index);
+            }
+        }
+    }
+    out
+}
+
+fn push_profile_example(examples: &mut Vec<String>, example: String) {
+    if examples.len() < 12 {
+        examples.push(example);
+    }
+}
+
+fn profile_override_packages() -> BTreeSet<&'static str> {
+    BTreeSet::from([
+        "backtrace",
+        "aho-corasick",
+        "blake3",
+        "block-buffer",
+        "cpufeatures",
+        "crypto-common",
+        "digest",
+        "generic-array",
+        "hashbrown",
+        "memchr",
+        "miniz_oxide",
+        "regex",
+        "regex-automata",
+        "regex-syntax",
+        "sha2",
+    ])
+}
+
+fn workspace_root() -> PathBuf {
+    Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .expect("vix crate has workspace parent")
+        .to_path_buf()
+}
+
+fn cargo_real_workspace_unit_graph_oracle() -> Result<CargoUnitGraph, String> {
+    let output = Command::new("cargo")
+        .arg("+nightly")
+        .arg("build")
+        .arg("--unit-graph")
+        .arg("-Z")
+        .arg("unstable-options")
+        .arg("--locked")
+        .arg("--manifest-path")
+        .arg(workspace_root().join("Cargo.toml"))
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo real-workspace unit graph oracle exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let stdout = String::from_utf8(output.stdout).map_err(|err| err.to_string())?;
+    facet_json::from_str(&stdout).map_err(|err| err.to_string())
 }
 
 #[derive(Debug, Facet)]
@@ -1058,6 +1364,75 @@ fn real_process_rustc_builds_proc_macro_fixture_and_matches_cargo_unit_graph_ora
     Ok(())
 }
 
+#[test]
+fn real_workspace_resolved_profiles_match_cargo_unit_graph_oracle() -> Result<(), String> {
+    if !Command::new("cargo")
+        .arg("+nightly")
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success())
+    {
+        return Ok(());
+    }
+
+    let graph = cargo_real_workspace_unit_graph_oracle()?;
+    let workspace_manifest =
+        fs::read_to_string(workspace_root().join("Cargo.toml")).map_err(|err| err.to_string())?;
+    let mut machine = Machine::load(&crate_source())?;
+    let workspace = machine
+        .intern_arg(
+            "Tree",
+            MachineArg::Tree(Tree::of(&[("Cargo.toml", workspace_manifest.as_str())])),
+        )?
+        .0;
+
+    let mut checked = 0usize;
+    let mut divergences = ProfileDivergenceCounts::default();
+    let mut examples = Vec::new();
+    let override_packages = profile_override_packages();
+    let host_dependencies = host_dependency_indices(&graph);
+
+    for (index, unit) in graph.units.iter().enumerate().filter(|(_, unit)| {
+        unit.mode != "run-custom-build"
+            && package_name_from_pkg_id(&unit.pkg_id)
+                .is_some_and(|package| override_packages.contains(package.as_str()))
+    }) {
+        let Some(package) = package_name_from_pkg_id(&unit.pkg_id) else {
+            divergences.package += 1;
+            push_profile_example(
+                &mut examples,
+                format!("could not parse package name from {}", unit.pkg_id),
+            );
+            continue;
+        };
+        let unit_kind = cargo_unit_kind(
+            unit,
+            host_dependencies.contains(&index) && unit.profile.debuginfo == 0,
+        )?;
+        let package_arg = intern_string(&mut machine, &package)?;
+        let unit_kind_arg = intern_string(&mut machine, &unit_kind)?;
+        let profile_name = intern_string(&mut machine, &unit.profile.name)?;
+        let resolved = machine.demand_i64(
+            "resolved_profile_for",
+            vec![workspace, package_arg, unit_kind_arg, profile_name],
+        )?;
+        let rendered = record(machine.render_result("resolved_profile_for", resolved)?)?;
+        let vix = profile_shape_from_rendered(&rendered)?;
+        let cargo = unit.profile.shape();
+        checked += 1;
+        divergences.record(&package, &unit_kind, &vix, &cargo, &mut examples);
+    }
+
+    assert!(checked > 0);
+    assert_eq!(
+        divergences.total(),
+        0,
+        "profile divergences over {checked} real-root override units: {divergences:#?}\nexamples: {examples:#?}"
+    );
+
+    Ok(())
+}
+
 fn proc_macro_graph_tree() -> Tree {
     Tree::of(&[
         ("app/Cargo.toml", PROC_MACRO_APP_MANIFEST),
@@ -1075,6 +1450,7 @@ struct ProcMacroUnitShape {
     source_suffix: String,
     dependencies: Vec<String>,
     platform: String,
+    profile: ProfileShape,
 }
 
 type ProcMacroUnitGraph = (Vec<ProcMacroUnitShape>, Vec<(String, String)>);
@@ -1144,6 +1520,7 @@ fn machine_proc_macro_unit_shape(
         edition: unit.edition,
         source_suffix: unit.source_suffix,
         dependencies: unit.dependencies,
+        profile: unit.profile,
     })
 }
 
@@ -1241,6 +1618,7 @@ fn cargo_proc_macro_unit_shapes_from_json(stdout: &str) -> Result<Vec<ProcMacroU
                 edition: unit.target.edition.clone(),
                 source_suffix: source_suffix(&unit.target.src_path)?,
                 dependencies,
+                profile: unit.profile.shape(),
                 platform: if unit.platform.is_some() {
                     "target".to_string()
                 } else {

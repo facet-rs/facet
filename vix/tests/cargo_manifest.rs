@@ -271,6 +271,112 @@ fn target_shapes_match_cargo_metadata_for_real_members() -> Result<(), String> {
 }
 
 #[test]
+fn profile_sections_and_package_overrides_are_ingested() -> Result<(), String> {
+    let mut machine = manifest_machine()?;
+    let workspace = intern_tree(
+        &mut machine,
+        Tree::of(&[(
+            "Cargo.toml",
+            r#"
+[workspace]
+members = []
+
+[profile.dev]
+opt-level = 1
+debug = 1
+debug-assertions = false
+overflow-checks = false
+panic = "abort"
+lto = "thin"
+codegen-units = 4
+strip = "debuginfo"
+
+[profile.dev.build-override]
+opt-level = 2
+debug = 0
+
+[profile.dev.package.hot_dep]
+opt-level = 3
+debug-assertions = true
+"#,
+        )]),
+    )?;
+    let package = intern_string(&mut machine, "hot_dep")?;
+    let unit_kind = intern_string(&mut machine, "lib")?;
+    let profile_name = intern_string(&mut machine, "dev")?;
+
+    let value = machine.demand_i64(
+        "resolved_profile_for",
+        vec![workspace, package, unit_kind, profile_name],
+    )?;
+    let profile = record(machine.render_result("resolved_profile_for", value)?)?;
+
+    assert_eq!(field_string(&profile, "name")?, "dev");
+    assert_eq!(field_string(&profile, "opt_level")?, "3");
+    assert_eq!(field_string(&profile, "debuginfo")?, "1");
+    assert_eq!(field_string(&profile, "debug_assertions")?, "true");
+    assert_eq!(field_string(&profile, "overflow_checks")?, "false");
+    assert_eq!(field_string(&profile, "panic")?, "abort");
+    assert_eq!(field_string(&profile, "lto")?, "thin");
+    assert_eq!(field_string(&profile, "codegen_units")?, "4");
+    assert_eq!(field_string(&profile, "strip")?, "debuginfo");
+
+    let unit_kind = intern_string(&mut machine, "build-script")?;
+    let package = intern_string(&mut machine, "hot_dep")?;
+    let profile_name = intern_string(&mut machine, "dev")?;
+    let value = machine.demand_i64(
+        "resolved_profile_for",
+        vec![workspace, package, unit_kind, profile_name],
+    )?;
+    let build_profile = record(machine.render_result("resolved_profile_for", value)?)?;
+    assert_eq!(field_string(&build_profile, "opt_level")?, "3");
+    assert_eq!(field_string(&build_profile, "debuginfo")?, "0");
+
+    let unit_kind = intern_string(&mut machine, "proc-macro")?;
+    let package = intern_string(&mut machine, "plain_proc_macro")?;
+    let profile_name = intern_string(&mut machine, "dev")?;
+    let value = machine.demand_i64(
+        "resolved_profile_for",
+        vec![workspace, package, unit_kind, profile_name],
+    )?;
+    let proc_macro_profile = record(machine.render_result("resolved_profile_for", value)?)?;
+    assert_eq!(field_string(&proc_macro_profile, "opt_level")?, "2");
+    assert_eq!(field_string(&proc_macro_profile, "debuginfo")?, "0");
+
+    Ok(())
+}
+
+#[test]
+fn real_workspace_profile_package_overrides_match_live_manifest() -> Result<(), String> {
+    let mut machine = manifest_machine()?;
+    let workspace_manifest = std::fs::read_to_string(workspace_root().join("Cargo.toml"))
+        .map_err(|err| err.to_string())?;
+    let workspace = intern_tree(
+        &mut machine,
+        Tree::of(&[("Cargo.toml", workspace_manifest.as_str())]),
+    )?;
+
+    for package in ["aho-corasick", "blake3", "sha2"] {
+        let package_arg = intern_string(&mut machine, package)?;
+        let unit_kind = intern_string(&mut machine, "lib")?;
+        let profile_name = intern_string(&mut machine, "dev")?;
+        let value = machine.demand_i64(
+            "resolved_profile_for",
+            vec![workspace, package_arg, unit_kind, profile_name],
+        )?;
+        let profile = record(machine.render_result("resolved_profile_for", value)?)?;
+        assert_eq!(
+            field_string(&profile, "opt_level")?,
+            "3",
+            "{package} should inherit [profile.dev.package.{package}] opt-level"
+        );
+        assert_eq!(field_string(&profile, "debuginfo")?, "2");
+    }
+
+    Ok(())
+}
+
+#[test]
 fn rodin_problem_shape_is_available_for_the_manifest_adapter() -> Result<(), String> {
     let mut machine = manifest_machine()?;
     let root_pkg = 7;

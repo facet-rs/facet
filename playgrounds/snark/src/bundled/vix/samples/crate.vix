@@ -5,6 +5,14 @@ fn doc_string(doc: Doc, key: String) -> String {
     doc.get(key).unwrap()
 }
 
+fn doc_as_string(doc: Doc) -> String {
+    doc
+}
+
+fn doc_as_bool(doc: Doc) -> Bool {
+    doc
+}
+
 fn package_doc(manifest: Tree) -> Doc {
     let doc = toml(manifest / p"Cargo.toml");
     doc.get("package").unwrap()
@@ -269,6 +277,7 @@ struct ResolvedUnit {
     link: Path,
     metadata_file: String,
     link_file: String,
+    profile: CargoResolvedProfile,
 }
 
 struct ResolvedGraph {
@@ -296,6 +305,315 @@ struct UnitArtifactRef {
     extern_name: String,
     subpath: Path,
     compat_file: String,
+}
+
+struct CargoProfileSpec {
+    opt_level: String,
+    debuginfo: String,
+    debug_assertions: String,
+    overflow_checks: String,
+    panic: String,
+    lto: String,
+    codegen_units: String,
+    strip: String,
+}
+
+struct CargoProfileData {
+    dev: CargoProfileSpec,
+    release: CargoProfileSpec,
+    dev_build_override: CargoProfileSpec,
+    release_build_override: CargoProfileSpec,
+    dev_package: CargoProfileSpec,
+    release_package: CargoProfileSpec,
+}
+
+struct CargoResolvedProfile {
+    name: String,
+    opt_level: String,
+    debuginfo: String,
+    debug_assertions: String,
+    overflow_checks: String,
+    panic: String,
+    lto: String,
+    codegen_units: String,
+    strip: String,
+}
+
+fn bool_string(value: Bool) -> String {
+    match value {
+        true => "true",
+        false => "false",
+    }
+}
+
+fn int_string(value: Int) -> String {
+    match value {
+        0 => "0",
+        1 => "1",
+        2 => "2",
+        3 => "3",
+        4 => "4",
+        16 => "16",
+        256 => "256",
+        _ => "0",
+    }
+}
+
+fn empty_profile_spec() -> CargoProfileSpec {
+    CargoProfileSpec {
+        opt_level: "",
+        debuginfo: "",
+        debug_assertions: "",
+        overflow_checks: "",
+        panic: "",
+        lto: "",
+        codegen_units: "",
+        strip: "",
+    }
+}
+
+fn profile_string_field(profile: Doc, key: String) -> String {
+    match profile.get(key) {
+        Some(value) => doc_as_string(value),
+        None => "",
+    }
+}
+
+fn profile_int_field(profile: Doc, key: String) -> String {
+    match profile.get(key) {
+        Some(value) => int_string(value),
+        None => "",
+    }
+}
+
+fn profile_bool_field(profile: Doc, key: String) -> String {
+    match profile.get(key) {
+        Some(value) => bool_string(value),
+        None => "",
+    }
+}
+
+fn profile_spec_from_doc(profile: Doc) -> CargoProfileSpec {
+    CargoProfileSpec {
+        opt_level: profile_int_field(profile, "opt-level"),
+        debuginfo: profile_int_field(profile, "debug"),
+        debug_assertions: profile_bool_field(profile, "debug-assertions"),
+        overflow_checks: profile_bool_field(profile, "overflow-checks"),
+        panic: profile_string_field(profile, "panic"),
+        lto: profile_string_field(profile, "lto"),
+        codegen_units: profile_int_field(profile, "codegen-units"),
+        strip: profile_string_field(profile, "strip"),
+    }
+}
+
+fn profile_spec_from_root(source: Tree, name: String) -> CargoProfileSpec {
+    match toml(source / p"Cargo.toml").get("profile") {
+        Some(profiles) => match profiles.get(name) {
+            Some(profile) => profile_spec_from_doc(profile),
+            None => empty_profile_spec(),
+        },
+        None => empty_profile_spec(),
+    }
+}
+
+fn profile_build_override_spec_from_root(source: Tree, name: String) -> CargoProfileSpec {
+    match toml(source / p"Cargo.toml").get("profile") {
+        Some(profiles) => match profiles.get(name) {
+            Some(profile) => match profile.get("build-override") {
+                Some(build_override) => profile_spec_from_doc(build_override),
+                None => empty_profile_spec(),
+            },
+            None => empty_profile_spec(),
+        },
+        None => empty_profile_spec(),
+    }
+}
+
+fn profile_package_spec_from_root(source: Tree, name: String, package: String) -> CargoProfileSpec {
+    match toml(source / p"Cargo.toml").get("profile") {
+        Some(profiles) => match profiles.get(name) {
+            Some(profile) => match profile.get("package") {
+                Some(packages) => match packages.get(package) {
+                    Some(package_profile) => profile_spec_from_doc(package_profile),
+                    None => empty_profile_spec(),
+                },
+                None => empty_profile_spec(),
+            },
+            None => empty_profile_spec(),
+        },
+        None => empty_profile_spec(),
+    }
+}
+
+fn cargo_profiles_for(source: Tree, package: String) -> CargoProfileData {
+    CargoProfileData {
+        dev: profile_spec_from_root(source, "dev"),
+        release: profile_spec_from_root(source, "release"),
+        dev_build_override: profile_build_override_spec_from_root(source, "dev"),
+        release_build_override: profile_build_override_spec_from_root(source, "release"),
+        dev_package: profile_package_spec_from_root(source, "dev", package),
+        release_package: profile_package_spec_from_root(source, "release", package),
+    }
+}
+
+fn dev_profile_defaults() -> CargoResolvedProfile {
+    CargoResolvedProfile {
+        name: "dev",
+        opt_level: "0",
+        debuginfo: "2",
+        debug_assertions: "true",
+        overflow_checks: "true",
+        panic: "unwind",
+        lto: "false",
+        codegen_units: "",
+        strip: "none",
+    }
+}
+
+fn release_profile_defaults() -> CargoResolvedProfile {
+    CargoResolvedProfile {
+        name: "release",
+        opt_level: "3",
+        debuginfo: "0",
+        debug_assertions: "false",
+        overflow_checks: "false",
+        panic: "unwind",
+        lto: "false",
+        codegen_units: "16",
+        strip: "none",
+    }
+}
+
+fn profile_defaults(name: String) -> CargoResolvedProfile {
+    match name == "release" {
+        true => release_profile_defaults(),
+        false => dev_profile_defaults(),
+    }
+}
+
+fn host_profile_defaults() -> CargoProfileSpec {
+    CargoProfileSpec {
+        opt_level: "",
+        debuginfo: "0",
+        debug_assertions: "",
+        overflow_checks: "",
+        panic: "",
+        lto: "",
+        codegen_units: "",
+        strip: "",
+    }
+}
+
+fn nonempty_or(value: String, fallback: String) -> String {
+    match value == "" {
+        true => fallback,
+        false => value,
+    }
+}
+
+fn profile_apply(base: CargoResolvedProfile, spec: CargoProfileSpec) -> CargoResolvedProfile {
+    CargoResolvedProfile {
+        name: base.name,
+        opt_level: nonempty_or(spec.opt_level, base.opt_level),
+        debuginfo: nonempty_or(spec.debuginfo, base.debuginfo),
+        debug_assertions: nonempty_or(spec.debug_assertions, base.debug_assertions),
+        overflow_checks: nonempty_or(spec.overflow_checks, base.overflow_checks),
+        panic: nonempty_or(spec.panic, base.panic),
+        lto: nonempty_or(spec.lto, base.lto),
+        codegen_units: nonempty_or(spec.codegen_units, base.codegen_units),
+        strip: nonempty_or(spec.strip, base.strip),
+    }
+}
+
+fn package_profile_spec(data: CargoProfileData, name: String) -> CargoProfileSpec {
+    match name == "release" {
+        true => data.release_package,
+        false => data.dev_package,
+    }
+}
+
+fn root_profile_spec(data: CargoProfileData, name: String) -> CargoProfileSpec {
+    match name == "release" {
+        true => data.release,
+        false => data.dev,
+    }
+}
+
+fn build_override_profile_spec(data: CargoProfileData, name: String) -> CargoProfileSpec {
+    match name == "release" {
+        true => data.release_build_override,
+        false => data.dev_build_override,
+    }
+}
+
+fn unit_uses_host_profile(unit_kind: String) -> Bool {
+    match unit_kind == "build-script" {
+        true => true,
+        false => unit_kind == "build-dependency",
+    }
+}
+
+fn unit_uses_build_override(unit_kind: String) -> Bool {
+    match unit_kind == "proc-macro" {
+        true => true,
+        false => unit_uses_host_profile(unit_kind),
+    }
+}
+
+fn resolved_profile(data: CargoProfileData, package: String, unit_kind: String, name: String) -> CargoResolvedProfile {
+    let base = profile_apply(profile_defaults(name), root_profile_spec(data, name));
+    let host_base = match unit_uses_host_profile(unit_kind) {
+        true => profile_apply(base, host_profile_defaults()),
+        false => base,
+    };
+    let build_override = match unit_uses_build_override(unit_kind) {
+        true => profile_apply(host_base, build_override_profile_spec(data, name)),
+        false => host_base,
+    };
+
+    // Cargo's Profiles reference says build-override covers build scripts, proc
+    // macros, and their dependencies, and that named package overrides take precedence.
+    // The unit-graph oracle exposes debuginfo=0 host defaults for build scripts/deps;
+    // proc macros still receive explicit build-override settings.
+    profile_apply(build_override, package_profile_spec(data, name))
+}
+
+fn default_resolved_profile(unit_kind: String, package: String) -> CargoResolvedProfile {
+    resolved_profile(
+        CargoProfileData {
+            dev: empty_profile_spec(),
+            release: empty_profile_spec(),
+            dev_build_override: empty_profile_spec(),
+            release_build_override: empty_profile_spec(),
+            dev_package: empty_profile_spec(),
+            release_package: empty_profile_spec(),
+        },
+        package,
+        unit_kind,
+        "dev",
+    )
+}
+
+pub fn resolved_profile_for(source: Tree, package: String, unit_kind: String, name: String) -> CargoResolvedProfile {
+    resolved_profile(cargo_profiles_for(source, package), package, unit_kind, name)
+}
+
+fn push_codegen_units(args: [String], units: String) -> [String] {
+    match units == "" {
+        true => args,
+        false => args.push("-C").push("codegen-units=" + units),
+    }
+}
+
+fn rustc_profile_args(profile: CargoResolvedProfile) -> [String] {
+    let args: [String] = [];
+    let args = args.push("-C").push("opt-level=" + profile.opt_level);
+    let args = args.push("-C").push("debuginfo=" + profile.debuginfo);
+    let args = args.push("-C").push("debug-assertions=" + profile.debug_assertions);
+    let args = args.push("-C").push("overflow-checks=" + profile.overflow_checks);
+    let args = args.push("-C").push("panic=" + profile.panic);
+    let args = args.push("-C").push("lto=" + profile.lto);
+    push_codegen_units(args, profile.codegen_units)
 }
 
 fn resolved_unit(graph: ResolvedGraph, ix: Int) -> ResolvedUnit {
@@ -354,11 +672,13 @@ fn generic_lib_no_deps(target: Target, source: Tree, unit: ResolvedUnit) -> Tree
     let rustc = Rustc::acquire(target);
     let manifest = source / unit.manifest;
     let edition = doc_string(package_doc(manifest), "edition");
+    let profile_args = rustc_profile_args(unit.profile);
 
     rustc! {
         --crate-name {unit.name}
         --edition {edition}
         --crate-type lib
+        {profile_args}
         --emit=metadata={unit.metadata},link={unit.link}
         {manifest / unit.source}
     }
@@ -379,11 +699,13 @@ fn generic_lib_with_one_dep(target: Target, source: Tree, graph: ResolvedGraph, 
     let dep_unit = resolved_unit(graph, dep);
     let dep_artifact = resolved_unit_artifact(target, source, graph, dep, mode);
     let dep_extern = dep_unit.name + "=";
+    let profile_args = rustc_profile_args(unit.profile);
 
     rustc! {
         --crate-name {unit.name}
         --edition {edition}
         --crate-type lib
+        {profile_args}
         --emit=metadata={unit.metadata},link={unit.link}
         -L dependency={deps}
         --extern {dep_extern}{dep_artifact}
@@ -397,11 +719,13 @@ fn generic_lib_with_dynamic_deps(target: Target, source: Tree, graph: ResolvedGr
     let edition = doc_string(package_doc(manifest), "edition");
     let deps = dependency_tree(target, source, graph, unit, mode);
     let externs = direct_extern_args(graph, unit.deps, mode, []);
+    let profile_args = rustc_profile_args(unit.profile);
 
     rustc! {
         --crate-name {unit.name}
         --edition {edition}
         --crate-type lib
+        {profile_args}
         --emit=metadata={unit.metadata},link={unit.link}
         -L dependency={deps}
         {externs}
@@ -420,11 +744,13 @@ fn generic_bin_check_no_deps(target: Target, source: Tree, unit: ResolvedUnit) -
     let rustc = Rustc::acquire(target);
     let manifest = source / unit.manifest;
     let edition = doc_string(package_doc(manifest), "edition");
+    let profile_args = rustc_profile_args(unit.profile);
 
     rustc! {
         --crate-name {unit.name}
         --edition {edition}
         --crate-type bin
+        {profile_args}
         --emit=metadata={unit.metadata}
         {manifest / unit.source}
     }
@@ -448,11 +774,13 @@ fn generic_bin_check_with_one_dep(target: Target, source: Tree, graph: ResolvedG
     let dep_unit = resolved_unit(graph, dep);
     let dep_artifact = resolved_unit_artifact(target, source, graph, dep, "metadata");
     let dep_extern = dep_unit.name + "=";
+    let profile_args = rustc_profile_args(unit.profile);
 
     rustc! {
         --crate-name {unit.name}
         --edition {edition}
         --crate-type bin
+        {profile_args}
         --emit=metadata={unit.metadata}
         -L dependency={deps}
         --extern {dep_extern}{dep_artifact}
@@ -475,11 +803,13 @@ fn generic_bin_check_with_two_dep_ids(target: Target, source: Tree, graph: Resol
     let dep_b_artifact = resolved_unit_artifact(target, source, graph, dep_b, "metadata");
     let dep_a_extern = dep_a_unit.name + "=";
     let dep_b_extern = dep_b_unit.name + "=";
+    let profile_args = rustc_profile_args(unit.profile);
 
     rustc! {
         --crate-name {unit.name}
         --edition {edition}
         --crate-type bin
+        {profile_args}
         --emit=metadata={unit.metadata}
         -L dependency={deps}
         --extern {dep_a_extern}{dep_a_artifact}
@@ -494,11 +824,13 @@ fn generic_bin_check_with_dynamic_deps(target: Target, source: Tree, graph: Reso
     let edition = doc_string(package_doc(manifest), "edition");
     let deps = dependency_tree(target, source, graph, unit, "metadata");
     let externs = direct_extern_args(graph, unit.deps, "metadata", []);
+    let profile_args = rustc_profile_args(unit.profile);
 
     rustc! {
         --crate-name {unit.name}
         --edition {edition}
         --crate-type bin
+        {profile_args}
         --emit=metadata={unit.metadata}
         -L dependency={deps}
         {externs}
@@ -510,11 +842,13 @@ fn generic_bin_link_no_deps(target: Target, source: Tree, unit: ResolvedUnit) ->
     let rustc = Rustc::acquire(target);
     let manifest = source / unit.manifest;
     let edition = doc_string(package_doc(manifest), "edition");
+    let profile_args = rustc_profile_args(unit.profile);
 
     rustc! {
         --crate-name {unit.name}
         --edition {edition}
         --crate-type bin
+        {profile_args}
         --emit=link={unit.link}
         {manifest / unit.source}
     }
@@ -538,11 +872,13 @@ fn generic_bin_link_with_one_dep(target: Target, source: Tree, graph: ResolvedGr
     let dep_unit = resolved_unit(graph, dep);
     let dep_artifact = resolved_unit_artifact(target, source, graph, dep, "link");
     let dep_extern = dep_unit.name + "=";
+    let profile_args = rustc_profile_args(unit.profile);
 
     rustc! {
         --crate-name {unit.name}
         --edition {edition}
         --crate-type bin
+        {profile_args}
         --emit=link={unit.link}
         -L dependency={deps}
         --extern {dep_extern}{dep_artifact}
@@ -565,11 +901,13 @@ fn generic_bin_link_with_two_dep_ids(target: Target, source: Tree, graph: Resolv
     let dep_b_artifact = resolved_unit_artifact(target, source, graph, dep_b, "link");
     let dep_a_extern = dep_a_unit.name + "=";
     let dep_b_extern = dep_b_unit.name + "=";
+    let profile_args = rustc_profile_args(unit.profile);
 
     rustc! {
         --crate-name {unit.name}
         --edition {edition}
         --crate-type bin
+        {profile_args}
         --emit=link={unit.link}
         -L dependency={deps}
         --extern {dep_a_extern}{dep_a_artifact}
@@ -584,11 +922,13 @@ fn generic_bin_link_with_dynamic_deps(target: Target, source: Tree, graph: Resol
     let edition = doc_string(package_doc(manifest), "edition");
     let deps = dependency_tree(target, source, graph, unit, "link");
     let externs = direct_extern_args(graph, unit.deps, "link", []);
+    let profile_args = rustc_profile_args(unit.profile);
 
     rustc! {
         --crate-name {unit.name}
         --edition {edition}
         --crate-type bin
+        {profile_args}
         --emit=link={unit.link}
         -L dependency={deps}
         {externs}
@@ -614,11 +954,13 @@ fn generic_proc_macro(source: Tree, unit: ResolvedUnit) -> Tree {
     let rustc = Rustc::acquire(host);
     let manifest = source / unit.manifest;
     let edition = doc_string(package_doc(manifest), "edition");
+    let profile_args = rustc_profile_args(unit.profile);
 
     rustc! {
         --crate-name {unit.name}
         --edition {edition}
         --crate-type proc-macro
+        {profile_args}
         --emit=link={unit.link}
         {manifest / unit.source}
     }
@@ -628,11 +970,13 @@ fn generic_build_script_compile(source: Tree, unit: ResolvedUnit) -> Tree {
     let rustc = Rustc::acquire(Target::host());
     let manifest = source / unit.manifest;
     let edition = doc_string(package_doc(manifest), "edition");
+    let profile_args = rustc_profile_args(unit.profile);
 
     rustc! {
         --crate-name {unit.name}
         --edition {edition}
         --crate-type bin
+        {profile_args}
         --emit=link={unit.link}
         {manifest / unit.source}
     }
@@ -727,6 +1071,7 @@ fn solution_unit(index: Index, result: SolveResult, targets: UnitTargetTable, so
     let target_shape = unit_target(targets, pkg);
     let manifest = source / target_shape.manifest;
     let name = doc_string(package_doc(manifest), "name");
+    let profile = default_resolved_profile(target_shape.kind, name);
     ResolvedUnit {
         name: name,
         kind: target_shape.kind,
@@ -737,6 +1082,7 @@ fn solution_unit(index: Index, result: SolveResult, targets: UnitTargetTable, so
         link: target_shape.link,
         metadata_file: target_shape.metadata_file,
         link_file: target_shape.link_file,
+        profile: profile,
     }
 }
 
@@ -817,11 +1163,13 @@ fn solution_lib_with_one_dep(target: Target, source: Tree, index: Index, result:
     let dep_ref = solution_artifact_ref(index, result, targets, source, target_name, dep, mode);
     let dep_artifact = solution_unit_artifact(target, source, index, result, targets, target_name, dep, mode);
     let dep_extern = argv_extern_prefix_for_artifact(dep_ref);
+    let profile_args = rustc_profile_args(unit.profile);
 
     rustc! {
         --crate-name {unit.name}
         --edition {edition}
         --crate-type lib
+        {profile_args}
         --emit=metadata={unit.metadata},link={unit.link}
         -L dependency={deps}
         --extern {dep_extern}{dep_artifact}
@@ -848,11 +1196,13 @@ fn solution_bin_check_with_one_dep(target: Target, source: Tree, index: Index, r
     let dep_ref = solution_artifact_ref(index, result, targets, source, target_name, dep, "metadata");
     let dep_artifact = solution_unit_artifact(target, source, index, result, targets, target_name, dep, "metadata");
     let dep_extern = argv_extern_prefix_for_artifact(dep_ref);
+    let profile_args = rustc_profile_args(unit.profile);
 
     rustc! {
         --crate-name {unit.name}
         --edition {edition}
         --crate-type bin
+        {profile_args}
         --emit=metadata={unit.metadata}
         -L dependency={deps}
         --extern {dep_extern}{dep_artifact}
@@ -875,11 +1225,13 @@ fn solution_bin_check_with_two_dep_ids(target: Target, source: Tree, index: Inde
     let dep_b_artifact = solution_unit_artifact(target, source, index, result, targets, target_name, dep_b, "metadata");
     let dep_a_extern = argv_extern_prefix_for_artifact(dep_a_ref);
     let dep_b_extern = argv_extern_prefix_for_artifact(dep_b_ref);
+    let profile_args = rustc_profile_args(unit.profile);
 
     rustc! {
         --crate-name {unit.name}
         --edition {edition}
         --crate-type bin
+        {profile_args}
         --emit=metadata={unit.metadata}
         -L dependency={deps}
         --extern {dep_a_extern}{dep_a_artifact}
@@ -910,11 +1262,13 @@ fn solution_bin_link_with_one_dep(target: Target, source: Tree, index: Index, re
     let dep_ref = solution_artifact_ref(index, result, targets, source, target_name, dep, "link");
     let dep_artifact = solution_unit_artifact(target, source, index, result, targets, target_name, dep, "link");
     let dep_extern = argv_extern_prefix_for_artifact(dep_ref);
+    let profile_args = rustc_profile_args(unit.profile);
 
     rustc! {
         --crate-name {unit.name}
         --edition {edition}
         --crate-type bin
+        {profile_args}
         --emit=link={unit.link}
         -L dependency={deps}
         --extern {dep_extern}{dep_artifact}
@@ -937,11 +1291,13 @@ fn solution_bin_link_with_two_dep_ids(target: Target, source: Tree, index: Index
     let dep_b_artifact = solution_unit_artifact(target, source, index, result, targets, target_name, dep_b, "link");
     let dep_a_extern = argv_extern_prefix_for_artifact(dep_a_ref);
     let dep_b_extern = argv_extern_prefix_for_artifact(dep_b_ref);
+    let profile_args = rustc_profile_args(unit.profile);
 
     rustc! {
         --crate-name {unit.name}
         --edition {edition}
         --crate-type bin
+        {profile_args}
         --emit=link={unit.link}
         -L dependency={deps}
         --extern {dep_a_extern}{dep_a_artifact}
