@@ -84,8 +84,9 @@ fn real_process_rustc_builds_two_crate_fixture_and_matches_cargo_unit_graph_orac
         return Ok(());
     }
 
+    let source = crate_source();
     let backend = Arc::new(RealProcessBackend::new());
-    let mut machine = Machine::load(SOURCE)?.with_exec_backend(backend);
+    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
     let target = machine.linux_target_handle();
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(two_crate_graph_tree()))?
@@ -122,8 +123,9 @@ fn real_process_rustc_builds_lockfile_graph_and_matches_cargo_unit_graph_oracle(
         return Ok(());
     }
 
+    let source = crate_source();
     let backend = Arc::new(RealProcessBackend::new());
-    let mut machine = Machine::load(SOURCE)?.with_exec_backend(backend);
+    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
     let target = machine.linux_target_handle();
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(lock_graph_tree()))?
@@ -219,14 +221,54 @@ fn generic_walk_builds_resolved_graph_and_matches_cargo_oracle() -> Result<(), S
 }
 
 #[test]
+fn solution_walk_derives_units_from_rodin_and_matches_cargo_oracle() -> Result<(), String> {
+    if !host_rustc_available() {
+        return Ok(());
+    }
+
+    let source = generic_lock_graph_source();
+    let backend = Arc::new(RealProcessBackend::new());
+    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
+    let target = machine.linux_target_handle();
+    let graph = machine
+        .intern_arg("Tree", MachineArg::Tree(lock_graph_tree()))?
+        .0;
+
+    let checked =
+        demand_with_rustc_trace(&mut machine, "derived_lock_bin_check", vec![target, graph])?;
+    let _rmeta = tree_file_bytes(&mut machine, checked, "mini_app.rmeta")?;
+
+    let built = demand_with_rustc_trace(&mut machine, "derived_lock_bin", vec![target, graph])?;
+    let bin = tree_file_bytes(&mut machine, built, "mini_app")?;
+    let stdout = run_binary_bytes(&bin)?;
+    if stdout != LOCK_GRAPH_EXPECTED_STDOUT {
+        return Err(format!(
+            "unexpected derived lock graph stdout: {:?}",
+            String::from_utf8_lossy(&stdout)
+        ));
+    }
+
+    let machine_graph = machine_rustc_unit_graph(&machine)?;
+    let cargo_graph = cargo_lock_graph_unit_graph_oracle()?;
+    if machine_graph != cargo_graph {
+        return Err(format!(
+            "derived unit graph did not match cargo oracle\nmachine: {machine_graph:#?}\ncargo: {cargo_graph:#?}"
+        ));
+    }
+
+    Ok(())
+}
+
+#[test]
 fn real_process_runs_build_script_threads_directives_and_out_dir_into_parent_rustc()
 -> Result<(), String> {
     if !host_rustc_available() {
         return Ok(());
     }
 
+    let source = crate_source();
     let backend = Arc::new(RealProcessBackend::new());
-    let mut machine = Machine::load(SOURCE)?.with_exec_backend(backend);
+    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
     let target = machine.linux_target_handle();
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(build_script_tree()))?
@@ -323,7 +365,11 @@ fn build_script_tree() -> Tree {
 }
 
 fn generic_lock_graph_source() -> String {
-    format!("{SOURCE}\n\n{RODIN_SOURCE}\n\n{GENERIC_LOCK_GRAPH_BRIDGE}")
+    format!("{RODIN_SOURCE}\n\n{SOURCE}\n\n{GENERIC_LOCK_GRAPH_BRIDGE}")
+}
+
+fn crate_source() -> String {
+    format!("{RODIN_SOURCE}\n\n{SOURCE}")
 }
 
 const GENERIC_LOCK_GRAPH_BRIDGE: &str = r#"
@@ -465,6 +511,15 @@ fn selected_insert_unit(units: Map<Int, ResolvedUnit>, selected: Map<Int, Versio
     }
 }
 
+fn fixture_unit_targets() -> UnitTargetTable {
+    let targets: Map<Int, UnitTarget> = {};
+    let targets = targets.insert(0, UnitTarget { kind: "lib", manifest: p"crates/alpha_lib", source: p"src/lib.rs", metadata: p"libalpha_lib.rmeta", link: p"libalpha_lib.rlib", metadata_file: "libalpha_lib.rmeta", link_file: "libalpha_lib.rlib" });
+    let targets = targets.insert(1, UnitTarget { kind: "lib", manifest: p"crates/core_lib", source: p"src/lib.rs", metadata: p"libcore_lib.rmeta", link: p"libcore_lib.rlib", metadata_file: "libcore_lib.rmeta", link_file: "libcore_lib.rlib" });
+    let targets = targets.insert(2, UnitTarget { kind: "lib", manifest: p"crates/formatting_lib", source: p"src/lib.rs", metadata: p"libformatting_lib.rmeta", link: p"libformatting_lib.rlib", metadata_file: "libformatting_lib.rmeta", link_file: "libformatting_lib.rlib" });
+    let targets = targets.insert(3, UnitTarget { kind: "bin", manifest: p"app", source: p"src/main.rs", metadata: p"mini_app.rmeta", link: p"mini_app", metadata_file: "mini_app.rmeta", link_file: "mini_app" });
+    UnitTargetTable { root: 3, targets: targets }
+}
+
 fn fixture_resolved_graph(target: String) -> ResolvedGraph {
     let result = solve(fixture_index(), fixture_problem(), target);
     let units: Map<Int, ResolvedUnit> = {};
@@ -481,6 +536,14 @@ pub fn generic_lock_bin_check(target: Target, graph: Tree) -> Tree {
 
 pub fn generic_lock_bin(target: Target, graph: Tree) -> Tree {
     crate_resolved_bin(target, graph, fixture_resolved_graph("x86_64-unknown-linux-gnu"))
+}
+
+pub fn derived_lock_bin_check(target: Target, graph: Tree) -> Tree {
+    crate_solution_bin_check(target, graph, fixture_index(), fixture_problem(), "x86_64-unknown-linux-gnu", fixture_unit_targets())
+}
+
+pub fn derived_lock_bin(target: Target, graph: Tree) -> Tree {
+    crate_solution_bin(target, graph, fixture_index(), fixture_problem(), "x86_64-unknown-linux-gnu", fixture_unit_targets())
 }
 
 "#;
@@ -959,8 +1022,9 @@ fn real_process_rustc_builds_proc_macro_fixture_and_matches_cargo_unit_graph_ora
         return Ok(());
     }
 
+    let source = crate_source();
     let backend = Arc::new(RealProcessBackend::new());
-    let mut machine = Machine::load(SOURCE)?.with_exec_backend(backend);
+    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(proc_macro_graph_tree()))?
         .0;

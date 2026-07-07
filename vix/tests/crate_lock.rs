@@ -4,6 +4,7 @@ use vix::exec::Tree;
 use vix::machine::{DriveEvent, Machine, MachineArg, RenderedValue};
 
 const SOURCE: &str = include_str!("../../playgrounds/snark/src/bundled/vix/samples/crate.vix");
+const RODIN_SOURCE: &str = include_str!("../../rodin/rodin.vix");
 const LOCK: &str =
     include_str!("../../playgrounds/snark/src/bundled/vix/samples/fixtures/lock_graph/Cargo.lock");
 const APP_LOCK: &str = include_str!(
@@ -54,7 +55,8 @@ const BUILD_SCRIPT_MAIN: &str = include_str!(
 
 #[test]
 fn crate_vix_consumes_lockfile_and_builds_transitive_graph_with_fake_rustc() -> Result<(), String> {
-    let mut machine = Machine::load(SOURCE)?;
+    let source = crate_source();
+    let mut machine = Machine::load(&source)?;
     let target = machine.linux_target_handle();
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(lock_graph_tree()))?
@@ -103,7 +105,8 @@ fn crate_vix_consumes_lockfile_and_builds_transitive_graph_with_fake_rustc() -> 
 
 #[test]
 fn crate_vix_models_build_script_directives_and_out_dir_with_fake_runner() -> Result<(), String> {
-    let mut machine = Machine::load(SOURCE)?;
+    let source = crate_source();
+    let mut machine = Machine::load(&source)?;
     let target = machine.linux_target_handle();
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(build_script_tree()))?
@@ -156,6 +159,10 @@ fn crate_vix_models_build_script_directives_and_out_dir_with_fake_runner() -> Re
         return Err("parent rustc did not receive OUT_DIR env".into());
     }
     Ok(())
+}
+
+fn crate_source() -> String {
+    format!("{RODIN_SOURCE}\n\n{SOURCE}")
 }
 
 fn rendered_string(machine: &Machine, name: &str, word: i64) -> Result<String, String> {
