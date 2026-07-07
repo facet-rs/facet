@@ -1,4 +1,5 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::hash::{BuildHasher, Hasher};
 
 use taxon::{
     Field as TaxonField, Kind, Primitive, Schema, SchemaId, SchemaRef, Variant as TaxonVariant,
@@ -139,18 +140,54 @@ impl ModuleTables {
 #[derive(Clone)]
 pub(crate) struct SchemaTables {
     by_name: HashMap<String, SchemaRef>,
-    by_id: HashMap<SchemaId, Schema>,
-    display_names: HashMap<SchemaId, String>,
-    frame_names: HashMap<SchemaId, String>,
+    by_id: SchemaIdMap<Schema>,
+    display_names: SchemaIdMap<String>,
+    frame_names: SchemaIdMap<String>,
+}
+
+type SchemaIdMap<T> = HashMap<SchemaId, T, SchemaIdBuildHasher>;
+
+#[derive(Clone, Default)]
+struct SchemaIdBuildHasher;
+
+#[derive(Default)]
+struct SchemaIdHasher {
+    value: u64,
+}
+
+impl BuildHasher for SchemaIdBuildHasher {
+    type Hasher = SchemaIdHasher;
+
+    fn build_hasher(&self) -> Self::Hasher {
+        SchemaIdHasher::default()
+    }
+}
+
+impl Hasher for SchemaIdHasher {
+    fn finish(&self) -> u64 {
+        self.value
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = [0u8; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            self.value ^= u64::from_le_bytes(word);
+        }
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.value = value;
+    }
 }
 
 impl SchemaTables {
     pub(crate) fn empty() -> Self {
         Self {
             by_name: HashMap::new(),
-            by_id: HashMap::new(),
-            display_names: HashMap::new(),
-            frame_names: HashMap::new(),
+            by_id: SchemaIdMap::default(),
+            display_names: SchemaIdMap::default(),
+            frame_names: SchemaIdMap::default(),
         }
     }
 
@@ -202,12 +239,25 @@ impl SchemaTables {
         if let Some(schema_ref) = self.by_name.get(name) {
             return schema_ref.clone();
         }
-        if let Some((base, args)) = legacy_generic_schema(name)
-            && matches!(base, "Array" | "List" | "Map" | "Option")
-            && let Some(SchemaRef::Concrete { id, .. }) = self.by_name.get(base)
-        {
+        if let Some((base, args)) = legacy_generic_schema(name) {
             let args = args.iter().map(|arg| self.legacy_ref(arg)).collect();
-            return SchemaRef::generic(*id, args);
+            if base == "Tuple" {
+                return self
+                    .by_id
+                    .values()
+                    .find_map(|schema| match &schema.kind {
+                        Kind::Tuple { elements } if *elements == args => {
+                            Some(SchemaRef::concrete(schema.id))
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| SchemaRef::var(name));
+            }
+            if matches!(base, "Array" | "List" | "Map" | "Option")
+                && let Some(SchemaRef::Concrete { id, .. }) = self.by_name.get(base)
+            {
+                return SchemaRef::generic(*id, args);
+            }
         }
         SchemaRef::var(name)
     }
@@ -509,8 +559,8 @@ impl SchemaBuilder {
                 .collect::<Vec<_>>(),
         );
         let mut by_name = HashMap::new();
-        let mut by_id = HashMap::new();
-        let mut display_names = HashMap::new();
+        let mut by_id = SchemaIdMap::default();
+        let mut display_names = SchemaIdMap::default();
         for (name, schema) in names.into_iter().zip(resolved) {
             if let Some(name) = name {
                 by_name.insert(name.clone(), SchemaRef::concrete(schema.id));
@@ -522,7 +572,7 @@ impl SchemaBuilder {
             by_name,
             by_id,
             display_names,
-            frame_names: HashMap::new(),
+            frame_names: SchemaIdMap::default(),
         }
     }
 }
