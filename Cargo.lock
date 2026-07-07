@@ -8233,6 +8233,7 @@ name = "vix"
 version = "0.0.0"
 dependencies = [
  "blake3",
+ "exec-protocol",
  "facet",
  "facet-json",
  "facet-toml",
@@ -8250,6 +8251,7 @@ dependencies = [
  "tempfile",
  "tokio",
  "tracing",
+ "vox",
  "weavy",
 ]
 

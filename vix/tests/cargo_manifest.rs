@@ -622,8 +622,8 @@ fn real_workspace_metadata_baseline_is_counted() -> Result<(), String> {
 
     assert_eq!(workspace_members.len(), 146);
     assert_eq!(vix_member_count, 146);
-    assert_eq!(total_oracle_deps, 1130);
-    assert_eq!(before_workspace_allowlist_failures, 764);
+    assert_eq!(total_oracle_deps, 1133);
+    assert_eq!(before_workspace_allowlist_failures, 765);
     assert_eq!(target_cfg_represented, 55);
 
     Ok(())

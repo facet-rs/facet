@@ -151,6 +151,7 @@ fn run_real_process_request(
     let outcome = Outcome {
         outputs,
         read_set: observed.into_read_set(),
+        tree_events: Vec::new(),
     };
     let mut cache = cache
         .lock()
