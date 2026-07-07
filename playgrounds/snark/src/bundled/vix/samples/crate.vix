@@ -13,9 +13,32 @@ fn doc_as_bool(doc: Doc) -> Bool {
     doc
 }
 
+fn doc_as_strings(doc: Doc) -> [String] {
+    doc
+}
+
+fn crate_name(package_name: String) -> String {
+    match package_name.contains("-") {
+        true => crate_name(package_name.before("-") + "_" + package_name.after("-")),
+        false => package_name,
+    }
+}
+
 fn package_doc(manifest: Tree) -> Doc {
     let doc = toml(manifest / p"Cargo.toml");
     doc.get("package").unwrap()
+}
+
+fn workspace_package_doc(source: Tree) -> Doc {
+    toml(source / p"Cargo.toml").get("workspace").unwrap().get("package").unwrap()
+}
+
+fn package_edition_from_source(source: Tree, manifest: Tree) -> String {
+    let edition = package_doc(manifest).get("edition").unwrap();
+    match edition.is_map() {
+        true => doc_string(workspace_package_doc(source), "edition"),
+        false => doc_as_string(edition),
+    }
 }
 
 fn lock_doc(graph: Tree) -> Doc {
@@ -273,6 +296,7 @@ struct ResolvedUnit {
     manifest: Path,
     source: Path,
     deps: [Int],
+    cfgs: [String],
     metadata: Path,
     link: Path,
     metadata_file: String,
@@ -289,6 +313,7 @@ struct UnitTarget {
     kind: String,
     manifest: Path,
     source: Path,
+    cfgs: [String],
     metadata: Path,
     link: Path,
     metadata_file: String,
@@ -1105,7 +1130,11 @@ fn solution_dep_ids_tuple(index: Index, result: SolveResult, parent: Int, target
 fn solution_unit(index: Index, result: SolveResult, targets: UnitTargetTable, source: Tree, target: String, pkg: Int) -> ResolvedUnit {
     let target_shape = unit_target(targets, pkg);
     let manifest = source / target_shape.manifest;
-    let name = doc_string(package_doc(manifest), "name");
+    let package_name = doc_string(package_doc(manifest), "name");
+    let name = match target_shape.kind == "build-script" {
+        true => "build_script_build",
+        false => crate_name(package_name),
+    };
     let profile = default_resolved_profile(target_shape.kind, name);
     ResolvedUnit {
         name: name,
@@ -1113,6 +1142,7 @@ fn solution_unit(index: Index, result: SolveResult, targets: UnitTargetTable, so
         manifest: target_shape.manifest,
         source: target_shape.source,
         deps: solution_dep_ids(index, result, pkg, target, index.clause_ids, []),
+        cfgs: target_shape.cfgs,
         metadata: target_shape.metadata,
         link: target_shape.link,
         metadata_file: target_shape.metadata_file,
@@ -1130,6 +1160,13 @@ fn solution_dependency_artifacts(target: Target, source: Tree, index: Index, res
 
 fn solution_dependency_artifacts_tuple(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, popped: (Int, [Int]), mode: String, out: [Tree]) -> [Tree] {
     let unit = solution_unit(index, result, targets, source, target_name, popped.0);
+    match unit.kind == "build-script" {
+        true => solution_dependency_artifacts(target, source, index, result, targets, target_name, popped.1, mode, out),
+        false => solution_dependency_artifacts_non_build(target, source, index, result, targets, target_name, popped, unit, mode, out),
+    }
+}
+
+fn solution_dependency_artifacts_non_build(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, popped: (Int, [Int]), unit: ResolvedUnit, mode: String, out: [Tree]) -> [Tree] {
     let nested = solution_dependency_artifacts(target, source, index, result, targets, target_name, unit.deps, mode, out);
     let built = solution_unit_built(target, source, index, result, targets, target_name, popped.0, mode);
     solution_dependency_artifacts(target, source, index, result, targets, target_name, popped.1, mode, nested.push(built))
@@ -1177,6 +1214,10 @@ fn argv_extern_interpolation_for_artifact(artifact: UnitArtifactRef, tree: Tree)
     Arg::Interpolation { tree: tree, subpath: artifact.subpath }
 }
 
+fn argv_source_interpolation(manifest: Tree, source: Path) -> Arg {
+    Arg::Interpolation { tree: manifest, subpath: source }
+}
+
 fn solution_extern_args(target: Target, index: Index, result: SolveResult, targets: UnitTargetTable, source: Tree, target_name: String, deps: [Int], mode: String, out: [Arg]) -> [Arg] {
     match deps.len() == 0 {
         true => out,
@@ -1186,25 +1227,84 @@ fn solution_extern_args(target: Target, index: Index, result: SolveResult, targe
 
 fn solution_extern_args_tuple(target: Target, index: Index, result: SolveResult, targets: UnitTargetTable, source: Tree, target_name: String, popped: (Int, [Int]), mode: String, out: [Arg]) -> [Arg] {
     let artifact = solution_artifact_ref(index, result, targets, source, target_name, popped.0, mode);
+    let unit = solution_unit(index, result, targets, source, target_name, popped.0);
+    match unit.kind == "build-script" {
+        true => solution_extern_args(target, index, result, targets, source, target_name, popped.1, mode, out),
+        false => solution_extern_args_non_build(target, index, result, targets, source, target_name, popped, mode, out, artifact),
+    }
+}
+
+fn solution_extern_args_non_build(target: Target, index: Index, result: SolveResult, targets: UnitTargetTable, source: Tree, target_name: String, popped: (Int, [Int]), mode: String, out: [Arg], artifact: UnitArtifactRef) -> [Arg] {
     let built = solution_unit_built(target, source, index, result, targets, target_name, popped.0, mode);
     let next = out.push(Arg::Str("--extern")).push(Arg::Str(argv_extern_prefix_for_artifact(artifact))).push(argv_extern_interpolation_for_artifact(artifact, built));
     solution_extern_args(target, index, result, targets, source, target_name, popped.1, mode, next)
 }
 
 fn solution_lib_no_deps(target: Target, source: Tree, unit: ResolvedUnit) -> Tree {
-    generic_lib_no_deps(target, source, unit)
-}
-
-fn solution_lib_with_one_dep(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, unit: ResolvedUnit, mode: String, dep: Int) -> Tree {
     let rustc = Rustc::acquire(target);
     let manifest = source / unit.manifest;
-    let edition = doc_string(package_doc(manifest), "edition");
-    let deps = solution_dependency_tree(target, source, index, result, targets, target_name, unit, mode);
-    let dep_ref = solution_artifact_ref(index, result, targets, source, target_name, dep, mode);
-    let dep_built = solution_unit_built(target, source, index, result, targets, target_name, dep, mode);
-    let dep_extern = argv_extern_prefix_for_artifact(dep_ref);
+    let edition = package_edition_from_source(source, manifest);
     let profile_args = rustc_profile_args(unit.profile);
-    let dep_arg = argv_extern_interpolation_for_artifact(dep_ref, dep_built);
+    let cfg_args = push_cfg_args(unit.cfgs, []);
+    let source_arg = argv_source_interpolation(manifest, unit.source);
+
+    rustc! {
+        --crate-name {unit.name}
+        --edition {edition}
+        --crate-type lib
+        {profile_args}
+        {cfg_args}
+        --env CARGO_MANIFEST_DIR={manifest}
+        --emit=metadata={unit.metadata},link={unit.link}
+        {source_arg}
+    }
+}
+
+fn push_cfg_args(cfgs: [String], out: [String]) -> [String] {
+    match cfgs.len() == 0 {
+        true => out,
+        false => push_cfg_args_tuple(cfgs.pop(), out),
+    }
+}
+
+fn push_cfg_args_tuple(popped: (String, [String]), out: [String]) -> [String] {
+    let out = push_cfg_args(popped.1, out);
+    out.push("--cfg").push(popped.0)
+}
+
+fn solution_build_script_cfg_args(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, deps: [Int], out: [String]) -> [String] {
+    match deps.len() == 0 {
+        true => out,
+        false => solution_build_script_cfg_args_tuple(target, source, index, result, targets, target_name, deps.pop(), out),
+    }
+}
+
+fn solution_build_script_cfg_args_tuple(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, popped: (Int, [Int]), out: [String]) -> [String] {
+    let unit = solution_unit(index, result, targets, source, target_name, popped.0);
+    let out = match unit.kind == "build-script" {
+        true => solution_build_script_cfg_args_one(target, source, index, result, targets, target_name, popped.0, out),
+        false => out,
+    };
+    solution_build_script_cfg_args(target, source, index, result, targets, target_name, popped.1, out)
+}
+
+fn solution_build_script_cfg_args_one(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, dep: Int, out: [String]) -> [String] {
+    let run = solution_unit_built(target, source, index, result, targets, target_name, dep, "link");
+    let directives = build_script_directives(run);
+    let cfgs = doc_as_strings(directives.get("rustc_cfg").unwrap());
+    push_cfg_args(cfgs, out)
+}
+
+fn solution_lib_with_deps(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, unit: ResolvedUnit, mode: String) -> Tree {
+    let rustc = Rustc::acquire(target);
+    let manifest = source / unit.manifest;
+    let edition = package_edition_from_source(source, manifest);
+    let direct_deps = unit.deps;
+    let deps = solution_dependency_tree(target, source, index, result, targets, target_name, unit, mode);
+    let externs = solution_extern_args(target, index, result, targets, source, target_name, direct_deps, mode, []);
+    let profile_args = rustc_profile_args(unit.profile);
+    let cfg_args = solution_build_script_cfg_args(target, source, index, result, targets, target_name, direct_deps, unit.cfgs);
+    let source_arg = argv_source_interpolation(manifest, unit.source);
 
     rustc! {
         --crate-name {unit.name}
@@ -1213,15 +1313,17 @@ fn solution_lib_with_one_dep(target: Target, source: Tree, index: Index, result:
         {profile_args}
         --emit=metadata={unit.metadata},link={unit.link}
         -L dependency={deps}
-        --extern {dep_extern}{dep_arg}
-        {manifest / unit.source}
+        {externs}
+        {cfg_args}
+        --env CARGO_MANIFEST_DIR={manifest}
+        {source_arg}
     }
 }
 
 fn solution_lib(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, unit: ResolvedUnit, mode: String) -> Tree {
     match unit.deps.len() == 0 {
         true => solution_lib_no_deps(target, source, unit),
-        false => solution_lib_with_one_dep(target, source, index, result, targets, target_name, unit, mode, unit.deps.pop().0),
+        false => solution_lib_with_deps(target, source, index, result, targets, target_name, unit, mode),
     }
 }
 
@@ -1370,13 +1472,116 @@ fn solution_bin(target: Target, source: Tree, index: Index, result: SolveResult,
     }
 }
 
+fn target_arch_env(target_name: String) -> String {
+    target_name.before("-")
+}
+
+fn target_after_arch(target_name: String) -> String {
+    target_name.after("-")
+}
+
+fn target_vendor_env(target_name: String) -> String {
+    target_after_arch(target_name).before("-")
+}
+
+fn target_after_vendor(target_name: String) -> String {
+    target_after_arch(target_name).after("-")
+}
+
+fn target_os_env(target_name: String) -> String {
+    target_after_vendor(target_name).before("-")
+}
+
+fn target_env_env(target_name: String) -> String {
+    match target_after_vendor(target_name).contains("-") {
+        true => target_after_vendor(target_name).after("-"),
+        false => "",
+    }
+}
+
+fn target_endian_env(target_name: String) -> String {
+    "little"
+}
+
+fn solution_build_script_compile(source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, pkg: Int, unit: ResolvedUnit) -> Tree {
+    let rustc = Rustc::acquire(Target::host());
+    let manifest = source / unit.manifest;
+    let edition = package_edition_from_source(source, manifest);
+    let direct_deps = solution_dep_ids(index, result, pkg, target_name, index.clause_ids, []);
+    let deps = solution_dependency_tree(Target::host(), source, index, result, targets, target_name, unit, "link");
+    let externs = solution_extern_args(Target::host(), index, result, targets, source, target_name, direct_deps, "link", []);
+    let profile_args = rustc_profile_args(unit.profile);
+    let cfg_args = push_cfg_args(unit.cfgs, []);
+    let source_arg = argv_source_interpolation(manifest, unit.source);
+
+    rustc! {
+        --crate-name {unit.name}
+        --edition {edition}
+        --crate-type bin
+        {profile_args}
+        {cfg_args}
+        --env CARGO_MANIFEST_DIR={manifest}
+        --emit=link={unit.link}
+        -L dependency={deps}
+        {externs}
+        {source_arg}
+    }
+}
+
+fn solution_build_script_run(source: Tree, target_name: String, unit: ResolvedUnit, binary: Tree) -> Tree {
+    let build_script = "build-script-runner";
+    let manifest = source / unit.manifest;
+    let package = package_doc(manifest);
+    let name = doc_string(package, "name");
+    let version = doc_string(package, "version");
+    let arch = target_arch_env(target_name);
+    let vendor = target_vendor_env(target_name);
+    let os = target_os_env(target_name);
+    let env = target_env_env(target_name);
+    let endian = target_endian_env(target_name);
+
+    build_script! {
+        --executable {binary / unit.link}
+        --stdout {p"build.stdout"}
+        --out-dir {p"out"}
+        --env OUT_DIR={p"out"}
+        --env CARGO_MANIFEST_DIR={manifest}
+        --env CARGO_PKG_NAME={name}
+        --env CARGO_PKG_VERSION={version}
+        --env CARGO_PKG_VERSION_MAJOR=0
+        --env CARGO_PKG_VERSION_MINOR=1
+        --env CARGO_PKG_VERSION_PATCH=0
+        --env CARGO_PKG_VERSION_PRE=
+        --env TARGET={target_name}
+        --env HOST={target_name}
+        --env OPT_LEVEL=3
+        --env PROFILE=debug
+        --env CARGO_CFG_TARGET_ARCH={arch}
+        --env CARGO_CFG_TARGET_VENDOR={vendor}
+        --env CARGO_CFG_TARGET_OS={os}
+        --env CARGO_CFG_TARGET_ENV={env}
+        --env CARGO_CFG_TARGET_ENDIAN={endian}
+    }
+}
+
+fn solution_build_script(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, pkg: Int, unit: ResolvedUnit) -> Tree {
+    let binary = solution_build_script_compile(source, index, result, targets, target_name, pkg, unit);
+    solution_build_script_run(source, target_name, unit, binary)
+}
+
 fn solution_unit_built(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, pkg: Int, mode: String) -> Tree {
     let unit = solution_unit(index, result, targets, source, target_name, pkg);
     match unit.kind == "lib" {
         true => solution_lib(target, source, index, result, targets, target_name, unit, mode),
-        false => match unit.kind == "proc-macro" {
-            true => generic_proc_macro(source, unit),
-            false => solution_bin(target, source, index, result, targets, target_name, unit, mode),
+        false => match unit.kind == "build-dependency" {
+            true => solution_lib(target, source, index, result, targets, target_name, unit, mode),
+            false => match unit.kind == "proc-macro" {
+                true => generic_proc_macro(source, unit),
+                false => match unit.kind == "build-script" {
+                    true => solution_build_script(target, source, index, result, targets, target_name, pkg, unit),
+                    false => solution_bin(target, source, index, result, targets, target_name, unit, mode),
+                },
+            },
         },
     }
 }

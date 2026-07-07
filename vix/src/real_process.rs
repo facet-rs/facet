@@ -311,20 +311,24 @@ fn stage_declared_inputs(
     Ok(())
 }
 
-fn stage_env_path(root: &Path, path: &str, world: &ObservedWorld<'_>) -> Result<(), String> {
-    if world.peek_bytes(path).is_some() {
-        if let Some(bytes) = world.peek_bytes(path) {
-            stage_file(root, path, &bytes)?;
-        }
+fn stage_env_path(root: &Path, path: &str, world: &mut ObservedWorld<'_>) -> Result<(), String> {
+    if let Some(bytes) = world.read_bytes(path) {
+        stage_file(root, path, &bytes)?;
         return Ok(());
     }
-    let Some(names) = world.peek_list(path) else {
+    stage_env_dir(root, path, world)
+}
+
+fn stage_env_dir(root: &Path, path: &str, world: &mut ObservedWorld<'_>) -> Result<(), String> {
+    let Some(names) = world.list(path) else {
         return Ok(());
     };
     for name in names {
         let logical = listed_logical_path(path, &name, world);
-        if let Some(bytes) = world.peek_bytes(&logical) {
+        if let Some(bytes) = world.read_bytes(&logical) {
             stage_file(root, &logical, &bytes)?;
+        } else {
+            stage_env_dir(root, &logical, world)?;
         }
     }
     Ok(())
@@ -336,7 +340,11 @@ fn stage_declared_input(
     root: &Path,
 ) -> Result<(), String> {
     if let Some(bytes) = world.read_bytes(input) {
-        return stage_file(root, input, &bytes);
+        stage_file(root, input, &bytes)?;
+        if let Some(mount) = mount_root(input) {
+            stage_env_dir(root, &mount, world)?;
+        }
+        return Ok(());
     }
     if let Some(names) = world.list(input) {
         for name in names {

@@ -526,20 +526,20 @@ fn selected_insert_unit(units: Map<Int, ResolvedUnit>, selected: Map<Int, Versio
 
 fn fixture_unit_targets() -> UnitTargetTable {
     let targets: Map<Int, UnitTarget> = {};
-    let targets = targets.insert(0, UnitTarget { kind: "lib", manifest: p"crates/alpha_lib", source: p"src/lib.rs", metadata: p"libalpha_lib.rmeta", link: p"libalpha_lib.rlib", metadata_file: "libalpha_lib.rmeta", link_file: "libalpha_lib.rlib" });
-    let targets = targets.insert(1, UnitTarget { kind: "lib", manifest: p"crates/core_lib", source: p"src/lib.rs", metadata: p"libcore_lib.rmeta", link: p"libcore_lib.rlib", metadata_file: "libcore_lib.rmeta", link_file: "libcore_lib.rlib" });
-    let targets = targets.insert(2, UnitTarget { kind: "lib", manifest: p"crates/formatting_lib", source: p"src/lib.rs", metadata: p"libformatting_lib.rmeta", link: p"libformatting_lib.rlib", metadata_file: "libformatting_lib.rmeta", link_file: "libformatting_lib.rlib" });
-    let targets = targets.insert(3, UnitTarget { kind: "bin", manifest: p"app", source: p"src/main.rs", metadata: p"mini_app.rmeta", link: p"mini_app", metadata_file: "mini_app.rmeta", link_file: "mini_app" });
+    let targets = targets.insert(0, UnitTarget { kind: "lib", manifest: p"crates/alpha_lib", source: p"src/lib.rs", cfgs: [], metadata: p"libalpha_lib.rmeta", link: p"libalpha_lib.rlib", metadata_file: "libalpha_lib.rmeta", link_file: "libalpha_lib.rlib" });
+    let targets = targets.insert(1, UnitTarget { kind: "lib", manifest: p"crates/core_lib", source: p"src/lib.rs", cfgs: [], metadata: p"libcore_lib.rmeta", link: p"libcore_lib.rlib", metadata_file: "libcore_lib.rmeta", link_file: "libcore_lib.rlib" });
+    let targets = targets.insert(2, UnitTarget { kind: "lib", manifest: p"crates/formatting_lib", source: p"src/lib.rs", cfgs: [], metadata: p"libformatting_lib.rmeta", link: p"libformatting_lib.rlib", metadata_file: "libformatting_lib.rmeta", link_file: "libformatting_lib.rlib" });
+    let targets = targets.insert(3, UnitTarget { kind: "bin", manifest: p"app", source: p"src/main.rs", cfgs: [], metadata: p"mini_app.rmeta", link: p"mini_app", metadata_file: "mini_app.rmeta", link_file: "mini_app" });
     UnitTargetTable { root: 3, targets: targets }
 }
 
 fn fixture_resolved_graph(target: String) -> ResolvedGraph {
     let result = solve(fixture_index(), fixture_problem(), target);
     let units: Map<Int, ResolvedUnit> = {};
-    let units = selected_insert_unit(units, result.selected, 0, ResolvedUnit { name: "alpha_lib", kind: "lib", manifest: p"crates/alpha_lib", source: p"src/lib.rs", deps: [1], metadata: p"libalpha_lib.rmeta", link: p"libalpha_lib.rlib", metadata_file: "libalpha_lib.rmeta", link_file: "libalpha_lib.rlib", profile: default_resolved_profile("lib", "alpha_lib") });
-    let units = selected_insert_unit(units, result.selected, 1, ResolvedUnit { name: "core_lib", kind: "lib", manifest: p"crates/core_lib", source: p"src/lib.rs", deps: [], metadata: p"libcore_lib.rmeta", link: p"libcore_lib.rlib", metadata_file: "libcore_lib.rmeta", link_file: "libcore_lib.rlib", profile: default_resolved_profile("lib", "core_lib") });
-    let units = selected_insert_unit(units, result.selected, 2, ResolvedUnit { name: "formatting_lib", kind: "lib", manifest: p"crates/formatting_lib", source: p"src/lib.rs", deps: [], metadata: p"libformatting_lib.rmeta", link: p"libformatting_lib.rlib", metadata_file: "libformatting_lib.rmeta", link_file: "libformatting_lib.rlib", profile: default_resolved_profile("lib", "formatting_lib") });
-    let units = selected_insert_unit(units, result.selected, 3, ResolvedUnit { name: "mini_app", kind: "bin", manifest: p"app", source: p"src/main.rs", deps: [0, 2], metadata: p"mini_app.rmeta", link: p"mini_app", metadata_file: "mini_app.rmeta", link_file: "mini_app", profile: default_resolved_profile("bin", "mini_app") });
+    let units = selected_insert_unit(units, result.selected, 0, ResolvedUnit { name: "alpha_lib", kind: "lib", manifest: p"crates/alpha_lib", source: p"src/lib.rs", deps: [1], cfgs: [], metadata: p"libalpha_lib.rmeta", link: p"libalpha_lib.rlib", metadata_file: "libalpha_lib.rmeta", link_file: "libalpha_lib.rlib", profile: default_resolved_profile("lib", "alpha_lib") });
+    let units = selected_insert_unit(units, result.selected, 1, ResolvedUnit { name: "core_lib", kind: "lib", manifest: p"crates/core_lib", source: p"src/lib.rs", deps: [], cfgs: [], metadata: p"libcore_lib.rmeta", link: p"libcore_lib.rlib", metadata_file: "libcore_lib.rmeta", link_file: "libcore_lib.rlib", profile: default_resolved_profile("lib", "core_lib") });
+    let units = selected_insert_unit(units, result.selected, 2, ResolvedUnit { name: "formatting_lib", kind: "lib", manifest: p"crates/formatting_lib", source: p"src/lib.rs", deps: [], cfgs: [], metadata: p"libformatting_lib.rmeta", link: p"libformatting_lib.rlib", metadata_file: "libformatting_lib.rmeta", link_file: "libformatting_lib.rlib", profile: default_resolved_profile("lib", "formatting_lib") });
+    let units = selected_insert_unit(units, result.selected, 3, ResolvedUnit { name: "mini_app", kind: "bin", manifest: p"app", source: p"src/main.rs", deps: [0, 2], cfgs: [], metadata: p"mini_app.rmeta", link: p"mini_app", metadata_file: "mini_app.rmeta", link_file: "mini_app", profile: default_resolved_profile("bin", "mini_app") });
     ResolvedGraph { root: 3, units: units }
 }
 
@@ -1259,6 +1259,7 @@ fn unit_shapes_from_graph(
 #[derive(Debug, Facet)]
 struct CargoUnitGraph {
     units: Vec<CargoUnit>,
+    roots: Vec<usize>,
 }
 
 #[derive(Debug, Facet)]
@@ -1268,6 +1269,7 @@ struct CargoUnit {
     mode: String,
     platform: Option<String>,
     profile: CargoProfile,
+    features: Vec<String>,
     dependencies: Vec<CargoDependency>,
 }
 
@@ -1520,7 +1522,10 @@ fn cargo_taxon_unit_graph_oracle() -> Result<CargoUnitGraph, String> {
         .output()
         .is_ok_and(|output| output.status.success())
     {
-        return Ok(CargoUnitGraph { units: Vec::new() });
+        return Ok(CargoUnitGraph {
+            units: Vec::new(),
+            roots: Vec::new(),
+        });
     }
 
     let output = Command::new("cargo")
@@ -1760,6 +1765,586 @@ fn taxon_ladder_oracle_reveals_blake3_build_script_boundary() -> Result<(), Stri
         "cargo unit graph for taxon did not expose blake3's cc build dependency: {graph:#?}"
     );
     Ok(())
+}
+
+#[test]
+#[ignore = "demo checkpoint: runs blake3's real build.rs and records whether it invokes C tooling"]
+fn taxon_ladder_runs_blake3_build_script_to_c_compiler_checkpoint() -> Result<(), String> {
+    if !host_rustc_available() {
+        return Ok(());
+    }
+
+    let graph = cargo_taxon_unit_graph_oracle()?;
+    if graph.units.is_empty() {
+        return Ok(());
+    }
+
+    let host = host_triple()?;
+    let bridge = taxon_demo_bridge_source(&graph, &host)?;
+    write_tier_a_artifact("taxon-demo-bridge.vix", &bridge)?;
+    let source_tree = taxon_demo_source_tree(&graph)?;
+    let source = format!("{RODIN_SOURCE}\n\n{SOURCE}\n\n{bridge}");
+    let backend = Arc::new(RealProcessBackend::new());
+    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
+    let source_arg = machine.intern_arg("Tree", MachineArg::Tree(source_tree))?.0;
+
+    let demanded = machine.demand_i64("taxon_blake3_build_script_run", vec![source_arg]);
+    let run = match demanded {
+        Ok(run) => run,
+        Err(err) if mentions_c_tooling(&err) => {
+            write_tier_a_artifact(
+                "taxon-blake3-build-script-error.txt",
+                &format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(&machine)),
+            )?;
+            return Ok(());
+        }
+        Err(err) => {
+            write_tier_a_artifact(
+                "taxon-blake3-build-script-error.txt",
+                &format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(&machine)),
+            )?;
+            return Err(err);
+        }
+    };
+
+    let stdout = tree_file_bytes(&mut machine, run, "build.stdout")?;
+    let stdout = String::from_utf8_lossy(&stdout).into_owned();
+    write_tier_a_artifact("taxon-blake3-build-stdout.txt", &stdout)?;
+
+    if stdout.contains("cargo:rustc-link-lib=") || stdout.contains("cargo:rustc-link-search=") {
+        return Ok(());
+    }
+
+    Err(format!(
+        "blake3 build script stayed Rust-only on host {host}; stdout:\n{stdout}"
+    ))
+}
+
+fn taxon_demo_bridge_source(graph: &CargoUnitGraph, host: &str) -> Result<String, String> {
+    let ids = taxon_included_unit_ids(graph);
+    let run_to_build = taxon_run_custom_build_map(graph);
+    let root = graph
+        .roots
+        .first()
+        .copied()
+        .ok_or_else(|| "taxon cargo unit graph had no root".to_string())?;
+    let root = *ids
+        .get(&root)
+        .ok_or_else(|| format!("taxon root unit {root} was not included"))?;
+    let blake3_build = graph
+        .units
+        .iter()
+        .enumerate()
+        .find(|(_, unit)| {
+            unit.pkg_id.contains("#blake3@")
+                && unit.mode == "build"
+                && unit.target.kind.iter().any(|kind| kind == "custom-build")
+        })
+        .and_then(|(index, _)| ids.get(&index).copied())
+        .ok_or_else(|| "missing blake3 custom-build unit".to_string())?;
+    let cc_unit = graph
+        .units
+        .iter()
+        .enumerate()
+        .find(|(_, unit)| unit.pkg_id.contains("#cc@") && unit.mode == "build")
+        .and_then(|(index, _)| ids.get(&index).copied())
+        .ok_or_else(|| "missing cc host unit".to_string())?;
+
+    let mut out = String::new();
+    out.push_str("fn taxon_index() -> Index {\n");
+    out.push_str("    let names: Map<Int, String> = {};\n");
+    out.push_str("    let version_pkgs: Map<Int, Int> = {};\n");
+    out.push_str("    let version_values: Map<Int, String> = {};\n");
+    out.push_str("    let guard_clause_ids: Map<Int, Int> = {};\n");
+    out.push_str("    let guard_tags: Map<Int, String> = {};\n");
+    out.push_str("    let guard_kinds: Map<Int, Int> = {};\n");
+    out.push_str("    let guard_pkgs: Map<Int, Int> = {};\n");
+    out.push_str("    let guard_version_values: Map<Int, String> = {};\n");
+    out.push_str("    let guard_features: Map<Int, Int> = {};\n");
+    out.push_str("    let consequent_tags: Map<Int, String> = {};\n");
+    out.push_str("    let consequent_pkgs: Map<Int, Int> = {};\n");
+    out.push_str("    let consequent_version_sets: Map<Int, VersionSet> = {};\n");
+    out.push_str("    let consequent_features: Map<Int, Int> = {};\n");
+    out.push_str("    let gate_kinds: Map<Int, String> = {};\n");
+    out.push_str("    let gate_targets: Map<Int, String> = {};\n");
+
+    let mut packages = Vec::new();
+    let mut version_ids = Vec::new();
+    for (cargo_index, id) in &ids {
+        let unit = &graph.units[*cargo_index];
+        packages.push(id.to_string());
+        version_ids.push(id.to_string());
+        out.push_str(&format!(
+            "    let names = names.insert({id}, {});\n",
+            vix_string(&taxon_unit_name(unit, *cargo_index))
+        ));
+        out.push_str(&format!(
+            "    let version_pkgs = version_pkgs.insert({id}, {id});\n"
+        ));
+        out.push_str(&format!(
+            "    let version_values = version_values.insert({id}, {});\n",
+            vix_string(&taxon_pkg_version(&unit.pkg_id)?)
+        ));
+    }
+
+    let mut clause = 0usize;
+    let mut guard = 0usize;
+    for (cargo_index, id) in &ids {
+        let unit = &graph.units[*cargo_index];
+        for dep in &unit.dependencies {
+            let mapped_dep = run_to_build.get(&dep.index).copied().unwrap_or(dep.index);
+            let Some(dep_id) = ids.get(&mapped_dep).copied() else {
+                continue;
+            };
+            let dep_version = taxon_pkg_version(&graph.units[mapped_dep].pkg_id)?;
+            push_taxon_clause(
+                &mut out,
+                &mut clause,
+                &mut guard,
+                *id,
+                dep_id,
+                "*",
+                "in_graph",
+            );
+            push_taxon_clause(
+                &mut out,
+                &mut clause,
+                &mut guard,
+                *id,
+                dep_id,
+                &format!("={dep_version}"),
+                "version_set",
+            );
+        }
+    }
+
+    out.push_str("    Index {\n");
+    out.push_str(&format!("        packages: [{}],\n", packages.join(", ")));
+    out.push_str("        names: names,\n");
+    out.push_str(&format!(
+        "        version_ids: [{}],\n",
+        version_ids.join(", ")
+    ));
+    out.push_str("        version_pkgs: version_pkgs,\n");
+    out.push_str("        version_values: version_values,\n");
+    out.push_str(&format!(
+        "        clause_ids: [{}],\n",
+        (0..clause)
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+    out.push_str(&format!(
+        "        guard_ids: [{}],\n",
+        (0..guard)
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+    out.push_str("        guard_clause_ids: guard_clause_ids,\n");
+    out.push_str("        guard_tags: guard_tags,\n");
+    out.push_str("        guard_kinds: guard_kinds,\n");
+    out.push_str("        guard_pkgs: guard_pkgs,\n");
+    out.push_str("        guard_version_values: guard_version_values,\n");
+    out.push_str("        guard_features: guard_features,\n");
+    out.push_str("        consequent_tags: consequent_tags,\n");
+    out.push_str("        consequent_pkgs: consequent_pkgs,\n");
+    out.push_str("        consequent_version_sets: consequent_version_sets,\n");
+    out.push_str("        consequent_features: consequent_features,\n");
+    out.push_str("        gate_kinds: gate_kinds,\n");
+    out.push_str("        gate_targets: gate_targets,\n");
+    out.push_str("    }\n");
+    out.push_str("}\n\n");
+
+    out.push_str("fn taxon_problem() -> Problem {\n");
+    out.push_str(&format!(
+        "    Problem {{ root_pkg: {root}, root_req: VersionSet::from_req(\"*\"), root_features: [], root_default_feature: 0, root_default_features: false }}\n"
+    ));
+    out.push_str("}\n\n");
+    out.push_str("fn taxon_blake3_build_script_problem() -> Problem {\n");
+    out.push_str(&format!(
+        "    Problem {{ root_pkg: {blake3_build}, root_req: VersionSet::from_req(\"*\"), root_features: [], root_default_feature: 0, root_default_features: false }}\n"
+    ));
+    out.push_str("}\n\n");
+
+    out.push_str("fn taxon_targets() -> UnitTargetTable {\n");
+    out.push_str("    let targets: Map<Int, UnitTarget> = {};\n");
+    for (cargo_index, id) in &ids {
+        let unit = &graph.units[*cargo_index];
+        let logical = taxon_logical_unit_root(unit)?;
+        let source = taxon_unit_source_suffix(unit)?;
+        let kind = taxon_unit_kind(unit);
+        let cfgs = unit
+            .features
+            .iter()
+            .map(|feature| vix_string(&format!("feature=\"{feature}\"")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let crate_name = unit.target.name.replace('-', "_");
+        let (metadata, link, metadata_file, link_file) = if kind == "build-script" {
+            (
+                "build_script_build.rmeta".to_string(),
+                "build_script".to_string(),
+                "build_script_build.rmeta".to_string(),
+                "build_script".to_string(),
+            )
+        } else {
+            (
+                format!("lib{crate_name}.rmeta"),
+                format!("lib{crate_name}.rlib"),
+                format!("lib{crate_name}.rmeta"),
+                format!("lib{crate_name}.rlib"),
+            )
+        };
+        out.push_str(&format!(
+            "    let targets = targets.insert({id}, UnitTarget {{ kind: {}, manifest: p{}, source: p{}, cfgs: [{}], metadata: p{}, link: p{}, metadata_file: {}, link_file: {} }});\n",
+            vix_string(&kind),
+            vix_string(&logical),
+            vix_string(&source),
+            cfgs,
+            vix_string(&metadata),
+            vix_string(&link),
+            vix_string(&metadata_file),
+            vix_string(&link_file),
+        ));
+    }
+    out.push_str(&format!(
+        "    UnitTargetTable {{ root: {root}, targets: targets }}\n"
+    ));
+    out.push_str("}\n\n");
+    out.push_str("pub fn taxon_blake3_build_script_run(source: Tree) -> Tree {\n");
+    out.push_str("    let index = taxon_index();\n");
+    out.push_str("    let result = solve(index, taxon_blake3_build_script_problem(), \"host\");\n");
+    out.push_str(&format!(
+        "    let cc = solution_unit_built(Target::host(), source, index, result, taxon_targets(), {}, {cc_unit}, \"link\");\n",
+        vix_string(host)
+    ));
+    out.push_str("    let rustc = Rustc::acquire(Target::host());\n");
+    out.push_str("    let manifest = source / p\"registry/blake3-1.8.5\";\n");
+    out.push_str("    let edition = \"2024\";\n");
+    out.push_str("    let cc_arg = Arg::Interpolation { tree: cc, subpath: p\"libcc.rlib\" };\n");
+    out.push_str("    let externs: [Arg] = [Arg::Str(\"--extern\"), Arg::Str(\"cc=\"), cc_arg];\n");
+    out.push_str("    let binary = rustc! {\n");
+    out.push_str("        --crate-name build_script_build\n");
+    out.push_str("        --edition {edition}\n");
+    out.push_str("        --crate-type bin\n");
+    out.push_str("        --emit=link=build_script\n");
+    out.push_str("        {externs}\n");
+    out.push_str("        {manifest / p\"build.rs\"}\n");
+    out.push_str("    };\n");
+    out.push_str("    let build_script = \"build-script-runner\";\n");
+    out.push_str("    let version = \"1.8.5\";\n");
+    out.push_str("    let version_major = \"1\";\n");
+    out.push_str("    let version_minor = \"8\";\n");
+    out.push_str("    let version_patch = \"5\";\n");
+    out.push_str("    let package_name = \"blake3\";\n");
+    out.push_str("    let opt_level = \"3\";\n");
+    out.push_str("    let profile = \"debug\";\n");
+    out.push_str("    let endian = \"little\";\n");
+    out.push_str(&format!("    let target_name = {};\n", vix_string(host)));
+    out.push_str(&format!(
+        "    let target_arch = {};\n",
+        vix_string(&host_arch(host))
+    ));
+    out.push_str(&format!(
+        "    let target_vendor = {};\n",
+        vix_string(&host_vendor(host))
+    ));
+    out.push_str(&format!(
+        "    let target_os = {};\n",
+        vix_string(&host_os(host))
+    ));
+    out.push_str("    build_script! {\n");
+    out.push_str("        --executable {binary / p\"build_script\"}\n");
+    out.push_str("        --stdout {p\"build.stdout\"}\n");
+    out.push_str("        --out-dir {p\"out\"}\n");
+    out.push_str("        --env OUT_DIR={p\"out\"}\n");
+    out.push_str("        --env CARGO_MANIFEST_DIR={manifest}\n");
+    out.push_str("        --env CARGO_PKG_NAME={package_name}\n");
+    out.push_str("        --env CARGO_PKG_VERSION={version}\n");
+    out.push_str("        --env CARGO_PKG_VERSION_MAJOR={version_major}\n");
+    out.push_str("        --env CARGO_PKG_VERSION_MINOR={version_minor}\n");
+    out.push_str("        --env CARGO_PKG_VERSION_PATCH={version_patch}\n");
+    out.push_str("        --env TARGET={target_name}\n");
+    out.push_str("        --env HOST={target_name}\n");
+    out.push_str("        --env OPT_LEVEL={opt_level}\n");
+    out.push_str("        --env PROFILE={profile}\n");
+    out.push_str("        --env CARGO_CFG_TARGET_ARCH={target_arch}\n");
+    out.push_str("        --env CARGO_CFG_TARGET_VENDOR={target_vendor}\n");
+    out.push_str("        --env CARGO_CFG_TARGET_OS={target_os}\n");
+    out.push_str("        --env CARGO_CFG_TARGET_ENDIAN={endian}\n");
+    out.push_str("    }\n");
+    out.push_str("}\n");
+    Ok(out)
+}
+
+fn push_taxon_clause(
+    out: &mut String,
+    clause: &mut usize,
+    guard: &mut usize,
+    parent: usize,
+    dep: usize,
+    req: &str,
+    tag: &str,
+) {
+    out.push_str(&format!(
+        "    let guard_clause_ids = guard_clause_ids.insert({guard}, {clause});\n"
+    ));
+    out.push_str(&format!(
+        "    let guard_tags = guard_tags.insert({guard}, \"in_graph\");\n"
+    ));
+    out.push_str(&format!(
+        "    let guard_kinds = guard_kinds.insert({guard}, 0);\n"
+    ));
+    out.push_str(&format!(
+        "    let guard_pkgs = guard_pkgs.insert({guard}, {parent});\n"
+    ));
+    out.push_str(&format!(
+        "    let guard_features = guard_features.insert({guard}, 0);\n"
+    ));
+    out.push_str(&format!(
+        "    let consequent_tags = consequent_tags.insert({clause}, {tag:?});\n"
+    ));
+    out.push_str(&format!(
+        "    let consequent_pkgs = consequent_pkgs.insert({clause}, {dep});\n"
+    ));
+    out.push_str(&format!(
+        "    let consequent_version_sets = consequent_version_sets.insert({clause}, VersionSet::from_req({}));\n",
+        vix_string(req)
+    ));
+    out.push_str(&format!(
+        "    let consequent_features = consequent_features.insert({clause}, 0);\n"
+    ));
+    out.push_str(&format!(
+        "    let gate_kinds = gate_kinds.insert({clause}, \"normal\");\n"
+    ));
+    *clause += 1;
+    *guard += 1;
+}
+
+fn taxon_included_unit_ids(graph: &CargoUnitGraph) -> BTreeMap<usize, usize> {
+    graph
+        .units
+        .iter()
+        .enumerate()
+        .filter(|(_, unit)| unit.mode != "run-custom-build")
+        .enumerate()
+        .map(|(id, (cargo_index, _))| (cargo_index, id))
+        .collect()
+}
+
+fn taxon_run_custom_build_map(graph: &CargoUnitGraph) -> BTreeMap<usize, usize> {
+    let mut out = BTreeMap::new();
+    for (run_index, run_unit) in graph.units.iter().enumerate() {
+        if run_unit.mode != "run-custom-build" {
+            continue;
+        }
+        if let Some((build_index, _)) = graph.units.iter().enumerate().find(|(_, unit)| {
+            unit.pkg_id == run_unit.pkg_id
+                && unit.mode == "build"
+                && unit.target.kind.iter().any(|kind| kind == "custom-build")
+        }) {
+            out.insert(run_index, build_index);
+        }
+    }
+    out
+}
+
+fn taxon_demo_source_tree(graph: &CargoUnitGraph) -> Result<Tree, String> {
+    let mut entries = BTreeMap::new();
+    let mut blobs = BTreeMap::new();
+    entries.insert(
+        "Cargo.toml".to_owned(),
+        fs::read_to_string(workspace_root().join("Cargo.toml")).map_err(|err| err.to_string())?,
+    );
+
+    let mut copied = BTreeSet::new();
+    for unit in graph
+        .units
+        .iter()
+        .filter(|unit| unit.mode != "run-custom-build")
+    {
+        let physical = taxon_physical_unit_root(unit)?;
+        let logical = taxon_logical_unit_root(unit)?;
+        if !copied.insert(logical.clone()) {
+            continue;
+        }
+        copy_tree_into_vix_tree(&physical, &logical, &mut entries, &mut blobs)?;
+    }
+    Ok(Tree { entries, blobs })
+}
+
+fn copy_tree_into_vix_tree(
+    physical: &Path,
+    logical: &str,
+    entries: &mut BTreeMap<String, String>,
+    blobs: &mut BTreeMap<String, Vec<u8>>,
+) -> Result<(), String> {
+    for entry in
+        fs::read_dir(physical).map_err(|err| format!("read {}: {err}", physical.display()))?
+    {
+        let entry = entry.map_err(|err| err.to_string())?;
+        let path = entry.path();
+        let name = entry
+            .file_name()
+            .into_string()
+            .map_err(|name| format!("non-utf8 path component {name:?}"))?;
+        let logical = format!("{}/{}", logical.trim_end_matches('/'), name);
+        if path.is_dir() {
+            copy_tree_into_vix_tree(&path, &logical, entries, blobs)?;
+        } else if path.is_file() {
+            let bytes = fs::read(&path).map_err(|err| format!("read {}: {err}", path.display()))?;
+            match String::from_utf8(bytes) {
+                Ok(text) => {
+                    entries.insert(logical, text);
+                }
+                Err(err) => {
+                    blobs.insert(logical, err.into_bytes());
+                }
+            }
+        }
+    }
+    Ok(())
+}
+
+fn taxon_physical_unit_root(unit: &CargoUnit) -> Result<PathBuf, String> {
+    let src = Path::new(&unit.target.src_path);
+    if src.ends_with("build.rs") {
+        return src
+            .parent()
+            .map(Path::to_path_buf)
+            .ok_or_else(|| format!("source had no parent: {}", unit.target.src_path));
+    }
+    if src.ends_with("src/lib.rs") {
+        return src
+            .parent()
+            .and_then(Path::parent)
+            .map(Path::to_path_buf)
+            .ok_or_else(|| format!("source had no crate root: {}", unit.target.src_path));
+    }
+    Err(format!(
+        "unsupported taxon unit source {}",
+        unit.target.src_path
+    ))
+}
+
+fn taxon_logical_unit_root(unit: &CargoUnit) -> Result<String, String> {
+    let physical = taxon_physical_unit_root(unit)?;
+    let root = workspace_root();
+    if let Ok(relative) = physical.strip_prefix(&root) {
+        return relative
+            .to_str()
+            .map(str::to_owned)
+            .ok_or_else(|| format!("non-utf8 workspace path {}", physical.display()));
+    }
+    let package = taxon_pkg_name(&unit.pkg_id)?;
+    let version = taxon_pkg_version(&unit.pkg_id)?;
+    Ok(format!("registry/{package}-{version}"))
+}
+
+fn taxon_unit_source_suffix(unit: &CargoUnit) -> Result<String, String> {
+    let root = taxon_physical_unit_root(unit)?;
+    let source = Path::new(&unit.target.src_path)
+        .strip_prefix(&root)
+        .map_err(|err| err.to_string())?;
+    source
+        .to_str()
+        .map(|value| value.replace('\\', "/"))
+        .ok_or_else(|| format!("non-utf8 source path {}", unit.target.src_path))
+}
+
+fn taxon_unit_kind(unit: &CargoUnit) -> String {
+    if unit.target.kind.iter().any(|kind| kind == "custom-build") {
+        "build-script".to_owned()
+    } else if unit.target.kind.iter().any(|kind| kind == "lib") && unit.profile.debuginfo == 0 {
+        "build-dependency".to_owned()
+    } else {
+        "lib".to_owned()
+    }
+}
+
+fn taxon_unit_name(unit: &CargoUnit, index: usize) -> String {
+    if unit.target.kind.iter().any(|kind| kind == "custom-build") {
+        format!(
+            "{}_build_script_{index}",
+            taxon_pkg_name(&unit.pkg_id).unwrap_or_default()
+        )
+    } else {
+        unit.target.name.clone()
+    }
+}
+
+fn taxon_pkg_name(pkg_id: &str) -> Result<String, String> {
+    let tail = pkg_id
+        .rsplit('#')
+        .next()
+        .ok_or_else(|| format!("pkg id had no #: {pkg_id}"))?;
+    Ok(tail
+        .split('@')
+        .next()
+        .ok_or_else(|| format!("pkg id had no package name: {pkg_id}"))?
+        .to_owned())
+}
+
+fn taxon_pkg_version(pkg_id: &str) -> Result<String, String> {
+    let tail = pkg_id
+        .rsplit('#')
+        .next()
+        .ok_or_else(|| format!("pkg id had no #: {pkg_id}"))?;
+    match tail.split_once('@') {
+        Some((_, version)) => Ok(version.to_owned()),
+        None => Ok(tail.to_owned()),
+    }
+}
+
+fn vix_string(value: &str) -> String {
+    format!("{value:?}")
+}
+
+fn host_triple() -> Result<String, String> {
+    let output = Command::new("rustc")
+        .arg("-vV")
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Err(format!(
+            "rustc -vV exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    let stdout = String::from_utf8(output.stdout).map_err(|err| err.to_string())?;
+    stdout
+        .lines()
+        .find_map(|line| line.strip_prefix("host: ").map(str::to_owned))
+        .ok_or_else(|| format!("rustc -vV did not print host triple:\n{stdout}"))
+}
+
+fn host_arch(host: &str) -> String {
+    host.split('-').next().unwrap_or(host).to_owned()
+}
+
+fn host_vendor(host: &str) -> String {
+    host.split('-').nth(1).unwrap_or("").to_owned()
+}
+
+fn host_os(host: &str) -> String {
+    match host {
+        value if value.contains("apple-darwin") => "macos".to_owned(),
+        value if value.contains("unknown-linux") => "linux".to_owned(),
+        value if value.contains("pc-windows") => "windows".to_owned(),
+        _ => host.split('-').nth(2).unwrap_or("").to_owned(),
+    }
+}
+
+fn mentions_c_tooling(text: &str) -> bool {
+    text.contains(" cc ")
+        || text.contains(" cc-")
+        || text.contains("`cc`")
+        || text.contains("clang")
+        || text.contains("gcc")
+        || text.contains("cargo:rustc-link-lib")
+        || text.contains("cargo:rustc-link-search")
 }
 
 fn proc_macro_graph_tree() -> Tree {
