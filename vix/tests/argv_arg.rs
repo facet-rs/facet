@@ -37,12 +37,27 @@ fn consumer_run(target: Target) -> Tree {
     }
 }
 
+fn consumer_inline_run(target: Target) -> Tree {
+    let rustc = rustc_for(target);
+    let dep_tree = dep(rustc);
+    rustc! {
+        --crate-name inline_app
+        --crate-type lib
+        --emit=metadata={p"inline_app.rmeta"}
+        {[Arg::Str("--extern"), Arg::Str("dep="), Arg::Interpolation { tree: dep_tree, subpath: p"libdep.rmeta" }]}
+    }
+}
+
 pub fn consumer_full(target: Target) -> Tree {
     consumer_run(target)
 }
 
 pub fn consumer(target: Target) -> Tree {
     consumer_run(target) / p"app.rmeta"
+}
+
+pub fn consumer_inline(target: Target) -> Tree {
+    consumer_inline_run(target) / p"inline_app.rmeta"
 }
 
 pub fn build_stdout(target: Target) -> String {
@@ -65,6 +80,41 @@ pub fn first_directive_key(target: Target) -> String {
     build_stdout(target).before("\n").after("cargo:").before("=")
 }
 "#;
+
+#[test]
+fn argv_inline_arg_array_splice_interns_molten_array() -> Result<(), String> {
+    let mut machine = Machine::load(SOURCE)?;
+    let target = machine.linux_target_handle();
+
+    let artifact = machine.demand_i64("consumer_inline", vec![target])?;
+    assert!(
+        machine
+            .tree_entries(artifact)?
+            .contains_key("inline_app.rmeta")
+    );
+
+    let requested = machine
+        .trace()
+        .iter()
+        .filter_map(|event| match event {
+            DriveEvent::RunRequested {
+                command_name, argv, ..
+            } if command_name == "rustc" && argv.iter().any(|arg| arg == "inline_app") => {
+                Some(argv.clone())
+            }
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(requested.len(), 1, "{requested:#?}");
+    assert!(
+        requested[0]
+            .windows(2)
+            .any(|pair| { pair[0] == "--extern" && pair[1] == "dep=/m/0/libdep.rmeta" }),
+        "{requested:#?}"
+    );
+
+    Ok(())
+}
 
 #[test]
 fn argv_interpolation_mount_is_lazy_until_consumer_exec_is_demanded() -> Result<(), String> {
