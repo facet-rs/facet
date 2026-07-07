@@ -699,7 +699,6 @@ struct CargoDependency {
     extern_crate_name: Option<String>,
 }
 
-
 const PROC_MACRO_APP_MANIFEST: &str = include_str!(
     "../../playgrounds/snark/src/bundled/vix/samples/fixtures/proc_macro_graph/app/Cargo.toml"
 );

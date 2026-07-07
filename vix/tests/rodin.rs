@@ -11,7 +11,9 @@ fn rodin_source() -> String {
 #[test]
 fn compat_class_matches_rodin_core_from_version() {
     let mut machine = Machine::load(&rodin_source()).expect("rodin.vix loads");
-    let value = machine.demand_i64("main", vec![0]).expect("rodin.vix main runs");
+    let value = machine
+        .demand_i64("main", vec![0])
+        .expect("rodin.vix main runs");
     // compat_code: 2.3.4 -> 2 (major bucket) ; 0.5.1 -> 1005 ; 0.0.7 -> 2007
     assert_eq!(value, 2 + 1005 + 2007);
 }

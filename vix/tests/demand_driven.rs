@@ -484,7 +484,11 @@ pub fn pick(record: BigRecord) -> Int {
             )
             .unwrap()
             .0;
-        assert_eq!(machine.demand_i64("pick", vec![first]).unwrap(), 7, "{lane:?}");
+        assert_eq!(
+            machine.demand_i64("pick", vec![first]).unwrap(),
+            7,
+            "{lane:?}"
+        );
 
         let untouched_changed = machine
             .call(
@@ -510,7 +514,11 @@ pub fn pick(record: BigRecord) -> Int {
         );
         assert_eq!(spawned_count(&machine, "pick"), 0, "{lane:?}");
         assert_eq!(memo_projection_hit_count(&machine, "pick"), 1, "{lane:?}");
-        assert_eq!(projection_verified_count(&machine, "pick"), vec![1], "{lane:?}");
+        assert_eq!(
+            projection_verified_count(&machine, "pick"),
+            vec![1],
+            "{lane:?}"
+        );
 
         let touched_changed = machine
             .call(
@@ -601,7 +609,11 @@ pub fn pick(map: Map<String, String>) -> String {
         assert_eq!(value, "keep", "{lane:?}");
         assert_eq!(spawned_count(&machine, "pick"), 0, "{lane:?}");
         assert_eq!(memo_projection_hit_count(&machine, "pick"), 1, "{lane:?}");
-        assert_eq!(projection_verified_count(&machine, "pick"), vec![1], "{lane:?}");
+        assert_eq!(
+            projection_verified_count(&machine, "pick"),
+            vec![1],
+            "{lane:?}"
+        );
 
         let touched_changed = machine
             .call(
@@ -1129,8 +1141,8 @@ fn warm_reload_leaf_edit_misses_exact_blast_radius() {
     for lane in lanes() {
         let mut machine = load_with_lane(anti_nix_diamond(), lane);
         assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 37, "{lane:?}");
-        let edited = anti_nix_diamond()
-            .replace("fn leaf() -> Int {\n    1", "fn leaf() -> Int {\n    2");
+        let edited =
+            anti_nix_diamond().replace("fn leaf() -> Int {\n    1", "fn leaf() -> Int {\n    2");
         let diff = machine.reload(&edited).unwrap();
         assert_eq!(
             diff.changed,
@@ -1202,8 +1214,7 @@ fn warm_reload_type_decl_edit_misses_transitive_users() {
     for lane in lanes() {
         let mut machine = load_with_lane(type_closure_source(), lane);
         assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 8, "{lane:?}");
-        let edited =
-            type_closure_source().replace("enum Choice { A, B }", "enum Choice { B, A }");
+        let edited = type_closure_source().replace("enum Choice { A, B }", "enum Choice { B, A }");
         let diff = machine.reload(&edited).unwrap();
         assert_eq!(
             diff.changed,
