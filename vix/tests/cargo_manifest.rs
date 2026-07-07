@@ -204,6 +204,59 @@ edition = "2024"
 }
 
 #[test]
+#[ignore = "tier-A measurement repro: prerelease workspace member solve is semantically empty"]
+fn tiny_workspace_prerelease_member_solve_selects_member() -> Result<(), String> {
+    let mut machine = manifest_machine()?;
+    let workspace = intern_tree(
+        &mut machine,
+        Tree::of(&[
+            (
+                "Cargo.toml",
+                r#"[workspace]
+members = ["facet"]
+"#,
+            ),
+            (
+                "facet/Cargo.toml",
+                r#"[package]
+name = "facet"
+version = "0.50.0-rc.5"
+edition = "2024"
+"#,
+            ),
+        ]),
+    )?;
+    let root = intern_path(&mut machine, "")?;
+    let target = intern_string(&mut machine, "x86_64-apple-darwin")?;
+    let exact_candidates = machine.demand_i64(
+        "workspace_member_only_first_member_exact_candidate_count",
+        vec![workspace, root],
+    )?;
+    assert_eq!(exact_candidates, 1);
+    let selected = machine.demand_i64(
+        "workspace_member_only_solve_selected_member_count",
+        vec![workspace, root, target],
+    )?;
+    assert_eq!(selected, 1);
+
+    let selected_versions = machine.demand_i64(
+        "workspace_member_only_solve_selected_versions_text",
+        vec![workspace, root, target],
+    )?;
+    let selected_versions = rendered_string(
+        &machine,
+        "workspace_member_only_solve_selected_versions_text",
+        selected_versions,
+    )?;
+    let solve_rows = package_versions_from_solve_text(&selected_versions)?;
+    assert!(
+        solve_rows.contains(&PackageVersion::new("facet", "0.50.0-rc.5")),
+        "{solve_rows:#?}"
+    );
+    Ok(())
+}
+
+#[test]
 fn workspace_member_globs_expand_from_root_manifest() -> Result<(), String> {
     let mut machine = manifest_machine()?;
     let workspace = intern_tree(
@@ -597,12 +650,12 @@ fn real_workspace_member_only_index_builds_bounded_ring() -> Result<(), String> 
 
     assert_eq!(workspace_members.len(), 145);
     assert_eq!(package_count, limit + 1);
-    assert_eq!(clause_count, limit);
+    assert_eq!(clause_count, limit * 2);
     Ok(())
 }
 
 #[test]
-#[ignore = "tier-A measurement probe: bounded solve currently hits molten handle -1"]
+#[ignore = "tier-A measurement probe: real workspace member-only solve is semantically empty"]
 fn real_workspace_member_index_solves_bounded_ring() -> Result<(), String> {
     real_workspace_member_only_solve_ring(16)
 }
@@ -610,7 +663,7 @@ fn real_workspace_member_index_solves_bounded_ring() -> Result<(), String> {
 macro_rules! real_workspace_member_only_solve_ring_test {
     ($name:ident, $limit:expr) => {
         #[test]
-        #[ignore = "tier-A measurement probe: real workspace member-only solve ring"]
+        #[ignore = "tier-A measurement probe: real workspace member-only solve ring is semantically empty"]
         fn $name() -> Result<(), String> {
             real_workspace_member_only_solve_ring($limit)
         }
@@ -662,7 +715,7 @@ fn real_workspace_member_only_index_builds_all_members() -> Result<(), String> {
     )?;
 
     assert_eq!(package_count, 146);
-    assert_eq!(clause_count, 145);
+    assert_eq!(clause_count, 290);
     Ok(())
 }
 
@@ -681,8 +734,8 @@ fn real_workspace_member_index_builds_required_direct_dep_clauses() -> Result<()
         vec![workspace, root],
     )?;
 
-    assert!(clause_count > 145, "clause_count={clause_count}");
-    assert_eq!(direct_clause_count, clause_count - 145);
+    assert!(clause_count > 290, "clause_count={clause_count}");
+    assert_eq!(direct_clause_count, clause_count - 290);
     assert_eq!(direct_clause_count % 2, 0);
     Ok(())
 }

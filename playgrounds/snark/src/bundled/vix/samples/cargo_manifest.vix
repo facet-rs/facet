@@ -406,7 +406,15 @@ fn add_workspace_root_member_clauses_tuple(state: WorkspaceIndexState, popped: (
 }
 
 fn add_workspace_root_member_clause(state: WorkspaceIndexState, member_pkg: Int) -> WorkspaceIndexState {
-    workspace_add_selected_guard_clause(state, 0, "0.0.0", "in_graph", member_pkg, VersionSet::from_req("*"), "normal")
+    workspace_add_selected_guard_clause(
+        workspace_add_selected_guard_clause(state, 0, "0.0.0", "in_graph", member_pkg, VersionSet::from_req("*"), "normal"),
+        0,
+        "0.0.0",
+        "version_set",
+        member_pkg,
+        VersionSet::from_req("=" + workspace_state_version_text(state, member_pkg)),
+        "normal",
+    )
 }
 
 fn add_workspace_required_dep_clauses(state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, dep_pkg: Int, req: String, kind: String) -> WorkspaceIndexState {
@@ -581,8 +589,18 @@ pub fn workspace_member_only_index_clause_count_limit(workspace: Tree, workspace
     workspace_member_only_index_state_limit(workspace, workspace_root, limit).clause_ids.len()
 }
 
+pub fn workspace_member_only_first_member_exact_candidate_count(workspace: Tree, workspace_root: Path) -> Int {
+    let state = workspace_member_only_index_state_limit(workspace, workspace_root, 1);
+    let member_pkg = state.packages.pop().0;
+    candidates_for(
+        workspace_index_from_state(state),
+        member_pkg,
+        VersionSet::from_req("=" + workspace_state_version_text(state, member_pkg)),
+    ).len()
+}
+
 pub fn workspace_member_root_clause_count(workspace: Tree) -> Int {
-    workspace_members(workspace).len()
+    workspace_members(workspace).len() * 2
 }
 
 pub fn workspace_member_direct_dep_clause_count(workspace: Tree, workspace_root: Path) -> Int {
@@ -590,7 +608,7 @@ pub fn workspace_member_direct_dep_clause_count(workspace: Tree, workspace_root:
 }
 
 pub fn workspace_member_direct_dep_clause_count_limit(workspace: Tree, workspace_root: Path, limit: Int) -> Int {
-    workspace_member_index_clause_count_limit(workspace, workspace_root, limit) - limit
+    workspace_member_index_clause_count_limit(workspace, workspace_root, limit) - (limit * 2)
 }
 
 pub fn workspace_member_solve_selected_count(workspace: Tree, workspace_root: Path, target: String) -> Int {

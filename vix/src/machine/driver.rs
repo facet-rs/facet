@@ -4739,7 +4739,7 @@ impl Driver {
                         .map(|key| {
                             store_cell
                                 .borrow_mut()
-                                .alloc_raw("String", key.into_bytes())
+                                .alloc_raw("String", key.into_bytes(), schemas)
                                 .0
                         })
                         .collect();
