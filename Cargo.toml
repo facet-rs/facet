@@ -146,7 +146,6 @@ members = [
   "weavy",
   "copypatch",
   "phon/rust/taxon",
-  "phon/rust/taxon-id",
   "phon/rust/phon-schema",
   "phon/rust/phon-ir",
   "phon/rust/phon-engine",
@@ -344,7 +343,6 @@ dibs-sql = { path = "dibs-sql", version = "0.2.0-rc.5" }
 dockside = { path = "dockside" }
 copypatch = { path = "copypatch", version = "0.2.0-rc.4" }
 taxon = { path = "phon/rust/taxon", version = "0.2.0-rc.5" }
-taxon-id = { path = "phon/rust/taxon-id", version = "0.2.0-rc.5" }
 cstree = { version = "0.14.0", features = ["derive"] }
 weavy = { path = "weavy", version = "0.2.2" }
 phon = { path = "phon/rust/phon", version = "0.2.0-rc.5" }
@@ -393,7 +391,7 @@ aho-corasick = "1.1.4"
 autocfg = "^1.5.0"
 axum = { version = "0.8.9", default-features = false, features = ["http1", "tokio", "json", "ws"] }
 ariadne = "^0.6"
-blake3 = "^1"
+blake3 = { version = "^1", default-features = false }
 bolero = "^0.13.4"
 brotli = "8"
 bytes = { version = "^1.11.0", default-features = false }

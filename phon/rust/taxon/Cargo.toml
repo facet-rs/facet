@@ -14,3 +14,4 @@ publish = false
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
+blake3 = { workspace = true, default-features = false }

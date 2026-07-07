@@ -1,4 +1,6 @@
 /// A destination for canonical identity bytes.
+use alloc::vec::Vec;
+
 pub(crate) trait Sink {
     fn put(&mut self, bytes: &[u8]);
 }

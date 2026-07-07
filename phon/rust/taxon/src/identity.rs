@@ -13,13 +13,16 @@
 //! Spec: "Schema identity" — `r[schema-identity.canonical-encoding]`,
 //! `r[schema-identity.computation]`.
 
-use std::collections::{HashMap, HashSet};
+use alloc::{
+    collections::{BTreeMap, BTreeSet},
+    string::String,
+    vec,
+    vec::Vec,
+};
 
-mod sink;
-
-use sink::{Sink, write_bool, write_str, write_u8, write_u32, write_u64};
-use taxon::{
+use crate::{
     ChannelDirection, Field, Kind, Primitive, Schema, SchemaId, SchemaRef, Variant, VariantPayload,
+    sink::{Sink, write_bool, write_str, write_u8, write_u32, write_u64},
 };
 
 // ============================================================================
@@ -71,7 +74,7 @@ pub fn primitive_id(p: Primitive) -> SchemaId {
 
 /// An index into the batch being resolved. A newtype so a batch position can't
 /// be confused with any other integer.
-#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Debug)]
 struct NodeIx(u32);
 
 impl NodeIx {
@@ -223,9 +226,9 @@ impl<'a> Tarjan<'a> {
 /// Context shared across a member's structural walk.
 struct Walk<'a> {
     batch: &'a [Schema],
-    key_to_index: &'a HashMap<u64, NodeIx>,
-    component: &'a HashSet<NodeIx>,
-    assigned: &'a HashMap<NodeIx, SchemaId>,
+    key_to_index: &'a BTreeMap<u64, NodeIx>,
+    component: &'a BTreeSet<NodeIx>,
+    assigned: &'a BTreeMap<NodeIx, SchemaId>,
 }
 
 impl Walk<'_> {
@@ -399,7 +402,7 @@ impl Walk<'_> {
 // Substitution of provisional keys with computed ids in the output
 // ============================================================================
 
-fn remap_ref(r: &SchemaRef, map: &HashMap<u64, SchemaId>) -> SchemaRef {
+fn remap_ref(r: &SchemaRef, map: &BTreeMap<u64, SchemaId>) -> SchemaRef {
     match r {
         SchemaRef::Var { name } => SchemaRef::Var { name: name.clone() },
         SchemaRef::Concrete { id, args } => SchemaRef::Concrete {
@@ -409,7 +412,7 @@ fn remap_ref(r: &SchemaRef, map: &HashMap<u64, SchemaId>) -> SchemaRef {
     }
 }
 
-fn remap_field(field: &Field, map: &HashMap<u64, SchemaId>) -> Field {
+fn remap_field(field: &Field, map: &BTreeMap<u64, SchemaId>) -> Field {
     Field {
         name: field.name.clone(),
         schema: remap_ref(&field.schema, map),
@@ -417,7 +420,7 @@ fn remap_field(field: &Field, map: &HashMap<u64, SchemaId>) -> Field {
     }
 }
 
-fn remap_kind(kind: &Kind, map: &HashMap<u64, SchemaId>) -> Kind {
+fn remap_kind(kind: &Kind, map: &BTreeMap<u64, SchemaId>) -> Kind {
     match kind {
         Kind::Primitive(p) => Kind::Primitive(*p),
         Kind::Dynamic => Kind::Dynamic,
@@ -507,7 +510,7 @@ pub fn resolve_ids(batch: Vec<Schema>) -> Vec<Schema> {
     let n = batch.len();
 
     // Provisional key -> node index.
-    let mut key_to_index: HashMap<u64, NodeIx> = HashMap::with_capacity(n);
+    let mut key_to_index: BTreeMap<u64, NodeIx> = BTreeMap::new();
     for (i, s) in batch.iter().enumerate() {
         key_to_index.insert(s.id.as_u64(), NodeIx::of(i));
     }
@@ -515,7 +518,7 @@ pub fn resolve_ids(batch: Vec<Schema>) -> Vec<Schema> {
     // Reference graph: edge i -> j when schema i references in-batch schema j.
     let mut adj: Vec<Vec<NodeIx>> = vec![Vec::new(); n];
     for (i, s) in batch.iter().enumerate() {
-        let mut seen = HashSet::new();
+        let mut seen = BTreeSet::new();
         visit_kind_targets(&s.kind, &mut |id| {
             if let Some(&j) = key_to_index.get(&id.as_u64())
                 && seen.insert(j)
@@ -528,9 +531,9 @@ pub fn resolve_ids(batch: Vec<Schema>) -> Vec<Schema> {
     let sccs = Tarjan::run(&adj);
 
     // Assign ids component-by-component, dependencies first.
-    let mut assigned: HashMap<NodeIx, SchemaId> = HashMap::with_capacity(n);
+    let mut assigned: BTreeMap<NodeIx, SchemaId> = BTreeMap::new();
     for scc in &sccs {
-        let component: HashSet<NodeIx> = scc.iter().copied().collect();
+        let component: BTreeSet<NodeIx> = scc.iter().copied().collect();
         let walk = Walk {
             batch: &batch,
             key_to_index: &key_to_index,
@@ -552,7 +555,7 @@ pub fn resolve_ids(batch: Vec<Schema>) -> Vec<Schema> {
     }
 
     // Provisional key -> real id, for rewriting references.
-    let mut key_to_real: HashMap<u64, SchemaId> = HashMap::with_capacity(n);
+    let mut key_to_real: BTreeMap<u64, SchemaId> = BTreeMap::new();
     for (i, s) in batch.iter().enumerate() {
         key_to_real.insert(s.id.as_u64(), assigned[&NodeIx::of(i)]);
     }
@@ -575,16 +578,16 @@ pub fn resolve_ids(batch: Vec<Schema>) -> Vec<Schema> {
 /// resolves cyclic ids: any SCC of size > 1 is recursive, and a singleton SCC is
 /// recursive iff the node references itself.
 #[must_use]
-pub fn recursive_schema_ids(schemas: &[Schema]) -> std::collections::BTreeSet<SchemaId> {
+pub fn recursive_schema_ids(schemas: &[Schema]) -> BTreeSet<SchemaId> {
     let n = schemas.len();
-    let mut id_to_index: HashMap<u64, NodeIx> = HashMap::with_capacity(n);
+    let mut id_to_index: BTreeMap<u64, NodeIx> = BTreeMap::new();
     for (i, s) in schemas.iter().enumerate() {
         id_to_index.insert(s.id.as_u64(), NodeIx::of(i));
     }
     let mut adj: Vec<Vec<NodeIx>> = vec![Vec::new(); n];
     let mut self_edge = vec![false; n];
     for (i, s) in schemas.iter().enumerate() {
-        let mut seen = HashSet::new();
+        let mut seen = BTreeSet::new();
         visit_kind_targets(&s.kind, &mut |id| {
             if let Some(&j) = id_to_index.get(&id.as_u64()) {
                 if j.ix() == i {
@@ -597,7 +600,7 @@ pub fn recursive_schema_ids(schemas: &[Schema]) -> std::collections::BTreeSet<Sc
         });
     }
 
-    let mut out = std::collections::BTreeSet::new();
+    let mut out = BTreeSet::new();
     for scc in Tarjan::run(&adj) {
         let recursive = scc.len() > 1 || (scc.len() == 1 && self_edge[scc[0].ix()]);
         if recursive {
@@ -612,7 +615,8 @@ pub fn recursive_schema_ids(schemas: &[Schema]) -> std::collections::BTreeSet<Sc
 #[cfg(test)]
 mod tests {
     use super::*;
-    use taxon::{Field, Kind, Schema, SchemaRef, Variant};
+    use crate::{Field, Kind, Schema, SchemaRef, Variant};
+    use alloc::string::ToString;
 
     /// A schema with a provisional key and the given kind, no type params.
     fn proto(key: u64, kind: Kind) -> Schema {
@@ -674,7 +678,7 @@ mod tests {
             .collect()
     }
 
-    fn as_set(components: &[Vec<usize>]) -> HashSet<Vec<usize>> {
+    fn as_set(components: &[Vec<usize>]) -> BTreeSet<Vec<usize>> {
         components.iter().cloned().collect()
     }
 

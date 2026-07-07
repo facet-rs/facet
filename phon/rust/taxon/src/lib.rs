@@ -12,9 +12,16 @@
 //! bridge.
 
 extern crate alloc;
+#[cfg(test)]
+extern crate std;
+
+pub mod identity;
+mod sink;
 
 use alloc::{string::String, vec::Vec};
 use core::fmt;
+
+pub use identity::{primitive_id, recursive_schema_ids, resolve_ids};
 
 /// A content-derived schema identifier: the first 8 bytes of the BLAKE3 hash of
 /// the schema's canonical structural encoding, read as a little-endian `u64`.
@@ -24,7 +31,7 @@ use core::fmt;
 pub struct SchemaId(u64);
 
 impl SchemaId {
-    /// Wrap a raw 64-bit id (a content hash from taxon-id, or an id received off the wire) — this does NOT compute a hash.
+    /// Wrap a raw 64-bit id (a content hash, or an id received off the wire) — this does NOT compute a hash.
     #[must_use]
     pub const fn from_raw(raw: u64) -> Self {
         Self(raw)
