@@ -89,6 +89,48 @@ fn member_manifest_paths_are_derived_from_granted_root() -> Result<(), String> {
 }
 
 #[test]
+fn projected_member_manifests_are_read_from_granted_root() -> Result<(), String> {
+    let mut machine = manifest_machine()?;
+    let workspace = intern_tree(
+        &mut machine,
+        Tree::of(&[
+            (
+                "Cargo.toml",
+                r#"[workspace]
+members = ["crates/a"]
+"#,
+            ),
+            (
+                "crates/a/Cargo.toml",
+                r#"[package]
+name = "a"
+version = "0.1.0"
+edition = "2024"
+"#,
+            ),
+        ]),
+    )?;
+    let root = intern_path(&mut machine, "")?;
+    let member = intern_string(&mut machine, "crates/a")?;
+
+    let value = machine.demand_i64(
+        "workspace_projected_member_package_name",
+        vec![workspace, root, member],
+    )?;
+    assert_eq!(
+        rendered_string(&machine, "workspace_projected_member_package_name", value)?,
+        "a"
+    );
+    let target = intern_string(&mut machine, "x86_64-apple-darwin")?;
+    let selected = machine.demand_i64(
+        "workspace_member_only_solve_selected_member_count",
+        vec![workspace, root, target],
+    )?;
+    assert_eq!(selected, 1);
+    Ok(())
+}
+
+#[test]
 fn workspace_member_globs_expand_from_root_manifest() -> Result<(), String> {
     let mut machine = manifest_machine()?;
     let workspace = intern_tree(
@@ -121,6 +163,16 @@ fn dependency_declarations_extract_workspace_and_detailed_forms() -> Result<(), 
     let taxon = intern_tree(&mut machine, taxon_tree())?;
     let facet_core = intern_tree(&mut machine, facet_core_tree())?;
     let facet = intern_tree(&mut machine, facet_tree())?;
+
+    let dependency_names_kind = intern_string(&mut machine, "normal")?;
+    let dependency_names = machine.demand_i64(
+        "dependency_names_text",
+        vec![facet_core, dependency_names_kind],
+    )?;
+    assert_eq!(
+        rendered_string(&machine, "dependency_names_text", dependency_names)?,
+        "bytes\nbytestring\ncamino\nchrono\ncompact_str\nconst-fnv1a-hash\niddqd\nimpls\nindexmap\njiff\nlock_api\nnum-complex\nordered-float\nruint\nrust_decimal\nsemver\nsmallvec\nsmartstring\nsmol_str\nstable_deref_trait\ntaxon\ntendril\ntime\nulid\nurl\nuuid\nyoke"
+    );
 
     let blake3 = detailed_dep(&mut machine, taxon, workspace, "blake3", "normal")?;
     assert_eq!(field_string(&blake3, "version_req")?, "^1");
@@ -294,7 +346,8 @@ fn direct_resolved_unit_adapter_gap_is_pinned() -> Result<(), String> {
     let gap = rendered_string(&machine, "resolved_unit_adaptation_gap", value)?;
     assert!(
         gap.contains("Path construction is join-only from a granted root")
-            && gap.contains("dependency-table key enumeration"),
+            && gap.contains("sparse-index composition")
+            && gap.contains("UnitTargetTable derivation"),
         "{gap}"
     );
     Ok(())
@@ -342,6 +395,134 @@ fn real_workspace_metadata_baseline_is_counted() -> Result<(), String> {
     assert_eq!(before_workspace_allowlist_failures, 760);
     assert_eq!(target_cfg_represented, 55);
 
+    Ok(())
+}
+
+#[test]
+fn real_workspace_member_only_index_builds_bounded_ring() -> Result<(), String> {
+    let metadata = cargo_metadata_real_workspace()?;
+    let mut machine = manifest_machine()?;
+    let workspace = intern_tree(&mut machine, real_workspace_manifest_tree(&metadata)?)?;
+    let root = intern_path(&mut machine, "")?;
+    let limit = 16;
+
+    let package_count = machine.demand_i64(
+        "workspace_member_only_index_package_count_limit",
+        vec![workspace, root, limit],
+    )?;
+    let clause_count = machine.demand_i64(
+        "workspace_member_only_index_clause_count_limit",
+        vec![workspace, root, limit],
+    )?;
+    let workspace_members: BTreeSet<_> = metadata.workspace_members.iter().collect();
+
+    assert_eq!(workspace_members.len(), 145);
+    assert_eq!(package_count, limit + 1);
+    assert_eq!(clause_count, limit);
+    Ok(())
+}
+
+#[test]
+#[ignore = "tier-A measurement probe: bounded solve currently hits molten handle -1"]
+fn real_workspace_member_index_solves_bounded_ring() -> Result<(), String> {
+    let metadata = cargo_metadata_real_workspace()?;
+    let mut machine = manifest_machine()?;
+    let workspace = intern_tree(&mut machine, real_workspace_manifest_tree(&metadata)?)?;
+    let root = intern_path(&mut machine, "")?;
+    let target = intern_string(&mut machine, "x86_64-apple-darwin")?;
+    let limit = 16;
+
+    let package_count = machine.demand_i64(
+        "workspace_member_only_index_package_count_limit",
+        vec![workspace, root, limit],
+    )?;
+    let selected_member_count = machine.demand_i64(
+        "workspace_member_only_solve_selected_member_count_limit",
+        vec![workspace, root, target, limit],
+    )?;
+
+    assert_eq!(package_count, limit + 1);
+    assert_eq!(selected_member_count, limit);
+    Ok(())
+}
+
+#[test]
+#[ignore = "tier-A measurement probe: full member-only index construction exceeds nextest's default timeout"]
+fn real_workspace_member_only_index_builds_all_members() -> Result<(), String> {
+    let metadata = cargo_metadata_real_workspace()?;
+    let mut machine = manifest_machine()?;
+    let workspace = intern_tree(&mut machine, real_workspace_manifest_tree(&metadata)?)?;
+    let root = intern_path(&mut machine, "")?;
+
+    let package_count = machine.demand_i64(
+        "workspace_member_only_index_package_count",
+        vec![workspace, root],
+    )?;
+    let clause_count = machine.demand_i64(
+        "workspace_member_only_index_clause_count",
+        vec![workspace, root],
+    )?;
+
+    assert_eq!(package_count, 146);
+    assert_eq!(clause_count, 145);
+    Ok(())
+}
+
+#[test]
+#[ignore = "tier-A measurement probe: direct-dep clause construction is currently over nextest's default timeout"]
+fn real_workspace_member_index_builds_required_direct_dep_clauses() -> Result<(), String> {
+    let metadata = cargo_metadata_real_workspace()?;
+    let mut machine = manifest_machine()?;
+    let workspace = intern_tree(&mut machine, real_workspace_manifest_tree(&metadata)?)?;
+    let root = intern_path(&mut machine, "")?;
+
+    let clause_count =
+        machine.demand_i64("workspace_member_index_clause_count", vec![workspace, root])?;
+    let direct_clause_count = machine.demand_i64(
+        "workspace_member_direct_dep_clause_count",
+        vec![workspace, root],
+    )?;
+
+    assert!(clause_count > 145, "clause_count={clause_count}");
+    assert_eq!(direct_clause_count, clause_count - 145);
+    assert_eq!(direct_clause_count % 2, 0);
+    Ok(())
+}
+
+#[test]
+#[ignore = "tier-A measurement probe: bounded direct-dep solve currently hits molten handle -1"]
+fn real_workspace_member_index_solves_bounded_direct_dep_ring() -> Result<(), String> {
+    let metadata = cargo_metadata_real_workspace()?;
+    let mut machine = manifest_machine()?;
+    let workspace = intern_tree(&mut machine, real_workspace_manifest_tree(&metadata)?)?;
+    let root = intern_path(&mut machine, "")?;
+    let target = intern_string(&mut machine, "x86_64-apple-darwin")?;
+    let limit = 16;
+
+    let selected_member_count = machine.demand_i64(
+        "workspace_member_solve_selected_member_count_limit",
+        vec![workspace, root, target, limit],
+    )?;
+
+    assert_eq!(selected_member_count, limit);
+    Ok(())
+}
+
+#[test]
+#[ignore = "tier-A measurement probe: full interpreted vix solve exceeds nextest's default timeout"]
+fn real_workspace_member_index_solves_all_members() -> Result<(), String> {
+    let metadata = cargo_metadata_real_workspace()?;
+    let mut machine = manifest_machine()?;
+    let workspace = intern_tree(&mut machine, real_workspace_manifest_tree(&metadata)?)?;
+    let root = intern_path(&mut machine, "")?;
+    let target = intern_string(&mut machine, "x86_64-apple-darwin")?;
+
+    let selected_member_count = machine.demand_i64(
+        "workspace_member_only_solve_selected_member_count",
+        vec![workspace, root, target],
+    )?;
+
+    assert_eq!(selected_member_count, 145);
     Ok(())
 }
 
@@ -618,6 +799,45 @@ fn field_doc_tag(fields: &BTreeMap<String, RenderedValue>, name: &str) -> Result
 
 fn workspace_tree() -> Tree {
     Tree::of(&[("Cargo.toml", WORKSPACE_MANIFEST)])
+}
+
+fn real_workspace_manifest_tree(metadata: &CargoMetadata) -> Result<Tree, String> {
+    let root = workspace_root();
+    let workspace_members: BTreeSet<_> = metadata.workspace_members.iter().collect();
+    let mut entries = BTreeMap::new();
+    entries.insert(
+        "Cargo.toml".to_owned(),
+        std::fs::read_to_string(root.join("Cargo.toml")).map_err(|err| err.to_string())?,
+    );
+    for package in metadata
+        .packages
+        .iter()
+        .filter(|package| workspace_members.contains(&package.id))
+    {
+        let manifest_path = Path::new(&package.manifest_path);
+        let relative = manifest_path.strip_prefix(&root).map_err(|err| {
+            format!(
+                "{} was not under {}: {err}",
+                package.manifest_path,
+                root.display()
+            )
+        })?;
+        let relative = relative
+            .to_str()
+            .ok_or_else(|| format!("manifest path was not utf-8: {}", package.manifest_path))?
+            .to_owned();
+        let contents = std::fs::read_to_string(manifest_path).map_err(|err| {
+            format!(
+                "read manifest for {} at {}: {err}",
+                package.name, package.manifest_path
+            )
+        })?;
+        entries.insert(relative, contents);
+    }
+    Ok(Tree {
+        entries,
+        blobs: BTreeMap::new(),
+    })
 }
 
 fn taxon_tree() -> Tree {

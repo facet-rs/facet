@@ -1,4 +1,4 @@
-use vix::{Tree, Path, VersionSet};
+use vix::{Tree, Path, VersionSet, Map};
 
 struct CargoPackage {
     name: String,
@@ -27,6 +27,34 @@ struct CargoTargetShape {
     crate_type: String,
     metadata_file: String,
     link_file: String,
+}
+
+struct WorkspaceIndexState {
+    packages: [Int],
+    package_ids: Map<String, Int>,
+    member_paths: Map<Int, String>,
+    names: Map<Int, String>,
+    version_ids: [Int],
+    version_pkgs: Map<Int, Int>,
+    version_values: Map<Int, String>,
+    clause_ids: [Int],
+    guard_ids: [Int],
+    guard_clause_ids: Map<Int, Int>,
+    guard_tags: Map<Int, String>,
+    guard_kinds: Map<Int, Int>,
+    guard_pkgs: Map<Int, Int>,
+    guard_version_values: Map<Int, String>,
+    guard_features: Map<Int, Int>,
+    consequent_tags: Map<Int, String>,
+    consequent_pkgs: Map<Int, Int>,
+    consequent_version_sets: Map<Int, VersionSet>,
+    consequent_features: Map<Int, Int>,
+    gate_kinds: Map<Int, String>,
+    gate_targets: Map<Int, String>,
+    next_pkg: Int,
+    next_version: Int,
+    next_clause: Int,
+    next_guard: Int,
 }
 
 fn manifest_doc(manifest: Tree) -> Doc {
@@ -122,6 +150,10 @@ fn package_version(manifest: Tree) -> String {
     doc_string(package_doc(manifest), "version")
 }
 
+fn package_version_in_workspace(manifest: Tree, workspace: Tree) -> String {
+    inherited_package_string(manifest, workspace, "version")
+}
+
 fn inherited_workspace_package_string(field: Doc, workspace: Tree, key: String) -> String {
     let _workspace: Bool = field.get("workspace").unwrap();
     doc_string(workspace_package_doc(workspace), key)
@@ -214,6 +246,334 @@ pub fn workspace_members_text(workspace: Tree) -> String {
     workspace_members(workspace).join("\n")
 }
 
+fn empty_workspace_index_state() -> WorkspaceIndexState {
+    let package_ids: Map<String, Int> = {};
+    let member_paths: Map<Int, String> = {};
+    let names: Map<Int, String> = {};
+    let version_pkgs: Map<Int, Int> = {};
+    let version_values: Map<Int, String> = {};
+    let guard_clause_ids: Map<Int, Int> = {};
+    let guard_tags: Map<Int, String> = {};
+    let guard_kinds: Map<Int, Int> = {};
+    let guard_pkgs: Map<Int, Int> = {};
+    let guard_version_values: Map<Int, String> = {};
+    let guard_features: Map<Int, Int> = {};
+    let consequent_tags: Map<Int, String> = {};
+    let consequent_pkgs: Map<Int, Int> = {};
+    let consequent_version_sets: Map<Int, VersionSet> = {};
+    let consequent_features: Map<Int, Int> = {};
+    let gate_kinds: Map<Int, String> = {};
+    let gate_targets: Map<Int, String> = {};
+    WorkspaceIndexState {
+        packages: [],
+        package_ids: package_ids,
+        member_paths: member_paths,
+        names: names,
+        version_ids: [],
+        version_pkgs: version_pkgs,
+        version_values: version_values,
+        clause_ids: [],
+        guard_ids: [],
+        guard_clause_ids: guard_clause_ids,
+        guard_tags: guard_tags,
+        guard_kinds: guard_kinds,
+        guard_pkgs: guard_pkgs,
+        guard_version_values: guard_version_values,
+        guard_features: guard_features,
+        consequent_tags: consequent_tags,
+        consequent_pkgs: consequent_pkgs,
+        consequent_version_sets: consequent_version_sets,
+        consequent_features: consequent_features,
+        gate_kinds: gate_kinds,
+        gate_targets: gate_targets,
+        next_pkg: 0,
+        next_version: 0,
+        next_clause: 0,
+        next_guard: 0,
+    }
+}
+
+fn register_workspace_pseudo_root(state: WorkspaceIndexState) -> WorkspaceIndexState {
+    register_workspace_package(state, "__workspace__", "0.0.0", "")
+}
+
+fn member_manifest(workspace: Tree, workspace_root: Path, member: String) -> Tree {
+    workspace / workspace_root.join(member)
+}
+
+pub fn workspace_projected_member_package_name(workspace: Tree, workspace_root: Path, member: String) -> String {
+    package_name(member_manifest(workspace, workspace_root, member))
+}
+
+fn register_workspace_members(workspace: Tree, workspace_root: Path, members: [String], state: WorkspaceIndexState) -> WorkspaceIndexState {
+    match members.len() == 0 {
+        true => state,
+        false => register_workspace_members_tuple(workspace, workspace_root, members.pop(), state),
+    }
+}
+
+fn register_workspace_members_tuple(workspace: Tree, workspace_root: Path, popped: (String, [String]), state: WorkspaceIndexState) -> WorkspaceIndexState {
+    let state = register_workspace_members(workspace, workspace_root, popped.1, state);
+    let manifest = member_manifest(workspace, workspace_root, popped.0);
+    register_workspace_package(state, package_name(manifest), package_version_in_workspace(manifest, workspace), popped.0)
+}
+
+fn register_workspace_package(state: WorkspaceIndexState, name: String, version: String, member_path: String) -> WorkspaceIndexState {
+    match state.package_ids.get(name) {
+        Some(_) => state,
+        None => register_workspace_package_new(state, name, version, member_path),
+    }
+}
+
+fn register_workspace_package_new(state: WorkspaceIndexState, name: String, version: String, member_path: String) -> WorkspaceIndexState {
+    let pkg = state.next_pkg;
+    let version_id = state.next_version;
+    WorkspaceIndexState {
+        packages: state.packages.push(pkg),
+        package_ids: state.package_ids.insert(name, pkg),
+        member_paths: state.member_paths.insert(pkg, member_path),
+        names: state.names.insert(pkg, name),
+        version_ids: state.version_ids.push(version_id),
+        version_pkgs: state.version_pkgs.insert(version_id, pkg),
+        version_values: state.version_values.insert(version_id, version),
+        next_pkg: pkg + 1,
+        next_version: version_id + 1,
+        ..state
+    }
+}
+
+fn add_workspace_root_member_clauses(state: WorkspaceIndexState, member_pkg_ids: [Int]) -> WorkspaceIndexState {
+    match member_pkg_ids.len() == 0 {
+        true => state,
+        false => add_workspace_root_member_clauses_tuple(state, member_pkg_ids.pop()),
+    }
+}
+
+fn add_workspace_root_member_clauses_tuple(state: WorkspaceIndexState, popped: (Int, [Int])) -> WorkspaceIndexState {
+    add_workspace_root_member_clauses(add_workspace_root_member_clause(state, popped.0), popped.1)
+}
+
+fn add_workspace_root_member_clause(state: WorkspaceIndexState, member_pkg: Int) -> WorkspaceIndexState {
+    workspace_add_selected_guard_clause(state, 0, "0.0.0", "in_graph", member_pkg, VersionSet::from_req("*"), "normal")
+}
+
+fn add_workspace_required_dep_clauses(state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, dep_pkg: Int, req: String, kind: String) -> WorkspaceIndexState {
+    workspace_add_selected_guard_clause(
+        workspace_add_selected_guard_clause(state, parent_pkg, parent_version, "in_graph", dep_pkg, VersionSet::from_req("*"), kind),
+        parent_pkg,
+        parent_version,
+        "version_set",
+        dep_pkg,
+        VersionSet::from_req(req),
+        kind,
+    )
+}
+
+fn workspace_member_pkg_ids(state: WorkspaceIndexState, members: [String], out: [Int]) -> [Int] {
+    match members.len() == 0 {
+        true => out,
+        false => workspace_member_pkg_ids_tuple(state, members.pop(), out),
+    }
+}
+
+fn workspace_member_pkg_ids_tuple(state: WorkspaceIndexState, popped: (String, [String]), out: [Int]) -> [Int] {
+    let out = workspace_member_pkg_ids(state, popped.1, out);
+    let name = workspace_member_package_name(state, popped.0, state.packages);
+    out.push(state.package_ids.get(name).unwrap())
+}
+
+fn workspace_member_package_name(state: WorkspaceIndexState, member: String, packages: [Int]) -> String {
+    match packages.len() == 0 {
+        true => "",
+        false => workspace_member_package_name_tuple(state, member, packages.pop()),
+    }
+}
+
+fn workspace_member_package_name_tuple(state: WorkspaceIndexState, member: String, popped: (Int, [Int])) -> String {
+    match state.member_paths.get(popped.0) {
+        Some(path) => match path == member {
+            true => state.names.get(popped.0).unwrap(),
+            false => workspace_member_package_name(state, member, popped.1),
+        },
+        None => workspace_member_package_name(state, member, popped.1),
+    }
+}
+
+fn workspace_add_selected_guard_clause(state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, consequent_tag: String, dep_pkg: Int, req: VersionSet, kind: String) -> WorkspaceIndexState {
+    let clause_id = state.next_clause;
+    let guard_id = state.next_guard;
+    WorkspaceIndexState {
+        clause_ids: state.clause_ids.push(clause_id),
+        guard_ids: state.guard_ids.push(guard_id),
+        guard_clause_ids: state.guard_clause_ids.insert(guard_id, clause_id),
+        guard_tags: state.guard_tags.insert(guard_id, "selected"),
+        guard_kinds: state.guard_kinds.insert(guard_id, 0),
+        guard_pkgs: state.guard_pkgs.insert(guard_id, parent_pkg),
+        guard_version_values: state.guard_version_values.insert(guard_id, parent_version),
+        guard_features: state.guard_features.insert(guard_id, 0),
+        consequent_tags: state.consequent_tags.insert(clause_id, consequent_tag),
+        consequent_pkgs: state.consequent_pkgs.insert(clause_id, dep_pkg),
+        consequent_version_sets: state.consequent_version_sets.insert(clause_id, req),
+        consequent_features: state.consequent_features.insert(clause_id, 0),
+        gate_kinds: state.gate_kinds.insert(clause_id, kind),
+        next_clause: clause_id + 1,
+        next_guard: guard_id + 1,
+        ..state
+    }
+}
+
+fn workspace_index_state(workspace: Tree, workspace_root: Path) -> WorkspaceIndexState {
+    let members = workspace_members(workspace);
+    workspace_index_state_for_members(workspace, workspace_root, members)
+}
+
+fn workspace_index_state_limit(workspace: Tree, workspace_root: Path, limit: Int) -> WorkspaceIndexState {
+    workspace_index_state_for_members(workspace, workspace_root, take_strings(workspace_members(workspace), limit, []))
+}
+
+fn workspace_index_state_for_members(workspace: Tree, workspace_root: Path, members: [String]) -> WorkspaceIndexState {
+    let state = workspace_member_only_index_state_for_members(workspace, workspace_root, members);
+    register_workspace_direct_deps(workspace, workspace_root, members, state)
+}
+
+fn workspace_member_only_index_state(workspace: Tree, workspace_root: Path) -> WorkspaceIndexState {
+    workspace_member_only_index_state_for_members(workspace, workspace_root, workspace_members(workspace))
+}
+
+fn workspace_member_only_index_state_limit(workspace: Tree, workspace_root: Path, limit: Int) -> WorkspaceIndexState {
+    workspace_member_only_index_state_for_members(workspace, workspace_root, take_strings(workspace_members(workspace), limit, []))
+}
+
+fn workspace_member_only_index_state_for_members(workspace: Tree, workspace_root: Path, members: [String]) -> WorkspaceIndexState {
+    let state = register_workspace_members(workspace, workspace_root, members, register_workspace_pseudo_root(empty_workspace_index_state()));
+    add_workspace_root_member_clauses(state, workspace_member_pkg_ids(state, members, []))
+}
+
+fn take_strings(values: [String], limit: Int, out: [String]) -> [String] {
+    match limit == 0 {
+        true => out,
+        false => match values.len() == 0 {
+            true => out,
+            false => take_strings_tuple(values.pop(), limit, out),
+        },
+    }
+}
+
+fn take_strings_tuple(popped: (String, [String]), limit: Int, out: [String]) -> [String] {
+    take_strings(popped.1, limit - 1, out.push(popped.0))
+}
+
+fn workspace_index_from_state(state: WorkspaceIndexState) -> Index {
+    Index {
+        packages: state.packages,
+        names: state.names,
+        version_ids: state.version_ids,
+        version_pkgs: state.version_pkgs,
+        version_values: state.version_values,
+        clause_ids: state.clause_ids,
+        guard_ids: state.guard_ids,
+        guard_clause_ids: state.guard_clause_ids,
+        guard_tags: state.guard_tags,
+        guard_kinds: state.guard_kinds,
+        guard_pkgs: state.guard_pkgs,
+        guard_version_values: state.guard_version_values,
+        guard_features: state.guard_features,
+        consequent_tags: state.consequent_tags,
+        consequent_pkgs: state.consequent_pkgs,
+        consequent_version_sets: state.consequent_version_sets,
+        consequent_features: state.consequent_features,
+        gate_kinds: state.gate_kinds,
+        gate_targets: state.gate_targets,
+    }
+}
+
+fn workspace_problem() -> Problem {
+    Problem {
+        root_pkg: 0,
+        root_req: VersionSet::from_req("*"),
+        root_features: [],
+        root_default_feature: 0,
+        root_default_features: false,
+    }
+}
+
+pub fn workspace_member_index_package_count(workspace: Tree, workspace_root: Path) -> Int {
+    workspace_index_state(workspace, workspace_root).packages.len()
+}
+
+pub fn workspace_member_only_index_package_count(workspace: Tree, workspace_root: Path) -> Int {
+    workspace_member_only_index_state(workspace, workspace_root).packages.len()
+}
+
+pub fn workspace_member_index_package_count_limit(workspace: Tree, workspace_root: Path, limit: Int) -> Int {
+    workspace_index_state_limit(workspace, workspace_root, limit).packages.len()
+}
+
+pub fn workspace_member_only_index_package_count_limit(workspace: Tree, workspace_root: Path, limit: Int) -> Int {
+    workspace_member_only_index_state_limit(workspace, workspace_root, limit).packages.len()
+}
+
+pub fn workspace_member_index_clause_count(workspace: Tree, workspace_root: Path) -> Int {
+    workspace_index_state(workspace, workspace_root).clause_ids.len()
+}
+
+pub fn workspace_member_only_index_clause_count(workspace: Tree, workspace_root: Path) -> Int {
+    workspace_member_only_index_state(workspace, workspace_root).clause_ids.len()
+}
+
+pub fn workspace_member_index_clause_count_limit(workspace: Tree, workspace_root: Path, limit: Int) -> Int {
+    workspace_index_state_limit(workspace, workspace_root, limit).clause_ids.len()
+}
+
+pub fn workspace_member_only_index_clause_count_limit(workspace: Tree, workspace_root: Path, limit: Int) -> Int {
+    workspace_member_only_index_state_limit(workspace, workspace_root, limit).clause_ids.len()
+}
+
+pub fn workspace_member_root_clause_count(workspace: Tree) -> Int {
+    workspace_members(workspace).len()
+}
+
+pub fn workspace_member_direct_dep_clause_count(workspace: Tree, workspace_root: Path) -> Int {
+    workspace_member_index_clause_count(workspace, workspace_root) - workspace_member_root_clause_count(workspace)
+}
+
+pub fn workspace_member_direct_dep_clause_count_limit(workspace: Tree, workspace_root: Path, limit: Int) -> Int {
+    workspace_member_index_clause_count_limit(workspace, workspace_root, limit) - limit
+}
+
+pub fn workspace_member_solve_selected_count(workspace: Tree, workspace_root: Path, target: String) -> Int {
+    let state = workspace_index_state(workspace, workspace_root);
+    solve_selected_names(workspace_index_from_state(state), workspace_problem(), target).len()
+}
+
+pub fn workspace_member_solve_selected_member_count(workspace: Tree, workspace_root: Path, target: String) -> Int {
+    workspace_member_solve_selected_count(workspace, workspace_root, target) - 1
+}
+
+pub fn workspace_member_only_solve_selected_count(workspace: Tree, workspace_root: Path, target: String) -> Int {
+    let state = workspace_member_only_index_state(workspace, workspace_root);
+    solve_selected_names(workspace_index_from_state(state), workspace_problem(), target).len()
+}
+
+pub fn workspace_member_only_solve_selected_member_count(workspace: Tree, workspace_root: Path, target: String) -> Int {
+    workspace_member_only_solve_selected_count(workspace, workspace_root, target) - 1
+}
+
+pub fn workspace_member_solve_selected_member_count_limit(workspace: Tree, workspace_root: Path, target: String, limit: Int) -> Int {
+    let state = workspace_index_state_limit(workspace, workspace_root, limit);
+    solve_selected_names(workspace_index_from_state(state), workspace_problem(), target).len() - 1
+}
+
+pub fn workspace_member_only_solve_selected_member_count_limit(workspace: Tree, workspace_root: Path, target: String, limit: Int) -> Int {
+    let state = workspace_member_only_index_state_limit(workspace, workspace_root, limit);
+    solve_selected_names(workspace_index_from_state(state), workspace_problem(), target).len() - 1
+}
+
+pub fn workspace_member_solve_selected_versions_text(workspace: Tree, workspace_root: Path, target: String) -> String {
+    let state = workspace_index_state(workspace, workspace_root);
+    solve_selected_versions_text(workspace_index_from_state(state), workspace_problem(), target)
+}
+
 pub fn package_of(manifest: Tree, workspace: Tree, manifest_path: String) -> CargoPackage {
     CargoPackage {
         name: package_name(manifest),
@@ -225,6 +585,10 @@ pub fn package_of(manifest: Tree, workspace: Tree, manifest_path: String) -> Car
 
 fn dependency_table(manifest: Tree, kind: String) -> Doc {
     manifest_doc(manifest).get(dependency_table_name(kind)).unwrap()
+}
+
+fn dependency_table_opt(manifest: Tree, kind: String) -> Option<Doc> {
+    manifest_doc(manifest).get(dependency_table_name(kind))
 }
 
 fn dependency_table_name(kind: String) -> String {
@@ -239,6 +603,72 @@ fn dependency_table_name(kind: String) -> String {
 
 fn dependency_doc(manifest: Tree, name: String, kind: String) -> Doc {
     dependency_table(manifest, kind).get(name).unwrap()
+}
+
+pub fn dependency_names_text(manifest: Tree, kind: String) -> String {
+    dependency_table(manifest, kind).keys().join("\n")
+}
+
+fn dependency_names(manifest: Tree, kind: String) -> [String] {
+    match dependency_table_opt(manifest, kind) {
+        Some(table) => table.keys(),
+        None => [],
+    }
+}
+
+fn register_workspace_direct_deps(workspace: Tree, workspace_root: Path, members: [String], state: WorkspaceIndexState) -> WorkspaceIndexState {
+    match members.len() == 0 {
+        true => state,
+        false => register_workspace_direct_deps_tuple(workspace, workspace_root, members.pop(), state),
+    }
+}
+
+fn register_workspace_direct_deps_tuple(workspace: Tree, workspace_root: Path, popped: (String, [String]), state: WorkspaceIndexState) -> WorkspaceIndexState {
+    let state = register_workspace_direct_deps(workspace, workspace_root, popped.1, state);
+    let manifest = member_manifest(workspace, workspace_root, popped.0);
+    let parent_pkg = state.package_ids.get(package_name(manifest)).unwrap();
+    let parent_version = package_version_in_workspace(manifest, workspace);
+    let state = register_workspace_kind_deps(workspace, manifest, state, parent_pkg, parent_version, "normal");
+    let state = register_workspace_kind_deps(workspace, manifest, state, parent_pkg, parent_version, "build");
+    register_workspace_kind_deps(workspace, manifest, state, parent_pkg, parent_version, "dev")
+}
+
+fn register_workspace_kind_deps(workspace: Tree, manifest: Tree, state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, kind: String) -> WorkspaceIndexState {
+    register_workspace_dep_names(workspace, manifest, dependency_names(manifest, kind), state, parent_pkg, parent_version, kind)
+}
+
+fn register_workspace_dep_names(workspace: Tree, manifest: Tree, names: [String], state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, kind: String) -> WorkspaceIndexState {
+    match names.len() == 0 {
+        true => state,
+        false => register_workspace_dep_names_tuple(workspace, manifest, names.pop(), state, parent_pkg, parent_version, kind),
+    }
+}
+
+fn register_workspace_dep_names_tuple(workspace: Tree, manifest: Tree, popped: (String, [String]), state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, kind: String) -> WorkspaceIndexState {
+    let state = register_workspace_dep_names(workspace, manifest, popped.1, state, parent_pkg, parent_version, kind);
+    register_workspace_dep_name(workspace, manifest, state, parent_pkg, parent_version, popped.0, kind)
+}
+
+fn register_workspace_dep_name(workspace: Tree, manifest: Tree, state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, dep_name: String, kind: String) -> WorkspaceIndexState {
+    match state.package_ids.get(dep_name) {
+        Some(dep_pkg) => register_workspace_known_dep(workspace, manifest, state, parent_pkg, parent_version, dep_name, dep_pkg, kind),
+        None => state,
+    }
+}
+
+fn register_workspace_known_dep(workspace: Tree, manifest: Tree, state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, dep_name: String, dep_pkg: Int, kind: String) -> WorkspaceIndexState {
+    let dep = dependency_doc(manifest, dep_name, kind);
+    match dependency_optional(dep) {
+        true => state,
+        false => add_workspace_required_dep_clauses(state, parent_pkg, parent_version, dep_pkg, dependency_req_or_any(dependency_version_req(dep, workspace, dep_name, dependency_is_workspace(dep))), kind),
+    }
+}
+
+fn dependency_req_or_any(req: String) -> String {
+    match req == "" {
+        true => "*",
+        false => req,
+    }
 }
 
 fn target_dependency_table(manifest: Tree, target: String, kind: String) -> Doc {
@@ -458,5 +888,5 @@ pub fn problem_of_member(root_pkg: Int, root_default_feature: Int) -> Problem {
 }
 
 pub fn resolved_unit_adaptation_gap() -> String {
-    "Path construction is join-only from a granted root; generic ResolvedUnit emission remains blocked by dependency-table key enumeration and the demanded resolve-to-unit graph bridge."
+    "Path construction is join-only from a granted root; generic ResolvedUnit emission remains blocked by sparse-index composition, UnitTargetTable derivation, and the demanded resolve-to-unit graph bridge."
 }
