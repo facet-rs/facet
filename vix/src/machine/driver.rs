@@ -1019,7 +1019,7 @@ impl MoltenStore {
         &self,
         store: &ValueStore,
         handle: i64,
-        schema_refs: &[String],
+        schema_tables: &SchemaTables,
     ) -> Result<ArrayEntry, String> {
         match Handle::from_word(handle) {
             Handle::Molten(molten_handle) => {
@@ -1028,12 +1028,14 @@ impl MoltenStore {
                         elem_schema: elem_schema.clone(),
                         words: words.clone(),
                     }),
-                    Some(MoltenValue::Interned(handle)) => store.array_entry(*handle, schema_refs),
+                    Some(MoltenValue::Interned(handle)) => {
+                        store.array_entry(*handle, schema_tables)
+                    }
                     Some(_) => Err(format!("molten handle {handle} is not an Array")),
-                    None => store.array_entry(handle, schema_refs),
+                    None => store.array_entry(handle, schema_tables),
                 }
             }
-            Handle::Store(store_ix) => store.array_entry(store_ix.to_word(), schema_refs),
+            Handle::Store(store_ix) => store.array_entry(store_ix.to_word(), schema_tables),
         }
     }
 }
@@ -1208,12 +1210,12 @@ impl ValueStore {
         &mut self,
         schema: &str,
         pairs: Vec<MapPair>,
-        schema_refs: &[String],
+        schema_tables: &SchemaTables,
         descriptors: &DescriptorMap,
         schemas: &SchemaTables,
     ) -> Result<(i64, bool), String> {
-        let ordered = canonical_map_pairs(self, pairs, descriptors, schemas, schema_refs)?;
-        let bytes = encode_map_pairs(&ordered, schema_refs)?;
+        let ordered = canonical_map_pairs(self, pairs, descriptors, schemas, schema_tables)?;
+        let bytes = encode_map_pairs(&ordered, schema_tables)?;
         let taint = taint_for_ordered_map_pairs(&ordered);
         let content_hash = hash_with_taint(hash_map_pairs(schema, &ordered), &taint);
         Ok(self.alloc_with_hash_tainted(schema, bytes, content_hash, taint))
@@ -1223,7 +1225,7 @@ impl ValueStore {
         &self,
         handle: i64,
         schemas: &SchemaTables,
-        schema_refs: &[String],
+        schema_tables: &SchemaTables,
     ) -> Result<(String, Vec<MapPair>), String> {
         let entry = self
             .entry(handle)
@@ -1233,7 +1235,7 @@ impl ValueStore {
         }
         Ok((
             entry.schema.clone(),
-            decode_map_pairs(&entry.bytes, schema_refs)?,
+            decode_map_pairs(&entry.bytes, schema_tables)?,
         ))
     }
 
@@ -1244,9 +1246,9 @@ impl ValueStore {
         key_word: i64,
         value_schema: &str,
         schemas: &SchemaTables,
-        schema_refs: &[String],
+        schema_tables: &SchemaTables,
     ) -> Result<(i64, bool), String> {
-        let (_, pairs) = self.map_pairs(handle, schemas, schema_refs)?;
+        let (_, pairs) = self.map_pairs(handle, schemas, schema_tables)?;
         let key_hash = canonical_word_hash_in_store(self, schemas, key_schema, key_word);
         for pair in pairs {
             if pair.key_schema != key_schema
@@ -1261,7 +1263,7 @@ impl ValueStore {
                     pair.value_word,
                     pair.value_realization,
                     schemas,
-                    schema_refs,
+                    schema_tables,
                 );
             }
             if let Some(inner) = realized_value_schema(value_schema) {
@@ -1273,7 +1275,7 @@ impl ValueStore {
                                 pair.value_word,
                                 Some(Realization::Ready),
                                 schemas,
-                                schema_refs,
+                                schema_tables,
                             );
                         }
                         Realization::Pending if pair.value_schema == pending_schema(inner) => {
@@ -1282,7 +1284,7 @@ impl ValueStore {
                                 pair.value_word,
                                 Some(Realization::Pending),
                                 schemas,
-                                schema_refs,
+                                schema_tables,
                             );
                         }
                         _ => {}
@@ -1294,7 +1296,7 @@ impl ValueStore {
                         pair.value_word,
                         Some(Realization::Ready),
                         schemas,
-                        schema_refs,
+                        schema_tables,
                     );
                 }
                 if pair.value_schema == pending_schema(inner) && pair.value_realization.is_none() {
@@ -1303,7 +1305,7 @@ impl ValueStore {
                         pair.value_word,
                         Some(Realization::Pending),
                         schemas,
-                        schema_refs,
+                        schema_tables,
                     );
                 }
             }
@@ -1313,20 +1315,20 @@ impl ValueStore {
                     pair.value_word,
                     pair.value_realization,
                     schemas,
-                    schema_refs,
+                    schema_tables,
                 );
             }
         }
-        self.alloc_option_none(value_schema, schema_refs)
+        self.alloc_option_none(value_schema, schema_tables)
     }
 
     fn alloc_option_none(
         &mut self,
         value_schema: &str,
-        schema_refs: &[String],
+        schema_tables: &SchemaTables,
     ) -> Result<(i64, bool), String> {
         let option_schema = option_schema(value_schema);
-        let value_ref = schema_ref_for(value_schema, schema_refs)?;
+        let value_ref = schema_ref_for(value_schema, schema_tables)?;
         let mut bytes = Vec::with_capacity(24);
         bytes.extend_from_slice(&0i64.to_le_bytes());
         bytes.extend_from_slice(&value_ref.to_le_bytes());
@@ -1345,10 +1347,10 @@ impl ValueStore {
         value_word: i64,
         realization: Option<Realization>,
         schemas: &SchemaTables,
-        schema_refs: &[String],
+        schema_tables: &SchemaTables,
     ) -> Result<(i64, bool), String> {
         let option_schema = option_schema(value_schema);
-        let value_ref = schema_ref_for(value_schema, schema_refs)?;
+        let value_ref = schema_ref_for(value_schema, schema_tables)?;
         let hash_schema = realized_value_schema(value_schema).unwrap_or(value_schema);
         let canonical_schema = match realization {
             Some(Realization::Pending) => pending_schema(hash_schema),
@@ -1380,7 +1382,7 @@ impl ValueStore {
         &self,
         handle: i64,
         schemas: &SchemaTables,
-        schema_refs: &[String],
+        schema_tables: &SchemaTables,
     ) -> Result<OptionPayload, String> {
         let entry = self
             .entry(handle)
@@ -1398,19 +1400,19 @@ impl ValueStore {
         if tag == 0 {
             return Ok(OptionPayload::None);
         }
-        let schema_ref = read_frame_word(&entry.bytes, 8);
-        let schema = schema_refs
-            .get(usize::try_from(schema_ref).map_err(|_| format!("schema ref {schema_ref}"))?)
-            .ok_or_else(|| format!("schema ref {schema_ref}"))?;
+        let schema_word = read_frame_word(&entry.bytes, 8);
+        let schema = schema_name_for(schema_word, schema_tables)?;
         let realization = if entry.bytes.len() == 32 {
             Some(Realization::from_word(read_frame_word(&entry.bytes, 24))?)
         } else {
             None
         };
         let word_schema = if let Some(Realization::Pending) = realization {
-            pending_schema(realized_value_schema(schema).unwrap_or(schema))
+            pending_schema(realized_value_schema(&schema).unwrap_or(&schema))
         } else {
-            realized_value_schema(schema).unwrap_or(schema).to_string()
+            realized_value_schema(&schema)
+                .unwrap_or(&schema)
+                .to_string()
         };
         Ok(OptionPayload::Some {
             word: canonicalize_word_for_schema(
@@ -1470,11 +1472,11 @@ impl ValueStore {
         elem_schema: &str,
         words: Vec<i64>,
         schemas: &SchemaTables,
-        schema_refs: &[String],
+        schema_tables: &SchemaTables,
     ) -> Result<(i64, bool), String> {
         let mut bytes = Vec::with_capacity(24 + words.len() * 8);
         bytes.extend_from_slice(&0i64.to_le_bytes());
-        bytes.extend_from_slice(&schema_ref_for(elem_schema, schema_refs)?.to_le_bytes());
+        bytes.extend_from_slice(&schema_ref_for(elem_schema, schema_tables)?.to_le_bytes());
         bytes.extend_from_slice(
             &i64::try_from(words.len())
                 .expect("array length fits i64")
@@ -1538,7 +1540,7 @@ impl ValueStore {
         self.alloc_with_hash("Array", bytes, content_hash)
     }
 
-    fn array_entry(&self, handle: i64, schema_refs: &[String]) -> Result<ArrayEntry, String> {
+    fn array_entry(&self, handle: i64, schema_tables: &SchemaTables) -> Result<ArrayEntry, String> {
         let entry = self
             .entry(handle)
             .ok_or_else(|| format!("store handle {handle}"))?;
@@ -1557,7 +1559,7 @@ impl ValueStore {
                         entry.bytes.len()
                     ));
                 }
-                let elem_schema = schema_name_for(read_frame_word(&entry.bytes, 8), schema_refs)?;
+                let elem_schema = schema_name_for(read_frame_word(&entry.bytes, 8), schema_tables)?;
                 Ok(ArrayEntry::Words {
                     elem_schema,
                     words: (0..count)
@@ -1646,7 +1648,7 @@ fn intern_molten_word(
     molten: &mut MoltenStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     schema: &str,
     word: i64,
 ) -> Result<(i64, bool), String> {
@@ -1677,7 +1679,7 @@ fn intern_molten_word(
                 molten,
                 descriptors,
                 schemas,
-                schema_refs,
+                schema_tables,
                 &record_schema,
                 &mut bytes,
             )?;
@@ -1696,7 +1698,7 @@ fn intern_molten_word(
                     molten,
                     descriptors,
                     schemas,
-                    schema_refs,
+                    schema_tables,
                     &pair.key_schema,
                     pair.key_word,
                 )?
@@ -1706,13 +1708,13 @@ fn intern_molten_word(
                     molten,
                     descriptors,
                     schemas,
-                    schema_refs,
+                    schema_tables,
                     &pair.value_schema,
                     pair.value_word,
                 )?
                 .0;
             }
-            store.alloc_map(&map_schema, pairs, schema_refs, descriptors, schemas)?
+            store.alloc_map(&map_schema, pairs, schema_tables, descriptors, schemas)?
         }
         MoltenValue::ArrayWords {
             elem_schema,
@@ -1727,13 +1729,13 @@ fn intern_molten_word(
                     molten,
                     descriptors,
                     schemas,
-                    schema_refs,
+                    schema_tables,
                     &elem_schema,
                     *word,
                 )?
                 .0;
             }
-            store.alloc_array_words(&elem_schema, words, schemas, schema_refs)?
+            store.alloc_array_words(&elem_schema, words, schemas, schema_tables)?
         }
         MoltenValue::Interned(_) => unreachable!("handled above"),
     };
@@ -1756,7 +1758,7 @@ fn intern_value_bytes_children(
     molten: &mut MoltenStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     schema: &str,
     bytes: &mut [u8],
 ) -> Result<(), String> {
@@ -1773,7 +1775,7 @@ fn intern_value_bytes_children(
                     molten,
                     descriptors,
                     schemas,
-                    schema_refs,
+                    schema_tables,
                     &field_schema,
                     word,
                 )?;
@@ -1794,7 +1796,7 @@ fn intern_value_bytes_children(
                     molten,
                     descriptors,
                     schemas,
-                    schema_refs,
+                    schema_tables,
                     &field_schema,
                     word,
                 )?;
@@ -1814,7 +1816,6 @@ pub struct Driver {
     fns: Vec<LoweredFn>,
     descriptors: DescriptorMap,
     schemas: SchemaTables,
-    schema_refs: Vec<String>,
     memo: HashMap<CanonMemoKey, MemoEntry>,
     memo_candidates: HashMap<ProjectionCandidateKey, Vec<CanonMemoKey>>,
     journal: BTreeMap<String, i64>,
@@ -1882,7 +1883,6 @@ impl Driver {
             fns,
             descriptors,
             schemas,
-            schema_refs: Vec::new(),
             memo: HashMap::new(),
             memo_candidates: HashMap::new(),
             journal: BTreeMap::new(),
@@ -1980,23 +1980,6 @@ impl Driver {
         self.store.borrow().len()
     }
 
-    pub fn intern_schema_ref(&mut self, schema: impl Into<String>) -> i64 {
-        let schema = schema.into();
-        if let Some(index) = self.schema_refs.iter().position(|s| s == &schema) {
-            return i64::try_from(index).expect("schema ref fits i64");
-        }
-        let index = self.schema_refs.len();
-        self.schema_refs.push(schema);
-        i64::try_from(index).expect("schema ref fits i64")
-    }
-
-    pub fn schema_ref_map_for(&mut self, schemas: &[String]) -> HashMap<String, i64> {
-        schemas
-            .iter()
-            .map(|schema| (schema.clone(), self.intern_schema_ref(schema.clone())))
-            .collect()
-    }
-
     pub fn store_entry(&self, handle: i64) -> Option<StoreEntry> {
         self.store.borrow().entry(handle).cloned()
     }
@@ -2086,7 +2069,7 @@ impl Driver {
         let (_, pairs) = self
             .store
             .borrow()
-            .map_pairs(handle, &self.schemas, &self.schema_refs)?;
+            .map_pairs(handle, &self.schemas, &self.schemas)?;
         Ok(pairs
             .into_iter()
             .map(|pair| {
@@ -2103,7 +2086,7 @@ impl Driver {
 
     #[cfg(test)]
     pub fn array_words(&self, handle: i64) -> Result<(String, Vec<i64>), String> {
-        match self.store.borrow().array_entry(handle, &self.schema_refs)? {
+        match self.store.borrow().array_entry(handle, &self.schemas)? {
             ArrayEntry::Words { elem_schema, words } => Ok((elem_schema, words)),
             ArrayEntry::Pending(_) => Err("array is pending".into()),
         }
@@ -2115,7 +2098,7 @@ impl Driver {
             &self.store.borrow(),
             &self.descriptors,
             &self.schemas,
-            &self.schema_refs,
+            &self.schemas,
             schema,
             a,
             b,
@@ -2132,7 +2115,7 @@ impl Driver {
             &self.store.borrow(),
             &self.descriptors,
             &self.schemas,
-            &self.schema_refs,
+            &self.schemas,
             names,
             schema,
             word,
@@ -2342,7 +2325,7 @@ impl Driver {
                                 &mut exec.molten,
                                 &self.descriptors,
                                 &self.schemas,
-                                &self.schema_refs,
+                                &self.schemas,
                                 &return_schema,
                                 value,
                             )?;
@@ -2696,7 +2679,7 @@ impl Driver {
             let mut pending_invokes: Vec<PendingInvokeRequest> = Vec::new();
             let descriptors = &self.descriptors;
             let schemas = &self.schemas;
-            let schema_refs = &self.schema_refs;
+            let schema_tables = &self.schemas;
             let store_cell = &self.store;
             let molten_cell = RefCell::new(&mut exec.molten);
             let ast_roots_cell = RefCell::new(&mut self.ast_roots);
@@ -2734,7 +2717,7 @@ impl Driver {
                         &mut molten_cell.borrow_mut(),
                         descriptors,
                         schemas,
-                        schema_refs,
+                        schema_tables,
                         schema,
                         *arg,
                     )
@@ -2759,7 +2742,7 @@ impl Driver {
                 let dst_slot = read_frame_word(frame, store_alloc_region) as usize;
                 let type_ref = read_frame_word(frame, store_alloc_region + 8);
                 let schema =
-                    schema_name_for(type_ref, schema_refs).unwrap_or_else(|err| panic!("{err}"));
+                    schema_name_for(type_ref, schema_tables).unwrap_or_else(|err| panic!("{err}"));
                 let variant_index = read_frame_word(frame, store_alloc_region + 16);
                 let field_count = read_frame_word(frame, store_alloc_region + 24) as usize;
                 let descriptor = descriptors
@@ -2837,7 +2820,7 @@ impl Driver {
                             &mut molten_cell.borrow_mut(),
                             descriptors,
                             schemas,
-                            schema_refs,
+                            schema_tables,
                             &schema,
                             handle,
                         )
@@ -2928,7 +2911,7 @@ impl Driver {
                             &mut molten_cell.borrow_mut(),
                             descriptors,
                             schemas,
-                            schema_refs,
+                            schema_tables,
                             &schema,
                             handle,
                         )
@@ -2982,7 +2965,7 @@ impl Driver {
                     let dst_slot = read_frame_word(frame, store_alloc_region) as usize;
                     let schema = schema_name_for(
                         read_frame_word(frame, store_alloc_region + 8),
-                        schema_refs,
+                        schema_tables,
                     )?;
                     let handle = molten_cell.borrow_mut().alloc(MoltenValue::Map {
                         schema: schema.clone(),
@@ -3002,11 +2985,11 @@ impl Driver {
                     let map_handle = read_frame_word(frame, store_alloc_region + 8);
                     let map_schema = schema_name_for(
                         read_frame_word(frame, store_alloc_region + 16),
-                        schema_refs,
+                        schema_tables,
                     )?;
                     let key_schema = schema_name_for(
                         read_frame_word(frame, store_alloc_region + 24),
-                        schema_refs,
+                        schema_tables,
                     )?;
                     let key_word = canonicalize_word_for_schema(
                         schemas,
@@ -3015,7 +2998,7 @@ impl Driver {
                     );
                     let value_schema = schema_name_for(
                         read_frame_word(frame, store_alloc_region + 40),
-                        schema_refs,
+                        schema_tables,
                     )?;
                     let value_realization =
                         Realization::from_word(read_frame_word(frame, store_alloc_region + 56))?;
@@ -3037,7 +3020,7 @@ impl Driver {
                         &mut molten_cell.borrow_mut(),
                         descriptors,
                         schemas,
-                        schema_refs,
+                        schema_tables,
                         &key_schema,
                         key_word,
                     )?
@@ -3047,7 +3030,7 @@ impl Driver {
                         &mut molten_cell.borrow_mut(),
                         descriptors,
                         schemas,
-                        schema_refs,
+                        schema_tables,
                         &stored_value_schema,
                         value_word,
                     )?
@@ -3075,7 +3058,7 @@ impl Driver {
                                     }
                                     MoltenValue::Interned(handle) => store_cell
                                         .borrow()
-                                        .map_pairs(*handle, schemas, schema_refs)?,
+                                        .map_pairs(*handle, schemas, schema_tables)?,
                                     _ => {
                                         return Err(format!(
                                             "molten handle {map_handle} is not a Map"
@@ -3085,13 +3068,13 @@ impl Driver {
                             } else {
                                 store_cell
                                     .borrow()
-                                    .map_pairs(map_handle, schemas, schema_refs)?
+                                    .map_pairs(map_handle, schemas, schema_tables)?
                             }
                         }
                         Handle::Store(store_ix) => store_cell.borrow().map_pairs(
                             store_ix.to_word(),
                             schemas,
-                            schema_refs,
+                            schema_tables,
                         )?,
                     };
                     if stored_schema != map_schema {
@@ -3139,11 +3122,11 @@ impl Driver {
                     let mut map_handle = read_frame_word(frame, store_alloc_region + 8);
                     let value_schema = schema_name_for(
                         read_frame_word(frame, store_alloc_region + 16),
-                        schema_refs,
+                        schema_tables,
                     )?;
                     let key_schema = schema_name_for(
                         read_frame_word(frame, store_alloc_region + 24),
-                        schema_refs,
+                        schema_tables,
                     )?;
                     let key_word = canonicalize_word_for_schema(
                         schemas,
@@ -3190,7 +3173,7 @@ impl Driver {
                                 &mut molten_cell.borrow_mut(),
                                 descriptors,
                                 schemas,
-                                schema_refs,
+                                schema_tables,
                                 &map_schema,
                                 map_handle,
                             )?;
@@ -3210,7 +3193,7 @@ impl Driver {
                         key_word,
                         &value_schema,
                         schemas,
-                        schema_refs,
+                        schema_tables,
                     )?;
                     let observed = store_cell
                         .borrow()
@@ -3262,7 +3245,7 @@ impl Driver {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let kind_ref = read_frame_word(frame, primitive_region + 8);
-                    let kind = schema_name_for(kind_ref, schema_refs)?;
+                    let kind = schema_name_for(kind_ref, schema_tables)?;
                     let mut target = read_frame_word(frame, primitive_region + 16);
                     match Handle::from_word(target) {
                         Handle::Molten(_) => {
@@ -3271,7 +3254,7 @@ impl Driver {
                                 &mut molten_cell.borrow_mut(),
                                 descriptors,
                                 schemas,
-                                schema_refs,
+                                schema_tables,
                                 "Target",
                                 target,
                             )?;
@@ -3330,8 +3313,10 @@ impl Driver {
             let mut array_alloc = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
-                    let elem_schema =
-                        schema_name_for(read_frame_word(frame, primitive_region + 8), schema_refs)?;
+                    let elem_schema = schema_name_for(
+                        read_frame_word(frame, primitive_region + 8),
+                        schema_tables,
+                    )?;
                     let count = usize::try_from(read_frame_word(frame, primitive_region + 16))
                         .map_err(|_| "negative array length".to_string())?;
                     let mut words = (0..count)
@@ -3343,7 +3328,7 @@ impl Driver {
                             &mut molten_cell.borrow_mut(),
                             descriptors,
                             schemas,
-                            schema_refs,
+                            schema_tables,
                             &elem_schema,
                             *word,
                         )?
@@ -3379,7 +3364,7 @@ impl Driver {
                     let words = match molten_cell.borrow().array_entry(
                         &store_cell.borrow(),
                         array_handle,
-                        schema_refs,
+                        schema_tables,
                     )? {
                         ArrayEntry::Words { words, .. } => words,
                         ArrayEntry::Pending(_) => {
@@ -3420,7 +3405,7 @@ impl Driver {
                                     &mut molten_cell.borrow_mut(),
                                     descriptors,
                                     schemas,
-                                    schema_refs,
+                                    schema_tables,
                                     schema,
                                     *arg,
                                 )?
@@ -3459,7 +3444,7 @@ impl Driver {
                     let array_entry = molten_cell.borrow().array_entry(
                         &store_cell.borrow(),
                         array_handle,
-                        schema_refs,
+                        schema_tables,
                     )?;
                     match Handle::from_word(array_handle) {
                         Handle::Molten(_) => {}
@@ -3491,7 +3476,7 @@ impl Driver {
                                         &store,
                                         descriptors,
                                         schemas,
-                                        schema_refs,
+                                        schema_tables,
                                         &elem_schema,
                                         *a,
                                         *b,
@@ -3506,7 +3491,7 @@ impl Driver {
                                     &elem_schema,
                                     words,
                                     schemas,
-                                    schema_refs,
+                                    schema_tables,
                                 )?
                             };
                             write_frame_word(frame, dst_slot, handle);
@@ -3632,7 +3617,7 @@ impl Driver {
                             store: store_cell,
                             descriptors,
                             schemas,
-                            schema_refs,
+                            schema_tables,
                             oci_file_memo: &oci_file_memo_cell,
                             store_events: &store_events,
                             clock_cell: &clock_cell,
@@ -3675,7 +3660,7 @@ impl Driver {
                     let name = read_frame_word(frame, primitive_region + 16);
                     let name = store_cell.borrow().string_value(name, "String")?;
                     let handle =
-                        doc_package(store_cell, descriptors, schemas, schema_refs, doc, &name)?;
+                        doc_package(store_cell, descriptors, schemas, schema_tables, doc, &name)?;
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -3690,7 +3675,7 @@ impl Driver {
                     let doc = read_frame_word(frame, primitive_region + 8);
                     let schema = schema_name_for(
                         read_frame_word(frame, primitive_region + 16),
-                        schema_refs,
+                        schema_tables,
                     )?;
                     record_whole_args_if_projectable_static(
                         &mut projection_reads.borrow_mut(),
@@ -3724,7 +3709,7 @@ impl Driver {
                         [input],
                     );
                     let handle =
-                        alloc_elf_doc(store_cell, descriptors, schemas, schema_refs, input)?;
+                        alloc_elf_doc(store_cell, descriptors, schemas, schema_tables, input)?;
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -3738,7 +3723,7 @@ impl Driver {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let input = read_frame_word(frame, primitive_region + 8);
                     let handle =
-                        alloc_ast_doc(store_cell, descriptors, schemas, schema_refs, input)?;
+                        alloc_ast_doc(store_cell, descriptors, schemas, schema_tables, input)?;
                     ast_roots_cell.borrow_mut().insert(handle, input);
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
@@ -3753,7 +3738,7 @@ impl Driver {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let input = read_frame_word(frame, primitive_region + 8);
                     let handle =
-                        alloc_oci_doc(store_cell, descriptors, schemas, schema_refs, input)?;
+                        alloc_oci_doc(store_cell, descriptors, schemas, schema_tables, input)?;
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -3819,17 +3804,17 @@ impl Driver {
                     let tag = read_frame_word(frame, primitive_region + 8);
                     let value_ref = read_frame_word(frame, primitive_region + 16);
                     let value_word = read_frame_word(frame, primitive_region + 24);
-                    let value_schema = schema_name_for(value_ref, schema_refs)?;
+                    let value_schema = schema_name_for(value_ref, schema_tables)?;
                     let (handle, _) = match tag {
                         0 => store_cell
                             .borrow_mut()
-                            .alloc_option_none(&value_schema, schema_refs)?,
+                            .alloc_option_none(&value_schema, schema_tables)?,
                         1 => store_cell.borrow_mut().alloc_option_some(
                             &value_schema,
                             value_word,
                             None,
                             schemas,
-                            schema_refs,
+                            schema_tables,
                         )?,
                         other => return Err(format!("unknown Option tag {other}")),
                     };
@@ -3851,7 +3836,7 @@ impl Driver {
                     let payload =
                         store_cell
                             .borrow()
-                            .option_payload(handle, schemas, schema_refs)?;
+                            .option_payload(handle, schemas, schema_tables)?;
                     let value = match (selector, payload) {
                         (0, OptionPayload::None) => 0,
                         (0, OptionPayload::Some { .. }) => 1,
@@ -3957,8 +3942,10 @@ impl Driver {
             let mut value_compare_host = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
-                    let schema =
-                        schema_name_for(read_frame_word(frame, primitive_region + 8), schema_refs)?;
+                    let schema = schema_name_for(
+                        read_frame_word(frame, primitive_region + 8),
+                        schema_tables,
+                    )?;
                     let op = read_frame_word(frame, primitive_region + 16);
                     let left = read_frame_word(frame, primitive_region + 24);
                     let right = read_frame_word(frame, primitive_region + 32);
@@ -3967,7 +3954,7 @@ impl Driver {
                         &store,
                         descriptors,
                         schemas,
-                        schema_refs,
+                        schema_tables,
                         &schema,
                         left,
                         right,
@@ -4135,7 +4122,7 @@ impl Driver {
                     let len = match molten_cell.borrow().array_entry(
                         &store_cell.borrow(),
                         array,
-                        schema_refs,
+                        schema_tables,
                     )? {
                         ArrayEntry::Words { words, .. } => words.len(),
                         ArrayEntry::Pending(pending) => pending.len(),
@@ -4193,7 +4180,7 @@ impl Driver {
                     let array_entry =
                         molten_cell
                             .borrow()
-                            .array_entry(&store, array, schema_refs)?;
+                            .array_entry(&store, array, schema_tables)?;
                     let joined = match array_entry {
                         ArrayEntry::Words { elem_schema, words } => {
                             if elem_schema != "String" && elem_schema != "Doc" {
@@ -4251,7 +4238,7 @@ impl Driver {
                     let (elem_schema, words) = match molten_cell.borrow().array_entry(
                         &store_cell.borrow(),
                         array_handle,
-                        schema_refs,
+                        schema_tables,
                     )? {
                         ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
                         ArrayEntry::Pending(_) => {
@@ -4283,7 +4270,7 @@ impl Driver {
                         &elem_schema,
                         kept,
                         schemas,
-                        schema_refs,
+                        schema_tables,
                     )?;
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
@@ -4337,7 +4324,7 @@ impl Driver {
                         "Path",
                         words,
                         schemas,
-                        schema_refs,
+                        schema_tables,
                     )?;
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
@@ -4377,8 +4364,10 @@ impl Driver {
             let mut pending_alloc = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
-                    let value_schema =
-                        schema_name_for(read_frame_word(frame, primitive_region + 8), schema_refs)?;
+                    let value_schema = schema_name_for(
+                        read_frame_word(frame, primitive_region + 8),
+                        schema_tables,
+                    )?;
                     let fn_ref = FnRef::new(
                         usize::try_from(read_frame_word(frame, primitive_region + 16))
                             .map_err(|_| "negative fn ref".to_string())?,
@@ -4397,7 +4386,7 @@ impl Driver {
                             &mut molten_cell.borrow_mut(),
                             descriptors,
                             schemas,
-                            schema_refs,
+                            schema_tables,
                             schema,
                             *arg,
                         )?
@@ -4468,7 +4457,7 @@ impl Driver {
                             &mut molten_cell.borrow_mut(),
                             descriptors,
                             schemas,
-                            schema_refs,
+                            schema_tables,
                             schema,
                             *arg,
                         )?
@@ -4684,7 +4673,7 @@ impl Driver {
                     let src = read_frame_word(frame, primitive_region + 8);
                     let schema = schema_name_for(
                         read_frame_word(frame, primitive_region + 16),
-                        schema_refs,
+                        schema_tables,
                     )?;
                     let was_molten = match Handle::from_word(src) {
                         Handle::Molten(_) => true,
@@ -4695,7 +4684,7 @@ impl Driver {
                         &mut molten_cell.borrow_mut(),
                         descriptors,
                         schemas,
-                        schema_refs,
+                        schema_tables,
                         &schema,
                         src,
                     )?;
@@ -4720,7 +4709,7 @@ impl Driver {
                     let mut value = read_frame_word(frame, primitive_region + 16);
                     let pushed_schema = schema_name_for(
                         read_frame_word(frame, primitive_region + 24),
-                        schema_refs,
+                        schema_tables,
                     )?;
                     if !force_molten_copy
                         && let Handle::Molten(array_handle) = Handle::from_word(array)
@@ -4748,7 +4737,7 @@ impl Driver {
                                 &mut molten_cell.borrow_mut(),
                                 descriptors,
                                 schemas,
-                                schema_refs,
+                                schema_tables,
                                 &elem_schema,
                                 value,
                             )?
@@ -4778,7 +4767,7 @@ impl Driver {
                     let (mut elem_schema, mut words) = match molten_cell.borrow().array_entry(
                         &store_cell.borrow(),
                         array,
-                        schema_refs,
+                        schema_tables,
                     )? {
                         ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
                         ArrayEntry::Pending(_) => return Err("push on pending array".into()),
@@ -4791,7 +4780,7 @@ impl Driver {
                         &mut molten_cell.borrow_mut(),
                         descriptors,
                         schemas,
-                        schema_refs,
+                        schema_tables,
                         &elem_schema,
                         value,
                     )?
@@ -4845,7 +4834,7 @@ impl Driver {
                     let (elem_schema, mut words) = match molten_cell.borrow().array_entry(
                         &store_cell.borrow(),
                         array,
-                        schema_refs,
+                        schema_tables,
                     )? {
                         ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
                         ArrayEntry::Pending(_) => return Err("pop on pending array".into()),
@@ -4894,7 +4883,7 @@ impl Driver {
                                 &mut molten_cell.borrow_mut(),
                                 descriptors,
                                 schemas,
-                                schema_refs,
+                                schema_tables,
                                 &elem_schema,
                                 value,
                             )?
@@ -4919,7 +4908,7 @@ impl Driver {
                     let (elem_schema, mut words) = match molten_cell.borrow().array_entry(
                         &store_cell.borrow(),
                         array,
-                        schema_refs,
+                        schema_tables,
                     )? {
                         ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
                         ArrayEntry::Pending(_) => return Err("set on pending array".into()),
@@ -4929,7 +4918,7 @@ impl Driver {
                         &mut molten_cell.borrow_mut(),
                         descriptors,
                         schemas,
-                        schema_refs,
+                        schema_tables,
                         &elem_schema,
                         value,
                     )?
@@ -4969,7 +4958,7 @@ impl Driver {
                     let base = read_frame_word(frame, store_alloc_region + 8);
                     let schema = schema_name_for(
                         read_frame_word(frame, store_alloc_region + 16),
-                        schema_refs,
+                        schema_tables,
                     )?;
                     let variant_index =
                         usize::try_from(read_frame_word(frame, store_alloc_region + 24))
@@ -5386,7 +5375,7 @@ impl Driver {
                 &mut store,
                 &self.descriptors,
                 &self.schemas,
-                &self.schema_refs,
+                &self.schemas,
                 arg,
                 &read.path,
             )?;
@@ -5754,7 +5743,7 @@ impl Driver {
         match self
             .store
             .borrow()
-            .option_payload(req.option, &self.schemas, &self.schema_refs)?
+            .option_payload(req.option, &self.schemas, &self.schemas)?
         {
             OptionPayload::None => Err("unwrap on None".into()),
             OptionPayload::Some { word, realization } => {
@@ -6061,7 +6050,7 @@ impl Driver {
             "Path" | "String" | "Flag" => Ok(vec![
                 String::from_utf8(entry.bytes).map_err(|err| err.to_string())?,
             ]),
-            "Array" => match { self.store.borrow().array_entry(word, &self.schema_refs)? } {
+            "Array" => match { self.store.borrow().array_entry(word, &self.schemas)? } {
                 ArrayEntry::Words { words, .. } => {
                     let mut args = Vec::new();
                     for word in words {
@@ -6147,7 +6136,7 @@ impl Driver {
             &self.store,
             &self.descriptors,
             &self.schemas,
-            &self.schema_refs,
+            &self.schemas,
             value,
         )?;
         Ok((req.input_slot, handle))
@@ -6282,7 +6271,7 @@ impl Driver {
             &self.store,
             &self.descriptors,
             &self.schemas,
-            &self.schema_refs,
+            &self.schemas,
             value,
         )?;
         self.elf_projection_memo
@@ -6396,14 +6385,14 @@ impl Driver {
                 &self.store,
                 &self.descriptors,
                 &self.schemas,
-                &self.schema_refs,
+                &self.schemas,
                 super::ast_probe::items(&file),
             )?,
             super::ast_probe::Projection::Fns => alloc_doc_from_value(
                 &self.store,
                 &self.descriptors,
                 &self.schemas,
-                &self.schema_refs,
+                &self.schemas,
                 super::ast_probe::fns(&file),
             )?,
             super::ast_probe::Projection::Fn => {
@@ -6412,7 +6401,7 @@ impl Driver {
                     &self.store,
                     &self.descriptors,
                     &self.schemas,
-                    &self.schema_refs,
+                    &self.schemas,
                     input,
                     input_hash,
                     item,
@@ -6424,7 +6413,7 @@ impl Driver {
                     &self.store,
                     &self.descriptors,
                     &self.schemas,
-                    &self.schema_refs,
+                    &self.schemas,
                     super::ast_probe::fn_body_children(item),
                 )?
             }
@@ -6481,7 +6470,7 @@ impl Driver {
                 &self.store,
                 &self.descriptors,
                 &self.schemas,
-                &self.schema_refs,
+                &self.schemas,
                 value,
             )?
         };
@@ -6596,7 +6585,7 @@ fn alloc_doc_from_value(
     store: &RefCell<ValueStore>,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     value: Value,
 ) -> Result<i64, String> {
     match value {
@@ -6622,11 +6611,13 @@ fn alloc_doc_from_value(
         Value::Array(values) => {
             let words = values
                 .into_iter()
-                .map(|value| alloc_doc_from_value(store, descriptors, schemas, schema_refs, value))
+                .map(|value| {
+                    alloc_doc_from_value(store, descriptors, schemas, schema_tables, value)
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             let handle = store
                 .borrow_mut()
-                .alloc_array_words("Doc", words, schemas, schema_refs)?
+                .alloc_array_words("Doc", words, schemas, schema_tables)?
                 .0;
             alloc_doc_variant(store, descriptors, schemas, 5, &[handle])
         }
@@ -6638,7 +6629,7 @@ fn alloc_doc_from_value(
                 };
                 let key_word = store.borrow_mut().alloc_raw("String", key.into_bytes()).0;
                 let value_word =
-                    alloc_doc_from_value(store, descriptors, schemas, schema_refs, value)?;
+                    alloc_doc_from_value(store, descriptors, schemas, schema_tables, value)?;
                 pairs.push(MapPair {
                     key_schema: "String".to_string(),
                     key_word,
@@ -6649,7 +6640,13 @@ fn alloc_doc_from_value(
             }
             let handle = store
                 .borrow_mut()
-                .alloc_map("Map<String,Doc>", pairs, schema_refs, descriptors, schemas)?
+                .alloc_map(
+                    "Map<String,Doc>",
+                    pairs,
+                    schema_tables,
+                    descriptors,
+                    schemas,
+                )?
                 .0;
             alloc_doc_variant(store, descriptors, schemas, 6, &[handle])
         }
@@ -6743,7 +6740,7 @@ fn doc_get(
     store: &RefCell<ValueStore>,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     doc: i64,
     key: &str,
 ) -> Result<(i64, bool), String> {
@@ -6761,7 +6758,7 @@ fn doc_get(
         key_word,
         "Realized<Doc>",
         schemas,
-        schema_refs,
+        schema_tables,
     )
 }
 
@@ -6769,7 +6766,7 @@ struct VirtualDocGetCtx<'a> {
     store: &'a RefCell<ValueStore>,
     descriptors: &'a DescriptorMap,
     schemas: &'a SchemaTables,
-    schema_refs: &'a [String],
+    schema_tables: &'a SchemaTables,
     oci_file_memo: &'a RefCell<&'a mut HashMap<(ContentHash, String), Option<i64>>>,
     store_events: &'a RefCell<Vec<DriveEvent>>,
     clock_cell: &'a RefCell<&'a mut u64>,
@@ -6791,7 +6788,7 @@ fn doc_get_with_virtual(
         ctx.store,
         ctx.descriptors,
         ctx.schemas,
-        ctx.schema_refs,
+        ctx.schema_tables,
         doc,
         key,
     )
@@ -6801,7 +6798,7 @@ fn doc_package(
     store: &RefCell<ValueStore>,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     lock_doc: i64,
     wanted_name: &str,
 ) -> Result<i64, String> {
@@ -6809,13 +6806,13 @@ fn doc_package(
         store,
         descriptors,
         schemas,
-        schema_refs,
+        schema_tables,
         lock_doc,
         "package",
     )?;
     let packages = match store
         .borrow()
-        .option_payload(package_option, schemas, schema_refs)?
+        .option_payload(package_option, schemas, schema_tables)?
     {
         OptionPayload::Some { word, .. } => {
             match doc_payload(&store.borrow(), descriptors, word)? {
@@ -6830,11 +6827,11 @@ fn doc_package(
         OptionPayload::None => {
             return Ok(store
                 .borrow_mut()
-                .alloc_option_none("Realized<Doc>", schema_refs)?
+                .alloc_option_none("Realized<Doc>", schema_tables)?
                 .0);
         }
     };
-    let package_words = match store.borrow().array_entry(packages, schema_refs)? {
+    let package_words = match store.borrow().array_entry(packages, schema_tables)? {
         ArrayEntry::Words { elem_schema, words }
             if schemas.is_named_schema(&elem_schema, "Doc") =>
         {
@@ -6846,10 +6843,11 @@ fn doc_package(
         ArrayEntry::Pending(_) => return Err("Cargo.lock `package` array is pending".into()),
     };
     for package in package_words {
-        let (name_option, _) = doc_get(store, descriptors, schemas, schema_refs, package, "name")?;
+        let (name_option, _) =
+            doc_get(store, descriptors, schemas, schema_tables, package, "name")?;
         let name = match store
             .borrow()
-            .option_payload(name_option, schemas, schema_refs)?
+            .option_payload(name_option, schemas, schema_tables)?
         {
             OptionPayload::Some { word, .. } => {
                 match doc_payload(&store.borrow(), descriptors, word)? {
@@ -6871,14 +6869,14 @@ fn doc_package(
                     package,
                     Some(Realization::Ready),
                     schemas,
-                    schema_refs,
+                    schema_tables,
                 )?
                 .0);
         }
     }
     Ok(store
         .borrow_mut()
-        .alloc_option_none("Realized<Doc>", schema_refs)?
+        .alloc_option_none("Realized<Doc>", schema_tables)?
         .0)
 }
 
@@ -6908,12 +6906,12 @@ fn oci_virtual_file_get(
                 handle,
                 Some(Realization::Ready),
                 ctx.schemas,
-                ctx.schema_refs,
+                ctx.schema_tables,
             ),
             None => ctx
                 .store
                 .borrow_mut()
-                .alloc_option_none("Realized<Doc>", ctx.schema_refs),
+                .alloc_option_none("Realized<Doc>", ctx.schema_tables),
         };
     }
     let layout = super::oci::parse_layout(tree)?;
@@ -6924,7 +6922,7 @@ fn oci_virtual_file_get(
                 ctx.store,
                 ctx.descriptors,
                 ctx.schemas,
-                ctx.schema_refs,
+                ctx.schema_tables,
                 Value::Map(BTreeMap::from([
                     (Value::Str("path".to_string()), Value::Str(path.to_string())),
                     (
@@ -6958,12 +6956,12 @@ fn oci_virtual_file_get(
             handle,
             Some(Realization::Ready),
             ctx.schemas,
-            ctx.schema_refs,
+            ctx.schema_tables,
         ),
         None => ctx
             .store
             .borrow_mut()
-            .alloc_option_none("Realized<Doc>", ctx.schema_refs),
+            .alloc_option_none("Realized<Doc>", ctx.schema_tables),
     }
 }
 
@@ -7027,7 +7025,7 @@ fn alloc_elf_doc(
     store: &RefCell<ValueStore>,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     input: i64,
 ) -> Result<i64, String> {
     let input_hash = {
@@ -7069,7 +7067,13 @@ fn alloc_elf_doc(
     }
     let map = store
         .borrow_mut()
-        .alloc_map("Map<String,Doc>", pairs, schema_refs, descriptors, schemas)?
+        .alloc_map(
+            "Map<String,Doc>",
+            pairs,
+            schema_tables,
+            descriptors,
+            schemas,
+        )?
         .0;
     alloc_doc_variant(store, descriptors, schemas, 6, &[map])
 }
@@ -7078,7 +7082,7 @@ fn alloc_oci_doc(
     store: &RefCell<ValueStore>,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     input: i64,
 ) -> Result<i64, String> {
     let input_hash = {
@@ -7104,7 +7108,13 @@ fn alloc_oci_doc(
     }
     let map = store
         .borrow_mut()
-        .alloc_map("Map<String,Doc>", pairs, schema_refs, descriptors, schemas)?
+        .alloc_map(
+            "Map<String,Doc>",
+            pairs,
+            schema_tables,
+            descriptors,
+            schemas,
+        )?
         .0;
     alloc_doc_variant(store, descriptors, schemas, 6, &[map])
 }
@@ -7149,7 +7159,7 @@ fn alloc_ast_doc(
     store: &RefCell<ValueStore>,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     input: i64,
 ) -> Result<i64, String> {
     let input_hash = {
@@ -7188,14 +7198,14 @@ fn alloc_ast_doc(
         (key.to_string(), pending_schema("Doc"), pending)
     })
     .collect::<Vec<_>>();
-    alloc_doc_object(store, descriptors, schemas, schema_refs, rows)
+    alloc_doc_object(store, descriptors, schemas, schema_tables, rows)
 }
 
 fn alloc_ast_fn_doc(
     store: &RefCell<ValueStore>,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     input: i64,
     input_hash: ContentHash,
     item: &ast::FnItem,
@@ -7215,7 +7225,7 @@ fn alloc_ast_fn_doc(
         store,
         descriptors,
         schemas,
-        schema_refs,
+        schema_tables,
         vec![
             (
                 "span".to_string(),
@@ -7224,7 +7234,7 @@ fn alloc_ast_fn_doc(
                     store,
                     descriptors,
                     schemas,
-                    schema_refs,
+                    schema_tables,
                     super::ast_probe::span_value(item.body.span),
                 )?,
             ),
@@ -7237,12 +7247,12 @@ fn alloc_ast_fn_doc(
             let Value::Str(key) = key else {
                 return Err(format!("ast fn key must be string, got {key:?}"));
             };
-            let handle = alloc_doc_from_value(store, descriptors, schemas, schema_refs, value)?;
+            let handle = alloc_doc_from_value(store, descriptors, schemas, schema_tables, value)?;
             Ok((key, "Doc".to_string(), handle))
         })
         .collect::<Result<Vec<_>, String>>()?;
     rows.push(("body".to_string(), "Doc".to_string(), body));
-    alloc_doc_object(store, descriptors, schemas, schema_refs, rows)
+    alloc_doc_object(store, descriptors, schemas, schema_tables, rows)
 }
 
 fn ast_projection_pending(
@@ -7276,7 +7286,7 @@ fn alloc_doc_object(
     store: &RefCell<ValueStore>,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     rows: Vec<(String, String, i64)>,
 ) -> Result<i64, String> {
     let mut pairs = Vec::with_capacity(rows.len());
@@ -7292,7 +7302,13 @@ fn alloc_doc_object(
     }
     let map = store
         .borrow_mut()
-        .alloc_map("Map<String,Doc>", pairs, schema_refs, descriptors, schemas)?
+        .alloc_map(
+            "Map<String,Doc>",
+            pairs,
+            schema_tables,
+            descriptors,
+            schemas,
+        )?
         .0;
     alloc_doc_variant(store, descriptors, schemas, 6, &[map])
 }
@@ -7377,7 +7393,7 @@ fn compare_words(
     store: &ValueStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     schema: &str,
     a: i64,
     b: i64,
@@ -7434,17 +7450,17 @@ fn compare_words(
         }
         Ok(a.bytes.cmp(&b.bytes))
     } else if schemas.is_list(schema) {
-        compare_arrays(store, descriptors, schemas, schema_refs, a, b)
+        compare_arrays(store, descriptors, schemas, schema_tables, a, b)
     } else if schemas.is_map(schema) {
-        compare_maps(store, descriptors, schemas, schema_refs, a, b)
+        compare_maps(store, descriptors, schemas, schema_tables, a, b)
     } else if schemas.is_named_schema(schema, "Doc") {
-        compare_docs(store, descriptors, schemas, schema_refs, a, b)
+        compare_docs(store, descriptors, schemas, schema_tables, a, b)
     } else if schemas.is_external(schema, "Tree") {
         Ok(canonical_word_hash_in_store(store, schemas, schema, a)
             .as_ref()
             .cmp(canonical_word_hash_in_store(store, schemas, schema, b).as_ref()))
     } else {
-        compare_declared_value(store, descriptors, schemas, schema_refs, schema, a, b)
+        compare_declared_value(store, descriptors, schemas, schema_tables, schema, a, b)
     }
 }
 
@@ -7452,7 +7468,7 @@ fn compare_expression_words(
     store: &ValueStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     schema: &str,
     a: i64,
     b: i64,
@@ -7469,22 +7485,22 @@ fn compare_expression_words(
         }
         return super::version::cmp_precedence(&a.bytes, &b.bytes);
     }
-    compare_words(store, descriptors, schemas, schema_refs, schema, a, b)
+    compare_words(store, descriptors, schemas, schema_tables, schema, a, b)
 }
 
 fn compare_arrays(
     store: &ValueStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     a: i64,
     b: i64,
 ) -> Result<Ordering, String> {
-    let (a_schema, a_words) = match store.array_entry(a, schema_refs)? {
+    let (a_schema, a_words) = match store.array_entry(a, schema_tables)? {
         ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
         ArrayEntry::Pending(_) => return Ok(a.cmp(&b)),
     };
-    let (b_schema, b_words) = match store.array_entry(b, schema_refs)? {
+    let (b_schema, b_words) = match store.array_entry(b, schema_tables)? {
         ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
         ArrayEntry::Pending(_) => return Ok(a.cmp(&b)),
     };
@@ -7496,7 +7512,7 @@ fn compare_arrays(
         store,
         descriptors,
         schemas,
-        schema_refs,
+        schema_tables,
         &a_schema,
         &a_words,
         &b_words,
@@ -7507,12 +7523,12 @@ fn compare_maps(
     store: &ValueStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     a: i64,
     b: i64,
 ) -> Result<Ordering, String> {
-    let (a_schema, a_pairs) = store.map_pairs(a, schemas, schema_refs)?;
-    let (b_schema, b_pairs) = store.map_pairs(b, schemas, schema_refs)?;
+    let (a_schema, a_pairs) = store.map_pairs(a, schemas, schema_tables)?;
+    let (b_schema, b_pairs) = store.map_pairs(b, schemas, schema_tables)?;
     let schema_order = a_schema.cmp(&b_schema);
     if schema_order != Ordering::Equal {
         return Ok(schema_order);
@@ -7526,7 +7542,7 @@ fn compare_maps(
             store,
             descriptors,
             schemas,
-            schema_refs,
+            schema_tables,
             &a_pair.key_schema,
             a_pair.key_word,
             b_pair.key_word,
@@ -7542,7 +7558,7 @@ fn compare_maps(
             store,
             descriptors,
             schemas,
-            schema_refs,
+            schema_tables,
             &a_pair.value_schema,
             a_pair.value_word,
             b_pair.value_word,
@@ -7558,7 +7574,7 @@ fn compare_docs(
     store: &ValueStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     a: i64,
     b: i64,
 ) -> Result<Ordering, String> {
@@ -7584,28 +7600,28 @@ fn compare_docs(
         (DocPayload::Bool(a), DocPayload::Bool(b)) => Ok(a.cmp(&b)),
         (DocPayload::Int(a), DocPayload::Int(b)) => Ok(a.cmp(&b)),
         (DocPayload::Float(a), DocPayload::Float(b)) => {
-            compare_words(store, descriptors, schemas, schema_refs, "Float", a, b)
+            compare_words(store, descriptors, schemas, schema_tables, "Float", a, b)
         }
         (DocPayload::String(a), DocPayload::String(b)) => {
-            compare_words(store, descriptors, schemas, schema_refs, "String", a, b)
+            compare_words(store, descriptors, schemas, schema_tables, "String", a, b)
         }
         (DocPayload::Blob(a), DocPayload::Blob(b)) => {
-            compare_words(store, descriptors, schemas, schema_refs, "Blob", a, b)
+            compare_words(store, descriptors, schemas, schema_tables, "Blob", a, b)
         }
         (DocPayload::Array(a), DocPayload::Array(b)) => {
-            compare_words(store, descriptors, schemas, schema_refs, "Array", a, b)
+            compare_words(store, descriptors, schemas, schema_tables, "Array", a, b)
         }
         (DocPayload::Map(a), DocPayload::Map(b)) => compare_words(
             store,
             descriptors,
             schemas,
-            schema_refs,
+            schema_tables,
             "Map<String,Doc>",
             a,
             b,
         ),
         (DocPayload::Virtual(a), DocPayload::Virtual(b)) => {
-            compare_words(store, descriptors, schemas, schema_refs, "String", a, b)
+            compare_words(store, descriptors, schemas, schema_tables, "String", a, b)
         }
         _ => Ok(Ordering::Equal),
     }
@@ -7615,7 +7631,7 @@ fn compare_declared_value(
     store: &ValueStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     schema: &str,
     a: i64,
     b: i64,
@@ -7635,7 +7651,7 @@ fn compare_declared_value(
         store,
         descriptors,
         schemas,
-        schema_refs,
+        schema_tables,
         descriptor,
         &a_entry.bytes,
         &b_entry.bytes,
@@ -7646,7 +7662,7 @@ fn compare_descriptor_bytes(
     store: &ValueStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     descriptor: &VixDescriptor,
     a: &[u8],
     b: &[u8],
@@ -7663,7 +7679,7 @@ fn compare_descriptor_bytes(
                 store,
                 descriptors,
                 schemas,
-                schema_refs,
+                schema_tables,
                 &schema,
                 read_frame_word(a, 0),
                 read_frame_word(b, 0),
@@ -7674,7 +7690,7 @@ fn compare_descriptor_bytes(
             store,
             descriptors,
             schemas,
-            schema_refs,
+            schema_tables,
             &schemas.display_ref(target),
             read_frame_word(a, 0),
             read_frame_word(b, 0),
@@ -7687,7 +7703,7 @@ fn compare_descriptor_bytes(
                     store,
                     descriptors,
                     schemas,
-                    schema_refs,
+                    schema_tables,
                     &field.descriptor,
                     &a[start..end],
                     &b[start..end],
@@ -7717,7 +7733,7 @@ fn compare_descriptor_bytes(
                     store,
                     descriptors,
                     schemas,
-                    schema_refs,
+                    schema_tables,
                     &field.descriptor,
                     &a[start..end],
                     &b[start..end],
@@ -7740,7 +7756,7 @@ fn compare_descriptor_bytes(
                     store,
                     descriptors,
                     schemas,
-                    schema_refs,
+                    schema_tables,
                     element,
                     &a[start..end],
                     &b[start..end],
@@ -7759,13 +7775,13 @@ fn compare_word_slices(
     store: &ValueStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     schema: &str,
     a: &[i64],
     b: &[i64],
 ) -> Result<Ordering, String> {
     for (a, b) in a.iter().zip(b) {
-        let order = compare_words(store, descriptors, schemas, schema_refs, schema, *a, *b)?;
+        let order = compare_words(store, descriptors, schemas, schema_tables, schema, *a, *b)?;
         if order != Ordering::Equal {
             return Ok(order);
         }
@@ -7777,7 +7793,7 @@ fn render_word(
     store: &ValueStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     names: &RenderNames,
     schema: &str,
     word: i64,
@@ -7788,7 +7804,7 @@ fn render_word(
         });
     }
     if schemas.is_option(schema) {
-        return render_option(store, descriptors, schemas, schema_refs, names, word);
+        return render_option(store, descriptors, schemas, schema_tables, names, word);
     }
     if !schemas.is_external(schema, "Sealed")
         && let Some(entry) = store.entry(word)
@@ -7853,15 +7869,15 @@ fn render_word(
     } else if schemas.is_external(schema, "Sealed") {
         render_sealed(store, word)
     } else if schemas.is_list(schema) {
-        render_array(store, descriptors, schemas, schema_refs, names, word)
+        render_array(store, descriptors, schemas, schema_tables, names, word)
     } else if schemas.is_named_schema(schema, "Doc") {
-        render_doc(store, descriptors, schemas, schema_refs, names, word)
+        render_doc(store, descriptors, schemas, schema_tables, names, word)
     } else if schemas.is_map(schema) {
         render_map(
             store,
             descriptors,
             schemas,
-            schema_refs,
+            schema_tables,
             names,
             schema,
             word,
@@ -7887,7 +7903,7 @@ fn render_word(
             store,
             descriptors,
             schemas,
-            schema_refs,
+            schema_tables,
             names,
             schema,
             word,
@@ -7899,7 +7915,7 @@ fn render_option(
     store: &ValueStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     names: &RenderNames,
     handle: i64,
 ) -> Result<RenderedValue, String> {
@@ -7909,7 +7925,7 @@ fn render_option(
     let value_schema = schemas
         .option_value_schema_name(&entry.schema)
         .ok_or_else(|| format!("handle {handle} is `{}`, not an Option", entry.schema))?;
-    match store.option_payload(handle, schemas, schema_refs)? {
+    match store.option_payload(handle, schemas, schema_tables)? {
         OptionPayload::None => Ok(RenderedValue::Enum {
             schema: entry.schema.clone(),
             variant_index: 0,
@@ -7937,7 +7953,7 @@ fn render_option(
                         store,
                         descriptors,
                         schemas,
-                        schema_refs,
+                        schema_tables,
                         names,
                         &render_schema,
                         word,
@@ -8005,11 +8021,11 @@ fn render_array(
     store: &ValueStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     names: &RenderNames,
     handle: i64,
 ) -> Result<RenderedValue, String> {
-    match store.array_entry(handle, schema_refs)? {
+    match store.array_entry(handle, schema_tables)? {
         ArrayEntry::Words { elem_schema, words } => Ok(RenderedValue::Array {
             element_schema: elem_schema.clone(),
             items: words
@@ -8019,7 +8035,7 @@ fn render_array(
                         store,
                         descriptors,
                         schemas,
-                        schema_refs,
+                        schema_tables,
                         names,
                         &elem_schema,
                         word,
@@ -8036,7 +8052,7 @@ fn render_array(
                         store,
                         descriptors,
                         schemas,
-                        schema_refs,
+                        schema_tables,
                         names,
                         "Pending<Tree>",
                         handle,
@@ -8051,12 +8067,12 @@ fn render_map(
     store: &ValueStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     names: &RenderNames,
     schema: &str,
     handle: i64,
 ) -> Result<RenderedValue, String> {
-    let (_, pairs) = store.map_pairs(handle, schemas, schema_refs)?;
+    let (_, pairs) = store.map_pairs(handle, schemas, schema_tables)?;
     Ok(RenderedValue::Map {
         schema: schema.to_string(),
         entries: pairs
@@ -8068,7 +8084,7 @@ fn render_map(
                         store,
                         descriptors,
                         schemas,
-                        schema_refs,
+                        schema_tables,
                         names,
                         &pair.key_schema,
                         pair.key_word,
@@ -8082,7 +8098,7 @@ fn render_map(
                         store,
                         descriptors,
                         schemas,
-                        schema_refs,
+                        schema_tables,
                         names,
                         &pair.value_schema,
                         pair.value_word,
@@ -8097,7 +8113,7 @@ fn render_doc(
     store: &ValueStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     names: &RenderNames,
     handle: i64,
 ) -> Result<RenderedValue, String> {
@@ -8109,7 +8125,7 @@ fn render_doc(
                 store,
                 descriptors,
                 schemas,
-                schema_refs,
+                schema_tables,
                 names,
                 "Bool",
                 word,
@@ -8121,7 +8137,7 @@ fn render_doc(
                 store,
                 descriptors,
                 schemas,
-                schema_refs,
+                schema_tables,
                 names,
                 "Int",
                 word,
@@ -8133,7 +8149,7 @@ fn render_doc(
                 store,
                 descriptors,
                 schemas,
-                schema_refs,
+                schema_tables,
                 names,
                 "Float",
                 word,
@@ -8145,7 +8161,7 @@ fn render_doc(
                 store,
                 descriptors,
                 schemas,
-                schema_refs,
+                schema_tables,
                 names,
                 "String",
                 word,
@@ -8166,7 +8182,7 @@ fn render_doc(
                 store,
                 descriptors,
                 schemas,
-                schema_refs,
+                schema_tables,
                 names,
                 "Array",
                 word,
@@ -8178,7 +8194,7 @@ fn render_doc(
                 store,
                 descriptors,
                 schemas,
-                schema_refs,
+                schema_tables,
                 names,
                 "Map<String,Doc>",
                 word,
@@ -8190,7 +8206,7 @@ fn render_doc(
                 store,
                 descriptors,
                 schemas,
-                schema_refs,
+                schema_tables,
                 names,
                 "String",
                 word,
@@ -8204,7 +8220,7 @@ fn render_declared(
     store: &ValueStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     names: &RenderNames,
     schema: &str,
     handle: i64,
@@ -8247,7 +8263,7 @@ fn render_declared(
                             store,
                             descriptors,
                             schemas,
-                            schema_refs,
+                            schema_tables,
                             names,
                             &field_schema,
                             word,
@@ -8296,7 +8312,7 @@ fn render_declared(
                             store,
                             descriptors,
                             schemas,
-                            schema_refs,
+                            schema_tables,
                             names,
                             &field_schema,
                             word,
@@ -8827,7 +8843,7 @@ fn projection_observation_hash(
     store: &mut ValueStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     handle: i64,
     path: &ProjectionPath,
 ) -> Result<ContentHash, String> {
@@ -8896,7 +8912,7 @@ fn projection_observation_hash(
                     entry.schema
                 ));
             }
-            let (_, pairs) = store.map_pairs(handle, schemas, schema_refs)?;
+            let (_, pairs) = store.map_pairs(handle, schemas, schema_tables)?;
             for pair in pairs {
                 if pair.key_schema == key_schema.as_str()
                     && canonical_word_hash_in_store(store, schemas, &pair.key_schema, pair.key_word)
@@ -8908,7 +8924,7 @@ fn projection_observation_hash(
                             pair.value_word,
                             pair.value_realization,
                             schemas,
-                            schema_refs,
+                            schema_tables,
                         )?
                     } else if let Some(inner) = realized_value_schema(value_schema) {
                         if let Some(realization) = pair.value_realization {
@@ -8919,7 +8935,7 @@ fn projection_observation_hash(
                                         pair.value_word,
                                         Some(Realization::Ready),
                                         schemas,
-                                        schema_refs,
+                                        schema_tables,
                                     )?,
                                 Realization::Pending
                                     if pair.value_schema == pending_schema(inner) =>
@@ -8929,10 +8945,10 @@ fn projection_observation_hash(
                                         pair.value_word,
                                         Some(Realization::Pending),
                                         schemas,
-                                        schema_refs,
+                                        schema_tables,
                                     )?
                                 }
-                                _ => store.alloc_option_none(value_schema, schema_refs)?,
+                                _ => store.alloc_option_none(value_schema, schema_tables)?,
                             }
                         } else if pair.value_schema == inner {
                             store.alloc_option_some(
@@ -8940,7 +8956,7 @@ fn projection_observation_hash(
                                 pair.value_word,
                                 Some(Realization::Ready),
                                 schemas,
-                                schema_refs,
+                                schema_tables,
                             )?
                         } else if pair.value_schema == pending_schema(inner) {
                             store.alloc_option_some(
@@ -8948,10 +8964,10 @@ fn projection_observation_hash(
                                 pair.value_word,
                                 Some(Realization::Pending),
                                 schemas,
-                                schema_refs,
+                                schema_tables,
                             )?
                         } else {
-                            store.alloc_option_none(value_schema, schema_refs)?
+                            store.alloc_option_none(value_schema, schema_tables)?
                         }
                     } else if pair.value_schema == pending_schema(value_schema) {
                         store.alloc_option_some(
@@ -8959,15 +8975,15 @@ fn projection_observation_hash(
                             pair.value_word,
                             pair.value_realization,
                             schemas,
-                            schema_refs,
+                            schema_tables,
                         )?
                     } else {
-                        store.alloc_option_none(value_schema, schema_refs)?
+                        store.alloc_option_none(value_schema, schema_tables)?
                     };
                     return Ok(store.entry(option).expect("option handle").content_hash);
                 }
             }
-            let (option, _) = store.alloc_option_none(value_schema, schema_refs)?;
+            let (option, _) = store.alloc_option_none(value_schema, schema_tables)?;
             Ok(store.entry(option).expect("option handle").content_hash)
         }
         ProjectionPath::TreePath { path } => {
@@ -8980,7 +8996,7 @@ fn projection_observation_hash(
             }
         }
         ProjectionPath::DocGet { key } => {
-            doc_get_observation_hash(store, descriptors, schemas, schema_refs, handle, key)
+            doc_get_observation_hash(store, descriptors, schemas, schema_tables, handle, key)
         }
         ProjectionPath::Elf { projection } => {
             let projection = super::elf::Projection::ALL
@@ -9026,7 +9042,8 @@ fn projection_observation_hash(
             };
             let value = super::elf::project(&bytes, projection)?;
             let scratch = RefCell::new(store.clone());
-            let handle = alloc_doc_from_value(&scratch, descriptors, schemas, schema_refs, value)?;
+            let handle =
+                alloc_doc_from_value(&scratch, descriptors, schemas, schema_tables, value)?;
             Ok(scratch
                 .borrow()
                 .entry(handle)
@@ -9037,7 +9054,7 @@ fn projection_observation_hash(
             store,
             descriptors,
             schemas,
-            schema_refs,
+            schema_tables,
             handle,
             projection,
             name.as_deref(),
@@ -9066,7 +9083,7 @@ fn projection_observation_hash(
             } else {
                 let layout = super::oci::parse_layout(tree)?;
                 let value = super::oci::project(&layout, projection)?;
-                alloc_doc_from_value(&scratch, descriptors, schemas, schema_refs, value)?
+                alloc_doc_from_value(&scratch, descriptors, schemas, schema_tables, value)?
             };
             Ok(scratch
                 .borrow()
@@ -9081,7 +9098,7 @@ fn doc_get_observation_hash(
     store: &mut ValueStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     handle: i64,
     key: &str,
 ) -> Result<ContentHash, String> {
@@ -9095,7 +9112,7 @@ fn doc_get_observation_hash(
                 &scratch,
                 descriptors,
                 schemas,
-                schema_refs,
+                schema_tables,
                 Value::Map(BTreeMap::from([
                     (Value::Str("path".to_string()), Value::Str(key.to_string())),
                     (
@@ -9117,12 +9134,12 @@ fn doc_get_observation_hash(
                 doc,
                 Some(Realization::Ready),
                 schemas,
-                schema_refs,
+                schema_tables,
             )?
         } else {
             scratch
                 .borrow_mut()
-                .alloc_option_none("Realized<Doc>", schema_refs)?
+                .alloc_option_none("Realized<Doc>", schema_tables)?
         };
         return Ok(scratch
             .borrow()
@@ -9132,7 +9149,7 @@ fn doc_get_observation_hash(
     }
 
     let scratch = RefCell::new(store.clone());
-    let (option, _) = doc_get(&scratch, descriptors, schemas, schema_refs, handle, key)?;
+    let (option, _) = doc_get(&scratch, descriptors, schemas, schema_tables, handle, key)?;
     Ok(scratch
         .borrow()
         .entry(option)
@@ -9144,7 +9161,7 @@ fn ast_projection_observation_hash(
     store: &mut ValueStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
     handle: i64,
     projection: &str,
     name: Option<&str>,
@@ -9160,14 +9177,14 @@ fn ast_projection_observation_hash(
             &scratch,
             descriptors,
             schemas,
-            schema_refs,
+            schema_tables,
             super::ast_probe::items(&file),
         )?,
         super::ast_probe::Projection::Fns => alloc_doc_from_value(
             &scratch,
             descriptors,
             schemas,
-            schema_refs,
+            schema_tables,
             super::ast_probe::fns(&file),
         )?,
         super::ast_probe::Projection::Fn => {
@@ -9177,7 +9194,7 @@ fn ast_projection_observation_hash(
                 &scratch,
                 descriptors,
                 schemas,
-                schema_refs,
+                schema_tables,
                 handle,
                 input_hash,
                 item,
@@ -9192,7 +9209,7 @@ fn ast_projection_observation_hash(
                 &scratch,
                 descriptors,
                 schemas,
-                schema_refs,
+                schema_tables,
                 super::ast_probe::fn_body_children(item),
             )?
         }
@@ -9252,7 +9269,7 @@ fn canonical_map_pairs(
     pairs: Vec<MapPair>,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
-    schema_refs: &[String],
+    schema_tables: &SchemaTables,
 ) -> Result<Vec<OrderedMapPair>, String> {
     let mut pairs: Vec<OrderedMapPair> = pairs
         .into_iter()
@@ -9284,7 +9301,7 @@ fn canonical_map_pairs(
             store,
             descriptors,
             schemas,
-            schema_refs,
+            schema_tables,
             &a.pair.key_schema,
             a.pair.key_word,
             b.pair.key_word,
@@ -9349,7 +9366,10 @@ fn promote_map_pairs_to_realized(
         .collect()
 }
 
-fn encode_map_pairs(pairs: &[OrderedMapPair], schema_refs: &[String]) -> Result<Vec<u8>, String> {
+fn encode_map_pairs(
+    pairs: &[OrderedMapPair],
+    schema_tables: &SchemaTables,
+) -> Result<Vec<u8>, String> {
     let bitset_words = if pairs
         .iter()
         .any(|pair| pair.pair.value_realization.is_some())
@@ -9365,10 +9385,12 @@ fn encode_map_pairs(pairs: &[OrderedMapPair], schema_refs: &[String]) -> Result<
             .to_le_bytes(),
     );
     for pair in pairs {
-        bytes.extend_from_slice(&schema_ref_for(&pair.pair.key_schema, schema_refs)?.to_le_bytes());
+        bytes.extend_from_slice(
+            &schema_ref_for(&pair.pair.key_schema, schema_tables)?.to_le_bytes(),
+        );
         bytes.extend_from_slice(&pair.pair.key_word.to_le_bytes());
         bytes.extend_from_slice(
-            &schema_ref_for(&pair.pair.value_schema, schema_refs)?.to_le_bytes(),
+            &schema_ref_for(&pair.pair.value_schema, schema_tables)?.to_le_bytes(),
         );
         bytes.extend_from_slice(&pair.pair.value_word.to_le_bytes());
     }
@@ -9389,7 +9411,7 @@ fn encode_map_pairs(pairs: &[OrderedMapPair], schema_refs: &[String]) -> Result<
     Ok(bytes)
 }
 
-fn decode_map_pairs(bytes: &[u8], schema_refs: &[String]) -> Result<Vec<MapPair>, String> {
+fn decode_map_pairs(bytes: &[u8], schema_tables: &SchemaTables) -> Result<Vec<MapPair>, String> {
     if bytes.len() < 8 {
         return Err("Map entry is shorter than its count word".into());
     }
@@ -9408,9 +9430,9 @@ fn decode_map_pairs(bytes: &[u8], schema_refs: &[String]) -> Result<Vec<MapPair>
     let mut pairs = Vec::with_capacity(count);
     for i in 0..count {
         let at = 8 + i * 32;
-        let key_schema = schema_name_for(read_frame_word(bytes, at), schema_refs)?;
+        let key_schema = schema_name_for(read_frame_word(bytes, at), schema_tables)?;
         let key_word = read_frame_word(bytes, at + 8);
-        let value_schema = schema_name_for(read_frame_word(bytes, at + 16), schema_refs)?;
+        let value_schema = schema_name_for(read_frame_word(bytes, at + 16), schema_tables)?;
         let value_word = read_frame_word(bytes, at + 24);
         let value_realization = if has_realization_bitset {
             let bitset_word = read_frame_word(bytes, rows_end + (i / 64) * 8) as u64;
@@ -9458,19 +9480,14 @@ fn map_realization_bitset_words(count: usize) -> usize {
     count.div_ceil(64)
 }
 
-fn schema_ref_for(schema: &str, schema_refs: &[String]) -> Result<i64, String> {
-    schema_refs
-        .iter()
-        .position(|candidate| candidate == schema)
-        .map(|index| i64::try_from(index).expect("schema ref fits i64"))
-        .ok_or_else(|| format!("schema `{schema}` has no schema ref"))
+fn schema_ref_for(schema: &str, schema_tables: &SchemaTables) -> Result<i64, String> {
+    Ok(schema_tables.frame_word_for_name(schema))
 }
 
-fn schema_name_for(schema_ref: i64, schema_refs: &[String]) -> Result<String, String> {
-    let index = usize::try_from(schema_ref).map_err(|_| format!("schema ref {schema_ref}"))?;
-    schema_refs
-        .get(index)
-        .cloned()
+fn schema_name_for(schema_ref: i64, schema_tables: &SchemaTables) -> Result<String, String> {
+    schema_tables
+        .name_for_frame_word(schema_ref)
+        .map(str::to_string)
         .ok_or_else(|| format!("schema ref {schema_ref}"))
 }
 
@@ -10521,11 +10538,25 @@ mod tests {
         )
     }
 
-    fn store_driver_for(code: Vec<Op>, arg_offsets: Vec<u32>, arg_schemas: Vec<String>) -> Driver {
-        let schemas = SchemaTables::empty();
+    fn store_driver_for(
+        mut code: Vec<Op>,
+        arg_offsets: Vec<u32>,
+        arg_schemas: Vec<String>,
+    ) -> Driver {
+        let mut schemas = SchemaTables::empty();
+        schemas.register_frame_names(["Tree".to_string()]);
+        let tree_word = schemas.frame_word_for_name("Tree");
+        for op in &mut code {
+            if let Op::ConstI64 { dst: 8, value } = op
+                && *value == 0
+            {
+                *value = tree_word;
+                break;
+            }
+        }
         let mut descriptors = DescriptorMap::new();
         descriptors.insert_named(&schemas, "Tree", tree_descriptor(&schemas));
-        let mut driver = Driver::with_descriptors(
+        let driver = Driver::try_with_schema_tables(
             Program {
                 fns: vec![TaskFn {
                     frame: Layout {
@@ -10549,8 +10580,11 @@ mod tests {
                 primitive_region: 0,
             }],
             descriptors,
-        );
-        assert_eq!(driver.intern_schema_ref("Tree"), 0);
+            schemas,
+            Lane::Interp,
+        )
+        .expect("interp driver");
+        assert_eq!(tree_word, driver.schemas.frame_word_for_name("Tree"));
         driver
     }
 
