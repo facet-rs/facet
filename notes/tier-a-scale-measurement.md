@@ -23,6 +23,14 @@ New vix/Rust surfaces:
 - Added `cargo_manifest.vix` workspace bridge state that derives Rodin `Index` fields from real manifests: pseudo workspace root, member package/version rows, root `selected -> in_graph` clauses, and a direct-dependency clause bridge for required workspace-known deps.
 - Added member-only and member+direct ring entrypoints so the harness can measure the frontier without Rust-side composition bypasses.
 - Added sparse-index fetch/pin script: `scripts/fetch-tier-a-sparse-index.sh`.
+- Added Cargo.lock and unit-graph diff harness prep. `scripts/tier-a-scale-measurement.sh` now exports `TIER_A_OUT`, runs the tiny live solve package diff, runs the 4/4 derived-unit fixture diff, and includes both TSV summaries in `summary.txt`.
+
+Prepared diff surfaces:
+
+| Surface | Exercised Case | Match | Divergence | Artifact |
+|---|---:|---:|---:|---|
+| Solve `(package, version)` vs real `Cargo.lock` | tiny live solve: `__workspace__ 0.0.0`, `bytes 1.12.0` | 1 / 2 solve rows | 1 solve-only pseudo-root; 862 Cargo-selected lock rows not in tiny solve; 30 lock residue rows | `/tmp/tier-a-scale-measurement/tiny-solve-vs-lock-summary.tsv` |
+| Derived units vs Cargo `--unit-graph` | `lock_graph` fixture | 4 / 4 units, 3 / 3 edges | 0 machine-only, 0 Cargo-only | `/tmp/tier-a-scale-measurement/lock-fixture-unit-diff-summary.tsv` |
 
 After-run ring table:
 
@@ -216,13 +224,14 @@ cargo nextest run -p vix --features real-process -E 'test(=solution_walk_derives
 
 Results:
 
+- `tiny_workspace_solve_diff_is_categorized_against_real_cargo_lock`: 1 passed, 204 skipped; tiny solve diff table reports 2 solve rows, 893 lock rows, 1 exact match, 1 solve-only pseudo-root, 892 lock-only rows categorized as 862 Cargo-selected-not-in-solve and 30 lock-residue-not-selected-by-metadata.
 - `real_workspace_metadata_baseline_is_counted`, `real_workspace_dependency_probe_shard_0`, `direct_resolved_unit_adapter_gap_is_pinned`: 3 passed, 196 skipped; shard 0 took 8.696s in the post-rebase script run.
 - `projected_member_manifests_are_read_from_granted_root`, `dependency_declarations_extract_workspace_and_detailed_forms`, `real_workspace_member_only_index_builds_bounded_ring`: 3 passed, 196 skipped; bounded member ring took 3.703s.
-- `solution_walk_derives_units_from_rodin_and_matches_cargo_oracle`: 1 passed, 206 skipped; 6.205s.
+- `solution_walk_derives_units_from_rodin_and_matches_cargo_oracle`: 1 passed, 212 skipped; 6.662s in the latest scoped run; diff table reports 4 machine units, 4 Cargo units, 4 unit matches, 3 machine edges, 3 Cargo edges, 3 edge matches, and zero machine-only/Cargo-only units or edges.
 - `real_workspace_member_only_index_builds_all_members`: 1 passed, 203 skipped; 84.413s for 146 package domains and 145 root clauses.
 - `real_workspace_member_only_solve_ring_{1,2,4,8,16}` plus the bounded-ring alias: all failed with `Error: "molten handle -1"`; no Cargo-lock-diffable selected rows.
 - Escalated `/usr/bin/time -l cargo nextest run -p vix -E 'test(=real_workspace_dependency_probe_shard_0)'`: 1 passed, 191 skipped; 20.207s test time; 215,793,664-byte max RSS.
-- `scripts/tier-a-scale-measurement.sh`: completed end to end after adding the nextest measurement timeout override; sparse refetch was disabled for the final rerun because `/tmp/tier-a-scale-measurement/sparse-index` was already fetched and pinned.
+- `scripts/tier-a-scale-measurement.sh`: completed end to end after adding the nextest measurement timeout override and diff artifacts; sparse refetch was disabled for the final rerun because `/tmp/tier-a-scale-measurement/sparse-index` was already fetched and pinned.
 
 Gate status from the gap-closer pass:
 
@@ -242,6 +251,22 @@ scripts/tier-a-scale-measurement.sh
 ```
 
 It writes captures and derived diffs under `${TIER_A_OUT:-/tmp/tier-a-scale-measurement}`.
+
+Rerun sequence when the machine fix lands:
+
+```sh
+git fetch origin rodin
+git rebase origin/rodin
+TIER_A_FETCH_SPARSE=0 scripts/tier-a-scale-measurement.sh
+```
+
+Use `TIER_A_FETCH_SPARSE=1` only when intentionally refreshing the pinned sparse snapshot; record the new `snapshot-manifest.tsv` sha256 if it changes.
+
+Once the branch already contains the machine fix, the remeasurement command is:
+
+```sh
+TIER_A_FETCH_SPARSE=0 scripts/tier-a-scale-measurement.sh
+```
 
 ## Precise Frontier
 

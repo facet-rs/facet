@@ -4,6 +4,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="${TIER_A_OUT:-/tmp/tier-a-scale-measurement}"
 mkdir -p "$OUT"
+export TIER_A_OUT="$OUT"
 
 cd "$ROOT"
 
@@ -61,6 +62,11 @@ cargo nextest list "${nextest_timeout[@]}" -p vix -E 'test(=projected_member_man
 cargo nextest run "${nextest_timeout[@]}" -p vix -E 'test(=projected_member_manifests_are_read_from_granted_root) | test(=dependency_declarations_extract_workspace_and_detailed_forms) | test(=real_workspace_member_only_index_builds_bounded_ring)' \
   > "$OUT/vix-composed-member-ring-run.txt" 2>&1
 
+cargo nextest list "${nextest_timeout[@]}" -p vix -E 'test(=tiny_workspace_solve_diff_is_categorized_against_real_cargo_lock)' \
+  > "$OUT/vix-lock-diff-list.txt" 2>&1
+cargo nextest run "${nextest_timeout[@]}" -p vix -E 'test(=tiny_workspace_solve_diff_is_categorized_against_real_cargo_lock)' \
+  > "$OUT/vix-lock-diff-run.txt" 2>&1
+
 cargo nextest list "${nextest_timeout[@]}" -p vix --features real-process -E 'test(=solution_walk_derives_units_from_rodin_and_matches_cargo_oracle)' \
   > "$OUT/vix-derived-unit-list.txt" 2>&1
 cargo nextest run "${nextest_timeout[@]}" -p vix --features real-process -E 'test(=solution_walk_derives_units_from_rodin_and_matches_cargo_oracle)' \
@@ -84,6 +90,13 @@ cargo nextest run "${nextest_timeout[@]}" -p vix --features real-process -E 'tes
     du -sh "$sparse_out"
     shasum -a 256 "$sparse_out/snapshot-manifest.tsv"
   fi
+  for artifact in tiny-solve-vs-lock-summary.tsv lock-fixture-unit-diff-summary.tsv; do
+    if [[ -f "$OUT/$artifact" ]]; then
+      echo
+      echo "$artifact:"
+      cat "$OUT/$artifact"
+    fi
+  done
 } > "$OUT/summary.txt"
 
 cat "$OUT/summary.txt"

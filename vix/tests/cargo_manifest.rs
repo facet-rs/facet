@@ -131,6 +131,79 @@ edition = "2024"
 }
 
 #[test]
+fn tiny_workspace_solve_diff_is_categorized_against_real_cargo_lock() -> Result<(), String> {
+    let mut machine = manifest_machine()?;
+    let workspace = intern_tree(
+        &mut machine,
+        Tree::of(&[
+            (
+                "Cargo.toml",
+                r#"[workspace]
+members = ["bytes"]
+"#,
+            ),
+            (
+                "bytes/Cargo.toml",
+                r#"[package]
+name = "bytes"
+version = "1.12.0"
+edition = "2024"
+"#,
+            ),
+        ]),
+    )?;
+    let root = intern_path(&mut machine, "")?;
+    let target = intern_string(&mut machine, "x86_64-apple-darwin")?;
+    let selected = machine.demand_i64(
+        "workspace_member_only_solve_selected_versions_text",
+        vec![workspace, root, target],
+    )?;
+    let selected = rendered_string(
+        &machine,
+        "workspace_member_only_solve_selected_versions_text",
+        selected,
+    )?;
+    let solve_rows = package_versions_from_solve_text(&selected)?;
+    let lock_rows = cargo_lock_package_rows(&workspace_root().join("Cargo.lock"))?;
+    let metadata_rows = cargo_metadata_real_workspace()?.package_rows();
+    let diff = diff_package_versions_against_lock(&solve_rows, &lock_rows, &metadata_rows);
+
+    assert!(
+        solve_rows.contains(&PackageVersion::new("bytes", "1.12.0")),
+        "{solve_rows:#?}"
+    );
+    assert!(
+        solve_rows.contains(&PackageVersion::new("__workspace__", "0.0.0")),
+        "{solve_rows:#?}"
+    );
+    assert_eq!(diff.solve_rows, 2, "{diff:#?}");
+    assert_eq!(diff.lock_rows, lock_rows.len(), "{diff:#?}");
+    assert_eq!(diff.matches, 1, "{diff:#?}");
+    assert_eq!(diff.solve_only, 1, "{diff:#?}");
+    assert_eq!(
+        diff.solve_only_categories.get("workspace-pseudo-root"),
+        Some(&1),
+        "{diff:#?}"
+    );
+    assert_eq!(diff.lock_only + diff.matches, diff.lock_rows, "{diff:#?}");
+    assert_eq!(
+        diff.lock_only_categories.get("cargo-selected-not-in-solve"),
+        Some(&(metadata_rows.len() - diff.matches)),
+        "{diff:#?}"
+    );
+
+    write_tier_a_artifact(
+        "tiny-solve-vs-lock-summary.tsv",
+        &package_diff_summary_table(&diff),
+    )?;
+    write_tier_a_artifact(
+        "tiny-solve-vs-lock-solve-rows.tsv",
+        &package_rows_table(&solve_rows),
+    )?;
+    Ok(())
+}
+
+#[test]
 fn workspace_member_globs_expand_from_root_manifest() -> Result<(), String> {
     let mut machine = manifest_machine()?;
     let workspace = intern_tree(
@@ -1104,6 +1177,13 @@ impl CargoMetadata {
             })
             .collect()
     }
+
+    fn package_rows(&self) -> BTreeSet<PackageVersion> {
+        self.packages
+            .iter()
+            .map(|package| PackageVersion::new(&package.name, &package.version))
+            .collect()
+    }
 }
 
 #[derive(Debug, Facet)]
@@ -1115,6 +1195,176 @@ struct CargoPackage {
     manifest_path: String,
     dependencies: Vec<CargoDependency>,
     targets: Vec<CargoTarget>,
+}
+
+#[derive(Debug, Facet)]
+struct CargoLock {
+    package: Vec<CargoLockPackage>,
+}
+
+#[derive(Debug, Facet)]
+struct CargoLockPackage {
+    name: String,
+    version: String,
+}
+
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
+struct PackageVersion {
+    name: String,
+    version: String,
+}
+
+impl PackageVersion {
+    fn new(name: &str, version: &str) -> Self {
+        Self {
+            name: name.to_owned(),
+            version: version.to_owned(),
+        }
+    }
+}
+
+#[derive(Debug)]
+struct PackageLockDiffSummary {
+    solve_rows: usize,
+    lock_rows: usize,
+    matches: usize,
+    solve_only: usize,
+    lock_only: usize,
+    version_skew_names: usize,
+    solve_only_categories: BTreeMap<&'static str, usize>,
+    lock_only_categories: BTreeMap<&'static str, usize>,
+}
+
+fn package_versions_from_solve_text(text: &str) -> Result<BTreeSet<PackageVersion>, String> {
+    text.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(|line| {
+            let (name, version) = line
+                .split_once(' ')
+                .ok_or_else(|| format!("selected package row was not `name version`: {line:?}"))?;
+            Ok(PackageVersion::new(name, version))
+        })
+        .collect()
+}
+
+fn cargo_lock_package_rows(path: &Path) -> Result<BTreeSet<PackageVersion>, String> {
+    let text = std::fs::read_to_string(path).map_err(|err| err.to_string())?;
+    let lock: CargoLock = facet_toml::from_str(&text).map_err(|err| err.to_string())?;
+    Ok(lock
+        .package
+        .iter()
+        .map(|package| PackageVersion::new(&package.name, &package.version))
+        .collect())
+}
+
+fn diff_package_versions_against_lock(
+    solve_rows: &BTreeSet<PackageVersion>,
+    lock_rows: &BTreeSet<PackageVersion>,
+    metadata_rows: &BTreeSet<PackageVersion>,
+) -> PackageLockDiffSummary {
+    let matches = solve_rows.intersection(lock_rows).count();
+    let solve_only_rows = solve_rows.difference(lock_rows).collect::<Vec<_>>();
+    let lock_only_rows = lock_rows.difference(solve_rows).collect::<Vec<_>>();
+    let lock_names = lock_rows
+        .iter()
+        .map(|row| row.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let solve_names = solve_rows
+        .iter()
+        .map(|row| row.name.as_str())
+        .collect::<BTreeSet<_>>();
+    let version_skew_names = solve_only_rows
+        .iter()
+        .filter(|row| lock_names.contains(row.name.as_str()))
+        .map(|row| row.name.as_str())
+        .collect::<BTreeSet<_>>()
+        .len();
+
+    let mut solve_only_categories = BTreeMap::new();
+    for row in &solve_only_rows {
+        bump(
+            &mut solve_only_categories,
+            if row.name == "__workspace__" {
+                "workspace-pseudo-root"
+            } else if metadata_rows.contains(row) {
+                "cargo-selected-but-lock-missing"
+            } else if lock_names.contains(row.name.as_str()) {
+                "version-skew"
+            } else {
+                "solve-only-unknown-or-fixture"
+            },
+        );
+    }
+
+    let mut lock_only_categories = BTreeMap::new();
+    for row in &lock_only_rows {
+        bump(
+            &mut lock_only_categories,
+            if metadata_rows.contains(row) {
+                "cargo-selected-not-in-solve"
+            } else if solve_names.contains(row.name.as_str()) {
+                "version-skew"
+            } else {
+                "lock-residue-not-selected-by-metadata"
+            },
+        );
+    }
+
+    PackageLockDiffSummary {
+        solve_rows: solve_rows.len(),
+        lock_rows: lock_rows.len(),
+        matches,
+        solve_only: solve_only_rows.len(),
+        lock_only: lock_only_rows.len(),
+        version_skew_names,
+        solve_only_categories,
+        lock_only_categories,
+    }
+}
+
+fn package_diff_summary_table(diff: &PackageLockDiffSummary) -> String {
+    let mut lines = vec![
+        "metric\tcount".to_owned(),
+        format!("solve_rows\t{}", diff.solve_rows),
+        format!("lock_rows\t{}", diff.lock_rows),
+        format!("matches\t{}", diff.matches),
+        format!("solve_only\t{}", diff.solve_only),
+        format!("lock_only\t{}", diff.lock_only),
+        format!("version_skew_names\t{}", diff.version_skew_names),
+    ];
+    for (category, count) in &diff.solve_only_categories {
+        lines.push(format!("solve_only:{category}\t{count}"));
+    }
+    for (category, count) in &diff.lock_only_categories {
+        lines.push(format!("lock_only:{category}\t{count}"));
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn package_rows_table(rows: &BTreeSet<PackageVersion>) -> String {
+    let mut lines = vec!["name\tversion".to_owned()];
+    lines.extend(
+        rows.iter()
+            .map(|row| format!("{}\t{}", row.name, row.version)),
+    );
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn bump(map: &mut BTreeMap<&'static str, usize>, key: &'static str) {
+    *map.entry(key).or_default() += 1;
+}
+
+fn write_tier_a_artifact(relative: &str, contents: &str) -> Result<(), String> {
+    let Ok(root) = std::env::var("TIER_A_OUT") else {
+        return Ok(());
+    };
+    let path = Path::new(&root).join(relative);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
+    }
+    std::fs::write(path, contents).map_err(|err| err.to_string())
 }
 
 #[derive(Debug, Facet)]
