@@ -4,7 +4,7 @@ use std::collections::BTreeSet;
 
 use common::*;
 use vix::machine::driver::Lane;
-use vix::machine::{DriveEvent, MachineArg, NamedArg, RenderedValue};
+use vix::machine::{DriveEvent, MachineArg, NamedArg, RenderedValue, StoreHandle};
 
 const CORPUS: &str = r#"
 fn square(x: Int) -> Int { x * x }
@@ -63,6 +63,84 @@ fn memo_semantic_hit_count(machine: &vix::machine::Machine, name: &str) -> usize
             matches!(event, DriveEvent::MemoSemanticHit { fn_hash, .. } if *fn_hash == hash)
         })
         .count()
+}
+
+fn fn_event_count(
+    machine: &vix::machine::Machine,
+    name: &str,
+    matches_event: impl Fn(&DriveEvent, u64) -> bool,
+) -> usize {
+    let hash = machine.fn_hash(name).expect("function hash");
+    machine
+        .trace()
+        .iter()
+        .filter(|event| matches_event(event, hash))
+        .count()
+}
+
+fn demanded_count(machine: &vix::machine::Machine, name: &str) -> usize {
+    fn_event_count(
+        machine,
+        name,
+        |event, hash| matches!(event, DriveEvent::Demanded { fn_hash } if *fn_hash == hash),
+    )
+}
+
+fn completed_count(machine: &vix::machine::Machine, name: &str) -> usize {
+    fn_event_count(
+        machine,
+        name,
+        |event, hash| matches!(event, DriveEvent::Completed { fn_hash } if *fn_hash == hash),
+    )
+}
+
+fn spawned_invocation_count(machine: &vix::machine::Machine, name: &str) -> usize {
+    fn_event_count(
+        machine,
+        name,
+        |event, hash| matches!(event, DriveEvent::SpawnedInvocation { fn_hash, .. } if *fn_hash == hash),
+    )
+}
+
+fn store_alloc_count(machine: &vix::machine::Machine) -> usize {
+    machine
+        .trace()
+        .iter()
+        .filter(|event| matches!(event, DriveEvent::StoreAlloc { .. }))
+        .count()
+}
+
+fn strict_subsequence<T: PartialEq>(needle: &[T], haystack: &[T]) -> bool {
+    if needle.len() >= haystack.len() {
+        return false;
+    }
+    let mut next = 0usize;
+    for item in haystack {
+        if needle.get(next).is_some_and(|candidate| candidate == item) {
+            next += 1;
+            if next == needle.len() {
+                return true;
+            }
+        }
+    }
+    false
+}
+
+fn countdown_tail_source() -> &'static str {
+    r#"
+pub fn countdown(n: Int, acc: Int) -> Int {
+    match n {
+        0 => acc,
+        _ => countdown(n - 1, acc + 1),
+    }
+}
+"#
+}
+
+fn load_forced_tail_invoke(source: &str, lane: Lane) -> vix::machine::Machine {
+    let mut machine = load_with_lane(source, lane);
+    machine.set_force_tail_invoke(true).unwrap();
+    machine
 }
 
 fn semantic_cutoff_demo_source(comparator_name: &str) -> String {
@@ -905,6 +983,250 @@ pub fn main() -> Int {
         assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 42, "{lane:?}");
         assert_eq!(spawned_count(&machine, "f"), 1, "{lane:?}");
         assert_eq!(memo_hit_count(&machine, "f"), 1, "{lane:?}");
+    }
+}
+
+#[test]
+fn tail_loop_emits_one_demand_per_entry_zero_per_iteration() {
+    for lane in lanes() {
+        let mut machine = load_with_lane(countdown_tail_source(), lane);
+        assert_eq!(machine.demand_i64("countdown", vec![12, 0]).unwrap(), 12);
+        assert_eq!(demanded_count(&machine, "countdown"), 1, "{lane:?}");
+        assert_eq!(spawned_count(&machine, "countdown"), 1, "{lane:?}");
+        assert_eq!(
+            spawned_invocation_count(&machine, "countdown"),
+            1,
+            "{lane:?}"
+        );
+        assert_eq!(completed_count(&machine, "countdown"), 1, "{lane:?}");
+    }
+}
+
+#[test]
+fn tail_loop_matches_forced_invoke_result_and_readset() {
+    let src = r#"
+struct Session {
+    wanted: String,
+    ignored: String
+}
+
+pub fn session(wanted: String, ignored: String) -> Session {
+    Session { wanted: wanted, ignored: ignored }
+}
+
+pub fn tail_session(session: Session, n: Int) -> String {
+    match n {
+        0 => session.wanted,
+        _ => tail_session(session, n - 1),
+    }
+}
+"#;
+    for lane in lanes() {
+        let mut enabled = load_with_lane(src, lane);
+        let mut disabled = load_forced_tail_invoke(src, lane);
+
+        let enabled_session = enabled
+            .call(
+                "session",
+                &[
+                    NamedArg {
+                        name: "wanted".to_string(),
+                        value: MachineArg::String("keep".to_string()),
+                    },
+                    NamedArg {
+                        name: "ignored".to_string(),
+                        value: MachineArg::String("first".to_string()),
+                    },
+                ],
+            )
+            .unwrap()
+            .0;
+        let disabled_session = disabled
+            .call(
+                "session",
+                &[
+                    NamedArg {
+                        name: "wanted".to_string(),
+                        value: MachineArg::String("keep".to_string()),
+                    },
+                    NamedArg {
+                        name: "ignored".to_string(),
+                        value: MachineArg::String("first".to_string()),
+                    },
+                ],
+            )
+            .unwrap()
+            .0;
+
+        enabled.clear_trace();
+        disabled.clear_trace();
+        let enabled_result = enabled
+            .demand_i64("tail_session", vec![enabled_session, 8])
+            .unwrap();
+        let disabled_result = disabled
+            .demand_i64("tail_session", vec![disabled_session, 8])
+            .unwrap();
+        assert_eq!(enabled_result, disabled_result, "{lane:?}");
+        assert_eq!(
+            enabled
+                .export_value(StoreHandle(enabled_result))
+                .unwrap()
+                .values,
+            disabled
+                .export_value(StoreHandle(disabled_result))
+                .unwrap()
+                .values,
+            "{lane:?}"
+        );
+        assert!(
+            strict_subsequence(enabled.trace(), disabled.trace()),
+            "{lane:?}: enabled trace must be a strict subsequence of forced-INVOKE trace"
+        );
+
+        let enabled_changed = enabled
+            .call(
+                "session",
+                &[
+                    NamedArg {
+                        name: "wanted".to_string(),
+                        value: MachineArg::String("keep".to_string()),
+                    },
+                    NamedArg {
+                        name: "ignored".to_string(),
+                        value: MachineArg::String("changed".to_string()),
+                    },
+                ],
+            )
+            .unwrap()
+            .0;
+        let disabled_changed = disabled
+            .call(
+                "session",
+                &[
+                    NamedArg {
+                        name: "wanted".to_string(),
+                        value: MachineArg::String("keep".to_string()),
+                    },
+                    NamedArg {
+                        name: "ignored".to_string(),
+                        value: MachineArg::String("changed".to_string()),
+                    },
+                ],
+            )
+            .unwrap()
+            .0;
+
+        enabled.clear_trace();
+        disabled.clear_trace();
+        assert_eq!(
+            enabled
+                .demand_i64("tail_session", vec![enabled_changed, 8])
+                .unwrap(),
+            enabled_result,
+            "{lane:?}"
+        );
+        assert_eq!(
+            disabled
+                .demand_i64("tail_session", vec![disabled_changed, 8])
+                .unwrap(),
+            disabled_result,
+            "{lane:?}"
+        );
+        let enabled_verified = projection_verified_count(&enabled, "tail_session");
+        let disabled_verified = projection_verified_count(&disabled, "tail_session");
+        assert_eq!(enabled_verified, disabled_verified, "{lane:?}");
+        assert_eq!(enabled_verified, vec![1], "{lane:?}");
+    }
+}
+
+#[test]
+fn tail_loop_interp_jit_trace_equal() {
+    let mut traces = Vec::new();
+    for lane in lanes() {
+        let mut machine = load_with_lane(countdown_tail_source(), lane);
+        assert_eq!(machine.demand_i64("countdown", vec![9, 0]).unwrap(), 9);
+        traces.push((lane, machine.trace().to_vec()));
+    }
+    assert_lane_traces_equal(&traces);
+}
+
+#[test]
+fn tail_loop_accumulator_stays_molten() {
+    let src = r#"
+fn grow(n: Int, acc: Array) -> Array {
+    match n {
+        0 => acc,
+        _ => grow(n - 1, acc.push(n)),
+    }
+}
+
+pub fn main(n: Int) -> Array {
+    grow(n, [0])
+}
+"#;
+    for lane in lanes() {
+        let mut machine = load_with_lane(src, lane);
+        let result = machine.demand_i64("main", vec![24]).unwrap();
+        let RenderedValue::Array { items, .. } = machine.render_result("main", result).unwrap()
+        else {
+            panic!("main did not render as an Array on {lane:?}");
+        };
+        assert_eq!(items.len(), 25, "{lane:?}");
+        assert_eq!(
+            store_alloc_count(&machine),
+            1,
+            "only the final accumulator should intern on {lane:?}"
+        );
+    }
+}
+
+#[test]
+fn non_tail_self_call_stays_invoke() {
+    let src = r#"
+pub fn sum(n: Int) -> Int {
+    match n {
+        0 => 0,
+        _ => n + sum(n - 1),
+    }
+}
+"#;
+    for lane in lanes() {
+        let mut machine = load_with_lane(src, lane);
+        assert_eq!(machine.demand_i64("sum", vec![6]).unwrap(), 21, "{lane:?}");
+        assert_eq!(demanded_count(&machine, "sum"), 7, "{lane:?}");
+        assert_eq!(spawned_count(&machine, "sum"), 7, "{lane:?}");
+        assert_eq!(completed_count(&machine, "sum"), 7, "{lane:?}");
+    }
+}
+
+#[test]
+fn self_tail_call_inside_match_arm_does_not_spawn_per_iteration() {
+    for lane in lanes() {
+        let mut machine = load_with_lane(countdown_tail_source(), lane);
+        assert_eq!(machine.demand_i64("countdown", vec![20, 0]).unwrap(), 20);
+        assert_eq!(spawned_count(&machine, "countdown"), 1, "{lane:?}");
+    }
+}
+
+#[test]
+fn tail_loop_body_invokes_still_demand_children() {
+    let src = r#"
+fn child(n: Int) -> Int { n * 2 }
+
+pub fn sum_child(n: Int, acc: Int) -> Int {
+    match n {
+        0 => acc,
+        _ => sum_child(n - 1, acc + child(n)),
+    }
+}
+"#;
+    for lane in lanes() {
+        let mut machine = load_with_lane(src, lane);
+        assert_eq!(machine.demand_i64("sum_child", vec![6, 0]).unwrap(), 42);
+        assert_eq!(spawned_count(&machine, "sum_child"), 1, "{lane:?}");
+        assert_eq!(demanded_count(&machine, "child"), 6, "{lane:?}");
+        assert_eq!(spawned_count(&machine, "child"), 6, "{lane:?}");
+        assert_eq!(completed_count(&machine, "child"), 6, "{lane:?}");
     }
 }
 

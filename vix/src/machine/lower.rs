@@ -59,8 +59,11 @@ pub struct Machine {
     fn_param_names: BTreeMap<String, Vec<String>>,
     fn_returns: BTreeMap<String, String>,
     render_names: RenderNames,
+    root: String,
+    modules: BTreeMap<String, String>,
     source: String,
     module_hash: Vec<u8>,
+    lower_options: LowerOptions,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -110,7 +113,8 @@ impl Machine {
     ) -> Result<Machine, String> {
         let mut modules = modules;
         inject_std_modules(&mut modules);
-        let c = compile_module_set(root, &modules, RefSource::Fresh)?;
+        let lower_options = LowerOptions::from_env();
+        let c = compile_module_set(root, &modules, RefSource::Fresh, lower_options)?;
 
         let mut driver = Driver::try_with_descriptors(c.program, c.lowered, c.descriptors, lane)?;
         // The driver's own interning must reproduce the fresh 0-based assignment.
@@ -126,6 +130,7 @@ impl Machine {
         assert_literal_handles(&mut driver, "Flag", &c.literal_handles.flags);
         assert_literal_handles(&mut driver, "Template", &c.literal_handles.templates);
 
+        let source = modules.get(root).cloned().unwrap_or_default();
         Ok(Machine {
             driver,
             fn_refs: c.fn_refs,
@@ -133,8 +138,11 @@ impl Machine {
             fn_param_names: c.fn_param_names.into_iter().collect(),
             fn_returns: c.fn_returns.into_iter().collect(),
             render_names: c.render_names,
-            source: modules.get(root).cloned().unwrap_or_default(),
+            root: root.to_string(),
+            modules,
+            source,
             module_hash: c.module_hash,
+            lower_options,
         })
     }
 
@@ -167,7 +175,12 @@ impl Machine {
         let mut modules = modules;
         inject_std_modules(&mut modules);
         let before = self.fn_hashes();
-        let c = compile_module_set(root, &modules, RefSource::Existing(&mut self.driver))?;
+        let c = compile_module_set(
+            root,
+            &modules,
+            RefSource::Existing(&mut self.driver),
+            self.lower_options,
+        )?;
 
         self.driver.reload(c.program, c.lowered, c.descriptors)?;
         self.fn_refs = c.fn_refs;
@@ -175,7 +188,9 @@ impl Machine {
         self.fn_param_names = c.fn_param_names.into_iter().collect();
         self.fn_returns = c.fn_returns.into_iter().collect();
         self.render_names = c.render_names;
+        self.root = root.to_string();
         self.source = modules.get(root).cloned().unwrap_or_default();
+        self.modules = modules;
         self.module_hash = c.module_hash;
 
         let after = self.fn_hashes();
@@ -382,6 +397,13 @@ impl Machine {
         self.driver.set_force_molten_copy(force);
     }
 
+    pub fn set_force_tail_invoke(&mut self, force: bool) -> Result<ReloadDiff, String> {
+        self.lower_options.force_tail_invoke = force;
+        let root = self.root.clone();
+        let modules = self.modules.clone();
+        self.reload_modules(&root, modules)
+    }
+
     pub fn entry_param_schemas(&self, name: &str) -> Option<&[String]> {
         self.fn_params.get(name).map(Vec::as_slice)
     }
@@ -469,6 +491,19 @@ struct LiteralHandleMaps {
     templates: HashMap<String, i64>,
 }
 
+#[derive(Clone, Copy)]
+struct LowerOptions {
+    force_tail_invoke: bool,
+}
+
+impl LowerOptions {
+    fn from_env() -> Self {
+        Self {
+            force_tail_invoke: std::env::var_os("VIX_FORCE_TAIL_INVOKE").is_some(),
+        }
+    }
+}
+
 /// Where schema-refs and literal handles come from — the one axis on which cold
 /// load and warm reload differ. Fresh assigns 0..N; Existing preserves the live
 /// driver's numbering (and extends it), which is what keeps warm state valid.
@@ -546,6 +581,7 @@ fn compile_module_set(
     root: &str,
     modules: &BTreeMap<String, String>,
     mut ref_source: RefSource,
+    lower_options: LowerOptions,
 ) -> Result<Compiled, String> {
     let module_hash = module_set_hash(root, modules);
     let tables = load_module_tables_from_modules(root, modules)?;
@@ -622,6 +658,7 @@ fn compile_module_set(
     for (ix, name) in names.iter().enumerate() {
         let item = &tables.fns[*name];
         let hash = tables.fn_hashes[*name];
+        let _ = lower_options.force_tail_invoke;
         let (task_fn, info) = if parked_generic_or_fn_typed(item) {
             parked_stub(item)?
         } else {
