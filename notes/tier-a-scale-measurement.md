@@ -14,8 +14,8 @@ Answer after the prerelease/root-clause fix: **the composed path now produces a 
 - The widened direct-deps sparse ring now runs through **16 workspace members + direct crates.io rows from 48 sparse package files -> 65 package domains, 104 clauses, 27 selected rows**, diffed against `Cargo.lock` with **26 exact matches, 0 version-skew packages, and 1 expected pseudo-root solve-only row**. Ring 32 was attempted in optimized profile and timed out at 180.212s before index-count artifacts.
 - The first transitive sparse composition is wired in vix and reaches **ring 2**: 2 workspace members + first transitive sparse rows -> 17 package domains, 24 clauses, 3 selected rows, 2 exact matches, 0 version skew, and 1 expected pseudo-root. Ring 3 expands to 80 sparse input crates and times out at 180.279s before index-count artifacts.
 - Manifest ingestion at real scale remains **closed for the direct-dependency oracle**. Current tests assert 145 workspace members, 1,124 direct deps, 55 cfg/target deps, 760 legacy allowlist failures retired, and zero name/kind/target mismatches across 16 shards.
-- Unit derivation at real scale: **0 / 881 Cargo unit-graph units measured through recursive `unit()` at real scale**, for the same missing composition plus the still-pinned `ResolvedUnit` adaptation gap.
-- Largest fully wired solve-to-unit path: **4 packages / 4 units** in the `lock_graph` fixture, verified against Cargo `--unit-graph`.
+- Unit derivation at ring scale now has a numerator: **direct sparse ring 8 derives 10 Vix unit target rows for 9 selected real packages**, diffed against **11 Cargo unit rows** for the same selected `(package, version)` set. Exact feature+profile unit-key matches are **7 / 11 Cargo rows**; target-kind/source/profile-shape matches are **10 / 10 Vix target rows**; edge-set matches are **4 / 42 Cargo edges**, with the remaining 38 Cargo-only edges categorized as dependencies outside the Vix-selected direct closure.
+- Largest artifact-producing solve-to-unit path remains **4 packages / 4 units** in the `lock_graph` fixture, verified against Cargo `--unit-graph`; real ring-scale unit rows are now emitted and diffed, but real source-tree artifact builds remain fixture-scoped.
 
 ## Gap-Closer Delta
 
@@ -28,10 +28,11 @@ New vix/Rust surfaces:
 - Added sparse JSONL row parsing in `cargo_manifest.vix` and direct sparse ring probes that compose selected real workspace members plus direct crates.io rows from the pinned sparse snapshot into one Rodin `Index`.
 - Added transitive sparse ring entrypoints that add dependency clauses from crates.io sparse rows in vix, with optional/dev deps skipped and target cfg carried as clause gate data.
 - Added sparse-index fetch/pin script: `scripts/fetch-tier-a-sparse-index.sh`.
-- Added Cargo.lock and unit-graph diff harness prep. `scripts/tier-a-scale-measurement.sh` now exports `TIER_A_OUT`, runs the tiny live solve package diff, runs the member-ring live solve package diffs through ring 64 by default, runs the 4/4 derived-unit fixture diff, and includes the TSV summaries in `summary.txt`. The timed-out 145-member solve is opt-in via `TIER_A_FULL_MEMBER_RING=1`.
+- Added Cargo.lock and unit-graph diff harness prep. `scripts/tier-a-scale-measurement.sh` now exports `TIER_A_OUT`, `TIER_A_CARGO_METADATA`, `TIER_A_UNIT_GRAPH`, and `TIER_A_SPARSE_OUT`; runs the tiny live solve package diff; runs the member-ring live solve package diffs through ring 64 by default; runs the 4/4 derived-unit fixture diff; runs the real direct ring-8 unit diff; and includes the TSV summaries in `summary.txt`. The timed-out 145-member solve is opt-in via `TIER_A_FULL_MEMBER_RING=1`.
 - After `c868cd51a`, root member clauses now emit the same two-step shape as direct deps: `in_graph` activation plus an exact `version_set` clause for the workspace member's manifest version. This doubled member-only root clauses from one to two per member.
 - Fixed Rodin's prerelease root semantics in `rodin.vix`: a default domain now acts as an unconstrained sentinel on the first real `version_set` narrow, and `in_graph` activation marks reachability without re-filtering through Cargo's plain `*` range. The semver differential tests still pin Cargo's rule that plain ranges exclude prereleases, while the unignored `tiny_workspace_prerelease_member_solve_selects_member` now proves exact workspace-root pins admit prereleases.
 - Added `workspace_member_only_solve_selected_versions_text_limit` and ignored ring lock-diff measurement probes for 16, 32, 64, and 145 so ring solves produce the same `(package, version)` Cargo.lock diff table as the tiny case.
+- Added `workspace_member_direct_sparse_solution_units_text_limit`, which composes the direct sparse ring solve into Vix-emitted unit rows carrying package/version, target kind, source suffix, mode, features, profile fields, and selected dependency edges. The Rust harness filters Cargo `--unit-graph` to the same selected `(package, version)` set and writes ring-scale unit/edge/category TSVs.
 
 Prepared diff surfaces:
 
@@ -45,6 +46,7 @@ Prepared diff surfaces:
 | Solve `(package, version)` vs real `Cargo.lock` | real member+direct sparse ring 16 | 26 / 27 solve rows | 1 solve-only pseudo-root; 0 version skew; 837 Cargo-selected lock rows not in ring 16; 30 lock residue rows | `/tmp/tier-a-scale-measurement/real-direct-ring-16-solve-vs-lock-summary.tsv` |
 | Solve `(package, version)` vs real `Cargo.lock` | real member+direct+transitive sparse ring 2 | 2 / 3 solve rows | 1 solve-only pseudo-root; 0 version skew; 861 Cargo-selected lock rows not in ring 2; 30 lock residue rows | `/tmp/tier-a-scale-measurement/real-transitive-ring-2-solve-vs-lock-summary.tsv` |
 | Derived units vs Cargo `--unit-graph` | `lock_graph` fixture | 4 / 4 units, 3 / 3 edges | 0 machine-only, 0 Cargo-only | `/tmp/tier-a-scale-measurement/lock-fixture-unit-diff-summary.tsv` |
+| Derived units vs Cargo `--unit-graph` | real member+direct sparse ring 8 | 7 / 11 exact unit keys; 10 / 10 Vix target keys; 4 / 42 edges | feature-set gap: 3 Vix-only + 3 Cargo-only; feature+profile variant: 1 Cargo-only; Cargo-only dependency edges outside Vix-selected closure: 38 | `/tmp/tier-a-scale-measurement/real-direct-ring-8-unit-diff-summary.tsv` |
 
 After-run ring table:
 
@@ -56,6 +58,7 @@ After-run ring table:
 | Real workspace member-only index, full | 145 workspace members | 146 package domains, 290 root clauses | passes as explicit ignored probe; 79.198s |
 | Real workspace member-only solve rings | 1, 2, 4, 8, 16, 32, 64 workspace members | selected member counts equal ring size; ring 64 writes 65 solve rows | passes through 64; 145 timed out at 180.020s |
 | Real workspace member+direct deps, small sparse ring | 8 workspace members plus direct crates.io rows from 16 sparse files | 25 package domains, 22 clauses, 989 sparse rows, 10 selected rows | passes; first direct divergence table captured |
+| Real workspace member+direct deps, unit derivation | ring 8 selected set: 9 real packages, 10 Vix unit target rows | 11 Cargo unit rows after filtering `--unit-graph`; 7 exact unit-key matches, 10 target-key matches, 4 edge matches | passes; all unit/edge divergences categorized |
 | Real workspace member+direct deps, widened sparse ring | 16 workspace members plus direct crates.io rows | 65 package domains, 104 clauses, 2,538 sparse rows, 27 selected rows | passes; 26 matches, 0 version skew, 1 pseudo-root |
 | Real workspace member+direct deps, next widened sparse ring | 32 workspace members plus direct crates.io rows | 82 sparse input crate files recorded | timed out at 180.212s in optimized profile before index-count artifacts |
 | Real workspace member+direct+transitive deps | 1 and 2 workspace members plus direct crates plus direct crates' deps | ring 1: 16 package domains, 22 clauses, 2 selected rows; ring 2: 17 package domains, 24 clauses, 3 selected rows | passes through ring 2; only workspace members selected so far, 0 version skew |
@@ -209,7 +212,7 @@ Tokio skew diagnosis:
 Current source frontier:
 
 - `cargo_manifest.vix` can derive member counts, dependency declarations, cfg data, target shapes one at a time, `problem_of_member`, and a workspace-member Rodin `Index` ring.
-- It now exposes `resolved_unit_adaptation_gap()` as: "Path construction is join-only from a granted root; generic ResolvedUnit emission remains blocked by sparse-index composition, UnitTargetTable derivation, and the demanded resolve-to-unit graph bridge."
+- It now exposes `resolved_unit_adaptation_gap()` as: "Ring-scale solution unit rows are emitted from the composed workspace+sparse solve; artifact-producing crate.vix builds remain fixture-scoped because real source trees and feature-name UnitTargetTable emission are not complete."
 - `rodin/index.vix` can parse sparse rows and bridge them to an `Index`, but `sparse_index_path` is still a demo hardcoded path table for a small crate set, and the bridge skips optional/dev deps.
 - `crate.vix` has `crate_solution_bin[_check]`, but it requires a pre-built `Index`, `Problem`, and `UnitTargetTable`.
 
@@ -281,9 +284,10 @@ The flame does not show a solve-specific `version_set` or propagation loop trunk
 
 | Projection | Cargo | Vix measured | Match | Divergence |
 |---|---:|---:|---:|---:|
-| Units | 881 | 0 full-workspace units | 0 | 881 unmeasured units |
-| Unit dependency edges | 2,478 | 0 full-workspace edges | 0 | 2,478 unmeasured edges |
-| `(package, target-kind, features)` shapes | 801 unique | 0 full-workspace shapes | 0 | 801 unmeasured shapes |
+| Full-workspace units | 881 | not widened past solve wall | 0 full-workspace rows | standing perf frontier before full unit derivation |
+| Direct sparse ring-8 units | 11 Cargo unit rows for the selected package set | 10 Vix unit target rows | 7 exact feature+profile unit-key matches; 10 target-key matches | 3 feature-set gaps on each side; 1 Cargo-only feature+profile variant |
+| Direct sparse ring-8 dependency edges | 42 Cargo edges | 4 Vix selected-closure edges | 4 | 38 Cargo-only edges outside the Vix-selected direct closure |
+| `(package, target-kind, features, profile)` shapes | 11 Cargo ring rows | 10 Vix ring rows | 7 exact, 10 target-shape | feature emission gap remains visible; profile payload included in the diff |
 | Fixture solve-to-unit path | 4 packages / 4 units | 4 packages / 4 units | 4 | 0 on fixture |
 
 Known Cargo unit categories that vix must eventually account for at scale:
@@ -292,10 +296,11 @@ Known Cargo unit categories that vix must eventually account for at scale:
 |---|---:|---|
 | build-script companion units (`custom-build` build + run) | 152 custom-build target-kind units; 76 run-custom-build units | counted as a gap category; do not chase profile payload here |
 | proc-macro host units | 48 | counted as a gap category |
-| profile fields | 881 units carry profile payloads | known absent category per mission brief |
-| non-lib/bin crate types | 9 cdylib, 4 rlib, 1 staticlib crate-type entries | unmeasured at vix scale |
+| profile fields | all Cargo ring rows carry profile payloads | emitted and compared for ring 8; one Cargo-only `tokio` feature/profile variant remains |
+| feature-name emission | Cargo ring rows include feature sets for `facet-showcase`, `strid`, and two `tokio` variants | current Vix ring rows emit empty feature sets; counted as the exact-key gap, not hidden |
+| non-lib/bin crate types | 9 cdylib, 4 rlib, 1 staticlib crate-type entries full-workspace; ring 8 includes 2 cdylib rows | ring 8 cdylib target rows match Cargo target keys |
 
-`crate.vix` recursive unit derivation is real but fixture-scoped: `solution_unit` recursively computes deps from `SolveResult`, and `crate_solution_bin[_check]` calls `solve(index, problem, target_name)`. The current fixture proves the shape over `mini_app -> alpha_lib -> core_lib` plus `formatting_lib`, not over the monorepo.
+The ring-scale unit bridge is now real for measurement: `cargo_manifest.vix` composes the direct sparse ring solve into target rows and selected dependency edges, and the Rust harness diffs those rows against Cargo `--unit-graph` filtered to the same selected `(package, version)` set. `crate.vix` artifact-producing recursive builds remain fixture-scoped: `solution_unit` still proves the build shape over `mini_app -> alpha_lib -> core_lib` plus `formatting_lib`, while real source-tree artifact builds are not widened yet.
 
 ## Scoped Verification
 
@@ -304,6 +309,8 @@ cargo nextest list -p vix -E 'test(=real_workspace_metadata_baseline_is_counted)
 cargo nextest run -p vix -E 'test(=real_workspace_metadata_baseline_is_counted) | test(=real_workspace_dependency_probe_shard_0) | test(=direct_resolved_unit_adapter_gap_is_pinned)'
 cargo nextest list -p vix --features real-process -E 'test(=solution_walk_derives_units_from_rodin_and_matches_cargo_oracle)'
 cargo nextest run -p vix --features real-process -E 'test(=solution_walk_derives_units_from_rodin_and_matches_cargo_oracle)'
+cargo nextest list --run-ignored only -p vix -E 'test(=real_workspace_member_direct_sparse_unit_diff_8)'
+TIER_A_OUT=/tmp/tier-a-scale-measurement cargo nextest run --run-ignored only -p vix -E 'test(=real_workspace_member_direct_sparse_unit_diff_8)'
 ```
 
 Results:
@@ -320,6 +327,7 @@ Results:
 - `real_workspace_member_only_solve_ring_lock_diff_32_jit_lane`: 1 passed; 6.577s; wrote `real-ring-32-jit-*` lock-diff artifacts.
 - `pinned_sparse_row_parses_in_cargo_manifest_module`: 1 passed; proves the `cargo_manifest.vix` sparse JSONL row parser over a real pinned `blake3` sparse row.
 - `real_workspace_member_direct_sparse_solve_ring_lock_diff_8`: 1 passed; latest scoped rerun 57.496s; ring 8 direct sparse table reports 989 sparse rows, 25 packages, 22 clauses, 10 solve rows, 9 matches, 0 version skew, 1 pseudo-root; `tokio_emitted_req = 1`.
+- `real_workspace_member_direct_sparse_unit_diff_8`: 1 passed; latest scoped rerun 67.022s. The unit diff table reports 10 Vix unit rows, 11 Cargo unit rows, 7 exact feature+profile unit-key matches, 10 target-key matches, 4 / 42 edge matches, 0 Vix-only edges, 38 Cargo-only edges categorized as outside the Vix-selected direct closure. Unit divergences are categorized as 3 feature-set gaps on each side and 1 Cargo-only feature+profile variant.
 - `real_workspace_member_direct_sparse_solve_ring_lock_diff_16`: 1 passed under `--release --profile debug`; 159.394s after release build; ring 16 direct sparse table reports 2,538 sparse rows, 65 packages, 104 clauses, 27 solve rows, 26 matches, 0 version skew, 1 pseudo-root. `tokio_emitted_req` now has three `1` lines, proving narrowing is intact for all emitted tokio clauses.
 - `real_workspace_member_direct_sparse_solve_ring_lock_diff_32`: timed out under `--release` default profile at 180.212s; wrote only the 82-entry sparse input crate artifact.
 - `real_workspace_member_transitive_sparse_solve_ring_lock_diff_1`: 1 passed under `--release`; 2.818s; 14 sparse input crates, 736 sparse rows, 16 packages, 22 clauses, 2 solve rows, 1 match, 0 version skew.
@@ -388,7 +396,7 @@ Largest reachable subgraph today:
 - Vix composed workspace-member solve ring: 64 / 145 members solved and diffed; 145 / 145 members still measured as an explicit index-construction probe; stable and prerelease 1 / 1 tiny member solves pass.
 - Vix composed member+direct sparse solve ring: 16 workspace members plus their direct crates.io sparse rows solved and diffed; first `tokio` divergence is closed and the widened ring remains zero-skew.
 - Vix composed member+direct+transitive sparse solve ring: 2 workspace members plus direct crates and direct crates' dependencies solved and diffed; no registry package is selected yet at the reachable transitive ring. Ring 3 is the current transitive wall-clock frontier, expanding from 14 to 80 sparse input crates and timing out before index counts.
-- Vix solve-to-unit scale: 4 package fixture, Cargo unit-graph matched.
+- Vix solve-to-unit scale: direct sparse ring 8 emits and diffs 10 Vix unit target rows against 11 Cargo unit rows; artifact-producing build scale remains the 4 package fixture, Cargo unit-graph matched.
 
 The next ring is no longer blocked by the prerelease/root-clause empty solve, and the first direct sparse `tokio` skew is closed. The current frontier is runtime growth before full member-only ring completion and before widening direct sparse rings:
 
@@ -402,12 +410,12 @@ Until those exist, the numeric answer remains:
 
 ```text
 resolve match at real scale: 64 / 863 selected Cargo packages measured
-unit-graph match at real scale: 0 / 881 Cargo units measured
+unit-graph match at full real scale: not widened past solve wall; ring-scale direct sparse unit match: 7 / 11 exact unit keys, 10 / 10 Vix target keys, 4 / 42 edges
 composed workspace-member solve ring: 64 / 145 members solved and diffed; 145-member solve timed out at 180.020s
 composed member+direct sparse ring: 16 members + direct sparse files solved; 26 exact matches, 0 version skew, 1 pseudo-root; ring 32 timed out at 180.212s
 composed member+direct+transitive sparse ring: 2 members solved; 2 exact matches, 0 version skew, 1 pseudo-root; ring 3 timed out at 180.279s
 composed workspace-member full index: 145 / 145 members measured explicitly
 composed tiny workspace solve: 1 / 1 stable member selected; 1 / 1 prerelease member selected
-largest solve-to-unit match: 4 / 4 fixture units
+largest artifact-producing solve-to-unit match: 4 / 4 fixture units
 manifest ingestion match: 1,124 / 1,124 direct workspace deps
 ```

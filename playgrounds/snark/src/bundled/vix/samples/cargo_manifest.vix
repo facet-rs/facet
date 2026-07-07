@@ -29,6 +29,22 @@ struct CargoTargetShape {
     link_file: String,
 }
 
+struct CargoUnitProfile {
+    name: String,
+    opt_level: String,
+    lto: String,
+    codegen_backend: String,
+    codegen_units: String,
+    debuginfo: String,
+    split_debuginfo: String,
+    debug_assertions: String,
+    overflow_checks: String,
+    rpath: String,
+    incremental: String,
+    panic: String,
+    strip: String,
+}
+
 struct WorkspaceIndexState {
     packages: [Int],
     package_ids: Map<String, Int>,
@@ -917,8 +933,263 @@ pub fn workspace_member_transitive_sparse_solve_selected_versions_text_limit(wor
     solve_selected_versions_text_from_workspace_state(state, workspace_problem(), target)
 }
 
+pub fn workspace_member_direct_sparse_solution_units_text_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, target: String, limit: Int) -> String {
+    let state = workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit);
+    solution_units_text_from_workspace_state(workspace, workspace_root, state, workspace_problem(), target)
+}
+
 fn solve_selected_versions_text_from_workspace_state(state: WorkspaceIndexState, problem: Problem, target: String) -> String {
     solve_selected_versions_text(workspace_index_from_state(state), problem, target)
+}
+
+fn solution_units_text_from_workspace_state(workspace: Tree, workspace_root: Path, state: WorkspaceIndexState, problem: Problem, target: String) -> String {
+    let index = workspace_index_from_state(state);
+    let result = solve(index, problem, target);
+    solution_units_text_from_packages(workspace, workspace_root, state, index, result, target, state.packages, "")
+}
+
+fn solution_units_text_from_packages(workspace: Tree, workspace_root: Path, state: WorkspaceIndexState, index: Index, result: SolveResult, target: String, packages: [Int], out: String) -> String {
+    match packages.len() == 0 {
+        true => out,
+        false => solution_units_text_from_packages_tuple(workspace, workspace_root, state, index, result, target, packages.pop(), out),
+    }
+}
+
+fn solution_units_text_from_packages_tuple(workspace: Tree, workspace_root: Path, state: WorkspaceIndexState, index: Index, result: SolveResult, target: String, popped: (Int, [Int]), out: String) -> String {
+    let out = solution_units_text_for_package(workspace, workspace_root, state, index, result, target, popped.0, out);
+    solution_units_text_from_packages(workspace, workspace_root, state, index, result, target, popped.1, out)
+}
+
+fn solution_units_text_for_package(workspace: Tree, workspace_root: Path, state: WorkspaceIndexState, index: Index, result: SolveResult, target: String, pkg: Int, out: String) -> String {
+    match result.selected.get(pkg) {
+        Some(version) => match state.names.get(pkg).unwrap() == "__workspace__" {
+            true => out,
+            false => solution_units_text_for_selected_package(workspace, workspace_root, state, index, result, target, pkg, workspace_selected_version_text(state, pkg, version), out),
+        },
+        None => out,
+    }
+}
+
+fn solution_units_text_for_selected_package(workspace: Tree, workspace_root: Path, state: WorkspaceIndexState, index: Index, result: SolveResult, target: String, pkg: Int, version: String, out: String) -> String {
+    let member_path = state.member_paths.get(pkg).unwrap();
+    match member_path == "" {
+        true => append_solution_unit_row(out, state.names.get(pkg).unwrap(), version, registry_lib_target_shape(state.names.get(pkg).unwrap()), registry_profile(), solution_dep_names_text(state, index, result, pkg, target)),
+        false => solution_member_units_text(workspace, workspace_root, state.names.get(pkg).unwrap(), version, member_manifest(workspace, workspace_root, member_path), workspace_profile(), solution_dep_names_text(state, index, result, pkg, target), out),
+    }
+}
+
+fn solution_member_units_text(workspace: Tree, workspace_root: Path, package: String, version: String, manifest: Tree, profile: CargoUnitProfile, deps: String, out: String) -> String {
+    match manifest_doc(manifest).get("bin") {
+        Some(bin_docs) => solution_bin_units_text(package, version, doc_as_docs(bin_docs), profile, deps, out),
+        None => append_solution_unit_row(out, package, version, manifest_lib_target(manifest), profile, deps),
+    }
+}
+
+fn solution_bin_units_text(package: String, version: String, bins: [Doc], profile: CargoUnitProfile, deps: String, out: String) -> String {
+    match bins.len() == 0 {
+        true => out,
+        false => solution_bin_units_text_tuple(package, version, bins.pop(), profile, deps, out),
+    }
+}
+
+fn solution_bin_units_text_tuple(package: String, version: String, popped: (Doc, [Doc]), profile: CargoUnitProfile, deps: String, out: String) -> String {
+    let out = solution_bin_units_text(package, version, popped.1, profile, deps, out);
+    append_solution_unit_row(out, package, version, bin_doc_target_shape(package, popped.0), profile, deps)
+}
+
+fn manifest_lib_target(manifest: Tree) -> CargoTargetShape {
+    match manifest_doc(manifest).get("lib") {
+        Some(lib) => manifest_explicit_lib_target(manifest, lib),
+        None => lib_target(manifest),
+    }
+}
+
+fn manifest_explicit_lib_target(manifest: Tree, lib: Doc) -> CargoTargetShape {
+    let name = crate_name(package_name(manifest));
+    let kind = explicit_lib_kind(lib);
+    CargoTargetShape {
+        name: name,
+        kind: kind,
+        source: doc_string_or(lib, "path", "src/lib.rs"),
+        crate_type: kind,
+        metadata_file: "lib" + name + ".rmeta",
+        link_file: "lib" + name + ".rlib",
+    }
+}
+
+fn explicit_lib_kind(lib: Doc) -> String {
+    match doc_bool_or(lib, "proc-macro", false) {
+        true => "proc-macro",
+        false => match string_list_contains(doc_strings_or_empty(lib, "crate-type"), "cdylib") {
+            true => "cdylib",
+            false => "lib",
+        },
+    }
+}
+
+fn bin_doc_target_shape(package: String, bin: Doc) -> CargoTargetShape {
+    let name = crate_name(doc_string_or(bin, "name", crate_name(package)));
+    CargoTargetShape {
+        name: name,
+        kind: "bin",
+        source: doc_string_or(bin, "path", "src/main.rs"),
+        crate_type: "bin",
+        metadata_file: name + ".rmeta",
+        link_file: name,
+    }
+}
+
+fn registry_lib_target_shape(package: String) -> CargoTargetShape {
+    let name = crate_name(package);
+    CargoTargetShape {
+        name: name,
+        kind: "lib",
+        source: "src/lib.rs",
+        crate_type: "lib",
+        metadata_file: "lib" + name + ".rmeta",
+        link_file: "lib" + name + ".rlib",
+    }
+}
+
+fn string_list_contains(values: [String], needle: String) -> Bool {
+    match values.len() == 0 {
+        true => false,
+        false => string_list_contains_tuple(values.pop(), needle),
+    }
+}
+
+fn string_list_contains_tuple(popped: (String, [String]), needle: String) -> Bool {
+    match popped.0 == needle {
+        true => true,
+        false => string_list_contains(popped.1, needle),
+    }
+}
+
+fn workspace_profile() -> CargoUnitProfile {
+    CargoUnitProfile {
+        name: "dev",
+        opt_level: "0",
+        lto: "false",
+        codegen_backend: "null",
+        codegen_units: "null",
+        debuginfo: "2",
+        split_debuginfo: "unpacked",
+        debug_assertions: "true",
+        overflow_checks: "true",
+        rpath: "false",
+        incremental: "true",
+        panic: "unwind",
+        strip: "None",
+    }
+}
+
+fn registry_profile() -> CargoUnitProfile {
+    CargoUnitProfile {
+        name: "dev",
+        opt_level: "0",
+        lto: "false",
+        codegen_backend: "null",
+        codegen_units: "null",
+        debuginfo: "2",
+        split_debuginfo: "unpacked",
+        debug_assertions: "true",
+        overflow_checks: "true",
+        rpath: "false",
+        incremental: "false",
+        panic: "unwind",
+        strip: "None",
+    }
+}
+
+fn selected_pkg_contains(selected: Map<Int, Version>, pkg: Int) -> Bool {
+    match selected.get(pkg) {
+        Some(_) => true,
+        None => false,
+    }
+}
+
+fn solution_guard_is_parent(index: Index, guard_id: Int, clause_id: Int, parent: Int) -> Bool {
+    index.guard_clause_ids.get(guard_id).unwrap() == clause_id
+        && index.guard_pkgs.get(guard_id).unwrap() == parent
+        && index.guard_tags.get(guard_id).unwrap() == "selected"
+}
+
+fn solution_clause_has_parent_guard(index: Index, parent: Int, clause_id: Int, guard_ids: [Int]) -> Bool {
+    match guard_ids.len() == 0 {
+        true => false,
+        false => solution_clause_has_parent_guard_tuple(index, parent, clause_id, guard_ids.pop()),
+    }
+}
+
+fn solution_clause_has_parent_guard_tuple(index: Index, parent: Int, clause_id: Int, popped: (Int, [Int])) -> Bool {
+    match solution_guard_is_parent(index, popped.0, clause_id, parent) {
+        true => true,
+        false => solution_clause_has_parent_guard(index, parent, clause_id, popped.1),
+    }
+}
+
+fn solution_dependency_clause_active(index: Index, result: SolveResult, parent: Int, clause_id: Int, target: String) -> Bool {
+    match gate_active_id(index, clause_id, target)
+        && selected_pkg_contains(result.selected, parent)
+        && solution_clause_has_parent_guard(index, parent, clause_id, index.guard_ids)
+        && index.consequent_tags.get(clause_id).unwrap() == "in_graph" {
+        true => selected_pkg_contains(result.selected, index.consequent_pkgs.get(clause_id).unwrap()),
+        false => false,
+    }
+}
+
+fn solution_dep_names_text(state: WorkspaceIndexState, index: Index, result: SolveResult, parent: Int, target: String) -> String {
+    solution_dep_names_text_from(state, index, result, parent, target, index.clause_ids, "")
+}
+
+fn solution_dep_names_text_from(state: WorkspaceIndexState, index: Index, result: SolveResult, parent: Int, target: String, clause_ids: [Int], out: String) -> String {
+    match clause_ids.len() == 0 {
+        true => out,
+        false => solution_dep_names_text_tuple(state, index, result, parent, target, clause_ids.pop(), out),
+    }
+}
+
+fn solution_dep_names_text_tuple(state: WorkspaceIndexState, index: Index, result: SolveResult, parent: Int, target: String, popped: (Int, [Int]), out: String) -> String {
+    let out = match solution_dependency_clause_active(index, result, parent, popped.0, target) {
+        true => append_dep_name(out, crate_name(state.names.get(index.consequent_pkgs.get(popped.0).unwrap()).unwrap())),
+        false => out,
+    };
+    solution_dep_names_text_from(state, index, result, parent, target, popped.1, out)
+}
+
+fn append_dep_name(out: String, name: String) -> String {
+    match out == "" {
+        true => name,
+        false => out + "," + name,
+    }
+}
+
+fn append_solution_unit_row(out: String, package: String, version: String, target: CargoTargetShape, profile: CargoUnitProfile, deps: String) -> String {
+    let row = package + "\t"
+        + version + "\t"
+        + target.name + "\t"
+        + target.kind + "\t"
+        + target.crate_type + "\t"
+        + target.source + "\t"
+        + "build\t\t\t"
+        + profile.name + "\t"
+        + profile.opt_level + "\t"
+        + profile.lto + "\t"
+        + profile.codegen_backend + "\t"
+        + profile.codegen_units + "\t"
+        + profile.debuginfo + "\t"
+        + profile.split_debuginfo + "\t"
+        + profile.debug_assertions + "\t"
+        + profile.overflow_checks + "\t"
+        + profile.rpath + "\t"
+        + profile.incremental + "\t"
+        + profile.panic + "\t"
+        + profile.strip + "\t"
+        + deps;
+    match out == "" {
+        true => row,
+        false => out + "\n" + row,
+    }
 }
 
 fn selected_workspace_state_versions_text_from(state: WorkspaceIndexState, packages: [Int], selected: Map<Int, Version>, out: String) -> String {
@@ -1389,5 +1660,5 @@ pub fn problem_of_member(root_pkg: Int, root_default_feature: Int) -> Problem {
 }
 
 pub fn resolved_unit_adaptation_gap() -> String {
-    "Path construction is join-only from a granted root; generic ResolvedUnit emission remains blocked by sparse-index composition, UnitTargetTable derivation, and the demanded resolve-to-unit graph bridge."
+    "Ring-scale solution unit rows are emitted from the composed workspace+sparse solve; artifact-producing crate.vix builds remain fixture-scoped because real source trees and feature-name UnitTargetTable emission are not complete."
 }

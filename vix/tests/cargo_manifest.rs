@@ -473,9 +473,9 @@ fn direct_resolved_unit_adapter_gap_is_pinned() -> Result<(), String> {
     let value = machine.demand_i64("resolved_unit_adaptation_gap", vec![])?;
     let gap = rendered_string(&machine, "resolved_unit_adaptation_gap", value)?;
     assert!(
-        gap.contains("Path construction is join-only from a granted root")
-            && gap.contains("sparse-index composition")
-            && gap.contains("UnitTargetTable derivation"),
+        gap.contains("Ring-scale solution unit rows")
+            && gap.contains("composed workspace+sparse solve")
+            && gap.contains("feature-name UnitTargetTable emission"),
         "{gap}"
     );
     Ok(())
@@ -743,6 +743,12 @@ real_workspace_member_direct_sparse_solve_ring_lock_diff_test!(
     32
 );
 
+#[test]
+#[ignore = "tier-A measurement probe: real workspace member + direct sparse dep unit diff"]
+fn real_workspace_member_direct_sparse_unit_diff_8() -> Result<(), String> {
+    real_workspace_member_direct_sparse_unit_diff(8)
+}
+
 macro_rules! real_workspace_member_transitive_sparse_solve_ring_lock_diff_test {
     ($name:ident, $limit:expr) => {
         #[test]
@@ -865,6 +871,60 @@ fn real_workspace_member_direct_sparse_solve_ring_lock_diff(limit: i64) -> Resul
     assert!(
         diff.solve_rows > limit as usize,
         "direct sparse ring {limit} produced no member-root solve: {diff:#?}"
+    );
+    Ok(())
+}
+
+fn real_workspace_member_direct_sparse_unit_diff(limit: i64) -> Result<(), String> {
+    let metadata = cargo_metadata_real_workspace()?;
+    let mut machine = manifest_machine()?;
+    let workspace = intern_tree(&mut machine, real_workspace_manifest_tree(&metadata)?)?;
+    let root = intern_path(&mut machine, "")?;
+    let target = intern_string(&mut machine, "x86_64-apple-darwin")?;
+    let sparse_jsonl =
+        direct_sparse_snapshot_jsonl_for_ring(&mut machine, &metadata, workspace, limit)?;
+    let sparse_jsonl = intern_string(&mut machine, &sparse_jsonl)?;
+
+    let units = machine.demand_i64(
+        "workspace_member_direct_sparse_solution_units_text_limit",
+        vec![workspace, root, sparse_jsonl, target, limit],
+    )?;
+    let units = rendered_string(
+        &machine,
+        "workspace_member_direct_sparse_solution_units_text_limit",
+        units,
+    )?;
+    let vix_units = ring_units_from_vix_text(&units)?;
+    let selected_rows = vix_units
+        .iter()
+        .map(|unit| PackageVersion::new(&unit.package, &unit.version))
+        .collect::<BTreeSet<_>>();
+    let cargo_units = cargo_ring_unit_shapes(&metadata, &selected_rows)?;
+    let diff = diff_ring_units(&vix_units, &cargo_units);
+
+    write_tier_a_artifact(
+        &format!("real-direct-ring-{limit}-unit-diff-summary.tsv"),
+        &ring_unit_diff_summary_table(&diff),
+    )?;
+    write_tier_a_artifact(
+        &format!("real-direct-ring-{limit}-vix-units.tsv"),
+        &ring_units_table(&vix_units),
+    )?;
+    write_tier_a_artifact(
+        &format!("real-direct-ring-{limit}-cargo-units.tsv"),
+        &ring_units_table(&cargo_units),
+    )?;
+    write_tier_a_artifact(
+        &format!("real-direct-ring-{limit}-unit-divergence-categories.tsv"),
+        &ring_unit_categories_table(&diff),
+    )?;
+
+    assert!(!vix_units.is_empty(), "no Vix units derived");
+    assert!(!cargo_units.is_empty(), "no Cargo units selected");
+    assert_eq!(
+        diff.unknown_divergences(),
+        0,
+        "uncategorized unit divergences remain: {diff:#?}"
     );
     Ok(())
 }
@@ -1834,6 +1894,524 @@ fn package_rows_table(rows: &BTreeSet<PackageVersion>) -> String {
     lines.join("\n")
 }
 
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct RingUnitShape {
+    package: String,
+    version: String,
+    target_name: String,
+    target_kind: String,
+    crate_type: String,
+    source_suffix: String,
+    mode: String,
+    platform: String,
+    features: Vec<String>,
+    profile: RingUnitProfile,
+    dependencies: Vec<String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct RingUnitProfile {
+    name: String,
+    opt_level: String,
+    lto: String,
+    codegen_backend: String,
+    codegen_units: String,
+    debuginfo: String,
+    split_debuginfo: String,
+    debug_assertions: String,
+    overflow_checks: String,
+    rpath: String,
+    incremental: String,
+    panic: String,
+    strip: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct RingUnitExactKey {
+    package: String,
+    version: String,
+    target_name: String,
+    target_kind: String,
+    crate_type: String,
+    source_suffix: String,
+    mode: String,
+    platform: String,
+    features: Vec<String>,
+    profile: RingUnitProfile,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct RingUnitTargetKey {
+    package: String,
+    version: String,
+    target_name: String,
+    target_kind: String,
+    crate_type: String,
+    source_suffix: String,
+    mode: String,
+    platform: String,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct RingUnitEdge {
+    from: RingUnitTargetKey,
+    extern_crate_name: String,
+}
+
+#[derive(Debug)]
+struct RingUnitDiffSummary {
+    vix_units: usize,
+    cargo_units: usize,
+    exact_unit_matches: usize,
+    vix_only_units: usize,
+    cargo_only_units: usize,
+    target_key_matches: usize,
+    vix_edges: usize,
+    cargo_edges: usize,
+    edge_matches: usize,
+    vix_only_edges: usize,
+    cargo_only_edges: usize,
+    vix_only_categories: BTreeMap<&'static str, usize>,
+    cargo_only_categories: BTreeMap<&'static str, usize>,
+    vix_only_edge_categories: BTreeMap<&'static str, usize>,
+    cargo_only_edge_categories: BTreeMap<&'static str, usize>,
+}
+
+impl RingUnitDiffSummary {
+    fn unknown_divergences(&self) -> usize {
+        self.vix_only_categories
+            .get("unknown")
+            .copied()
+            .unwrap_or_default()
+            + self
+                .cargo_only_categories
+                .get("unknown")
+                .copied()
+                .unwrap_or_default()
+            + self
+                .vix_only_edge_categories
+                .get("unknown")
+                .copied()
+                .unwrap_or_default()
+            + self
+                .cargo_only_edge_categories
+                .get("unknown")
+                .copied()
+                .unwrap_or_default()
+    }
+}
+
+impl From<&RingUnitShape> for RingUnitExactKey {
+    fn from(unit: &RingUnitShape) -> Self {
+        Self {
+            package: unit.package.clone(),
+            version: unit.version.clone(),
+            target_name: unit.target_name.clone(),
+            target_kind: unit.target_kind.clone(),
+            crate_type: unit.crate_type.clone(),
+            source_suffix: unit.source_suffix.clone(),
+            mode: unit.mode.clone(),
+            platform: unit.platform.clone(),
+            features: unit.features.clone(),
+            profile: unit.profile.clone(),
+        }
+    }
+}
+
+impl From<&RingUnitShape> for RingUnitTargetKey {
+    fn from(unit: &RingUnitShape) -> Self {
+        Self {
+            package: unit.package.clone(),
+            version: unit.version.clone(),
+            target_name: unit.target_name.clone(),
+            target_kind: unit.target_kind.clone(),
+            crate_type: unit.crate_type.clone(),
+            source_suffix: unit.source_suffix.clone(),
+            mode: unit.mode.clone(),
+            platform: unit.platform.clone(),
+        }
+    }
+}
+
+fn ring_units_from_vix_text(text: &str) -> Result<Vec<RingUnitShape>, String> {
+    text.lines()
+        .filter(|line| !line.trim().is_empty())
+        .map(ring_unit_from_tsv_line)
+        .collect()
+}
+
+fn ring_unit_from_tsv_line(line: &str) -> Result<RingUnitShape, String> {
+    let columns = line.split('\t').collect::<Vec<_>>();
+    if columns.len() != 23 {
+        return Err(format!(
+            "expected 23 unit columns, got {} in {line:?}",
+            columns.len()
+        ));
+    }
+    Ok(RingUnitShape {
+        package: columns[0].to_owned(),
+        version: columns[1].to_owned(),
+        target_name: columns[2].to_owned(),
+        target_kind: columns[3].to_owned(),
+        crate_type: columns[4].to_owned(),
+        source_suffix: columns[5].to_owned(),
+        mode: columns[6].to_owned(),
+        platform: columns[7].to_owned(),
+        features: comma_list(columns[8]),
+        profile: RingUnitProfile {
+            name: columns[9].to_owned(),
+            opt_level: columns[10].to_owned(),
+            lto: columns[11].to_owned(),
+            codegen_backend: columns[12].to_owned(),
+            codegen_units: columns[13].to_owned(),
+            debuginfo: columns[14].to_owned(),
+            split_debuginfo: columns[15].to_owned(),
+            debug_assertions: columns[16].to_owned(),
+            overflow_checks: columns[17].to_owned(),
+            rpath: columns[18].to_owned(),
+            incremental: columns[19].to_owned(),
+            panic: columns[20].to_owned(),
+            strip: columns[21].to_owned(),
+        },
+        dependencies: comma_list(columns[22]),
+    })
+}
+
+fn comma_list(value: &str) -> Vec<String> {
+    if value.is_empty() {
+        Vec::new()
+    } else {
+        let mut values = value
+            .split(',')
+            .filter(|item| !item.is_empty())
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        values.sort();
+        values.dedup();
+        values
+    }
+}
+
+fn cargo_ring_unit_shapes(
+    metadata: &CargoMetadata,
+    selected_rows: &BTreeSet<PackageVersion>,
+) -> Result<Vec<RingUnitShape>, String> {
+    let graph = cargo_unit_graph_real_workspace()?;
+    let package_by_id = metadata
+        .packages
+        .iter()
+        .map(|package| {
+            (
+                package.id.clone(),
+                PackageVersion::new(&package.name, &package.version),
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let mut shapes = Vec::new();
+    for unit in &graph.units {
+        let Some(package) = package_by_id.get(&unit.pkg_id) else {
+            continue;
+        };
+        if !selected_rows.contains(package) {
+            continue;
+        }
+        let dependencies = unit
+            .dependencies
+            .iter()
+            .filter_map(|dependency| dependency.extern_crate_name.clone())
+            .collect::<BTreeSet<_>>()
+            .into_iter()
+            .collect::<Vec<_>>();
+        shapes.push(RingUnitShape {
+            package: package.name.clone(),
+            version: package.version.clone(),
+            target_name: unit.target.name.replace('-', "_"),
+            target_kind: unit.target.normalized_unit_kind()?,
+            crate_type: unit
+                .target
+                .crate_types
+                .first()
+                .cloned()
+                .ok_or_else(|| format!("unit target {} had no crate types", unit.target.name))?,
+            source_suffix: cargo_unit_source_suffix(&unit.target.src_path)?,
+            mode: unit.mode.clone(),
+            platform: unit.platform.clone().unwrap_or_default(),
+            features: sorted_strings(unit.features.clone()),
+            profile: RingUnitProfile::from(&unit.profile),
+            dependencies,
+        });
+    }
+    shapes.sort();
+    shapes.dedup();
+    Ok(shapes)
+}
+
+fn cargo_unit_graph_real_workspace() -> Result<CargoUnitGraphForDiff, String> {
+    let text = if let Ok(path) = std::env::var("TIER_A_UNIT_GRAPH") {
+        std::fs::read_to_string(&path)
+            .map_err(|err| format!("read TIER_A_UNIT_GRAPH at {path}: {err}"))?
+    } else {
+        let default = std::path::PathBuf::from("/tmp/tier-a-scale-measurement/unit-graph.json");
+        if default.exists() {
+            std::fs::read_to_string(&default)
+                .map_err(|err| format!("read {}: {err}", default.display()))?
+        } else {
+            cargo_unit_graph_real_workspace_stdout()?
+        }
+    };
+    facet_json::from_str(&text).map_err(|err| err.to_string())
+}
+
+fn cargo_unit_graph_real_workspace_stdout() -> Result<String, String> {
+    let output = Command::new("cargo")
+        .arg("+nightly")
+        .arg("build")
+        .arg("--unit-graph")
+        .arg("-Z")
+        .arg("unstable-options")
+        .arg("--workspace")
+        .arg("--locked")
+        .current_dir(workspace_root())
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo unit graph oracle failed: {}",
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    String::from_utf8(output.stdout).map_err(|err| err.to_string())
+}
+
+fn sorted_strings(mut values: Vec<String>) -> Vec<String> {
+    values.sort();
+    values.dedup();
+    values
+}
+
+fn cargo_unit_source_suffix(source: &str) -> Result<String, String> {
+    for marker in ["/src/bin/", "/src/lib.rs", "/src/main.rs", "/build.rs"] {
+        if let Some(index) = source.rfind(marker) {
+            let suffix = &source[index + 1..];
+            return Ok(suffix.to_owned());
+        }
+    }
+    Err(format!("unexpected Cargo unit source path `{source}`"))
+}
+
+fn diff_ring_units(vix: &[RingUnitShape], cargo: &[RingUnitShape]) -> RingUnitDiffSummary {
+    let vix_exact = ring_unit_exact_keys(vix);
+    let cargo_exact = ring_unit_exact_keys(cargo);
+    let vix_targets = ring_unit_target_keys(vix);
+    let cargo_targets = ring_unit_target_keys(cargo);
+    let vix_edges = ring_unit_edges(vix);
+    let cargo_edges = ring_unit_edges(cargo);
+    let mut vix_only_categories = BTreeMap::new();
+    let mut cargo_only_categories = BTreeMap::new();
+    let mut vix_only_edge_categories = BTreeMap::new();
+    let mut cargo_only_edge_categories = BTreeMap::new();
+
+    for key in vix_exact.difference(&cargo_exact) {
+        bump(
+            &mut vix_only_categories,
+            categorize_unit_key(key, cargo, &cargo_targets),
+        );
+    }
+    for key in cargo_exact.difference(&vix_exact) {
+        bump(
+            &mut cargo_only_categories,
+            categorize_unit_key(key, vix, &vix_targets),
+        );
+    }
+    for edge in vix_edges.difference(&cargo_edges) {
+        bump(
+            &mut vix_only_edge_categories,
+            categorize_edge(edge, &cargo_targets, "vix-edge-not-in-cargo"),
+        );
+    }
+    for edge in cargo_edges.difference(&vix_edges) {
+        bump(
+            &mut cargo_only_edge_categories,
+            categorize_edge(
+                edge,
+                &vix_targets,
+                "cargo-dependency-edge-outside-vix-selected-closure",
+            ),
+        );
+    }
+
+    RingUnitDiffSummary {
+        vix_units: vix_exact.len(),
+        cargo_units: cargo_exact.len(),
+        exact_unit_matches: vix_exact.intersection(&cargo_exact).count(),
+        vix_only_units: vix_exact.difference(&cargo_exact).count(),
+        cargo_only_units: cargo_exact.difference(&vix_exact).count(),
+        target_key_matches: vix_targets.intersection(&cargo_targets).count(),
+        vix_edges: vix_edges.len(),
+        cargo_edges: cargo_edges.len(),
+        edge_matches: vix_edges.intersection(&cargo_edges).count(),
+        vix_only_edges: vix_edges.difference(&cargo_edges).count(),
+        cargo_only_edges: cargo_edges.difference(&vix_edges).count(),
+        vix_only_categories,
+        cargo_only_categories,
+        vix_only_edge_categories,
+        cargo_only_edge_categories,
+    }
+}
+
+fn ring_unit_exact_keys(units: &[RingUnitShape]) -> BTreeSet<RingUnitExactKey> {
+    units.iter().map(RingUnitExactKey::from).collect()
+}
+
+fn ring_unit_target_keys(units: &[RingUnitShape]) -> BTreeSet<RingUnitTargetKey> {
+    units.iter().map(RingUnitTargetKey::from).collect()
+}
+
+fn ring_unit_edges(units: &[RingUnitShape]) -> BTreeSet<RingUnitEdge> {
+    units
+        .iter()
+        .flat_map(|unit| {
+            let from = RingUnitTargetKey::from(unit);
+            unit.dependencies
+                .iter()
+                .cloned()
+                .map(move |extern_crate_name| RingUnitEdge {
+                    from: from.clone(),
+                    extern_crate_name,
+                })
+        })
+        .collect()
+}
+
+fn categorize_unit_key(
+    key: &RingUnitExactKey,
+    other_units: &[RingUnitShape],
+    other_targets: &BTreeSet<RingUnitTargetKey>,
+) -> &'static str {
+    let target = RingUnitTargetKey {
+        package: key.package.clone(),
+        version: key.version.clone(),
+        target_name: key.target_name.clone(),
+        target_kind: key.target_kind.clone(),
+        crate_type: key.crate_type.clone(),
+        source_suffix: key.source_suffix.clone(),
+        mode: key.mode.clone(),
+        platform: key.platform.clone(),
+    };
+    if !other_targets.contains(&target) {
+        return "target-kind-or-source-gap";
+    }
+    let same_target = other_units
+        .iter()
+        .filter(|unit| RingUnitTargetKey::from(*unit) == target)
+        .collect::<Vec<_>>();
+    let same_profile = same_target.iter().any(|unit| unit.profile == key.profile);
+    let same_features = same_target.iter().any(|unit| unit.features == key.features);
+    match (same_profile, same_features) {
+        (true, true) => "duplicate-or-edge-only-unit",
+        (true, false) => "feature-set-gap",
+        (false, true) => "profile-field-gap",
+        (false, false) => "feature-and-profile-gap",
+    }
+}
+
+fn categorize_edge(
+    edge: &RingUnitEdge,
+    other_targets: &BTreeSet<RingUnitTargetKey>,
+    matched_target_category: &'static str,
+) -> &'static str {
+    if other_targets.contains(&edge.from) {
+        matched_target_category
+    } else {
+        "edge-source-unit-gap"
+    }
+}
+
+fn ring_unit_diff_summary_table(diff: &RingUnitDiffSummary) -> String {
+    let mut lines = vec![
+        "metric\tcount".to_owned(),
+        format!("vix_units\t{}", diff.vix_units),
+        format!("cargo_units\t{}", diff.cargo_units),
+        format!("exact_unit_matches\t{}", diff.exact_unit_matches),
+        format!("vix_only_units\t{}", diff.vix_only_units),
+        format!("cargo_only_units\t{}", diff.cargo_only_units),
+        format!("target_key_matches\t{}", diff.target_key_matches),
+        format!("vix_edges\t{}", diff.vix_edges),
+        format!("cargo_edges\t{}", diff.cargo_edges),
+        format!("edge_matches\t{}", diff.edge_matches),
+        format!("vix_only_edges\t{}", diff.vix_only_edges),
+        format!("cargo_only_edges\t{}", diff.cargo_only_edges),
+    ];
+    for (category, count) in &diff.vix_only_categories {
+        lines.push(format!("vix_only:{category}\t{count}"));
+    }
+    for (category, count) in &diff.cargo_only_categories {
+        lines.push(format!("cargo_only:{category}\t{count}"));
+    }
+    for (category, count) in &diff.vix_only_edge_categories {
+        lines.push(format!("vix_only_edge:{category}\t{count}"));
+    }
+    for (category, count) in &diff.cargo_only_edge_categories {
+        lines.push(format!("cargo_only_edge:{category}\t{count}"));
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn ring_unit_categories_table(diff: &RingUnitDiffSummary) -> String {
+    let mut lines = vec!["side\tcategory\tcount".to_owned()];
+    for (category, count) in &diff.vix_only_categories {
+        lines.push(format!("vix_only\t{category}\t{count}"));
+    }
+    for (category, count) in &diff.cargo_only_categories {
+        lines.push(format!("cargo_only\t{category}\t{count}"));
+    }
+    for (category, count) in &diff.vix_only_edge_categories {
+        lines.push(format!("vix_only_edge\t{category}\t{count}"));
+    }
+    for (category, count) in &diff.cargo_only_edge_categories {
+        lines.push(format!("cargo_only_edge\t{category}\t{count}"));
+    }
+    lines.push(String::new());
+    lines.join("\n")
+}
+
+fn ring_units_table(units: &[RingUnitShape]) -> String {
+    let mut lines = vec![
+        "package\tversion\ttarget_name\ttarget_kind\tcrate_type\tsource_suffix\tmode\tplatform\tfeatures\tprofile_name\topt_level\tlto\tcodegen_backend\tcodegen_units\tdebuginfo\tsplit_debuginfo\tdebug_assertions\toverflow_checks\trpath\tincremental\tpanic\tstrip\tdependencies".to_owned(),
+    ];
+    lines.extend(units.iter().map(|unit| {
+        format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}\t{}",
+            unit.package,
+            unit.version,
+            unit.target_name,
+            unit.target_kind,
+            unit.crate_type,
+            unit.source_suffix,
+            unit.mode,
+            unit.platform,
+            unit.features.join(","),
+            unit.profile.name,
+            unit.profile.opt_level,
+            unit.profile.lto,
+            unit.profile.codegen_backend,
+            unit.profile.codegen_units,
+            unit.profile.debuginfo,
+            unit.profile.split_debuginfo,
+            unit.profile.debug_assertions,
+            unit.profile.overflow_checks,
+            unit.profile.rpath,
+            unit.profile.incremental,
+            unit.profile.panic,
+            unit.profile.strip,
+            unit.dependencies.join(","),
+        )
+    }));
+    lines.push(String::new());
+    lines.join("\n")
+}
+
 fn timed_ring_step<T>(
     timings: &mut Vec<(&'static str, Duration)>,
     label: &'static str,
@@ -1869,6 +2447,99 @@ fn write_tier_a_artifact(relative: &str, contents: &str) -> Result<(), String> {
         std::fs::create_dir_all(parent).map_err(|err| err.to_string())?;
     }
     std::fs::write(path, contents).map_err(|err| err.to_string())
+}
+
+#[derive(Debug, Facet)]
+struct CargoUnitGraphForDiff {
+    units: Vec<CargoUnitForDiff>,
+}
+
+#[derive(Debug, Facet)]
+struct CargoUnitForDiff {
+    pkg_id: String,
+    target: CargoUnitTargetForDiff,
+    mode: String,
+    platform: Option<String>,
+    features: Vec<String>,
+    profile: CargoProfileForDiff,
+    dependencies: Vec<CargoUnitDependencyForDiff>,
+}
+
+#[derive(Debug, Facet)]
+struct CargoUnitTargetForDiff {
+    name: String,
+    src_path: String,
+    crate_types: Vec<String>,
+    kind: Vec<String>,
+}
+
+impl CargoUnitTargetForDiff {
+    fn normalized_unit_kind(&self) -> Result<String, String> {
+        let kind = self
+            .kind
+            .first()
+            .ok_or_else(|| format!("unit target {:?} had no kind", self.name))?;
+        Ok(match kind.as_str() {
+            "custom-build" => "build-script".to_owned(),
+            other => other.to_owned(),
+        })
+    }
+}
+
+#[derive(Debug, Facet)]
+struct CargoUnitDependencyForDiff {
+    extern_crate_name: Option<String>,
+}
+
+#[derive(Debug, Facet)]
+struct CargoProfileForDiff {
+    name: String,
+    opt_level: String,
+    lto: String,
+    codegen_backend: Option<String>,
+    codegen_units: Option<i64>,
+    debuginfo: i64,
+    split_debuginfo: Option<String>,
+    debug_assertions: bool,
+    overflow_checks: bool,
+    rpath: bool,
+    incremental: bool,
+    panic: String,
+    strip: CargoProfileStripForDiff,
+}
+
+#[derive(Debug, Facet)]
+struct CargoProfileStripForDiff {
+    deferred: String,
+}
+
+impl From<&CargoProfileForDiff> for RingUnitProfile {
+    fn from(profile: &CargoProfileForDiff) -> Self {
+        Self {
+            name: profile.name.clone(),
+            opt_level: profile.opt_level.clone(),
+            lto: profile.lto.clone(),
+            codegen_backend: profile
+                .codegen_backend
+                .clone()
+                .unwrap_or_else(|| "null".to_owned()),
+            codegen_units: profile
+                .codegen_units
+                .map(|value| value.to_string())
+                .unwrap_or_else(|| "null".to_owned()),
+            debuginfo: profile.debuginfo.to_string(),
+            split_debuginfo: profile
+                .split_debuginfo
+                .clone()
+                .unwrap_or_else(|| "null".to_owned()),
+            debug_assertions: profile.debug_assertions.to_string(),
+            overflow_checks: profile.overflow_checks.to_string(),
+            rpath: profile.rpath.to_string(),
+            incremental: profile.incremental.to_string(),
+            panic: profile.panic.clone(),
+            strip: profile.strip.deferred.clone(),
+        }
+    }
 }
 
 #[derive(Clone, Debug, Facet)]
