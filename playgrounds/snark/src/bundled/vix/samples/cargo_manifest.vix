@@ -48,6 +48,7 @@ struct WorkspaceIndexState {
     consequent_tags: Map<Int, String>,
     consequent_pkgs: Map<Int, Int>,
     consequent_version_sets: Map<Int, VersionSet>,
+    consequent_req_texts: Map<Int, String>,
     consequent_features: Map<Int, Int>,
     gate_kinds: Map<Int, String>,
     gate_targets: Map<Int, String>,
@@ -274,6 +275,7 @@ fn empty_workspace_index_state() -> WorkspaceIndexState {
     let consequent_tags: Map<Int, String> = {};
     let consequent_pkgs: Map<Int, Int> = {};
     let consequent_version_sets: Map<Int, VersionSet> = {};
+    let consequent_req_texts: Map<Int, String> = {};
     let consequent_features: Map<Int, Int> = {};
     let gate_kinds: Map<Int, String> = {};
     let gate_targets: Map<Int, String> = {};
@@ -296,6 +298,7 @@ fn empty_workspace_index_state() -> WorkspaceIndexState {
         consequent_tags: consequent_tags,
         consequent_pkgs: consequent_pkgs,
         consequent_version_sets: consequent_version_sets,
+        consequent_req_texts: consequent_req_texts,
         consequent_features: consequent_features,
         gate_kinds: gate_kinds,
         gate_targets: gate_targets,
@@ -393,7 +396,7 @@ fn register_sparse_rows(rows: [SparseIndexRow], state: WorkspaceIndexState) -> W
 }
 
 fn register_sparse_rows_tuple(popped: (SparseIndexRow, [SparseIndexRow]), state: WorkspaceIndexState) -> WorkspaceIndexState {
-    register_sparse_rows(popped.1, register_sparse_row(state, popped.0))
+    register_sparse_row(register_sparse_rows(popped.1, state), popped.0)
 }
 
 fn register_sparse_row(state: WorkspaceIndexState, row: SparseIndexRow) -> WorkspaceIndexState {
@@ -435,25 +438,28 @@ fn add_workspace_root_member_clauses_tuple(state: WorkspaceIndexState, popped: (
 }
 
 fn add_workspace_root_member_clause(state: WorkspaceIndexState, member_pkg: Int) -> WorkspaceIndexState {
+    let member_req = "=" + workspace_state_version_text(state, member_pkg);
     workspace_add_selected_guard_clause(
-        workspace_add_selected_guard_clause(state, 0, "0.0.0", "in_graph", member_pkg, VersionSet::from_req("*"), "normal"),
+        workspace_add_selected_guard_clause(state, 0, "0.0.0", "in_graph", member_pkg, VersionSet::from_req("*"), "*", "normal"),
         0,
         "0.0.0",
         "version_set",
         member_pkg,
-        VersionSet::from_req("=" + workspace_state_version_text(state, member_pkg)),
+        VersionSet::from_req(member_req),
+        member_req,
         "normal",
     )
 }
 
 fn add_workspace_required_dep_clauses(state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, dep_pkg: Int, req: String, kind: String) -> WorkspaceIndexState {
     workspace_add_selected_guard_clause(
-        workspace_add_selected_guard_clause(state, parent_pkg, parent_version, "in_graph", dep_pkg, VersionSet::from_req("*"), kind),
+        workspace_add_selected_guard_clause(state, parent_pkg, parent_version, "in_graph", dep_pkg, VersionSet::from_req("*"), "*", kind),
         parent_pkg,
         parent_version,
         "version_set",
         dep_pkg,
         VersionSet::from_req(req),
+        req,
         kind,
     )
 }
@@ -488,7 +494,7 @@ fn workspace_member_package_name_tuple(state: WorkspaceIndexState, member: Strin
     }
 }
 
-fn workspace_add_selected_guard_clause(state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, consequent_tag: String, dep_pkg: Int, req: VersionSet, kind: String) -> WorkspaceIndexState {
+fn workspace_add_selected_guard_clause(state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, consequent_tag: String, dep_pkg: Int, req: VersionSet, req_text: String, kind: String) -> WorkspaceIndexState {
     let clause_id = state.next_clause;
     let guard_id = state.next_guard;
     WorkspaceIndexState {
@@ -503,6 +509,7 @@ fn workspace_add_selected_guard_clause(state: WorkspaceIndexState, parent_pkg: I
         consequent_tags: state.consequent_tags.insert(clause_id, consequent_tag),
         consequent_pkgs: state.consequent_pkgs.insert(clause_id, dep_pkg),
         consequent_version_sets: state.consequent_version_sets.insert(clause_id, req),
+        consequent_req_texts: state.consequent_req_texts.insert(clause_id, req_text),
         consequent_features: state.consequent_features.insert(clause_id, 0),
         gate_kinds: state.gate_kinds.insert(clause_id, kind),
         next_clause: clause_id + 1,
@@ -633,6 +640,33 @@ pub fn workspace_member_direct_sparse_index_clause_count_limit(workspace: Tree, 
     workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit).clause_ids.len()
 }
 
+pub fn workspace_member_direct_sparse_dep_req_text_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int, dep_name: String) -> String {
+    let state = workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit);
+    let pkg = state.package_ids.get(dep_name).unwrap();
+    workspace_version_set_req_text_for_pkg(state, pkg)
+}
+
+pub fn workspace_member_direct_sparse_dep_candidate_text_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int, dep_name: String) -> String {
+    let state = workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit);
+    let pkg = state.package_ids.get(dep_name).unwrap();
+    let index = workspace_index_from_state(state);
+    workspace_candidate_text_take(index, pkg, candidates_for(index, pkg, workspace_version_set_clauses_for_pkg(state, pkg)), 12, "")
+}
+
+fn workspace_candidate_text_take(index: Index, pkg: Int, candidates: [Version], limit: Int, out: String) -> String {
+    match candidates.len() == 0 {
+        true => out,
+        false => match limit == 0 {
+            true => out,
+            false => workspace_candidate_text_tuple(index, pkg, candidates.pop(), limit, out),
+        },
+    }
+}
+
+fn workspace_candidate_text_tuple(index: Index, pkg: Int, popped: (Version, [Version]), limit: Int, out: String) -> String {
+    workspace_candidate_text_take(index, pkg, popped.1, limit - 1, append_selected_name(out, selected_version_text(index, pkg, popped.0)))
+}
+
 pub fn workspace_member_only_first_member_exact_candidate_count(workspace: Tree, workspace_root: Path) -> Int {
     let state = workspace_member_only_index_state_limit(workspace, workspace_root, 1);
     let member_pkg = state.packages.pop().0;
@@ -641,6 +675,59 @@ pub fn workspace_member_only_first_member_exact_candidate_count(workspace: Tree,
         member_pkg,
         VersionSet::from_req("=" + workspace_state_version_text(state, member_pkg)),
     ).len()
+}
+
+fn workspace_version_set_clauses_for_pkg(state: WorkspaceIndexState, pkg: Int) -> VersionSet {
+    workspace_version_set_clauses_for_pkg_from(state, pkg, state.clause_ids, VersionSet::from_req("*"))
+}
+
+fn workspace_version_set_clauses_for_pkg_from(state: WorkspaceIndexState, pkg: Int, clause_ids: [Int], allowed: VersionSet) -> VersionSet {
+    match clause_ids.len() == 0 {
+        true => allowed,
+        false => workspace_version_set_clauses_for_pkg_tuple(state, pkg, clause_ids.pop(), allowed),
+    }
+}
+
+fn workspace_version_set_clauses_for_pkg_tuple(state: WorkspaceIndexState, pkg: Int, popped: (Int, [Int]), allowed: VersionSet) -> VersionSet {
+    let next = workspace_version_set_clause_for_pkg(state, pkg, popped.0, allowed);
+    workspace_version_set_clauses_for_pkg_from(state, pkg, popped.1, next)
+}
+
+fn workspace_version_set_clause_for_pkg(state: WorkspaceIndexState, pkg: Int, clause_id: Int, allowed: VersionSet) -> VersionSet {
+    match state.consequent_tags.get(clause_id).unwrap() == "version_set" && state.consequent_pkgs.get(clause_id).unwrap() == pkg {
+        true => allowed.intersect(state.consequent_version_sets.get(clause_id).unwrap()),
+        false => allowed,
+    }
+}
+
+fn workspace_version_set_req_text_for_pkg(state: WorkspaceIndexState, pkg: Int) -> String {
+    workspace_version_set_req_text_for_pkg_from(state, pkg, state.clause_ids, "")
+}
+
+fn workspace_version_set_req_text_for_pkg_from(state: WorkspaceIndexState, pkg: Int, clause_ids: [Int], out: String) -> String {
+    match clause_ids.len() == 0 {
+        true => out,
+        false => workspace_version_set_req_text_for_pkg_tuple(state, pkg, clause_ids.pop(), out),
+    }
+}
+
+fn workspace_version_set_req_text_for_pkg_tuple(state: WorkspaceIndexState, pkg: Int, popped: (Int, [Int]), out: String) -> String {
+    let next = workspace_version_set_req_text_clause_for_pkg(state, pkg, popped.0, out);
+    workspace_version_set_req_text_for_pkg_from(state, pkg, popped.1, next)
+}
+
+fn workspace_version_set_req_text_clause_for_pkg(state: WorkspaceIndexState, pkg: Int, clause_id: Int, out: String) -> String {
+    match state.consequent_tags.get(clause_id).unwrap() == "version_set" && state.consequent_pkgs.get(clause_id).unwrap() == pkg {
+        true => append_req_text(out, state.consequent_req_texts.get(clause_id).unwrap()),
+        false => out,
+    }
+}
+
+fn append_req_text(out: String, req: String) -> String {
+    match out == "" {
+        true => req,
+        false => out + "\n" + req,
+    }
 }
 
 pub fn workspace_member_root_clause_count(workspace: Tree) -> Int {
@@ -704,8 +791,7 @@ pub fn workspace_member_direct_sparse_solve_selected_versions_text_limit(workspa
 }
 
 fn solve_selected_versions_text_from_workspace_state(state: WorkspaceIndexState, problem: Problem, target: String) -> String {
-    let result = solve(workspace_index_from_state(state), problem, target);
-    selected_workspace_state_versions_text_from(state, state.packages, result.selected, "")
+    solve_selected_versions_text(workspace_index_from_state(state), problem, target)
 }
 
 fn selected_workspace_state_versions_text_from(state: WorkspaceIndexState, packages: [Int], selected: Map<Int, Version>, out: String) -> String {
@@ -721,7 +807,7 @@ fn selected_workspace_state_versions_text_tuple(state: WorkspaceIndexState, popp
 
 fn selected_workspace_state_versions_text_one(state: WorkspaceIndexState, pkg: Int, rest: [Int], selected: Map<Int, Version>, out: String) -> String {
     let next = match selected.get(pkg) {
-        Some(_) => append_selected_workspace_state_version(out, state.names.get(pkg).unwrap(), workspace_state_version_text(state, pkg)),
+        Some(version) => append_selected_workspace_state_version(out, state.names.get(pkg).unwrap(), workspace_selected_version_text(state, pkg, version)),
         None => out,
     };
     selected_workspace_state_versions_text_from(state, rest, selected, next)
@@ -753,6 +839,29 @@ fn workspace_state_version_text_one(state: WorkspaceIndexState, pkg: Int, versio
     match state.version_pkgs.get(version_id).unwrap() == pkg {
         true => state.version_values.get(version_id).unwrap(),
         false => workspace_state_version_text_from(state, pkg, rest),
+    }
+}
+
+fn workspace_selected_version_text(state: WorkspaceIndexState, pkg: Int, selected: Version) -> String {
+    workspace_selected_version_text_from(state, pkg, selected, state.version_ids)
+}
+
+fn workspace_selected_version_text_from(state: WorkspaceIndexState, pkg: Int, selected: Version, version_ids: [Int]) -> String {
+    match version_ids.len() == 0 {
+        true => "",
+        false => workspace_selected_version_text_tuple(state, pkg, selected, version_ids.pop()),
+    }
+}
+
+fn workspace_selected_version_text_tuple(state: WorkspaceIndexState, pkg: Int, selected: Version, popped: (Int, [Int])) -> String {
+    workspace_selected_version_text_one(state, pkg, selected, popped.0, popped.1)
+}
+
+fn workspace_selected_version_text_one(state: WorkspaceIndexState, pkg: Int, selected: Version, version_id: Int, rest: [Int]) -> String {
+    let row_text = state.version_values.get(version_id).unwrap();
+    match state.version_pkgs.get(version_id).unwrap() == pkg && VersionSet::from_req("=" + row_text).contains(selected) {
+        true => row_text,
+        false => workspace_selected_version_text_from(state, pkg, selected, rest),
     }
 }
 

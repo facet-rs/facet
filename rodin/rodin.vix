@@ -485,16 +485,7 @@ fn filter_allowed(versions: [Version], allowed: VersionSet, out: [Version]) -> [
 }
 
 fn candidates_for(index: Index, pkg: Int, allowed: VersionSet) -> [Version] {
-    reverse_versions(candidates_from_rows(index, pkg, allowed, index.version_ids, []), [])
-}
-
-fn reverse_versions(versions: [Version], out: [Version]) -> [Version] {
-    match versions.len() == 0 {
-        true => out,
-        false => match versions.pop() {
-            popped => reverse_versions(popped.1, out.push(popped.0)),
-        },
-    }
+    candidates_from_rows(index, pkg, allowed, index.version_ids, [])
 }
 
 fn candidates_from_rows(index: Index, pkg: Int, allowed: VersionSet, version_ids: [Int], out: [Version]) -> [Version] {
@@ -502,7 +493,7 @@ fn candidates_from_rows(index: Index, pkg: Int, allowed: VersionSet, version_ids
         true => out,
         false => match version_ids.pop() {
             popped => match candidate_row_allowed(index, pkg, allowed, popped.0) {
-                true => candidates_from_rows(index, pkg, allowed, popped.1, out.push(candidate_row_version(index, popped.0))),
+                true => candidates_from_rows(index, pkg, allowed, popped.1, out).push(candidate_row_version(index, popped.0)),
                 false => candidates_from_rows(index, pkg, allowed, popped.1, out),
             },
         },

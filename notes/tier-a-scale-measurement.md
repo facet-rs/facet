@@ -11,7 +11,7 @@ Answer after the prerelease/root-clause fix: **the composed path now produces a 
 - The explicit ignored scale probe still builds the full member-only index: **145 / 145 workspace members -> 146 package domains + 290 root clauses**.
 - Tiny composed solves now pass for both stable and prerelease workspace members: **1 / 1 workspace member selected** through manifest tree -> Rodin `Index`/`Problem` -> `solve`, including `facet 0.50.0-rc.5`.
 - Real-workspace full solve remains **64 / 863 Cargo-resolved package-version rows diffed against Cargo.lock** at the largest measured member-only ring. The machine-lane `molten handle -1` failure is gone, and the root prerelease empty-solve is fixed; the 145-member solve hit the wall-clock frontier at 180.020s.
-- The first small direct-deps sparse ring now runs: **8 workspace members + 16 direct crates.io sparse files -> 25 package domains, 22 clauses, 10 selected rows**, diffed against `Cargo.lock` with **8 exact matches and 1 version-skew package**.
+- The first small direct-deps sparse ring now runs: **8 workspace members + 16 direct crates.io sparse files -> 25 package domains, 22 clauses, 10 selected rows**, diffed against `Cargo.lock` with **9 exact matches, 0 version-skew packages, and 1 expected pseudo-root solve-only row**.
 - Manifest ingestion at real scale remains **closed for the direct-dependency oracle**. Current tests assert 145 workspace members, 1,124 direct deps, 55 cfg/target deps, 760 legacy allowlist failures retired, and zero name/kind/target mismatches across 16 shards.
 - Unit derivation at real scale: **0 / 881 Cargo unit-graph units measured through recursive `unit()` at real scale**, for the same missing composition plus the still-pinned `ResolvedUnit` adaptation gap.
 - Largest fully wired solve-to-unit path: **4 packages / 4 units** in the `lock_graph` fixture, verified against Cargo `--unit-graph`.
@@ -39,7 +39,7 @@ Prepared diff surfaces:
 | Solve `(package, version)` vs real `Cargo.lock` | real member-only ring 16 | 16 / 17 solve rows | 1 solve-only pseudo-root; 847 Cargo-selected lock rows not in ring 16; 30 lock residue rows | `/tmp/tier-a-scale-measurement/real-ring-16-solve-vs-lock-summary.tsv` |
 | Solve `(package, version)` vs real `Cargo.lock` | real member-only ring 32 | 32 / 33 solve rows | 1 solve-only pseudo-root; 831 Cargo-selected lock rows not in ring 32; 30 lock residue rows | `/tmp/tier-a-scale-measurement/real-ring-32-solve-vs-lock-summary.tsv` |
 | Solve `(package, version)` vs real `Cargo.lock` | real member-only ring 64 | 64 / 65 solve rows | 1 solve-only pseudo-root; 799 Cargo-selected lock rows not in ring 64; 30 lock residue rows | `/tmp/tier-a-scale-measurement/real-ring-64-solve-vs-lock-summary.tsv` |
-| Solve `(package, version)` vs real `Cargo.lock` | real member+direct sparse ring 8 | 8 / 10 solve rows | 1 solve-only pseudo-root; 1 version skew: `tokio 0.0.0` vs Cargo.lock `tokio 1.52.3`; 855 Cargo-selected lock rows not in ring 8; 30 lock residue rows | `/tmp/tier-a-scale-measurement/real-direct-ring-8-solve-vs-lock-summary.tsv` |
+| Solve `(package, version)` vs real `Cargo.lock` | real member+direct sparse ring 8 | 9 / 10 solve rows | 1 solve-only pseudo-root; 0 version skew; 854 Cargo-selected lock rows not in ring 8; 30 lock residue rows | `/tmp/tier-a-scale-measurement/real-direct-ring-8-solve-vs-lock-summary.tsv` |
 | Derived units vs Cargo `--unit-graph` | `lock_graph` fixture | 4 / 4 units, 3 / 3 edges | 0 machine-only, 0 Cargo-only | `/tmp/tier-a-scale-measurement/lock-fixture-unit-diff-summary.tsv` |
 
 After-run ring table:
@@ -167,7 +167,7 @@ wordfreq 0.2.3
 | Registry selected rows | 718 selected / 748 locked | 0 registry rows in member-only ring | 0 | 718 unmeasured selected registry rows |
 | Lock residue relative to Cargo metadata | 30 | n/a | n/a | 30 lock-only rows |
 | Workspace member-only solve ring | 145 members | 64 bounded members solved and diffed; full 145-member index measured explicitly; tiny stable/prerelease solves pass | 64 | 81 workspace members not yet solved in a completed ring |
-| Workspace member+direct sparse solve ring | 8 members + direct sparse candidates | 10 solve rows | 8 | 1 version-skew row; 1 pseudo-root row; remaining Cargo rows outside the small ring |
+| Workspace member+direct sparse solve ring | 8 members + direct sparse candidates | 10 solve rows | 9 | 1 pseudo-root row; remaining Cargo rows outside the small ring |
 
 Full-workspace divergence categories cannot be assigned yet, because the largest rodin-selected real-workspace output is the member-only ring 64, not the full 863-row Cargo closure. At the measured ring, there is no version skew: all 64 real member rows match `Cargo.lock`; the only solve-only row is the pseudo workspace root.
 
@@ -175,11 +175,18 @@ First direct sparse divergence table:
 
 | Category | Count | Evidence | Current read |
 |---|---:|---|---|
-| exact solve rows matching Cargo.lock | 8 | `facet-showcase`, `peer-server`, `strid`, `strid-examples`, `strid-macros`, `vox-phon`, `wasm-browser-tests`, `wasm-inprocess-tests` | all workspace members in the 8-member ring match lock versions |
+| exact solve rows matching Cargo.lock | 9 | `facet-showcase`, `peer-server`, `strid`, `strid-examples`, `strid-macros`, `tokio`, `vox-phon`, `wasm-browser-tests`, `wasm-inprocess-tests` | all workspace members in the 8-member ring plus the first direct crates.io package match lock versions |
 | solve-only pseudo-root | 1 | `__workspace__ 0.0.0` | harness root sentinel, expected |
-| version skew | 1 | Rodin selects `tokio 0.0.0`; Cargo.lock selects `tokio 1.52.3` | solver/candidate ordering divergence: the pinned sparse file has 191 non-yanked `tokio` rows, first `0.0.0`, last `1.52.3`; the direct manifest edge is `peer-server -> tokio = { workspace = true, features = [...] }` |
-| Cargo-selected rows outside the ring | 855 | lock rows selected by metadata but not selected by this ring | expected small-ring residue |
+| version skew | 0 | Rodin now renders/selects `tokio 1.52.3`, matching Cargo.lock | the emitted direct `version_set` req was `1`, not wildcard; narrowing was intact |
+| Cargo-selected rows outside the ring | 854 | lock rows selected by metadata but not selected by this ring | expected small-ring residue |
 | Cargo.lock residue not selected by metadata | 30 | same lock-vs-metadata residue as the full oracle | expected lock residue |
+
+Tokio skew diagnosis:
+
+| Half Checked | Result | Evidence |
+|---|---|---|
+| requirement narrowing | intact | `real-direct-ring-8-tokio-narrowing.tsv` records `tokio_emitted_req = 1`; the direct bridge did not emit `*` |
+| candidate preference / sparse row order | fixed | sparse JSONL rows are now registered into the `Index` in file order; Rodin preserves that ascending candidate order so Vix back-pop tries the newest admissible row first. `real-direct-ring-8-tokio-candidates.txt` starts with `1.52.3`, and the selected row is `tokio 1.52.3` |
 
 Current source frontier:
 
@@ -195,12 +202,12 @@ Categorization for the current resolve frontier:
 | Workspace manifest-to-Index composition, bounded | 64 / 145 workspace members solved by default; stable/prerelease tiny solves pass | new `workspace_member_only_*` entrypoints |
 | Workspace manifest-to-Index composition, full index | 145 / 145 workspace members index-built explicitly | `real_workspace_member_only_index_builds_all_members`: 146 package domains, 290 root clauses, 79.198s |
 | Workspace manifest-to-Index composition, full solve | 64 / 863 Cargo-resolved package-version rows diffed | member-only solve rings pass through 64; ring 64 diff table has 64 matches, 0 version skew; ring 145 timed out at 180.020s |
-| Workspace member+direct sparse composition | 8-member direct sparse ring solved and diffed | 16 direct sparse files, 989 sparse rows, 25 packages, 22 clauses, 10 solve rows; first version skew is `tokio 0.0.0` vs `1.52.3` |
+| Workspace member+direct sparse composition | 8-member direct sparse ring solved and diffed | 16 direct sparse files, 989 sparse rows, 25 packages, 22 clauses, 10 solve rows; 9 matches, 0 version skew |
 | Sparse-index live path not generic in vix | 718 registry rows need lookup/snapshot composition | snapshot fetched/pinned externally; direct sparse ring currently feeds JSONL rows from the harness rather than vix fetching sparse paths itself |
 | Optional/dev/features in sparse bridge incomplete | 61 workspace feature sections, 299 cfg-gated dep-kinds in metadata; registry feature closure unmeasured | `bridge_dep` skips optional and dev; feature maps are present but not populated by sparse rows |
 | Cargo.lock residue | 30 lock-only rows | lock-vs-metadata diff above |
 | Index snapshot skew | not measured | no new live snapshot was fetched; used local Cargo cache/oracles only |
-| Solver behavior divergence | 1 first direct sparse skew | small-ring direct sparse solve selects `tokio 0.0.0` while Cargo.lock selects `tokio 1.52.3` |
+| Solver behavior divergence | 0 in the measured ring-8 direct sparse table | the prior `tokio 0.0.0` row was not a wildcard requirement; after preserving sparse row order and making candidate search try the newest admissible row first, ring 8 has no version skew |
 
 Performance:
 
@@ -214,7 +221,7 @@ Performance:
 | Vix full member-only index ignored probe | 79.198s for 145-member index probe | not captured |
 | Vix real member-only solve rings after prerelease fix | ring 1: 13.896s; 2: 13.734s; 4: 14.152s; 8: 14.499s; 16: 16.580s; alias 16: 16.472s; ring-16 lock diff: 16.598s | all passed in the script run; max RSS not captured |
 | Vix widened member-only lock diffs | isolated: ring 32 10.636s, ring 64 27.594s; default script: ring 32 8.304s, ring 64 21.724s; ring 145 timed out at 180.020s | 32 and 64 passed with 0 version skew; 145 stopped before direct-dep expansion |
-| Vix direct sparse lock diff ring 8 | 51.797s; latest scoped rerun 53.682s | 989 sparse rows from 16 direct crates.io sparse files; 8 matches, 1 version skew |
+| Vix direct sparse lock diff ring 8 | 51.797s before fix; latest fixed rerun 57.496s (129.839s on the first post-clean rerun) | 989 sparse rows from 16 direct crates.io sparse files; now 9 matches, 0 version skew |
 | Vix member-only ring 32, interpreter lane | 6.539s | default `Machine::load`/measurement lane is `Lane::Interp` |
 | Vix member-only ring 32, JIT lane | 6.577s | near parity with interpreter; host-call/memo/load trunk dominates this workload |
 | Vix tiny composed solve sentinel | included in `projected_member_manifests_are_read_from_granted_root`, 3.199s | not captured |
@@ -286,7 +293,7 @@ Results:
 - `real_workspace_member_only_solve_ring_lock_diff_32_interp_lane`: 1 passed; paired lane measurement 6.539s; latest scoped rerun 8.294s; wrote `real-ring-32-interp-*` lock-diff artifacts.
 - `real_workspace_member_only_solve_ring_lock_diff_32_jit_lane`: 1 passed; 6.577s; wrote `real-ring-32-jit-*` lock-diff artifacts.
 - `pinned_sparse_row_parses_in_cargo_manifest_module`: 1 passed; proves the `cargo_manifest.vix` sparse JSONL row parser over a real pinned `blake3` sparse row.
-- `real_workspace_member_direct_sparse_solve_ring_lock_diff_8`: 1 passed; latest scoped rerun 53.682s; ring 8 direct sparse table reports 989 sparse rows, 25 packages, 22 clauses, 10 solve rows, 8 matches, 1 version skew, 1 pseudo-root.
+- `real_workspace_member_direct_sparse_solve_ring_lock_diff_8`: 1 passed; latest scoped rerun 57.496s; ring 8 direct sparse table reports 989 sparse rows, 25 packages, 22 clauses, 10 solve rows, 9 matches, 0 version skew, 1 pseudo-root; `tokio_emitted_req = 1`.
 - `tiny_workspace_prerelease_member_solve_selects_member`: 1 passed; exact workspace-member root pin selects `facet 0.50.0-rc.5`.
 - `solution_walk_derives_units_from_rodin_and_matches_cargo_oracle`: 1 passed, 217 skipped; 13.341s in the latest script run; diff table reports 4 machine units, 4 Cargo units, 4 unit matches, 3 machine edges, 3 Cargo edges, 3 edge matches, and zero machine-only/Cargo-only units or edges.
 - `real_workspace_member_only_index_builds_all_members`: 1 passed, 208 skipped; 79.198s for 146 package domains and 290 root clauses.
@@ -298,9 +305,9 @@ Gate status from the gap-closer pass:
 | Gate | Result |
 |---|---|
 | `git fetch origin rodin && git rebase origin/rodin` | completed; picked up `c868cd51a` molten sentinel fix |
-| `cargo check --workspace --all-targets` | passed; latest rerun 3.03s |
-| `cargo nextest run -p vix --features real-process` | passed; latest rerun 206 passed, 23 skipped, 72.392s |
-| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | passed; latest rerun 0.80s |
+| `cargo check --workspace --all-targets` | passed; latest rerun 2m47s after `cargo clean` |
+| `cargo nextest run -p vix --features real-process` | passed; latest rerun 206 passed, 23 skipped, 96.055s |
+| `cargo clippy --workspace --all-targets --all-features -- -D warnings` | passed; latest rerun 1m12s |
 | `git diff --check` | passed latest rerun |
 
 Additional current-pass probes:
@@ -346,16 +353,15 @@ Largest reachable subgraph today:
 - Cargo oracle scale: 863 package-version rows, 881 units.
 - Vix real-manifest ingestion/projection scale: 145 workspace members and 1,124 direct deps, sharded.
 - Vix composed workspace-member solve ring: 64 / 145 members solved and diffed; 145 / 145 members still measured as an explicit index-construction probe; stable and prerelease 1 / 1 tiny member solves pass.
-- Vix composed member+direct sparse solve ring: 8 workspace members plus their direct crates.io sparse rows solved and diffed; first divergence is candidate choice for `tokio`.
+- Vix composed member+direct sparse solve ring: 8 workspace members plus their direct crates.io sparse rows solved and diffed; first `tokio` divergence is closed.
 - Vix solve-to-unit scale: 4 package fixture, Cargo unit-graph matched.
 
-The next ring is no longer blocked by the prerelease/root-clause empty solve. The current frontier is runtime growth before full member-only ring completion plus the first direct sparse solver semantic divergence:
+The next ring is no longer blocked by the prerelease/root-clause empty solve, and the first direct sparse `tokio` skew is closed. The current frontier is runtime growth before full member-only ring completion and before widening direct sparse rings:
 
 1. Make the 145-member member-only solve complete under the watchdog; the latest run timed out at 180.020s after rings 32 and 64 passed.
-2. Fix or classify the first direct sparse solver divergence: Cargo selects the newest admissible `tokio 1.52.3`, while Rodin currently selects the first admissible sparse row, `tokio 0.0.0`.
-3. Widen the direct sparse ring beyond 8 once the perf lane lands the off-CPU/module-load fixes.
-4. Compose the pinned sparse snapshot rows into the workspace `Index`, replacing the harness-fed JSONL surface with vix-side sparse path lookup.
-5. Emit `UnitTargetTable` from real manifests using join-only `Path` provenance, then rerun `crate_solution_*` against the full Cargo unit graph.
+2. Widen the direct sparse ring beyond 8 once the perf lane lands the off-CPU/module-load fixes.
+3. Compose the pinned sparse snapshot rows into the workspace `Index`, replacing the harness-fed JSONL surface with vix-side sparse path lookup.
+4. Emit `UnitTargetTable` from real manifests using join-only `Path` provenance, then rerun `crate_solution_*` against the full Cargo unit graph.
 
 Until those exist, the numeric answer remains:
 
@@ -363,7 +369,7 @@ Until those exist, the numeric answer remains:
 resolve match at real scale: 64 / 863 selected Cargo packages measured
 unit-graph match at real scale: 0 / 881 Cargo units measured
 composed workspace-member solve ring: 64 / 145 members solved and diffed; 145-member solve timed out at 180.020s
-composed member+direct sparse ring: 8 members + 16 direct sparse files solved; 8 exact matches, 1 version skew, 1 pseudo-root
+composed member+direct sparse ring: 8 members + 16 direct sparse files solved; 9 exact matches, 0 version skew, 1 pseudo-root
 composed workspace-member full index: 145 / 145 members measured explicitly
 composed tiny workspace solve: 1 / 1 stable member selected; 1 / 1 prerelease member selected
 largest solve-to-unit match: 4 / 4 fixture units

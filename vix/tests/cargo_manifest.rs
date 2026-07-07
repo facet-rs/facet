@@ -770,12 +770,40 @@ fn real_workspace_member_direct_sparse_solve_ring_lock_diff(limit: i64) -> Resul
         "workspace_member_direct_sparse_index_clause_count_limit",
         vec![workspace, root, sparse_jsonl, limit],
     )?;
+    let tokio = intern_string(&mut machine, "tokio")?;
+    let tokio_req_text = machine.demand_i64(
+        "workspace_member_direct_sparse_dep_req_text_limit",
+        vec![workspace, root, sparse_jsonl, limit, tokio],
+    )?;
+    let tokio_req_text = rendered_string(
+        &machine,
+        "workspace_member_direct_sparse_dep_req_text_limit",
+        tokio_req_text,
+    )?;
+    let tokio_candidate_text = machine.demand_i64(
+        "workspace_member_direct_sparse_dep_candidate_text_limit",
+        vec![workspace, root, sparse_jsonl, limit, tokio],
+    )?;
+    let tokio_candidate_text = rendered_string(
+        &machine,
+        "workspace_member_direct_sparse_dep_candidate_text_limit",
+        tokio_candidate_text,
+    )?;
     write_tier_a_artifact(
         &format!("real-direct-ring-{limit}-index-counts.tsv"),
         &format!(
             "metric\tcount\nsparse_rows\t{sparse_row_count}\npackages\t{package_count}\nclauses\t{clause_count}\n"
         ),
     )?;
+    write_tier_a_artifact(
+        &format!("real-direct-ring-{limit}-tokio-narrowing.tsv"),
+        &format!("metric\tvalue\ntokio_emitted_req\t{tokio_req_text}\n"),
+    )?;
+    write_tier_a_artifact(
+        &format!("real-direct-ring-{limit}-tokio-candidates.txt"),
+        &tokio_candidate_text,
+    )?;
+    assert_eq!(tokio_req_text, "1", "direct sparse ring {limit}");
 
     let selected = machine.demand_i64(
         "workspace_member_direct_sparse_solve_selected_versions_text_limit",
