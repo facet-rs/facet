@@ -29,6 +29,38 @@ struct CargoTargetShape {
     link_file: String,
 }
 
+struct CargoProfileSpec {
+    opt_level: String,
+    debuginfo: String,
+    debug_assertions: String,
+    overflow_checks: String,
+    panic: String,
+    lto: String,
+    codegen_units: String,
+    strip: String,
+}
+
+struct CargoProfileData {
+    dev: CargoProfileSpec,
+    release: CargoProfileSpec,
+    dev_build_override: CargoProfileSpec,
+    release_build_override: CargoProfileSpec,
+    dev_package: CargoProfileSpec,
+    release_package: CargoProfileSpec,
+}
+
+struct CargoResolvedProfile {
+    name: String,
+    opt_level: String,
+    debuginfo: String,
+    debug_assertions: String,
+    overflow_checks: String,
+    panic: String,
+    lto: String,
+    codegen_units: String,
+    strip: String,
+}
+
 fn manifest_doc(manifest: Tree) -> Doc {
     toml(manifest / p"Cargo.toml")
 }
@@ -105,6 +137,26 @@ fn doc_as_bool(doc: Doc) -> Bool {
 
 fn doc_as_strings(doc: Doc) -> [String] {
     doc
+}
+
+fn bool_string(value: Bool) -> String {
+    match value {
+        true => "true",
+        false => "false",
+    }
+}
+
+fn int_string(value: Int) -> String {
+    match value {
+        0 => "0",
+        1 => "1",
+        2 => "2",
+        3 => "3",
+        4 => "4",
+        16 => "16",
+        256 => "256",
+        _ => "0",
+    }
 }
 
 fn crate_name(package_name: String) -> String {
@@ -441,6 +493,229 @@ fn bin_target(manifest: Tree) -> CargoTargetShape {
 
 pub fn bin_target_shape(manifest: Tree) -> CargoTargetShape {
     bin_target(manifest)
+}
+
+fn empty_profile_spec() -> CargoProfileSpec {
+    CargoProfileSpec {
+        opt_level: "",
+        debuginfo: "",
+        debug_assertions: "",
+        overflow_checks: "",
+        panic: "",
+        lto: "",
+        codegen_units: "",
+        strip: "",
+    }
+}
+
+fn profile_string_field(profile: Doc, key: String) -> String {
+    match profile.get(key) {
+        Some(value) => doc_as_string(value),
+        None => "",
+    }
+}
+
+fn profile_int_field(profile: Doc, key: String) -> String {
+    match profile.get(key) {
+        Some(value) => int_string(value),
+        None => "",
+    }
+}
+
+fn profile_bool_field(profile: Doc, key: String) -> String {
+    match profile.get(key) {
+        Some(value) => bool_string(value),
+        None => "",
+    }
+}
+
+fn profile_spec_from_doc(profile: Doc) -> CargoProfileSpec {
+    CargoProfileSpec {
+        opt_level: profile_int_field(profile, "opt-level"),
+        debuginfo: profile_int_field(profile, "debug"),
+        debug_assertions: profile_bool_field(profile, "debug-assertions"),
+        overflow_checks: profile_bool_field(profile, "overflow-checks"),
+        panic: profile_string_field(profile, "panic"),
+        lto: profile_string_field(profile, "lto"),
+        codegen_units: profile_int_field(profile, "codegen-units"),
+        strip: profile_string_field(profile, "strip"),
+    }
+}
+
+fn profile_spec(workspace: Tree, name: String) -> CargoProfileSpec {
+    match manifest_doc(workspace).get("profile") {
+        Some(profiles) => match profiles.get(name) {
+            Some(profile) => profile_spec_from_doc(profile),
+            None => empty_profile_spec(),
+        },
+        None => empty_profile_spec(),
+    }
+}
+
+fn profile_build_override_spec(workspace: Tree, name: String) -> CargoProfileSpec {
+    match manifest_doc(workspace).get("profile") {
+        Some(profiles) => match profiles.get(name) {
+            Some(profile) => match profile.get("build-override") {
+                Some(build_override) => profile_spec_from_doc(build_override),
+                None => empty_profile_spec(),
+            },
+            None => empty_profile_spec(),
+        },
+        None => empty_profile_spec(),
+    }
+}
+
+fn profile_package_spec(workspace: Tree, name: String, package: String) -> CargoProfileSpec {
+    match manifest_doc(workspace).get("profile") {
+        Some(profiles) => match profiles.get(name) {
+            Some(profile) => match profile.get("package") {
+                Some(packages) => match packages.get(package) {
+                    Some(package_profile) => profile_spec_from_doc(package_profile),
+                    None => empty_profile_spec(),
+                },
+                None => empty_profile_spec(),
+            },
+            None => empty_profile_spec(),
+        },
+        None => empty_profile_spec(),
+    }
+}
+
+pub fn cargo_profiles_for(workspace: Tree, package: String) -> CargoProfileData {
+    CargoProfileData {
+        dev: profile_spec(workspace, "dev"),
+        release: profile_spec(workspace, "release"),
+        dev_build_override: profile_build_override_spec(workspace, "dev"),
+        release_build_override: profile_build_override_spec(workspace, "release"),
+        dev_package: profile_package_spec(workspace, "dev", package),
+        release_package: profile_package_spec(workspace, "release", package),
+    }
+}
+
+fn dev_profile_defaults() -> CargoResolvedProfile {
+    CargoResolvedProfile {
+        name: "dev",
+        opt_level: "0",
+        debuginfo: "2",
+        debug_assertions: "true",
+        overflow_checks: "true",
+        panic: "unwind",
+        lto: "false",
+        codegen_units: "",
+        strip: "none",
+    }
+}
+
+fn release_profile_defaults() -> CargoResolvedProfile {
+    CargoResolvedProfile {
+        name: "release",
+        opt_level: "3",
+        debuginfo: "0",
+        debug_assertions: "false",
+        overflow_checks: "false",
+        panic: "unwind",
+        lto: "false",
+        codegen_units: "16",
+        strip: "none",
+    }
+}
+
+fn profile_defaults(name: String) -> CargoResolvedProfile {
+    match name == "release" {
+        true => release_profile_defaults(),
+        false => dev_profile_defaults(),
+    }
+}
+
+fn host_profile_defaults(profile: CargoResolvedProfile) -> CargoProfileSpec {
+    CargoProfileSpec {
+        opt_level: "",
+        debuginfo: "0",
+        debug_assertions: "",
+        overflow_checks: "",
+        panic: "",
+        lto: "",
+        codegen_units: "",
+        strip: "",
+    }
+}
+
+fn profile_apply(base: CargoResolvedProfile, spec: CargoProfileSpec) -> CargoResolvedProfile {
+    CargoResolvedProfile {
+        name: base.name,
+        opt_level: nonempty_or(spec.opt_level, base.opt_level),
+        debuginfo: nonempty_or(spec.debuginfo, base.debuginfo),
+        debug_assertions: nonempty_or(spec.debug_assertions, base.debug_assertions),
+        overflow_checks: nonempty_or(spec.overflow_checks, base.overflow_checks),
+        panic: nonempty_or(spec.panic, base.panic),
+        lto: nonempty_or(spec.lto, base.lto),
+        codegen_units: nonempty_or(spec.codegen_units, base.codegen_units),
+        strip: nonempty_or(spec.strip, base.strip),
+    }
+}
+
+fn nonempty_or(value: String, fallback: String) -> String {
+    match value == "" {
+        true => fallback,
+        false => value,
+    }
+}
+
+fn package_profile_spec(data: CargoProfileData, name: String) -> CargoProfileSpec {
+    match name == "release" {
+        true => data.release_package,
+        false => data.dev_package,
+    }
+}
+
+fn root_profile_spec(data: CargoProfileData, name: String) -> CargoProfileSpec {
+    match name == "release" {
+        true => data.release,
+        false => data.dev,
+    }
+}
+
+fn build_override_profile_spec(data: CargoProfileData, name: String) -> CargoProfileSpec {
+    match name == "release" {
+        true => data.release_build_override,
+        false => data.dev_build_override,
+    }
+}
+
+fn unit_uses_host_profile(unit_kind: String) -> Bool {
+    match unit_kind == "build-script" {
+        true => true,
+        false => unit_kind == "build-dependency",
+    }
+}
+
+fn unit_uses_build_override(unit_kind: String) -> Bool {
+    match unit_kind == "proc-macro" {
+        true => true,
+        false => unit_uses_host_profile(unit_kind),
+    }
+}
+
+pub fn resolved_profile(data: CargoProfileData, package: String, unit_kind: String, name: String) -> CargoResolvedProfile {
+    let base = profile_apply(profile_defaults(name), root_profile_spec(data, name));
+    let host_base = match unit_uses_host_profile(unit_kind) {
+        true => profile_apply(base, host_profile_defaults(base)),
+        false => base,
+    };
+    let build_override = match unit_uses_build_override(unit_kind) {
+        true => profile_apply(host_base, build_override_profile_spec(data, name)),
+        false => host_base,
+    };
+
+    // Cargo's Profiles reference says build-override covers build scripts, proc
+    // macros, and their dependencies, and that named package overrides take precedence.
+    // The unit-graph oracle exposes debuginfo=0 host defaults for build scripts/deps;
+    // proc macros still receive explicit build-override settings.
+    profile_apply(build_override, package_profile_spec(data, name))
+}
+
+pub fn resolved_profile_for(workspace: Tree, package: String, unit_kind: String, name: String) -> CargoResolvedProfile {
+    resolved_profile(cargo_profiles_for(workspace, package), package, unit_kind, name)
 }
 
 pub fn target_shapes_array_gap() -> String {
