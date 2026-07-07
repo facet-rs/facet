@@ -7009,10 +7009,8 @@ where
                 ParseEventKind::SequenceEnd | ParseEventKind::StructEnd => {
                     depth = depth.saturating_sub(1);
                 }
-                ParseEventKind::Scalar(_) | ParseEventKind::VariantTag(_) => {
-                    if depth == 1 {
-                        arity += 1;
-                    }
+                ParseEventKind::Scalar(_) | ParseEventKind::VariantTag(_) if depth == 1 => {
+                    arity += 1;
                 }
                 ParseEventKind::FieldKey(_) | ParseEventKind::OrderedField => {}
                 _ => {}
