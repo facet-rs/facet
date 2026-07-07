@@ -791,6 +791,31 @@ fn add_builtin_schemas(builder: &mut SchemaBuilder) -> Result<(), String> {
             ],
         })
     })?;
+    builder.add_builtin_if_absent("Arg", Vec::new(), |builder| {
+        Ok(Kind::Enum {
+            name: "Arg".into(),
+            variants: vec![
+                taxon_variant(
+                    "Str",
+                    0,
+                    VariantPayload::Newtype(builder.named_ref("String")?),
+                ),
+                taxon_variant(
+                    "Path",
+                    1,
+                    VariantPayload::Newtype(builder.named_ref("Path")?),
+                ),
+                taxon_variant(
+                    "Interpolation",
+                    2,
+                    VariantPayload::Struct(vec![
+                        taxon_field("tree", builder.named_ref("Tree")?, true),
+                        taxon_field("subpath", builder.named_ref("Path")?, true),
+                    ]),
+                ),
+            ],
+        })
+    })?;
     builder.add_builtin_if_absent("Doc", Vec::new(), |builder| {
         let doc = builder.named_ref("Doc")?;
         let string = builder.named_ref("String")?;

@@ -40,7 +40,7 @@ use super::driver::{
     STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_CONTAINS_HOST,
     STRING_DEFAULT_HOST, STRING_IS_NUMERIC_HOST, STRING_LOWER_HOST, STRING_PARSE_INT_HOST,
     STRING_SPLIT_HOST, STRING_UPPER_HOST, SemanticComparator, StepMode, StoreHandle, TARGET_HOST,
-    TREE_PROJECT_HOST, VALUE_COMPARE_HOST, VERSION_PARSE_HOST, VERSION_SET_OP_HOST,
+    TREE_PROJECT_HOST, TREE_TEXT_HOST, VALUE_COMPARE_HOST, VERSION_PARSE_HOST, VERSION_SET_OP_HOST,
     VERSION_SET_PARSE_HOST, ValueBundle,
 };
 use crate::ast;
@@ -832,10 +832,12 @@ fn schema_names_for(
         "Rustc".to_string(),
         "Run".to_string(),
         "Flag".to_string(),
+        "Arg".to_string(),
         "Template".to_string(),
         "Sealed".to_string(),
         "Tree".to_string(),
         "Array".to_string(),
+        "Array<Arg>".to_string(),
         "Array<Doc>".to_string(),
         "Array<Path>".to_string(),
         "Map".to_string(),
@@ -2256,6 +2258,7 @@ fn collect_expr_schemas(
             match (call.name.value.as_str(), receiver_schema.as_deref()) {
                 ("with_ext", Some("Path")) => Ok(Some("Path".into())),
                 ("glob", Some("Tree")) => Ok(Some(array_schema("Path"))),
+                ("text", Some("Tree")) => Ok(Some("String".into())),
                 ("insert", Some(schema)) if map_schemas(schema).is_some() => {
                     Ok(Some(schema.to_string()))
                 }
@@ -2477,6 +2480,31 @@ fn add_builtin_descriptors(descriptors: &mut DescriptorMap, schemas: &SchemaTabl
             vec![
                 declared_mem::i64_(schemas.legacy_ref("RunOk")),
                 declared_mem::handle(schemas.legacy_ref("RunOut"), schemas.legacy_ref("Tree")),
+            ],
+        )
+    });
+    descriptors.insert_named_if_absent(schemas, "Arg", || {
+        declared_mem::declared_enum(
+            schemas.legacy_ref("Arg"),
+            vec![
+                vec![declared_mem::handle(
+                    schemas.legacy_ref("ArgStr"),
+                    schemas.legacy_ref("String"),
+                )],
+                vec![declared_mem::handle(
+                    schemas.legacy_ref("ArgPath"),
+                    schemas.legacy_ref("Path"),
+                )],
+                vec![
+                    declared_mem::handle(
+                        schemas.legacy_ref("ArgInterpolationTree"),
+                        schemas.legacy_ref("Tree"),
+                    ),
+                    declared_mem::handle(
+                        schemas.legacy_ref("ArgInterpolationSubpath"),
+                        schemas.legacy_ref("Path"),
+                    ),
+                ],
             ],
         )
     });
@@ -4520,6 +4548,14 @@ impl<'a> FnLowerer<'a> {
                 self.array_len(&receiver)
             }
             "glob" => self.tree_glob(&receiver, call),
+            "text" => {
+                self.expect_schema(&receiver, "Tree")?;
+                let [arg] = call.args.args.as_slice() else {
+                    return Err("Tree.text takes one Path".into());
+                };
+                let path = self.method_arg(arg, Some("Path"))?;
+                self.tree_text(&receiver, &path)
+            }
             "filter" => self.array_filter_exclude(&receiver, call),
             "map" => self.array_map_pending(&receiver, call),
             "collect" => {
@@ -6909,6 +6945,40 @@ impl<'a> FnLowerer<'a> {
         })
     }
 
+    fn tree_text(&mut self, tree: &ValueSlot, path: &ValueSlot) -> Result<ValueSlot, String> {
+        self.expect_schema(tree, "Tree")?;
+        self.expect_schema(path, "Path")?;
+        let input_slot = self.next_input_slot;
+        self.next_input_slot += 1;
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: input_slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: tree.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: path.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: TREE_TEXT_HOST,
+        });
+        let dst = self.alloc();
+        self.code.push(Op::Await {
+            dst,
+            input: u32::try_from(input_slot).expect("input slot fits u32"),
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "String".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
     fn command_block(&mut self, command: &ast::CommandBlock) -> Result<ValueSlot, String> {
         if !matches!(
             command.command.value.as_str(),
@@ -8026,10 +8096,10 @@ fn resolve_variant_segments(
         return Err(format!("path {segments:?} is not a declared variant path"));
     };
     let Some(info) = tables.enums.get(enum_name) else {
-        let Some(index) = builtin_unit_variant_index(enum_name, variant_name) else {
+        let Some((index, shape)) = builtin_variant_shape(enum_name, variant_name) else {
             return Err(format!("unknown enum {enum_name}"));
         };
-        return Ok((enum_name.clone(), index, VariantShape::Unit));
+        return Ok((enum_name.clone(), index, shape));
     };
     let (index, (_, shape)) = info
         .variants
@@ -8041,16 +8111,27 @@ fn resolve_variant_segments(
 }
 
 fn builtin_unit_variant_index(enum_name: &str, variant_name: &str) -> Option<usize> {
+    builtin_variant_shape(enum_name, variant_name)
+        .and_then(|(index, shape)| matches!(shape, VariantShape::Unit).then_some(index))
+}
+
+fn builtin_variant_shape(enum_name: &str, variant_name: &str) -> Option<(usize, VariantShape)> {
     match (enum_name, variant_name) {
-        ("Os", "Linux") => Some(0),
-        ("Os", "Macos") => Some(1),
-        ("Os", "Windows") => Some(2),
-        ("Arch", "X86_64") => Some(0),
-        ("Arch", "Aarch64") => Some(1),
-        ("Arch", "Arm") => Some(2),
-        ("Arch", "Riscv64") => Some(3),
-        ("Arch", "Wasm32") => Some(4),
-        ("Arch", "Unknown") => Some(5),
+        ("Arg", "Str") => Some((0, VariantShape::Tuple(1))),
+        ("Arg", "Path") => Some((1, VariantShape::Tuple(1))),
+        ("Arg", "Interpolation") => Some((
+            2,
+            VariantShape::Record(vec!["tree".to_string(), "subpath".to_string()]),
+        )),
+        ("Os", "Linux") => Some((0, VariantShape::Unit)),
+        ("Os", "Macos") => Some((1, VariantShape::Unit)),
+        ("Os", "Windows") => Some((2, VariantShape::Unit)),
+        ("Arch", "X86_64") => Some((0, VariantShape::Unit)),
+        ("Arch", "Aarch64") => Some((1, VariantShape::Unit)),
+        ("Arch", "Arm") => Some((2, VariantShape::Unit)),
+        ("Arch", "Riscv64") => Some((3, VariantShape::Unit)),
+        ("Arch", "Wasm32") => Some((4, VariantShape::Unit)),
+        ("Arch", "Unknown") => Some((5, VariantShape::Unit)),
         _ => None,
     }
 }

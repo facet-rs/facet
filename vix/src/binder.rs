@@ -354,7 +354,7 @@ fn builtin_module_item(module: &str, name: &str) -> Option<ModuleItem> {
             // builtin fallback to the real `vix` module. This is the migration
             // lever — a type leaves the host-primitive list to become vix std.
             "Int" | "Float" | "String" | "Bool" | "Blob" | "Doc" | "Tree" | "Path" | "Target"
-            | "Map" | "Array" | "Flag" | "Run" | "Os" | "Arch" | "VersionSet" | "Sealed",
+            | "Map" | "Array" | "Arg" | "Flag" | "Run" | "Os" | "Arch" | "VersionSet" | "Sealed",
         ) => ImportKind::Type,
         ("caps", "Cc" | "Ar" | "Rustc") => ImportKind::Type,
         _ => return None,

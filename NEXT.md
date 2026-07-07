@@ -54,10 +54,10 @@ Logged by the day's missions: no `sort` primitive (insertion sort hand-written t
 aggregates-in-containers hit Realized/Pending/molten barriers (workaround: Int ids + flat row
 maps); `Array.pop` surfaces as `Tuple<Int,Array>` (awkward for non-Int); returning `[String]`
 unstable; appended fixture code can't call imported std helpers; dynamic `--extern name={Tree}`
-splicing gap (from the generic walk); no block expressions in match arms; Doc traversal
-ergonomics (optional projection without lowering failure; key enumeration over dependency
-tables — from manifest ingestion); no string→Path / path-join bridge (blocks vix-side
-ResolvedUnit emission).
+splicing gap discharged by built-in `Arg::{Str,Path,Interpolation}` + lazy pending mounts;
+Tree→String text projection landed as `Tree.text(Path)` for single file leaves; no block
+expressions in match arms; Doc traversal ergonomics (optional projection without lowering
+failure; key enumeration over dependency tables — from manifest ingestion).
 
 ## Open investigation: JIT lane slower than interp
 Persists AFTER the compile-cache fix (spike D final: JIT ~2× interp at 10k and 100k tokens,
