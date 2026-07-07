@@ -2205,6 +2205,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "exec-protocol"
+version = "0.10.0-rc.1"
+dependencies = [
+ "blake3",
+ "facet",
+ "vox",
+]
+
+[[package]]
 name = "eyre"
 version = "0.6.12"
 source = "registry+https://github.com/rust-lang/crates.io-index"

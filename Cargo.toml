@@ -8,6 +8,7 @@ members = [
   "vix-fetch",
   "vix-wire",
   "vix-daemon",
+  "exec-protocol",
   # core
   "facet-core",
   "facet",
