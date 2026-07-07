@@ -9109,6 +9109,20 @@ pub fn main() -> Int {
     }
 
     #[test]
+    fn typed_array_pop_preserves_remaining_array_schema() {
+        let src = r#"
+pub fn main() -> Int {
+    let stack: Array<Int> = [0].push(1).push(2);
+    (stack.pop().1).len()
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 2, "{lane:?}");
+        }
+    }
+
+    #[test]
     fn empty_arrays_keep_their_declared_element_identity() {
         let src = r#"
 pub fn ints() -> [Int] { [] }
