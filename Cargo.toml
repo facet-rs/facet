@@ -520,6 +520,50 @@ codegen-units = 1
 [profile.dev.package.backtrace]
 opt-level = 3
 
+# Keep workspace crates in debug mode, but optimize dependency hot paths that
+# dominate vix's debug test runtime.
+[profile.dev.package.aho-corasick]
+opt-level = 3
+
+[profile.dev.package.blake3]
+opt-level = 3
+
+[profile.dev.package.block-buffer]
+opt-level = 3
+
+[profile.dev.package.cpufeatures]
+opt-level = 3
+
+[profile.dev.package.crypto-common]
+opt-level = 3
+
+[profile.dev.package.digest]
+opt-level = 3
+
+[profile.dev.package.generic-array]
+opt-level = 3
+
+[profile.dev.package.hashbrown]
+opt-level = 3
+
+[profile.dev.package.memchr]
+opt-level = 3
+
+[profile.dev.package.miniz_oxide]
+opt-level = 3
+
+[profile.dev.package.regex]
+opt-level = 3
+
+[profile.dev.package.regex-automata]
+opt-level = 3
+
+[profile.dev.package.regex-syntax]
+opt-level = 3
+
+[profile.dev.package.sha2]
+opt-level = 3
+
 [patch.crates-io]
 facet = { path = "facet" }
 facet-core = { path = "facet-core" }
