@@ -157,16 +157,59 @@ pub fn member_manifest_path(workspace_root: Path, member: String) -> String {
     workspace_root.join(member).join("Cargo.toml").to_string()
 }
 
-pub fn workspace_members(workspace: Tree) -> [String] {
+fn workspace_member_entries(workspace: Tree) -> [String] {
     workspace_doc(workspace).get("members").unwrap()
+}
+
+fn workspace_member_glob_pattern(member: String) -> String {
+    member + "/Cargo.toml"
+}
+
+fn workspace_members_from_manifest_paths(paths: [Path], out: [String]) -> [String] {
+    match paths.len() == 0 {
+        true => out,
+        false => workspace_members_from_manifest_paths_tuple(paths.pop(), out),
+    }
+}
+
+fn workspace_members_from_manifest_paths_tuple(popped: (Path, [Path]), out: [String]) -> [String] {
+    let out = workspace_members_from_manifest_paths(popped.1, out);
+    out.push(member_from_manifest_path(popped.0))
+}
+
+fn workspace_members_from_glob(workspace: Tree, member: String, out: [String]) -> [String] {
+    workspace_members_from_manifest_paths(workspace.glob(workspace_member_glob_pattern(member)), out)
+}
+
+fn workspace_members_from_entry(workspace: Tree, member: String, out: [String]) -> [String] {
+    match member.contains("*") {
+        true => workspace_members_from_glob(workspace, member, out),
+        false => out.push(member),
+    }
+}
+
+fn workspace_members_from_entries(workspace: Tree, entries: [String], out: [String]) -> [String] {
+    match entries.len() == 0 {
+        true => out,
+        false => workspace_members_from_entries_tuple(workspace, entries.pop(), out),
+    }
+}
+
+fn workspace_members_from_entries_tuple(workspace: Tree, popped: (String, [String]), out: [String]) -> [String] {
+    let out = workspace_members_from_entries(workspace, popped.1, out);
+    workspace_members_from_entry(workspace, popped.0, out)
+}
+
+pub fn workspace_members(workspace: Tree) -> [String] {
+    workspace_members_from_entries(workspace, workspace_member_entries(workspace), [])
+}
+
+pub fn workspace_member_count(workspace: Tree) -> Int {
+    workspace_members(workspace).len()
 }
 
 pub fn workspace_members_text(workspace: Tree) -> String {
     workspace_members(workspace).join("\n")
-}
-
-pub fn workspace_member_glob_gap() -> String {
-    "Root member globs need iteration over [String]/[Path], but Array.pop still lowers as Tuple<Int,Array>; explicit facet-cc members are enumerated from the root manifest."
 }
 
 pub fn package_of(manifest: Tree, workspace: Tree, manifest_path: String) -> CargoPackage {

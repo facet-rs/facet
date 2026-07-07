@@ -89,6 +89,32 @@ fn member_manifest_paths_are_derived_from_granted_root() -> Result<(), String> {
 }
 
 #[test]
+fn workspace_member_globs_expand_from_root_manifest() -> Result<(), String> {
+    let mut machine = manifest_machine()?;
+    let workspace = intern_tree(
+        &mut machine,
+        Tree::of(&[
+            (
+                "Cargo.toml",
+                r#"[workspace]
+members = ["crates/*", "plain"]
+"#,
+            ),
+            ("crates/a/Cargo.toml", "[package]\nname = \"a\"\n"),
+            ("crates/b/Cargo.toml", "[package]\nname = \"b\"\n"),
+            ("plain/Cargo.toml", "[package]\nname = \"plain\"\n"),
+        ]),
+    )?;
+
+    let members = machine.demand_i64("workspace_members_text", vec![workspace])?;
+    assert_eq!(
+        rendered_string(&machine, "workspace_members_text", members)?,
+        "crates/a\ncrates/b\nplain"
+    );
+    Ok(())
+}
+
+#[test]
 fn dependency_declarations_extract_workspace_and_detailed_forms() -> Result<(), String> {
     let mut machine = manifest_machine()?;
     let workspace = intern_tree(&mut machine, workspace_tree())?;
@@ -180,17 +206,6 @@ fn package_workspace_fields_are_inherited_generically() -> Result<(), String> {
 }
 
 #[test]
-fn workspace_member_glob_gap_is_pinned() -> Result<(), String> {
-    let mut machine = manifest_machine()?;
-    let value = machine.demand_i64("workspace_member_glob_gap", vec![])?;
-    let gap = rendered_string(&machine, "workspace_member_glob_gap", value)?;
-    assert!(gap.contains("Array.pop"), "{gap}");
-    assert!(gap.contains("explicit facet-cc members"), "{gap}");
-
-    Ok(())
-}
-
-#[test]
 fn target_shapes_match_cargo_metadata_for_real_members() -> Result<(), String> {
     let metadata = cargo_metadata_oracle()?;
     let cargo_shapes = metadata.target_shapes_for_real_members()?;
@@ -250,6 +265,14 @@ fn direct_resolved_unit_adapter_gap_is_pinned() -> Result<(), String> {
 #[test]
 fn real_workspace_metadata_baseline_is_counted() -> Result<(), String> {
     let metadata = cargo_metadata_real_workspace()?;
+    let mut machine = manifest_machine()?;
+    let workspace_manifest = std::fs::read_to_string(workspace_root().join("Cargo.toml"))
+        .map_err(|err| err.to_string())?;
+    let workspace = intern_tree(
+        &mut machine,
+        Tree::of(&[("Cargo.toml", &workspace_manifest)]),
+    )?;
+    let vix_member_count = machine.demand_i64("workspace_member_count", vec![workspace])?;
     let workspace_members: BTreeSet<_> = metadata.workspace_members.iter().collect();
     let mut total_oracle_deps = 0usize;
     let mut target_cfg_unmodeled = 0usize;
@@ -276,6 +299,7 @@ fn real_workspace_metadata_baseline_is_counted() -> Result<(), String> {
     }
 
     assert_eq!(workspace_members.len(), 145);
+    assert_eq!(vix_member_count, 145);
     assert_eq!(total_oracle_deps, 1122);
     assert_eq!(before_workspace_allowlist_failures, 760);
     assert_eq!(target_cfg_unmodeled, 55);
@@ -283,25 +307,31 @@ fn real_workspace_metadata_baseline_is_counted() -> Result<(), String> {
     Ok(())
 }
 
-#[test]
-fn real_workspace_dependency_probe_shard_0() -> Result<(), String> {
-    real_workspace_dependency_probe_shard(0, 4)
+macro_rules! real_workspace_dependency_probe_test {
+    ($name:ident, $shard:expr) => {
+        #[test]
+        fn $name() -> Result<(), String> {
+            real_workspace_dependency_probe_shard($shard, 16)
+        }
+    };
 }
 
-#[test]
-fn real_workspace_dependency_probe_shard_1() -> Result<(), String> {
-    real_workspace_dependency_probe_shard(1, 4)
-}
-
-#[test]
-fn real_workspace_dependency_probe_shard_2() -> Result<(), String> {
-    real_workspace_dependency_probe_shard(2, 4)
-}
-
-#[test]
-fn real_workspace_dependency_probe_shard_3() -> Result<(), String> {
-    real_workspace_dependency_probe_shard(3, 4)
-}
+real_workspace_dependency_probe_test!(real_workspace_dependency_probe_shard_0, 0);
+real_workspace_dependency_probe_test!(real_workspace_dependency_probe_shard_1, 1);
+real_workspace_dependency_probe_test!(real_workspace_dependency_probe_shard_2, 2);
+real_workspace_dependency_probe_test!(real_workspace_dependency_probe_shard_3, 3);
+real_workspace_dependency_probe_test!(real_workspace_dependency_probe_shard_4, 4);
+real_workspace_dependency_probe_test!(real_workspace_dependency_probe_shard_5, 5);
+real_workspace_dependency_probe_test!(real_workspace_dependency_probe_shard_6, 6);
+real_workspace_dependency_probe_test!(real_workspace_dependency_probe_shard_7, 7);
+real_workspace_dependency_probe_test!(real_workspace_dependency_probe_shard_8, 8);
+real_workspace_dependency_probe_test!(real_workspace_dependency_probe_shard_9, 9);
+real_workspace_dependency_probe_test!(real_workspace_dependency_probe_shard_10, 10);
+real_workspace_dependency_probe_test!(real_workspace_dependency_probe_shard_11, 11);
+real_workspace_dependency_probe_test!(real_workspace_dependency_probe_shard_12, 12);
+real_workspace_dependency_probe_test!(real_workspace_dependency_probe_shard_13, 13);
+real_workspace_dependency_probe_test!(real_workspace_dependency_probe_shard_14, 14);
+real_workspace_dependency_probe_test!(real_workspace_dependency_probe_shard_15, 15);
 
 fn real_workspace_dependency_probe_shard(shard: usize, shards: usize) -> Result<(), String> {
     let metadata = cargo_metadata_real_workspace()?;
