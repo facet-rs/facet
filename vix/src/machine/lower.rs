@@ -6242,22 +6242,28 @@ impl<'a> FnLowerer<'a> {
         }
         let dst = self.alloc();
         let region = self.primitive_region;
+        let elem_schema_ref = elems
+            .first()
+            .map(|elem| {
+                self.schema_words
+                    .get(&elem.schema)
+                    .copied()
+                    .ok_or_else(|| format!("no schema ref for {}", elem.schema))
+            })
+            .transpose()?
+            .unwrap_or_else(|| {
+                *self
+                    .schema_words
+                    .get("Sealed")
+                    .expect("Sealed is a builtin schema word")
+            });
         self.code.push(Op::ConstI64 {
             dst: region,
             value: dst.into(),
         });
         self.code.push(Op::ConstI64 {
             dst: region + 8,
-            value: elems
-                .first()
-                .map(|elem| {
-                    self.schema_words
-                        .get(&elem.schema)
-                        .copied()
-                        .ok_or_else(|| format!("no schema ref for {}", elem.schema))
-                })
-                .transpose()?
-                .unwrap_or(0),
+            value: elem_schema_ref,
         });
         self.code.push(Op::ConstI64 {
             dst: region + 16,

@@ -10551,7 +10551,20 @@ mod tests {
                 && *value == 0
             {
                 *value = tree_word;
-                break;
+            }
+        }
+        for i in 0..code.len().saturating_sub(1) {
+            let next_is_molten_intern = matches!(
+                code[i + 1],
+                Op::HostCall {
+                    host: MOLTEN_INTERN_HOST
+                }
+            );
+            if next_is_molten_intern
+                && let Op::ConstI64 { dst: 16, value } = &mut code[i]
+                && *value == 0
+            {
+                *value = tree_word;
             }
         }
         let mut descriptors = DescriptorMap::new();
