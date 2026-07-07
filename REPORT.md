@@ -285,3 +285,230 @@ JIT is `2.58x` slower than interpreter on the rebased tree for this unchanged
 recursive/memo-heavy LR source. That is less severe than the original `5.6x`,
 but still a real finding: this workload is dominated by host/store/canonical
 hashing paths, and JITting the weavy task lane does not remove that cost.
+
+## Follow-up: recursion is the demand boundary
+
+The rematch raised the question of whether the LR benchmark was paying
+`intern_molten_word` because recursion crosses a demand boundary or because of
+some accidental source shape. The answer is structural: source-level vix calls
+always lower through `INVOKE`, not task-local `Op::Call`.
+
+### Lowering evidence
+
+Relevant lowering path:
+
+| question | finding |
+|---|---|
+| Where does source call syntax go? | `ast::Expr::Call` dispatches to `LowerFn::call` in `vix/src/machine/lower.rs:2838`. |
+| What does a resolved same-module function call do? | `call` resolves the function name and returns `self.invoke_fn(...)` in `vix/src/machine/lower.rs:3297-3332`. |
+| What does `invoke_fn` emit? | It writes `[input_slot, fn_ref, argc, args...]`, emits `Op::HostCall { host: INVOKE_HOST }`, then `Op::Await` in `vix/src/machine/lower.rs:3370-3402`. |
+| Is that intentional? | The module header says every user-function call is a memo boundary lowered to INVOKE in `vix/src/machine/lower.rs:1-8`. |
+| Does raw `Op::Call` exist? | Yes, but below the source lowerer: the driver test `plain_task_calls_still_work_below_memo_boundaries` hand-builds an `Op::Call` task in `vix/src/machine/driver.rs:9880-9915`. `rg 'Op::Call|code.push\(Op::Call' vix/src/machine/lower.rs vix/src/machine/driver.rs` found no source-lowering emission of `Op::Call`. |
+| What selects between them? | Source-level calls select INVOKE. Plain task `Op::Call` is only available to hand-constructed weavy programs below a memo unit, not to vix source today. Builtins take separate specialized host-call paths before the user-function branch. |
+
+The driver then crystallizes molten arguments exactly where the profiler said it
+would. `INVOKE_HOST`'s frame contract is documented in
+`vix/src/machine/driver.rs:108-113`. The `invoke` host closure reads the frame
+arguments and calls `intern_molten_word` for each argument before queuing the
+`InvokeRequest` in `vix/src/machine/driver.rs:2587-2627`. `Driver::demand`
+immediately constructs a memo key in `vix/src/machine/driver.rs:2170-2173`, and
+`memo_key` hashes each argument with `canonical_word_hash` in
+`vix/src/machine/driver.rs:5032-5039`. For molten arrays,
+`intern_molten_word` recursively interns children and calls
+`store.alloc_array_words` in `vix/src/machine/driver.rs:1556-1644`.
+
+That explains the earlier recursive LR flame:
+
+```text
+parse(...) recursive call
+  -> lower.rs invoke_fn
+  -> HostCall(INVOKE_HOST)
+  -> driver invoke closure
+  -> intern_molten_word([Int] stack/tokens)
+  -> alloc_array_words / canonical hash
+  -> Driver::demand memo_key
+```
+
+### Loop surface check
+
+There is no source construct today that expresses a loop inside one demand
+region. The grammar has blocks, `let`, expression statements, calls, method
+calls, matches, closures, arrays, maps, tuples, and literals
+(`playgrounds/snark/src/bundled/vix/grammar.js:130-171`,
+`:216-226`, `:252-260`), but no `while`, `loop`, `for`, or fold form. A sample
+search:
+
+```text
+rg -n '\b(while|loop|for|fold)\b' vix/std/version.vix rodin/rodin.vix \
+  playgrounds/snark/src/bundled/vix/samples --glob '*.vix'
+```
+
+returned only comments, not syntax. So a natural token-driven vix LR loop is
+forced into recursion, and recursion is an INVOKE demand boundary. That means
+today's vix language cannot express a hot loop over a molten accumulator without
+crystallizing the accumulator each iteration.
+
+### Straight-line molten trace
+
+I added a separate generated straight-line LR trace mode to bound the best case
+when the whole accumulator chain stays inside one function:
+
+```text
+--mode vix-unrolled-interp
+--mode vix-unrolled-jit
+```
+
+The new path is in `vix/src/bin/lr_loop_bench.rs:118-155` and
+`vix/src/bin/lr_loop_bench.rs:329-357`. The generator emits the consuming
+named-rebind idioms directly:
+
+```vix
+let tokens = tokens.pop().1;
+let stack = stack.push(2);
+let stack = stack.pop().1;
+let stack = stack.push(1);
+```
+
+and repeats the deterministic LR trace in one `parse_entry` body
+(`vix/src/bin/lr_loop_bench.rs:725-763`). This is the same straight-line shape
+as spike C's machine benchmark, which generated repeated
+`let trail = trail.push(step);` statements rather than using a language loop
+(`/Users/amos/.paseo/worktrees/1t3lgrd0/spike-c-cdcl-rematch/vix/src/bin/cdcl_molten_bench.rs:239-253`).
+
+Important limitation: this is not a natural parser loop. It removes dynamic
+action/goto dispatch and code-generates the known trace. It is only a molten
+reuse ceiling for "all updates in one demand region."
+
+### Verification
+
+```text
+cargo nextest list -p vix -E 'binary(lr_loop_bench)'
+cargo nextest run -p vix -E 'binary(lr_loop_bench)'
+cargo build --release -p vix --bin lr_loop_bench
+```
+
+The focused binary now has 3 tests, and all 3 passed. The unrolled test uses 8
+terms because the test harness thread stack overflows at larger generated
+straight-line chains.
+
+### Straight-line measurements
+
+The largest release source shape that completed here was 576 terms
+(1,152 tokens, 1,728 LR actions). 600 terms and above overflowed the process
+stack during load/lowering:
+
+```text
+./target/release/lr_loop_bench --terms 600 --runs 1 \
+  --mode vix-unrolled-interp --molten-reuse
+
+thread 'main' has overflowed its stack
+fatal runtime error: stack overflow, aborting
+```
+
+So the 100k-token straight-line trace cannot be built today either; it fails
+far before execution.
+
+Stable Rust baseline for this small-token shape:
+
+```text
+./target/release/lr_loop_bench --terms 576 --runs 100000 --mode rust
+rust_ns_per_action=4.048
+```
+
+Single-invocation unrolled runs are short and wall-clock noisy, but they bound
+the one-parse cost without memo-table growth:
+
+| lane | command shape | ns/action | factor vs 4.048 ns Rust |
+|---|---|---:|---:|
+| vix unrolled interp, reuse | `--terms 576 --runs 1 --mode vix-unrolled-interp --molten-reuse` | 877.797 | 216.8x |
+| vix unrolled interp, forced copy | `--terms 576 --runs 1 --mode vix-unrolled-interp --force-molten-copy` | 1,514.661 | 374.2x |
+| vix unrolled JIT, reuse | `--terms 576 --runs 1 --mode vix-unrolled-jit --molten-reuse` | 1,853.853 | 458.0x |
+
+With 100 distinct seeds on the same loaded machine, per-action cost rises as the
+memo/projection tables grow:
+
+| lane | ns/action | factor vs 4.048 ns Rust |
+|---|---:|---:|
+| vix unrolled interp, reuse | 914.471 | 225.9x |
+| vix unrolled interp, forced copy | 1,172.944 | 289.8x |
+| vix unrolled JIT, reuse | 2,217.318 | 547.8x |
+
+The named-rebind fix is working in the sense that the reuse lane beats forced
+copy, but the best measured natural-ish ceiling is still hundreds of times Rust,
+not near the relaxed ~50x acceptance bar. The gap is no longer SHA-256
+canonicalization per iteration; it is hosted task/frame/host-op overhead plus
+memo bookkeeping, and the source form only exists as generated straight-line
+code with a severe lowering stack limit.
+
+### stax on the unrolled shape
+
+Interpreter profile:
+
+```text
+stax record -- ./target/release/lr_loop_bench \
+  --terms 512 --runs 1000 --mode vix-unrolled-interp --molten-reuse
+stax flame -d 20 --threshold-pct 0.5 --run 8
+stax top -n 25 --sort self --run 8
+```
+
+The run printed `vix_unrolled_interp_ns_per_action=336.997`. stax reported
+0.092s active CPU and 0.539s off-CPU. Active trunk:
+
+| stack / frame | active share |
+|---|---:|
+| `Machine::demand_i64 -> Driver::demand` | 98.3% |
+| `weavy::task::Task::run_hosted` | 87.0% |
+| `Driver::burst::{closure}` | 66.5% |
+| `String::clone` under burst | 13.3% |
+| `BuildHasher::hash_one` under burst | 11.4% |
+| allocator free/malloc/memcmp/memmove leaves | visible siblings |
+
+`intern_molten_word` had no samples in `top` for this run, and SHA-256 was gone
+from the trunk. That is the expected difference from the recursive benchmark:
+the accumulator stayed molten within the one demand region, so per-iteration
+canonical array hashing disappeared.
+
+JIT profile:
+
+```text
+stax record -- ./target/release/lr_loop_bench \
+  --terms 512 --runs 1000 --mode vix-unrolled-jit --molten-reuse
+stax flame -d 24 --threshold-pct 0.5 --run 9
+stax top -n 30 --sort self --run 9
+```
+
+The run printed `vix_unrolled_jit_ns_per_action=1271.237`, about `3.77x` slower
+than the profiled interpreter run. stax reported 0.265s active CPU and 9.585s
+off-CPU. Active trunk:
+
+| stack / frame | active share |
+|---|---:|
+| `Machine::demand_i64 -> Driver::demand` | 97.1% |
+| `Driver::spawn -> JitProgram::compile` | 60.6% |
+| `compile_fn` | 60.6% |
+| `ExecBuf::new` under compile | 19.2% |
+| `_platform_memmove` under executable buffer creation | 15.9% |
+| `JitTask::run_hosted` | 32.4% |
+| `Driver::burst::{closure}` under JIT run | 20.6% |
+
+So the JIT anomaly persists, but its cause is clearer here: the JIT lane is
+paying compilation/executable-buffer work under `Driver::spawn` for these
+demands. It is not removing the dominant driver/host overhead, and for this
+generated straight-line function it adds a larger compile cost than it saves.
+
+### Updated verdict
+
+For the real LR loop shape, vix source recursion is structurally an INVOKE
+boundary, so a molten stack/token accumulator crystallizes every iteration.
+Today's language therefore cannot express the natural parser hot loop in one
+molten demand region.
+
+The only molten-preserving workaround I could express is generated
+straight-line named rebinding. That proves the consuming-move reuse path can
+remove the SHA-256/interner trunk, but it is not a parser loop, it stack
+overflows during lowering before 1,200 tokens, and its measured cost remains
+roughly `200x-550x` Rust depending on interp/JIT and run shape. Against the
+relaxed ~50x bar, this still argues against lowering Snark's LR kernels to vix
+today. The missing capability is a loop/tail-call form that stays within one
+demand region and lets molten accumulators flow frame-direct, plus eliminating
+the remaining hosted task/frame/host-op and JIT compile-per-demand overheads.

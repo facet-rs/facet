@@ -20,6 +20,8 @@ enum Mode {
     Rust,
     VixInterp,
     VixJit,
+    VixUnrolledInterp,
+    VixUnrolledJit,
     ArrayControl,
 }
 
@@ -63,7 +65,10 @@ fn main() -> Result<(), String> {
             .unwrap_or_else(|| "runtime-default".to_string())
     );
 
-    let rust = if matches!(args.mode, Mode::All | Mode::Rust) {
+    let rust = if matches!(
+        args.mode,
+        Mode::All | Mode::Rust | Mode::VixUnrolledInterp | Mode::VixUnrolledJit
+    ) {
         let result = bench_rust(args.terms, args.runs, expected);
         print_result("rust", &result, args.runs, actions);
         Some(result)
@@ -102,6 +107,45 @@ fn main() -> Result<(), String> {
             if let Some(rust) = &rust {
                 println!(
                     "factor_vix_jit_vs_rust={:.3}",
+                    duration_ratio(result.elapsed, rust.elapsed)
+                );
+            }
+        }
+        #[cfg(not(feature = "jit"))]
+        return Err("vix was built without the jit feature".to_string());
+    }
+
+    if matches!(args.mode, Mode::VixUnrolledInterp) {
+        let result = bench_vix_unrolled(
+            args.terms,
+            args.runs,
+            expected,
+            Lane::Interp,
+            args.force_molten_copy,
+        )?;
+        print_result("vix_unrolled_interp", &result, args.runs, actions);
+        if let Some(rust) = &rust {
+            println!(
+                "factor_vix_unrolled_interp_vs_rust={:.3}",
+                duration_ratio(result.elapsed, rust.elapsed)
+            );
+        }
+    }
+
+    if matches!(args.mode, Mode::VixUnrolledJit) {
+        #[cfg(feature = "jit")]
+        {
+            let result = bench_vix_unrolled(
+                args.terms,
+                args.runs,
+                expected,
+                Lane::Jit,
+                args.force_molten_copy,
+            )?;
+            print_result("vix_unrolled_jit", &result, args.runs, actions);
+            if let Some(rust) = &rust {
+                println!(
+                    "factor_vix_unrolled_jit_vs_rust={:.3}",
                     duration_ratio(result.elapsed, rust.elapsed)
                 );
             }
@@ -179,10 +223,12 @@ fn parse_args(mut args: impl Iterator<Item = String>) -> Result<Args, String> {
                     "rust" => Mode::Rust,
                     "vix-interp" => Mode::VixInterp,
                     "vix-jit" => Mode::VixJit,
+                    "vix-unrolled-interp" => Mode::VixUnrolledInterp,
+                    "vix-unrolled-jit" => Mode::VixUnrolledJit,
                     "array-control" => Mode::ArrayControl,
                     other => {
                         return Err(format!(
-                            "unknown --mode `{other}` (expected all, rust, vix-interp, vix-jit, array-control)"
+                            "unknown --mode `{other}` (expected all, rust, vix-interp, vix-jit, vix-unrolled-interp, vix-unrolled-jit, array-control)"
                         ));
                     }
                 };
@@ -208,7 +254,7 @@ fn parse_next<T: std::str::FromStr>(
 }
 
 fn help_text() -> String {
-    "usage: lr_loop_bench [--tokens N|--terms N] [--runs N] [--mode all|rust|vix-interp|vix-jit|array-control] [--force-molten-copy|--molten-reuse] [--array-pushes N] [--array-burst N] [--array-pops N] [--array-runs N]".to_string()
+    "usage: lr_loop_bench [--tokens N|--terms N] [--runs N] [--mode all|rust|vix-interp|vix-jit|vix-unrolled-interp|vix-unrolled-jit|array-control] [--force-molten-copy|--molten-reuse] [--array-pushes N] [--array-burst N] [--array-pops N] [--array-runs N]".to_string()
 }
 
 fn print_result(name: &str, result: &BenchResult, runs: i64, actions: usize) {
@@ -270,6 +316,36 @@ fn bench_vix(
         if value != expected {
             return Err(format!(
                 "{lane:?} checksum mismatch: got {value}, expected {expected}"
+            ));
+        }
+        checksum_sum += black_box(value);
+    }
+    Ok(BenchResult {
+        elapsed: start.elapsed(),
+        checksum_sum,
+    })
+}
+
+fn bench_vix_unrolled(
+    terms: usize,
+    runs: i64,
+    expected: i64,
+    lane: Lane,
+    force_molten_copy: Option<bool>,
+) -> Result<BenchResult, String> {
+    let source = vix_unrolled_source(terms);
+    let mut machine = Machine::load_with_lane(&source, lane)?;
+    if let Some(force) = force_molten_copy {
+        machine.set_force_molten_copy(force);
+    }
+    let tokens = machine.demand_i64("tokens", vec![])?;
+    let start = Instant::now();
+    let mut checksum_sum = 0;
+    for seed in 0..runs {
+        let value = machine.demand_i64("parse_entry", vec![tokens, seed])?;
+        if value != expected {
+            return Err(format!(
+                "{lane:?} unrolled checksum mismatch: got {value}, expected {expected}"
             ));
         }
         checksum_sum += black_box(value);
@@ -552,20 +628,9 @@ fn reversed_tokens(terms: usize) -> Vec<i64> {
 
 fn vix_source(terms: usize) -> String {
     let mut source = String::new();
-    source.push_str("pub fn tokens() -> [Int] {\n    [");
-    for (index, token) in reversed_tokens(terms).into_iter().enumerate() {
-        if index > 0 {
-            source.push_str(", ");
-        }
-        if index > 0 && index % 32 == 0 {
-            source.push_str("\n     ");
-        }
-        source.push_str(&token.to_string());
-    }
+    push_tokens_fn(&mut source, terms);
     source.push_str(
-        r#"]
-}
-
+        r#"
 fn parse(tokens: [Int], stack: [Int], lookahead: Int, reduces: Int) -> Int {
     let top = stack.pop();
     let state = top.0;
@@ -639,6 +704,64 @@ pub fn parse_entry(tokens: [Int], seed: Int) -> Int {
     source
 }
 
+fn push_tokens_fn(source: &mut String, terms: usize) {
+    source.push_str("pub fn tokens() -> [Int] {\n    [");
+    for (index, token) in reversed_tokens(terms).into_iter().enumerate() {
+        if index > 0 {
+            source.push_str(", ");
+        }
+        if index > 0 && index % 32 == 0 {
+            source.push_str("\n     ");
+        }
+        source.push_str(&token.to_string());
+    }
+    source.push_str(
+        r#"]
+}
+"#,
+    );
+}
+
+fn vix_unrolled_source(terms: usize) -> String {
+    let mut source = String::new();
+    push_tokens_fn(&mut source, terms);
+    source.push_str(
+        r#"
+pub fn parse_entry(tokens: [Int], seed: Int) -> Int {
+    let tokens = tokens.pop().1;
+    let stack = [0];
+    let reduces = seed;
+    let stack = stack.push(2);
+    let tokens = tokens.pop().1;
+    let stack = stack.pop().1;
+    let stack = stack.push(1);
+    let reduces = reduces + 1;
+"#,
+    );
+    for _ in 1..terms {
+        source.push_str(
+            r#"    let stack = stack.push(3);
+    let tokens = tokens.pop().1;
+    let stack = stack.push(4);
+    let tokens = tokens.pop().1;
+    let stack = stack.pop().1;
+    let stack = stack.pop().1;
+    let stack = stack.pop().1;
+    let stack = stack.push(1);
+    let reduces = reduces + 1;
+"#,
+        );
+    }
+    source.push_str(
+        r#"    let stack_len = stack.len();
+    let token_len = tokens.len();
+    reduces - seed + stack_len - 2 + token_len
+}
+"#,
+    );
+    source
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -676,6 +799,23 @@ mod tests {
                     bench_array_control_vix(&source, 2, expected, lane, force_copy).unwrap();
                 assert_eq!(result.checksum_sum, expected * 2, "{lane:?}/{force_copy}");
             }
+        }
+    }
+
+    #[test]
+    fn unrolled_named_rebind_lr_stream_matches_rust() {
+        let terms = 8;
+        let expected = i64::try_from(terms).unwrap();
+        let source = vix_unrolled_source(terms);
+        for lane in test_lanes() {
+            let mut machine = Machine::load_with_lane(&source, lane).unwrap();
+            machine.set_force_molten_copy(false);
+            let tokens = machine.demand_i64("tokens", vec![]).unwrap();
+            assert_eq!(
+                machine.demand_i64("parse_entry", vec![tokens, 7]).unwrap(),
+                expected,
+                "{lane:?}"
+            );
         }
     }
 
