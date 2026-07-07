@@ -175,11 +175,11 @@ impl SchemaTables {
     }
 
     pub(crate) fn frame_word_for_name(&self, name: &str) -> i64 {
-        i64::from_ne_bytes(self.frame_id_for_name(name).as_u64().to_ne_bytes())
+        i64::from_le_bytes(self.frame_id_for_name(name).as_u64().to_le_bytes())
     }
 
     pub(crate) fn name_for_frame_word(&self, word: i64) -> Option<&str> {
-        let id = SchemaId::from_raw(u64::from_ne_bytes(word.to_ne_bytes()));
+        let id = SchemaId::from_raw(u64::from_le_bytes(word.to_le_bytes()));
         self.frame_names
             .get(&id)
             .or_else(|| self.display_names.get(&id))
@@ -1011,7 +1011,7 @@ pub(crate) fn type_schema_name(ty: &ast::Type) -> Result<String, String> {
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(format!("{base}<{}>", args.join(",")))
         }
-        ast::Type::Array(_) => Ok("Array".into()),
+        ast::Type::Array(array) => Ok(format!("Array<{}>", type_schema_name(&array.elem)?)),
         ast::Type::Tuple(tuple) => {
             let elems = tuple
                 .elems

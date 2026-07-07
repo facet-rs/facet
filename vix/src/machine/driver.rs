@@ -969,7 +969,10 @@ enum ArrayEntry {
         elem_schema: String,
         words: Vec<i64>,
     },
-    Pending(Vec<i64>),
+    Pending {
+        elem_schema: String,
+        pending: Vec<i64>,
+    },
 }
 
 #[derive(Clone, Debug, Default)]
@@ -1329,10 +1332,11 @@ impl ValueStore {
     ) -> Result<(i64, bool), String> {
         let option_schema = option_schema(value_schema);
         let value_ref = schema_ref_for(value_schema, schema_tables)?;
-        let mut bytes = Vec::with_capacity(24);
+        let mut bytes = Vec::with_capacity(32);
         bytes.extend_from_slice(&0i64.to_le_bytes());
         bytes.extend_from_slice(&value_ref.to_le_bytes());
         bytes.extend_from_slice(&0i64.to_le_bytes());
+        bytes.extend_from_slice(&(-1i64).to_le_bytes());
         let mut hasher = Sha256::new();
         hasher.update(b"vix-option");
         hasher.update(option_schema.as_bytes());
@@ -1362,9 +1366,12 @@ impl ValueStore {
         bytes.extend_from_slice(&1i64.to_le_bytes());
         bytes.extend_from_slice(&value_ref.to_le_bytes());
         bytes.extend_from_slice(&value_word.to_le_bytes());
-        if let Some(realization) = &realization {
-            bytes.extend_from_slice(&realization.to_word().to_le_bytes());
-        }
+        bytes.extend_from_slice(
+            &realization
+                .map(Realization::to_word)
+                .unwrap_or(-1)
+                .to_le_bytes(),
+        );
         let mut hasher = Sha256::new();
         hasher.update(b"vix-option");
         hasher.update(option_schema.as_bytes());
@@ -1393,7 +1400,7 @@ impl ValueStore {
                 entry.schema
             ));
         }
-        if entry.bytes.len() != 24 && entry.bytes.len() != 32 {
+        if entry.bytes.len() != 32 {
             return Err(format!("Option entry has {} bytes", entry.bytes.len()));
         }
         let tag = read_frame_word(&entry.bytes, 0);
@@ -1402,10 +1409,11 @@ impl ValueStore {
         }
         let schema_word = read_frame_word(&entry.bytes, 8);
         let schema = schema_name_for(schema_word, schema_tables)?;
-        let realization = if entry.bytes.len() == 32 {
-            Some(Realization::from_word(read_frame_word(&entry.bytes, 24))?)
-        } else {
+        let realization_word = read_frame_word(&entry.bytes, 24);
+        let realization = if realization_word == -1 {
             None
+        } else {
+            Some(Realization::from_word(realization_word)?)
         };
         let word_schema = if let Some(Realization::Pending) = realization {
             pending_schema(realized_value_schema(&schema).unwrap_or(&schema))
@@ -1474,6 +1482,7 @@ impl ValueStore {
         schemas: &SchemaTables,
         schema_tables: &SchemaTables,
     ) -> Result<(i64, bool), String> {
+        let schema = array_schema(elem_schema);
         let mut bytes = Vec::with_capacity(24 + words.len() * 8);
         bytes.extend_from_slice(&0i64.to_le_bytes());
         bytes.extend_from_slice(&schema_ref_for(elem_schema, schema_tables)?.to_le_bytes());
@@ -1507,7 +1516,7 @@ impl ValueStore {
                 .filter_map(|word| self.entry(*word).and_then(|entry| entry.taint.clone())),
         );
         let content_hash = hash_with_taint(finish_hash(hasher), &taint);
-        Ok(self.alloc_with_hash_tainted("Array", bytes, content_hash, taint))
+        Ok(self.alloc_with_hash_tainted(&schema, bytes, content_hash, taint))
     }
 
     fn alloc_pending(&mut self, value_schema: &str, invocation: PendingInvocation) -> (i64, bool) {
@@ -1534,22 +1543,54 @@ impl ValueStore {
         decode_pending_invocation(&entry.bytes)
     }
 
-    fn alloc_array_pending(&mut self, pending: Vec<i64>) -> (i64, bool) {
-        let bytes = encode_handle_list(1, &pending);
-        let content_hash = hash_handle_list(b"vix-array-pending", &pending, self);
-        self.alloc_with_hash("Array", bytes, content_hash)
+    fn alloc_array_pending(
+        &mut self,
+        elem_schema: &str,
+        pending: Vec<i64>,
+        schemas: &SchemaTables,
+        schema_tables: &SchemaTables,
+    ) -> Result<(i64, bool), String> {
+        let schema = array_schema(elem_schema);
+        let mut bytes = Vec::with_capacity(24 + pending.len() * 8);
+        bytes.extend_from_slice(&1i64.to_le_bytes());
+        bytes.extend_from_slice(&schema_ref_for(elem_schema, schema_tables)?.to_le_bytes());
+        bytes.extend_from_slice(
+            &i64::try_from(pending.len())
+                .expect("array length fits i64")
+                .to_le_bytes(),
+        );
+        for word in &pending {
+            bytes.extend_from_slice(&word.to_le_bytes());
+        }
+        let mut hasher = Sha256::new();
+        hasher.update(b"vix-array-pending");
+        hasher.update(elem_schema.as_bytes());
+        hasher.update(
+            i64::try_from(pending.len())
+                .expect("array length fits i64")
+                .to_le_bytes(),
+        );
+        for word in &pending {
+            hasher.update(canonical_word_hash_in_store(
+                self,
+                schemas,
+                elem_schema,
+                *word,
+            ));
+        }
+        Ok(self.alloc_with_hash(&schema, bytes, finish_hash(hasher)))
     }
 
     fn array_entry(&self, handle: i64, schema_tables: &SchemaTables) -> Result<ArrayEntry, String> {
         let entry = self
             .entry(handle)
             .ok_or_else(|| format!("store handle {handle}"))?;
-        if entry.schema != "Array" {
+        if !schema_tables.is_list(&entry.schema) {
             return Err(format!("handle {handle} is `{}`, not Array", entry.schema));
         }
         let kind = read_frame_word(&entry.bytes, 0);
         match kind {
-            0 => {
+            0 | 1 => {
                 let count = usize::try_from(read_frame_word(&entry.bytes, 16))
                     .map_err(|_| "array count")?;
                 let expected = 24 + count * 8;
@@ -1560,14 +1601,24 @@ impl ValueStore {
                     ));
                 }
                 let elem_schema = schema_name_for(read_frame_word(&entry.bytes, 8), schema_tables)?;
-                Ok(ArrayEntry::Words {
-                    elem_schema,
-                    words: (0..count)
-                        .map(|i| read_frame_word(&entry.bytes, 24 + i * 8))
-                        .collect(),
-                })
+                if array_element_schema(&entry.schema).is_some_and(|schema| schema != elem_schema) {
+                    return Err(format!(
+                        "Array payload element {elem_schema} disagrees with schema {}",
+                        entry.schema
+                    ));
+                }
+                let words = (0..count)
+                    .map(|i| read_frame_word(&entry.bytes, 24 + i * 8))
+                    .collect();
+                if kind == 0 {
+                    Ok(ArrayEntry::Words { elem_schema, words })
+                } else {
+                    Ok(ArrayEntry::Pending {
+                        elem_schema,
+                        pending: words,
+                    })
+                }
             }
-            1 => Ok(ArrayEntry::Pending(decode_handle_list(&entry.bytes)?)),
             other => Err(format!("unknown Array kind {other}")),
         }
     }
@@ -1720,8 +1771,13 @@ fn intern_molten_word(
             elem_schema,
             mut words,
         } => {
-            if schema != "Array" {
+            if !schemas.is_list(schema) {
                 return Err(format!("molten array cannot intern as {schema}"));
+            }
+            if array_element_schema(schema).is_some_and(|schema| schema != elem_schema) {
+                return Err(format!(
+                    "molten Array<{elem_schema}> cannot intern as {schema}"
+                ));
             }
             for word in &mut words {
                 *word = intern_molten_word(
@@ -2088,7 +2144,7 @@ impl Driver {
     pub fn array_words(&self, handle: i64) -> Result<(String, Vec<i64>), String> {
         match self.store.borrow().array_entry(handle, &self.schemas)? {
             ArrayEntry::Words { elem_schema, words } => Ok((elem_schema, words)),
-            ArrayEntry::Pending(_) => Err("array is pending".into()),
+            ArrayEntry::Pending { .. } => Err("array is pending".into()),
         }
     }
 
@@ -3367,7 +3423,7 @@ impl Driver {
                         schema_tables,
                     )? {
                         ArrayEntry::Words { words, .. } => words,
-                        ArrayEntry::Pending(_) => {
+                        ArrayEntry::Pending { .. } => {
                             return Err("map over pending array is outside slice 4".into());
                         }
                     };
@@ -3428,7 +3484,12 @@ impl Driver {
                             )
                         })
                         .collect::<Result<Vec<_>, _>>()?;
-                    let (handle, _) = store_cell.borrow_mut().alloc_array_pending(pending);
+                    let (handle, _) = store_cell.borrow_mut().alloc_array_pending(
+                        &lowered_fns[fn_ref.index()].return_schema,
+                        pending,
+                        schemas,
+                        schema_tables,
+                    )?;
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();
@@ -3461,7 +3522,7 @@ impl Driver {
                         }
                     }
                     match array_entry {
-                        ArrayEntry::Pending(pending) => {
+                        ArrayEntry::Pending { pending, .. } => {
                             let (handle, _) = store_cell.borrow_mut().alloc_tree_merge(pending);
                             write_frame_word(frame, dst_slot, handle);
                         }
@@ -4125,7 +4186,7 @@ impl Driver {
                         schema_tables,
                     )? {
                         ArrayEntry::Words { words, .. } => words.len(),
-                        ArrayEntry::Pending(pending) => pending.len(),
+                        ArrayEntry::Pending { pending, .. } => pending.len(),
                     };
                     write_frame_word(
                         frame,
@@ -4206,7 +4267,7 @@ impl Driver {
                                 .collect::<Result<Vec<_>, _>>()?
                                 .join(&separator)
                         }
-                        ArrayEntry::Pending(_) => {
+                        ArrayEntry::Pending { .. } => {
                             return Err("join called on pending array".to_string());
                         }
                     };
@@ -4241,7 +4302,7 @@ impl Driver {
                         schema_tables,
                     )? {
                         ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
-                        ArrayEntry::Pending(_) => {
+                        ArrayEntry::Pending { .. } => {
                             return Err("filter over pending array is outside B4".into());
                         }
                     };
@@ -4770,7 +4831,7 @@ impl Driver {
                         schema_tables,
                     )? {
                         ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
-                        ArrayEntry::Pending(_) => return Err("push on pending array".into()),
+                        ArrayEntry::Pending { .. } => return Err("push on pending array".into()),
                     };
                     if words.is_empty() {
                         elem_schema = pushed_schema;
@@ -4837,7 +4898,7 @@ impl Driver {
                         schema_tables,
                     )? {
                         ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
-                        ArrayEntry::Pending(_) => return Err("pop on pending array".into()),
+                        ArrayEntry::Pending { .. } => return Err("pop on pending array".into()),
                     };
                     let value = words
                         .pop()
@@ -4911,7 +4972,7 @@ impl Driver {
                         schema_tables,
                     )? {
                         ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
-                        ArrayEntry::Pending(_) => return Err("set on pending array".into()),
+                        ArrayEntry::Pending { .. } => return Err("set on pending array".into()),
                     };
                     value = intern_molten_word(
                         &mut store_cell.borrow_mut(),
@@ -6050,18 +6111,20 @@ impl Driver {
             "Path" | "String" | "Flag" => Ok(vec![
                 String::from_utf8(entry.bytes).map_err(|err| err.to_string())?,
             ]),
-            "Array" => match { self.store.borrow().array_entry(word, &self.schemas)? } {
-                ArrayEntry::Words { words, .. } => {
-                    let mut args = Vec::new();
-                    for word in words {
-                        args.extend(self.splice_word_to_command_args(word, mounts, false)?);
+            schema if self.schemas.is_list(schema) => {
+                match { self.store.borrow().array_entry(word, &self.schemas)? } {
+                    ArrayEntry::Words { words, .. } => {
+                        let mut args = Vec::new();
+                        for word in words {
+                            args.extend(self.splice_word_to_command_args(word, mounts, false)?);
+                        }
+                        Ok(args)
                     }
-                    Ok(args)
+                    ArrayEntry::Pending { .. } => {
+                        Err("pending arrays cannot be spliced into commands".into())
+                    }
                 }
-                ArrayEntry::Pending(_) => {
-                    Err("pending arrays cannot be spliced into commands".into())
-                }
-            },
+            }
             "Tree" => {
                 let forced = self.force_tree_handle(word)?;
                 let TreeEntry::Concrete(tree) = self.store.borrow().tree_entry(forced)? else {
@@ -6840,7 +6903,7 @@ fn doc_package(
         ArrayEntry::Words { elem_schema, .. } => {
             return Err(format!("Cargo.lock `package` array contains {elem_schema}"));
         }
-        ArrayEntry::Pending(_) => return Err("Cargo.lock `package` array is pending".into()),
+        ArrayEntry::Pending { .. } => return Err("Cargo.lock `package` array is pending".into()),
     };
     for package in package_words {
         let (name_option, _) =
@@ -7498,11 +7561,11 @@ fn compare_arrays(
 ) -> Result<Ordering, String> {
     let (a_schema, a_words) = match store.array_entry(a, schema_tables)? {
         ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
-        ArrayEntry::Pending(_) => return Ok(a.cmp(&b)),
+        ArrayEntry::Pending { .. } => return Ok(a.cmp(&b)),
     };
     let (b_schema, b_words) = match store.array_entry(b, schema_tables)? {
         ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
-        ArrayEntry::Pending(_) => return Ok(a.cmp(&b)),
+        ArrayEntry::Pending { .. } => return Ok(a.cmp(&b)),
     };
     let schema_order = a_schema.cmp(&b_schema);
     if schema_order != Ordering::Equal {
@@ -7608,9 +7671,15 @@ fn compare_docs(
         (DocPayload::Blob(a), DocPayload::Blob(b)) => {
             compare_words(store, descriptors, schemas, schema_tables, "Blob", a, b)
         }
-        (DocPayload::Array(a), DocPayload::Array(b)) => {
-            compare_words(store, descriptors, schemas, schema_tables, "Array", a, b)
-        }
+        (DocPayload::Array(a), DocPayload::Array(b)) => compare_words(
+            store,
+            descriptors,
+            schemas,
+            schema_tables,
+            "Array<Doc>",
+            a,
+            b,
+        ),
         (DocPayload::Map(a), DocPayload::Map(b)) => compare_words(
             store,
             descriptors,
@@ -8043,9 +8112,12 @@ fn render_array(
                 })
                 .collect::<Result<Vec<_>, _>>()?,
         }),
-        ArrayEntry::Pending(handles) => Ok(RenderedValue::Array {
-            element_schema: "Pending<Tree>".to_string(),
-            items: handles
+        ArrayEntry::Pending {
+            elem_schema,
+            pending,
+        } => Ok(RenderedValue::Array {
+            element_schema: elem_schema.clone(),
+            items: pending
                 .into_iter()
                 .map(|handle| {
                     render_word(
@@ -8054,7 +8126,7 @@ fn render_array(
                         schemas,
                         schema_tables,
                         names,
-                        "Pending<Tree>",
+                        &elem_schema,
                         handle,
                     )
                 })
@@ -8177,14 +8249,14 @@ fn render_doc(
             })),
         ),
         DocPayload::Array(word) => (
-            "Array".to_string(),
+            "Array<Doc>".to_string(),
             Some(Box::new(render_word(
                 store,
                 descriptors,
                 schemas,
                 schema_tables,
                 names,
-                "Array",
+                "Array<Doc>",
                 word,
             )?)),
         ),
@@ -9495,6 +9567,17 @@ fn option_schema(value_schema: &str) -> String {
     format!("Option<{value_schema}>")
 }
 
+fn array_schema(elem_schema: &str) -> String {
+    format!("Array<{elem_schema}>")
+}
+
+fn array_element_schema(schema: &str) -> Option<&str> {
+    let (base, args) = generic_schema(schema)?;
+    (base == "Array" || base == "List").then_some(())?;
+    let [elem]: [&str; 1] = args.try_into().ok()?;
+    Some(elem)
+}
+
 fn pending_schema(value_schema: &str) -> String {
     format!("Pending<{value_schema}>")
 }
@@ -9508,9 +9591,34 @@ fn realized_value_schema(schema: &str) -> Option<&str> {
 }
 
 fn map_schemas(schema: &str) -> Option<(&str, &str)> {
-    let inner = schema.strip_prefix("Map<")?.strip_suffix('>')?;
-    let (key, value) = inner.split_once(',')?;
+    let (base, args) = generic_schema(schema)?;
+    (base == "Map").then_some(())?;
+    let [key, value]: [&str; 2] = args.try_into().ok()?;
     Some((key, value))
+}
+
+fn generic_schema(schema: &str) -> Option<(&str, Vec<&str>)> {
+    let (base, rest) = schema.split_once('<')?;
+    Some((base, split_top_level_schema_slices(rest.strip_suffix('>')?)))
+}
+
+fn split_top_level_schema_slices(inner: &str) -> Vec<&str> {
+    let mut out = Vec::new();
+    let mut depth = 0usize;
+    let mut start = 0usize;
+    for (index, ch) in inner.char_indices() {
+        match ch {
+            '<' => depth += 1,
+            '>' => depth = depth.saturating_sub(1),
+            ',' if depth == 0 => {
+                out.push(&inner[start..index]);
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    out.push(&inner[start..]);
+    out
 }
 
 fn encode_pending_invocation(invocation: &PendingInvocation) -> Vec<u8> {
