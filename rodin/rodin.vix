@@ -421,7 +421,7 @@ fn insert_asc(version: Version, sorted: [Version]) -> [Version] {
     }
 }
 
-fn insert_asc_after_tuple(version: Version, popped: (Int, [Version])) -> [Version] {
+fn insert_asc_after_tuple(version: Version, popped: (Version, [Version])) -> [Version] {
     insert_asc_after_pop(version, popped.0, popped.1)
 }
 
@@ -446,7 +446,7 @@ fn sort_versions_into(versions: [Version], sorted: [Version]) -> [Version] {
     }
 }
 
-fn sort_versions_after_tuple(popped: (Int, [Version]), sorted: [Version]) -> [Version] {
+fn sort_versions_after_tuple(popped: (Version, [Version]), sorted: [Version]) -> [Version] {
     sort_versions_into(popped.1, insert_asc(popped.0, sorted))
 }
 
@@ -690,7 +690,7 @@ fn guards_hold(state: State, guards: [Guard]) -> Bool {
     }
 }
 
-fn guards_hold_tuple(state: State, popped: (Int, [Guard])) -> Bool {
+fn guards_hold_tuple(state: State, popped: (Guard, [Guard])) -> Bool {
     guard_holds(state, popped.0) && guards_hold(state, popped.1)
 }
 
@@ -863,7 +863,7 @@ fn last_hypothesis(state: State) -> Option<Hypothesis> {
     }
 }
 
-fn last_hypothesis_after_pop(popped: (Int, [Hypothesis])) -> Option<Hypothesis> {
+fn last_hypothesis_after_pop(popped: (Hypothesis, [Hypothesis])) -> Option<Hypothesis> {
     Some(hypothesis_from_realized(popped.0))
 }
 
@@ -995,7 +995,7 @@ fn learned_contains_region(learned: [LearnedNoGood], region: Region) -> Bool {
     }
 }
 
-fn learned_contains_region_after_pop(popped: (Int, [LearnedNoGood]), region: Region) -> Bool {
+fn learned_contains_region_after_pop(popped: (LearnedNoGood, [LearnedNoGood]), region: Region) -> Bool {
     let fact = learned_no_good_from_realized(popped.0);
     match fact.active && region_contains_region(fact.region, region) {
         true => true,
@@ -1010,7 +1010,7 @@ fn deactivate_contained(learned: [LearnedNoGood], region: Region, out: [LearnedN
     }
 }
 
-fn deactivate_contained_after_pop(popped: (Int, [LearnedNoGood]), region: Region, out: [LearnedNoGood]) -> [LearnedNoGood] {
+fn deactivate_contained_after_pop(popped: (LearnedNoGood, [LearnedNoGood]), region: Region, out: [LearnedNoGood]) -> [LearnedNoGood] {
     deactivate_contained(popped.1, region, out.push(deactivate_if_contained(learned_no_good_from_realized(popped.0), region)))
 }
 
@@ -1132,7 +1132,7 @@ fn apply_learned_no_goods_from(index: Index, state: State, facts: [LearnedNoGood
     }
 }
 
-fn apply_learned_no_goods_after_pop(index: Index, state: State, popped: (Int, [LearnedNoGood]), changed: Bool) -> Step {
+fn apply_learned_no_goods_after_pop(index: Index, state: State, popped: (LearnedNoGood, [LearnedNoGood]), changed: Bool) -> Step {
     match apply_one_learned_no_good(index, state, learned_no_good_from_realized(popped.0)) {
         Step::Conflict(conflict) => Step::Conflict(conflict),
         Step::Pass { state: next, changed: fact_changed } =>
@@ -1228,7 +1228,7 @@ fn try_candidates(index: Index, state: State, target: String, pkg: Int, candidat
     }
 }
 
-fn try_candidate_tuple(index: Index, state: State, target: String, pkg: Int, popped: (Int, [Version])) -> SearchResult {
+fn try_candidate_tuple(index: Index, state: State, target: String, pkg: Int, popped: (Version, [Version])) -> SearchResult {
     try_candidate(index, state, target, pkg, popped.0, popped.1)
 }
 
@@ -1349,7 +1349,7 @@ fn active_learned_count(learned: [LearnedNoGood], count: Int) -> Int {
     }
 }
 
-fn active_learned_count_after_pop(popped: (Int, [LearnedNoGood]), count: Int) -> Int {
+fn active_learned_count_after_pop(popped: (LearnedNoGood, [LearnedNoGood]), count: Int) -> Int {
     let fact = learned_no_good_from_realized(popped.0);
     match fact.active {
         true => active_learned_count(popped.1, count + 1),

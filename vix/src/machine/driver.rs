@@ -3891,7 +3891,8 @@ impl Driver {
             };
 
             // Option matching: selector 0 reads the tag (0 = None, 1 = Some),
-            // selector 1 reads the Some payload word for binding.
+            // selector 1 reads the Some payload word for binding, and selector
+            // 2 reads the payload realization flag.
             let mut option_destruct_host = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
@@ -3907,6 +3908,22 @@ impl Driver {
                         (1, OptionPayload::Some { word, .. }) => word,
                         (1, OptionPayload::None) => {
                             return Err("Option payload read on None".into());
+                        }
+                        (
+                            2,
+                            OptionPayload::Some {
+                                realization: Some(realization),
+                                ..
+                            },
+                        ) => realization.to_word(),
+                        (
+                            2,
+                            OptionPayload::Some {
+                                realization: None, ..
+                            },
+                        ) => -1,
+                        (2, OptionPayload::None) => {
+                            return Err("Option realization read on None".into());
                         }
                         (other, _) => {
                             return Err(format!("unknown Option destruct selector {other}"));
