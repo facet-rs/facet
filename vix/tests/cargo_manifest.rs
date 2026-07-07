@@ -531,12 +531,31 @@ fn real_workspace_member_only_index_builds_bounded_ring() -> Result<(), String> 
 #[test]
 #[ignore = "tier-A measurement probe: bounded solve currently hits molten handle -1"]
 fn real_workspace_member_index_solves_bounded_ring() -> Result<(), String> {
+    real_workspace_member_only_solve_ring(16)
+}
+
+macro_rules! real_workspace_member_only_solve_ring_test {
+    ($name:ident, $limit:expr) => {
+        #[test]
+        #[ignore = "tier-A measurement probe: real workspace member-only solve ring"]
+        fn $name() -> Result<(), String> {
+            real_workspace_member_only_solve_ring($limit)
+        }
+    };
+}
+
+real_workspace_member_only_solve_ring_test!(real_workspace_member_only_solve_ring_1, 1);
+real_workspace_member_only_solve_ring_test!(real_workspace_member_only_solve_ring_2, 2);
+real_workspace_member_only_solve_ring_test!(real_workspace_member_only_solve_ring_4, 4);
+real_workspace_member_only_solve_ring_test!(real_workspace_member_only_solve_ring_8, 8);
+real_workspace_member_only_solve_ring_test!(real_workspace_member_only_solve_ring_16, 16);
+
+fn real_workspace_member_only_solve_ring(limit: i64) -> Result<(), String> {
     let metadata = cargo_metadata_real_workspace()?;
     let mut machine = manifest_machine()?;
     let workspace = intern_tree(&mut machine, real_workspace_manifest_tree(&metadata)?)?;
     let root = intern_path(&mut machine, "")?;
     let target = intern_string(&mut machine, "x86_64-apple-darwin")?;
-    let limit = 16;
 
     let package_count = machine.demand_i64(
         "workspace_member_only_index_package_count_limit",
@@ -553,7 +572,7 @@ fn real_workspace_member_index_solves_bounded_ring() -> Result<(), String> {
 }
 
 #[test]
-#[ignore = "tier-A measurement probe: full member-only index construction exceeds nextest's default timeout"]
+#[ignore = "tier-A measurement probe: full member-only index construction"]
 fn real_workspace_member_only_index_builds_all_members() -> Result<(), String> {
     let metadata = cargo_metadata_real_workspace()?;
     let mut machine = manifest_machine()?;
