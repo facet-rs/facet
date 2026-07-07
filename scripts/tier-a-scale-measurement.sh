@@ -21,6 +21,7 @@ fi
 metadata="$OUT/metadata.json"
 unit_graph="$OUT/unit-graph.json"
 sparse_out="$OUT/sparse-index"
+export TIER_A_CARGO_METADATA="$metadata"
 
 cargo metadata --locked --format-version 1 > "$metadata"
 cargo +nightly build --unit-graph -Z unstable-options --workspace --locked > "$unit_graph"
