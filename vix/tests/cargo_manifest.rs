@@ -620,10 +620,10 @@ fn real_workspace_metadata_baseline_is_counted() -> Result<(), String> {
             .count();
     }
 
-    assert_eq!(workspace_members.len(), 145);
-    assert_eq!(vix_member_count, 145);
-    assert_eq!(total_oracle_deps, 1127);
-    assert_eq!(before_workspace_allowlist_failures, 762);
+    assert_eq!(workspace_members.len(), 146);
+    assert_eq!(vix_member_count, 146);
+    assert_eq!(total_oracle_deps, 1133);
+    assert_eq!(before_workspace_allowlist_failures, 765);
     assert_eq!(target_cfg_represented, 55);
 
     Ok(())
@@ -647,7 +647,7 @@ fn real_workspace_member_only_index_builds_bounded_ring() -> Result<(), String> 
     )?;
     let workspace_members: BTreeSet<_> = metadata.workspace_members.iter().collect();
 
-    assert_eq!(workspace_members.len(), 145);
+    assert_eq!(workspace_members.len(), 146);
     assert_eq!(package_count, limit + 1);
     assert_eq!(clause_count, limit * 2);
     Ok(())

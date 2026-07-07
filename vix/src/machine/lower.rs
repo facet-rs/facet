@@ -8455,6 +8455,7 @@ pub fn poly(n: Int) -> Int {
                     read_set: ReadSet {
                         entries: BTreeMap::new(),
                     },
+                    tree_events: Vec::new(),
                 },
                 ExecEvent::Ran,
             ))

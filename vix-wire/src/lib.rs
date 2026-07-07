@@ -951,6 +951,7 @@ impl MachinePendingRun for FleetRun {
         let outcome = Outcome {
             outputs: tree,
             read_set,
+            tree_events: Vec::new(),
         };
         self.state.lock().unwrap().flushed = Some(outcome.clone());
         Ok((outcome, source))

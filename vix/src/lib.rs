@@ -28,6 +28,8 @@ pub(crate) mod module;
 #[cfg(all(feature = "real-process", not(target_arch = "wasm32")))]
 pub mod real_process;
 pub mod reloc_selection;
+#[cfg(all(feature = "runner-rpc", not(target_arch = "wasm32")))]
+pub mod rpc_process;
 pub mod value;
 
 /// The tree-sitter grammar.json emitted from grammar.js at build time, embedded so

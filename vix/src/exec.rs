@@ -454,6 +454,21 @@ pub struct ReadSet {
 pub struct Outcome {
     pub outputs: Tree,
     pub read_set: ReadSet,
+    pub tree_events: Vec<TreeEvent>,
+}
+
+#[derive(facet::Facet, Debug, Clone, PartialEq, Eq)]
+pub struct TreeFileCompletion {
+    pub path: String,
+    pub content_hash: Blake3Hash,
+    pub size: u64,
+}
+
+#[derive(facet::Facet, Debug, Clone, PartialEq, Eq)]
+#[repr(u8)]
+pub enum TreeEvent {
+    SubfileCompleted(TreeFileCompletion),
+    TreeFinalized { files: Vec<TreeFileCompletion> },
 }
 
 // ---------------------------------------------------------------------------
@@ -730,6 +745,7 @@ impl ExecCache {
         let outcome = Outcome {
             outputs,
             read_set: observed.into_read_set(),
+            tree_events: Vec::new(),
         };
         self.record_ran(plan, capability, mounts, outcome.clone());
         Ok(outcome)
