@@ -328,6 +328,13 @@ pub enum DriveEvent {
     },
 }
 
+#[cfg(test)]
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub(crate) struct MoltenStats {
+    pub array_push_reused: usize,
+    pub array_push_copied: usize,
+}
+
 #[derive(Clone, Debug, PartialEq, Facet)]
 pub struct RenderedField {
     pub name: String,
@@ -1712,6 +1719,8 @@ pub struct Driver {
     event_sink: Option<DriveEventSink>,
     step_mode: StepMode,
     force_molten_copy: bool,
+    #[cfg(test)]
+    molten_stats: MoltenStats,
     store: RefCell<ValueStore>,
 }
 
@@ -1767,6 +1776,8 @@ impl Driver {
             event_sink: None,
             step_mode: StepMode::Run,
             force_molten_copy: std::env::var_os("VIX_FORCE_MOLTEN_COPY").is_some(),
+            #[cfg(test)]
+            molten_stats: MoltenStats::default(),
             store: RefCell::new(ValueStore::default()),
         })
     }
@@ -1782,6 +1793,10 @@ impl Driver {
         self.fns = fns;
         self.descriptors = descriptors;
         self.trace.clear();
+        #[cfg(test)]
+        {
+            self.molten_stats = MoltenStats::default();
+        }
         Ok(())
     }
 
@@ -1803,6 +1818,11 @@ impl Driver {
 
     pub fn set_force_molten_copy(&mut self, force: bool) {
         self.force_molten_copy = force;
+    }
+
+    #[cfg(test)]
+    pub(crate) fn molten_stats(&self) -> MoltenStats {
+        self.molten_stats
     }
 
     fn emit(&mut self, event: DriveEvent) {
@@ -2536,6 +2556,8 @@ impl Driver {
             let oci_file_memo_cell = RefCell::new(&mut self.oci_file_memo);
             let journal_cell = RefCell::new(&mut self.journal);
             let clock_cell = RefCell::new(&mut self.trace_clock);
+            #[cfg(test)]
+            let molten_stats = RefCell::new(&mut self.molten_stats);
             let lowered_fns = &self.fns;
             let store_events = RefCell::new(Vec::new());
             let projection_reads = RefCell::new(Vec::new());
@@ -4500,6 +4522,10 @@ impl Driver {
                                 .ok_or_else(|| format!("molten handle {array}"))?;
                             if let MoltenValue::ArrayWords { words, .. } = &mut entry.value {
                                 words.push(value);
+                                #[cfg(test)]
+                                {
+                                    molten_stats.borrow_mut().array_push_reused += 1;
+                                }
                                 write_frame_word(frame, dst_slot, array);
                                 return Ok(());
                             }
@@ -4526,6 +4552,10 @@ impl Driver {
                     let handle = molten_cell
                         .borrow_mut()
                         .alloc(MoltenValue::ArrayWords { elem_schema, words });
+                    #[cfg(test)]
+                    {
+                        molten_stats.borrow_mut().array_push_copied += 1;
+                    }
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
                 })();

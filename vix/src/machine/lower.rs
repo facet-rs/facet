@@ -1571,6 +1571,48 @@ fn collect_expr_identifiers(expr: &ast::Expr, out: &mut BTreeSet<String>) {
     }
 }
 
+fn consuming_rebind_receiver(binding_name: &str, value: &ast::Expr) -> Option<String> {
+    let value = unparen_expr(value);
+    match value {
+        ast::Expr::MethodCall(call)
+            if aggregate_update_method(call.name.value.as_str())
+                && plain_identifier_expr(&call.receiver) == Some(binding_name) =>
+        {
+            Some(binding_name.to_string())
+        }
+        ast::Expr::Field(field) if matches!(&field.name, ast::Member::Index(index) if index.value == "1") =>
+        {
+            let receiver = unparen_expr(&field.receiver);
+            if let ast::Expr::MethodCall(call) = receiver
+                && call.name.value == "pop"
+                && plain_identifier_expr(&call.receiver) == Some(binding_name)
+            {
+                return Some(binding_name.to_string());
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn aggregate_update_method(name: &str) -> bool {
+    matches!(name, "push" | "pop" | "set" | "insert")
+}
+
+fn plain_identifier_expr(expr: &ast::Expr) -> Option<&str> {
+    match unparen_expr(expr) {
+        ast::Expr::Identifier(name) => Some(name.value.as_str()),
+        _ => None,
+    }
+}
+
+fn unparen_expr(mut expr: &ast::Expr) -> &ast::Expr {
+    while let ast::Expr::Paren(paren) = expr {
+        expr = &paren.inner;
+    }
+    expr
+}
+
 fn collect_pattern_bindings(pattern: &ast::Pattern, out: &mut BTreeSet<String>) {
     match pattern {
         ast::Pattern::Identifier(name) => {
@@ -2286,6 +2328,7 @@ enum BindingState {
         value: ast::Expr,
         expected: Option<String>,
         env: Bindings,
+        consume_receiver: Option<String>,
     },
 }
 
@@ -2294,11 +2337,17 @@ impl BindingCell {
         Self(Rc::new(RefCell::new(BindingState::Value(slot))))
     }
 
-    fn lazy(value: ast::Expr, expected: Option<String>, env: Bindings) -> Self {
+    fn lazy(
+        value: ast::Expr,
+        expected: Option<String>,
+        env: Bindings,
+        consume_receiver: Option<String>,
+    ) -> Self {
         Self(Rc::new(RefCell::new(BindingState::Lazy {
             value,
             expected,
             env,
+            consume_receiver,
         })))
     }
 }
@@ -2317,7 +2366,8 @@ fn fork_binding_cell(cell: &BindingCell) -> BindingCell {
             value,
             expected,
             env,
-        } => BindingCell::lazy(value, expected, fork_bindings(&env)),
+            consume_receiver,
+        } => BindingCell::lazy(value, expected, fork_bindings(&env), consume_receiver),
     }
 }
 
@@ -2337,6 +2387,7 @@ struct FnLowerer<'a> {
     store_tag_region: u32,
     primitive_region: u32,
     next_input_slot: i64,
+    consume_receiver: Option<String>,
 }
 
 impl<'a> FnLowerer<'a> {
@@ -2365,6 +2416,7 @@ impl<'a> FnLowerer<'a> {
             store_tag_region: 0,
             primitive_region: 0,
             next_input_slot: 0,
+            consume_receiver: None,
         };
 
         let mut arg_offsets = Vec::new();
@@ -2447,9 +2499,15 @@ impl<'a> FnLowerer<'a> {
             match stmt {
                 ast::Stmt::Let(l) => {
                     let expected = l.ty.as_ref().map(type_schema_name).transpose()?;
+                    let consume_receiver = consuming_rebind_receiver(&l.name.value, &l.value);
                     self.slots.insert(
                         l.name.value.clone(),
-                        BindingCell::lazy(l.value.clone(), expected, self.slots.clone()),
+                        BindingCell::lazy(
+                            l.value.clone(),
+                            expected,
+                            self.slots.clone(),
+                            consume_receiver,
+                        ),
                     );
                 }
                 ast::Stmt::Expr(_) => {
@@ -2810,11 +2868,15 @@ impl<'a> FnLowerer<'a> {
                 value,
                 expected,
                 env,
+                consume_receiver,
             } => {
                 let saved = std::mem::replace(&mut self.slots, env);
+                let saved_consume_receiver =
+                    std::mem::replace(&mut self.consume_receiver, consume_receiver);
                 let slot =
                     self.expr_expected(&value, contextual_expected.or(expected.as_deref()))?;
                 *cell.0.borrow_mut() = BindingState::Value(slot.clone());
+                self.consume_receiver = saved_consume_receiver;
                 self.slots = saved;
                 if self.schema_can_be_molten(&slot.schema) {
                     self.molten_dup(&slot)
@@ -2823,6 +2885,70 @@ impl<'a> FnLowerer<'a> {
                 }
             }
         }
+    }
+
+    fn resolve_binding_consuming_move(
+        &mut self,
+        name: &str,
+        contextual_expected: Option<&str>,
+    ) -> Result<ValueSlot, String> {
+        let cell = self
+            .slots
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("unbound name {name}"))?;
+        let state = cell.0.borrow().clone();
+        let slot = match state {
+            BindingState::Value(slot) => slot,
+            BindingState::Lazy {
+                value,
+                expected,
+                env,
+                consume_receiver,
+            } => {
+                let saved = std::mem::replace(&mut self.slots, env);
+                let saved_consume_receiver =
+                    std::mem::replace(&mut self.consume_receiver, consume_receiver);
+                let slot =
+                    self.expr_expected(&value, contextual_expected.or(expected.as_deref()))?;
+                *cell.0.borrow_mut() = BindingState::Value(slot.clone());
+                self.consume_receiver = saved_consume_receiver;
+                self.slots = saved;
+                slot
+            }
+        };
+        Ok(self.copy_value(&slot))
+    }
+
+    fn copy_value(&mut self, value: &ValueSlot) -> ValueSlot {
+        let dst = self.alloc();
+        self.code.push(Op::CopyI64 {
+            dst,
+            src: value.slot,
+        });
+        ValueSlot {
+            slot: dst,
+            schema: value.schema.clone(),
+            realization: value.realization,
+            pending: value.pending,
+        }
+    }
+
+    fn pending_lazy_alias_reads(&self, name: &str) -> bool {
+        self.slots.iter().any(|(binding_name, cell)| {
+            if binding_name == name {
+                return false;
+            }
+            let BindingState::Lazy { value, env, .. } = &*cell.0.borrow() else {
+                return false;
+            };
+            if !env.contains_key(name) {
+                return false;
+            }
+            let mut identifiers = BTreeSet::new();
+            collect_expr_identifiers(value, &mut identifiers);
+            identifiers.contains(name)
+        })
     }
 
     fn schema_can_be_molten(&self, schema: &str) -> bool {
@@ -3474,7 +3600,7 @@ impl<'a> FnLowerer<'a> {
         call: &ast::MethodCall,
         expected: Option<&str>,
     ) -> Result<ValueSlot, String> {
-        let mut receiver = self.expr(&call.receiver)?;
+        let mut receiver = self.method_receiver(call)?;
         if receiver.schema == "Realized<Doc>" {
             receiver = self.coerce_to_schema(receiver, "Doc")?;
         }
@@ -3704,6 +3830,17 @@ impl<'a> FnLowerer<'a> {
                 "method {other} is outside the machine slice-3 subset"
             )),
         }
+    }
+
+    fn method_receiver(&mut self, call: &ast::MethodCall) -> Result<ValueSlot, String> {
+        if aggregate_update_method(call.name.value.as_str())
+            && let Some(name) = plain_identifier_expr(&call.receiver)
+            && self.consume_receiver.as_deref() == Some(name)
+            && !self.pending_lazy_alias_reads(name)
+        {
+            return self.resolve_binding_consuming_move(name, None);
+        }
+        self.expr(&call.receiver)
     }
 
     fn method_arg(&mut self, arg: &ast::Arg, expected: Option<&str>) -> Result<ValueSlot, String> {
@@ -7417,6 +7554,64 @@ pub fn main() -> Int {
                 assert_eq!(reuse_trace, copy_trace, "{lane:?} {name}");
                 assert_eq!(reuse_bundle.values, copy_bundle.values, "{lane:?} {name}");
             }
+        }
+    }
+
+    #[test]
+    fn molten_consuming_rebind_preserves_pending_aliases() {
+        let src = r#"
+pub fn main() -> Int {
+    let a = [1];
+    let b = a;
+    let a = a.push(2);
+    a.len() * 10 + b.len()
+}
+"#;
+        for lane in lanes() {
+            let mut reuse = Machine::load_with_lane(src, lane).unwrap();
+            reuse.driver.set_force_molten_copy(false);
+            let reuse_result = reuse.demand_i64("main", vec![]).unwrap();
+            let reuse_stats = reuse.driver.molten_stats();
+
+            let mut copy = Machine::load_with_lane(src, lane).unwrap();
+            copy.driver.set_force_molten_copy(true);
+            let copy_result = copy.demand_i64("main", vec![]).unwrap();
+
+            assert_eq!(reuse_result, 21, "{lane:?}");
+            assert_eq!(reuse_result, copy_result, "{lane:?}");
+            assert_eq!(reuse_stats.array_push_reused, 0, "{lane:?}");
+            assert_eq!(reuse_stats.array_push_copied, 1, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn molten_consuming_rebind_reuses_array_push_receiver() {
+        let src = r#"
+pub fn main() -> Int {
+    let x = [0];
+    let x = x.push(1);
+    let x = x.push(2);
+    let x = x.push(3);
+    x.len()
+}
+"#;
+        for lane in lanes() {
+            let mut reuse = Machine::load_with_lane(src, lane).unwrap();
+            reuse.driver.set_force_molten_copy(false);
+            let reuse_result = reuse.demand_i64("main", vec![]).unwrap();
+            let reuse_stats = reuse.driver.molten_stats();
+
+            let mut copy = Machine::load_with_lane(src, lane).unwrap();
+            copy.driver.set_force_molten_copy(true);
+            let copy_result = copy.demand_i64("main", vec![]).unwrap();
+            let copy_stats = copy.driver.molten_stats();
+
+            assert_eq!(reuse_result, 4, "{lane:?}");
+            assert_eq!(reuse_result, copy_result, "{lane:?}");
+            assert_eq!(reuse_stats.array_push_reused, 3, "{lane:?}");
+            assert_eq!(reuse_stats.array_push_copied, 0, "{lane:?}");
+            assert_eq!(copy_stats.array_push_reused, 0, "{lane:?}");
+            assert_eq!(copy_stats.array_push_copied, 3, "{lane:?}");
         }
     }
 
