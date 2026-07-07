@@ -616,6 +616,41 @@ fn rustc_profile_args(profile: CargoResolvedProfile) -> [String] {
     push_codegen_units(args, profile.codegen_units)
 }
 
+struct BuildScriptMetadata {
+    key: String,
+    value: String,
+}
+
+struct BuildScriptOutDirRef {
+    tree: Tree,
+    subpath: Path,
+}
+
+struct BuildScriptUnitEffects {
+    rustc_cfg: [String],
+    rustc_check_cfg: [String],
+    rustc_env: [String],
+    rustc_link_lib: [String],
+    rustc_link_search: [String],
+    rerun_if_changed: [String],
+    rerun_if_env_changed: [String],
+    warning: [String],
+    metadata: [BuildScriptMetadata],
+    out_dir: BuildScriptOutDirRef,
+}
+
+struct BuildScriptDirectives {
+    rustc_cfg: [String],
+    rustc_check_cfg: [String],
+    rustc_env: [String],
+    rustc_link_lib: [String],
+    rustc_link_search: [String],
+    rerun_if_changed: [String],
+    rerun_if_env_changed: [String],
+    warning: [String],
+    metadata: [BuildScriptMetadata],
+}
+
 fn resolved_unit(graph: ResolvedGraph, ix: Int) -> ResolvedUnit {
     graph.units.get(ix).unwrap()
 }
@@ -1391,29 +1426,216 @@ fn build_script_run(manifest: Tree, binary: Tree) -> Tree {
     }
 }
 
-fn build_script_directives(run: Tree) -> Doc {
-    build_directives(run / p"build.stdout")
+fn empty_build_script_directives() -> BuildScriptDirectives {
+    BuildScriptDirectives {
+        rustc_cfg: [],
+        rustc_check_cfg: [],
+        rustc_env: [],
+        rustc_link_lib: [],
+        rustc_link_search: [],
+        rerun_if_changed: [],
+        rerun_if_env_changed: [],
+        warning: [],
+        metadata: [],
+    }
+}
+
+fn malformed_build_script_directive(line: String) -> String {
+    let missing: Map<String, String> = {};
+    missing.get(line).unwrap()
+}
+
+fn cargo_directive_payload(line: String) -> String {
+    let double_colon = line.strip_prefix("cargo::");
+    match double_colon == line {
+        true => match line.strip_prefix("cargo:") {
+            single_colon => match single_colon == line {
+                true => malformed_build_script_directive(line),
+                false => single_colon,
+            },
+        },
+        false => double_colon,
+    }
+}
+
+fn checked_directive_payload(line: String) -> String {
+    let payload = cargo_directive_payload(line);
+    match payload.contains("=") {
+        true => payload,
+        false => malformed_build_script_directive(line),
+    }
+}
+
+fn metadata_directive(key: String, value: String) -> BuildScriptMetadata {
+    match key == "metadata" {
+        true => match value.contains("=") {
+            true => BuildScriptMetadata { key: value.before("="), value: value.after("=") },
+            false => BuildScriptMetadata { key: malformed_build_script_directive(value), value: value },
+        },
+        false => BuildScriptMetadata { key: key, value: value },
+    }
+}
+
+fn build_script_directive_line(line: String, directives: BuildScriptDirectives) -> BuildScriptDirectives {
+    match line == "" {
+        true => directives,
+        false => build_script_directive_payload(checked_directive_payload(line), directives),
+    }
+}
+
+fn build_script_directive_payload(payload: String, directives: BuildScriptDirectives) -> BuildScriptDirectives {
+    let key = payload.before("=");
+    let value = payload.after("=");
+    match key == "rustc-cfg" {
+        true => BuildScriptDirectives { rustc_cfg: directives.rustc_cfg.push(value), ..directives },
+        false => match key == "rustc-check-cfg" {
+            true => BuildScriptDirectives { rustc_check_cfg: directives.rustc_check_cfg.push(value), ..directives },
+            false => match key == "rustc-env" {
+                true => BuildScriptDirectives { rustc_env: directives.rustc_env.push(value), ..directives },
+                false => match key == "rustc-link-lib" {
+                    true => BuildScriptDirectives { rustc_link_lib: directives.rustc_link_lib.push(value), ..directives },
+                    false => match key == "rustc-link-search" {
+                        true => BuildScriptDirectives { rustc_link_search: directives.rustc_link_search.push(value), ..directives },
+                        false => match key == "rerun-if-changed" {
+                            true => BuildScriptDirectives { rerun_if_changed: directives.rerun_if_changed.push(value), ..directives },
+                            false => match key == "rerun-if-env-changed" {
+                                true => BuildScriptDirectives { rerun_if_env_changed: directives.rerun_if_env_changed.push(value), ..directives },
+                                false => match key == "warning" {
+                                    true => BuildScriptDirectives { warning: directives.warning.push(value), ..directives },
+                                    false => BuildScriptDirectives { metadata: directives.metadata.push(metadata_directive(key, value)), ..directives },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+}
+
+fn parse_build_script_directive_lines(stdout: String, directives: BuildScriptDirectives) -> BuildScriptDirectives {
+    match stdout.contains("\n") {
+        true => parse_build_script_directive_lines(stdout.after("\n"), build_script_directive_line(stdout.before("\n"), directives)),
+        false => build_script_directive_line(stdout, directives),
+    }
+}
+
+fn build_script_directives_from_stdout(stdout: String) -> BuildScriptDirectives {
+    parse_build_script_directive_lines(stdout, empty_build_script_directives())
+}
+
+fn build_script_directives(run: Tree) -> BuildScriptDirectives {
+    build_script_directives_from_stdout(run.text(p"build.stdout"))
 }
 
 fn build_script_out_dir(run: Tree) -> Tree {
     run / p"out"
 }
 
-fn build_script_lib(target: Target, manifest: Tree, directives: Doc, out_dir: Tree) -> Tree {
+fn build_script_out_dir_ref(run: Tree) -> BuildScriptOutDirRef {
+    BuildScriptOutDirRef { tree: run, subpath: p"out" }
+}
+
+// Cargo's rerun-if-* directives are DECLARED-world receipts: Cargo needs them
+// because it cannot see. Vix invalidation authority stays with OBSERVED
+// hermetic read-sets; declared/observed divergence is recorded data.
+fn build_script_unit_effects(run: Tree, directives: BuildScriptDirectives) -> BuildScriptUnitEffects {
+    BuildScriptUnitEffects {
+        rustc_cfg: directives.rustc_cfg,
+        rustc_check_cfg: directives.rustc_check_cfg,
+        rustc_env: directives.rustc_env,
+        rustc_link_lib: directives.rustc_link_lib,
+        rustc_link_search: directives.rustc_link_search,
+        rerun_if_changed: directives.rerun_if_changed,
+        rerun_if_env_changed: directives.rerun_if_env_changed,
+        warning: directives.warning,
+        metadata: directives.metadata,
+        out_dir: build_script_out_dir_ref(run),
+    }
+}
+
+fn rustc_cfg_args(values: [String], out: [Arg]) -> [Arg] {
+    match values.len() == 0 {
+        true => out,
+        false => rustc_cfg_args_tuple(values.pop(), out),
+    }
+}
+
+fn rustc_cfg_args_tuple(popped: (String, [String]), out: [Arg]) -> [Arg] {
+    let next = rustc_cfg_args(popped.1, out);
+    next.push(Arg::Str("--cfg")).push(Arg::Str(popped.0))
+}
+
+fn rustc_check_cfg_args(values: [String], out: [Arg]) -> [Arg] {
+    match values.len() == 0 {
+        true => out,
+        false => rustc_check_cfg_args_tuple(values.pop(), out),
+    }
+}
+
+fn rustc_check_cfg_args_tuple(popped: (String, [String]), out: [Arg]) -> [Arg] {
+    let next = rustc_check_cfg_args(popped.1, out);
+    next.push(Arg::Str("--check-cfg")).push(Arg::Str(popped.0))
+}
+
+fn rustc_env_args(values: [String], out: [Arg]) -> [Arg] {
+    match values.len() == 0 {
+        true => out,
+        false => rustc_env_args_tuple(values.pop(), out),
+    }
+}
+
+fn rustc_env_args_tuple(popped: (String, [String]), out: [Arg]) -> [Arg] {
+    let next = rustc_env_args(popped.1, out);
+    next.push(Arg::Str("--env")).push(Arg::Str(popped.0))
+}
+
+fn out_dir_env_arg(out_dir: BuildScriptOutDirRef) -> [Arg] {
+    [
+        Arg::Str("--env"),
+        Arg::Str("OUT_DIR="),
+        Arg::Interpolation { tree: out_dir.tree, subpath: out_dir.subpath },
+    ]
+}
+
+fn dep_metadata_env_name(links: String, metadata: BuildScriptMetadata) -> String {
+    "DEP_" + links + "_" + metadata.key
+}
+
+fn dep_metadata_env_value(links: String, metadata: BuildScriptMetadata) -> String {
+    dep_metadata_env_name(links, metadata) + "=" + metadata.value
+}
+
+fn dep_metadata_env_values(links: String, metadata: [BuildScriptMetadata], out: [String]) -> [String] {
+    match metadata.len() == 0 {
+        true => out,
+        false => dep_metadata_env_values_tuple(links, metadata.pop(), out),
+    }
+}
+
+fn dep_metadata_env_values_tuple(links: String, popped: (BuildScriptMetadata, [BuildScriptMetadata]), out: [String]) -> [String] {
+    let next = dep_metadata_env_values(links, popped.1, out);
+    next.push(dep_metadata_env_value(links, popped.0))
+}
+
+fn build_script_lib(target: Target, manifest: Tree, effects: BuildScriptUnitEffects) -> Tree {
     let rustc = Rustc::acquire(target);
     let package = package_doc(manifest);
     let name = doc_string(package, "name");
     let edition = doc_string(package, "edition");
-    let cfg = directives.get("rustc_cfg").unwrap().join(" ");
-    let check_cfg = directives.get("rustc_check_cfg").unwrap().join(" ");
+    let cfg_args = rustc_cfg_args(effects.rustc_cfg, []);
+    let check_cfg_args = rustc_check_cfg_args(effects.rustc_check_cfg, []);
+    let env_args = rustc_env_args(effects.rustc_env, []);
+    let out_dir_env = out_dir_env_arg(effects.out_dir);
 
     rustc! {
         --crate-name {name}
         --edition {edition}
         --crate-type lib
-        --cfg {cfg}
-        --check-cfg {check_cfg}
-        --env OUT_DIR={out_dir}
+        {cfg_args}
+        {check_cfg_args}
+        {env_args}
+        {out_dir_env}
         --emit=metadata={p"libbuild_script_app.rmeta"},link={p"libbuild_script_app.rlib"}
         {manifest / p"src/lib.rs"}
     }
@@ -1439,7 +1661,29 @@ pub fn crate_build_script_directive_cfg(graph: Tree) -> String {
     let binary = build_script_compile(manifest);
     let run = build_script_run(manifest, binary);
     let directives = build_script_directives(run);
-    directives.get("rustc_cfg").unwrap().join(" ")
+    directives.rustc_cfg.join(" ")
+}
+
+pub fn crate_build_script_directive_cfg_from_stdout(stdout: String) -> String {
+    build_script_directives_from_stdout(stdout).rustc_cfg.join(" ")
+}
+
+pub fn crate_build_script_directive_env_from_stdout(stdout: String) -> String {
+    build_script_directives_from_stdout(stdout).rustc_env.join(",")
+}
+
+pub fn crate_build_script_directive_links_from_stdout(stdout: String) -> String {
+    let directives = build_script_directives_from_stdout(stdout);
+    directives.rustc_link_lib.join(",") + "|" + directives.rustc_link_search.join(",")
+}
+
+pub fn crate_build_script_directive_rerun_from_stdout(stdout: String) -> String {
+    let directives = build_script_directives_from_stdout(stdout);
+    directives.rerun_if_changed.join(",") + "|" + directives.rerun_if_env_changed.join(",")
+}
+
+pub fn crate_build_script_dep_metadata_env_from_stdout(stdout: String, links: String) -> String {
+    dep_metadata_env_values(links, build_script_directives_from_stdout(stdout).metadata, []).join(",")
 }
 
 pub fn crate_build_script_out_dir(graph: Tree) -> Tree {
@@ -1454,8 +1698,8 @@ pub fn crate_build_script_bin(target: Target, graph: Tree) -> Tree {
     let binary = build_script_compile(manifest);
     let run = build_script_run(manifest, binary);
     let directives = build_script_directives(run);
-    let out_dir = build_script_out_dir(run);
-    let lib = build_script_lib(target, manifest, directives, out_dir);
+    let effects = build_script_unit_effects(run, directives);
+    let lib = build_script_lib(target, manifest, effects);
     build_script_bin_link(target, manifest, lib) / p"build_script_runner"
 }
 
