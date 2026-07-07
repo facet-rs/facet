@@ -1081,6 +1081,7 @@ struct MoltenStore {
 struct MoltenEntry {
     refs: usize,
     value: MoltenValue,
+    carried_array_hash: Option<CarriedArrayHasher>,
 }
 
 #[derive(Clone, Debug)]
@@ -1096,15 +1097,27 @@ enum MoltenValue {
     ArrayWords {
         elem_schema: String,
         words: Vec<i64>,
-        carried_hash: Option<Box<CarriedArrayHasher>>,
     },
     Interned(i64),
+    Interning,
 }
 
 impl MoltenStore {
     fn alloc(&mut self, value: MoltenValue) -> i64 {
+        self.alloc_with_carried_array_hash(value, None)
+    }
+
+    fn alloc_with_carried_array_hash(
+        &mut self,
+        value: MoltenValue,
+        carried_array_hash: Option<CarriedArrayHasher>,
+    ) -> i64 {
         let handle = MoltenHandle(self.entries.len());
-        self.entries.push(MoltenEntry { refs: 1, value });
+        self.entries.push(MoltenEntry {
+            refs: 1,
+            value,
+            carried_array_hash,
+        });
         Handle::Molten(handle).to_word()
     }
 
@@ -1125,9 +1138,7 @@ impl MoltenStore {
         match Handle::from_word(handle) {
             Handle::Molten(molten_handle) => {
                 match self.entry(molten_handle).map(|entry| &entry.value) {
-                    Some(MoltenValue::ArrayWords {
-                        elem_schema, words, ..
-                    }) => Ok(ArrayEntry::Words {
+                    Some(MoltenValue::ArrayWords { elem_schema, words }) => Ok(ArrayEntry::Words {
                         elem_schema: elem_schema.clone(),
                         words: words.clone(),
                     }),
@@ -1140,6 +1151,31 @@ impl MoltenStore {
             }
             Handle::Store(store_ix) => store.array_entry(store_ix.to_word(), schema_tables),
         }
+    }
+
+    fn debug_counts(&self) -> (usize, usize, usize, usize, usize, usize) {
+        let mut array_words = 0usize;
+        let mut carried_hashes = 0usize;
+        let mut array_entries = 0usize;
+        let mut refs_gt_one = 0usize;
+        let mut max_refs = 0usize;
+        for entry in &self.entries {
+            if let MoltenValue::ArrayWords { words, .. } = &entry.value {
+                array_entries += 1;
+                array_words += words.len();
+            }
+            carried_hashes += usize::from(entry.carried_array_hash.is_some());
+            refs_gt_one += usize::from(entry.refs > 1);
+            max_refs = max_refs.max(entry.refs);
+        }
+        (
+            self.entries.len(),
+            array_words,
+            carried_hashes,
+            array_entries,
+            refs_gt_one,
+            max_refs,
+        )
     }
 }
 
@@ -1816,15 +1852,18 @@ fn intern_molten_word(
         Handle::Store(_) => return Ok((word, true)),
     };
     let index = molten_handle.index();
-    let value = molten
+    let entry = molten
         .entries
-        .get(index)
-        .ok_or_else(|| format!("molten handle {word}"))?
-        .value
-        .clone();
-    if let MoltenValue::Interned(handle) = value {
+        .get_mut(index)
+        .ok_or_else(|| format!("molten handle {word}"))?;
+    if let MoltenValue::Interned(handle) = entry.value {
         return Ok((handle, true));
     }
+    if matches!(entry.value, MoltenValue::Interning) {
+        return Err(format!("molten handle {word} is already being interned"));
+    }
+    let value = std::mem::replace(&mut entry.value, MoltenValue::Interning);
+    let carried_array_hash = entry.carried_array_hash.take();
     let (handle, deduped) = match value {
         MoltenValue::Record {
             schema: record_schema,
@@ -1878,8 +1917,8 @@ fn intern_molten_word(
         MoltenValue::ArrayWords {
             elem_schema,
             mut words,
-            mut carried_hash,
         } => {
+            let mut carried_hash = carried_array_hash;
             if !schemas.is_list(schema) {
                 return Err(format!("molten array cannot intern as {schema}"));
             }
@@ -1909,14 +1948,16 @@ fn intern_molten_word(
             store.alloc_array_words_with_carried_hash(
                 &elem_schema,
                 words,
-                carried_hash.map(|hash| *hash),
+                carried_hash,
                 schemas,
                 schema_tables,
             )?
         }
         MoltenValue::Interned(_) => unreachable!("handled above"),
+        MoltenValue::Interning => unreachable!("handled above"),
     };
     molten.entries[index].value = MoltenValue::Interned(handle);
+    molten.entries[index].carried_array_hash = None;
     Ok((handle, deduped))
 }
 
@@ -2013,6 +2054,7 @@ pub struct Driver {
     event_sink: Option<DriveEventSink>,
     step_mode: StepMode,
     force_molten_copy: bool,
+    last_molten_debug_counts: (usize, usize, usize, usize, usize, usize),
     #[cfg(test)]
     molten_stats: MoltenStats,
     store: RefCell<ValueStore>,
@@ -2080,6 +2122,7 @@ impl Driver {
             event_sink: None,
             step_mode: StepMode::Run,
             force_molten_copy: std::env::var_os("VIX_FORCE_MOLTEN_COPY").is_some(),
+            last_molten_debug_counts: (0, 0, 0, 0, 0, 0),
             #[cfg(test)]
             molten_stats: MoltenStats::default(),
             store: RefCell::new(ValueStore::default()),
@@ -2099,6 +2142,7 @@ impl Driver {
         self.descriptors = descriptors;
         self.schemas = schemas;
         self.trace.clear();
+        self.last_molten_debug_counts = (0, 0, 0, 0, 0, 0);
         #[cfg(test)]
         {
             self.molten_stats = MoltenStats::default();
@@ -2155,6 +2199,10 @@ impl Driver {
 
     pub fn store_len(&self) -> usize {
         self.store.borrow().len()
+    }
+
+    pub fn molten_debug_counts(&self) -> (usize, usize, usize, usize, usize, usize) {
+        self.last_molten_debug_counts
     }
 
     pub fn store_entry(&self, handle: i64) -> Option<StoreEntry> {
@@ -2531,6 +2579,7 @@ impl Driver {
                         args: exec.args.clone(),
                         read_set: exec.read_set,
                     };
+                    self.last_molten_debug_counts = exec.molten.debug_counts();
                     self.memo.insert(done_key.clone(), done_entry.clone());
                     self.index_memo_candidate(exec.fn_ref, &exec.args, &done_key);
                     self.emit(DriveEvent::Completed {
@@ -3519,7 +3568,6 @@ impl Driver {
                     let handle = molten_cell.borrow_mut().alloc(MoltenValue::ArrayWords {
                         elem_schema,
                         words,
-                        carried_hash: None,
                     });
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
@@ -5008,13 +5056,15 @@ impl Driver {
                             molten
                                 .entry(array_handle)
                                 .and_then(|entry| match &entry.value {
-                                    MoltenValue::ArrayWords {
-                                        elem_schema, words, ..
-                                    } if entry.refs == 1 => Some(if words.is_empty() {
+                                    MoltenValue::ArrayWords { elem_schema, words }
+                                        if entry.refs == 1 =>
+                                    {
+                                        Some(if words.is_empty() {
                                         pushed_schema.clone()
                                     } else {
                                         elem_schema.clone()
-                                    }),
+                                        })
+                                    }
                                     _ => None,
                                 })
                         };
@@ -5036,26 +5086,25 @@ impl Driver {
                             if let MoltenValue::ArrayWords {
                                 elem_schema: stored_schema,
                                 words,
-                                carried_hash,
                             } = &mut entry.value
                             {
                                 if words.is_empty() {
                                     *stored_schema = elem_schema.clone();
-                                    *carried_hash = Some(Box::new(start_array_element_hasher(
+                                    entry.carried_array_hash = Some(start_array_element_hasher(
                                         b"vix-array-words",
                                         schema_tables,
                                         &elem_schema,
-                                    )));
+                                    ));
                                 }
-                                if carried_hash.is_none() {
-                                    *carried_hash = Some(Box::new(recompute_array_element_hasher(
+                                if entry.carried_array_hash.is_none() {
+                                    entry.carried_array_hash = Some(recompute_array_element_hasher(
                                         &store_cell.borrow(),
                                         schemas,
                                         schema_tables,
                                         b"vix-array-words",
                                         stored_schema,
                                         words,
-                                    )));
+                                    ));
                                 }
                                 let element_hash = canonical_word_hash_in_store(
                                     &store_cell.borrow(),
@@ -5063,8 +5112,8 @@ impl Driver {
                                     stored_schema,
                                     value,
                                 );
-                                if let Some(carried_hash) = carried_hash {
-                                    update_array_element_hash(carried_hash.as_mut(), element_hash);
+                                if let Some(carried_hash) = &mut entry.carried_array_hash {
+                                    update_array_element_hash(carried_hash, element_hash);
                                 }
                                 words.push(value);
                                 #[cfg(test)]
@@ -5101,7 +5150,6 @@ impl Driver {
                     let handle = molten_cell.borrow_mut().alloc(MoltenValue::ArrayWords {
                         elem_schema,
                         words,
-                        carried_hash: None,
                     });
                     #[cfg(test)]
                     {
@@ -5135,16 +5183,12 @@ impl Driver {
                             let entry = molten
                                 .entry_mut(array_handle)
                                 .ok_or_else(|| format!("molten handle {array}"))?;
-                            if let MoltenValue::ArrayWords {
-                                words,
-                                carried_hash,
-                                ..
-                            } = &mut entry.value
+                            if let MoltenValue::ArrayWords { words, .. } = &mut entry.value
                             {
                                 let value = words
                                     .pop()
                                     .ok_or_else(|| "pop on empty array".to_string())?;
-                                *carried_hash = None;
+                                entry.carried_array_hash = None;
                                 write_frame_word(frame, value_slot, value);
                                 write_frame_word(frame, dst_slot, array);
                                 return Ok(());
@@ -5166,7 +5210,6 @@ impl Driver {
                     let handle = molten_cell.borrow_mut().alloc(MoltenValue::ArrayWords {
                         elem_schema,
                         words,
-                        carried_hash: None,
                     });
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
@@ -5214,11 +5257,7 @@ impl Driver {
                             let entry = molten
                                 .entry_mut(array_handle)
                                 .ok_or_else(|| format!("molten handle {array}"))?;
-                            if let MoltenValue::ArrayWords {
-                                words,
-                                carried_hash,
-                                ..
-                            } = &mut entry.value
+                            if let MoltenValue::ArrayWords { words, .. } = &mut entry.value
                             {
                                 if index >= words.len() {
                                     return Err(format!(
@@ -5227,7 +5266,7 @@ impl Driver {
                                     ));
                                 }
                                 words[index] = value;
-                                *carried_hash = None;
+                                entry.carried_array_hash = None;
                                 write_frame_word(frame, dst_slot, array);
                                 return Ok(());
                             }
@@ -5258,7 +5297,6 @@ impl Driver {
                     let handle = molten_cell.borrow_mut().alloc(MoltenValue::ArrayWords {
                         elem_schema,
                         words,
-                        carried_hash: None,
                     });
                     write_frame_word(frame, dst_slot, handle);
                     Ok(())
@@ -5699,13 +5737,13 @@ impl Driver {
         args: &[i64],
         read_set: &ProjectionReadSet,
     ) -> Result<bool, String> {
-        let mut store = self.store.borrow().clone();
+        let store = self.store.borrow();
         for read in &read_set.entries {
             let Some(&arg) = args.get(read.arg_index) else {
                 return Ok(false);
             };
             let observed = projection_observation_hash(
-                &mut store,
+                &store,
                 &self.descriptors,
                 &self.schemas,
                 &self.schemas,
@@ -9268,7 +9306,7 @@ fn remap_read_set_for_caller(
 }
 
 fn projection_observation_hash(
-    store: &mut ValueStore,
+    store: &ValueStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
     schema_tables: &SchemaTables,
@@ -9331,6 +9369,7 @@ fn projection_observation_hash(
             key_hash,
             value_schema,
         } => {
+            let mut scratch = store.clone();
             let entry = store
                 .entry(handle)
                 .ok_or_else(|| format!("store handle {handle}"))?;
@@ -9340,14 +9379,18 @@ fn projection_observation_hash(
                     entry.schema
                 ));
             }
-            let (_, pairs) = store.map_pairs(handle, schemas, schema_tables)?;
+            let (_, pairs) = scratch.map_pairs(handle, schemas, schema_tables)?;
             for pair in pairs {
                 if pair.key_schema == key_schema.as_str()
-                    && canonical_word_hash_in_store(store, schemas, &pair.key_schema, pair.key_word)
-                        == *key_hash
+                    && canonical_word_hash_in_store(
+                        &scratch,
+                        schemas,
+                        &pair.key_schema,
+                        pair.key_word,
+                    ) == *key_hash
                 {
                     let (option, _) = if pair.value_schema == value_schema.as_str() {
-                        store.alloc_option_some(
+                        scratch.alloc_option_some(
                             &pair.value_schema,
                             pair.value_word,
                             pair.value_realization,
@@ -9357,7 +9400,7 @@ fn projection_observation_hash(
                     } else if let Some(inner) = realized_value_schema(value_schema) {
                         if let Some(realization) = pair.value_realization {
                             match realization {
-                                Realization::Ready if pair.value_schema == inner => store
+                                Realization::Ready if pair.value_schema == inner => scratch
                                     .alloc_option_some(
                                         value_schema,
                                         pair.value_word,
@@ -9368,7 +9411,7 @@ fn projection_observation_hash(
                                 Realization::Pending
                                     if pair.value_schema == pending_schema(inner) =>
                                 {
-                                    store.alloc_option_some(
+                                    scratch.alloc_option_some(
                                         value_schema,
                                         pair.value_word,
                                         Some(Realization::Pending),
@@ -9376,10 +9419,10 @@ fn projection_observation_hash(
                                         schema_tables,
                                     )?
                                 }
-                                _ => store.alloc_option_none(value_schema, schema_tables)?,
+                                _ => scratch.alloc_option_none(value_schema, schema_tables)?,
                             }
                         } else if pair.value_schema == inner {
-                            store.alloc_option_some(
+                            scratch.alloc_option_some(
                                 value_schema,
                                 pair.value_word,
                                 Some(Realization::Ready),
@@ -9387,7 +9430,7 @@ fn projection_observation_hash(
                                 schema_tables,
                             )?
                         } else if pair.value_schema == pending_schema(inner) {
-                            store.alloc_option_some(
+                            scratch.alloc_option_some(
                                 value_schema,
                                 pair.value_word,
                                 Some(Realization::Pending),
@@ -9395,10 +9438,10 @@ fn projection_observation_hash(
                                 schema_tables,
                             )?
                         } else {
-                            store.alloc_option_none(value_schema, schema_tables)?
+                            scratch.alloc_option_none(value_schema, schema_tables)?
                         }
                     } else if pair.value_schema == pending_schema(value_schema) {
-                        store.alloc_option_some(
+                        scratch.alloc_option_some(
                             &pair.value_schema,
                             pair.value_word,
                             pair.value_realization,
@@ -9406,13 +9449,13 @@ fn projection_observation_hash(
                             schema_tables,
                         )?
                     } else {
-                        store.alloc_option_none(value_schema, schema_tables)?
+                        scratch.alloc_option_none(value_schema, schema_tables)?
                     };
-                    return Ok(store.entry(option).expect("option handle").content_hash);
+                    return Ok(scratch.entry(option).expect("option handle").content_hash);
                 }
             }
-            let (option, _) = store.alloc_option_none(value_schema, schema_tables)?;
-            Ok(store.entry(option).expect("option handle").content_hash)
+            let (option, _) = scratch.alloc_option_none(value_schema, schema_tables)?;
+            Ok(scratch.entry(option).expect("option handle").content_hash)
         }
         ProjectionPath::TreePath { path } => {
             let TreeEntry::Concrete(tree) = store.tree_entry(handle)? else {
@@ -9523,7 +9566,7 @@ fn projection_observation_hash(
 }
 
 fn doc_get_observation_hash(
-    store: &mut ValueStore,
+    store: &ValueStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
     schema_tables: &SchemaTables,
@@ -9586,7 +9629,7 @@ fn doc_get_observation_hash(
 }
 
 fn ast_projection_observation_hash(
-    store: &mut ValueStore,
+    store: &ValueStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
     schema_tables: &SchemaTables,
@@ -9721,20 +9764,8 @@ fn canonical_map_pairs(
         })
         .collect();
     pairs.sort_by(|a, b| {
-        let schema_order = a.pair.key_schema.cmp(&b.pair.key_schema);
-        if schema_order != Ordering::Equal {
-            return schema_order;
-        }
-        compare_words(
-            store,
-            descriptors,
-            schemas,
-            schema_tables,
-            &a.pair.key_schema,
-            a.pair.key_word,
-            b.pair.key_word,
-        )
-        .unwrap_or_else(|_| a.key_hash.as_ref().cmp(b.key_hash.as_ref()))
+        compare_ordered_map_pairs(store, descriptors, schemas, schema_tables, a, b)
+            .unwrap_or_else(|_| a.key_hash.as_ref().cmp(b.key_hash.as_ref()))
     });
     let mut deduped: Vec<OrderedMapPair> = Vec::new();
     for pair in pairs {
@@ -9751,6 +9782,52 @@ fn canonical_map_pairs(
         deduped.push(pair);
     }
     Ok(deduped)
+}
+
+fn ordered_map_pairs_from_decoded(
+    store: &ValueStore,
+    pairs: Vec<MapPair>,
+    schemas: &SchemaTables,
+) -> Vec<OrderedMapPair> {
+    pairs
+        .into_iter()
+        .map(|pair| {
+            let key_hash =
+                canonical_word_hash_in_store(store, schemas, &pair.key_schema, pair.key_word);
+            let value_hash =
+                canonical_word_hash_in_store(store, schemas, &pair.value_schema, pair.value_word);
+            OrderedMapPair {
+                pair,
+                key_hash,
+                value_hash,
+                key_taint: None,
+                value_taint: None,
+            }
+        })
+        .collect()
+}
+
+fn compare_ordered_map_pairs(
+    store: &ValueStore,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
+    schema_tables: &SchemaTables,
+    a: &OrderedMapPair,
+    b: &OrderedMapPair,
+) -> Result<Ordering, String> {
+    let schema_order = a.pair.key_schema.cmp(&b.pair.key_schema);
+    if schema_order != Ordering::Equal {
+        return Ok(schema_order);
+    }
+    compare_words(
+        store,
+        descriptors,
+        schemas,
+        schema_tables,
+        &a.pair.key_schema,
+        a.pair.key_word,
+        b.pair.key_word,
+    )
 }
 
 fn promote_map_pairs_to_realized(
@@ -10594,10 +10671,26 @@ fn hash_value_into(
             let pairs = decode_map_pairs(bytes, schemas).unwrap_or_else(|err| {
                 panic!("map descriptor hashing failed for `{schema}`: {err}")
             });
-            let ordered = canonical_map_pairs(store, pairs, descriptors, schemas, schemas)
-                .unwrap_or_else(|err| {
-                    panic!("map descriptor canonicalization failed for `{schema}`: {err}")
-                });
+            let ordered = ordered_map_pairs_from_decoded(store, pairs, schemas);
+            let already_canonical = ordered.windows(2).all(|window| {
+                compare_ordered_map_pairs(
+                    store,
+                    descriptors,
+                    schemas,
+                    schemas,
+                    &window[0],
+                    &window[1],
+                )
+                .is_ok_and(|ordering| ordering == Ordering::Less)
+            });
+            let ordered = if already_canonical {
+                ordered
+            } else {
+                let pairs = ordered.into_iter().map(|pair| pair.pair).collect();
+                canonical_map_pairs(store, pairs, descriptors, schemas, schemas).unwrap_or_else(
+                    |err| panic!("map descriptor canonicalization failed for `{schema}`: {err}"),
+                )
+            };
             hasher.update(hash_map_pairs(&schema, &ordered, schemas).as_ref());
         }
         Access::Option(option) => {

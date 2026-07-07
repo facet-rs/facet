@@ -428,6 +428,10 @@ impl Machine {
         self.driver.store_len()
     }
 
+    pub fn molten_debug_counts(&self) -> (usize, usize, usize, usize, usize, usize) {
+        self.driver.molten_debug_counts()
+    }
+
     pub fn tree_entries(
         &mut self,
         handle: i64,
