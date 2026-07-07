@@ -55,6 +55,7 @@ fn itoa_static_index() -> Index {
     let version_values = version_values.insert(0, "1.0.14").insert(1, "1.0.15");
     let guard_clause_ids: Map<Int, Int> = {};
     let guard_tags: Map<Int, String> = {};
+    let guard_kinds: Map<Int, Int> = {};
     let guard_pkgs: Map<Int, Int> = {};
     let guard_version_values: Map<Int, String> = {};
     let guard_features: Map<Int, Int> = {};
@@ -74,6 +75,7 @@ fn itoa_static_index() -> Index {
         guard_ids: [],
         guard_clause_ids: guard_clause_ids,
         guard_tags: guard_tags,
+        guard_kinds: guard_kinds,
         guard_pkgs: guard_pkgs,
         guard_version_values: guard_version_values,
         guard_features: guard_features,

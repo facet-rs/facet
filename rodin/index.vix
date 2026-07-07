@@ -40,6 +40,7 @@ struct SparseBridgeState {
     guard_ids: [Int],
     guard_clause_ids: Map<Int, Int>,
     guard_tags: Map<Int, String>,
+    guard_kinds: Map<Int, Int>,
     guard_pkgs: Map<Int, Int>,
     guard_version_values: Map<Int, String>,
     guard_features: Map<Int, Int>,
@@ -183,6 +184,7 @@ fn empty_bridge_state() -> SparseBridgeState {
     let version_values: Map<Int, String> = {};
     let guard_clause_ids: Map<Int, Int> = {};
     let guard_tags: Map<Int, String> = {};
+    let guard_kinds: Map<Int, Int> = {};
     let guard_pkgs: Map<Int, Int> = {};
     let guard_version_values: Map<Int, String> = {};
     let guard_features: Map<Int, Int> = {};
@@ -203,6 +205,7 @@ fn empty_bridge_state() -> SparseBridgeState {
         guard_ids: [],
         guard_clause_ids: guard_clause_ids,
         guard_tags: guard_tags,
+        guard_kinds: guard_kinds,
         guard_pkgs: guard_pkgs,
         guard_version_values: guard_version_values,
         guard_features: guard_features,
@@ -342,6 +345,7 @@ fn add_selected_guard_clause(state: SparseBridgeState, parent_pkg: Int, parent_v
         guard_ids: state.guard_ids.push(guard_id),
         guard_clause_ids: state.guard_clause_ids.insert(guard_id, clause_id),
         guard_tags: state.guard_tags.insert(guard_id, "selected"),
+        guard_kinds: state.guard_kinds.insert(guard_id, 0),
         guard_pkgs: state.guard_pkgs.insert(guard_id, parent_pkg),
         guard_version_values: state.guard_version_values.insert(guard_id, parent_version),
         guard_features: state.guard_features.insert(guard_id, 0),
@@ -367,6 +371,7 @@ fn index_from_bridge_state(state: SparseBridgeState) -> Index {
         guard_ids: state.guard_ids,
         guard_clause_ids: state.guard_clause_ids,
         guard_tags: state.guard_tags,
+        guard_kinds: state.guard_kinds,
         guard_pkgs: state.guard_pkgs,
         guard_version_values: state.guard_version_values,
         guard_features: state.guard_features,
