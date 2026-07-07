@@ -249,6 +249,7 @@ impl Tool for RealProcessTool {
             .output()
             .map_err(|err| format!("real-process {} spawn failed: {err}", self.command))?;
         if !output.status.success() {
+            dump_failed_inputs(&self.command, &plan, root)?;
             return Err(format!(
                 "real-process {} exited with {}: {}",
                 self.command,
@@ -426,6 +427,37 @@ fn harvest_outputs(plan: &ExecPlan, root: &Path, stdout: &[u8]) -> Result<Tree, 
     Ok(tree)
 }
 
+fn dump_failed_inputs(command: &str, plan: &ExecPlan, root: &Path) -> Result<(), String> {
+    let Ok(out_root) = std::env::var("TIER_A_OUT") else {
+        return Ok(());
+    };
+    let dump_root = Path::new(&out_root).join("real-process-failed-inputs");
+    fs::create_dir_all(&dump_root)
+        .map_err(|err| format!("real-process create failed-input dump dir: {err}"))?;
+    for (arg, role) in &plan.argv {
+        for input in role_input_paths(arg, *role) {
+            let physical = physical_path(&input, root)?;
+            if !physical.is_file() {
+                continue;
+            }
+            let bytes = fs::read(&physical).map_err(|err| {
+                format!(
+                    "real-process read failed-input `{}`: {err}",
+                    physical.display()
+                )
+            })?;
+            let name = format!(
+                "{}__{}",
+                command,
+                input.trim_start_matches('/').replace('/', "__")
+            );
+            fs::write(dump_root.join(name), bytes)
+                .map_err(|err| format!("real-process write failed-input dump: {err}"))?;
+        }
+    }
+    Ok(())
+}
+
 fn harvest_output_dir(root: &Path, logical_dir: &str, tree: &mut Tree) -> Result<(), String> {
     let physical = physical_path(logical_dir, root)?;
     if !physical.exists() {
@@ -487,6 +519,15 @@ fn stage_file(root: &Path, logical: &str, bytes: &[u8]) -> Result<(), String> {
     if !cas_path.exists() {
         fs::write(&cas_path, bytes)
             .map_err(|err| format!("real-process write cas `{logical}`: {err}"))?;
+    }
+    if physical.exists() {
+        let current = fs::read(&physical)
+            .map_err(|err| format!("real-process read existing staged `{logical}`: {err}"))?;
+        if current == bytes {
+            return Ok(());
+        }
+        fs::remove_file(&physical)
+            .map_err(|err| format!("real-process replace staged `{logical}`: {err}"))?;
     }
     fs::hard_link(&cas_path, &physical)
         .or_else(|_| fs::copy(&cas_path, &physical).map(|_| ()))

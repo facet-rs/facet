@@ -1848,31 +1848,42 @@ fn taxon_ladder_runs_blake3_build_script_rust_only_checkpoint() -> Result<(), St
     let bridge = taxon_demo_bridge_source(&graph, &host)?;
     write_tier_a_artifact("taxon-demo-bridge.vix", &bridge)?;
     let source_tree = taxon_demo_source_tree(&graph)?;
+    assert_taxon_source_tree_has_blake3_build_main(&source_tree)?;
     let source = format!("{RODIN_SOURCE}\n\n{SOURCE}\n\n{bridge}");
     let backend = Arc::new(RealProcessBackend::new());
     let mut machine = Machine::load(&source)?.with_exec_backend(backend);
     let source_arg = machine.intern_arg("Tree", MachineArg::Tree(source_tree))?.0;
+    let projected_build_rs = machine.demand_i64("taxon_blake3_build_rs", vec![source_arg])?;
+    assert_projected_blake3_build_main(&mut machine, projected_build_rs)?;
 
     let demanded = machine.demand_i64("taxon_blake3_build_script_run", vec![source_arg]);
     let run = match demanded {
         Ok(run) => run,
-        Err(err) if mentions_c_tooling(&err) => {
-            write_tier_a_artifact(
-                "taxon-blake3-build-script-error.txt",
-                &format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(&machine)),
-            )?;
-            return Err(format!("blake3 build.rs attempted C tooling:\n{err}"));
-        }
         Err(err) => {
             write_tier_a_artifact(
                 "taxon-blake3-build-script-error.txt",
                 &format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(&machine)),
             )?;
+            if mentions_c_tooling(&err) {
+                return Err(format!("blake3 build.rs attempted C tooling:\n{err}"));
+            }
             return Err(err);
         }
     };
 
-    let stdout = tree_file_bytes(&mut machine, run, "build.stdout")?;
+    let stdout = match tree_file_bytes(&mut machine, run, "build.stdout") {
+        Ok(stdout) => stdout,
+        Err(err) => {
+            write_tier_a_artifact(
+                "taxon-blake3-build-script-error.txt",
+                &format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(&machine)),
+            )?;
+            if mentions_c_tooling(&err) {
+                return Err(format!("blake3 build.rs attempted C tooling:\n{err}"));
+            }
+            return Err(err);
+        }
+    };
     let stdout = String::from_utf8_lossy(&stdout).into_owned();
     write_tier_a_artifact("taxon-blake3-build-stdout.txt", &stdout)?;
 
@@ -2119,6 +2130,9 @@ fn taxon_demo_bridge_source(graph: &CargoUnitGraph, host: &str) -> Result<String
         "    UnitTargetTable {{ root: {root}, targets: targets }}\n"
     ));
     out.push_str("}\n\n");
+    out.push_str("pub fn taxon_blake3_build_rs(source: Tree) -> Tree {\n");
+    out.push_str("    source / p\"registry/blake3-1.8.5\" / p\"build.rs\"\n");
+    out.push_str("}\n\n");
     out.push_str("pub fn taxon_cc_host_unit(source: Tree) -> Tree {\n");
     out.push_str("    let index = taxon_index();\n");
     out.push_str("    let result = solve(index, taxon_blake3_build_script_problem(), \"host\");\n");
@@ -2134,61 +2148,37 @@ fn taxon_demo_bridge_source(graph: &CargoUnitGraph, host: &str) -> Result<String
         "    let cc = solution_unit_built(Target::host(), source, index, result, taxon_targets(), {}, {cc_unit}, \"link\");\n",
         vix_string(host)
     ));
+    out.push_str(&format!(
+        "    let cc_unit = solution_unit(index, result, taxon_targets(), source, {}, {cc_unit});\n",
+        vix_string(host)
+    ));
+    out.push_str(&format!(
+        "    let cc_deps = solution_dependency_tree(Target::host(), source, index, result, taxon_targets(), {}, cc_unit, \"link\");\n",
+        vix_string(host)
+    ));
     out.push_str("    let rustc = Rustc::acquire(Target::host());\n");
     out.push_str("    let manifest = source / p\"registry/blake3-1.8.5\";\n");
     out.push_str("    let edition = \"2024\";\n");
     out.push_str("    let cc_arg = Arg::Interpolation { tree: cc, subpath: p\"libcc.rlib\" };\n");
-    out.push_str("    let externs: [Arg] = [Arg::Str(\"--extern\"), Arg::Str(\"cc=\"), cc_arg];\n");
+    out.push_str("    let source_arg = Arg::Interpolation { tree: source, subpath: p\"registry/blake3-1.8.5/build.rs\" };\n");
     out.push_str("    let binary = rustc! {\n");
     out.push_str("        --crate-name build_script_build\n");
     out.push_str("        --edition {edition}\n");
     out.push_str("        --crate-type bin\n");
     out.push_str("        --emit=link=build_script\n");
-    out.push_str("        {externs}\n");
-    out.push_str("        {manifest / p\"build.rs\"}\n");
-    out.push_str("    };\n");
-    out.push_str("    let build_script = \"build-script-runner\";\n");
-    out.push_str("    let version = \"1.8.5\";\n");
-    out.push_str("    let version_major = \"1\";\n");
-    out.push_str("    let version_minor = \"8\";\n");
-    out.push_str("    let version_patch = \"5\";\n");
-    out.push_str("    let package_name = \"blake3\";\n");
-    out.push_str("    let opt_level = \"3\";\n");
-    out.push_str("    let profile = \"debug\";\n");
-    out.push_str("    let endian = \"little\";\n");
-    out.push_str(&format!("    let target_name = {};\n", vix_string(host)));
-    out.push_str(&format!(
-        "    let target_arch = {};\n",
-        vix_string(&host_arch(host))
-    ));
-    out.push_str(&format!(
-        "    let target_vendor = {};\n",
-        vix_string(&host_vendor(host))
-    ));
-    out.push_str(&format!(
-        "    let target_os = {};\n",
-        vix_string(&host_os(host))
-    ));
-    out.push_str("    build_script! {\n");
-    out.push_str("        --executable {binary / p\"build_script\"}\n");
-    out.push_str("        --stdout {p\"build.stdout\"}\n");
-    out.push_str("        --out-dir {p\"out\"}\n");
-    out.push_str("        --env OUT_DIR={p\"out\"}\n");
+    out.push_str("        -L dependency={cc_deps}\n");
+    out.push_str("        --extern cc={cc_arg}\n");
     out.push_str("        --env CARGO_MANIFEST_DIR={manifest}\n");
-    out.push_str("        --env CARGO_PKG_NAME={package_name}\n");
-    out.push_str("        --env CARGO_PKG_VERSION={version}\n");
-    out.push_str("        --env CARGO_PKG_VERSION_MAJOR={version_major}\n");
-    out.push_str("        --env CARGO_PKG_VERSION_MINOR={version_minor}\n");
-    out.push_str("        --env CARGO_PKG_VERSION_PATCH={version_patch}\n");
-    out.push_str("        --env TARGET={target_name}\n");
-    out.push_str("        --env HOST={target_name}\n");
-    out.push_str("        --env OPT_LEVEL={opt_level}\n");
-    out.push_str("        --env PROFILE={profile}\n");
-    out.push_str("        --env CARGO_CFG_TARGET_ARCH={target_arch}\n");
-    out.push_str("        --env CARGO_CFG_TARGET_VENDOR={target_vendor}\n");
-    out.push_str("        --env CARGO_CFG_TARGET_OS={target_os}\n");
-    out.push_str("        --env CARGO_CFG_TARGET_ENDIAN={endian}\n");
-    out.push_str("    }\n");
+    out.push_str("        {source_arg}\n");
+    out.push_str("    };\n");
+    out.push_str("    let unit = solution_unit(index, result, taxon_targets(), source, ");
+    out.push_str(&vix_string(host));
+    out.push_str(", ");
+    out.push_str(&blake3_build.to_string());
+    out.push_str(");\n");
+    out.push_str("    solution_build_script_run(source, ");
+    out.push_str(&vix_string(host));
+    out.push_str(", unit, binary)\n");
     out.push_str("}\n");
     Ok(out)
 }
@@ -2287,6 +2277,43 @@ fn taxon_demo_source_tree(graph: &CargoUnitGraph) -> Result<Tree, String> {
         copy_tree_into_vix_tree(&physical, &logical, &mut entries, &mut blobs)?;
     }
     Ok(Tree { entries, blobs })
+}
+
+fn assert_taxon_source_tree_has_blake3_build_main(source: &Tree) -> Result<(), String> {
+    let path = "registry/blake3-1.8.5/build.rs";
+    let text = source
+        .entries
+        .get(path)
+        .ok_or_else(|| format!("taxon source tree missing {path}"))?;
+    write_tier_a_artifact(
+        "taxon-blake3-build-source-head.txt",
+        &text[..text.len().min(512)],
+    )?;
+    if text.contains("fn main()") {
+        Ok(())
+    } else {
+        Err(format!(
+            "taxon source tree {path} did not contain fn main(); first bytes:\n{}",
+            &text[..text.len().min(512)]
+        ))
+    }
+}
+
+fn assert_projected_blake3_build_main(machine: &mut Machine, handle: i64) -> Result<(), String> {
+    let bytes = tree_file_bytes(machine, handle, "build.rs")?;
+    let text = String::from_utf8(bytes).map_err(|err| err.to_string())?;
+    write_tier_a_artifact(
+        "taxon-blake3-build-projected-head.txt",
+        &text[..text.len().min(512)],
+    )?;
+    if text.contains("fn main()") {
+        Ok(())
+    } else {
+        Err(format!(
+            "projected blake3 build.rs did not contain fn main(); first bytes:\n{}",
+            &text[..text.len().min(512)]
+        ))
+    }
 }
 
 fn copy_tree_into_vix_tree(
@@ -2435,26 +2462,11 @@ fn host_triple() -> Result<String, String> {
         .ok_or_else(|| format!("rustc -vV did not print host triple:\n{stdout}"))
 }
 
-fn host_arch(host: &str) -> String {
-    host.split('-').next().unwrap_or(host).to_owned()
-}
-
-fn host_vendor(host: &str) -> String {
-    host.split('-').nth(1).unwrap_or("").to_owned()
-}
-
-fn host_os(host: &str) -> String {
-    match host {
-        value if value.contains("apple-darwin") => "macos".to_owned(),
-        value if value.contains("unknown-linux") => "linux".to_owned(),
-        value if value.contains("pc-windows") => "windows".to_owned(),
-        _ => host.split('-').nth(2).unwrap_or("").to_owned(),
-    }
-}
-
 fn mentions_c_tooling(text: &str) -> bool {
     text.contains(" cc ")
         || text.contains(" cc-")
+        || text.contains("cc-rs")
+        || text.contains("\"cc\"")
         || text.contains("`cc`")
         || text.contains("clang")
         || text.contains("gcc")

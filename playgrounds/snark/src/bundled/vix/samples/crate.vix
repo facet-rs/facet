@@ -1489,7 +1489,16 @@ fn target_after_vendor(target_name: String) -> String {
 }
 
 fn target_os_env(target_name: String) -> String {
-    target_after_vendor(target_name).before("-")
+    match target_name.contains("apple-darwin") {
+        true => "macos",
+        false => match target_name.contains("unknown-linux") {
+            true => "linux",
+            false => match target_name.contains("pc-windows") {
+                true => "windows",
+                false => target_after_vendor(target_name).before("-"),
+            },
+        },
+    }
 }
 
 fn target_env_env(target_name: String) -> String {
@@ -1507,9 +1516,8 @@ fn solution_build_script_compile(source: Tree, index: Index, result: SolveResult
     let rustc = Rustc::acquire(Target::host());
     let manifest = source / unit.manifest;
     let edition = package_edition_from_source(source, manifest);
-    let direct_deps = solution_dep_ids(index, result, pkg, target_name, index.clause_ids, []);
     let deps = solution_dependency_tree(Target::host(), source, index, result, targets, target_name, unit, "link");
-    let externs = solution_extern_args(Target::host(), index, result, targets, source, target_name, direct_deps, "link", []);
+    let externs = solution_extern_args(Target::host(), index, result, targets, source, target_name, unit.deps, "link", []);
     let profile_args = rustc_profile_args(unit.profile);
     let cfg_args = push_cfg_args(unit.cfgs, []);
     let source_arg = argv_source_interpolation(manifest, unit.source);
