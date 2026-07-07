@@ -1106,17 +1106,25 @@ fn solution_dependency_tree(target: Target, source: Tree, index: Index, result: 
 }
 
 fn solution_unit_artifact_path(unit: ResolvedUnit, mode: String) -> Path {
-    match mode == "metadata" {
-        true => unit.metadata,
-        false => unit.link,
+    // Cargo's unit graph exposes proc-macros as host units consumed through
+    // the produced dylib, including metadata-only consumer builds.
+    match unit.kind == "proc-macro" {
+        true => unit.link,
+        false => match mode == "metadata" {
+            true => unit.metadata,
+            false => unit.link,
+        },
     }
 }
 
 fn solution_artifact_ref(index: Index, result: SolveResult, targets: UnitTargetTable, source: Tree, target_name: String, pkg: Int, mode: String) -> UnitArtifactRef {
     let unit = solution_unit(index, result, targets, source, target_name, pkg);
-    let compat_file = match mode == "metadata" {
-        true => unit.metadata_file,
-        false => unit.link_file,
+    let compat_file = match unit.kind == "proc-macro" {
+        true => unit.link_file,
+        false => match mode == "metadata" {
+            true => unit.metadata_file,
+            false => unit.link_file,
+        },
     };
     UnitArtifactRef {
         producer: pkg,
@@ -1331,7 +1339,10 @@ fn solution_unit_built(target: Target, source: Tree, index: Index, result: Solve
     let unit = solution_unit(index, result, targets, source, target_name, pkg);
     match unit.kind == "lib" {
         true => solution_lib(target, source, index, result, targets, target_name, unit, mode),
-        false => solution_bin(target, source, index, result, targets, target_name, unit, mode),
+        false => match unit.kind == "proc-macro" {
+            true => generic_proc_macro(source, unit),
+            false => solution_bin(target, source, index, result, targets, target_name, unit, mode),
+        },
     }
 }
 
@@ -1465,6 +1476,10 @@ fn proc_macro_dylib_ext(host: Target) -> String {
         Os::Windows => "dll",
         _ => "so",
     }
+}
+
+fn proc_macro_dylib_file(host: Target) -> String {
+    "libemit_answer_macro." + proc_macro_dylib_ext(host)
 }
 
 fn proc_macro_dylib_path(host: Target) -> Path {

@@ -377,6 +377,10 @@ fn generic_lock_graph_source() -> String {
     format!("{RODIN_SOURCE}\n\n{SOURCE}\n\n{GENERIC_LOCK_GRAPH_BRIDGE}")
 }
 
+fn proc_macro_solution_source() -> String {
+    format!("{RODIN_SOURCE}\n\n{SOURCE}\n\n{PROC_MACRO_SOLUTION_BRIDGE}")
+}
+
 fn crate_source() -> String {
     format!("{RODIN_SOURCE}\n\n{SOURCE}")
 }
@@ -553,6 +557,104 @@ pub fn derived_lock_bin_check(target: Target, graph: Tree) -> Tree {
 
 pub fn derived_lock_bin(target: Target, graph: Tree) -> Tree {
     crate_solution_bin(target, graph, fixture_index(), fixture_problem(), "x86_64-unknown-linux-gnu", fixture_unit_targets())
+}
+
+"#;
+
+const PROC_MACRO_SOLUTION_BRIDGE: &str = r#"
+fn proc_macro_solution_index() -> Index {
+    let names: Map<Int, String> = {};
+    let names = names.insert(0, "emit_answer_macro");
+    let names = names.insert(1, "macro_app");
+
+    let version_pkgs: Map<Int, Int> = {};
+    let version_pkgs = version_pkgs.insert(0, 0);
+    let version_pkgs = version_pkgs.insert(1, 1);
+
+    let version_values: Map<Int, String> = {};
+    let version_values = version_values.insert(0, "0.1.0");
+    let version_values = version_values.insert(1, "0.1.0");
+
+    let guard_clause_ids: Map<Int, Int> = {};
+    let guard_tags: Map<Int, String> = {};
+    let guard_kinds: Map<Int, Int> = {};
+    let guard_pkgs: Map<Int, Int> = {};
+    let guard_version_values: Map<Int, String> = {};
+    let guard_features: Map<Int, Int> = {};
+    let consequent_tags: Map<Int, String> = {};
+    let consequent_pkgs: Map<Int, Int> = {};
+    let consequent_version_sets: Map<Int, VersionSet> = {};
+    let consequent_features: Map<Int, Int> = {};
+    let gate_kinds: Map<Int, String> = {};
+    let gate_targets: Map<Int, String> = {};
+
+    let guard_clause_ids = guard_clause_ids.insert(0, 0);
+    let guard_tags = guard_tags.insert(0, "in_graph");
+    let guard_kinds = guard_kinds.insert(0, 0);
+    let guard_pkgs = guard_pkgs.insert(0, 1);
+    let guard_features = guard_features.insert(0, 0);
+    let consequent_tags = consequent_tags.insert(0, "in_graph");
+    let consequent_pkgs = consequent_pkgs.insert(0, 0);
+    let consequent_version_sets = consequent_version_sets.insert(0, VersionSet::from_req("*"));
+    let consequent_features = consequent_features.insert(0, 0);
+    let gate_kinds = gate_kinds.insert(0, "normal");
+
+    let guard_clause_ids = guard_clause_ids.insert(1, 1);
+    let guard_tags = guard_tags.insert(1, "in_graph");
+    let guard_kinds = guard_kinds.insert(1, 0);
+    let guard_pkgs = guard_pkgs.insert(1, 1);
+    let guard_features = guard_features.insert(1, 0);
+    let consequent_tags = consequent_tags.insert(1, "version_set");
+    let consequent_pkgs = consequent_pkgs.insert(1, 0);
+    let consequent_version_sets = consequent_version_sets.insert(1, VersionSet::from_req("0.1.0"));
+    let consequent_features = consequent_features.insert(1, 0);
+    let gate_kinds = gate_kinds.insert(1, "normal");
+
+    Index {
+        packages: [0, 1],
+        names: names,
+        version_ids: [0, 1],
+        version_pkgs: version_pkgs,
+        version_values: version_values,
+        clause_ids: [0, 1],
+        guard_ids: [0, 1],
+        guard_clause_ids: guard_clause_ids,
+        guard_tags: guard_tags,
+        guard_kinds: guard_kinds,
+        guard_pkgs: guard_pkgs,
+        guard_version_values: guard_version_values,
+        guard_features: guard_features,
+        consequent_tags: consequent_tags,
+        consequent_pkgs: consequent_pkgs,
+        consequent_version_sets: consequent_version_sets,
+        consequent_features: consequent_features,
+        gate_kinds: gate_kinds,
+        gate_targets: gate_targets,
+    }
+}
+
+fn proc_macro_solution_problem() -> Problem {
+    Problem {
+        root_pkg: 1,
+        root_req: VersionSet::from_req("*"),
+        root_features: [],
+        root_default_feature: 0,
+        root_default_features: false,
+    }
+}
+
+fn proc_macro_solution_targets() -> UnitTargetTable {
+    let host = Target::host();
+    let dylib = proc_macro_dylib_path(host);
+    let dylib_file = proc_macro_dylib_file(host);
+    let targets: Map<Int, UnitTarget> = {};
+    let targets = targets.insert(0, UnitTarget { kind: "proc-macro", manifest: p"crates/emit_answer_macro", source: p"src/lib.rs", metadata: dylib, link: dylib, metadata_file: dylib_file, link_file: dylib_file });
+    let targets = targets.insert(1, UnitTarget { kind: "bin", manifest: p"app", source: p"src/main.rs", metadata: p"macro_app.rmeta", link: p"macro_app", metadata_file: "macro_app.rmeta", link_file: "macro_app" });
+    UnitTargetTable { root: 1, targets: targets }
+}
+
+pub fn derived_proc_macro_cross_bin(graph: Tree) -> Tree {
+    crate_solution_bin(proc_macro_cross_target(), graph, proc_macro_solution_index(), proc_macro_solution_problem(), "x86_64-unknown-linux-gnu", proc_macro_solution_targets())
 }
 
 "#;
@@ -1481,6 +1583,49 @@ fn real_process_rustc_builds_proc_macro_fixture_and_matches_cargo_unit_graph_ora
     if host_capability == target_capability {
         return Err(format!(
             "proc-macro producer and consumer used the same rustc capability: {host_capability}"
+        ));
+    }
+
+    Ok(())
+}
+
+#[test]
+fn real_process_rustc_builds_derived_proc_macro_fixture_and_matches_cargo_unit_graph_oracle()
+-> Result<(), String> {
+    if !host_rustc_available() {
+        return Ok(());
+    }
+
+    let source = proc_macro_solution_source();
+    let backend = Arc::new(RealProcessBackend::new());
+    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
+    let graph = machine
+        .intern_arg("Tree", MachineArg::Tree(proc_macro_graph_tree()))?
+        .0;
+
+    let built = demand_with_rustc_trace(&mut machine, "derived_proc_macro_cross_bin", vec![graph])?;
+    let bin = tree_file_bytes(&mut machine, built, "macro_app")?;
+    let stdout = run_named_binary_bytes(&bin, "macro_app")?;
+    if stdout != PROC_MACRO_EXPECTED_STDOUT {
+        return Err(format!(
+            "unexpected derived proc-macro fixture stdout: {:?}",
+            String::from_utf8_lossy(&stdout)
+        ));
+    }
+
+    let (machine_graph, host_target_capabilities) = machine_proc_macro_unit_graph(&machine)?;
+    let cargo_graph = cargo_proc_macro_unit_graph_oracle()?;
+    if machine_graph != cargo_graph {
+        return Err(format!(
+            "derived proc-macro machine unit graph did not match cargo oracle\nmachine: {machine_graph:#?}\ncargo: {cargo_graph:#?}"
+        ));
+    }
+    let (host_capability, target_capability) = host_target_capabilities
+        .first()
+        .ok_or_else(|| "missing proc-macro host/target capability pair".to_string())?;
+    if host_capability == target_capability {
+        return Err(format!(
+            "derived proc-macro producer and consumer used the same rustc capability: {host_capability}"
         ));
     }
 
