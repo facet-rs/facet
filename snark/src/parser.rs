@@ -5459,7 +5459,7 @@ impl<'a> ResolvedCstBuilder<'a> {
             return None;
         }
 
-        self.debug_assert_online_attachment_matches_range_sort();
+        self.normalize_resolved_children();
         let roots = std::mem::take(&mut self.roots);
         if roots.is_empty() {
             return None;
@@ -5503,7 +5503,7 @@ impl<'a> ResolvedCstBuilder<'a> {
             return None;
         }
 
-        self.debug_assert_online_attachment_matches_range_sort();
+        self.normalize_resolved_children();
         let roots = std::mem::take(&mut self.roots);
         if roots.is_empty() {
             return None;
@@ -5606,32 +5606,15 @@ impl<'a> ResolvedCstBuilder<'a> {
             .partition_point(|root| resolved_item_order_key(&self.items[*root]) < key)
     }
 
-    #[cfg(debug_assertions)]
-    fn debug_assert_online_attachment_matches_range_sort(&self) {
-        if self.items.len() > 4096 {
-            return;
-        }
-
-        let mut items = self.items.clone();
-        let mut roots = attach_resolved_children_from_ranges(&mut items);
-        sort_resolved_children(&mut roots, &items);
-        for index in 0..items.len() {
-            let mut children = std::mem::take(&mut items[index].children);
-            sort_resolved_children(&mut children, &items);
-            items[index].children = children;
-        }
-
-        debug_assert_eq!(self.roots, roots);
-        for (index, (actual, expected)) in self.items.iter().zip(&items).enumerate() {
-            debug_assert_eq!(
-                actual.children, expected.children,
-                "resolved CST child attachment mismatch at item {index}"
-            );
+    fn normalize_resolved_children(&mut self) {
+        self.roots = attach_resolved_children_from_ranges(&mut self.items);
+        sort_resolved_children(&mut self.roots, &self.items);
+        for index in 0..self.items.len() {
+            let mut children = std::mem::take(&mut self.items[index].children);
+            sort_resolved_children(&mut children, &self.items);
+            self.items[index].children = children;
         }
     }
-
-    #[cfg(not(debug_assertions))]
-    fn debug_assert_online_attachment_matches_range_sort(&self) {}
 
     fn ensure_node_slot(&mut self, node: TreeNodeId) -> usize {
         let slot = node.get() as usize;
@@ -5724,7 +5707,6 @@ fn resolved_item_order_key(item: &ResolvedCstItem) -> (u32, u32, usize) {
     (item.bytes.start().get(), item.bytes.end().get(), item.order)
 }
 
-#[cfg(any(debug_assertions, test))]
 fn attach_resolved_children_from_ranges(items: &mut [ResolvedCstItem]) -> Vec<usize> {
     let parents = resolved_parent_slots_by_range_sort(items);
     let mut child_counts = vec![0usize; items.len()];
@@ -5755,7 +5737,6 @@ fn attach_resolved_children_from_ranges(items: &mut [ResolvedCstItem]) -> Vec<us
     roots
 }
 
-#[cfg(any(debug_assertions, test))]
 fn resolved_parent_slots_by_range_sort(items: &[ResolvedCstItem]) -> Vec<Option<usize>> {
     let mut indices = (0..items.len()).collect::<Vec<_>>();
     indices.sort_unstable_by_key(|index| {
@@ -5851,7 +5832,6 @@ fn build_resolved_node(
     }
 }
 
-#[cfg(any(debug_assertions, test))]
 fn sort_resolved_children(children: &mut [usize], items: &[ResolvedCstItem]) {
     if children.len() < 2 {
         return;
