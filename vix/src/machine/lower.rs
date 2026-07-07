@@ -120,14 +120,6 @@ impl Machine {
 
         let mut driver =
             Driver::try_with_schema_tables(c.program, c.lowered, c.descriptors, c.schemas, lane)?;
-        // The driver's own interning must reproduce the fresh 0-based assignment.
-        for name in &c.schema_names {
-            let actual = driver.intern_schema_ref(name.clone());
-            assert_eq!(
-                actual, c.schema_refs[name],
-                "schema ref assignment is deterministic"
-            );
-        }
         assert_literal_handles(&mut driver, "String", &c.literal_handles.strings);
         assert_literal_handles(&mut driver, "Path", &c.literal_handles.paths);
         assert_literal_handles(&mut driver, "Flag", &c.literal_handles.flags);
@@ -523,22 +515,6 @@ enum RefSource<'a> {
 }
 
 impl RefSource<'_> {
-    fn schema_refs(&mut self, schema_names: &[String]) -> HashMap<String, i64> {
-        match self {
-            RefSource::Fresh => schema_names
-                .iter()
-                .enumerate()
-                .map(|(ix, name)| {
-                    (
-                        name.clone(),
-                        i64::try_from(ix).expect("schema ref fits i64"),
-                    )
-                })
-                .collect(),
-            RefSource::Existing(driver) => driver.schema_ref_map_for(schema_names),
-        }
-    }
-
     fn literal_handles(&mut self, tables: &ModuleTables) -> LiteralHandleMaps {
         match self {
             RefSource::Fresh => {
@@ -578,8 +554,6 @@ struct Compiled {
     fn_params: HashMap<String, Vec<String>>,
     fn_param_names: HashMap<String, Vec<String>>,
     render_names: RenderNames,
-    schema_names: Vec<String>,
-    schema_refs: HashMap<String, i64>,
     literal_handles: LiteralHandleMaps,
     module_hash: Vec<u8>,
     diagnostics: Vec<String>,
@@ -652,8 +626,13 @@ fn compile_module_set(
     let mut schema_names = schema_names_for(&tables, &fn_returns, &fn_params)?;
     schema_names.sort();
     schema_names.dedup();
+    let mut schemas = tables.schemas.clone();
+    schemas.register_frame_names(schema_names.clone());
     let render_names = render_names_for(&tables);
-    let schema_refs = ref_source.schema_refs(&schema_names);
+    let schema_words = schema_names
+        .iter()
+        .map(|name| (name.clone(), schemas.frame_word_for_name(name)))
+        .collect::<HashMap<_, _>>();
     let handles = ref_source.literal_handles(&tables);
     let literal_handles = LiteralHandles {
         strings: &handles.strings,
@@ -691,7 +670,7 @@ fn compile_module_set(
                     current_fn_ref: ix,
                     fn_refs: &fn_refs,
                     signatures,
-                    schema_refs: &schema_refs,
+                    schema_words: &schema_words,
                     literal_handles,
                     lower_options,
                 },
@@ -736,7 +715,6 @@ fn compile_module_set(
         });
     }
 
-    let schemas = tables.schemas.clone();
     let mut descriptors = tables.descriptors;
     add_builtin_descriptors(&mut descriptors, &schemas);
     for name in &schema_names {
@@ -755,8 +733,6 @@ fn compile_module_set(
         fn_params,
         fn_param_names,
         render_names,
-        schema_names,
-        schema_refs,
         literal_handles: handles,
         module_hash,
         diagnostics,
@@ -2869,7 +2845,7 @@ struct LowerEnv<'a> {
     current_fn_ref: usize,
     fn_refs: &'a HashMap<String, usize>,
     signatures: FnSignatures<'a>,
-    schema_refs: &'a HashMap<String, i64>,
+    schema_words: &'a HashMap<String, i64>,
     literal_handles: LiteralHandles<'a>,
     lower_options: LowerOptions,
 }
@@ -2934,7 +2910,7 @@ struct FnLowerer<'a> {
     current_fn_ref: usize,
     fn_refs: &'a HashMap<String, usize>,
     signatures: FnSignatures<'a>,
-    schema_refs: &'a HashMap<String, i64>,
+    schema_words: &'a HashMap<String, i64>,
     literal_handles: LiteralHandles<'a>,
     slots: Bindings,
     param_slots: Vec<ValueSlot>,
@@ -2968,7 +2944,7 @@ impl<'a> FnLowerer<'a> {
             current_fn_ref: env.current_fn_ref,
             fn_refs: env.fn_refs,
             signatures: env.signatures,
-            schema_refs: env.schema_refs,
+            schema_words: env.schema_words,
             literal_handles: env.literal_handles,
             slots: HashMap::new(),
             param_slots: Vec::new(),
@@ -5243,7 +5219,7 @@ impl<'a> FnLowerer<'a> {
     ) -> Result<ValueSlot, String> {
         self.expect_schema(&value, "Doc")?;
         let schema_ref = *self
-            .schema_refs
+            .schema_words
             .get(expected)
             .ok_or_else(|| format!("no schema ref for {expected}"))?;
         let dst = self.alloc();
@@ -5550,7 +5526,7 @@ impl<'a> FnLowerer<'a> {
         let dst = self.alloc();
         let region = self.store_alloc_region;
         let type_ref = *self
-            .schema_refs
+            .schema_words
             .get(schema)
             .ok_or_else(|| format!("no schema ref for {schema}"))?;
         self.code.push(Op::ConstI64 {
@@ -5597,7 +5573,7 @@ impl<'a> FnLowerer<'a> {
         let dst = self.alloc();
         let region = self.store_alloc_region;
         let schema_ref = *self
-            .schema_refs
+            .schema_words
             .get(schema)
             .ok_or_else(|| format!("no schema ref for {schema}"))?;
         self.code.push(Op::ConstI64 {
@@ -5716,7 +5692,7 @@ impl<'a> FnLowerer<'a> {
         let dst = self.alloc();
         let region = self.store_alloc_region;
         let schema_ref = *self
-            .schema_refs
+            .schema_words
             .get(schema)
             .ok_or_else(|| format!("no schema ref for {schema}"))?;
         self.code.push(Op::ConstI64 {
@@ -5769,15 +5745,15 @@ impl<'a> FnLowerer<'a> {
         let dst = self.alloc();
         let region = self.store_alloc_region;
         let map_schema_ref = *self
-            .schema_refs
+            .schema_words
             .get(&output_schema)
             .ok_or_else(|| format!("no schema ref for {output_schema}"))?;
         let key_schema_ref = *self
-            .schema_refs
+            .schema_words
             .get(key_schema)
             .ok_or_else(|| format!("no schema ref for {key_schema}"))?;
         let value_schema_ref = *self
-            .schema_refs
+            .schema_words
             .get(&stored_value.schema)
             .ok_or_else(|| format!("no schema ref for {}", stored_value.schema))?;
         self.code.push(Op::ConstI64 {
@@ -5872,11 +5848,11 @@ impl<'a> FnLowerer<'a> {
         let dst = self.alloc();
         let region = self.store_alloc_region;
         let key_schema_ref = *self
-            .schema_refs
+            .schema_words
             .get(key_schema)
             .ok_or_else(|| format!("no schema ref for {key_schema}"))?;
         let value_schema_ref = *self
-            .schema_refs
+            .schema_words
             .get(value_schema)
             .ok_or_else(|| format!("no schema ref for {value_schema}"))?;
         self.code.push(Op::ConstI64 {
@@ -6017,7 +5993,7 @@ impl<'a> FnLowerer<'a> {
         let dst = self.alloc();
         let region = self.primitive_region;
         let value_schema_ref = *self
-            .schema_refs
+            .schema_words
             .get(value_schema)
             .ok_or_else(|| format!("no schema ref for {value_schema}"))?;
         self.code.push(Op::ConstI64 {
@@ -6101,7 +6077,7 @@ impl<'a> FnLowerer<'a> {
         let dst = self.alloc();
         let region = self.primitive_region;
         let kind_ref = *self
-            .schema_refs
+            .schema_words
             .get(kind)
             .ok_or_else(|| format!("no schema ref for {kind}"))?;
         self.code.push(Op::ConstI64 {
@@ -6275,7 +6251,7 @@ impl<'a> FnLowerer<'a> {
             value: elems
                 .first()
                 .map(|elem| {
-                    self.schema_refs
+                    self.schema_words
                         .get(&elem.schema)
                         .copied()
                         .ok_or_else(|| format!("no schema ref for {}", elem.schema))
@@ -6532,7 +6508,7 @@ impl<'a> FnLowerer<'a> {
         self.code.push(Op::ConstI64 {
             dst: region + 24,
             value: *self
-                .schema_refs
+                .schema_words
                 .get(&value.schema)
                 .ok_or_else(|| format!("no schema ref for {}", value.schema))?,
         });
@@ -7355,7 +7331,7 @@ impl<'a> FnLowerer<'a> {
         value: Option<&ValueSlot>,
     ) -> Result<ValueSlot, String> {
         let value_ref = *self
-            .schema_refs
+            .schema_words
             .get(value_schema)
             .ok_or_else(|| format!("no schema ref for {value_schema}"))?;
         let dst = self.alloc();
@@ -7469,7 +7445,7 @@ impl<'a> FnLowerer<'a> {
     ) -> Result<ValueSlot, String> {
         let dst = self.alloc();
         let schema_ref = *self
-            .schema_refs
+            .schema_words
             .get(schema)
             .ok_or_else(|| format!("no schema ref for {schema}"))?;
         let op_code = match op {

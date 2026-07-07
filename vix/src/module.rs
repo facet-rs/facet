@@ -142,6 +142,7 @@ pub(crate) struct SchemaTables {
     by_name: HashMap<String, SchemaRef>,
     by_id: HashMap<SchemaId, Schema>,
     display_names: HashMap<SchemaId, String>,
+    frame_names: HashMap<SchemaId, String>,
 }
 
 impl SchemaTables {
@@ -150,6 +151,7 @@ impl SchemaTables {
             by_name: HashMap::new(),
             by_id: HashMap::new(),
             display_names: HashMap::new(),
+            frame_names: HashMap::new(),
         }
     }
 
@@ -163,6 +165,36 @@ impl SchemaTables {
 
     pub(crate) fn display_name(&self, id: SchemaId) -> Option<&str> {
         self.display_names.get(&id).map(String::as_str)
+    }
+
+    pub(crate) fn frame_id_for_name(&self, name: &str) -> SchemaId {
+        if self.by_name.contains_key(name) {
+            return self.descriptor_key_for_name(name);
+        }
+        legacy_marker_schema_id(name)
+    }
+
+    pub(crate) fn frame_word_for_name(&self, name: &str) -> i64 {
+        i64::from_ne_bytes(self.frame_id_for_name(name).as_u64().to_ne_bytes())
+    }
+
+    pub(crate) fn name_for_frame_word(&self, word: i64) -> Option<&str> {
+        let id = SchemaId::from_raw(u64::from_ne_bytes(word.to_ne_bytes()));
+        self.frame_names
+            .get(&id)
+            .or_else(|| self.display_names.get(&id))
+            .map(String::as_str)
+    }
+
+    pub(crate) fn register_frame_names(&mut self, names: impl IntoIterator<Item = String>) {
+        for name in names {
+            self.frame_names
+                .entry(self.frame_id_for_name(&name))
+                .or_insert(name);
+        }
+        for (id, name) in &self.display_names {
+            self.frame_names.entry(*id).or_insert_with(|| name.clone());
+        }
     }
 
     pub(crate) fn legacy_ref(&self, name: &str) -> SchemaRef {
@@ -489,6 +521,7 @@ impl SchemaBuilder {
             by_name,
             by_id,
             display_names,
+            frame_names: HashMap::new(),
         }
     }
 }
