@@ -30,6 +30,39 @@ counts: 45 walkers + 26 tuple helpers in `rodin/rodin.vix`, 52 walker+helper
 pairs in `cargo_manifest.vix`, 102 markers across `crate.vix`/`index.vix`.
 Estimated 800+ lines dissolved corpus-wide by this proposal.
 
+<!-- note
++++
+author = "Amos Wenger"
+kind = "note"
+id = "43b9671206e6c40535a3cc2bcc0a97d5"
+created = "2026-07-08T17:36:54.802651+00:00"
+quote = "and a freestanding _tuple helper because pop()'s tuple can't be destructured in a match arm"
++++
+Okay, so already just update the page. Saying here's what it looks like. If we do the obvious thing and allow destructuring tuples.
+-->
+
+<!-- note
++++
+author = "Amos Wenger"
+kind = "note"
+id = "c1282cf88d219109fe69ad29410ba012"
+created = "2026-07-08T17:36:49.305994+00:00"
+quote = "and a freestanding _tuple helper because pop()'s tuple can't be destructured in a match arm"
++++
+Okay, so already just update the page. Saying here's what it looks like. If we do the obvious thing and allow destructuring tuples.
+-->
+
+<!-- note
++++
+author = "Amos Wenger"
+kind = "note"
+id = "826883f19f779e934fb768d9203703cd"
+created = "2026-07-08T17:36:46.230989+00:00"
+quote = "and a freestanding _tuple helper because pop()'s tuple can't be destructured in a match arm"
++++
+Okay, so already just update the page. Saying here's what it looks like. If we do the obvious thing and allow destructuring tuples.
+-->
+
 ## What exists today (read before proposing, per the method)
 
 - `.map(f)` exists — but it is **always demand fan-out**: `array_map_pending`
@@ -100,8 +133,10 @@ lowering concern, not a surface concern; the surface composes arrays).
 Closure parameters and match arms accept tuple (and record) patterns:
 
 ```vix
-let (head, tail) = xs.pop();
-match xs.pop() { (head, tail) => ... }
+let (last, rest) = xs.split_last();
+match xs.split_last() { (last, rest) => ... }
+// (was `xs.pop()` — retired per combinators.md: mutation-shaped name,
+//  silent about which element; the operation was always by-value)
 rows.fold(state, |state, (pkg, version)| ...)
 ```
 

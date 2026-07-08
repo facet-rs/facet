@@ -41,14 +41,18 @@ not literal-based (not 2-watched-literal CDCL) — a researched decision.
 > A new no-good is installed by two-way containment: dropped if an existing
 > active region contains it; deactivating any learned region it contains. The
 > learned set remains a frontier of maximal dead regions. Subsumption is region
-> containment, never hash-equality.
+> containment, never hash-equality. (The mutation verbs are
+> implementation-plane: the frontier is solve-interior molten state — at the
+> semantic plane each step denotes a fresh learned-set value, per the as-if
+> law.)
 
 > r[solver.learning.propagate]
 >
 > Installed no-goods propagate on every subsequent node: a selection fully
 > inside a dead region is a conflict; all-but-one dimension pinned inside
 > narrows the last free domain by the region's complement (unit propagation
-> over regions).
+> over regions). ("Narrows" is likewise implementation-plane — a narrowed
+> domain is a fresh value; the solve interior is molten.)
 
 > r[solver.learning.reuse]
 >
