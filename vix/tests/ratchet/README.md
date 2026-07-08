@@ -18,7 +18,11 @@ the vix book (`/vix`) exists. That is the definition of done.
    its own subject.
 4. **`.reject.vix` rungs must fail to compile** with the diagnostic
    declared in their header. A reject file that compiles is a red rung.
-5. Test-system semantics (declarations, `expect_*`, the `expecting`
+5. **The foundation contract binds** (FOUNDATION.md, same directory):
+   traces + counters + receipts from rung 001, chaos-run agreement, and
+   spec-coverage gates at band boundaries. Behavior alone does not
+   advance the ratchet.
+6. Test-system semantics (declarations, `expect_*`, the `expecting`
    trace clauses, `//! rerun` two-phase runs, snapshots) are specified in
    the book's [Testing](/vix/testing) chapter. The harness is itself part
    of what the ladder demands into existence.
