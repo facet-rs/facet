@@ -192,18 +192,36 @@ positional order.
   the leftmost-bias that would have forced serial evaluation.
 - `any`/`all` are order-free and unaffected.
 
+**Construction is NOT affected (Amos, 2026-07-08 follow-up):** a literal
+`[a, b, c]` is positional and stays positional — *an array is a struct
+whose fields are named 0, 1, 2*. The literal denotes a value depending on
+three values (each a field, each independently projectable, available at
+different times — fine). It is not a stream and not a bag. So positional
+projection of a *constructed* array is ordinary field access and keeps
+per-field partial dependency; what dies is positional order of *derived*
+aggregates (map/filter/collect output), per the ruling above.
+
 **Open questions this raises** (for Amos, follow-up round):
 
-1. Does positional order die at *construction* too? A literal `[a, b, c]`
-   and today's `pop()` head/tail decomposition are positional concepts.
-   Options: (i) `[T]` stays a positional structure and only *derived*
-   aggregates (map/filter/collect results) are canonical — two collection
-   flavors; (ii) positional order dies everywhere and `[a, b, c]` denotes
-   a bag observed canonically, with `pop()` meaning "remove the least" —
-   one rule, bigger corpus impact. The doctrine's logic leans (ii); the
-   corpus rewrite cost leans (i).
-2. If (ii): is `Indexed<T>` a blessed alias with literal/constructor
-   support, or just a convention?
+1. **What, typed, does `xs.map(f)` return?** If `[T]` is a
+   positional struct-with-numeric-fields and map output is canonically
+   ordered, either (i) map returns a distinct collection type (a bag/
+   multiset whose observation order is canonical — Amos: "kind of
+   interesting… an even weirder thing" — explicitly undecided), or
+   (ii) map returns `[U]` where field `i` holds the i-th value in
+   canonical order (an array *re-indexed by rank*). Same observable
+   behavior; different type-system story and different `pop`/field-access
+   semantics downstream.
+2. **What is `pop()` now?** On a positional array, "last field" is
+   coherent but creates a dependency on field N-1 specifically (which is
+   real and fine under array-as-struct — but serializes head/tail
+   recursion, which the combinators exist to replace anyway). On a
+   canonical aggregate it would mean "remove the greatest." Amos:
+   "pop is complicated, I don't know what pop is supposed to do." With
+   fold/find_map landed, pop's remaining legitimate uses may not exist —
+   candidate for deprecation rather than redefinition.
+3. Is `Indexed<T>` a blessed alias with constructor support, or just a
+   convention?
 
 ### 5. `for` sugar — deferred, with a lean
 
