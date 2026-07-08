@@ -60,31 +60,55 @@ human or agent — cannot tell which mechanism to implement today. An
 implementing agent hitting this page would have a coin-flip's chance of
 building the wrong hasher.
 
-### The options
+### REFRAMED after the consumption census + Amos's one-mechanism decree
 
-**Option 1 — retag canonical-memory to `[DESIGN, epoch-2 candidate]`** (my
-recommendation). Framed-encoding stays `[SETTLED]` as the current epoch's
-law. Canonical-memory's rule text gains one sentence: "this is the epoch-2
-candidate per the identity amendment; it becomes law through its own
-sanctioned break, own gates, committee ratification." Matches the
-amendment's own conditional language exactly. Cost: none — no code changes,
-no commitment weakened, just the tags now telling the truth.
+Two facts changed the question. First, the census
+(`~/vixenware/notes/machine-spec/contenthash-consumption-census.md`): the
+current code already runs BOTH constructions, split per-descriptor at
+driver.rs:1598 — raw zero-padded bytes for flat descriptors,
+`hash_value_into`'s framed walk for handle-bearing ones. Second, Amos's
+ruling on being shown that: **"absolutely not... there is one mechanism, it
+has three different tiers."** The in-code split is an unblessed fork to
+eliminate, not a state to bless. (Corollary banked in changelog round 5
+addenda: exec's private `exec::Blake3Hash` plan-hash domain violates
+`requests-are-values` and joins the ad-hoc-cache kill list.)
 
-**Option 2 — `[SETTLED, rollout OPEN]` on canonical-memory.** Use this if
-you consider the *decision to migrate* already made and only the
-timing/gating open — i.e., "we WILL do this, don't relitigate the
-direction." Then framed-encoding gets marked "current epoch only,
-scheduled for replacement." Stronger commitment than the amendment's "if it
-proves viable" wording; pick this only if your actual position is firmer
-than what you dictated in the amendment.
+So the question is no longer "which tag does canonical-memory wear" — it is
+**which single definition wins, and the loser's rule dies**:
 
-**Option 3 — leave both as-is.** Rejected on the merits: two `[SETTLED]`
-tags on mutually exclusive mechanisms is exactly the kind of ambiguity that
-sends an agent down the wrong path for a day. This isn't a real option,
-listed only for completeness.
+**Definition A — the framed walk, everywhere.** Every hash is
+`hash_value_into`'s descriptor walk (domain, schema, framed fields; handles
+contribute referent hashes). Flat values lose their raw fast path. One
+definition, today's dominant one; the cost is the walk itself — hand-written
+reflection-shaped Rust that has always been the wrong shape and a
+performance drag (Amos's own words), paid on every hash of everything,
+forever.
 
-**The question in one line: is epoch-2 "conditional pending viability"
-(Option 1) or "decided pending rollout" (Option 2)?**
+**Definition B — canonical memory, everywhere, with handle substitution as
+part of the ONE definition.** A value's hash is `blake3(domain ‖ SchemaRef ‖
+image)` where *image* is the canonical zero-padded memory with every handle
+word substituted by the referent's 32-byte content hash. For flat values the
+image IS the raw bytes (zero substitutions) — the fast path stops being a
+second mechanism and becomes the degenerate case of the only one.
+Prefix-freedom comes from schema-determined layout widths (the identity pair
+carries SchemaRef), not framing bytes. Hash-as-field makes substitution
+cheap: store entries already carry `content_hash`; the walk shrinks to
+"copy 32 bytes per handle slot." This is the identity amendment's epoch-2
+direction stated as the single mechanism rather than a migration between
+two.
+
+Under the one-mechanism decree, B is the coherent destination and A is the
+incumbent; either way the change is ONE sanctioned epoch break (own gates,
+committee-ratified) and the surviving rule set states ONE definition.
+Census facts that bound the blast radius: consumers are edge-only; the
+mechanism-pinned consumers are receipt re-derivation, value bundles (which
+should recompute on import anyway — trust hole flagged), and ordering
+(already ruled: content order, never hash bytes — so ordering stops being
+mechanism-sensitive once fixed).
+
+**The question in one line: is the one mechanism the walk (A) or canonical
+memory with substitution (B) — and does the epoch fire now or after the
+viability gates the amendment named?**
 
 ---
 
