@@ -62,3 +62,47 @@ fn user_type_owns_its_comparison_operator() {
         .expect("rodin.vix rank_probe runs");
     assert_eq!(value, 1);
 }
+
+#[test]
+fn dense_state_array_indexed_get_reads_aggregate_elements() {
+    let source = r#"
+struct Domain {
+    active: Bool,
+}
+
+fn seed() -> [Domain] {
+    [Domain { active: true }, Domain { active: false }]
+}
+
+pub fn molten() -> Bool {
+    let domains = [Domain { active: true }];
+    domains.get(0).active
+}
+
+pub fn interned() -> Bool {
+    let domains = seed();
+    domains.get(0).active
+}
+
+pub fn out_of_bounds() -> Bool {
+    let domains = seed();
+    domains.get(2).active
+}
+"#;
+
+    let mut machine = Machine::load(source).expect("array indexed get lowers");
+    let molten = machine
+        .demand_i64("molten", vec![])
+        .expect("molten array indexed get runs");
+    assert_eq!(molten, 1);
+
+    let interned = machine
+        .demand_i64("interned", vec![])
+        .expect("interned array indexed get runs");
+    assert_eq!(interned, 1);
+
+    let err = machine
+        .demand_i64("out_of_bounds", vec![])
+        .expect_err("out-of-bounds array indexed get must be loud");
+    assert!(err.contains("array index 2 out of bounds 2"), "{err}");
+}
