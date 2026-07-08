@@ -209,13 +209,54 @@ prior-art pass will confirm or correct):
   verification (the safe direction). Candidate structure: ribbon filters
   or successors — to be grounded, not assumed.
 
-Prior-art posture, honestly: the nominal thesis (matching by name beats
-matching by structure for incremental reuse) is nominal Adapton's; the
-stamp trick is Salsa's red-green; since-queries over deltas are
-watchman/Buck2 territory; and the corpus's own paid-for adjudications
-(`store-architecture.md`, `vx-store-as-vix-memo.md`) outrank all
-training-data memory of the above. A grounding pass is in flight; this
-section carries its findings when they land.
+Prior-art posture — grounded (the pass ran 2026-07-08; full report:
+`~/vixenware/notes/machine-spec/location-plane-prior-art.md`):
+
+- **Nomination-never-validation is restated doctrine, not invention** —
+  `vx-store-as-vix-memo.md` already specified the five-step lookup order
+  (local exact → persistent exact → local projection → persistent
+  projection, each verified → spawn), and the machine spec ratified it as
+  rules. What no page specified was how a projection candidate is *found*:
+  `machine.persistence.trait-boundary` literally stubs "enumerate
+  projection candidates" with no backing mechanism. The location plane
+  fills a real hole in our own ratified spec.
+- **Names-not-bodies has two shipped precedents inside this very system**,
+  reached independently: exec mounts at role-stable paths ("content-derived
+  paths would leak the world into the identity and kill tier 2") and
+  capability *names* not indices in lowered programs (survives registry
+  reordering across reload). Same doctrine, third layer.
+- **Nominal Adapton**: the thesis transfers (names ≠ content, used only to
+  find reuse candidates, correctness by construction); the allocation
+  mechanism does not — Adapton's names are programmer-allocated and
+  opt-in (explicit name-forking through loops), which "no programmer draws
+  islands" rules out on principle. Our derivation is automatic and
+  structural (call site + input position), and must be.
+- **Salsa's stamps solve a different sub-problem than the trie** — this is
+  the pass's sharpest scoping correction. Salsa's durability/revision
+  shortcut makes re-verifying a dependency edge *you already have* O(1);
+  it never needed nomination because its query keys are exact. So in this
+  design: the trie *finds* the candidate; the stamp makes *confirming* it
+  cheap. Complementary mechanisms, and the spec should scope them as such.
+- **Skyframe's SkyKey** proves stable nominal keys work at production
+  build-graph scale — but it conflates nomination and validation in one
+  key (no separate content-verification layer) and has no fallback when
+  the exact key misses: a renamed target is an unrecoverable cache miss.
+  The suffix-match fallback is exactly what it lacks. Watchman's clockspec
+  is the clean precedent for the daemon-owned monotonic delta stream.
+- **Ribbon filters** (Dillinger & Walzer 2021; BuRR follow-up) are
+  confirmed current and fit the false-positives-are-safe direction
+  precisely. But probabilistic structures would be a *first* for this
+  corpus — every existing "did what I read change" check is exact, and
+  the corpus's one worked analog of this intersection problem chose an
+  exact inverted index (see the warm-facts question below). Choosing
+  probabilistic here is a scale-driven judgment call to make consciously,
+  not a default.
+- **Genuinely new territory, confirmed by absence in both corpora**: the
+  content-free path identity for demand-graph nodes itself, suffix
+  matching as fallback nomination (no build system or paper does it —
+  nearest citation is GreenTrie's constraint-entailment caching, already
+  adjudicated in the corpus for the solver domain), and the reversed-path
+  trie as nomination index.
 
 ## What this chapter deliberately leaves open
 
@@ -233,3 +274,18 @@ section carries its findings when they land.
    implementation agrees.
 4. **Vocabulary ratification** — "location hash," "provenance coordinate,"
    and the plane names themselves await the explicit *bank it*.
+5. **The warm-facts fork** (surfaced by the grounding pass; needs an Amos
+   ruling). The corpus holds two irreconcilable versions of Rodin's
+   warm-fact design: `warm-facts-spec.md` (vixenware, 2026-07-07) — an
+   elaborate bespoke subsystem with a `Premise` enum, first-class absence
+   witnesses, and an **exact** inverted `premise → facts` index — and this
+   repo's `solver-learning.md` (2026-07-08), which collapses it to one
+   line: "reuse soundness is the substrate's memo verification," no
+   hand-rolled indexing. This chapter already leans on the new version
+   (solver facts are trajectory-born, content-keyed). The ruling needed:
+   is the old design (a) dead, superseded by the generic memo — in which
+   case the filter design here has no in-corpus worked precedent — or
+   (b) the intended *implementation detail* underneath the terse new rule
+   — in which case its exact-index choice is the closest existing worked
+   design for read-set × delta intersection and the probabilistic-filter
+   proposal should be measured against it deliberately.
