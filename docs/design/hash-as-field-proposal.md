@@ -1,364 +1,464 @@
 # HASH-AS-FIELD / memory-identity (the second epoch)
 
-Status: **design, committee-gated** (implementation not authorized by this doc).
-Author lane: docs-only (`hash-as-field-proposal` worktree). Coordinates with the
-standing perf lane, which is landing tactical levers in the same `driver.rs`
-territory — this document touches no code.
+Status: **design, committee-reviewed → REVISE-then-proceed folded in.** Both seats
+returned (seat 1 / opus: PROCEED with six binding rulings; seat 2 / codex:
+REVISE-then-proceed with five P1s). This revision incorporates both, per Amos's
+adjudication where they conflict. Implementation is charter-gated, not authorized by
+this doc. Docs-only lane; coordinates with the standing perf lane landing tactical
+levers in the same `driver.rs` territory — this document touches no code.
 
-Required grounding (read before relitigating anything here):
-- `~/oss/facet-cc/RESURRECTION.md` — "The ratified design", the IDENTITY AMENDMENT
-  (2026-07-08), the ONE-hash-break epoch, the carried-hasher lever.
-- `capabilities-ambient-vs-materialized.md` — the *zero-padding law* dictation
-  ("Padding ANSWERED: CANONICAL ZERO, ALWAYS"), the blake3/flat-memory direction,
-  and the second-epoch authorization addendum.
-- `vix/docs/content/redesign/2-hashing-flesh.md` — the hash-as-field thesis in its
-  first (pre-blake3, "flesh") form; the "get the hash scheme right and flesh's job
-  gets simpler" argument.
-- `vix/src/machine/driver.rs` — the live hash sites (cited inline below).
+### Grounding provenance (codex asked for reproducibility — here it is)
+
+The required grounding is **partly out-of-tree by design** and reviewers should know
+where each piece lives:
+- `RESURRECTION.md` — **gitignored** in facet-cc (`.gitignore` excludes `/RESURRECTION.md`
+  and `/vix/docs/`), archived on the private `vix-docs-archive` branch. Real, not
+  branch-local.
+- `capabilities-ambient-vs-materialized.md` — lives in the **vixen** corpus
+  (`docs/design/`), a different repo. The zero-padding law and second-epoch
+  authorization are dictations there.
+- `vix/docs/content/redesign/2-hashing-flesh.md` — present in the facet-cc working
+  tree but under the gitignored `/vix/docs/` prefix; it predates the sha2→blake3 swap
+  and the flesh→molten rename, so read it as *thesis*, not current code.
+- Flame evidence (the 23.4 / 29.1 / 13.6 / ~66% / ~95,000× figures) is the **perf-lane
+  solve-class run**; the perf lane is committing the flame notes. **Cite the committed
+  note paths here once they land** — until then these figures are attributed to that
+  run and are not independently reproducible from this branch. Do not bank them as
+  reproduced.
+
+All `driver.rs:NNNN` code anchors below are verified against the live file.
 
 ---
 
 ## 0. The existential framing
 
-A native reference solve runs the *identical* index at **~95,000×** vix on
-solve-class workloads (perf-lane flame, solve-class run). Of vix's solve time,
-the flame attributes **~66%** to *recomputing identity bytes that the machine
-already knew*:
+A native reference solve runs the *identical* index at **~95,000×** vix on solve-class
+workloads (perf-lane flame). Of vix's solve time, the flame attributes **~66%** to
+*recomputing identity bytes the machine already knew* — three **addressable trunks**
+(the word matters; see §6 — "addressable" is not yet "removed"):
 
 | trunk | flame share | live site |
 |---|---:|---|
 | blake3 at every allocation | **23.4%** | `ValueStore::alloc` recomputes a full-value digest on every intern — `driver.rs:1407`, hashing at `:1419` |
 | map re-canonicalization per intern | **29.1%** | `alloc_map` → `canonical_map_pairs` re-canonicalizes, re-hashes every key+value, sorts, dedupes from scratch — `driver.rs:1466`, `:10376` |
-| observation re-hashing | **13.6%** | `projection_observation_hash` re-derives a canonical digest for every demanded read — `driver.rs:9980` |
+| observation re-hashing | **13.6%** | `projection_observation_hash` re-derives a digest per demanded read — `driver.rs:9980` |
 
-This is not a constant-factor tax; it is *repeated work over immutable data*. Every
-one of these three trunks recomputes a value that is, by the machine's own
-invariants, **write-once**: interned store entries are immutable, so their identity
-is fixed the instant they exist. The proposal is to stop recomputing it and instead
-**store it as a field** — computed once, at the write, carried incrementally while
-molten, read as a plain field load forever after.
+This is repeated work over *immutable* data. Interned store entries are immutable, so
+their identity is fixed the instant they exist. The proposal: stop recomputing it,
+**store it as a field** — computed once at the write, carried incrementally while
+molten, read as a field load forever after.
 
-The 50× bar (RESURRECTION, "acceptance bar RELAXED to ~50× vs Rust") is the target.
-Killing the 66% identity-recompute trunk is the *existential* precondition; §6 is
-explicit about what remains after and the honest path from there.
+Amdahl caveat, stated up front (opus ruling 6): removing 66% of flame is **≈ 2.9× at
+best** (`1 / (1 − 0.66)`). This proposal is the *existential precondition* — it removes
+the trunk that makes 50× unreachable — but the JIT lane and memo-granularity legs (§6)
+are **load-bearing, not garnish**. And the 29.1% map trunk is **contingent** on the map
+construction chosen (Q1) — not banked.
 
 ---
 
 ## 1. The identity slot
 
-**Claim.** Content identity is a *property of a value*, not a computation over it.
-Every non-inline value class gets a descriptor-reserved slot that holds its
-identity. The slot's *representation* differs by lifecycle stage but its *meaning*
-(the blake3 content hash of the canonical value) does not.
+**Claim.** Content identity is a *property of a value*, not a computation over it. Every
+non-inline value class gets a descriptor-reserved slot holding its identity. The slot's
+*representation* differs by lifecycle stage; its *meaning* (the blake3 content hash of
+the canonical value, taint-composed) does not.
 
 ### Per value class
 
-- **Interned store entries** — already carry `content_hash: ContentHash` in
-  `StoreEntry` (`driver.rs` store entry struct; `ContentHash = [u8;32]`). Today it
-  is *recomputed* at `alloc` (`:1419`) then cached. Under this proposal the cached
-  field *is* the identity slot and the recompute path is deleted: the digest arrives
-  already-finished from the molten carried hasher (§2) or the blake3 stencil (§4).
-  No layout change — this class already has the slot; we change *who writes it*.
+- **Interned store entries** — already carry `content_hash: ContentHash` in `StoreEntry`
+  (`ContentHash = [u8;32]`). Today it is *recomputed* at `alloc` (`:1419`) then cached;
+  under this proposal the cached field *is* the slot and the recompute path is deleted —
+  the digest arrives already-finished from the molten carried state (§2) or the flat
+  stencil (§4). No layout change; we change *who writes it*.
 
-- **Molten (carried) values** — `MoltenEntry` today holds
-  `carried_array_hash: Option<CarriedArrayHasher>` (`driver.rs:1141`), and
-  `CarriedArrayHasher` wraps a live `blake3::Hasher` (`:1068`). This is the identity
-  slot *for arrays only*, in its incremental (not-yet-finalized) representation. The
-  proposal **generalizes the slot to every molten class** — `MoltenValue::{Record,
-  Map, ArrayWords}` (`:1145`) — so the molten identity slot is
-  `Option<CarriedHasher>` uniformly, carrying the in-progress digest state, promoted
-  to a finished `ContentHash` at intern.
+- **Molten (carried) values** — `MoltenEntry` holds `carried_array_hash:
+  Option<CarriedArrayHasher>` (`:1141`), wrapping a live `blake3::Hasher` (`:1068`) — the
+  slot *for arrays only*, in incremental representation. The proposal generalizes it to
+  every molten class (`MoltenValue::{Record, Map, ArrayWords}`, `:1145`) — but the
+  molten slot is a **validity-tracked cache of a future identity, not a write-once
+  field** (see §2; codex P1).
 
-- **Inline scalars — exempt.** `schema_is_inline_word` values (`driver.rs:2037`) are
-  their own identity: the word bytes *are* the canonical encoding, memcmp-comparable,
-  no digest needed. `hash_value_into`'s `Access::Scalar` arm already hashes raw word
-  bytes directly (`2-hashing-flesh.md` records this as the pre-existing POD-flat fast
-  path). Reserving a slot for these would be pure waste; they stay slot-free. This is
-  the one class boundary the design draws hard.
+- **Inline scalars — exempt.** `schema_is_inline_word` values (`:2037`) are their own
+  identity: the word bytes are the canonical encoding, memcmp-comparable. `hash_value_into`'s
+  `Access::Scalar` arm already hashes raw word bytes directly. No slot.
 
-### Representation: molten vs interned
+### The slot carries base identity AND taint (codex P1 #3)
 
-| stage | slot type | meaning |
-|---|---|---|
-| molten, mutable | `Option<CarriedHasher>` | in-progress incremental digest state (blake3 midstate), carried across mutations |
-| interned, frozen | `ContentHash` (`[u8;32]`) | the finalized digest — the value's permanent name |
+The array path today finalizes the base array hash, then applies `hash_with_taint` over
+collected child taints (`finish_array_element_hash` at `:1852`, `hash_with_taint` wrapping
+it; taint combine at `:1846`). A generalized slot **must state that it carries base
+identity plus a composed taint**, and taint invalidation must not be silently dropped:
+- the carried state holds the incremental *base* digest;
+- taint is composed from children and applied at finalize (as today);
+- any mutation that changes a child's taint invalidates the carried taint composition,
+  exactly as a changed child identity invalidates the base (§2).
 
-The transition molten→interned is the **finalize** (`finish_hash`,
-`driver.rs:740`): the carried midstate is closed out, the descriptor slot flips from
-"carried" to "final", and the value becomes immutable. After that the slot is
-read-only forever.
+### Representation
 
----
+| stage | slot | meaning | write-once? |
+|---|---|---|---|
+| molten, mutable | `Option<CarriedIdentity>` (base midstate + taint accumulator) | in-progress digest of a *future* identity | **no — validity-tracked, droppable** |
+| interned, frozen | `ContentHash` (`[u8;32]`) | the finalized, taint-composed digest — the value's permanent name | **yes — never invalidated** |
 
-## 2. Write-once, read-forever semantics
-
-The lifecycle of the identity slot, stated as four rules:
-
-1. **Computed at intern** — when a value freezes, its digest is finalized *once*.
-   For a molten value that carried its hasher, finalize is `finish_hash` over the
-   already-fed midstate (O(1) in value size). For a value materialized flat (e.g. a
-   facet-bridge copy-in, §3), it is one blake3-stencil pass over the canonical bytes
-   (§4). Either way: **one** digest per value, at the write.
-
-2. **Carried incrementally on molten mutation** — the array case is *already proven*
-   in the tree: `start_array_element_hasher` (`:776`) seeds domain + element schema,
-   `update_array_element_hash` (`:787`) folds each appended element's hash, and
-   `finish_array_element_hash` (`:809`) closes with the length. This is the
-   spike-C "incremental append-hash" lever (RESURRECTION: "7,300× → 16.8× SHA-256"
-   on the store-append path). The proposal **generalizes the carried-hasher discipline
-   to maps and records**: a molten record mutation folds the changed field's
-   (offset, new-child-hash) into the midstate; a molten map insertion folds the
-   (key-hash, value-hash) pair. The trail loop that dominates solve is array-shaped,
-   so arrays are the measured 50× lever; maps/records extend the *same* mechanism to
-   the map re-canonicalization trunk (§0's 29.1%).
-
-3. **Invalidated never** — post-intern the value is immutable, so the slot is never
-   invalidated, only read. Molten mutation does not invalidate a *finished* hash; it
-   updates a *carried midstate* that was never finalized. The one existing invalidation
-   is honest and stays: `intern_molten_word` drops the carried hash when interning
-   *changed* a child word (`driver.rs:2135` `changed_words → carried_hash = None`),
-   forcing a recompute for that array — because the carried midstate was fed the
-   pre-interned child words. The map/record generalization must preserve this rule
-   (fold post-intern child identities, or drop-and-recompute on change).
-
-4. **Read as a field load** — an interned value's identity is a struct field read,
-   not a hash. This is the payoff that makes the JIT lane (§6) tractable: the JIT can
-   emit a plain load from the descriptor-reserved offset instead of orchestrating a
-   digest. The observation trunk (§0's 13.6%) collapses to this: `projection_observation_hash`
-   (`:9980`) for a `Whole` projection should read the entry's stored `content_hash`
-   field, not call `canonical_word_hash_in_store` — the field is already the answer.
+HandleTier stays out of the slot (invariant preserved from the first epoch): it keys
+`ValueStore::by_content` (`:972`, `:1380`) but never enters the hash input.
 
 ---
 
-## 3. Zero-padding law integration (Amos-directed)
+## 2. Lifecycle: two layers, not one "write-once" (both seats, layered per Amos ruling 2)
 
-`capabilities-ambient-vs-materialized.md` settles the ABI question this proposal
-depends on: **weavy-declared layouts mandate padding == 0, no exceptions.** Rationale
-(verbatim from the dictation): fresh pages are zero; hash-at-intern already touches
-every byte so zeroing rides hot cachelines; memcpy preserves canonicity; the one
-recurring tax is enum variant-switch slack-zeroing (bounded). C/Rust can't mandate
-this (they don't own every writer); weavy owns every writer by construction.
+The proposal previously said identity is "invalidated never." That is true for the
+**interned** slot and false for the **molten** carried state. The corrected model is two
+layers:
 
-What canonical-zero padding *buys* this proposal — the two enabling properties:
+### Layer A — interned `ContentHash`: write-once, read-forever
 
-- **flat-bytes blake3** — the identity of a value becomes blake3 over its raw memory
-  representation, no descriptor-walk. Today `hash_value_into` (`driver.rs:11211`)
-  *walks* the descriptor (`Access::Record` recurse-per-field, `Access::Enum`
-  recurse-per-variant, `Access::Array` recurse-per-element) precisely because it
-  cannot trust padding bytes. With padding canonically zero, a leaf-flat value is one
-  contiguous blake3 pass — the stencil in §4.
-- **memcmp equality** — two canonically-zeroed values are equal iff their bytes are
-  equal, so dedup can shortcut and the differential oracle (§5) is bit-exact.
+Computed once at intern (`finish_hash`, `:740`), immutable thereafter, never
+invalidated. Read as a field load. This is the absolute, and it is genuinely write-once.
 
-**Zero-init obligations** the law imposes (the write-side contract):
-- allocation zero-fills (fresh pages already are; the obligation is to *not* leave
-  molten scratch un-zeroed before it becomes hashable);
-- frame slots zero on entry (the weavy `Init` IR already has `Zero { offset, size }`
-  — `weavy/src/ir.rs`, the InitOp family);
-- **enum variant-switch slack** — when a sum type switches to a smaller-payload
-  variant, the slack bytes must be re-zeroed (the bounded recurring tax the dictation
-  named). This is a weavy lowering obligation on variant writes.
+### Layer B — molten `CarriedIdentity`: a validity-tracked droppable cache (codex P1)
 
-**Debug padding-canary at intern.** Under `debug_assertions`, at the finalize
-boundary, assert every declared padding byte of the interned value is zero before
-sealing the digest. This catches a missed zero-init obligation *at the value that
-would be mis-identified*, not three demands later. (Note the RESURRECTION gotcha:
-canaries must not be *inside* `debug_assert!` side-effect position — assert a
-separately-computed predicate.)
+Molten carried state is *not* a finished identity; it is a cache of the identity the
+value **will** have when frozen. It is valid only while every folded child identity
+equals the **final post-intern identity** that will appear in the frozen bytes. Rules:
 
-**The facet-bridge canonicalization boundary.** The zero-padding law governs
-weavy-declared layouts *only*. facet-*discovered* values (rustc dictates layout;
-padding is whatever the Rust ABI left) canonicalize **at the bridge**: the copy-in
-re-layouts into weavy-declared form and *mints* the guarantee there. So the identity
-slot for a bridged value is computed on the canonical (weavy-side, zeroed) copy, never
-on the raw Rust bytes. This keeps the law's boundary exactly where RESURRECTION's
-ratified design put the facet bridge (post-V10, additive, hash-neutral).
+1. **Computed at intern** — freezing finalizes Layer A once: O(1) `finish_hash` of the
+   carried midstate if valid, else a flat-bytes stencil pass (§4) over the canonical
+   bytes.
+2. **Carried incrementally on molten mutation** — fold the changed child's
+   post-canonical identity into the midstate (arrays: append; maps/records: the ordered
+   structure of Q1/Q2). Also fold taint (§1).
+3. **Dropped-and-recomputed when it cannot fold a *final* child identity** — this is the
+   rule, not an exception. Any mutation whose child is not yet at its final canonical
+   identity must either force that child to its store identity before folding, or mark
+   the carried state dirty and recompute at intern.
+
+### The motivating bug, named (opus unifying finding + array carry defect)
+
+The live `changed_words → carried_hash = None` (`:2135`) is **not incidental** — it is
+Layer B's validity rule already firing. Root cause: `update_array_element_hash` folds
+the child's `ContentHash`, but that hash is taken on the **pre-intern** child
+(`canonical_word_hash_in_store(*word)` before interning); if the child *re-canonicalizes
+at intern*, its final identity differs, the midstate is stale, and the carry is dropped.
+
+Consequence, and it is the spine of both reviews:
+- **Array of inline scalars (the trail loop):** scalar canonical hash is stable across
+  intern → `changed_words` stays false → carry survives → the measured 50× lever. **This
+  is the only case the tree proves.**
+- **Aggregate-of-aggregates (what the 29.1% map trunk *is* — maps of package→version
+  records):** children re-canonicalize at intern → `changed_words` fires → carry dropped
+  → O(n) recompute. **The generalization does not materialize for the biggest trunk by
+  assertion.**
+
+### The engineering that makes drops rare (opus ruling 1)
+
+Make **molten-canonical == intern-canonical** so a child identity is stable the instant
+it is folded, and Layer B drops become the exception rather than the rule on nested data:
+- **records/scalars:** the zero-padding + flat-memory law (§3) makes molten bytes already
+  canonical → intern does not re-canonicalize → the folded child identity is final;
+- **maps:** intern's re-canonicalization *is the sort* (`canonical_map_pairs` sorts by
+  key hash, `:10404`); an **ordered incremental structure** (Q1 construction b) folds in
+  canonical key order, so molten-fold == intern-fold and the drop dissolves for maps.
+
+**Fixture (both seats):** an array/map/record **of aggregates** asserting `changed_words`
+(and its map/record analogues) never fires post-flat-memory. Until that fixture is green,
+the map/record win is unproven — not banked (§6).
+
+This is the strongest argument *for* the second epoch: flat-memory is not merely a perf
+lever, it is the **soundness enabler** for the carried-hasher generalization. Gate 3
+(carried maps/records) therefore *depends on* gate 1 (flat memory) + the Q1 structure —
+a dependency, not just an ordering (§5).
+
+---
+
+## 3. Zero-padding law integration (Amos-directed; obligations completed by both seats)
+
+`capabilities-ambient-vs-materialized.md` settles it: **weavy-declared layouts mandate
+padding == 0, no exceptions** (fresh pages are zero; hash-at-intern already touches every
+byte; memcpy preserves canonicity; the one recurring tax is variant-switch slack). This
+buys **flat-bytes blake3** (identity = blake3 over raw memory, no descriptor-walk —
+replacing the unconditional `hash_value_into` walk at `:11211`) and **memcmp equality**.
+
+### Write-side obligations (the completed list)
+
+Fresh construction is already zeroed: `STORE_ALLOC` starts `vec![0u8; layout.size]`
+before writing tag+fields (`:3200`); `alloc_doc_variant` likewise (`:7707`). The gaps are
+in **mutation**:
+
+- **frame slots zero on entry** — weavy `Init::Zero { offset, size }` (`weavy/src/ir.rs`);
+- **narrowing-field-overwrite re-zero (opus ruling 3).** A molten write of a value
+  narrower than its slot (stage-4 writes `to_le_bytes()[..field.size]`) leaves stale high
+  bytes if the slot previously held a wider value → mis-identity. Every narrowing field
+  overwrite must re-zero the slack. Same defect class as variant-switch, broader trigger;
+- **inactive-enum-payload zeroing — the *whole* payload region, not just declared padding
+  (codex P1 #4).** On a variant switch from a larger to a smaller payload, stale payload
+  bytes remain unless the switch zeros every byte of the enum payload region **not owned
+  by the new active variant**. These stale bytes are *not* `RecordByteOwnership::Padding`
+  for the selected variant — so the canary must treat inactive-variant bytes as part of
+  enum canonicality, not only declared padding.
+
+### Atomic variant switch (both seats — one primitive)
+
+Make variant switch a single primitive, never two folds:
+1. determine old and new active variant;
+2. **zero** every payload byte not owned by the new variant (incl. old-payload slack);
+3. write the **tag**;
+4. write **and fold** the new payload region exactly once.
+(zero → tag → write → fold, atomic — no double-count, no race.)
+
+### The padding canary runs in CI *always*, not only under `debug_assertions` (opus ruling 3)
+
+Load-bearing distinction: the force-copy and cross-lane differentials (§5) are
+**relative** — they catch *divergence between two paths*. A **shared** zero-init bug is
+wrong *identically* on both paths, passes every differential, and produces globally wrong
+identity → false cache hits → **wrong builds** (the existential failure). The canary — a
+cheap zero-check over declared padding *and inactive-variant payload* ranges at intern —
+is the **only absolute guard**. Run it in every CI corpus run. (Gotcha: the canary
+predicate must be computed separately and asserted, never placed *inside* a
+`debug_assert!` side-effect position — release compiles those out.)
+
+### The facet-bridge canonicalization boundary
+
+The law governs weavy-declared layouts only. facet-*discovered* values (rustc dictates
+layout; padding is whatever the Rust ABI left) canonicalize **at the bridge**: the copy-in
+re-layouts into weavy-declared, zeroed form and *mints* the guarantee there. The identity
+slot of a bridged value is computed on the canonical copy, never on raw Rust bytes — the
+first-epoch ratified boundary (post-V10, additive, hash-neutral) unchanged.
 
 ---
 
 ## 4. The blake3 stencil
 
-**Answered from copypatch's actual capabilities.** copypatch is copy-and-patch: it
-"runs and patches bytes — it never encodes an instruction or interprets a" stencil
-(`copypatch/src/lib.rs`). The arithmetic of a stencil lives in a **host-compiled
-native code body**, patched with immediates and stitched into the JIT stream. weavy's
-IR (`weavy/src/ir.rs`) is a *memory/aggregate/control* IR — `MemoryOp`, `InitOp`,
-`AggregateOp`, `Control` — it has **no arithmetic/bitwise op vocabulary** (no
-add/xor/rotate at the IR level; the `Add` in `weavy/src/async.rs` is a toy demo op).
+**Answered from copypatch's actual capabilities.** copypatch "runs and patches bytes — it
+never encodes an instruction or interprets" (`copypatch/src/lib.rs`): a stencil's
+arithmetic is a **host-compiled native body**, patched with immediates. weavy's IR
+(`weavy/src/ir.rs`) is a *memory/aggregate/control* IR (`MemoryOp`, `InitOp`,
+`AggregateOp`, `Control`) — it has **no arithmetic/bitwise op vocabulary** (the `Add` in
+`weavy/src/async.rs` is a toy demo op).
 
-This resolves the "needed IR ops (rotate at minimum)" question **by reframing it**:
+This resolves "needed IR ops (rotate at minimum)" **by reframing**:
 
-> **No new arithmetic IR ops are required.** blake3's compression function (the
-> add/xor/rotate G-mixing) does **not** get lowered to vix/weavy IR. It stays inside
-> a **stencil body** compiled from the `blake3` crate by the host toolchain — `-O by
-> construction`, exactly copypatch's value proposition. The only IR surface is an
-> `Intrinsic` node (`weavy/src/ir.rs:39` `Intrinsic(Intrinsic)`) that the JIT patches
-> with the input pointer/offset, output-digest pointer, and length immediate. Rotate,
-> xor, and modular add never appear as vix ops — they are opaque native instructions
-> inside the pre-compiled stencil.
+> **No new arithmetic IR ops are required.** blake3's compression (add/xor/rotate
+> G-mixing) is **not** lowered to vix/weavy IR. It stays in a **stencil body** compiled
+> from the `blake3` crate by the host toolchain — `-O by construction`, exactly
+> copypatch's value. The only IR surface is an `Intrinsic` node (`weavy/src/ir.rs:39`
+> `Intrinsic(Intrinsic)`) that the JIT patches with input pointer/offset, output-digest
+> pointer, and length immediate. Rotate/xor/modular-add never appear as vix ops.
 
-**IR orchestration.** The identity computation the JIT *does* orchestrate is:
-(a) obtain the flat canonical bytes (a `ScalarRun`/`Move` region under the zero-padding
-law), (b) invoke the blake3-compression intrinsic stencil over that region, (c) store
-the finalized digest into the identity slot (a `ScalarCopy` to the reserved offset).
-All three are existing weavy IR shapes; only (b) is new, and it is an intrinsic, not
-an op-set expansion.
+**IR orchestration.** The JIT orchestrates: (a) obtain flat canonical bytes (a
+`ScalarRun`/`Move` region under the zero-padding law), (b) invoke the blake3 intrinsic
+stencil over that region, (c) store the finalized digest to the reserved slot offset (a
+`ScalarCopy`). Only (b) is new, and it is an intrinsic, not an op-set expansion.
 
-**Interp-lane callability.** Trivially satisfied and *load-bearing for correctness*:
-the interpreter calls the identical native `blake3` compression routine as an ordinary
-Rust function call; the JIT patches the same routine as a stencil. Because both lanes
-share one compiled compression body, identity is **byte-identical across interp and
-JIT by construction** — there is no "the JIT hashes differently" failure mode. This is
-the same guarantee `finish_hash`/`blake3::Hasher` gives today (`driver.rs:740`),
-carried forward into the stencil world.
+**Interp-lane callability — load-bearing for correctness.** The interpreter calls the
+identical native `blake3` routine as an ordinary Rust call; the JIT patches the same
+routine as a stencil. One compiled compression body ⇒ **byte-identical identity across
+interp and JIT by construction** — no "the JIT hashes differently" failure mode. Same
+guarantee `finish_hash`/`blake3::Hasher` gives today (`:740`), carried into the stencil
+world.
 
-**Stencil inventory.** One core compression stencil (blake3 G-mix + finalize) covers
-the flat-bytes path. The carried-hasher path (§2) needs a *midstate-update* stencil
-(fold one 64-byte block into a carried state) — this is the copypatch-able primitive
-behind incremental molten hashing. Both live beside the existing weavy stencils
-(`weavy/stencils/{async_ops,hostcall,task_ops}.rs`).
+**Stencil-state ABI is process-local only (codex non-blocking note).** `blake3::Hasher`
+is a Rust type, **not** a stable, portable, cross-version memory contract. The carried
+midstate (Layer B) is therefore valid **only within a single process** — it is molten
+scratch, never persisted, never sent cross-version. Persisted/cross-process identity is
+always the *finalized* `ContentHash` (Layer A), never a carried midstate. The stencil ABI
+spec must say this explicitly: the midstate-update stencil operates on
+process-local `blake3::Hasher` state; only finalized 32-byte digests cross any boundary.
+
+**Stencil inventory.** One core compression stencil (G-mix + finalize) covers the
+flat-bytes path; one midstate-update stencil (fold one 64-byte block into carried state)
+covers Layer B. Both live beside `weavy/stencils/{async_ops,hostcall,task_ops}.rs`.
 
 ---
 
 ## 5. The second epoch
 
 RESURRECTION IDENTITY AMENDMENT (2026-07-08): *"the epoch's encoding-hashes are NOT
-sacred. If canonical-zero-padding + flat-memory hashing proves viable, identity
-migrates to canonical-memory hashing as a SECOND sanctioned epoch — its own break,
-own gates, committee-ratified."* This section is the migration plan for that break.
+sacred… identity migrates to canonical-memory hashing as a SECOND sanctioned epoch — its
+own break, own gates, committee-ratified."* This is the migration plan.
 
-**What changes.** The first epoch (the V3/V1/V2 break already on `rodin`) hashes
-**canonical payload *encodings*** — `hash_value_into` walks the descriptor and hashes
-a domain-separated, field-by-field *encoding* of the value. The second epoch hashes
-**canonical *memory*** — blake3 over the zeroed flat bytes of the weavy-declared
-layout. Same algorithm (blake3), different input. Every content hash in the store
-changes value.
+**What changes.** First epoch (V3/V1/V2, on `rodin`) hashes canonical payload
+*encodings* — `hash_value_into` walks the descriptor and hashes a domain-separated,
+field-by-field encoding. Second epoch hashes canonical *memory* — blake3 over the zeroed
+flat bytes of the weavy-declared layout. Same algorithm (blake3), different input. Every
+content hash changes value.
 
-**What breaks.** Everything keyed by content hash: `ValueStore::by_content` dedup keys,
-memo keys (`fn_hash` × canonicalized-arg identities), `.vix-cas` store keys, and any
-`ReadObservation`/projection hash. Within a single process/build these all rederive
-consistently — the break is only observable across the epoch boundary.
+**What breaks.** Everything keyed by content hash: `by_content` dedup keys, memo keys,
+`.vix-cas` store keys, `ReadObservation`/projection hashes. Consistent within a process;
+observable only across the epoch boundary.
 
-**Bridges — none needed.** Per RESURRECTION's ratified design, "*no cross-process
-persistence exists yet, so intermediate breaks on the branch are free*." The only
-persistent dependent is `.vix-cas`, which is regenerable by construction (it is a
-memo cache, not a source of truth). So: **no compatibility shim, no dual-hashing
-window, no migration of stored artifacts** — the second epoch is a clean cutover, same
-posture as the first. If `.vix-cas` from a prior epoch is present, it is treated as
-cold (miss-and-recompute), not migrated.
+**Bridges — none needed.** No cross-process persistence exists yet; the only persistent
+dependent is `.vix-cas`, regenerable by construction (a memo cache, not source of truth).
+Clean cutover — no compat shim, no dual-hashing window. A prior-epoch `.vix-cas` is
+treated as cold (miss-and-recompute), never migrated.
 
-**How the oracles verify the new identity.** Two standing differentials, both already
-in the machine's vocabulary:
-- **Force-copy differential** (`VIX_FORCE_MOLTEN_COPY`, RESURRECTION "corpus-wide
-  differential as standing guard"): run every corpus fixture with molten reuse forced
-  off. Under canonical-memory identity, the reuse and force-copy paths must produce
-  **byte-identical** content hashes — memcmp equality (§3) makes this exact, not
-  approximate. Any divergence is a canonicalization/zero-padding bug caught at the
-  value.
-- **Interp/JIT cross-lane differential** (§4): the shared compression stencil must
-  produce identical digests in both lanes over the corpus. This is the guard that the
-  stencil path and the interp path agree.
-- **First-vs-second-epoch structural check** (transitional, then deleted): assert that
-  *dedup topology* is preserved — two values equal under encoding-identity are equal
-  under memory-identity and vice versa (equality is invariant even though the hash
-  bytes change). This proves the epoch swap changed *names*, not *equivalence classes*.
+**Oracles.**
+- **Force-copy differential** (`VIX_FORCE_MOLTEN_COPY`): every corpus fixture with molten
+  reuse forced off must produce **byte-identical** content hashes on the reuse and
+  force-copy paths (memcmp-exact under §3). Catches canonicalization/zero-padding bugs *at
+  the value*. Note: **relative** — see the canary (§3).
+- **Interp/JIT cross-lane differential** (§4): the shared stencil must agree in both lanes
+  corpus-wide. Also **relative**.
+- **First-vs-second-epoch structural check** — assert the epoch swap changed *names*, not
+  *equivalence classes*: equality preservation **and INJECTIVITY** (opus ruling 5;
+  distinct-under-epoch-1 → distinct-under-epoch-2). A false cache hit is a padding/combine
+  **collision** (two distinct values → one hash); only injectivity over the corpus catches
+  it. Run to corpus exhaustion — the **absolute** identity guard the relative differentials
+  cannot be.
+- **rodin-vs-cargo build differential** — survives the epoch; the correctness backstop
+  against a wrong-identity build.
 
-**Gate sequence.** (1) zero-padding law lands in weavy layouts + zero-init obligations
-+ debug canary (committee-ratified with the layout work, per the dictation). (2)
-blake3 flat-bytes stencil + intrinsic, interp-lane parity green. (3) carried-hasher
-generalization to maps/records, force-copy differential green. (4) flip identity input
-from encoding-walk to flat-memory; both differentials green corpus-wide; structural
-epoch check green. (5) delete `hash_value_into`'s descriptor-walk arms that the flat
-path subsumes; delete the observation re-hash path in favor of the field read. Both
-committees review before fold, as with the first epoch.
+### Gate sequence — SPLIT so array/whole-value wins never wait on map research (codex P2, opus ruling 5)
+
+1. Define `StoredIdentity` (Layer A) / `CarriedIdentity` (Layer B) semantics — incl.
+   taint and the validity/drop rules (§1–§2).
+2. Land zero-fill + padding/**inactive-payload** canaries **behind the old encoding hash**
+   (so the canary can fail before identity changes) — CI-always.
+3. Flip **whole-value identity slots** and projection `Whole` reads to field reads where
+   the store already has `content_hash` (`:9831` — see §6, this is largely already a
+   field read).
+4. Move **arrays** to the second-epoch carried path; keep the `changed_words` fallback.
+5. **Maps/records: preserve sort-at-finalize, OR gate the ordered-structure map/record
+   carry as a SEPARATE sub-epoch with its own proof (Q1/Q2).** This is where the fold
+   algebra + flat-memory dependency lives; it does **not** block gates 3–4.
+6. Only then delete `hash_value_into` descriptor-walk arms truly subsumed by the flat
+   proof, and the observation re-hash arms subsumed by field reads.
+
+Gate 5 is a **dependency** on gate 2 (flat memory) + the Q1 structure — its force-copy
+fixture cannot even be written until the fold algebra exists. Both committees review before
+fold, per first-epoch discipline.
 
 ---
 
 ## 6. Cost model
 
-### Expected wins, per flame trunk
+### Expected wins, per trunk — with the overclaims subtracted
 
-| trunk | today | after | mechanism |
+| trunk | today | after | banked? |
 |---|---|---|---|
-| blake3 at every alloc (23.4%) | full descriptor-walk digest per intern (`:1419`, `:11211`) | one flat-bytes stencil pass on materialize, or O(1) `finish_hash` of the carried midstate | §2 rule 1 + §4 stencil |
-| map re-canonicalization (29.1%) | re-canonicalize + re-hash every key/value + sort + dedup from scratch per intern (`:10376`) | fold (key-hash,value-hash) into carried midstate on molten insertion; intern finalizes | §2 carried-hasher generalized to maps |
-| observation re-hashing (13.6%) | `canonical_word_hash_in_store` per demanded read (`:9980`) | field load of the stored `content_hash` for `Whole`; cached child-hash reads for projections | §2 rule 4 |
+| blake3 at every alloc (23.4%) | full descriptor-walk digest per intern (`:1419`, `:11211`) | one flat-bytes stencil pass on materialize, or O(1) finalize of a valid carried midstate | **robust** |
+| observation re-hashing (13.6%) | `projection_observation_hash` per read (`:9980`) | field load of stored `content_hash` for `Whole`; cached child-hash reads for projections | **robust, but smaller than stated — see below** |
+| map re-canonicalization (29.1%) | re-canonicalize + re-hash every pair + sort + dedup per intern (`:10376`) | ordered incremental structure (Q1 b) OR sort-at-finalize (Q1 c) | **CONTINGENT — not banked** |
 
-If the three trunks collapse as designed, ~66% of solve time is removed at the root —
-the identity-recompute wall. The remaining question is what that leaves.
+**`ProjectionPath::Whole` overclaim subtracted (codex P2).** `projection_observation_hash`
+for `Whole` calls `canonical_word_hash_in_store` (`:9990`), which **already returns
+`entry.content_hash` directly** for a store handle with matching schema (`:9831`). So the
+`Whole` cell is *already a field-read wrapper*; the residual cost is
+call/dispatch/schema-match, **not a full rehash**. The 13.6% observation trunk's win is
+therefore the *projection* cases (`Field`/`MapGet`/`Tag`/`DocGet`/`TreePath`, `:9992`–
+`10073`) plus dispatch shaving — real, but smaller than a naive "kill the rehash" reading.
 
-### What remains after (the honest accounting)
+**29.1% map win is contingent (opus ruling 6).** It only materializes once Q1 (ordered
+structure) + §3 (flat memory) dissolve `changed_words` for nested children. Report the
+66% as **"addressable trunks," not "removed by this proposal."** Re-flame after gates 2–4
+to confirm the map trunk actually collapses before banking it — and decompose the 29.1%
+first (see Q1): if the dominant cost is per-pair *re-hashing* (which stable child
+identities + cached pair hashes kill) rather than the *sort*, even sort-at-finalize (Q1 c)
+captures most of it, and the ordered-structure research may be unnecessary.
 
-Killing the recompute trunk does **not** by itself reach 50×. What is left:
+### Amdahl honesty (opus ruling 4/6)
 
-- **Memo-per-demand overhead.** Every source-level vix call is an INVOKE demand
-  boundary that interns molten args for the memo key (RESURRECTION LINCHPIN #2). Even
-  with free identity, the intern-args-per-call structure has a floor. The lever is
-  **memo granularity in solver interiors**: the solve interior is molten (doctrine),
-  so interior iteration should stay molten (the tail-loop feature, already landed) and
-  *not* pay a memo key per step. Identity-as-field makes the per-step cost a field
-  read; it does not remove the per-INVOKE intern boundary.
-- **Interp dispatch.** With identity free, the residual is interpreter dispatch
-  overhead — the per-op match/dispatch loop. This is what the **JIT lane** exists to
-  remove. RESURRECTION records the JIT was *2.58× slower* than interp due to
-  per-spawn recompilation (root-caused; compile-cache fix landed). Identity-as-field
-  is a *precondition* for the JIT lane paying off: §2 rule 4 + §4 make identity a
-  patchable stencil + field load the JIT can emit inline, instead of a host-call into
-  the digest machinery that would dominate JIT'd code the way `Driver::spawn →
-  compile` did.
+Removing 66% of flame is **≈ 2.9× at best** — and less initially, since the 29.1% is
+contingent. §1–§5 do **not** alone reach 50×. What remains:
+- **per-INVOKE memo floor** — every source-level vix call interns molten args for the memo
+  key (LINCHPIN #2). Identity-as-field makes the per-step cost a field read but does not
+  remove the per-INVOKE intern boundary. Lever: **memo granularity in solver interiors** —
+  keep interior iteration molten (tail-loop, landed), pay identity once per interned
+  aggregate, not per step.
+- **interp dispatch** — the residual after identity is free. Removed by the **JIT lane**,
+  which identity-as-field is the *precondition* for: §2 Layer-A field read + §4 stencil let
+  the JIT emit identity inline instead of a host-call that would dominate JIT'd code the way
+  `Driver::spawn → compile` did (RESURRECTION JIT anomaly).
 
-### The path to 50×
+### The path to 50× (both legs load-bearing, not garnish)
 
-1. **Identity-as-field** (this proposal) removes the 66% recompute wall — the
-   existential precondition.
-2. **JIT lane** turns the residual interp-dispatch cost into native code; identity is
-   now a field load / patched stencil, not a host barrier, so the JIT actually pays
-   (unblocks the anomaly class RESURRECTION named).
-3. **Memo granularity in solver interiors** — keep interior iteration molten
-   (tail-loop), pay identity once per interned aggregate not once per step, so the
-   INVOKE-boundary floor stops dominating.
+1. **Identity-as-field** (this proposal, robust trunks first) removes the recompute wall —
+   the existential precondition.
+2. **JIT lane** turns residual interp dispatch into native code; identity is a field
+   load / patched stencil, so the JIT actually pays.
+3. **Memo granularity in solver interiors** — keep interior iteration molten; map identity
+   optimized only *after* a map-heavy profile justifies the ordered/Merkle structure.
 
-The claim is *not* that §1–§5 alone hit 50×. The claim is that they remove the one
-trunk that makes 50× unreachable *and* they are the precondition that makes the JIT
-lane's win real rather than swallowed by digest host-calls. That is the honest arc.
+The claim is **not** that §1–§5 hit 50×. It is that they remove the one trunk that makes
+50× unreachable *and* are the precondition that makes the JIT win real. That is the arc.
 
 ---
 
-## Top-3 open questions
+## Open questions
 
-1. **Carried-hasher generalization to maps: fold-order vs sort-at-finalize.**
-   Arrays carry cleanly because append is order-preserving (`update_array_element_hash`,
-   `:787`). Maps are *canonicalized by sort* (`canonical_map_pairs` sorts by key-hash,
-   `:10404`) — a carried midstate fed in insertion order cannot be finalized to the
-   sorted-canonical digest without either (a) re-sorting at finalize (partially
-   defeating the carry) or (b) maintaining an order-independent commutative fold (e.g.
-   a homomorphic combine of per-pair hashes that is insertion-order-invariant). **Recommendation:**
-   option (b) — an order-independent per-pair hash combine (XOR/add of pair digests
-   into the midstate, length-and-domain-sealed at finalize), so molten map mutation is
-   O(1) and finalize needs no sort. Risk: order-independent combines are weaker against
-   adversarial collisions; since these are *content* hashes over trusted machine-owned
-   data (not adversarial input), blake3-per-pair + commutative combine is acceptable —
-   but the committee should rule, because it changes the canonical-encoding spec
-   (`r[schema-identity.canonical-encoding]`) for maps.
+### Q1 — the map-hash construction (THREAT-MODEL REFRAME — Amos ruling 1)
 
-2. **Does the zero-padding law's variant-switch slack-zeroing interact with the carried
-   record hasher?** A molten record whose enum field switches variants must re-zero
-   slack (§3) *and* re-fold the changed region into its carried midstate. If the
-   slack-zero and the fold race or double-count, identity corrupts. **Recommendation:**
-   make variant-switch a single atomic molten mutation that (zero slack → fold the
-   whole variant region), never two folds; add a force-copy differential fixture that
-   exercises a variant shrink specifically. Open because the carried-record hasher does
-   not exist yet — its mutation granularity is a design choice this proposal defers to
-   the layout committee.
+**Identity hashes are supply-chain security artifacts**, not optimization-only checksums:
+they become cachets (`.note.vixen.cachet`), content-keyed advisories, and cross-org cache
+trade keys. **Collision resistance under adversarial content is a hard requirement** — vix
+values include registry metadata, manifests, archives, and build outputs from potentially
+hostile sources. My original recommendation (XOR/add commutative combine) is **withdrawn**:
+codex is right that a public abelian-group sum of attacker-influenceable addends falls to
+**Wagner's generalized-birthday attack** (even per-pair-hashed addends: the attacker
+supplies enough pairs to solve the k-sum). Opus is right that the algebra must support
+**O(~1) mutation including delete**. The three viable constructions, with costs:
 
-3. **Observation projections beyond `Whole`: field read vs recompute.** §2 rule 4
-   collapses `ProjectionPath::Whole` to a field load, but `Field`, `MapGet`, `Tag`,
-   `DocGet`, `TreePath` projections (`driver.rs:9992`–`10073`) hash a *sub-value* that
-   has no top-level identity slot. **Recommendation:** interned children already carry
-   their own `content_hash` (the `Access::Handle` arm hashes the child's cached hash,
-   per `2-hashing-flesh.md`), so `Field`/`MapGet` should read the child's stored
-   identity, not re-canonicalize. `Tag`/`TreePath`/`DocGet` over scalars stay cheap
-   (inline). Open question: whether `DocGet`/`TreePath` on large sub-trees warrant a
-   *per-projection* memo (identity-of-a-projection as a first-class cached fact) or
-   whether the child-hash read suffices. Recommend measuring after trunks 1–2 land —
-   the 13.6% may already be gone.
+- **(a) LtHash-class lattice multiset hash.** Proven (Facebook LtHash / homomorphic
+  MSet-Hash lineage), true multiset semantics, O(1) add *and* delete via the lattice
+  inverse. Cost: **~2KB carried state per molten map** (a wide vector over a lattice
+  modulus) — heavy for molten scratch that churns per solve step. **Changes the taxon
+  value-map canonical-encoding spec** (a new cryptographic construction with its own
+  security assumptions, collision target, duplicate semantics, and adversarial test
+  suite). *Only (a) touches the spec.*
+- **(b) Ordered incremental Merkle / B-tree over canonical key order. — RECOMMEND.**
+  A balanced tree keyed by `(key_schema, canonical key comparison / key hash with
+  tie-break)`; each node holds `blake3` of its children; final identity is the **root
+  hash**. Mutation (insert/overwrite/**delete**) updates **O(log n)** nodes; finalize is
+  **O(1)** (read the root). **Standard Merkle security — no new cryptographic
+  assumptions.** Crucially, being *ordered*, it **realizes the CURRENT sorted-canonical
+  spec incrementally**: molten-fold == intern-fold (no re-sort at finalize), so it captures
+  opus's soundness benefit (dissolves `changed_words` for maps) **without** the additive
+  weakness. ~O(log n) small nodes of carried state — far lighter than (a). This is the
+  recommendation.
+- **(c) Sort-at-finalize (no map carry).** Keep `canonical_map_pairs`' sort; do not carry
+  a map midstate. Zero new machinery, realizes the current spec exactly. Arrays,
+  whole-value slots, and projection field-reads still pay off (they are independent — gate
+  split, §5). Cost: map intern stays O(n log n), but **only the sort** — the per-pair
+  *re-hashing* and *re-canonicalization* (likely the bulk of 29.1%) are already killed by
+  stable child identities + cached pair hashes under §3. **Measure whether map-intern
+  frequency even needs better than this before building (b).**
+
+**Recommended sequence:** land (c) as the gate-2/gate-4 default (it needs nothing new),
+re-flame (§6), **decompose the 29.1%** into re-canonicalize / re-hash / sort; build (b)
+only if the *sort* residual alone still justifies it. Reserve (a) for a future
+multiset-heavy profile that (b) cannot serve — and only with its own written crypto spec.
+**Note:** (b) and (c) realize the current sorted-canonical value-map encoding; **only (a)
+changes it.**
+
+### Q2 — record carried-hasher × atomic variant switch
+
+A linear blake3 midstate supports **append only** (arrays); it cannot do the **in-place
+field/variant update** records need (you cannot subtract a field from a sequential
+midstate). So the record carried hasher, if built, uses the **same ordered-structure
+discipline as Q1(b)** over per-field child identities — a small Merkle/positional tree
+keyed by field offset, root-hashed. A variant switch is then the atomic primitive of §3
+(zero inactive payload → tag → write → fold the new variant's field contributions),
+updating O(log fields) nodes, no double-count, no race. Under the gate split (§5) this is
+part of the deferred map/record sub-epoch; arrays (linear append-midstate) and whole-value
+slots do not wait on it. Open: whether records even need a carry, or whether flat-memory
+whole-record hashing (§3) at intern is already cheap enough — decide by the same re-flame.
+
+### Q3 — projections beyond `Whole`
+
+`Whole` is *already* a field-read wrapper (`:9831`); the win there is dispatch shaving, not
+rehash elimination (§6). `Field`/`MapGet` should read the **interned child's own
+`content_hash`** (the `Access::Handle` arm already hashes a child's cached hash), not
+re-canonicalize. `Tag`/`TreePath`/`DocGet` over scalars stay inline-cheap. Open: whether
+large `DocGet`/`TreePath` sub-trees warrant a *per-projection* memo (identity-of-a-projection
+as a cached fact) — recommend measuring after gates 2–4; the 13.6% (already smaller than
+first stated) may largely be gone.
+
+### Grounding correction (codex non-blocking note — folded)
+
+This doc no longer cites `r[schema-identity.canonical-encoding]` for **runtime value-map
+identity**. That taxon spec encodes `Kind::Map` **schema** identity (key ref then value
+ref, `phon/rust/taxon/src/identity.rs:301`) — it does **not** define runtime map-*value*
+canonicalization. The value-map canonical encoding is a **driver-level** spec
+(`canonical_map_pairs`, `:10376`), and only Q1 construction (a) would change it; (b)/(c)
+preserve it. Extending taxon into value canonicalization would be its own decision, not
+assumed here.
