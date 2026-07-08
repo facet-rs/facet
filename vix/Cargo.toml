@@ -36,10 +36,6 @@ vox = { workspace = true, optional = true }
 weavy = { path = "../weavy" }
 
 [features]
-# JIT is compiled in by default; the Interp/Jit lane is chosen at runtime.
-# iPhone (no runtime codegen allowed) builds opt out with --no-default-features.
-default = ["jit"]
-jit = ["weavy/jit"]
 real-process = ["dep:tempfile", "runner-rpc"]
 runner-rpc = ["dep:exec-protocol", "dep:tokio", "dep:vox"]
 
@@ -53,4 +49,4 @@ tempfile = { workspace = true, optional = true }
 # wasm-clean); tokio is DEV-only, an executor + timers for the demand tests.
 [dev-dependencies]
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
-weavy = { path = "../weavy", features = ["jit"] }
+weavy = { path = "../weavy" }

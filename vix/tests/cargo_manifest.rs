@@ -670,7 +670,6 @@ fn real_workspace_member_only_solve_ring_lock_diff_32_interp_lane() -> Result<()
     real_workspace_member_only_solve_ring_lock_diff_on_lane(32, Lane::Interp, Some("interp"))
 }
 
-#[cfg(feature = "jit")]
 #[test]
 #[ignore = "tier-A measurement probe: real workspace member-only ring 32 jit lane"]
 fn real_workspace_member_only_solve_ring_lock_diff_32_jit_lane() -> Result<(), String> {

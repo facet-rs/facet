@@ -31,17 +31,14 @@ use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::hash::{BuildHasher, Hash, Hasher};
-#[cfg(any(test, feature = "jit"))]
 use std::rc::Rc;
 use std::sync::{Arc, mpsc};
 use std::time::Duration;
 
 use facet::Facet;
 use taxon::{Kind, Primitive, SchemaRef};
-#[cfg(any(test, feature = "jit"))]
 use weavy::jit::task_lane::{JitProgram, JitTask};
 use weavy::mem::{Access, MapStorage, Presence, SequenceStorage, Tag};
-#[cfg(any(test, feature = "jit"))]
 use weavy::task::Op;
 use weavy::task::{FnId, HostFn, Program, Task, TaskStep, ValueMemories, ValueMemory};
 
@@ -198,7 +195,6 @@ pub const NATIVE_OPTION_UNWRAP_NONE_HOST: u32 = 63;
 pub enum Lane {
     #[default]
     Interp,
-    #[cfg(any(test, feature = "jit"))]
     Jit,
 }
 
@@ -600,7 +596,6 @@ struct Execution {
 
 enum LaneRuntime {
     Interp,
-    #[cfg(any(test, feature = "jit"))]
     Jit {
         program: Rc<JitProgram>,
     },
@@ -610,7 +605,6 @@ impl LaneRuntime {
     fn new(lane: Lane, _program: &Program) -> Result<Self, String> {
         match lane {
             Lane::Interp => Ok(Self::Interp),
-            #[cfg(any(test, feature = "jit"))]
             Lane::Jit => {
                 let Some(program) = compile_jit_program(_program) else {
                     return Err(format!(
@@ -639,7 +633,6 @@ impl LaneRuntime {
                 }
                 Ok(LaneTask::Interp(task))
             }
-            #[cfg(any(test, feature = "jit"))]
             Self::Jit { program: jit } => {
                 let mut task = JitTask::spawn(jit.as_ref(), lowered.task_fn);
                 for (offset, value) in lowered.arg_offsets.iter().zip(args) {
@@ -656,7 +649,6 @@ impl LaneRuntime {
 
 enum LaneTask {
     Interp(Task),
-    #[cfg(any(test, feature = "jit"))]
     Jit {
         program: Rc<JitProgram>,
         task: JitTask,
@@ -676,7 +668,6 @@ impl LaneTask {
             Self::Interp(task) => {
                 task.run_hosted_with_value_memories(program, ready, awaited, hosts, value_memories)
             }
-            #[cfg(any(test, feature = "jit"))]
             Self::Jit { program, task } => task.run_hosted_with_value_memories(
                 program.as_ref(),
                 ready,
@@ -690,13 +681,11 @@ impl LaneTask {
     fn result_i64(&self) -> i64 {
         match self {
             Self::Interp(task) => task.result_i64(),
-            #[cfg(any(test, feature = "jit"))]
             Self::Jit { task, .. } => task.result_i64(),
         }
     }
 }
 
-#[cfg(any(test, feature = "jit"))]
 fn compile_jit_program(program: &Program) -> Option<JitProgram> {
     #[cfg(test)]
     JIT_PROGRAM_COMPILE_COUNT.with(|count| count.set(count.get() + 1));
@@ -10289,7 +10278,6 @@ fn hex_bytes(hash: &[u8]) -> String {
     out
 }
 
-#[cfg(any(test, feature = "jit"))]
 fn program_op_set(program: &Program) -> String {
     let mut names: Vec<&'static str> = program
         .fns
@@ -10301,7 +10289,6 @@ fn program_op_set(program: &Program) -> String {
     names.join(", ")
 }
 
-#[cfg(any(test, feature = "jit"))]
 fn op_name(op: &Op) -> &'static str {
     match op {
         Op::ConstI64 { .. } => "ConstI64",

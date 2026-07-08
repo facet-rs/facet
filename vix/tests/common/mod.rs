@@ -4,13 +4,10 @@ use vix::machine::driver::Lane;
 use vix::machine::{DriveEvent, Machine};
 
 pub fn lanes() -> Vec<Lane> {
-    let lanes = vec![Lane::Interp];
-    #[cfg(feature = "jit")]
-    let lanes = {
-        let mut lanes = lanes;
+    let mut lanes = vec![Lane::Interp];
+    if weavy::jit::task_lane::available() {
         lanes.push(Lane::Jit);
-        lanes
-    };
+    }
     lanes
 }
 
