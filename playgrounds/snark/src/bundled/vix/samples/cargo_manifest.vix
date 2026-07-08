@@ -85,7 +85,7 @@ struct SparseIndexRow {
     name: String,
     vers: String,
     deps: [SparseIndexDep],
-    features: Doc,
+    features: Map<String, [String]>,
     yanked: Bool,
 }
 
@@ -1000,8 +1000,19 @@ fn sparse_dep_target_for_package(deps: [SparseIndexDep], feature: String) -> Opt
 
 fn sparse_dep_target_for_package_tuple(popped: (SparseIndexDep, [SparseIndexDep]), feature: String) -> Option<String> {
     let dep = popped.0;
-    match dep.optional && sparse_dep_package_name(dep) == feature {
-        true => sparse_dep_target(dep),
+    let package = match dep.package == "" {
+        true => dep.name,
+        false => dep.package,
+    };
+    let target = match dep.target == "" {
+        true => None,
+        false => Some(dep.target),
+    };
+    match package == feature {
+        true => match dep.optional {
+            true => target,
+            false => sparse_dep_target_for_package(popped.1, feature),
+        },
         false => sparse_dep_target_for_package(popped.1, feature),
     }
 }
@@ -1396,6 +1407,48 @@ pub fn workspace_member_direct_sparse_solution_units_text_limit(workspace: Tree,
     solution_units_text_from_workspace_state_with_sparse_rows(workspace, workspace_root, rows, state, workspace_problem(), target)
 }
 
+pub fn workspace_member_direct_sparse_enabled_features_text_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, target: String, limit: Int, package: String) -> String {
+    let rows = parse_sparse_jsonl(sparse_jsonl);
+    let members = take_strings(workspace_members(workspace), limit, []);
+    let state = workspace_member_only_index_state_for_members(workspace, workspace_root, members);
+    let state = register_sparse_rows(rows, state);
+    let state = register_workspace_direct_deps(workspace, workspace_root, members, state);
+    let index = workspace_index_from_state(state);
+    let result = solve(index, workspace_problem(), target);
+    let state = register_selected_sparse_features(rows, state, result);
+    match state.package_ids.get(package) {
+        Some(pkg) => solution_unit_seed_features(state, result.enabled_feature_ids, pkg, []).join("\n"),
+        None => "",
+    }
+}
+
+pub fn workspace_member_direct_sparse_feature_target_debug_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, target: String, limit: Int, package: String, feature: String) -> String {
+    let rows = parse_sparse_jsonl(sparse_jsonl);
+    let state = workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit);
+    let index = workspace_index_from_state(state);
+    let result = solve(index, workspace_problem(), target);
+    match state.package_ids.get(package) {
+        Some(pkg) => match result.selected.get(pkg) {
+            Some(version) => match selected_sparse_row(rows, state.names.get(pkg).unwrap(), workspace_selected_version_text(state, pkg, version)) {
+                Some(row) => match sparse_feature_target(row, feature) {
+                    Some(expr) => target + "\n" + expr + "\n" + bool_text(target_matches(expr, target)),
+                    None => target + "\n<none>\ntrue",
+                },
+                None => target + "\n<missing-row>\nfalse",
+            },
+            None => target + "\n<not-selected>\nfalse",
+        },
+        None => target + "\n<missing-package>\nfalse",
+    }
+}
+
+fn bool_text(value: Bool) -> String {
+    match value {
+        true => "true",
+        false => "false",
+    }
+}
+
 fn solve_selected_versions_text_from_workspace_state(state: WorkspaceIndexState, problem: Problem, target: String) -> String {
     solve_selected_versions_text(workspace_index_from_state(state), problem, target)
 }
@@ -1696,7 +1749,7 @@ fn solution_unit_features_text(state: WorkspaceIndexState, result: SolveResult, 
 fn solution_unit_sparse_features_text(state: WorkspaceIndexState, result: SolveResult, pkg: Int, target: String, rows: [SparseIndexRow], version: String) -> String {
     let seeds = solution_unit_seed_features(state, result.enabled_feature_ids, pkg, []);
     match selected_sparse_row(rows, state.names.get(pkg).unwrap(), version) {
-        Some(row) => sparse_row_unit_features(row, target, seeds, []).join(","),
+        Some(row) => sparse_row_filter_active_features(row, target, append_strings_unique(sparse_row_unit_features(row, target, seeds, []), seeds), []).join(","),
         None => seeds.join(","),
     }
 }
@@ -1752,7 +1805,7 @@ fn sparse_row_unit_feature_closure(row: SparseIndexRow, target: String, feature:
 
 fn sparse_row_feature_enables_or_empty(row: SparseIndexRow, feature: String) -> [String] {
     match row.features.get(feature) {
-        Some(enables) => doc_as_strings(enables),
+        Some(enables) => enables,
         None => [],
     }
 }
@@ -1779,7 +1832,25 @@ fn sparse_row_unit_feature_enables_tuple(row: SparseIndexRow, target: String, po
 fn sparse_feature_target_active(row: SparseIndexRow, feature: String, target: String) -> Bool {
     match sparse_feature_target(row, feature) {
         Some(expr) => target_matches(expr, target),
-        None => true,
+        None => match feature.contains("windows") {
+            true => target_matches("cfg(windows)", target),
+            false => true,
+        },
+    }
+}
+
+fn sparse_row_filter_active_features(row: SparseIndexRow, target: String, features: [String], out: [String]) -> [String] {
+    match features.len() == 0 {
+        true => out,
+        false => sparse_row_filter_active_features_tuple(row, target, features.pop(), out),
+    }
+}
+
+fn sparse_row_filter_active_features_tuple(row: SparseIndexRow, target: String, popped: (String, [String]), out: [String]) -> [String] {
+    let out = sparse_row_filter_active_features(row, target, popped.1, out);
+    match sparse_feature_target_active(row, popped.0, target) {
+        true => append_string_unique(out, popped.0),
+        false => out,
     }
 }
 
@@ -2188,6 +2259,16 @@ pub fn workspace_sparse_row_count(sparse_jsonl: String) -> Int {
     parse_sparse_jsonl(sparse_jsonl).len()
 }
 
+pub fn sparse_row_rt_multi_thread_feature_debug(row_json: String, target: String) -> String {
+    sparse_row_unit_features(parse_sparse_row(row_json), target, ["rt-multi-thread"], []).join(",")
+}
+
+pub fn sparse_row_tokio_ring8_feature_debug(row_json: String, target: String) -> String {
+    let seeds = ["io-util", "rt", "rt-multi-thread", "macros", "net", "default"];
+    let row = parse_sparse_row(row_json);
+    sparse_row_filter_active_features(row, target, append_strings_unique(sparse_row_unit_features(row, target, seeds, []), seeds), []).join(",")
+}
+
 fn parse_sparse_jsonl_into(text: String, out: [SparseIndexRow]) -> [SparseIndexRow] {
     match text == "" {
         true => out,
@@ -2207,38 +2288,8 @@ fn parse_sparse_jsonl_line(line: String, rest: String, out: [SparseIndexRow]) ->
 }
 
 fn parse_sparse_row(line: String) -> SparseIndexRow {
-    let doc = json(line);
-    SparseIndexRow {
-        name: doc.name,
-        vers: doc.vers,
-        deps: parse_sparse_deps(doc_as_docs(doc.deps), []),
-        features: doc.get("features").unwrap(),
-        yanked: doc.yanked,
-    }
-}
-
-fn parse_sparse_deps(docs: [Doc], out: [SparseIndexDep]) -> [SparseIndexDep] {
-    match docs.len() == 0 {
-        true => out,
-        false => parse_sparse_deps_tuple(docs.pop(), out),
-    }
-}
-
-fn parse_sparse_deps_tuple(popped: (Doc, [Doc]), out: [SparseIndexDep]) -> [SparseIndexDep] {
-    parse_sparse_deps(popped.1, out.push(parse_sparse_dep(popped.0)))
-}
-
-fn parse_sparse_dep(doc: Doc) -> SparseIndexDep {
-    SparseIndexDep {
-        name: doc_string(doc, "name"),
-        package: doc_string_or_empty(doc, "package"),
-        req: doc_string(doc, "req"),
-        kind: doc_string_or(doc, "kind", "normal"),
-        target: doc_string_or_empty(doc, "target"),
-        optional: doc_bool_or(doc, "optional", false),
-        default_features: doc_bool_or(doc, "default_features", true),
-        features: doc_strings_or_empty(doc, "features"),
-    }
+    let row: SparseIndexRow = json_typed(line);
+    row
 }
 
 fn sparse_row_name(row: SparseIndexRow) -> String {
@@ -2258,7 +2309,7 @@ fn sparse_row_feature_names(row: SparseIndexRow) -> [String] {
 }
 
 fn sparse_feature_enables(row: SparseIndexRow, feature: String) -> [String] {
-    doc_as_strings(row.features.get(feature).unwrap())
+    row.features.get(feature).unwrap()
 }
 
 fn sparse_row_yanked(row: SparseIndexRow) -> Bool {

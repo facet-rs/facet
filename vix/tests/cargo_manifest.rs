@@ -368,6 +368,41 @@ fn dependency_declarations_extract_workspace_and_detailed_forms() -> Result<(), 
 }
 
 #[test]
+fn workspace_dependency_features_preserve_hyphenated_inherited_names() -> Result<(), String> {
+    let mut machine = manifest_machine()?;
+    let workspace = intern_tree(
+        &mut machine,
+        Tree::of(&[(
+            "Cargo.toml",
+            r#"[workspace]
+[workspace.dependencies]
+tokio = { version = "1", features = ["io-util", "rt", "rt-multi-thread"] }
+"#,
+        )]),
+    )?;
+    let manifest = intern_tree(
+        &mut machine,
+        Tree::of(&[(
+            "Cargo.toml",
+            r#"[package]
+name = "peer-server"
+version = "0.2.2"
+
+[dependencies]
+tokio = { workspace = true, features = ["rt-multi-thread", "net", "macros"] }
+"#,
+        )]),
+    )?;
+
+    let tokio = detailed_dep(&mut machine, manifest, workspace, "tokio", "normal")?;
+    assert_eq!(
+        field_strings(&tokio, "features")?,
+        ["io-util", "rt", "rt-multi-thread", "macros", "net"]
+    );
+    Ok(())
+}
+
+#[test]
 fn target_dependency_declarations_carry_parsed_cfg_data() -> Result<(), String> {
     let mut machine = manifest_machine()?;
     let workspace = intern_tree(&mut machine, workspace_tree())?;
@@ -573,7 +608,7 @@ real_workspace_member_only_solve_ring_test!(real_workspace_member_only_solve_rin
 real_workspace_member_only_solve_ring_test!(real_workspace_member_only_solve_ring_16, 16);
 real_workspace_member_only_solve_ring_test!(real_workspace_member_only_solve_ring_32, 32);
 real_workspace_member_only_solve_ring_test!(real_workspace_member_only_solve_ring_64, 64);
-real_workspace_member_only_solve_ring_test!(real_workspace_member_only_solve_ring_145, 145);
+real_workspace_member_only_solve_ring_test!(real_workspace_member_only_solve_ring_146, 146);
 
 fn real_workspace_member_only_solve_ring(limit: i64) -> Result<(), String> {
     let metadata = cargo_metadata_real_workspace()?;
@@ -619,8 +654,8 @@ real_workspace_member_only_solve_ring_lock_diff_test!(
     64
 );
 real_workspace_member_only_solve_ring_lock_diff_test!(
-    real_workspace_member_only_solve_ring_lock_diff_145,
-    145
+    real_workspace_member_only_solve_ring_lock_diff_146,
+    146
 );
 
 fn real_workspace_member_only_solve_ring_lock_diff(limit: i64) -> Result<(), String> {
@@ -793,16 +828,89 @@ fn pinned_sparse_row_parses_in_cargo_manifest_module() -> Result<(), String> {
     Ok(())
 }
 
+#[test]
+fn sparse_feature_closure_preserves_hyphenated_seed_feature() -> Result<(), String> {
+    let mut machine = manifest_machine()?;
+    let rows = sparse_snapshot_jsonl_for_crates(BTreeSet::from(["tokio".to_owned()]), "")?;
+    let row = rows
+        .lines()
+        .find(|line| line.contains(r#""vers":"1.52.3""#))
+        .ok_or_else(|| "missing tokio 1.52.3 sparse row".to_owned())?;
+    let row = intern_string(&mut machine, row)?;
+    let target = intern_string(&mut machine, "x86_64-apple-darwin")?;
+    let features = machine.demand_i64(
+        "sparse_row_rt_multi_thread_feature_debug",
+        vec![row, target],
+    )?;
+    assert_eq!(
+        rendered_string(
+            &machine,
+            "sparse_row_rt_multi_thread_feature_debug",
+            features
+        )?,
+        "rt-multi-thread,rt"
+    );
+    Ok(())
+}
+
+#[test]
+fn sparse_feature_closure_preserves_ring8_tokio_seed_features() -> Result<(), String> {
+    let mut machine = manifest_machine()?;
+    let rows = sparse_snapshot_jsonl_for_crates(BTreeSet::from(["tokio".to_owned()]), "")?;
+    let row = rows
+        .lines()
+        .find(|line| line.contains(r#""vers":"1.52.3""#))
+        .ok_or_else(|| "missing tokio 1.52.3 sparse row".to_owned())?;
+    let row = intern_string(&mut machine, row)?;
+    let target = intern_string(&mut machine, "x86_64-apple-darwin")?;
+    let features = machine.demand_i64("sparse_row_tokio_ring8_feature_debug", vec![row, target])?;
+    let features = rendered_string(&machine, "sparse_row_tokio_ring8_feature_debug", features)?;
+    assert!(
+        features
+            .split(',')
+            .any(|feature| feature == "rt-multi-thread"),
+        "{features}"
+    );
+    assert!(
+        !features.split(',').any(|feature| feature == "windows-sys"),
+        "{features}"
+    );
+    Ok(())
+}
+
 fn real_workspace_member_direct_sparse_solve_ring_lock_diff(limit: i64) -> Result<(), String> {
     let metadata = cargo_metadata_real_workspace()?;
     let mut machine = manifest_machine()?;
     let workspace = intern_tree(&mut machine, real_workspace_manifest_tree(&metadata)?)?;
     let root = intern_path(&mut machine, "")?;
     let target = intern_string(&mut machine, "x86_64-apple-darwin")?;
-    let sparse_jsonl =
+    let mut timings = Vec::new();
+    let started = Instant::now();
+    let sparse_jsonl_text =
         direct_sparse_snapshot_jsonl_for_ring(&mut machine, &metadata, workspace, limit)?;
-    let sparse_jsonl = intern_string(&mut machine, &sparse_jsonl)?;
+    timings.push(("sparse_snapshot", started.elapsed()));
+    write_tier_a_artifact(
+        &format!("real-direct-ring-{limit}-timings.tsv"),
+        &ring_timings_table(&timings),
+    )?;
+    if let Some(tokio_row) = sparse_jsonl_text
+        .lines()
+        .find(|line| line.contains(r#""name":"tokio""#) && line.contains(r#""vers":"1.52.3""#))
+    {
+        write_tier_a_artifact(
+            &format!("real-direct-ring-{limit}-tokio-row.json"),
+            tokio_row,
+        )?;
+    }
+    let sparse_jsonl = intern_string(&mut machine, &sparse_jsonl_text)?;
+    let started = Instant::now();
     let sparse_row_count = machine.demand_i64("workspace_sparse_row_count", vec![sparse_jsonl])?;
+    timings.push(("typed_sparse_row_count", started.elapsed()));
+    write_tier_a_artifact(
+        &format!("real-direct-ring-{limit}-timings.tsv"),
+        &ring_timings_table(&timings),
+    )?;
+    let started = Instant::now();
     let package_count = machine.demand_i64(
         "workspace_member_direct_sparse_index_package_count_limit",
         vec![workspace, root, sparse_jsonl, limit],
@@ -830,6 +938,11 @@ fn real_workspace_member_direct_sparse_solve_ring_lock_diff(limit: i64) -> Resul
         "workspace_member_direct_sparse_dep_candidate_text_limit",
         tokio_candidate_text,
     )?;
+    timings.push(("typed_sparse_index_and_debug", started.elapsed()));
+    write_tier_a_artifact(
+        &format!("real-direct-ring-{limit}-timings.tsv"),
+        &ring_timings_table(&timings),
+    )?;
     write_tier_a_artifact(
         &format!("real-direct-ring-{limit}-index-counts.tsv"),
         &format!(
@@ -846,6 +959,7 @@ fn real_workspace_member_direct_sparse_solve_ring_lock_diff(limit: i64) -> Resul
     )?;
     assert_all_req_lines(&tokio_req_text, "1", &format!("direct sparse ring {limit}"))?;
 
+    let started = Instant::now();
     let selected = machine.demand_i64(
         "workspace_member_direct_sparse_solve_selected_versions_text_limit",
         vec![workspace, root, sparse_jsonl, target, limit],
@@ -859,6 +973,11 @@ fn real_workspace_member_direct_sparse_solve_ring_lock_diff(limit: i64) -> Resul
     let lock_rows = cargo_lock_package_rows(&workspace_root().join("Cargo.lock"))?;
     let metadata_rows = metadata.package_rows();
     let diff = diff_package_versions_against_lock(&solve_rows, &lock_rows, &metadata_rows);
+    timings.push(("solve_and_lock_diff", started.elapsed()));
+    write_tier_a_artifact(
+        &format!("real-direct-ring-{limit}-timings.tsv"),
+        &ring_timings_table(&timings),
+    )?;
 
     write_tier_a_artifact(
         &format!("real-direct-ring-{limit}-solve-vs-lock-summary.tsv"),
@@ -881,9 +1000,46 @@ fn real_workspace_member_direct_sparse_unit_diff(limit: i64) -> Result<(), Strin
     let workspace = intern_tree(&mut machine, real_workspace_manifest_tree(&metadata)?)?;
     let root = intern_path(&mut machine, "")?;
     let target = intern_string(&mut machine, "x86_64-apple-darwin")?;
-    let sparse_jsonl =
+    let sparse_jsonl_text =
         direct_sparse_snapshot_jsonl_for_ring(&mut machine, &metadata, workspace, limit)?;
-    let sparse_jsonl = intern_string(&mut machine, &sparse_jsonl)?;
+    if let Some(tokio_row) = sparse_jsonl_text
+        .lines()
+        .find(|line| line.contains(r#""name":"tokio""#) && line.contains(r#""vers":"1.52.3""#))
+    {
+        write_tier_a_artifact(
+            &format!("real-direct-ring-{limit}-unit-tokio-row.json"),
+            tokio_row,
+        )?;
+    }
+    let sparse_jsonl = intern_string(&mut machine, &sparse_jsonl_text)?;
+    let tokio = intern_string(&mut machine, "tokio")?;
+    let windows_sys = intern_string(&mut machine, "windows-sys")?;
+    let tokio_enabled_features = machine.demand_i64(
+        "workspace_member_direct_sparse_enabled_features_text_limit",
+        vec![workspace, root, sparse_jsonl, target, limit, tokio],
+    )?;
+    let tokio_enabled_features = rendered_string(
+        &machine,
+        "workspace_member_direct_sparse_enabled_features_text_limit",
+        tokio_enabled_features,
+    )?;
+    let tokio_windows_target = machine.demand_i64(
+        "workspace_member_direct_sparse_feature_target_debug_limit",
+        vec![
+            workspace,
+            root,
+            sparse_jsonl,
+            target,
+            limit,
+            tokio,
+            windows_sys,
+        ],
+    )?;
+    let tokio_windows_target = rendered_string(
+        &machine,
+        "workspace_member_direct_sparse_feature_target_debug_limit",
+        tokio_windows_target,
+    )?;
 
     let units = machine.demand_i64(
         "workspace_member_direct_sparse_solution_units_text_limit",
@@ -917,6 +1073,14 @@ fn real_workspace_member_direct_sparse_unit_diff(limit: i64) -> Result<(), Strin
     write_tier_a_artifact(
         &format!("real-direct-ring-{limit}-unit-divergence-categories.tsv"),
         &ring_unit_categories_table(&diff),
+    )?;
+    write_tier_a_artifact(
+        &format!("real-direct-ring-{limit}-tokio-enabled-features.txt"),
+        &tokio_enabled_features,
+    )?;
+    write_tier_a_artifact(
+        &format!("real-direct-ring-{limit}-tokio-windows-sys-target.txt"),
+        &tokio_windows_target,
     )?;
 
     assert!(!vix_units.is_empty(), "no Vix units derived");
@@ -1324,6 +1488,22 @@ fn field_bool(fields: &BTreeMap<String, RenderedValue>, name: &str) -> Result<bo
     match fields.get(name) {
         Some(RenderedValue::Bool { value }) => Ok(*value),
         other => Err(format!("field {name} was {other:?}, not Bool")),
+    }
+}
+
+fn field_strings(
+    fields: &BTreeMap<String, RenderedValue>,
+    name: &str,
+) -> Result<Vec<String>, String> {
+    match fields.get(name) {
+        Some(RenderedValue::Array { items, .. }) => items
+            .iter()
+            .map(|item| match item {
+                RenderedValue::String { value } => Ok(value.clone()),
+                other => Err(format!("field {name} item was {other:?}, not String")),
+            })
+            .collect(),
+        other => Err(format!("field {name} was {other:?}, not Array")),
     }
 }
 

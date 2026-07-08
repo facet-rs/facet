@@ -15,7 +15,7 @@ nextest_timeout=(
 
 member_solve_expr='test(=real_workspace_member_only_solve_ring_1) | test(=real_workspace_member_only_solve_ring_2) | test(=real_workspace_member_only_solve_ring_4) | test(=real_workspace_member_only_solve_ring_8) | test(=real_workspace_member_only_solve_ring_16) | test(=real_workspace_member_index_solves_bounded_ring) | test(=real_workspace_member_only_solve_ring_lock_diff_16) | test(=real_workspace_member_only_solve_ring_lock_diff_32) | test(=real_workspace_member_only_solve_ring_lock_diff_64)'
 if [[ "${TIER_A_FULL_MEMBER_RING:-0}" == "1" ]]; then
-  member_solve_expr="$member_solve_expr | test(=real_workspace_member_only_solve_ring_lock_diff_145)"
+  member_solve_expr="$member_solve_expr | test(=real_workspace_member_only_solve_ring_lock_diff_146)"
 fi
 
 metadata="$OUT/metadata.json"
@@ -80,6 +80,13 @@ cargo nextest list "${nextest_timeout[@]}" -p vix -E 'test(=tiny_workspace_solve
 cargo nextest run "${nextest_timeout[@]}" -p vix -E 'test(=tiny_workspace_solve_diff_is_categorized_against_real_cargo_lock)' \
   > "$OUT/vix-lock-diff-run.txt" 2>&1
 
+direct_sparse_solve_expr='test(=real_workspace_member_direct_sparse_solve_ring_lock_diff_8) | test(=real_workspace_member_direct_sparse_solve_ring_lock_diff_16)'
+
+cargo nextest list "${nextest_timeout[@]}" -p vix --run-ignored only -E "$direct_sparse_solve_expr" \
+  > "$OUT/vix-direct-ring-solve-diff-list.txt" 2>&1
+cargo nextest run "${nextest_timeout[@]}" -p vix --run-ignored only -E "$direct_sparse_solve_expr" \
+  > "$OUT/vix-direct-ring-solve-diff-run.txt" 2>&1
+
 cargo nextest list "${nextest_timeout[@]}" -p vix --features real-process -E 'test(=solution_walk_derives_units_from_rodin_and_matches_cargo_oracle)' \
   > "$OUT/vix-derived-unit-list.txt" 2>&1
 cargo nextest run "${nextest_timeout[@]}" -p vix --features real-process -E 'test(=solution_walk_derives_units_from_rodin_and_matches_cargo_oracle)' \
@@ -113,12 +120,18 @@ cargo nextest run "${nextest_timeout[@]}" -p vix --run-ignored only -E 'test(=re
     real-ring-16-solve-vs-lock-summary.tsv
     real-ring-32-solve-vs-lock-summary.tsv
     real-ring-64-solve-vs-lock-summary.tsv
+    real-direct-ring-8-solve-vs-lock-summary.tsv
+    real-direct-ring-8-index-counts.tsv
+    real-direct-ring-8-timings.tsv
+    real-direct-ring-16-solve-vs-lock-summary.tsv
+    real-direct-ring-16-index-counts.tsv
+    real-direct-ring-16-timings.tsv
     lock-fixture-unit-diff-summary.tsv
     real-direct-ring-8-unit-diff-summary.tsv
     real-direct-ring-8-unit-divergence-categories.tsv
   )
   if [[ "${TIER_A_FULL_MEMBER_RING:-0}" == "1" ]]; then
-    summary_artifacts+=(real-ring-145-solve-vs-lock-summary.tsv)
+    summary_artifacts+=(real-ring-146-solve-vs-lock-summary.tsv)
   fi
   for artifact in "${summary_artifacts[@]}"; do
     if [[ -f "$OUT/$artifact" ]]; then
