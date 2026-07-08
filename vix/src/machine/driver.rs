@@ -1344,10 +1344,12 @@ struct PendingFetchRun {
     completion: mpsc::Receiver<Result<crate::fetch::FetchOutput, String>>,
 }
 
-struct StartedFetchRequest {
+struct PreparedFetchRequest {
     input_slot: usize,
     key: String,
-    run: PendingFetchRun,
+    url: String,
+    expected_sha256: Option<String>,
+    replayed: bool,
 }
 
 #[derive(Default)]
@@ -2993,13 +2995,13 @@ impl Driver {
                         }
                     }
                     for req in fetch_requests {
-                        let pending = self.start_fetch_request(req)?;
-                        if let Some(&run_id) = pending_work.in_flight_fetches.get(&pending.key) {
+                        let prepared = self.prepare_fetch_request(req)?;
+                        if let Some(&run_id) = pending_work.in_flight_fetches.get(&prepared.key) {
                             pending_work
                                 .fetch_waiters
                                 .entry(run_id)
                                 .or_default()
-                                .push((ix, pending.input_slot));
+                                .push((ix, prepared.input_slot));
                         } else {
                             let run_id = pending_work.next_fetch_run_id;
                             pending_work.next_fetch_run_id =
@@ -3008,11 +3010,12 @@ impl Driver {
                                 .fetch_waiters
                                 .entry(run_id)
                                 .or_default()
-                                .push((ix, pending.input_slot));
+                                .push((ix, prepared.input_slot));
                             pending_work
                                 .in_flight_fetches
-                                .insert(pending.key.clone(), run_id);
-                            pending_work.pending_fetches.insert(run_id, pending.run);
+                                .insert(prepared.key.clone(), run_id);
+                            let run = self.start_fetch_run(prepared);
+                            pending_work.pending_fetches.insert(run_id, run);
                         }
                     }
                     for req in doc_parse_requests {
@@ -7406,7 +7409,7 @@ impl Driver {
             .collect()
     }
 
-    fn start_fetch_request(&mut self, req: FetchRequest) -> Result<StartedFetchRequest, String> {
+    fn prepare_fetch_request(&mut self, req: FetchRequest) -> Result<PreparedFetchRequest, String> {
         let url = self.store.borrow().string_value(req.url, "String")?;
         let declared_sha256 = if req.sha256 < 0 {
             None
@@ -7422,23 +7425,29 @@ impl Driver {
         } else {
             (declared_sha256, false)
         };
+        Ok(PreparedFetchRequest {
+            input_slot: req.input_slot,
+            key,
+            url,
+            expected_sha256,
+            replayed,
+        })
+    }
+
+    fn start_fetch_run(&mut self, prepared: PreparedFetchRequest) -> PendingFetchRun {
         let backend = Arc::clone(&self.fetch_backend);
-        let thread_url = url.clone();
-        let thread_expected_sha256 = expected_sha256.clone();
+        let thread_url = prepared.url.clone();
+        let thread_expected_sha256 = prepared.expected_sha256.clone();
         let (completion_tx, completion_rx) = mpsc::channel();
         std::thread::spawn(move || {
             let result = backend.fetch(&thread_url, thread_expected_sha256.as_deref());
             let _ = completion_tx.send(result);
         });
-        Ok(StartedFetchRequest {
-            input_slot: req.input_slot,
-            key: key.clone(),
-            run: PendingFetchRun {
-                key,
-                replayed,
-                completion: completion_rx,
-            },
-        })
+        PendingFetchRun {
+            key: prepared.key,
+            replayed: prepared.replayed,
+            completion: completion_rx,
+        }
     }
 
     fn finish_fetch_run(
@@ -12132,7 +12141,10 @@ fn field_descriptor<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::Mutex;
+    use std::sync::{
+        Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
     use std::time::{Duration, Instant};
     use weavy::mem::Layout;
     use weavy::mem::declared as declared_mem;
@@ -12212,6 +12224,26 @@ mod tests {
                 .lock()
                 .map_err(|_| "latency run state poisoned".to_string())? = Some(completed.clone());
             Ok(completed)
+        }
+    }
+
+    struct CountingFetchBackend {
+        calls: Arc<AtomicUsize>,
+        delay: Duration,
+    }
+
+    impl FetchBackend for CountingFetchBackend {
+        fn fetch(
+            &self,
+            _url: &str,
+            _expected_sha256: Option<&str>,
+        ) -> Result<crate::fetch::FetchOutput, String> {
+            self.calls.fetch_add(1, Ordering::SeqCst);
+            std::thread::sleep(self.delay);
+            Ok(crate::fetch::FetchOutput {
+                tree: crate::exec::Tree::of(&[("payload.txt", "fetch;")]),
+                actual_sha256: "fake-fetch-sha256".to_string(),
+            })
         }
     }
 
@@ -12653,6 +12685,61 @@ mod tests {
         (program, fns)
     }
 
+    fn duplicate_fetch_program() -> (Program, Vec<LoweredFn>) {
+        const REGION: u32 = 128;
+        let mut code = Vec::new();
+        push_fetch_request_ops(&mut code, REGION, 0, 0);
+        push_fetch_request_ops(&mut code, REGION, 1, 0);
+        code.extend([
+            Op::Await { dst: 24, input: 0 },
+            Op::Await { dst: 32, input: 1 },
+        ]);
+        push_text_project_ops(&mut code, REGION, 2, 24, 8);
+        push_text_project_ops(&mut code, REGION, 3, 32, 8);
+        code.extend([
+            Op::Await { dst: 40, input: 2 },
+            Op::Await { dst: 48, input: 3 },
+            Op::ConstI64 {
+                dst: REGION,
+                value: 56,
+            },
+            Op::CopyI64 {
+                dst: REGION + 8,
+                src: 40,
+            },
+            Op::CopyI64 {
+                dst: REGION + 16,
+                src: 48,
+            },
+            Op::HostCall {
+                host: STRING_CONCAT_HOST,
+            },
+            Op::Ret { src: 56, size: 8 },
+        ]);
+        let body = TaskFn {
+            frame: Layout {
+                size: 256,
+                align: 8,
+            },
+            code,
+        };
+        let program = Program { fns: vec![body] };
+        let fns = vec![LoweredFn {
+            hash: 0xFE7C,
+            task_fn: FnId(0),
+            arg_offsets: vec![0, 8],
+            arg_schemas: vec!["String".into(), "Path".into()],
+            return_schema: "String".into(),
+            semantic_comparators: Vec::new(),
+            invoke_region: 0,
+            store_alloc_region: 0,
+            store_read_region: 0,
+            store_tag_region: 0,
+            primitive_region: REGION,
+        }];
+        (program, fns)
+    }
+
     fn push_exec_request_ops(
         code: &mut Vec<Op>,
         region: u32,
@@ -12740,6 +12827,24 @@ mod tests {
         ]);
     }
 
+    fn push_fetch_request_ops(code: &mut Vec<Op>, region: u32, input_slot: i64, url_slot: u32) {
+        code.extend([
+            Op::ConstI64 {
+                dst: region,
+                value: input_slot,
+            },
+            Op::CopyI64 {
+                dst: region + 8,
+                src: url_slot,
+            },
+            Op::ConstI64 {
+                dst: region + 16,
+                value: -1,
+            },
+            Op::HostCall { host: FETCH_HOST },
+        ]);
+    }
+
     #[test]
     fn independent_exec_text_waits_overlap() {
         let (program, fns) = exec_text_overlap_program();
@@ -12776,6 +12881,43 @@ mod tests {
             has_two_run_starts_before_completion(&driver.trace),
             "{:?}",
             driver.trace
+        );
+    }
+
+    #[test]
+    fn duplicate_fetch_demands_share_one_in_flight_backend_call() {
+        let (program, fns) = duplicate_fetch_program();
+        let mut driver = Driver::new(program, fns);
+        let calls = Arc::new(AtomicUsize::new(0));
+        driver.set_fetch_backend(Arc::new(CountingFetchBackend {
+            calls: Arc::clone(&calls),
+            delay: Duration::from_millis(25),
+        }));
+        let schemas = driver.schemas.clone();
+        let args = {
+            let mut store = driver.store.borrow_mut();
+            vec![
+                store
+                    .alloc_raw(
+                        "String",
+                        b"https://example.invalid/archive.tgz".to_vec(),
+                        &schemas,
+                    )
+                    .0,
+                store.alloc_raw("Path", b"payload.txt".to_vec(), &schemas).0,
+            ]
+        };
+
+        let value = driver.demand(FnRef::new(0), args).unwrap();
+
+        assert_eq!(
+            driver.store.borrow().string_value(value, "String").unwrap(),
+            "fetch;fetch;"
+        );
+        assert_eq!(
+            calls.load(Ordering::SeqCst),
+            1,
+            "duplicate same-key fetch demands must join one in-flight run"
         );
     }
 
