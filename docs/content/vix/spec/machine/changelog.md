@@ -229,3 +229,28 @@ testability (sonnet). Reports in `/tmp/spec-poke-*` and
 - None outright. The page-count nit (correctness #15) is a report-vs-prompt
   mismatch, not a spec defect: there are 15 pages by design, and the index
   now says so.
+
+## Round 3 (2026-07-08, post-review with Amos)
+
+- **Vix 101 banked as law: `machine.scheduler.no-in-program-forcing`.**
+  Everything is lazy, everything is demand-driven; construction binds
+  promises; no in-program construct forces; forcing originates only outside
+  the program (the vx CLI / the holder). `task-is-path` reworded — its
+  "nested demand is a call" phrasing read as eager evaluation order; it now
+  explicitly describes what happens when propagated demand REACHES an
+  invocation. The spec asking "is vix lazy in constructors?" was a process
+  failure: the language's born principle was never in question.
+- **Rule syntax fixed corpus-wide.** All 164 rules (machine + solver) were
+  written as bare `r[id]` + paragraphs; dodeca's binding requires the rule
+  id AND its prose in ONE blockquote. Every rule is now its own `>` block;
+  verified via `ddc coverage rule` showing definition bodies where it
+  previously reported "No definition body" (the missed tell).
+- **Research artifacts moved out of /tmp** (they die on reboot; one reboot
+  already cost a rerun today) into ~/vixenware/notes/machine-spec/: all
+  mining, poke, feel reports + the hash-as-field proposal branch copy +
+  hostcall census + language-gap censuses.
+- OPEN (with Fable to think through, per Amos): container identity over
+  pending children — permanent promise-ids vs identity-migration on
+  realization — narrowed by the laziness law (there is no eager
+  construction to diverge from) but the realization story still needs
+  design; the lazy-fields/Point example is the canonical test case.
