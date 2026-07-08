@@ -2473,13 +2473,13 @@ fn diff_ring_units(vix: &[RingUnitShape], cargo: &[RingUnitShape]) -> RingUnitDi
     for key in vix_exact.difference(&cargo_exact) {
         bump(
             &mut vix_only_categories,
-            categorize_unit_key(key, cargo, &cargo_targets),
+            categorize_unit_key(UnitDiffSide::VixOnly, key, cargo, &cargo_targets),
         );
     }
     for key in cargo_exact.difference(&vix_exact) {
         bump(
             &mut cargo_only_categories,
-            categorize_unit_key(key, vix, &vix_targets),
+            categorize_unit_key(UnitDiffSide::CargoOnly, key, vix, &vix_targets),
         );
     }
     for edge in vix_edges.difference(&cargo_edges) {
@@ -2542,7 +2542,14 @@ fn ring_unit_edges(units: &[RingUnitShape]) -> BTreeSet<RingUnitEdge> {
         .collect()
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum UnitDiffSide {
+    VixOnly,
+    CargoOnly,
+}
+
 fn categorize_unit_key(
+    side: UnitDiffSide,
     key: &RingUnitExactKey,
     other_units: &[RingUnitShape],
     other_targets: &BTreeSet<RingUnitTargetKey>,
@@ -2566,6 +2573,30 @@ fn categorize_unit_key(
         .collect::<Vec<_>>();
     let same_profile = same_target.iter().any(|unit| unit.profile == key.profile);
     let same_features = same_target.iter().any(|unit| unit.features == key.features);
+    if same_profile && !same_features {
+        let current_features = key.features.iter().collect::<BTreeSet<_>>();
+        let same_profile_targets = same_target
+            .iter()
+            .filter(|unit| unit.profile == key.profile)
+            .collect::<Vec<_>>();
+        let current_is_subset = same_profile_targets.iter().any(|unit| {
+            let other_features = unit.features.iter().collect::<BTreeSet<_>>();
+            current_features.is_subset(&other_features)
+        });
+        let current_is_superset = same_profile_targets.iter().any(|unit| {
+            let other_features = unit.features.iter().collect::<BTreeSet<_>>();
+            current_features.is_superset(&other_features)
+        });
+        match (side, current_is_subset, current_is_superset) {
+            (UnitDiffSide::VixOnly, true, false) => {
+                return "vix-feature-subset-vs-cargo-transitive-path-closure";
+            }
+            (UnitDiffSide::CargoOnly, false, true) => {
+                return "cargo-feature-superset-from-transitive-path-closure";
+            }
+            _ => {}
+        }
+    }
     match (same_profile, same_features) {
         (true, true) => "duplicate-or-edge-only-unit",
         (true, false) => "feature-set-gap",
