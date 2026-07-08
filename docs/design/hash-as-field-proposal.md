@@ -413,70 +413,108 @@ The claim is **not** that §1–§5 hit 50×. It is that they remove the one tru
 
 **Orthogonal solver-specific win — the dense-index transform (§7).** The 29.1% map trunk
 analysis above assumes the solver's `State` stays *map-shaped*. It need not: the solver's
-key universe is **closed** (the Index is built before solve), which admits a transform to
-dense-array `State` that the **existing array carried-hasher already handles** — no map
-hash construction (Q1) on the hot path at all. This is potentially a *large* solver-specific
+key universe is **open-but-monotone** (keys discovered lazily during solve, only ever
+growing), which admits a transform to a dense-array `State` via a **dense-id interner** that
+the **existing array carried-hasher already handles** — no map hash construction (Q1) on the
+hot path at all. This is potentially a *large* solver-specific
 win that is **orthogonal to the gate sequence** (it does not wait on flat-memory or the
 weavy-native tree); §7 develops it, and it may make the map trunk's collapse a matter of
 *not building a map* rather than of hashing one faster.
 
 ---
 
-## 7. Closed-universe collections: the dense-index transform (Amos probe)
+## 7. Monotone-interned collections: the dense-index transform (Amos probe)
 
 The map-hash discussion (Q1) implicitly treats the solver's `State` as an **open-universe
-map** — arbitrary keys arriving over time, needing an ordered structure to hash. **The
-solver's maps are not open-universe.** The `Index` is built *before* solve begins, so the
-set of keys (packages, and per-package the candidate versions) is **closed and known** at
-the start. That changes everything about how identity should be computed for the hot path.
+map** — arbitrary keys arriving over time, needing an ordered structure to hash. That
+over-states the problem *and* an earlier draft of this section over-corrected it. The
+precise claim (Amos correction):
 
-### The transform
+**The solver's key universe is OPEN-BUT-MONOTONE, not closed.** rodin's real workload is
+**gradual discovery** — sparse rows are demanded lazily *during* solve; keys (packages, and
+per-package candidate versions) appear as the search touches them, and the set only ever
+**grows** (monotone — nothing is un-discovered). Today's harness pre-composes the whole
+Index up front, but that is a **measurement rig**, not the workload: it front-loads
+discovery so the solver can be timed in isolation. Designing to the rig ("closed universe,
+assign all ids up front") would bake in an artifact of the benchmark. The transform must
+survive **lazy, monotone discovery** — and it does, via an interner rather than a pre-pass.
 
-Given a closed key universe, **composition assigns dense integer ids** (package → id,
-(package, version) → id) once, up front. The solver `State` then stops being a map and
-becomes **SOA arrays + bitsets** indexed by dense id:
+### The transform — a dense-id interner, not a pre-pass
+
+The dense route works on a monotone universe via a **dense-id interner**: **first touch of
+a key allocates the next `u32`** (`package → id`, `(package, version) → id`), and SOA arrays
+**grow at the tail** to accommodate it. Discovery of a new package appends; no key is ever
+removed. The solver `State` is then **SOA arrays + bitsets** indexed by dense id:
 - a domain per package = a bitset over its candidate-version ids;
 - assignments / decision levels / watched literals = flat arrays indexed by package id.
 
-For identity, this is decisive: a dense-array `State` is **array-shaped**, so the
-**existing array carried-hasher** (`start_array_element_hasher` `:776`, `update_array_element_hash`
-`:787`, `finish_array_element_hash` `:809`) does the identity work directly. **No Merkle
-tree, no map-hash construction, no Q1 at all on the solver hot path.** And because the
-transform is exactly the shape the array carry proves (§2 — array of stable-identity
-elements, `changed_words` never fires), it inherits the measured 50× lever without new
-machinery.
+For identity, this is decisive **and it is the array carry's *best* case**: append. A
+dense-array `State` is **array-shaped**, so the **existing array carried-hasher**
+(`start_array_element_hasher` `:776`, `update_array_element_hash` `:787`,
+`finish_array_element_hash` `:809`) does the identity work directly, and a newly-discovered
+key is a **tail append** — exactly the consuming-move/append path the array carry already
+proves (§2, `changed_words` never fires for stable-identity elements). **No Merkle tree, no
+map-hash construction, no Q1 on the solver hot path**, and the monotone-growth pattern is
+the one the carry is fastest at.
 
-Structural sharing survives the transform: a successor `State` flips one bitset / one array
-slot, so the array carry re-folds a single element — the same O(1)-per-mutation the trail
-loop already gets (and the bitset word is an inline scalar, the cheapest possible fold).
-This is why the dense route can beat even the persistent tree (Q1(b)) for the *solver*
-workload: the tree gives O(log n) per State; the dense array gives O(1) per changed domain.
+Structural sharing survives: a successor `State` flips one bitset / one array slot (or
+appends one on discovery), so the array carry re-folds a single element — the same
+O(1)-per-mutation the trail loop already gets (the bitset word is an inline scalar, the
+cheapest possible fold). This is why the dense route can beat even the persistent tree
+(Q1(b)) for the *solver* workload: the tree gives O(log n) per State; the dense array gives
+O(1) per changed-or-discovered domain.
+
+### The load-bearing rule: ids are solve-local representation, NEVER identity
+
+Because ids are assigned **by discovery order**, and discovery order depends on the search,
+**the same package can get a different id in two different solves.** Therefore:
+
+> **Dense ids are a solve-local representation. They are NEVER identity, and nothing that
+> crosses the solve boundary may be keyed by them.**
+
+- **Interior to one solve**, ids are the fast index and the array-carry element positions.
+  Machine determinism makes them reproducible *within* that solve (same discovery order →
+  same ids), so a `State`'s array-carry digest is well-defined and stable during the solve.
+- **Crossing the solve boundary** — memo keys, receipts, `.vix-cas` keys, learned/warm
+  facts — everything stays keyed by **content identity** (`ContentHash` over the *value*:
+  the package coordinate, the version, the premise set), **never by id.** Ids do not survive
+  across differing solves and must never be leaned on there.
+- The **warm-facts spec already complies**: facts are keyed by **premises** (content), not
+  by any solver-interior index — so the fact store is already id-free at its boundary. This
+  is the pattern to preserve everywhere: id-fast inside, content-keyed at every edge.
+
+This is the same discipline as HandleTier staying out of identity (§1): a representation
+detail that speeds the interior must be invisible to the value's name.
 
 ### Scope split for Q1
 
 This creates a clean scope split the charter should hold:
-- **Closed-universe hot paths (the solver `State`)** → the **dense-array route**. Q1's
-  tree is *not* on this path. Expressible in **vix today** (Int ids + flat arrays + bitsets
-  over declared layouts — the same idioms rodin already reaches for); **experiment chartered
-  on the tier-A lane.**
-- **Genuinely open-universe maps** (registry metadata, manifests, arbitrary Doc maps whose
-  keys are not known a priori) → **Q1(b)'s weavy-native ordered tree** remains the answer.
+- **Monotone-interned hot paths (the solver `State`)** → the **dense-id-interner route**.
+  Q1's tree is *not* on this path. Expressible in **vix today** (interned `u32` ids + flat
+  arrays + bitsets over declared layouts — the same idioms rodin already reaches for);
+  **experiment chartered on the tier-A lane.** Ids stay solve-local (the rule above).
+- **Genuinely open, non-interned maps** (registry metadata, manifests, arbitrary Doc maps
+  whose keys are unbounded content, not drawn from an interner) → **Q1(b)'s weavy-native
+  ordered tree** remains the answer.
 
-The two are not in tension: dense-index is the *specialization* for closed universes; the
-tree is the *general* structure. The charter picks per call-site by whether the key universe
-is closed at construction.
+The two are not in tension: dense-interner is the *specialization* for a monotone key
+domain fed by an interner; the tree is the *general* structure for content-keyed maps. The
+charter picks per call-site by whether the keys come from an interner.
 
 ### Future compiler transform — own the key→index layer as a pass
 
-Today the dense-index transform is *hand-written* (the solver author chooses Int ids). The
-destination is to make it a **checker/lowerer pass**: recognize a map whose key universe is
-**provably closed at construction** (keys drawn from a fixed, pre-solve set) and **lower it
-to dense arrays automatically** — assign the ids, rewrite `map_get`/insert into array
-index/bitset ops, route identity through the array carry. "**Own the key→index layer**" as a
-compiler responsibility, not a solver-author idiom. This is the same philosophy as the rest
-of the proposal (the machine should own what today is hand-rolled in Rust or in vix source),
-applied to collection *representation selection*. It is future work, noted here so the
-hand-written experiment is understood as the prototype of a pass, not the endpoint.
+Today the dense-index transform is *hand-written* (the solver author interns ids). The
+destination is to make it a **checker/lowerer pass** — but note the corrected trigger: not
+"provably-closed key universe" (which the gradual-discovery workload does *not* satisfy)
+but **"monotone-interned key domain."** Recognize a map whose keys **come from an interner**
+(monotone-allocated ids, no deletion) and **lower it to dense arrays automatically** —
+route the interner, rewrite `map_get`/insert into array index/bitset ops, route identity
+through the array carry, **and enforce the solve-local-id rule** (the pass must keep ids out
+of anything that crosses a memo/receipt/fact boundary, re-keying those by content). "**Own
+the key→index layer**" as a compiler responsibility, not a solver-author idiom — the same
+philosophy as the rest of the proposal (the machine owns what is hand-rolled today), applied
+to collection *representation selection*. Future work; the hand-written experiment is the
+prototype of this pass, not the endpoint.
 
 ### Cost-model placement
 
@@ -505,10 +543,11 @@ codex is right that a public abelian-group sum of attacker-influenceable addends
 supplies enough pairs to solve the k-sum). Opus is right that the algebra must support
 **O(~1) mutation including delete**. The three viable constructions, with costs:
 
-**Scope first (see §7):** this question is about **open-universe maps** only. The solver's
-`State` has a **closed** key universe (Index built pre-solve) and takes the **dense-array
-route** (§7) — the existing array carried-hasher, no tree, no Q1 on that hot path. The
-constructions below are for genuinely open maps (registry metadata, arbitrary Doc maps).
+**Scope first (see §7):** this question is about **open, non-interned maps** only. The
+solver's `State` has an **open-but-monotone, interned** key domain (keys discovered lazily
+during solve) and takes the **dense-id-interner route** (§7) — the existing array
+carried-hasher, no tree, no Q1 on that hot path, ids strictly solve-local. The constructions
+below are for genuinely content-keyed maps (registry metadata, arbitrary Doc maps).
 
 - **(a) LtHash-class lattice multiset hash.** Proven (Facebook LtHash / homomorphic
   MSet-Hash lineage), true multiset semantics, O(1) add *and* delete via the lattice
