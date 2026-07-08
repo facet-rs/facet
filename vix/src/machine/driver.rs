@@ -1133,6 +1133,9 @@ struct DecodedMapCacheKey {
 struct DecodedMapRow {
     pair: MapPair,
     key_hash: ContentHash,
+    value_hash: ContentHash,
+    key_taint: Option<StructuralTaint>,
+    value_taint: Option<StructuralTaint>,
 }
 
 #[derive(Clone, Debug)]
@@ -1736,7 +1739,12 @@ impl ValueStore {
                 .ok_or_else(|| format!("store handle {handle}"))?;
             let schema = entry.schema.clone();
             let bytes = entry.bytes.clone();
-            let rows = decode_map_pairs(&bytes, schema_tables)?
+            let decoded_pairs = decode_map_pairs(&bytes, schema_tables)?;
+            self.map_intern_counters.add(MapInternStats {
+                child_identity_reads: decoded_pairs.len().saturating_mul(2),
+                ..MapInternStats::default()
+            });
+            let rows = decoded_pairs
                 .into_iter()
                 .map(|pair| {
                     let key_hash = canonical_word_hash_in_store(
@@ -1745,7 +1753,21 @@ impl ValueStore {
                         &pair.key_schema,
                         pair.key_word,
                     );
-                    DecodedMapRow { pair, key_hash }
+                    let value_hash = canonical_word_hash_in_store(
+                        self,
+                        schemas,
+                        &pair.value_schema,
+                        pair.value_word,
+                    );
+                    let key_taint = taint_for_word(self, pair.key_word);
+                    let value_taint = taint_for_word(self, pair.value_word);
+                    DecodedMapRow {
+                        pair,
+                        key_hash,
+                        value_hash,
+                        key_taint,
+                        value_taint,
+                    }
                 })
                 .collect();
             self.decoded_map_rows
@@ -1836,17 +1858,30 @@ impl ValueStore {
         self.alloc_option_none(value_schema, schema_tables)
     }
 
-    fn map_pairs_cached(
+    fn map_pairs_with_carried_rows_cached(
         &mut self,
         handle: i64,
         schemas: &SchemaTables,
         schema_tables: &SchemaTables,
-    ) -> Result<(String, Vec<MapPair>), String> {
-        let rows = self.decoded_map_rows(handle, schemas, schema_tables)?;
-        Ok((
-            rows.schema.clone(),
-            rows.rows.iter().map(|row| row.pair.clone()).collect(),
-        ))
+    ) -> Result<(String, Vec<MapPair>, CarriedMapRows), String> {
+        let (schema, decoded_rows) = {
+            let rows = self.decoded_map_rows(handle, schemas, schema_tables)?;
+            (rows.schema.clone(), rows.rows.clone())
+        };
+        let mut pairs = Vec::with_capacity(decoded_rows.len());
+        let mut ordered = Vec::with_capacity(decoded_rows.len());
+        for row in decoded_rows {
+            let pair = row.pair;
+            ordered.push(OrderedMapPair {
+                pair: pair.clone(),
+                key_hash: row.key_hash,
+                value_hash: row.value_hash,
+                key_taint: row.key_taint,
+                value_taint: row.value_taint,
+            });
+            pairs.push(pair);
+        }
+        Ok((schema, pairs, CarriedMapRows { ordered }))
     }
 
     fn alloc_option_none(
@@ -4019,13 +4054,14 @@ impl Driver {
                                             entry.carried_map_rows.clone(),
                                         ),
                                         MoltenValue::Interned(handle) => {
-                                            let (schema, pairs) =
-                                                store_cell.borrow_mut().map_pairs_cached(
+                                            let (schema, pairs, carried_rows) = store_cell
+                                                .borrow_mut()
+                                                .map_pairs_with_carried_rows_cached(
                                                     *handle,
                                                     schemas,
                                                     schema_tables,
                                                 )?;
-                                            (schema, pairs, None)
+                                            (schema, pairs, Some(carried_rows))
                                         }
                                         _ => {
                                             return Err(format!(
@@ -4034,24 +4070,47 @@ impl Driver {
                                         }
                                     }
                                 } else {
-                                    let (schema, pairs) = store_cell
+                                    let (schema, pairs, carried_rows) = store_cell
                                         .borrow_mut()
-                                        .map_pairs_cached(map_handle, schemas, schema_tables)?;
-                                    (schema, pairs, None)
+                                        .map_pairs_with_carried_rows_cached(
+                                            map_handle,
+                                            schemas,
+                                            schema_tables,
+                                        )?;
+                                    (schema, pairs, Some(carried_rows))
                                 }
                             }
                             Handle::Store(store_ix) => {
-                                let (schema, pairs) = store_cell.borrow_mut().map_pairs_cached(
-                                    store_ix.to_word(),
-                                    schemas,
-                                    schema_tables,
-                                )?;
-                                (schema, pairs, None)
+                                let (schema, pairs, carried_rows) =
+                                    store_cell.borrow_mut().map_pairs_with_carried_rows_cached(
+                                        store_ix.to_word(),
+                                        schemas,
+                                        schema_tables,
+                                    )?;
+                                (schema, pairs, Some(carried_rows))
                             }
                         };
                     if stored_schema != map_schema {
                         pairs = promote_map_pairs_to_realized(&stored_schema, &map_schema, pairs)?;
-                        carried_map_rows = None;
+                        carried_map_rows = Some(CarriedMapRows {
+                            ordered: canonical_map_pairs(
+                                &store_cell.borrow(),
+                                pairs.clone(),
+                                descriptors,
+                                schemas,
+                                schema_tables,
+                            )?,
+                        });
+                    } else if carried_map_rows.is_none() {
+                        carried_map_rows = Some(CarriedMapRows {
+                            ordered: canonical_map_pairs(
+                                &store_cell.borrow(),
+                                pairs.clone(),
+                                descriptors,
+                                schemas,
+                                schema_tables,
+                            )?,
+                        });
                     }
                     let new_pair = MapPair {
                         key_schema,
@@ -4061,18 +4120,14 @@ impl Driver {
                         value_realization: realized_value_schema(&value_schema)
                             .map(|_| value_realization),
                     };
-                    carried_map_rows = carried_map_rows
-                        .map(|carried| {
-                            carried_map_rows_after_insert(
-                                &store_cell.borrow(),
-                                descriptors,
-                                schemas,
-                                schema_tables,
-                                carried,
-                                new_pair.clone(),
-                            )
-                        })
-                        .transpose()?;
+                    carried_map_rows = Some(carried_map_rows_after_insert(
+                        &store_cell.borrow(),
+                        descriptors,
+                        schemas,
+                        schema_tables,
+                        carried_map_rows.expect("map insert has carried rows"),
+                        new_pair.clone(),
+                    )?);
                     let handle = if !force_molten_copy
                         && let Handle::Molten(molten_handle) = Handle::from_word(map_handle)
                         && let Some(entry) = molten_cell.borrow_mut().entry_mut(molten_handle)
@@ -6544,12 +6599,16 @@ impl Driver {
                 &mut doc_keys,
                 &mut native_option_unwrap_none,
             ];
-            let store_payloads = store_cell
-                .borrow()
-                .entries
-                .iter()
-                .map(|entry| entry.bytes.clone())
-                .collect::<Vec<_>>();
+            let store_payloads = if task_has_native_array_load {
+                store_cell
+                    .borrow()
+                    .entries
+                    .iter()
+                    .map(|entry| entry.bytes.clone())
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
             let store_value_memories = store_payloads
                 .iter()
                 .map(|bytes| ValueMemory::from_slice(bytes))
@@ -6570,12 +6629,16 @@ impl Driver {
                 schemas,
                 native_store_reads,
             );
-            let molten_payloads = molten_cell
-                .borrow()
-                .entries
-                .iter()
-                .map(|entry| molten_value_payload(entry, schema_tables))
-                .collect::<Vec<_>>();
+            let molten_payloads = if task_has_native_array_load {
+                molten_cell
+                    .borrow()
+                    .entries
+                    .iter()
+                    .map(|entry| molten_value_payload(entry, schema_tables))
+                    .collect::<Vec<_>>()
+            } else {
+                Vec::new()
+            };
             let molten_value_memories = molten_payloads
                 .iter()
                 .map(|payload| {
@@ -11257,8 +11320,22 @@ fn carried_map_rows_after_insert(
     pair: MapPair,
 ) -> Result<CarriedMapRows, String> {
     let mut ordered = carried.ordered;
-    ordered.push(ordered_map_pair(store, schemas, pair));
-    sort_and_dedup_ordered_map_pairs(store, descriptors, schemas, schema_tables, &mut ordered)?;
+    store.map_intern_counters.add(MapInternStats {
+        rows_canonicalized: 1,
+        child_identity_reads: 2,
+        ..MapInternStats::default()
+    });
+    let row = ordered_map_pair(store, schemas, pair);
+    match ordered.binary_search_by(|candidate| {
+        store.map_intern_counters.add(MapInternStats {
+            sort_comparisons: 1,
+            ..MapInternStats::default()
+        });
+        ordered_map_pair_cmp(store, descriptors, schemas, schema_tables, candidate, &row)
+    }) {
+        Ok(index) => ordered[index] = row,
+        Err(index) => ordered.insert(index, row),
+    }
     Ok(CarriedMapRows { ordered })
 }
 
@@ -11295,16 +11372,12 @@ fn sort_and_dedup_ordered_map_pairs(
             sort_comparisons: 1,
             ..MapInternStats::default()
         });
-        compare_ordered_map_pairs(store, descriptors, schemas, schema_tables, a, b)
-            .unwrap_or_else(|_| a.key_hash.as_ref().cmp(b.key_hash.as_ref()))
+        ordered_map_pair_cmp(store, descriptors, schemas, schema_tables, a, b)
     });
     let mut deduped: Vec<OrderedMapPair> = Vec::new();
     for pair in std::mem::take(pairs) {
         match deduped.last_mut() {
-            Some(last)
-                if last.pair.key_schema == pair.pair.key_schema
-                    && last.key_hash == pair.key_hash =>
-            {
+            Some(last) if same_canonical_map_key(last, &pair) => {
                 *last = pair;
                 continue;
             }
@@ -11314,6 +11387,27 @@ fn sort_and_dedup_ordered_map_pairs(
     }
     *pairs = deduped;
     Ok(())
+}
+
+fn same_canonical_map_key(a: &OrderedMapPair, b: &OrderedMapPair) -> bool {
+    a.pair.key_schema == b.pair.key_schema && a.key_hash == b.key_hash
+}
+
+fn ordered_map_pair_cmp(
+    store: &ValueStore,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
+    schema_tables: &SchemaTables,
+    a: &OrderedMapPair,
+    b: &OrderedMapPair,
+) -> Ordering {
+    let primary = compare_ordered_map_pairs(store, descriptors, schemas, schema_tables, a, b)
+        .unwrap_or_else(|_| a.key_hash.as_ref().cmp(b.key_hash.as_ref()));
+    if primary == Ordering::Equal {
+        a.key_hash.as_ref().cmp(b.key_hash.as_ref())
+    } else {
+        primary
+    }
 }
 
 fn ordered_map_pairs_from_decoded(
@@ -12960,6 +13054,198 @@ mod tests {
                 .content_hash;
             assert_eq!(carried_hash, recomputed, "{key}={value}");
         }
+    }
+
+    #[test]
+    fn store_map_insert_carries_sorted_rows_to_final_intern() {
+        let module_tables = crate::module::load_module_tables_from_modules(
+            "root",
+            &BTreeMap::from([(
+                "root".to_string(),
+                "pub fn main() -> Map<String, Int> { {} }".to_string(),
+            )]),
+        )
+        .expect("module tables");
+        let schemas = module_tables.schemas;
+        let descriptors = module_tables.descriptors;
+        let mut store = ValueStore::default();
+        let schema = "Map<String,Int>";
+        let base_pairs = vec![
+            map_pair_for_test(&mut store, &schemas, "b", 2),
+            map_pair_for_test(&mut store, &schemas, "a", 1),
+        ];
+        let (base_handle, _) = store
+            .alloc_map(schema, base_pairs.clone(), &schemas, &descriptors, &schemas)
+            .expect("base map");
+
+        let new_pair = map_pair_for_test(&mut store, &schemas, "c", 3);
+        let mut expected_pairs = base_pairs;
+        expected_pairs.push(new_pair.clone());
+        let (expected_handle, _) = store
+            .alloc_map(
+                schema,
+                expected_pairs.clone(),
+                &schemas,
+                &descriptors,
+                &schemas,
+            )
+            .expect("expected map");
+        let expected_hash = store
+            .entry(expected_handle)
+            .expect("expected map entry")
+            .content_hash;
+
+        let (_, mut carried_pairs, carried) = store
+            .map_pairs_with_carried_rows_cached(base_handle, &schemas, &schemas)
+            .expect("cached rows");
+        carried_pairs.push(new_pair.clone());
+        let carried = carried_map_rows_after_insert(
+            &store,
+            &descriptors,
+            &schemas,
+            &schemas,
+            carried,
+            new_pair,
+        )
+        .expect("carried insert");
+        let before_final = store.map_intern_stats();
+        let (carried_handle, _) = store
+            .alloc_map_with_carried_rows(
+                schema,
+                carried_pairs,
+                Some(carried),
+                &schemas,
+                &descriptors,
+                &schemas,
+            )
+            .expect("carried map");
+        let after_final = store.map_intern_stats();
+        let carried_hash = store
+            .entry(carried_handle)
+            .expect("carried map entry")
+            .content_hash;
+
+        assert_eq!(carried_hash, expected_hash);
+        assert_eq!(
+            after_final.rows_canonicalized, before_final.rows_canonicalized,
+            "final intern must not rebuild canonical map rows"
+        );
+        assert_eq!(
+            after_final.sort_rows, before_final.sort_rows,
+            "final intern must not sort carried map rows"
+        );
+        assert_eq!(
+            after_final.sort_comparisons, before_final.sort_comparisons,
+            "final intern must not compare carried map rows"
+        );
+        assert_eq!(
+            after_final.hash_rows,
+            before_final.hash_rows + 3,
+            "final intern should only hash the ordered rows"
+        );
+    }
+
+    #[test]
+    fn carried_map_insert_distinguishes_tainted_equal_plaintext_keys() {
+        let module_tables = crate::module::load_module_tables_from_modules(
+            "root",
+            &BTreeMap::from([(
+                "root".to_string(),
+                "pub fn main() -> Map<String, Int> { {} }".to_string(),
+            )]),
+        )
+        .expect("module tables");
+        let schemas = module_tables.schemas;
+        let descriptors = module_tables.descriptors;
+        let mut store = ValueStore::default();
+        let schema = "Map<String,Int>";
+        let taint_a = StructuralTaint {
+            marker: "secret.a".to_string(),
+            recipient: "test".to_string(),
+            identity_hash: b"a".to_vec(),
+            content_tag: None,
+        };
+        let taint_b = StructuralTaint {
+            marker: "secret.b".to_string(),
+            recipient: "test".to_string(),
+            identity_hash: b"b".to_vec(),
+            content_tag: None,
+        };
+        let key_a = store
+            .alloc_raw_tainted("String", b"same".to_vec(), &schemas, Some(taint_a))
+            .0;
+        let key_b = store
+            .alloc_raw_tainted("String", b"same".to_vec(), &schemas, Some(taint_b))
+            .0;
+        let pair_a_one = MapPair {
+            key_schema: "String".to_string(),
+            key_word: key_a,
+            value_schema: "Int".to_string(),
+            value_word: 1,
+            value_realization: None,
+        };
+        let pair_b = MapPair {
+            key_schema: "String".to_string(),
+            key_word: key_b,
+            value_schema: "Int".to_string(),
+            value_word: 2,
+            value_realization: None,
+        };
+        let pair_a_two = MapPair {
+            value_word: 3,
+            ..pair_a_one.clone()
+        };
+        let pairs = vec![pair_a_one, pair_b, pair_a_two];
+        let recomputed =
+            canonical_map_pairs(&store, pairs.clone(), &descriptors, &schemas, &schemas)
+                .expect("canonical pairs");
+        let mut carried = CarriedMapRows {
+            ordered: Vec::new(),
+        };
+        for pair in pairs.clone() {
+            carried = carried_map_rows_after_insert(
+                &store,
+                &descriptors,
+                &schemas,
+                &schemas,
+                carried,
+                pair,
+            )
+            .expect("carried insert");
+        }
+
+        assert_eq!(carried.ordered.len(), 2);
+        assert_eq!(
+            carried
+                .ordered
+                .iter()
+                .map(|row| (row.key_hash, row.pair.value_word))
+                .collect::<Vec<_>>(),
+            recomputed
+                .iter()
+                .map(|row| (row.key_hash, row.pair.value_word))
+                .collect::<Vec<_>>()
+        );
+        let (recomputed_handle, _) = store
+            .alloc_map(schema, pairs.clone(), &schemas, &descriptors, &schemas)
+            .expect("recomputed map");
+        let (carried_handle, _) = store
+            .alloc_map_with_carried_rows(
+                schema,
+                carried.ordered.iter().map(|row| row.pair.clone()).collect(),
+                Some(carried),
+                &schemas,
+                &descriptors,
+                &schemas,
+            )
+            .expect("carried map");
+        assert_eq!(
+            store.entry(carried_handle).expect("carried").content_hash,
+            store
+                .entry(recomputed_handle)
+                .expect("recomputed")
+                .content_hash
+        );
     }
 
     #[test]

@@ -9350,7 +9350,6 @@ pub fn main() -> Int {
             assert_eq!(reuse_result, 121, "{lane:?}");
             assert!(reuse_map_stats.rows_canonicalized > 0, "{lane:?}");
             assert!(reuse_map_stats.child_identity_reads > 0, "{lane:?}");
-            assert!(reuse_map_stats.sort_rows > 0, "{lane:?}");
             assert!(reuse_map_stats.sort_comparisons > 0, "{lane:?}");
             assert!(reuse_map_stats.hash_rows > 0, "{lane:?}");
             assert_eq!(reuse_result, copy_result, "{lane:?}");
