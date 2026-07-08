@@ -708,8 +708,8 @@ fn stage_file(root: &Path, logical: &str, bytes: &[u8]) -> Result<(), String> {
         fs::remove_file(&physical)
             .map_err(|err| format!("real-process replace staged `{logical}`: {err}"))?;
     }
-    fs::hard_link(&cas_path, &physical)
-        .or_else(|_| fs::copy(&cas_path, &physical).map(|_| ()))
+    fs::copy(&cas_path, &physical)
+        .map(|_| ())
         .map_err(|err| format!("real-process stage `{logical}`: {err}"))
 }
 
