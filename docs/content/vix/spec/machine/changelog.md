@@ -400,3 +400,31 @@ reconciliation pass:
   digest both ways). The proposal's §4 flat-memory fallback is amputated with
   definition B. Rewrite vocabulary: entry-carried identity + carried midstate,
   not "hash-as-field".
+
+### Round 5 — surface rulings (Amos, continued)
+
+- **Mutation audit ORDERED**: the current documentation likely assumes
+  mutation in places because the syntax reads like Rust — audit every doc
+  page for semantic-plane mutation claims vs the by-value law (sanctioned
+  as-if/molten implementation talk is fine when labeled as such).
+- **Names carry semantics**: no bare `map`/`pop` whose ordering/selection
+  semantics are implicit — variants get longer, explicit names. Execution
+  shape (fused vs fan-out) stays OUT of names (partition's business);
+  only semantic differences (positional vs unordered, min vs max) may
+  appear in a name.
+- **pop is by-value or nothing**: any "removal" returns (element, rest) as
+  fresh values; which named variants exist (last / min / max / first-ready?)
+  is open — first-ready is in tension with the determinism doctrine, to be
+  argued in the draft.
+- **Indexed<T> RATIFIED**: plain std alias `(Int, T)` + enumerate. Nothing
+  special.
+- **map's return type: still open** — stream was tried and rejected in the
+  original design ("not conducive"); a mutable bag violates by-value; the
+  named-variants approach reframes the question (positional field-wise map
+  on arrays is honest struct-mapping; the unordered result type must be an
+  immutable multiset VALUE, born complete, name TBD).
+- **Builtin-vs-std dividing line TBD**: combinators expressible in vix
+  should be vix; some will be builtins; line undecided.
+- **Combinator surface to be DRAFTED as documentation** for website review,
+  not enumerated in conversation. For-loops and the trajectory-class rule
+  (B2): circle back later, explicitly.
