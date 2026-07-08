@@ -1393,6 +1393,10 @@ pub fn workspace_member_direct_sparse_solve_selected_versions_text_limit(workspa
     solve_selected_versions_text_from_workspace_state(state, workspace_problem(), target)
 }
 
+pub fn workspace_member_direct_sparse_index_dump_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int) -> String {
+    workspace_index_dump(workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit))
+}
+
 pub fn workspace_member_transitive_sparse_solve_selected_versions_text_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, target: String, limit: Int) -> String {
     let state = workspace_index_state_with_transitive_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit);
     solve_selected_versions_text_from_workspace_state(state, workspace_problem(), target)
@@ -1451,6 +1455,81 @@ fn bool_text(value: Bool) -> String {
 
 fn solve_selected_versions_text_from_workspace_state(state: WorkspaceIndexState, problem: Problem, target: String) -> String {
     solve_selected_versions_text(workspace_index_from_state(state), problem, target)
+}
+
+fn workspace_index_dump(state: WorkspaceIndexState) -> String {
+    let out = workspace_index_dump_packages(state, state.packages, "");
+    let out = workspace_index_dump_versions(state, state.version_ids, out);
+    workspace_index_dump_clauses(state, state.clause_ids, out)
+}
+
+fn workspace_index_dump_packages(state: WorkspaceIndexState, packages: [Int], out: String) -> String {
+    match packages.len() == 0 {
+        true => out,
+        false => workspace_index_dump_packages_tuple(state, packages.pop(), out),
+    }
+}
+
+fn workspace_index_dump_packages_tuple(state: WorkspaceIndexState, popped: (Int, [Int]), out: String) -> String {
+    workspace_index_dump_packages(state, popped.1, append_index_dump_line(out, "p\t" + state.names.get(popped.0).unwrap()))
+}
+
+fn workspace_index_dump_versions(state: WorkspaceIndexState, version_ids: [Int], out: String) -> String {
+    match version_ids.len() == 0 {
+        true => out,
+        false => workspace_index_dump_versions_tuple(state, version_ids.pop(), out),
+    }
+}
+
+fn workspace_index_dump_versions_tuple(state: WorkspaceIndexState, popped: (Int, [Int]), out: String) -> String {
+    let pkg = state.version_pkgs.get(popped.0).unwrap();
+    let line = "v\t" + state.names.get(pkg).unwrap() + "\t" + state.version_values.get(popped.0).unwrap();
+    workspace_index_dump_versions(state, popped.1, append_index_dump_line(out, line))
+}
+
+fn workspace_index_dump_clauses(state: WorkspaceIndexState, clause_ids: [Int], out: String) -> String {
+    match clause_ids.len() == 0 {
+        true => out,
+        false => workspace_index_dump_clauses_tuple(state, clause_ids.pop(), out),
+    }
+}
+
+fn workspace_index_dump_clauses_tuple(state: WorkspaceIndexState, popped: (Int, [Int]), out: String) -> String {
+    workspace_index_dump_clauses(state, popped.1, append_index_dump_line(out, workspace_index_dump_clause(state, popped.0)))
+}
+
+fn workspace_index_dump_clause(state: WorkspaceIndexState, clause_id: Int) -> String {
+    let guard_id = guard_id_for_clause(state, clause_id, state.guard_ids);
+    let parent_pkg = state.guard_pkgs.get(guard_id).unwrap();
+    let dep_pkg = state.consequent_pkgs.get(clause_id).unwrap();
+    "c\t"
+        + state.names.get(parent_pkg).unwrap()
+        + "\t"
+        + state.guard_version_values.get(guard_id).unwrap()
+        + "\t"
+        + state.consequent_tags.get(clause_id).unwrap()
+        + "\t"
+        + state.names.get(dep_pkg).unwrap()
+        + "\t"
+        + state.consequent_req_texts.get(clause_id).unwrap()
+        + "\t"
+        + state.gate_kinds.get(clause_id).unwrap()
+}
+
+fn guard_id_for_clause(state: WorkspaceIndexState, clause_id: Int, guard_ids: [Int]) -> Int {
+    match guard_ids.pop() {
+        popped => match state.guard_clause_ids.get(popped.0).unwrap() == clause_id {
+            true => popped.0,
+            false => guard_id_for_clause(state, clause_id, popped.1),
+        },
+    }
+}
+
+fn append_index_dump_line(out: String, line: String) -> String {
+    match out == "" {
+        true => line,
+        false => out + "\n" + line,
+    }
 }
 
 fn solution_units_text_from_workspace_state(workspace: Tree, workspace_root: Path, state: WorkspaceIndexState, problem: Problem, target: String) -> String {
