@@ -24,7 +24,7 @@
 //!   # strict parse with the same execution counters as hostcalls mode
 //!   `cargo run --release -p snark-ts-diff -- report <grammar.js|grammar.json> <input-file> [iters]`
 //!
-//!   # strict parse through Weavy host-call blocks; requires 
+//!   # strict parse through Weavy host-call blocks; requires Weavy JIT on this target
 //!   `cargo run --release -p snark-ts-diff hostcalls <grammar.js|grammar.json> <input-file> [iters]`
 //!
 //!   # lowering/JIT readiness for one grammar
@@ -60,12 +60,10 @@ use snark::{
     validated::ValidatedGrammar,
 };
 
-#[cfg(all(
-    any(
-        all(target_os = "macos", target_arch = "aarch64"),
-        all(target_os = "linux", target_arch = "x86_64")
-    )
-))]
+#[cfg(all(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64")
+)))]
 use snark::lower::weavy::{
     parse_prepared_weavy_hostcalls_tree, parse_prepared_weavy_hostcalls_with_report,
 };
@@ -383,22 +381,18 @@ fn report_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyParse
     parse_prepared_weavy_with_report(&p.plan, &p.parser, &p.table, input)
 }
 
-#[cfg(all(
-    any(
-        all(target_os = "macos", target_arch = "aarch64"),
-        all(target_os = "linux", target_arch = "x86_64")
-    )
-))]
+#[cfg(all(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64")
+)))]
 fn hostcalls_once(p: &Prepared, input: &str) -> Result<(), WeavyParseError> {
     parse_prepared_weavy_hostcalls_tree(&p.plan, &p.parser, &p.table, input).map(|_| ())
 }
 
-#[cfg(all(
-    any(
-        all(target_os = "macos", target_arch = "aarch64"),
-        all(target_os = "linux", target_arch = "x86_64")
-    )
-))]
+#[cfg(all(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64")
+)))]
 fn hostcalls_report_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyParseError> {
     parse_prepared_weavy_hostcalls_with_report(&p.plan, &p.parser, &p.table, input)
 }
@@ -438,12 +432,10 @@ fn best_report_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, WeavyP
     Ok(best_ms)
 }
 
-#[cfg(all(
-    any(
-        all(target_os = "macos", target_arch = "aarch64"),
-        all(target_os = "linux", target_arch = "x86_64")
-    )
-))]
+#[cfg(all(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64")
+)))]
 fn best_hostcalls_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, WeavyParseError> {
     hostcalls_once(p, input)?;
     let mut best_ms = f64::INFINITY;
@@ -1154,12 +1146,10 @@ fn main() {
     }
 
     if args.get(1).map(|s| s == "hostcalls").unwrap_or(false) {
-        #[cfg(all(
-            any(
-                all(target_os = "macos", target_arch = "aarch64"),
-                all(target_os = "linux", target_arch = "x86_64")
-            )
-        ))]
+        #[cfg(all(any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        )))]
         {
             let grammar_path = args
                 .get(2)
@@ -1196,16 +1186,12 @@ fn main() {
             print_lexer_execution_stats(&report);
             return;
         }
-        #[cfg(not(all(
-            any(
-                all(target_os = "macos", target_arch = "aarch64"),
-                all(target_os = "linux", target_arch = "x86_64")
-            )
-        )))]
+        #[cfg(not(all(any(
+            all(target_os = "macos", target_arch = "aarch64"),
+            all(target_os = "linux", target_arch = "x86_64")
+        ))))]
         {
-            eprintln!(
-                "Weavy hostcall parse requires `` on a supported copy-patch target"
-            );
+            eprintln!("Weavy hostcall parse requires Weavy JIT on a supported copy-patch target");
             std::process::exit(1);
         }
     }

@@ -596,9 +596,7 @@ struct Execution {
 
 enum LaneRuntime {
     Interp,
-    Jit {
-        program: Rc<JitProgram>,
-    },
+    Jit { program: Rc<JitProgram> },
 }
 
 impl LaneRuntime {

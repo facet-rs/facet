@@ -796,7 +796,7 @@ mod tests {
         delta: isize,
     }
 
-        // r[verify machine.execution.jit-single-feature]
+    // r[verify machine.execution.jit-single-feature]
     // r[verify exec.jit-optional]
     #[test]
     fn api_result_uses_native_jit_when_available() {
