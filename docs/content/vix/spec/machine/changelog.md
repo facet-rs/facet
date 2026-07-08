@@ -254,3 +254,59 @@ testability (sonnet). Reports in `/tmp/spec-poke-*` and
   realization — narrowed by the laziness law (there is no eager
   construction to diverge from) but the realization story still needs
   design; the lazy-fields/Point example is the canonical test case.
+
+## Round 4 (2026-07-08 afternoon — the islands conversation, Amos + Fable direct)
+
+Foundation chapter written: docs/content/vix/_index.md ("What vix is").
+Decisions banked in it, superseding/reframing rules pending the
+reconciliation pass:
+
+- **Islands are the missing IR** between AST and weavy IR: vixc partitions
+  grains (computation sites of values) into islands (eager straight-line
+  interiors) and edges (identity/memo/receipts/suspension/safepoints).
+  Everything re-derives from the partition. NOT a separate spec — the
+  foundation of this one.
+- **Namespaces: `vix.*` (semantics) / `vixc.*` (compiler).** "machine" dies
+  as a name — there is no machine, only an implementation. Charter rules
+  (HostEnv, RefCell bans, ABI) split out of semantics during the rename
+  sweep. Rename is near-free NOW (zero machine.* impl annotations exist).
+- **Vix 101 sharpened: description, not action.** Programs describe value
+  graphs; nothing in-program evaluates ANYTHING (no escape hatch — stricter
+  than all prior lazy languages); demand exists only outside (vx CLI, LSP,
+  audits). "Promise" vocabulary banned (JS eager-association + the noun was
+  the bug: no wrapper objects, just wiring). Values, not nodes: everything
+  is a value; dependencies full or partial (projections).
+- **The as-if law** named as the master law: implementation may do anything
+  unobservable at the semantic plane. Instances: molten mutation
+  (uniqueness), rematerialization (sharing is economics, NOT a mandatory
+  edge — softened from the earlier draft), eager interiors, suspension-as-
+  discardable-replay-cache. By-value semantics = the wall that makes
+  threads/executors/machines coordination-free (old vixen language
+  doctrine, now written).
+- **Partition-as-filter (Amos: "sold").** Memo keys = semantic value
+  identity, partition-independent; the partition filters WHICH values are
+  observed, never their keys. Deopt (split/merge islands at runtime) fully
+  as-if; receipts survive repartition; compiler upgrades cannot poison
+  cache; versioning surfaces reduce to identity-encoding epoch + lowering
+  artifacts. Lowering determinism = reproducibility goal, not soundness.
+- **No programmer draws islands** — cgu-style: maybe a how-much knob,
+  never which/how; suboptimal partition = compiler bug; observable, never
+  steerable. Door permanently shut.
+- **Two-plane identity skeleton (to formalize as rules next): recipe
+  identity (tier 1) vs value identity (tier 2)**, memo = the map between;
+  downstream keys on value identities → early cutoff falls out (stdlib fn
+  changes, value doesn't → one-node recompute). Same shape for pure fns,
+  exec, solver facts. This ALSO resolves the pending-children identity
+  think-item: grain/recipe identity exists at description time; value
+  identity at computation; the old Pending-shares-identity smearing was
+  the two planes collapsed.
+- **Streams**: internal = codata (head, rest) — SICP lineage; stateful
+  backing = molten under uniqueness; external streams = journaled effects.
+  No new semantics.
+- Dogfooding = design accelerator, not credibility requirement (rigor +
+  oracles carry credibility). "Vixling" was dictation mangling of "old
+  vixen language".
+- PENDING: the reconciliation pass (all 152 rules: survive / re-derive /
+  strike against the chapter), the vix/vixc rename sweep + charter split,
+  molten-across-edges ruling (lean: never — merge islands instead; linear-
+  handoff exception reserved for Stage B), formalizing tier-1/tier-2 rules.
