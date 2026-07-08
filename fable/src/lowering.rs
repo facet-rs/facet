@@ -1533,6 +1533,11 @@ impl FableTaskPlan {
                         reason: "synchronous fable task parked",
                     });
                 }
+                weavy::task::TaskStep::Yielded => {
+                    return Err(FableError::MalformedProgram {
+                        reason: "synchronous fable task yielded",
+                    });
+                }
             }
             return self.decode_task_result(&task.result);
         }
@@ -1571,6 +1576,11 @@ impl FableTaskPlan {
             weavy::task::TaskStep::Parked { .. } => {
                 return Err(FableError::MalformedProgram {
                     reason: "synchronous fable task parked",
+                });
+            }
+            weavy::task::TaskStep::Yielded => {
+                return Err(FableError::MalformedProgram {
+                    reason: "synchronous fable task yielded",
                 });
             }
         }

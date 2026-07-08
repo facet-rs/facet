@@ -3750,7 +3750,8 @@ impl Driver {
                                             descriptors.get(schema).unwrap_or_else(|| {
                                                 panic!("descriptor for schema `{schema}`")
                                             });
-                                        let field = field_descriptor(descriptor, bytes, field_index);
+                                        let field =
+                                            field_descriptor(descriptor, bytes, field_index);
                                         let offset = field_offset(descriptor, bytes, field_index);
                                         Some(read_word_at(bytes, offset, field.layout.size))
                                     }
@@ -12407,7 +12408,10 @@ fn assert_canonical_zero_padding(schema: &str, descriptor: &VixDescriptor, bytes
     }
 }
 
-fn enum_tag_owns_byte<SchemaRef>(access: &weavy::mem::EnumAccess<SchemaRef>, offset: usize) -> bool {
+fn enum_tag_owns_byte<SchemaRef>(
+    access: &weavy::mem::EnumAccess<SchemaRef>,
+    offset: usize,
+) -> bool {
     match access.tag {
         Tag::Direct {
             offset: tag_offset,
