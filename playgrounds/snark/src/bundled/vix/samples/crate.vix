@@ -34,10 +34,12 @@ fn workspace_package_doc(source: Tree) -> Doc {
 }
 
 fn package_edition_from_source(source: Tree, manifest: Tree) -> String {
-    let edition = package_doc(manifest).get("edition").unwrap();
-    match edition.is_map() {
-        true => doc_string(workspace_package_doc(source), "edition"),
-        false => doc_as_string(edition),
+    match package_doc(manifest).get("edition") {
+        Some(edition) => match edition.is_map() {
+            true => doc_string(workspace_package_doc(source), "edition"),
+            false => doc_as_string(edition),
+        },
+        None => "2015",
     }
 }
 
@@ -1290,9 +1292,7 @@ fn solution_build_script_cfg_args_tuple(target: Target, source: Tree, index: Ind
 
 fn solution_build_script_cfg_args_one(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, dep: Int, out: [String]) -> [String] {
     let run = solution_unit_built(target, source, index, result, targets, target_name, dep, "link");
-    let directives = build_script_directives(run);
-    let cfgs = doc_as_strings(directives.get("rustc_cfg").unwrap());
-    push_cfg_args(cfgs, out)
+    push_cfg_args(build_script_rustc_cfgs(run), out)
 }
 
 fn solution_lib_with_deps(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, unit: ResolvedUnit, mode: String) -> Tree {
@@ -1300,10 +1300,10 @@ fn solution_lib_with_deps(target: Target, source: Tree, index: Index, result: So
     let manifest = source / unit.manifest;
     let edition = package_edition_from_source(source, manifest);
     let direct_deps = unit.deps;
-    let deps = solution_dependency_tree(target, source, index, result, targets, target_name, unit, mode);
     let externs = solution_extern_args(target, index, result, targets, source, target_name, direct_deps, mode, []);
     let profile_args = rustc_profile_args(unit.profile);
     let cfg_args = solution_build_script_cfg_args(target, source, index, result, targets, target_name, direct_deps, unit.cfgs);
+    let deps = solution_dependency_tree(target, source, index, result, targets, target_name, unit, mode);
     let source_arg = argv_source_interpolation(manifest, unit.source);
 
     rustc! {
@@ -1549,6 +1549,7 @@ fn solution_build_script_run(source: Tree, target_name: String, unit: ResolvedUn
     let endian = target_endian_env(target_name);
 
     build_script! {
+        --requires-toolchain=cc
         --executable {binary / unit.link}
         --stdout {p"build.stdout"}
         --out-dir {p"out"}
@@ -1690,6 +1691,13 @@ fn checked_directive_payload(line: String) -> String {
     }
 }
 
+fn is_cargo_directive_line(line: String) -> Bool {
+    match line.contains(":") {
+        true => line.before(":") == "cargo",
+        false => false,
+    }
+}
+
 fn metadata_directive(key: String, value: String) -> BuildScriptMetadata {
     match key == "metadata" {
         true => match value.contains("=") {
@@ -1703,7 +1711,10 @@ fn metadata_directive(key: String, value: String) -> BuildScriptMetadata {
 fn build_script_directive_line(line: String, directives: BuildScriptDirectives) -> BuildScriptDirectives {
     match line == "" {
         true => directives,
-        false => build_script_directive_payload(checked_directive_payload(line), directives),
+        false => match is_cargo_directive_line(line) {
+            true => build_script_directive_payload(checked_directive_payload(line), directives),
+            false => directives,
+        },
     }
 }
 
@@ -1750,6 +1761,30 @@ fn build_script_directives_from_stdout(stdout: String) -> BuildScriptDirectives 
 
 fn build_script_directives(run: Tree) -> BuildScriptDirectives {
     build_script_directives_from_stdout(run.text(p"build.stdout"))
+}
+
+fn rustc_cfg_directive_line(line: String, out: [String]) -> [String] {
+    let double_colon = line.strip_prefix("cargo::rustc-cfg=");
+    match double_colon == line {
+        true => match line.strip_prefix("cargo:rustc-cfg=") {
+            single_colon => match single_colon == line {
+                true => out,
+                false => out.push(single_colon),
+            },
+        },
+        false => out.push(double_colon),
+    }
+}
+
+fn rustc_cfg_directive_lines(stdout: String, out: [String]) -> [String] {
+    match stdout.contains("\n") {
+        true => rustc_cfg_directive_lines(stdout.after("\n"), rustc_cfg_directive_line(stdout.before("\n"), out)),
+        false => rustc_cfg_directive_line(stdout, out),
+    }
+}
+
+fn build_script_rustc_cfgs(run: Tree) -> [String] {
+    rustc_cfg_directive_lines(run.text(p"build.stdout"), [])
 }
 
 fn build_script_out_dir(run: Tree) -> Tree {

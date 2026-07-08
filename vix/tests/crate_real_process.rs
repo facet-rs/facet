@@ -648,8 +648,8 @@ fn proc_macro_solution_targets() -> UnitTargetTable {
     let dylib = proc_macro_dylib_path(host);
     let dylib_file = proc_macro_dylib_file(host);
     let targets: Map<Int, UnitTarget> = {};
-    let targets = targets.insert(0, UnitTarget { kind: "proc-macro", manifest: p"crates/emit_answer_macro", source: p"src/lib.rs", metadata: dylib, link: dylib, metadata_file: dylib_file, link_file: dylib_file });
-    let targets = targets.insert(1, UnitTarget { kind: "bin", manifest: p"app", source: p"src/main.rs", metadata: p"macro_app.rmeta", link: p"macro_app", metadata_file: "macro_app.rmeta", link_file: "macro_app" });
+    let targets = targets.insert(0, UnitTarget { kind: "proc-macro", manifest: p"crates/emit_answer_macro", source: p"src/lib.rs", cfgs: [], metadata: dylib, link: dylib, metadata_file: dylib_file, link_file: dylib_file });
+    let targets = targets.insert(1, UnitTarget { kind: "bin", manifest: p"app", source: p"src/main.rs", cfgs: [], metadata: p"macro_app.rmeta", link: p"macro_app", metadata_file: "macro_app.rmeta", link_file: "macro_app" });
     UnitTargetTable { root: 1, targets: targets }
 }
 
@@ -1461,6 +1461,13 @@ fn rendered_field_bool_string(
     }
 }
 
+fn rendered_result_string(machine: &Machine, name: &str, handle: i64) -> Result<String, String> {
+    match machine.render_result(name, handle)? {
+        RenderedValue::String { value } => Ok(value),
+        other => Err(format!("result {name} rendered as {other:?}, not String")),
+    }
+}
+
 fn record(value: RenderedValue) -> Result<BTreeMap<String, RenderedValue>, String> {
     let RenderedValue::Record { fields, .. } = value else {
         return Err(format!("value rendered as {value:?}, not Record"));
@@ -1833,8 +1840,8 @@ fn taxon_ladder_oracle_reveals_blake3_build_script_boundary() -> Result<(), Stri
 }
 
 #[test]
-#[ignore = "demo checkpoint: runs blake3's real build.rs and verifies it stays Rust-only"]
-fn taxon_ladder_runs_blake3_build_script_rust_only_checkpoint() -> Result<(), String> {
+#[ignore = "demo checkpoint: runs blake3's real build.rs with declared cc capability"]
+fn taxon_ladder_runs_blake3_build_script_with_declared_cc() -> Result<(), String> {
     if !host_rustc_available() {
         return Ok(());
     }
@@ -1864,9 +1871,6 @@ fn taxon_ladder_runs_blake3_build_script_rust_only_checkpoint() -> Result<(), St
                 "taxon-blake3-build-script-error.txt",
                 &format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(&machine)),
             )?;
-            if mentions_c_tooling(&err) {
-                return Err(format!("blake3 build.rs attempted C tooling:\n{err}"));
-            }
             return Err(err);
         }
     };
@@ -1878,17 +1882,16 @@ fn taxon_ladder_runs_blake3_build_script_rust_only_checkpoint() -> Result<(), St
                 "taxon-blake3-build-script-error.txt",
                 &format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(&machine)),
             )?;
-            if mentions_c_tooling(&err) {
-                return Err(format!("blake3 build.rs attempted C tooling:\n{err}"));
-            }
             return Err(err);
         }
     };
     let stdout = String::from_utf8_lossy(&stdout).into_owned();
     write_tier_a_artifact("taxon-blake3-build-stdout.txt", &stdout)?;
 
-    if mentions_c_tooling(&stdout) {
-        return Err(format!("blake3 build.rs attempted C tooling:\n{stdout}"));
+    if stdout.contains("undeclared C-toolchain capability") {
+        return Err(format!(
+            "blake3 build.rs hit undeclared C-toolchain trap:\n{stdout}"
+        ));
     }
 
     Ok(())
@@ -1938,6 +1941,98 @@ fn taxon_ladder_builds_cc_host_unit_and_hashes_artifacts() -> Result<(), String>
     Ok(())
 }
 
+#[test]
+#[ignore = "demo: builds taxon through real rustc, blake3 build.rs, and declared cc capability"]
+fn taxon_ladder_builds_taxon_with_real_process_and_hashes_artifacts() -> Result<(), String> {
+    if !host_rustc_available() {
+        return Ok(());
+    }
+
+    let graph = cargo_taxon_unit_graph_oracle()?;
+    if graph.units.is_empty() {
+        return Ok(());
+    }
+
+    let host = host_triple()?;
+    let bridge = taxon_demo_bridge_source(&graph, &host)?;
+    write_tier_a_artifact("taxon-demo-bridge.vix", &bridge)?;
+    let source_tree = taxon_demo_source_tree(&graph)?;
+    assert_taxon_source_tree_has_blake3_build_main(&source_tree)?;
+    let source = format!("{RODIN_SOURCE}\n\n{SOURCE}\n\n{bridge}");
+    let backend = Arc::new(RealProcessBackend::new());
+    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
+    let source_arg = machine.intern_arg("Tree", MachineArg::Tree(source_tree))?.0;
+    let selected = machine.demand_i64("taxon_root_selected_names", Vec::new())?;
+    write_tier_a_artifact(
+        "taxon-root-selected.txt",
+        &rendered_result_string(&machine, "taxon_root_selected_names", selected)?,
+    )?;
+    let build_script_run =
+        demand_with_rustc_trace(&mut machine, "taxon_blake3_build_script_run", vec![source_arg])?;
+    let build_script_stdout = tree_file_bytes(&mut machine, build_script_run, "build.stdout")?;
+    write_tier_a_artifact(
+        "taxon-blake3-build-stdout-final.txt",
+        &String::from_utf8_lossy(&build_script_stdout),
+    )?;
+    let cfgs = machine.demand_i64("taxon_blake3_cfgs", vec![source_arg])?;
+    write_tier_a_artifact(
+        "taxon-blake3-cfgs.txt",
+        &rendered_result_string(&machine, "taxon_blake3_cfgs", cfgs)?,
+    )?;
+    let root_deps = machine.demand_i64("taxon_root_deps_text", vec![source_arg])?;
+    write_tier_a_artifact(
+        "taxon-root-deps.txt",
+        &rendered_result_string(&machine, "taxon_root_deps_text", root_deps)?,
+    )?;
+    let blake3 = demand_with_rustc_trace(&mut machine, "taxon_blake3_link", vec![source_arg])?;
+    let blake3_receipts = artifact_receipt_table(
+        &mut machine,
+        blake3,
+        &[
+            ArtifactExpectation {
+                path: "libblake3.rlib",
+                archive: true,
+            },
+            ArtifactExpectation {
+                path: "libblake3.rmeta",
+                archive: false,
+            },
+        ],
+    )?;
+    write_tier_a_artifact("taxon-blake3-artifact-receipts.tsv", &blake3_receipts)?;
+
+    let built = match demand_with_rustc_trace(&mut machine, "taxon_root_link", vec![source_arg]) {
+        Ok(built) => built,
+        Err(err) => {
+            write_tier_a_artifact("taxon-final-rustc-trace.txt", &rustc_argv_trace(&machine))?;
+            return Err(err);
+        }
+    };
+    assert_rustc_requests_include_crates(
+        &machine,
+        &["find_msvc_tools", "shlex", "cc", "blake3", "taxon"],
+    )?;
+
+    let receipts = artifact_receipt_table(
+        &mut machine,
+        built,
+        &[
+            ArtifactExpectation {
+                path: "libtaxon.rlib",
+                archive: true,
+            },
+            ArtifactExpectation {
+                path: "libtaxon.rmeta",
+                archive: false,
+            },
+        ],
+    )?;
+    write_tier_a_artifact("taxon-final-artifact-receipts.tsv", &receipts)?;
+    write_tier_a_artifact("taxon-final-rustc-trace.txt", &rustc_argv_trace(&machine))?;
+
+    Ok(())
+}
+
 fn taxon_demo_bridge_source(graph: &CargoUnitGraph, host: &str) -> Result<String, String> {
     let ids = taxon_included_unit_ids(graph);
     let run_to_build = taxon_run_custom_build_map(graph);
@@ -1949,6 +2044,11 @@ fn taxon_demo_bridge_source(graph: &CargoUnitGraph, host: &str) -> Result<String
     let root = *ids
         .get(&root)
         .ok_or_else(|| format!("taxon root unit {root} was not included"))?;
+    let root_version = taxon_pkg_version(&graph.units[*graph
+        .roots
+        .first()
+        .ok_or_else(|| "taxon cargo unit graph had no root".to_string())?]
+        .pkg_id)?;
     let blake3_build = graph
         .units
         .iter()
@@ -1960,6 +2060,22 @@ fn taxon_demo_bridge_source(graph: &CargoUnitGraph, host: &str) -> Result<String
         })
         .and_then(|(index, _)| ids.get(&index).copied())
         .ok_or_else(|| "missing blake3 custom-build unit".to_string())?;
+    let blake3_lib_cargo_index = graph
+        .units
+        .iter()
+        .enumerate()
+        .find(|(_, unit)| {
+            unit.pkg_id.contains("#blake3@")
+                && unit.target.kind.iter().any(|kind| kind == "lib")
+                && !unit.target.kind.iter().any(|kind| kind == "custom-build")
+        })
+        .map(|(index, _)| index)
+        .ok_or_else(|| "missing blake3 lib unit".to_string())?;
+    let blake3_lib = *ids
+        .get(&blake3_lib_cargo_index)
+        .ok_or_else(|| format!("missing vix id for blake3 lib unit {blake3_lib_cargo_index}"))?;
+    let blake3_transitive_libs =
+        taxon_transitive_lib_dependency_ids(graph, &ids, blake3_lib_cargo_index)?;
     let cc_unit = graph
         .units
         .iter()
@@ -2076,7 +2192,8 @@ fn taxon_demo_bridge_source(graph: &CargoUnitGraph, host: &str) -> Result<String
 
     out.push_str("fn taxon_problem() -> Problem {\n");
     out.push_str(&format!(
-        "    Problem {{ root_pkg: {root}, root_req: VersionSet::from_req(\"*\"), root_features: [], root_default_feature: 0, root_default_features: false }}\n"
+        "    Problem {{ root_pkg: {root}, root_req: VersionSet::from_req({}), root_features: [], root_default_feature: 0, root_default_features: true }}\n",
+        vix_string(&format!("={root_version}"))
     ));
     out.push_str("}\n\n");
     out.push_str("fn taxon_blake3_build_script_problem() -> Problem {\n");
@@ -2140,6 +2257,140 @@ fn taxon_demo_bridge_source(graph: &CargoUnitGraph, host: &str) -> Result<String
         "    solution_unit_built(Target::host(), source, index, result, taxon_targets(), {}, {cc_unit}, \"link\")\n",
         vix_string(host)
     ));
+    out.push_str("}\n\n");
+    out.push_str("pub fn taxon_root_link(source: Tree) -> Tree {\n");
+    out.push_str("    let index = taxon_index();\n");
+    out.push_str("    let result = solve(index, taxon_problem(), ");
+    out.push_str(&vix_string(host));
+    out.push_str(");\n");
+    out.push_str("    let targets = taxon_targets();\n");
+    out.push_str("    let unit = solution_unit(index, result, targets, source, ");
+    out.push_str(&vix_string(host));
+    out.push_str(", ");
+    out.push_str(&root.to_string());
+    out.push_str(");\n");
+    out.push_str("    let blake3_unit = solution_unit(index, result, targets, source, ");
+    out.push_str(&vix_string(host));
+    out.push_str(", ");
+    out.push_str(&blake3_lib.to_string());
+    out.push_str(");\n");
+    out.push_str("    let blake3 = solution_unit_built(Target::host(), source, index, result, targets, ");
+    out.push_str(&vix_string(host));
+    out.push_str(", ");
+    out.push_str(&blake3_lib.to_string());
+    out.push_str(", \"link\");\n");
+    out.push_str("    let deps = solution_dependency_tree(Target::host(), source, index, result, targets, ");
+    out.push_str(&vix_string(host));
+    out.push_str(", blake3_unit, \"link\");\n");
+    out.push_str("    let rustc = Rustc::acquire(Target::host());\n");
+    out.push_str("    let manifest = source / unit.manifest;\n");
+    out.push_str("    let edition = package_edition_from_source(source, manifest);\n");
+    out.push_str("    let profile_args = rustc_profile_args(unit.profile);\n");
+    out.push_str("    let source_arg = argv_source_interpolation(manifest, unit.source);\n");
+    out.push_str("    let blake3_arg = Arg::Interpolation { tree: blake3, subpath: p\"libblake3.rlib\" };\n");
+    for id in &blake3_transitive_libs {
+        let unit = graph
+            .units
+            .iter()
+            .enumerate()
+            .find_map(|(cargo_index, unit)| {
+                ids.get(&cargo_index)
+                    .copied()
+                    .filter(|candidate| candidate == id)
+                    .map(|_| unit)
+            })
+            .ok_or_else(|| format!("missing cargo unit for vix id {id}"))?;
+        let crate_name = unit.target.name.replace('-', "_");
+        out.push_str(&format!(
+            "    let dep_{crate_name} = solution_unit_built(Target::host(), source, index, result, targets, {}, {id}, \"link\");\n",
+            vix_string(host)
+        ));
+        out.push_str(&format!(
+            "    let dep_{crate_name}_arg = Arg::Interpolation {{ tree: dep_{crate_name}, subpath: p\"lib{crate_name}.rlib\" }};\n"
+        ));
+    }
+    out.push_str("    rustc! {\n");
+    out.push_str("        --crate-name {unit.name}\n");
+    out.push_str("        --edition {edition}\n");
+    out.push_str("        --crate-type lib\n");
+    out.push_str("        {profile_args}\n");
+    out.push_str("        --emit=metadata={unit.metadata},link={unit.link}\n");
+    out.push_str("        -L dependency={deps}\n");
+    out.push_str("        -L dependency={blake3}\n");
+    for id in &blake3_transitive_libs {
+        let unit = graph
+            .units
+            .iter()
+            .enumerate()
+            .find_map(|(cargo_index, unit)| {
+                ids.get(&cargo_index)
+                    .copied()
+                    .filter(|candidate| candidate == id)
+                    .map(|_| unit)
+            })
+            .ok_or_else(|| format!("missing cargo unit for vix id {id}"))?;
+        let crate_name = unit.target.name.replace('-', "_");
+        out.push_str(&format!("        -L dependency={{dep_{crate_name}}}\n"));
+    }
+    out.push_str("        --extern blake3={blake3_arg}\n");
+    for id in &blake3_transitive_libs {
+        let unit = graph
+            .units
+            .iter()
+            .enumerate()
+            .find_map(|(cargo_index, unit)| {
+                ids.get(&cargo_index)
+                    .copied()
+                    .filter(|candidate| candidate == id)
+                    .map(|_| unit)
+            })
+            .ok_or_else(|| format!("missing cargo unit for vix id {id}"))?;
+        let crate_name = unit.target.name.replace('-', "_");
+        out.push_str(&format!("        --extern {crate_name}={{dep_{crate_name}_arg}}\n"));
+    }
+    out.push_str("        --env CARGO_MANIFEST_DIR={manifest}\n");
+    out.push_str("        {source_arg}\n");
+    out.push_str("    }\n");
+    out.push_str("}\n\n");
+    out.push_str("pub fn taxon_blake3_link(source: Tree) -> Tree {\n");
+    out.push_str("    let index = taxon_index();\n");
+    out.push_str("    let result = solve(index, taxon_problem(), ");
+    out.push_str(&vix_string(host));
+    out.push_str(");\n");
+    out.push_str("    solution_unit_built(Target::host(), source, index, result, taxon_targets(), ");
+    out.push_str(&vix_string(host));
+    out.push_str(", ");
+    out.push_str(&blake3_lib.to_string());
+    out.push_str(", \"link\")\n");
+    out.push_str("}\n\n");
+    out.push_str("pub fn taxon_root_selected_names() -> String {\n");
+    out.push_str("    solve_selected_names_text(taxon_index(), taxon_problem(), ");
+    out.push_str(&vix_string(host));
+    out.push_str(")\n");
+    out.push_str("}\n\n");
+    out.push_str("pub fn taxon_blake3_cfgs(source: Tree) -> String {\n");
+    out.push_str("    let run = taxon_blake3_build_script_run(source);\n");
+    out.push_str("    build_script_rustc_cfgs(run).join(\" \")\n");
+    out.push_str("}\n\n");
+    out.push_str("fn taxon_dep_names(index: Index, deps: [Int], out: [String]) -> [String] {\n");
+    out.push_str("    match deps.len() == 0 {\n");
+    out.push_str("        true => out,\n");
+    out.push_str("        false => match deps.pop() {\n");
+    out.push_str("            popped => taxon_dep_names(index, popped.1, out.push(index.names.get(popped.0).unwrap())),\n");
+    out.push_str("        },\n");
+    out.push_str("    }\n");
+    out.push_str("}\n\n");
+    out.push_str("pub fn taxon_root_deps_text(source: Tree) -> String {\n");
+    out.push_str("    let index = taxon_index();\n");
+    out.push_str("    let result = solve(index, taxon_problem(), ");
+    out.push_str(&vix_string(host));
+    out.push_str(");\n");
+    out.push_str("    let unit = solution_unit(index, result, taxon_targets(), source, ");
+    out.push_str(&vix_string(host));
+    out.push_str(", ");
+    out.push_str(&root.to_string());
+    out.push_str(");\n");
+    out.push_str("    taxon_dep_names(index, unit.deps, []).join(\"\\n\")\n");
     out.push_str("}\n\n");
     out.push_str("pub fn taxon_blake3_build_script_run(source: Tree) -> Tree {\n");
     out.push_str("    let index = taxon_index();\n");
@@ -2236,6 +2487,43 @@ fn taxon_included_unit_ids(graph: &CargoUnitGraph) -> BTreeMap<usize, usize> {
         .enumerate()
         .map(|(id, (cargo_index, _))| (cargo_index, id))
         .collect()
+}
+
+fn taxon_transitive_lib_dependency_ids(
+    graph: &CargoUnitGraph,
+    ids: &BTreeMap<usize, usize>,
+    root: usize,
+) -> Result<Vec<usize>, String> {
+    fn walk(graph: &CargoUnitGraph, index: usize, seen: &mut BTreeSet<usize>) {
+        for dep in &graph.units[index].dependencies {
+            let unit = &graph.units[dep.index];
+            if unit.mode == "run-custom-build"
+                || unit.target.kind.iter().any(|kind| kind == "custom-build")
+            {
+                continue;
+            }
+            if seen.insert(dep.index) {
+                walk(graph, dep.index, seen);
+            }
+        }
+    }
+
+    let mut cargo_ids = BTreeSet::new();
+    walk(graph, root, &mut cargo_ids);
+    let mut vix_ids = Vec::new();
+    for cargo_id in cargo_ids {
+        let unit = &graph.units[cargo_id];
+        if !unit.target.kind.iter().any(|kind| kind == "lib") {
+            continue;
+        }
+        let vix_id = ids
+            .get(&cargo_id)
+            .copied()
+            .ok_or_else(|| format!("missing vix id for cargo unit {cargo_id}"))?;
+        vix_ids.push(vix_id);
+    }
+    vix_ids.sort_unstable();
+    Ok(vix_ids)
 }
 
 fn taxon_run_custom_build_map(graph: &CargoUnitGraph) -> BTreeMap<usize, usize> {
@@ -2460,18 +2748,6 @@ fn host_triple() -> Result<String, String> {
         .lines()
         .find_map(|line| line.strip_prefix("host: ").map(str::to_owned))
         .ok_or_else(|| format!("rustc -vV did not print host triple:\n{stdout}"))
-}
-
-fn mentions_c_tooling(text: &str) -> bool {
-    text.contains(" cc ")
-        || text.contains(" cc-")
-        || text.contains("cc-rs")
-        || text.contains("\"cc\"")
-        || text.contains("`cc`")
-        || text.contains("clang")
-        || text.contains("gcc")
-        || text.contains("cargo:rustc-link-lib")
-        || text.contains("cargo:rustc-link-search")
 }
 
 fn proc_macro_graph_tree() -> Tree {

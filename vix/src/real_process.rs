@@ -23,6 +23,7 @@ use crate::machine::{
 };
 
 const ENV_ALLOWLIST: &[&str] = &["PATH", "HOME", "TMPDIR", "TEMP", "TMP", "SystemRoot"];
+const CC_TOOLCHAIN_REQUIREMENT: &str = "--requires-toolchain=cc";
 
 pub struct RealProcessBackend {
     cache: Arc<Mutex<ExecCache>>,
@@ -122,7 +123,7 @@ fn run_real_process_request(
     cache: Arc<Mutex<ExecCache>>,
     request: MachineExecRequest,
 ) -> Result<(Outcome, ExecEvent), String> {
-    let capability = real_process_capability(&request.command, request.capability)?;
+    let capability = real_process_capability(&request.command, request.capability, &request.plan)?;
     if let Some((outcome, event)) = {
         let mut cache = cache
             .lock()
@@ -165,11 +166,21 @@ fn run_real_process_request(
     Ok((outcome, event))
 }
 
-fn real_process_capability(command: &str, capability: u64) -> Result<u64, String> {
-    if command != "rustc" {
-        return Ok(capability);
+fn real_process_capability(command: &str, capability: u64, plan: &ExecPlan) -> Result<u64, String> {
+    let capability = if command == "rustc" {
+        rustc_real_process_capability(capability)?
+    } else {
+        capability
+    };
+
+    if command == "build_script" && build_script_requires_cc(plan) {
+        return build_script_cc_capability(capability);
     }
 
+    Ok(capability)
+}
+
+fn rustc_real_process_capability(capability: u64) -> Result<u64, String> {
     let output = Command::new("rustc")
         .arg("-vV")
         .output()
@@ -196,6 +207,100 @@ fn real_process_capability(command: &str, capability: u64) -> Result<u64, String
     ))
 }
 
+fn build_script_cc_capability(capability: u64) -> Result<u64, String> {
+    let identity = probe_cc_toolchain()?;
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"vix-real-process-build-script-cc-capability");
+    hasher.update(&capability.to_le_bytes());
+    identity.update_hash(&mut hasher);
+    let hash = hasher.finalize();
+    let effective = u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("blake3 prefix"));
+    write_cc_toolchain_receipt(&identity, effective)?;
+    Ok(effective)
+}
+
+#[derive(Clone)]
+struct CcToolchainIdentity {
+    path: PathBuf,
+    stdout: Vec<u8>,
+    stderr: Vec<u8>,
+}
+
+impl CcToolchainIdentity {
+    fn update_hash(&self, hasher: &mut blake3::Hasher) {
+        let path = self.path.to_string_lossy();
+        hasher.update(path.as_bytes());
+        hasher.update(&self.stdout);
+        hasher.update(&self.stderr);
+    }
+
+    fn identity_hash(&self) -> blake3::Hash {
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"vix-real-process-cc-toolchain-identity");
+        self.update_hash(&mut hasher);
+        hasher.finalize()
+    }
+}
+
+fn probe_cc_toolchain() -> Result<CcToolchainIdentity, String> {
+    let path = resolve_program_on_path("cc")?;
+    let output = Command::new(&path)
+        .arg("--version")
+        .output()
+        .map_err(|err| format!("real-process cc --version failed: {err}"))?;
+    if !output.status.success() {
+        return Err(format!(
+            "real-process cc --version exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+    Ok(CcToolchainIdentity {
+        path,
+        stdout: output.stdout,
+        stderr: output.stderr,
+    })
+}
+
+fn resolve_program_on_path(program: &str) -> Result<PathBuf, String> {
+    let path = std::env::var_os("PATH")
+        .ok_or_else(|| format!("real-process cannot resolve `{program}` without PATH"))?;
+    for dir in std::env::split_paths(&path) {
+        let candidate = dir.join(program);
+        if candidate.is_file() {
+            return Ok(candidate);
+        }
+    }
+    Err(format!("real-process could not find `{program}` on PATH"))
+}
+
+fn write_cc_toolchain_receipt(
+    identity: &CcToolchainIdentity,
+    effective_capability: u64,
+) -> Result<(), String> {
+    let Ok(out_root) = std::env::var("TIER_A_OUT") else {
+        return Ok(());
+    };
+    let out_root = Path::new(&out_root);
+    fs::create_dir_all(out_root)
+        .map_err(|err| format!("real-process create capability receipt dir: {err}"))?;
+    let receipt = format!(
+        "capability\tcc\ncapability_u64\t{effective_capability}\nidentity_hash\t{}\npath\t{}\nversion_stdout\n{}\nversion_stderr\n{}\n",
+        identity.identity_hash().to_hex(),
+        identity.path.display(),
+        String::from_utf8_lossy(&identity.stdout),
+        String::from_utf8_lossy(&identity.stderr),
+    );
+    fs::write(out_root.join("real-process-cc-capability.txt"), receipt)
+        .map_err(|err| format!("real-process write cc capability receipt: {err}"))
+}
+
+fn build_script_requires_cc(plan: &ExecPlan) -> bool {
+    plan.argv
+        .iter()
+        .any(|(arg, role)| *role == Role::Flag && arg == CC_TOOLCHAIN_REQUIREMENT)
+}
+
 fn has_child<T>(entries: &BTreeMap<String, T>, path: &str) -> bool {
     let prefix = format!("{path}/");
     entries.keys().any(|entry| entry.starts_with(&prefix))
@@ -220,8 +325,11 @@ impl Tool for RealProcessTool {
         stage_declared_inputs(&plan, world, root)?;
         prepare_output_dirs(&plan, root)?;
 
-        let env = command_env(&plan, root)?;
-        let (program, argv) = if self.command == "build_script" {
+        let mut env = command_env(&plan, root)?;
+        if self.command == "build_script" {
+            configure_build_script_toolchain_env(&plan, root, &mut env)?;
+        }
+        let (program, argv, current_dir) = if self.command == "build_script" {
             let mut executable = None;
             for (arg, role) in &plan.argv {
                 if *role == Role::Executable {
@@ -233,22 +341,25 @@ impl Tool for RealProcessTool {
                 .ok_or_else(|| "build_script command missing --executable".to_string())?;
             make_executable(&executable)?;
             let argv = process_argv(&plan, root)?;
-            (executable.into_os_string(), argv)
+            let current_dir = build_script_current_dir(&plan, root)?;
+            (executable.into_os_string(), argv, current_dir)
         } else {
             (
                 OsString::from(&self.command),
                 map_argv(&self.command, &plan, world, root)?,
+                root.to_path_buf(),
             )
         };
 
         let output = Command::new(&program)
-            .args(argv)
-            .current_dir(root)
+            .args(&argv)
+            .current_dir(&current_dir)
             .env_clear()
-            .envs(env)
+            .envs(env.iter().cloned())
             .output()
             .map_err(|err| format!("real-process {} spawn failed: {err}", self.command))?;
         if !output.status.success() {
+            dump_failed_process(&self.command, &program, &argv, &current_dir, &env)?;
             dump_failed_inputs(&self.command, &plan, root)?;
             return Err(format!(
                 "real-process {} exited with {}: {}",
@@ -431,7 +542,9 @@ fn dump_failed_inputs(command: &str, plan: &ExecPlan, root: &Path) -> Result<(),
     let Ok(out_root) = std::env::var("TIER_A_OUT") else {
         return Ok(());
     };
-    let dump_root = Path::new(&out_root).join("real-process-failed-inputs");
+    let out_root = Path::new(&out_root);
+    dump_failed_root(command, root, out_root)?;
+    let dump_root = out_root.join("real-process-failed-inputs");
     fs::create_dir_all(&dump_root)
         .map_err(|err| format!("real-process create failed-input dump dir: {err}"))?;
     for (arg, role) in &plan.argv {
@@ -453,6 +566,72 @@ fn dump_failed_inputs(command: &str, plan: &ExecPlan, root: &Path) -> Result<(),
             );
             fs::write(dump_root.join(name), bytes)
                 .map_err(|err| format!("real-process write failed-input dump: {err}"))?;
+        }
+    }
+    Ok(())
+}
+
+fn dump_failed_process(
+    command: &str,
+    program: &OsString,
+    argv: &[OsString],
+    current_dir: &Path,
+    env: &[(OsString, OsString)],
+) -> Result<(), String> {
+    let Ok(out_root) = std::env::var("TIER_A_OUT") else {
+        return Ok(());
+    };
+    let mut out = String::new();
+    out.push_str(&format!("command\t{command}\n"));
+    out.push_str(&format!("program\t{}\n", program.to_string_lossy()));
+    out.push_str(&format!("current_dir\t{}\n", current_dir.display()));
+    out.push_str("argv\n");
+    for arg in argv {
+        out.push_str(&format!("{}\n", arg.to_string_lossy()));
+    }
+    out.push_str("env\n");
+    for (key, value) in env {
+        out.push_str(&format!(
+            "{}={}\n",
+            key.to_string_lossy(),
+            value.to_string_lossy()
+        ));
+    }
+    fs::write(
+        Path::new(&out_root).join("real-process-failed-command.txt"),
+        out,
+    )
+    .map_err(|err| format!("real-process write failed command dump: {err}"))
+}
+
+fn dump_failed_root(command: &str, root: &Path, out_root: &Path) -> Result<(), String> {
+    let dump_root = out_root.join("real-process-failed-root");
+    fs::create_dir_all(&dump_root)
+        .map_err(|err| format!("real-process create failed-root dump dir: {err}"))?;
+    let mut stack = vec![root.to_path_buf()];
+    while let Some(dir) = stack.pop() {
+        for entry in fs::read_dir(&dir)
+            .map_err(|err| format!("real-process read failed-root `{}`: {err}", dir.display()))?
+        {
+            let entry = entry.map_err(|err| format!("real-process failed-root entry: {err}"))?;
+            let path = entry.path();
+            if path.is_dir() {
+                stack.push(path);
+                continue;
+            }
+            if !path.is_file() {
+                continue;
+            }
+            let relative = path
+                .strip_prefix(root)
+                .map_err(|err| format!("real-process failed-root strip prefix: {err}"))?;
+            let relative = relative
+                .to_string_lossy()
+                .replace(std::path::MAIN_SEPARATOR, "__");
+            let bytes = fs::read(&path)
+                .map_err(|err| format!("real-process read failed-root `{}`: {err}", path.display()))?;
+            fs::write(dump_root.join(format!("{command}__{relative}")), bytes)
+                .map_err(|err| format!("real-process write failed-root dump: {err}"))?;
         }
     }
     Ok(())
@@ -547,6 +726,7 @@ fn is_control_arg(arg: &str, role: Role) -> bool {
         role,
         Role::Executable | Role::OutputDir | Role::Stdout | Role::Env
     ) || matches!(arg, "--executable" | "--stdout" | "--out-dir" | "--env")
+        || arg == CC_TOOLCHAIN_REQUIREMENT
 }
 
 fn map_arg(arg: &str, role: Role, root: &Path) -> Result<OsString, String> {
@@ -580,7 +760,7 @@ fn command_env(plan: &ExecPlan, root: &Path) -> Result<Vec<(OsString, OsString)>
         let (key, value) = arg
             .split_once('=')
             .ok_or_else(|| format!("env role expected KEY=VALUE, got `{arg}`"))?;
-        let value = if value.starts_with('/') {
+        let value = if env_path_value_should_be_physical(key) || value.starts_with('/') {
             physical_path(value, root)?.into_os_string()
         } else {
             OsString::from(value)
@@ -589,6 +769,71 @@ fn command_env(plan: &ExecPlan, root: &Path) -> Result<Vec<(OsString, OsString)>
         env.push((OsString::from(key), value));
     }
     Ok(env)
+}
+
+fn env_path_value_should_be_physical(key: &str) -> bool {
+    matches!(key, "CARGO_MANIFEST_DIR" | "OUT_DIR")
+}
+
+fn build_script_current_dir(plan: &ExecPlan, root: &Path) -> Result<PathBuf, String> {
+    for (arg, role) in &plan.argv {
+        if *role != Role::Env {
+            continue;
+        }
+        let Some((key, value)) = arg.split_once('=') else {
+            continue;
+        };
+        if key == "CARGO_MANIFEST_DIR" {
+            return physical_path(value, root);
+        }
+    }
+    Ok(root.to_path_buf())
+}
+
+fn configure_build_script_toolchain_env(
+    plan: &ExecPlan,
+    root: &Path,
+    env: &mut Vec<(OsString, OsString)>,
+) -> Result<(), String> {
+    if build_script_requires_cc(plan) {
+        let identity = probe_cc_toolchain()?;
+        set_env(env, "CC", identity.path.into_os_string());
+        return Ok(());
+    }
+
+    let trap_dir = root.join(".vix-undeclared-toolchain").join("bin");
+    fs::create_dir_all(&trap_dir)
+        .map_err(|err| format!("real-process create undeclared toolchain trap: {err}"))?;
+    for program in ["cc", "gcc", "clang", "c++", "g++", "clang++"] {
+        let trap = trap_dir.join(program);
+        fs::write(
+            &trap,
+            "#!/bin/sh\necho 'vix real-process: undeclared C-toolchain capability' >&2\nexit 127\n",
+        )
+        .map_err(|err| format!("real-process write undeclared toolchain trap: {err}"))?;
+        make_executable(&trap)?;
+    }
+
+    set_env(env, "CC", trap_dir.join("cc").into_os_string());
+    set_env(env, "CXX", trap_dir.join("c++").into_os_string());
+    prepend_env_path(env, &trap_dir);
+    Ok(())
+}
+
+fn set_env(env: &mut Vec<(OsString, OsString)>, key: &str, value: OsString) {
+    env.retain(|(existing, _)| existing.to_str() != Some(key));
+    env.push((OsString::from(key), value));
+}
+
+fn prepend_env_path(env: &mut Vec<(OsString, OsString)>, dir: &Path) {
+    let mut value = OsString::from(dir);
+    if let Some((_, existing)) = env.iter().find(|(key, _)| key.to_str() == Some("PATH"))
+        && !existing.is_empty()
+    {
+        value.push(":");
+        value.push(existing);
+    }
+    set_env(env, "PATH", value);
 }
 
 fn physical_path(logical: &str, root: &Path) -> Result<PathBuf, String> {

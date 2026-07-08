@@ -67,7 +67,7 @@ fn real_process_cc_runs_through_machine_exec_cache() -> Result<(), String> {
     let cutoff = machine.demand_i64("build_a", vec![cc, tree_v2, unit])?;
     assert_eq!(tree_bytes(&mut machine, cutoff, "hello.o")?, first_object);
     assert_run_serving(&machine, |event| {
-        matches!(event, ExecEvent::Tier2Cutoff { verified: 2 })
+        matches!(event, ExecEvent::Tier2Cutoff { verified: 3 })
     });
 
     #[cfg(target_os = "linux")]
