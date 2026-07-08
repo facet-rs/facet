@@ -36,6 +36,11 @@ use crate::stencils::{
     SKIPWIRE_CONT,
 };
 
+#[must_use]
+pub fn available() -> bool {
+    weavy::jit::NATIVE_COPY_PATCH_AVAILABLE && !SCALAR.is_empty()
+}
+
 /// Load the smoke stencil into JIT memory and run it: `x * 3 + 1`, computed by
 /// rustc-emitted machine code executing from a `MAP_JIT` page. A self-test that
 /// the native execution path works on this machine; the real stencils plug into

@@ -3017,10 +3017,10 @@ fn expect_native_clean_when_jit_available(
     report: phon::api::MethodJitFallbackReport,
     context: &str,
 ) {
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     assert!(report.is_empty(), "{context}: {report:#?}");
 
-    #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
     let _ = (report, context);
 }
 

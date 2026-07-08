@@ -60,27 +60,66 @@ fn main() {
     // Declared here (always) so the cfg is known on every target, even those
     // where it is never set.
     println!("cargo:rustc-check-cfg=cfg(phon_jit_tailcall)");
+    println!("cargo:rustc-check-cfg=cfg(phon_jit_native)");
 
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let generated = out.join("stencils.rs");
 
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    let weavy_jit_active = env::var_os("DEP_WEAVY_JIT").is_some();
 
-    if target_os == "macos" && target_arch == "aarch64" {
+    if weavy_jit_active && target_os == "macos" && target_arch == "aarch64" {
+        println!("cargo:rustc-cfg=phon_jit_native");
         emit_arm64_macos(&out, &generated);
     } else {
-        fs::write(
-            &generated,
-            "pub const SMOKE: &[u8] = &[];\n\
-             pub const SCALAR: &[u8] = &[];\n\
-             pub const SCALAR_CONT: &[usize] = &[];\n\
-             pub const SEQUENCE: &[u8] = &[];\n\
-             pub const SEQUENCE_CONT: &[usize] = &[];\n\
-             pub const DONE: &[u8] = &[];\n",
-        )
-        .unwrap();
+        emit_empty(&generated);
     }
+}
+
+fn emit_empty(generated: &Path) {
+    let names = [
+        "SMOKE",
+        "SCALAR",
+        "SCALAR_RUN",
+        "SEQUENCE",
+        "BYTES",
+        "BORROW",
+        "OPTION",
+        "RESULT",
+        "POINTER",
+        "OPAQUE",
+        "DYNAMIC",
+        "CALLBLOCK",
+        "SET",
+        "MAP",
+        "ENUM",
+        "DEFAULT",
+        "SKIPWIRE",
+        "DONE",
+        "SCALAR_ENC",
+        "SCALAR_RUN_ENC",
+        "SEQUENCE_ENC",
+        "BYTES_ENC",
+        "OPTION_ENC",
+        "RESULT_ENC",
+        "POINTER_ENC",
+        "OPAQUE_ENC",
+        "DYNAMIC_ENC",
+        "CALLBLOCK_ENC",
+        "SET_ENC",
+        "MAP_ENC",
+        "ENUM_ENC",
+        "DONE_ENC",
+    ];
+    let mut s = String::new();
+    for name in names {
+        s.push_str(&format!("pub const {name}: &[u8] = &[];\n"));
+        if name != "SMOKE" && name != "DONE" && name != "DONE_ENC" {
+            s.push_str(&format!("pub const {name}_CONT: &[usize] = &[];\n"));
+        }
+    }
+    fs::write(generated, s).unwrap();
 }
 
 fn emit_arm64_macos(out: &Path, generated: &Path) {
