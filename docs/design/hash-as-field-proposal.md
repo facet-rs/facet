@@ -269,6 +269,35 @@ process-local `blake3::Hasher` state; only finalized 32-byte digests cross any b
 flat-bytes path; one midstate-update stencil (fold one 64-byte block into carried state)
 covers Layer B. Both live beside `weavy/stencils/{async_ops,hostcall,task_ops}.rs`.
 
+### The const-eval dividend (Amos probe)
+
+Machine-side blake3 is not only faster at runtime — it enables **compile-time hashing**,
+which a host-op blake3 structurally cannot. Because the compression body is weavy-visible
+(intrinsic + stencil, §4) rather than an opaque FFI call, the checker/lowerer can evaluate
+it at **lowering time** over operands it knows are constant:
+
+- **Literals, static schemas, constant strings** get their `ContentHash` **baked at
+  lowering** — a `String` literal, a fixed schema descriptor, an interned constant Doc
+  never hashes at runtime; the 32-byte digest is a constant in the emitted program.
+- **Partial evaluation over constant prefixes** — a value assembled from a constant prefix
+  and a dynamic tail (e.g. a record whose first fields are literals) has its **carried
+  midstate precomputed at compile time** over the constant prefix; the runtime folds only
+  the dynamic tail. The blake3 block structure makes this exact: a midstate after N
+  constant 64-byte blocks is itself a constant.
+
+A host-op blake3 **precludes all of this** — the compiler cannot evaluate across an FFI
+boundary, so every literal's identity is recomputed at runtime, every time. This is the
+same drum as Q1(b)'s weavy-native charter, now with the full bill:
+
+> The FFI boundary does not cost one optimization, it costs **four**: **inlining, fusion,
+> register residency, and const-eval.** We can optimize weavy codegen; we can never
+> optimize FFI.
+
+Const-eval is the fourth, and it is the one that is *impossible* rather than merely slow
+across the boundary — a runtime FFI call can at least be fast, but a compile-time FFI call
+into `blake3::Hasher` cannot exist. Machine-side blake3 turns a class of runtime hashing
+into zero-cost constants.
+
 ---
 
 ## 5. The second epoch
@@ -382,6 +411,84 @@ contingent. §1–§5 do **not** alone reach 50×. What remains:
 The claim is **not** that §1–§5 hit 50×. It is that they remove the one trunk that makes
 50× unreachable *and* are the precondition that makes the JIT win real. That is the arc.
 
+**Orthogonal solver-specific win — the dense-index transform (§7).** The 29.1% map trunk
+analysis above assumes the solver's `State` stays *map-shaped*. It need not: the solver's
+key universe is **closed** (the Index is built before solve), which admits a transform to
+dense-array `State` that the **existing array carried-hasher already handles** — no map
+hash construction (Q1) on the hot path at all. This is potentially a *large* solver-specific
+win that is **orthogonal to the gate sequence** (it does not wait on flat-memory or the
+weavy-native tree); §7 develops it, and it may make the map trunk's collapse a matter of
+*not building a map* rather than of hashing one faster.
+
+---
+
+## 7. Closed-universe collections: the dense-index transform (Amos probe)
+
+The map-hash discussion (Q1) implicitly treats the solver's `State` as an **open-universe
+map** — arbitrary keys arriving over time, needing an ordered structure to hash. **The
+solver's maps are not open-universe.** The `Index` is built *before* solve begins, so the
+set of keys (packages, and per-package the candidate versions) is **closed and known** at
+the start. That changes everything about how identity should be computed for the hot path.
+
+### The transform
+
+Given a closed key universe, **composition assigns dense integer ids** (package → id,
+(package, version) → id) once, up front. The solver `State` then stops being a map and
+becomes **SOA arrays + bitsets** indexed by dense id:
+- a domain per package = a bitset over its candidate-version ids;
+- assignments / decision levels / watched literals = flat arrays indexed by package id.
+
+For identity, this is decisive: a dense-array `State` is **array-shaped**, so the
+**existing array carried-hasher** (`start_array_element_hasher` `:776`, `update_array_element_hash`
+`:787`, `finish_array_element_hash` `:809`) does the identity work directly. **No Merkle
+tree, no map-hash construction, no Q1 at all on the solver hot path.** And because the
+transform is exactly the shape the array carry proves (§2 — array of stable-identity
+elements, `changed_words` never fires), it inherits the measured 50× lever without new
+machinery.
+
+Structural sharing survives the transform: a successor `State` flips one bitset / one array
+slot, so the array carry re-folds a single element — the same O(1)-per-mutation the trail
+loop already gets (and the bitset word is an inline scalar, the cheapest possible fold).
+This is why the dense route can beat even the persistent tree (Q1(b)) for the *solver*
+workload: the tree gives O(log n) per State; the dense array gives O(1) per changed domain.
+
+### Scope split for Q1
+
+This creates a clean scope split the charter should hold:
+- **Closed-universe hot paths (the solver `State`)** → the **dense-array route**. Q1's
+  tree is *not* on this path. Expressible in **vix today** (Int ids + flat arrays + bitsets
+  over declared layouts — the same idioms rodin already reaches for); **experiment chartered
+  on the tier-A lane.**
+- **Genuinely open-universe maps** (registry metadata, manifests, arbitrary Doc maps whose
+  keys are not known a priori) → **Q1(b)'s weavy-native ordered tree** remains the answer.
+
+The two are not in tension: dense-index is the *specialization* for closed universes; the
+tree is the *general* structure. The charter picks per call-site by whether the key universe
+is closed at construction.
+
+### Future compiler transform — own the key→index layer as a pass
+
+Today the dense-index transform is *hand-written* (the solver author chooses Int ids). The
+destination is to make it a **checker/lowerer pass**: recognize a map whose key universe is
+**provably closed at construction** (keys drawn from a fixed, pre-solve set) and **lower it
+to dense arrays automatically** — assign the ids, rewrite `map_get`/insert into array
+index/bitset ops, route identity through the array carry. "**Own the key→index layer**" as a
+compiler responsibility, not a solver-author idiom. This is the same philosophy as the rest
+of the proposal (the machine should own what today is hand-rolled in Rust or in vix source),
+applied to collection *representation selection*. It is future work, noted here so the
+hand-written experiment is understood as the prototype of a pass, not the endpoint.
+
+### Cost-model placement
+
+Fold this into §6 as a **solver-specific trunk win orthogonal to the gates**: if the dense
+transform lands (even hand-written, on tier-A), the 29.1% map trunk on the *solver* workload
+is addressed by **eliminating the map**, not by hashing it — independent of gate 1
+(flat-memory) or gate 5 (weavy-native tree). It does not reduce the general map-hash work
+(open-universe maps still need Q1), but the solve-class flame that motivates this whole
+proposal is dominated by the *solver*, so the dense route may be the single largest
+practical win in the document — and the cheapest to reach, since it needs no new epoch
+machinery, only the existing array carry over a re-shaped `State`.
+
 ---
 
 ## Open questions
@@ -397,6 +504,11 @@ codex is right that a public abelian-group sum of attacker-influenceable addends
 **Wagner's generalized-birthday attack** (even per-pair-hashed addends: the attacker
 supplies enough pairs to solve the k-sum). Opus is right that the algebra must support
 **O(~1) mutation including delete**. The three viable constructions, with costs:
+
+**Scope first (see §7):** this question is about **open-universe maps** only. The solver's
+`State` has a **closed** key universe (Index built pre-solve) and takes the **dense-array
+route** (§7) — the existing array carried-hasher, no tree, no Q1 on that hot path. The
+constructions below are for genuinely open maps (registry metadata, arbitrary Doc maps).
 
 - **(a) LtHash-class lattice multiset hash.** Proven (Facebook LtHash / homomorphic
   MSet-Hash lineage), true multiset semantics, O(1) add *and* delete via the lattice
