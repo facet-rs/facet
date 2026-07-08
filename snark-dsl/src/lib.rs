@@ -3,12 +3,10 @@ use std::{
     collections::BTreeMap,
     ffi::OsStr,
     fs,
+    io::Write as _,
     path::{Path, PathBuf},
     process::Command,
 };
-
-#[cfg(feature = "boa")]
-use boa_engine::{Context, JsValue, Source};
 
 #[cfg(feature = "typed-ast")]
 pub mod typed_ast;
@@ -39,28 +37,31 @@ pub enum Error {
         source: std::io::Error,
     },
     #[cfg(feature = "native")]
-    #[error("failed to run tree-sitter: {0}")]
-    TreeSitterIo(#[from] std::io::Error),
+    #[error("I/O error: {0}")]
+    Io(#[from] std::io::Error),
     #[cfg(feature = "native")]
     #[error("tree-sitter generate failed with status {status}: {stderr}")]
     TreeSitterFailed { status: String, stderr: String },
-    #[cfg(feature = "boa")]
-    #[error("Boa failed while evaluating {path}: {message}")]
-    Boa { path: String, message: String },
-    #[cfg(feature = "boa")]
+    #[cfg(feature = "native")]
+    #[error("no JavaScript runtime found on PATH (tried: node, bun)")]
+    JsRuntimeNotFound,
+    #[cfg(feature = "native")]
+    #[error("failed while evaluating {path}: {message}")]
+    Js { path: String, message: String },
+    #[cfg(feature = "native")]
     #[error("expected JavaScript string from {operation}, got {value}")]
     ExpectedString {
         operation: &'static str,
         value: String,
     },
-    #[cfg(feature = "boa")]
+    #[cfg(feature = "native")]
     #[error("failed to convert JavaScript string from {operation}: {message}")]
     InvalidJsString {
         operation: &'static str,
         message: String,
     },
     #[cfg(feature = "native")]
-    #[error("Boa output differs from tree-sitter output")]
+    #[error("emitted output differs from tree-sitter output")]
     Mismatch,
     #[error("official tree-sitter DSL entrypoint marker was not found")]
     OfficialDslMarkerMissing,
@@ -72,61 +73,42 @@ pub fn official_tree_sitter_dsl_source() -> &'static str {
     OFFICIAL_TREE_SITTER_DSL
 }
 
-#[cfg(feature = "boa")]
-pub fn emit_source_with_boa(grammar_source: &str, source_name: &str) -> Result<String> {
-    let mut context = Context::default();
+const COMMONJS_SHIM: &str = "globalThis.module = { exports: {} };\nglobalThis.exports = globalThis.module.exports;\nglobalThis.console ??= { log() {}, warn() {}, error() {} };\nglobalThis.process ??= { env: {} };";
 
-    eval(
-        &mut context,
+#[cfg(feature = "native")]
+pub fn emit_source_with_boa(grammar_source: &str, source_name: &str) -> Result<String> {
+    let mut session = JsSession::new();
+    session.exec(
         official_tree_sitter_dsl_prelude()?,
         "vendor/tree-sitter-generate-0.26.9/dsl.js",
-    )?;
-    eval(
-        &mut context,
-        "globalThis.module = { exports: {} };\nglobalThis.exports = globalThis.module.exports;\nglobalThis.console ??= { log() {}, warn() {}, error() {} };\nglobalThis.process ??= { env: {} };",
-        "commonjs-shim.js",
-    )?;
-    eval(
-        &mut context,
-        SNARK_DSL_EXTENSIONS,
-        "snark-dsl-extensions.js",
-    )?;
-    eval(&mut context, grammar_source, source_name)?;
-    eval_to_string(&mut context, EMIT_SCRIPT, "emit.js", "emit")
+    );
+    session.exec(COMMONJS_SHIM, "commonjs-shim.js");
+    session.exec(SNARK_DSL_EXTENSIONS, "snark-dsl-extensions.js");
+    session.exec(grammar_source, source_name);
+    session.eval_to_string(EMIT_SCRIPT, "emit.js")
 }
 
 /// Like [`emit_source_with_boa`], but also returns the AST-enrichment annotations the
 /// grammar registered via the `ast({...})` helper (JSON keyed by node kind). The grammar
 /// JSON is byte-for-byte what `emit_source_with_boa` produces — annotations ride a side
 /// registry, so tree-sitter compatibility is untouched.
-#[cfg(feature = "boa")]
+#[cfg(feature = "native")]
 pub fn emit_source_with_annotations_boa(
     grammar_source: &str,
     source_name: &str,
 ) -> Result<(String, String)> {
-    let mut context = Context::default();
-    eval(
-        &mut context,
+    let mut session = JsSession::new();
+    session.exec(
         official_tree_sitter_dsl_prelude()?,
         "vendor/tree-sitter-generate-0.26.9/dsl.js",
-    )?;
-    eval(
-        &mut context,
-        "globalThis.module = { exports: {} };\nglobalThis.exports = globalThis.module.exports;\nglobalThis.console ??= { log() {}, warn() {}, error() {} };\nglobalThis.process ??= { env: {} };",
-        "commonjs-shim.js",
-    )?;
-    eval(
-        &mut context,
-        SNARK_DSL_EXTENSIONS,
-        "snark-dsl-extensions.js",
-    )?;
-    eval(&mut context, grammar_source, source_name)?;
-    let grammar_json = eval_to_string(&mut context, EMIT_SCRIPT, "emit.js", "emit")?;
-    let annotations_json = eval_to_string(
-        &mut context,
+    );
+    session.exec(COMMONJS_SHIM, "commonjs-shim.js");
+    session.exec(SNARK_DSL_EXTENSIONS, "snark-dsl-extensions.js");
+    session.exec(grammar_source, source_name);
+    let grammar_json = session.eval_to_string(EMIT_SCRIPT, "emit.js")?;
+    let annotations_json = session.eval_to_string(
         "JSON.stringify(globalThis.__snark_ast ?? {})",
         "ast-emit.js",
-        "ast",
     )?;
     Ok((grammar_json, annotations_json))
 }
@@ -134,34 +116,23 @@ pub fn emit_source_with_annotations_boa(
 /// Run standalone `ast({...})` annotation source (with the tree-sitter DSL + snark
 /// extensions available) and return the captured registry JSON. Useful when the grammar
 /// is emitted separately and only the AST enrichment is needed.
-#[cfg(feature = "boa")]
+#[cfg(feature = "native")]
 pub fn annotations_from_source(source: &str, source_name: &str) -> Result<String> {
-    let mut context = Context::default();
-    eval(
-        &mut context,
+    let mut session = JsSession::new();
+    session.exec(
         official_tree_sitter_dsl_prelude()?,
         "vendor/tree-sitter-generate-0.26.9/dsl.js",
-    )?;
-    eval(
-        &mut context,
-        "globalThis.module = { exports: {} };\nglobalThis.exports = globalThis.module.exports;\nglobalThis.console ??= { log() {}, warn() {}, error() {} };\nglobalThis.process ??= { env: {} };",
-        "commonjs-shim.js",
-    )?;
-    eval(
-        &mut context,
-        SNARK_DSL_EXTENSIONS,
-        "snark-dsl-extensions.js",
-    )?;
-    eval(&mut context, source, source_name)?;
-    eval_to_string(
-        &mut context,
+    );
+    session.exec(COMMONJS_SHIM, "commonjs-shim.js");
+    session.exec(SNARK_DSL_EXTENSIONS, "snark-dsl-extensions.js");
+    session.exec(source, source_name);
+    session.eval_to_string(
         "JSON.stringify(globalThis.__snark_ast ?? {})",
         "ast-emit.js",
-        "ast",
     )
 }
 
-#[cfg(all(test, feature = "boa"))]
+#[cfg(all(test, feature = "native"))]
 mod ast_annotation_tests {
     use super::emit_source_with_annotations_boa;
 
@@ -361,52 +332,102 @@ pub fn write_string(path: &std::path::Path, contents: &str) -> Result<()> {
     })
 }
 
-#[cfg(feature = "boa")]
-fn eval(context: &mut Context, source: &str, path: &str) -> Result<JsValue> {
-    context
-        .eval(Source::from_bytes(source).with_path(std::path::Path::new(path)))
-        .map_err(|err| Error::Boa {
-            path: path.to_string(),
-            message: err.to_string(),
-        })
+/// Accumulates a sequence of JS chunks (prelude, shims, the grammar itself, ...) that all
+/// share one global scope, then hands them to a real JS runtime (`node`, falling back to
+/// `bun`) as a single script per evaluated result. Mirrors the shape of the old
+/// Boa-`Context`-backed API: `exec` runs a chunk for its side effects, `eval_to_string`
+/// re-runs everything accumulated so far plus one final expression and captures its value.
+#[cfg(feature = "native")]
+struct JsSession {
+    script: String,
 }
 
-#[cfg(feature = "boa")]
-fn eval_to_string(
-    context: &mut Context,
-    source: &str,
-    path: &str,
-    operation: &'static str,
-) -> Result<String> {
-    let value = eval(context, source, path)?;
-    js_value_to_string(value, context, operation)
-}
-
-#[cfg(feature = "boa")]
-fn js_value_to_string(
-    value: JsValue,
-    context: &mut Context,
-    operation: &'static str,
-) -> Result<String> {
-    let value_display = value.display().to_string();
-    let js_string = value.to_string(context).map_err(|err| Error::Boa {
-        path: operation.to_string(),
-        message: err.to_string(),
-    })?;
-
-    if value.is_string() {
-        js_string
-            .to_std_string()
-            .map_err(|err| Error::InvalidJsString {
-                operation,
-                message: err.to_string(),
-            })
-    } else {
-        Err(Error::ExpectedString {
-            operation,
-            value: value_display,
-        })
+#[cfg(feature = "native")]
+impl JsSession {
+    fn new() -> Self {
+        Self {
+            script: String::new(),
+        }
     }
+
+    fn exec(&mut self, source: &str, path: &str) {
+        self.script.push_str(&Self::guarded_eval_statement(
+            source,
+            path,
+            "process.exit(1);",
+        ));
+    }
+
+    /// Re-runs everything executed so far, plus `source`, in a fresh process, and returns
+    /// `source`'s completion value (which must be a JS string).
+    fn eval_to_string(&self, source: &str, path: &str) -> Result<String> {
+        let mut script = self.script.clone();
+        script.push_str(&format!(
+            "const __snark_out = eval({});\n\
+             if (typeof __snark_out !== \"string\") {{\n\
+             \x20\x20process.stderr.write(\"expected a string result from {path}, got \" + (typeof __snark_out) + \": \" + String(__snark_out));\n\
+             \x20\x20process.exit(2);\n\
+             }}\n\
+             process.stdout.write(__snark_out);\n",
+            js_string_literal(&with_source_url(source, path)),
+        ));
+        run_js(&script, path)
+    }
+
+    fn guarded_eval_statement(source: &str, path: &str, on_error: &str) -> String {
+        format!(
+            "try {{\n  eval({});\n}} catch (e) {{\n  process.stderr.write({} + \": \" + (e && e.stack ? e.stack : String(e)));\n  {on_error}\n}}\n",
+            js_string_literal(&with_source_url(source, path)),
+            js_string_literal(path),
+        )
+    }
+}
+
+#[cfg(feature = "native")]
+fn with_source_url(source: &str, path: &str) -> String {
+    format!("{source}\n//# sourceURL={path}")
+}
+
+#[cfg(feature = "native")]
+fn run_js(script: &str, path: &str) -> Result<String> {
+    let mut file = tempfile::Builder::new()
+        .prefix("snark-dsl-")
+        .suffix(".mjs")
+        .tempfile()?;
+    file.write_all(script.as_bytes())?;
+    file.flush()?;
+
+    let runtime = js_runtime()?;
+    let output = Command::new(runtime).arg(file.path()).output()?;
+
+    match output.status.code() {
+        Some(2) => Err(Error::ExpectedString {
+            operation: "js output",
+            value: String::from_utf8_lossy(&output.stderr).into_owned(),
+        }),
+        Some(0) => String::from_utf8(output.stdout).map_err(|error| Error::InvalidJsString {
+            operation: "js output",
+            message: error.to_string(),
+        }),
+        _ => Err(Error::Js {
+            path: path.to_string(),
+            message: String::from_utf8_lossy(&output.stderr).into_owned(),
+        }),
+    }
+}
+
+#[cfg(feature = "native")]
+fn js_runtime() -> Result<&'static str> {
+    for candidate in ["node", "bun"] {
+        if Command::new(candidate)
+            .arg("--version")
+            .output()
+            .is_ok_and(|output| output.status.success())
+        {
+            return Ok(candidate);
+        }
+    }
+    Err(Error::JsRuntimeNotFound)
 }
 
 #[cfg(feature = "native")]
@@ -414,7 +435,7 @@ pub fn grammar_arg(arg: Option<&OsStr>) -> PathBuf {
     arg.map_or_else(|| PathBuf::from(DEFAULT_LUA_GRAMMAR), PathBuf::from)
 }
 
-#[cfg(feature = "boa")]
+#[cfg(feature = "native")]
 const SNARK_DSL_EXTENSIONS: &str = r#"
 globalThis.until = function until(...markers) {
   return { type: "UNTIL", markers: markers.flat() };
@@ -452,7 +473,7 @@ globalThis.ast = function ast(spec) {
 };
 "#;
 
-#[cfg(all(feature = "native", feature = "boa"))]
+#[cfg(feature = "native")]
 const COMMONJS_LOADER: &str = r#"
 const __snark_module_cache = new Map();
 
@@ -588,7 +609,7 @@ function __snark_named_import_bindings(names) {
 }
 "#;
 
-#[cfg(feature = "boa")]
+#[cfg(feature = "native")]
 const EMIT_SCRIPT: &str = r#"
 const defaultExport = module.exports && module.exports.default;
 const grammarObj = module.exports && module.exports.grammar
@@ -659,7 +680,7 @@ function normalizePatternSourceLikeNode(source) {
 mod tests {
     use super::*;
 
-    #[cfg(feature = "boa")]
+    #[cfg(feature = "native")]
     #[test]
     fn emits_grammar_source_with_boa() {
         let json = emit_source_with_boa(
@@ -673,7 +694,7 @@ mod tests {
         assert!(json.contains("\"PATTERN\""));
     }
 
-    #[cfg(feature = "boa")]
+    #[cfg(feature = "native")]
     #[test]
     fn emits_snark_lexical_primitives_with_boa() {
         let json = emit_source_with_boa(
@@ -688,7 +709,7 @@ mod tests {
         assert!(json.contains("\"open\": \"{#\""));
     }
 
-    #[cfg(feature = "boa")]
+    #[cfg(feature = "native")]
     #[test]
     fn emits_snark_auto_close_primitive_with_boa() {
         let json = emit_source_with_boa(
@@ -969,20 +990,43 @@ module.exports = grammar(base, {
         assert!(json.contains("\"item\""));
     }
 
+    // Vendored fixture, not `DEFAULT_LUA_GRAMMAR` (that's a CLI convenience
+    // default pointing at a local arborium checkout, not available in CI).
+    const LUA_GRAMMAR_FIXTURE: &str =
+        concat!(env!("CARGO_MANIFEST_DIR"), "/tests/fixtures/lua/grammar.js");
+    const LUA_GRAMMAR_ORACLE_JSON: &str =
+        include_str!("../tests/fixtures/lua/grammar.tree-sitter.json");
+
     #[cfg(feature = "native")]
     #[test]
     fn emits_lua_grammar_with_boa() {
-        let json = emit_with_boa(std::path::Path::new(DEFAULT_LUA_GRAMMAR)).unwrap();
+        let json = emit_with_boa(std::path::Path::new(LUA_GRAMMAR_FIXTURE)).unwrap();
 
         assert!(json.contains("\"name\": \"lua\""));
         assert!(json.contains("\"chunk\""));
         assert!(json.contains("\"IMMEDIATE_TOKEN\""));
     }
 
+    // Compares against a committed tree-sitter oracle snapshot rather than
+    // shelling out to the `tree-sitter` CLI, which CI does not provision.
+    // Regenerate with `snark-dsl/scripts/regenerate-lua-fixture.sh` after
+    // changing the fixture grammar or upgrading tree-sitter-cli.
     #[cfg(feature = "native")]
     #[test]
     fn boa_lua_output_matches_tree_sitter_oracle() {
-        check_against_tree_sitter(std::path::Path::new(DEFAULT_LUA_GRAMMAR)).unwrap();
+        let boa_json = emit_with_boa(std::path::Path::new(LUA_GRAMMAR_FIXTURE)).unwrap();
+        assert_eq!(boa_json.trim(), LUA_GRAMMAR_ORACLE_JSON.trim());
+    }
+
+    // Exercises the real tree-sitter CLI against the fixture to catch drift
+    // against the committed oracle snapshot. Requires `tree-sitter` on PATH,
+    // so it's opt-in (`cargo test -- --ignored`) rather than part of the
+    // default CI run.
+    #[cfg(feature = "native")]
+    #[test]
+    #[ignore = "requires the tree-sitter CLI on PATH"]
+    fn boa_lua_output_matches_live_tree_sitter_oracle() {
+        check_against_tree_sitter(std::path::Path::new(LUA_GRAMMAR_FIXTURE)).unwrap();
     }
 
     #[test]

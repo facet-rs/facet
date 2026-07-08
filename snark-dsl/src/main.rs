@@ -34,7 +34,7 @@ fn run() -> snark_dsl::Result<()> {
             let grammar = grammar_arg(args.next().as_deref());
             check_against_tree_sitter(&grammar)?;
             println!(
-                "Boa output matches tree-sitter output for {}",
+                "emitted output matches tree-sitter output for {}",
                 display_path(grammar)
             );
         }
