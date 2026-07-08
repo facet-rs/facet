@@ -12195,7 +12195,7 @@ fn assert_canonical_zero_padding(schema: &str, descriptor: &VixDescriptor, bytes
                 .iter()
                 .find(|variant| variant.selector == selector)
                 .unwrap_or_else(|| panic!("enum selector {selector}"));
-            for offset in 0..bytes.len() {
+            for (offset, byte) in bytes.iter().enumerate() {
                 if enum_tag_owns_byte(access, offset)
                     || variant
                         .payload
@@ -12206,7 +12206,7 @@ fn assert_canonical_zero_padding(schema: &str, descriptor: &VixDescriptor, bytes
                     continue;
                 }
                 assert_eq!(
-                    bytes[offset], 0,
+                    *byte, 0,
                     "canonical-zero canary failed for `{schema}` inactive enum byte {offset}"
                 );
             }
@@ -12241,7 +12241,7 @@ fn zero_inactive_enum_payload(bytes: &mut [u8], descriptor: &VixDescriptor, vari
         .variants
         .get(variant_index)
         .unwrap_or_else(|| panic!("variant index {variant_index}"));
-    for offset in 0..bytes.len() {
+    for (offset, byte) in bytes.iter_mut().enumerate() {
         if enum_tag_owns_byte(access, offset)
             || variant
                 .payload
@@ -12251,7 +12251,7 @@ fn zero_inactive_enum_payload(bytes: &mut [u8], descriptor: &VixDescriptor, vari
         {
             continue;
         }
-        bytes[offset] = 0;
+        *byte = 0;
     }
 }
 
