@@ -124,6 +124,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+
       - name: Select Rust 1.92
         shell: bash
         run: |
@@ -145,6 +149,10 @@ jobs:
       image: ghcr.io/facet-rs/facet-ci:latest-amd64
     steps:
       - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
 
       - name: Select Rust 1.92
         shell: bash
@@ -192,6 +200,10 @@ jobs:
     steps:
       - uses: actions/checkout@v6
 
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+
       - name: Select Rust 1.92
         shell: bash
         run: |
@@ -219,6 +231,10 @@ jobs:
       - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
 
       - name: ✨ Run cargo-semver-checks
         uses: obi1kenobi/cargo-semver-checks-action@v2
