@@ -46,7 +46,7 @@ layout before loading the element.
 
 ## Native Array Read
 
-The first op is a read-only store-payload operation:
+The first op is a read-only value-memory operation:
 
 ```text
 LoadArrayWord {
@@ -62,18 +62,22 @@ Semantics:
 
 - `array` and `index` are frame slots containing the array handle and requested
   index.
-- the op succeeds only for non-negative store handles whose payload is an
-  `Array<T>` word payload (`kind == 0`) with `elem_schema_ref` equal to the
-  immediate baked by lowering;
+- the op succeeds for either a non-negative store handle or a negative molten
+  handle whose payload table entry is an `Array<T>` word payload (`kind == 0`)
+  with `elem_schema_ref` equal to the immediate baked by lowering;
 - if the index is non-negative and less than the stored length, the op writes
   the element word to `dst` and `1` to `present`;
 - otherwise it writes `0` to `dst` and `0` to `present`.
 
 That gives `Array<Int>.get(i)` a machine-visible bounds check and element load.
 The lowerer can consume the native option directly for `unwrap` in the scalar
-hot path; aggregate elements and non-store arrays remain pinned to the host
-fallback until their representation can be materialized without hiding the read
-behind FFI again.
+hot path. Store-backed array arguments are charged to the projection read set
+when the driver materializes the store value-memory table for a task containing
+`LoadArrayWord`; the stencil itself stays a pure checked load. That records the
+same whole-array observation the host path records, including arrays already
+resident before the current execution window. Aggregate elements remain pinned
+to the host fallback until their representation can be materialized without
+hiding the read behind FFI again.
 
 ## Interpreter And JIT
 
@@ -90,6 +94,13 @@ The tables are process-local and valid for the task burst. Store entries are
 snapshotted as payload bytes, and molten array-word slots are encoded into the
 same checked array-word payload shape. The op never owns the canonical value and
 never extends its lifetime.
+
+Projection receipts are driver-side, not stencil-side. Materializing a
+store-backed scalar array argument into the native value-memory table records a
+whole-argument projection read once for the burst. Molten snapshots do not
+record store reads because they are execution-local values; if they were derived
+from a store argument, the host operation that copied or mutated them already
+records the whole input just like the pre-native host path.
 
 Sync hosts that can mutate value-memory provenance use a yielding host-call op.
 That keeps ordinary request-producing hosts on the old call-and-continue path,

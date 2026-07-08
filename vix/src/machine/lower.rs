@@ -9402,6 +9402,86 @@ pub fn main() -> Int {
     }
 
     #[test]
+    fn native_array_get_records_store_backed_array_receipt() {
+        let src = r#"
+pub fn values() -> Array<Int> {
+    [10, 20, 30]
+}
+
+pub fn read(values: Array<Int>) -> Int {
+    values.get(1).unwrap()
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let values = machine.demand_i64("values", vec![]).unwrap();
+            assert_eq!(
+                machine.demand_i64("read", vec![values]).unwrap(),
+                20,
+                "{lane:?}"
+            );
+            let read_fn = FnRef::new(*machine.fn_refs.get("read").expect("read fn ref"));
+            assert_eq!(
+                machine
+                    .driver
+                    .memo_whole_read_count(read_fn, &[values], 0, "Array<Int>"),
+                1,
+                "{lane:?}"
+            );
+            assert_eq!(
+                host_call_count(&machine, "read", OPTION_UNWRAP_HOST),
+                0,
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn native_array_get_blocks_false_projection_reuse_when_backing_array_changes() {
+        let src = r#"
+struct Bias {
+    amount: Int,
+}
+
+fn native_first(values: Array<Int>, bias: Bias) -> Int {
+    values.get(0).unwrap() + bias.amount
+}
+
+pub fn first() -> Int {
+    native_first([10, 20], Bias { amount: 1 })
+}
+
+pub fn second() -> Int {
+    native_first([30, 20], Bias { amount: 1 })
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            assert_eq!(machine.demand_i64("first", vec![]).unwrap(), 11, "{lane:?}");
+            let native_hash = machine.fn_hash("native_first").expect("native_first hash");
+            machine.clear_trace();
+            assert_eq!(
+                machine.demand_i64("second", vec![]).unwrap(),
+                31,
+                "{lane:?}"
+            );
+            assert!(
+                !machine.trace().iter().any(|event| matches!(
+                    event,
+                    DriveEvent::MemoProjectionHit { fn_hash, .. } if *fn_hash == native_hash
+                )),
+                "{lane:?}: {:?}",
+                machine.trace()
+            );
+            assert_eq!(
+                host_call_count(&machine, "native_first", OPTION_UNWRAP_HOST),
+                0,
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
     fn scalar_array_get_unwrap_out_of_bounds_errors() {
         let src = r#"
 pub fn main() -> Int {

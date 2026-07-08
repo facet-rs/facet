@@ -2869,6 +2869,31 @@ impl Driver {
         &self.program.fns[self.lowered(fn_ref).task_fn.0 as usize].code
     }
 
+    #[cfg(test)]
+    pub(super) fn memo_whole_read_count(
+        &self,
+        fn_ref: FnRef,
+        args: &[i64],
+        arg_index: usize,
+        schema: &str,
+    ) -> usize {
+        let key = self.memo_key(fn_ref, args);
+        self.memo
+            .get(&key)
+            .map(|entry| {
+                entry
+                    .read_set
+                    .entries
+                    .iter()
+                    .filter(|read| {
+                        read.arg_index == arg_index
+                            && matches!(&read.path, ProjectionPath::Whole { schema: read_schema } if read_schema == schema)
+                    })
+                    .count()
+            })
+            .unwrap_or(0)
+    }
+
     pub fn intern_raw_value(&self, schema: &str, bytes: Vec<u8>) -> (i64, bool) {
         self.store
             .borrow_mut()
@@ -3579,6 +3604,10 @@ impl Driver {
         let store_read_region = lowered.store_read_region as usize;
         let store_tag_region = lowered.store_tag_region as usize;
         let primitive_region = lowered.primitive_region as usize;
+        let task_has_native_array_load = self.program.fns[lowered.task_fn.0 as usize]
+            .code
+            .iter()
+            .any(|op| matches!(op, Op::LoadArrayWord { .. }));
         loop {
             // Size the input arrays BEFORE the burst (slots the body
             // registers this burst get sized on the next iteration —
@@ -6524,6 +6553,22 @@ impl Driver {
                 .iter()
                 .map(|bytes| ValueMemory::from_slice(bytes))
                 .collect::<Vec<_>>();
+            let native_store_reads = native_array_store_read_handles_at_materialization(
+                task_has_native_array_load,
+                &exec_arg_schemas,
+                &exec_args,
+                &store_value_memories,
+                schemas,
+            );
+            record_whole_args_if_projectable_static(
+                &mut projection_reads.borrow_mut(),
+                &exec_arg_schemas,
+                &exec_args,
+                &store_cell.borrow(),
+                descriptors,
+                schemas,
+                native_store_reads,
+            );
             let molten_payloads = molten_cell
                 .borrow()
                 .entries
@@ -10731,6 +10776,31 @@ fn record_whole_args_if_projectable_static(
             }
         }
     }
+}
+
+fn native_array_store_read_handles_at_materialization(
+    task_has_native_array_load: bool,
+    arg_schemas: &[String],
+    args: &[i64],
+    store_value_memories: &[ValueMemory],
+    schemas: &SchemaTables,
+) -> Vec<i64> {
+    if !task_has_native_array_load {
+        return Vec::new();
+    }
+    arg_schemas
+        .iter()
+        .zip(args)
+        .filter_map(|(schema, &word)| {
+            let elem_schema = array_element_schema(schema)?;
+            schema_is_inline_word(schemas, elem_schema).then_some(())?;
+            let Handle::Store(store_ix) = Handle::from_word(word) else {
+                return None;
+            };
+            let memory = store_value_memories.get(store_ix.0)?;
+            (!memory.ptr.is_null()).then_some(store_ix.to_word())
+        })
+        .collect()
 }
 
 fn remap_read_set_for_caller(
