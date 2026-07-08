@@ -21,6 +21,9 @@ fi
 metadata="$OUT/metadata.json"
 unit_graph="$OUT/unit-graph.json"
 sparse_out="$OUT/sparse-index"
+export TIER_A_CARGO_METADATA="$metadata"
+export TIER_A_UNIT_GRAPH="$unit_graph"
+export TIER_A_SPARSE_OUT="$sparse_out"
 
 cargo metadata --locked --format-version 1 > "$metadata"
 cargo +nightly build --unit-graph -Z unstable-options --workspace --locked > "$unit_graph"
@@ -82,6 +85,11 @@ cargo nextest list "${nextest_timeout[@]}" -p vix --features real-process -E 'te
 cargo nextest run "${nextest_timeout[@]}" -p vix --features real-process -E 'test(=solution_walk_derives_units_from_rodin_and_matches_cargo_oracle)' \
   > "$OUT/vix-derived-unit-run.txt" 2>&1
 
+cargo nextest list "${nextest_timeout[@]}" -p vix --run-ignored only -E 'test(=real_workspace_member_direct_sparse_unit_diff_8)' \
+  > "$OUT/vix-direct-ring-unit-diff-list.txt" 2>&1
+cargo nextest run "${nextest_timeout[@]}" -p vix --run-ignored only -E 'test(=real_workspace_member_direct_sparse_unit_diff_8)' \
+  > "$OUT/vix-direct-ring-unit-diff-run.txt" 2>&1
+
 {
   echo "Artifacts: $OUT"
   echo
@@ -100,7 +108,19 @@ cargo nextest run "${nextest_timeout[@]}" -p vix --features real-process -E 'tes
     du -sh "$sparse_out"
     shasum -a 256 "$sparse_out/snapshot-manifest.tsv"
   fi
-  for artifact in tiny-solve-vs-lock-summary.tsv real-ring-16-solve-vs-lock-summary.tsv real-ring-32-solve-vs-lock-summary.tsv real-ring-64-solve-vs-lock-summary.tsv real-ring-145-solve-vs-lock-summary.tsv lock-fixture-unit-diff-summary.tsv; do
+  summary_artifacts=(
+    tiny-solve-vs-lock-summary.tsv
+    real-ring-16-solve-vs-lock-summary.tsv
+    real-ring-32-solve-vs-lock-summary.tsv
+    real-ring-64-solve-vs-lock-summary.tsv
+    lock-fixture-unit-diff-summary.tsv
+    real-direct-ring-8-unit-diff-summary.tsv
+    real-direct-ring-8-unit-divergence-categories.tsv
+  )
+  if [[ "${TIER_A_FULL_MEMBER_RING:-0}" == "1" ]]; then
+    summary_artifacts+=(real-ring-145-solve-vs-lock-summary.tsv)
+  fi
+  for artifact in "${summary_artifacts[@]}"; do
     if [[ -f "$OUT/$artifact" ]]; then
       echo
       echo "$artifact:"
