@@ -37,6 +37,39 @@ Known next steps, in order:
 
 Perf dependency: the stax profile for the solve workload points at machine/module/host infrastructure rather than a Rodin-specific semantic trunk. The queued perf lane owns those levers. This lane should not widen transitive/full-closure probes again until that work lands, except to run the one-command remeasurement above.
 
+## Dense State Interner Experiment
+
+Design correction from Amos: the dense ids must be a solve-local interner, not a pre-closed-universe numbering scheme. First touch of a content package id allocates the next local dense `Int`, and the state arrays grow by append. Nothing crossing the solve boundary may be keyed by those local ids; `SolveResult`, lock-diff rows, receipts, and memoized artifacts stay keyed by content package identity / names.
+
+Baseline measured before changing `rodin.vix`:
+
+```sh
+TIER_A_OUT=/tmp/tier-a-scale-measurement cargo nextest run -p vix --run-ignored only -E 'test(=real_workspace_member_only_solve_ring_lock_diff_16) | test(=real_workspace_member_only_solve_ring_lock_diff_32) | test(=real_workspace_member_only_solve_ring_lock_diff_64)'
+```
+
+| Ring | Selected rows | Lock matches | Version skew | Wall |
+|---:|---:|---:|---:|---:|
+| member-only 16 | 17 | 16 | 0 | 7.199s |
+| member-only 32 | 33 | 32 | 0 | 7.430s |
+| member-only 64 | 65 | 64 | 0 | 8.362s |
+
+Experiment frontier: the current vix array surface can append (`push`), mutate (`set`), pop, and measure length, but cannot read an array element by index. The dense solver state hot path needs exactly that operation: `domain_for(local_id)` over `[Domain]`, and `feature_enabled(local_feature_id)` over an array/bitset-shaped feature state. Replacing those reads with recursive `pop` scans would preserve output semantics but would not test the proposed array carried-hasher hot path.
+
+Minimal repro is pinned by `vix::rodin dense_state_array_indexed_get_language_gap_is_pinned`:
+
+```vix
+struct Domain {
+    active: Bool,
+}
+
+pub fn main() -> Bool {
+    let domains = [Domain { active: true }];
+    domains.get(0).unwrap().active
+}
+```
+
+Current lowerer result: `get called on Array<Domain>`. The dense-state rewrite is therefore parked at the language/runtime surface, before any semantic Rodin change. The next enabling primitive should be an atomic pure indexed array read, or the endorsed language-level equivalent, before this experiment can produce a meaningful after table.
+
 - Before this pass, resolve at real scale was **0 / 864 Cargo-resolved package-version rows measured** because there was no vix entrypoint composing workspace manifests into a Rodin `Index`.
 - After the widening pass, the largest measured solve ring is **64 / 146 workspace members -> 65 selected rows**, diffed against the real `Cargo.lock`: **64 / 65 solve rows match Cargo.lock**, with the remaining solve-only row being the pseudo workspace root.
 - The explicit ignored scale probe still builds the full member-only index: **146 / 146 workspace members -> 147 package domains**; root clauses are now the old 2-per-member baseline plus root default-feature clauses.
