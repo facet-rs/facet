@@ -9,19 +9,20 @@ description = "Shared lowered-program substrate for interpreters and copy-and-pa
 keywords = ["bytecode", "interpreter", "jit", "stencil"]
 categories = ["encoding", "compilers"]
 homepage = "https://facet.rs"
+links = "weavy"
 
 [package.metadata."docs.rs"]
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-copypatch = { workspace = true, optional = true }
+copypatch = { workspace = true }
 
 [build-dependencies]
-copypatch = { workspace = true, features = ["build"], optional = true }
+copypatch = { workspace = true, features = ["build"] }
 
 [features]
-default = []
-jit = ["dep:copypatch"]
+default = ["jit"]
+jit = []
 
 # The async lane's driver uses only `core::future` — no runtime dependency.
 # tokio is dev-only, to provide an executor + timers for the suspend tests.

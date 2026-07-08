@@ -11,7 +11,6 @@ pub mod ir;
 pub mod mem;
 pub mod task;
 
-#[cfg(feature = "jit")]
 pub mod jit;
 
 use std::collections::BTreeMap;
