@@ -1,0 +1,6 @@
+//! reject: unknown variant Blue
+//! at: 5
+
+// Rung 117 — unknown enum variant.
+enum Light { Red, Green }
+test t { expect_eq(Light::Blue, Light::Red); }

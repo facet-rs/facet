@@ -77,3 +77,24 @@ the vix book (`/vix`) exists. That is the definition of done.
 | 098 | capstone: oracle | matches the reference resolver on kitchen-sink |
 | 099 | capstone: warm restart | one req bumped; untouched subtree untouched |
 | 100 | **the solver** | the book's final chapter, whole, green |
+
+## Bands 101+ — "the language is good"
+
+Rungs 1–100 define existence; these define quality. Same rules, same
+foundation contract; the score past 100 counts consecutively as before.
+New harness surface introduced here: `NNN-*.v2.vix` second-phase sources
+for `rerun with: source-v2` (code-edit rungs), `//! differential: FLAG`
+(run twice, plain vs forced mode, results must be identical),
+`failed_with` / `failure_span_in` (asserting typed demand failures),
+`overlapped` / `finished_before` / `killed` (parallelism and
+kill-when-satisfied), `memo_hits_at_least` / `demanded_times`.
+
+| # | band | certifies |
+|---|---|---|
+| 101–105 | code-edit early cutoff | body edit, same value → one node recomputes (101); changed value → downstream recomputes (102); rename = accepted cold (103); wrapper refactor recovered by suffix nomination (104); reuse is lookup, not recompute-and-compare (105) |
+| 106–110 | modules | imports, visibility (reject), std across boundaries, collisions (reject), memo across module boundaries |
+| 111–122 | diagnostics | twelve rejects asserting message content and span: type mismatch, arity both ways, unknown/missing/duplicate field, unknown variant, payload shape, refutable let, non-Bool guard, unresolved name, duplicate binding |
+| 123–125 | differential guards | force-molten-copy, force-fanout, chaos — bit-identical results under every as-if mode |
+| 126–130 | parallelism observed | overlapped effects, fan-out parallelism, progressive trees (subfile consumer finishes before producer exits), spawn-and-park, kill-when-satisfied |
+| 131–136 | edge semantics | unary minus; division by zero and overflow as typed failures; float TOTAL order (NaN reflexive, sorts last); string order by codepoints; unwrap-None carries a span |
+| 137–140 | trust & scale | corrupted store caught by reverify; map accumulator (molten twin of 051); identity at 100k depth; memo under 100k-demand load |

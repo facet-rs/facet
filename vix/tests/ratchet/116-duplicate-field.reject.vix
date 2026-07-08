@@ -1,0 +1,6 @@
+//! reject: duplicate field x
+//! at: 5
+
+// Rung 116 — duplicate field in a literal.
+struct Point { x: Int, y: Int }
+test t { expect_eq(Point { x: 1, x: 2, y: 3 }.x, 1); }

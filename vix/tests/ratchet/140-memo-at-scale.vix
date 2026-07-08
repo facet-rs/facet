@@ -1,0 +1,15 @@
+//! budget: 5s wall, 1GB rss
+
+// Rung 140 — the memo under load: 100k distinct demands, then 100k hits.
+// Hits are allocation-free lookups; the second wave costs table reads,
+// not recomputation.
+fn f(n: Int) -> Int { n * 17 }
+
+test memo_at_scale {
+    let first = range(0, 100000).map(f);
+    let second = range(0, 100000).map(f);
+    expect_eq(first, second);
+} expecting {
+    demanded_times f 100000;
+    memo_hits_at_least 100000;
+}

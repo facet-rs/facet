@@ -1,0 +1,12 @@
+//! uses: lib/geometry.vix
+//! rerun
+
+// Rung 110 — cross-module calls memoize like any other demand: warm
+// across runs through an import boundary.
+import geometry::{Point, magnitude_sq};
+
+test module_memo_boundary {
+    expect_eq(magnitude_sq(Point { x: 6, y: 8 }), 100);
+} expecting on rerun {
+    never_demanded magnitude_sq;
+}

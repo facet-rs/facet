@@ -1,0 +1,7 @@
+// Second phase for rung 102: helper's VALUE changes; render must re-run.
+fn helper(n: Int) -> Int { n + n + 1 }
+fn render(n: Int) -> String { "value: " + n.to_string() }
+
+test body_edit_negative_control {
+    expect(render(helper(21)).contains("value:"));
+}

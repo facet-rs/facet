@@ -1,0 +1,13 @@
+//! budget: 2s wall, 256MB rss
+
+// Rung 128 — progressive exec trees, the primary exec shape: stage one
+// writes early.txt immediately, then sleeps before finishing its tree.
+// Stage two consumes ONLY early.txt — and must complete before stage
+// one's process exits. Subfile demand, not whole-output demand.
+test progressive_tree {
+    let stage1 = exec! { sh -c "mkdir -p out; echo ready > out/early.txt; sleep 1.5; echo done > out/late.txt" };
+    let early = (stage1.tree / "out" / "early.txt").text();
+    expect_eq(early.trim(), "ready");
+} expecting {
+    finished_before this stage1;
+}

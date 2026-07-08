@@ -1,0 +1,12 @@
+//! budget: 1s wall, 256MB rss
+
+// Rung 126 — automatic concurrency is real: two independent effects run
+// overlapped. Each sleeps 400ms; the budget is under their sum. A serial
+// executor cannot pass this rung. (scheduler: spawn-and-park)
+test effects_overlap {
+    let a = exec! { sh -c "sleep 0.4; echo a" };
+    let b = exec! { sh -c "sleep 0.4; echo b" };
+    expect_eq(a.stdout.trim() + b.stdout.trim(), "ab");
+} expecting {
+    overlapped;
+}

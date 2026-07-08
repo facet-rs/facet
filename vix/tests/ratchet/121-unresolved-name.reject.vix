@@ -1,0 +1,5 @@
+//! reject: unresolved name
+//! at: 4
+
+// Rung 121 — unresolved identifiers name the identifier.
+test t { expect_eq(definitely_not_a_thing(1), 1); }

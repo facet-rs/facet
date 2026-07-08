@@ -1,0 +1,8 @@
+// Rung 131 — unary minus exists; negative literals behave.
+test negative_numbers {
+    let n = -5;
+    expect_eq(n + 10, 5);
+    expect_eq(-n, 5);
+    expect(-1 < 0);
+    expect_eq((-2) * (-3), 6);
+}

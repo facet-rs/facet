@@ -1,0 +1,13 @@
+//! budget: 5s wall, 1GB rss
+
+// Rung 138 — the map twin of rung 051: 200k inserts into an accumulator
+// map, molten with carried rows, published once. Copy-per-insert is
+// O(n²); intern-per-insert is forbidden by the counter.
+test map_accumulator {
+    let n = 200000;
+    let m = range(0, n).fold({}, |acc, i| acc.insert(i.to_string(), i));
+    expect_eq(m.len(), n);
+    expect_eq(m.get("123456"), Some(123456));
+} expecting {
+    store_interns_at_most 10;
+}

@@ -1,0 +1,10 @@
+//! reject: duplicate binding
+//! at: 6
+
+// Rung 122 — rebinding a name in one scope is rejected: bindings are
+// wiring, and two wires with one label is a short circuit.
+test t {
+    let x = 1;
+    let x = 2;
+    expect_eq(x, 2);
+}

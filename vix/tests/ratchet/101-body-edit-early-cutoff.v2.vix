@@ -1,0 +1,7 @@
+// Second-phase source for rung 101: helper's body differs, its value doesn't.
+fn helper(n: Int) -> Int { n * 2 }
+fn render(n: Int) -> String { "value: " + n.to_string() }
+
+test body_edit_early_cutoff {
+    expect_eq(render(helper(21)), "value: 42");
+}

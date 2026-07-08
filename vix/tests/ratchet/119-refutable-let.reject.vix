@@ -1,0 +1,8 @@
+//! reject: refutable pattern
+//! at: 5
+
+// Rung 119 — a let pattern that can fail is rejected; use match.
+fn f(o: Option<Int>) -> Int {
+    let Some(n) = o;
+    n
+}

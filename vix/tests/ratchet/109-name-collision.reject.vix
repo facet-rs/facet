@@ -1,0 +1,12 @@
+//! reject: duplicate name
+//! at: 7
+//! uses: lib/geometry.vix
+
+// Rung 109 — importing a name that's also declared locally is rejected.
+import geometry::Point;
+
+struct Point { x: Int }
+
+test name_collision {
+    expect(true);
+}

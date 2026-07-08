@@ -1,0 +1,12 @@
+//! budget: 5s wall, 512MB rss
+
+// Rung 139 — identity at depth: build a 100k-deep nested structure and
+// intern it. The walk reads each child's STORED hash — O(depth) total,
+// once per node ever — not O(depth²) rehashing of subtrees.
+enum Chain { End, Link(Int, Chain) }
+
+test deep_nesting_identity {
+    let chain = range(0, 100000).fold(Chain::End, |acc, i| Chain::Link(i, acc));
+    let twin = range(0, 100000).fold(Chain::End, |acc, i| Chain::Link(i, acc));
+    expect_eq(chain, twin);
+}
