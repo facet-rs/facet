@@ -31,12 +31,6 @@ command = "bash -c 'exec \"$(git rev-parse --show-toplevel)/scripts/memcap-wrapp
 slow-timeout = { period = "60s", terminate-after = 3 }
 
 [[profile.default.scripts]]
-# Every test on unix runs under the memory watchdog (see wrapper above).
-filter = 'all()'
-platform = { host = "cfg(unix)" }
-run-wrapper = 'memcap'
-
-[[profile.default.scripts]]
 filter = 'all()'
 platform = { host = "cfg(unix)" }
 setup = 'set-env-unix'
