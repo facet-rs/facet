@@ -310,3 +310,33 @@ reconciliation pass:
   strike against the chapter), the vix/vixc rename sweep + charter split,
   molten-across-edges ruling (lean: never — merge islands instead; linear-
   handoff exception reserved for Stage B), formalizing tier-1/tier-2 rules.
+
+## Round 5 (2026-07-08 evening — the location-plane conversation, Amos + Fable direct)
+
+- **Tasks vs islands RATIFIED** (Amos: "we agree on tasks"): a task is a maximal
+  inline path through the island graph — it traverses one or more islands,
+  flowing through edges whose values are ready and parking/joining/splitting
+  only at edges, never mid-interior. Not every edge is a task boundary. Kills
+  are a separate category: they land at safepoints (edges + loop back-edges)
+  and discard rather than suspend. Tokio analogy banked for the textbook:
+  interiors are the synchronous stretches, edges are the await points, tasks
+  are what the runtime schedules. `task-is-path` re-derives onto this.
+- **Namespace for daemon/capability packages RATIFIED: `vixd.*`** (the daemon —
+  completes vix/vixc/vixd; names the component, not the product). Physical
+  home: ALL specifications consolidate into the facet monorepo (Amos: specs
+  need scrutiny, iteration, public play; the proprietary boundary is the
+  control plane / cloud parts, not the specs). The repo-topology problem
+  (facet-cc too big to operate in, too small for a full build — no dodeca, no
+  vixenware parts) is real and explicitly NOT solved by this ruling.
+- **The location plane** (third identity plane: location/recipe/content) is
+  designed and grounded — chapter: `docs/content/vix/three-planes.md`;
+  prior-art grounding: `~/vixenware/notes/machine-spec/location-plane-prior-art.md`.
+  Fills the `machine.persistence.trait-boundary` "enumerate projection
+  candidates" stub. Rules to be extracted in the rewrite pass.
+- **Ordering doctrine** (in `design/iteration.md`): positional order dies for
+  derived aggregates (canonical value order; concurrency wins); construction
+  stays positional (an array is a struct with fields named 0, 1, 2);
+  `Indexed<T>` opt-in.
+- **Spec-as-textbook doctrine** (Amos): the spec is a textbook for the
+  amalgamation, not a list of prose-tests — chapters are written to teach the
+  rationale, not just to bind rules.
