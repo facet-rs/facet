@@ -199,94 +199,16 @@ default-members = [
   # core
   "facet-core",
   "facet",
-
-  # derive macro
-  "facet-macros-impl",
-  "facet-macros",
-
-  # macro ecosystem (plugin support)
-  "facet-macro-types",
-  "facet-macro-parse",
-
-  # derive plugins
-  "facet-error",
-  "facet-default",
-
-  # reflection and solver
-  "facet-reflect",
-  "facet-solver",
-
-  # test helpers
-  "facet-testhelpers",
-  "facet-testhelpers-macros",
-  "facet-testattrs",
-
-  # pretty printing
-  "facet-pretty",
-
-  # misc.
-  "facet-urlencoded",
-  "facet-axum",
-
-  # formats, dynamic values, and schema/codegen
-  "facet-dessert",
-  "facet-format",
-  "facet-json",
-  "facet-json-classics",
-  "facet-postcard",
-  "facet-msgpack",
-  "facet-toml",
-  "facet-yaml",
-  "facet-format-suite",
-  "facet-asn1",
-  "facet-csv",
-  "facet-xdr",
-  "facet-json-schema",
-  "facet-typescript",
-  "facet-python",
-  "facet-lua",
-  "facet-value",
-  "facet-zod",
-
-  # XML, DOM, and SVG
-  "facet-singularize",
-  "facet-dom",
-  "facet-xml",
-  "facet-xml-node",
-  "facet-atom",
-  "facet-svg",
-
-  # utilities
-  "facet-path",
-  "facet-validate",
-  "facet-hash",
-  "fable",
-  "facet-cargo-toml",
-  "rusqlite-facet",
-  "rediff",
-  "margin",
-  "margin-term",
-  "figue",
-  "figue-attrs",
-  "snark",
-
-  # Phon schema and typed codec
-  "weavy",
-  "copypatch",
-  "phon/rust/phon-schema",
-  "phon/rust/phon-ir",
-  "phon/rust/phon-engine",
-  "phon/rust/phon-jit",
-  "phon/rust/phon",
-  "phon/rust/phon-codegen",
-  "phon/rust/phon-conformance",
 ]
+
 exclude = [
   # tools/ has its own workspace
   "tools",
+
   # imported Vox directories that were not members of the original Vox workspace
   "vox/fuzz",
 ]
+
 resolver = "3"
 
 [workspace.package]
@@ -413,7 +335,11 @@ dotenvy = "^0.15"
 eyre = "^0.6.12"
 futures = "^0.3"
 futures-channel = "0.3"
-futures-util = { version = "^0.3.31", default-features = false, features = ["std", "async-await", "async-await-macro"] }
+futures-util = { version = "^0.3.31", default-features = false, features = [
+  "std",
+  "async-await",
+  "async-await-macro",
+] }
 glob = "^0.3"
 goblin = "^0.9"
 hashbrown = { version = "0.17", features = ["raw-entry"] }
@@ -441,7 +367,13 @@ proptest = "^1"
 quote = "1"
 ratatui = "^0.30"
 regex = { version = "1.12.4", default-features = false, features = ["std", "unicode"] }
-regex-automata = { version = "0.4.14", default-features = false, features = ["std", "unicode", "meta", "perf", "hybrid"] }
+regex-automata = { version = "0.4.14", default-features = false, features = [
+  "std",
+  "unicode",
+  "meta",
+  "perf",
+  "hybrid",
+] }
 rowan = "^0.16"
 smartstring = { version = "^1.0.1", default-features = false }
 smol_str = { version = "^0.3.4", default-features = false }
@@ -462,7 +394,11 @@ tokio-tungstenite = "^0.29"
 tower = { version = "0.5", default-features = false, features = ["util"] }
 tower-lsp = "^0.20"
 tracing = { version = "^0.1.43", default-features = false, features = ["std", "attributes"] }
-tracing-subscriber = { version = "^0.3.22", default-features = false, features = ["fmt", "std", "env-filter"] }
+tracing-subscriber = { version = "^0.3.22", default-features = false, features = [
+  "fmt",
+  "std",
+  "env-filter",
+] }
 tree-sitter = { package = "arborium-tree-sitter", version = "2.18.0" }
 unicode-width = "^0.2.2"
 trybuild = "^1.0"
