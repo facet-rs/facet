@@ -129,10 +129,11 @@ struct Hypothesis {
 }
 
 struct State {
-    domains: Map<Int, Domain>,
-    features: Map<Int, Bool>,
+    pkg_slots: Map<Int, Int>,
+    domains: [Domain],
+    feature_slots: Map<Int, Int>,
+    features: [Bool],
     hypotheses: [Hypothesis],
-    applied: Map<Int, Bool>,
     learned: [LearnedNoGood],
 }
 
@@ -276,10 +277,9 @@ fn hypothesis_from_realized(hypothesis: Hypothesis) -> Hypothesis {
 }
 
 fn empty_state() -> State {
-    let domains: Map<Int, Domain> = {};
-    let features: Map<Int, Bool> = {};
-    let applied: Map<Int, Bool> = {};
-    stored_state(State { domains: domains, features: features, hypotheses: [], applied: applied, learned: [] })
+    let pkg_slots: Map<Int, Int> = {};
+    let feature_slots: Map<Int, Int> = {};
+    stored_state(State { pkg_slots: pkg_slots, domains: [], feature_slots: feature_slots, features: [], hypotheses: [], learned: [] })
 }
 
 fn empty_result() -> SolveResult {
@@ -335,20 +335,38 @@ fn consequent_version_set_for(index: Index, clause_id: Int) -> VersionSet {
 }
 
 fn domain_for(state: State, pkg: Int) -> Domain {
-    match state.domains.get(pkg) {
-        Some(domain) => domain_from_realized(domain),
+    match state.pkg_slots.get(pkg) {
+        Some(slot) => domain_from_realized(state.domains.get(slot)),
         None => default_domain(),
     }
 }
 
 fn put_domain(state: State, pkg: Int, domain: Domain) -> State {
-    stored_state(State { domains: state.domains.insert(pkg, domain), ..state })
+    match state.pkg_slots.get(pkg) {
+        Some(slot) => stored_state(State { domains: state.domains.set(slot, domain), ..state }),
+        None => stored_state(State {
+            pkg_slots: state.pkg_slots.insert(pkg, state.domains.len()),
+            domains: state.domains.push(domain),
+            ..state
+        }),
+    }
 }
 
 fn feature_enabled(state: State, feature: Int) -> Bool {
-    match state.features.get(feature) {
-        Some(_) => true,
+    match state.feature_slots.get(feature) {
+        Some(slot) => state.features.get(slot),
         None => false,
+    }
+}
+
+fn put_enabled_feature(state: State, feature: Int) -> State {
+    match state.feature_slots.get(feature) {
+        Some(slot) => stored_state(State { features: state.features.set(slot, true), ..state }),
+        None => stored_state(State {
+            feature_slots: state.feature_slots.insert(feature, state.features.len()),
+            features: state.features.push(true),
+            ..state
+        }),
     }
 }
 
@@ -410,7 +428,7 @@ fn enable_feature(state: State, feature: Int) -> Step {
     match feature_enabled(state, feature) {
         true => Step::Pass { state: state, changed: false },
         false => Step::Pass {
-            state: stored_state(State { features: state.features.insert(feature, true), ..state }),
+            state: put_enabled_feature(state, feature),
             changed: true,
         },
     }
@@ -1295,10 +1313,11 @@ fn try_candidate(index: Index, state: State, target: String, pkg: Int, version: 
 
 fn state_with_learned(state: State, learned_state: State) -> State {
     stored_state(State {
+        pkg_slots: state.pkg_slots,
         domains: state.domains,
+        feature_slots: state.feature_slots,
         features: state.features,
         hypotheses: state.hypotheses,
-        applied: state.applied,
         learned: learned_state.learned,
     })
 }

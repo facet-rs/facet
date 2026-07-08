@@ -41,34 +41,45 @@ Perf dependency: the stax profile for the solve workload points at machine/modul
 
 Design correction from Amos: the dense ids must be a solve-local interner, not a pre-closed-universe numbering scheme. First touch of a content package id allocates the next local dense `Int`, and the state arrays grow by append. Nothing crossing the solve boundary may be keyed by those local ids; `SolveResult`, lock-diff rows, receipts, and memoized artifacts stay keyed by content package identity / names.
 
-Baseline measured before changing `rodin.vix`:
+After `origin/rodin` folded `ARRAY_GET_HOST` at `b49fba320`, `rodin.vix`
+state was changed from map-shaped package/feature state to a solve-local SOA:
+`Map<Int, Int>` content-id interners for packages/features, append-grown
+`[Domain]` and `[Bool]` arrays for hot state, and map-shaped public
+`SolveResult` emission at the boundary.
+
+Rebased baseline and dense-state after runs used the same command shape:
 
 ```sh
-TIER_A_OUT=/tmp/tier-a-scale-measurement cargo nextest run -p vix --run-ignored only -E 'test(=real_workspace_member_only_solve_ring_lock_diff_16) | test(=real_workspace_member_only_solve_ring_lock_diff_32) | test(=real_workspace_member_only_solve_ring_lock_diff_64)'
+TIER_A_OUT=/tmp/tier-a-dense-soa-before cargo nextest run -p vix --run-ignored only -E 'test(=real_workspace_member_only_solve_ring_lock_diff_16) | test(=real_workspace_member_only_solve_ring_lock_diff_32) | test(=real_workspace_member_only_solve_ring_lock_diff_64)'
+TIER_A_OUT=/tmp/tier-a-dense-soa-after-interner-final cargo nextest run -p vix --run-ignored only -E 'test(=real_workspace_member_only_solve_ring_lock_diff_16) | test(=real_workspace_member_only_solve_ring_lock_diff_32) | test(=real_workspace_member_only_solve_ring_lock_diff_64)'
 ```
 
-| Ring | Selected rows | Lock matches | Version skew | Wall |
-|---:|---:|---:|---:|---:|
-| member-only 16 | 17 | 16 | 0 | 7.199s |
-| member-only 32 | 33 | 32 | 0 | 7.430s |
-| member-only 64 | 65 | 64 | 0 | 8.362s |
+Load caveat: these timings were taken on a shared machine under gate load, not
+the standing perf lane's controlled certification setup. Baseline start load
+was `7.05 6.88 14.08`; final interner after-run start load was
+`34.03 41.74 40.79`.
 
-Experiment frontier: the current vix array surface can append (`push`), mutate (`set`), pop, and measure length, but cannot read an array element by index. The dense solver state hot path needs exactly that operation: `domain_for(local_id)` over `[Domain]`, and `feature_enabled(local_feature_id)` over an array/bitset-shaped feature state. Replacing those reads with recursive `pop` scans would preserve output semantics but would not test the proposed array carried-hasher hot path.
+| Ring | Selected rows | Lock matches | Version skew | Baseline wall | Dense-state wall | Delta |
+|---:|---:|---:|---:|---:|---:|---:|
+| member-only 16 | 17 | 16 | 0 | 7.783s | 5.909s | -24.1% |
+| member-only 32 | 33 | 32 | 0 | 8.039s | 6.139s | -23.6% |
+| member-only 64 | 65 | 64 | 0 | 9.386s | 6.948s | -26.0% |
 
-Minimal repro is pinned by `vix::rodin dense_state_array_indexed_get_language_gap_is_pinned`:
+Interpretation: the solve-local dense arrays preserve the zero-skew lock-diff
+bar on the member-only rings and remove roughly 24-26% of wall time in this
+opportunistic comparison despite heavier load during the after run.
 
-```vix
-struct Domain {
-    active: Bool,
-}
-
-pub fn main() -> Bool {
-    let domains = [Domain { active: true }];
-    domains.get(0).unwrap().active
-}
-```
-
-Current lowerer result: `get called on Array<Domain>`. The dense-state rewrite is therefore parked at the language/runtime surface, before any semantic Rodin change. The next enabling primitive should be an atomic pure indexed array read, or the endorsed language-level equivalent, before this experiment can produce a meaningful after table.
+Gate status: **not fold-ready**. The final interner variant compiles and the
+member-ring lock diffs pass, but `cargo nextest run -p vix --features
+real-process` timed out six feature-heavy Rodin fixtures in the first dense
+attempt. After removing the unused reverse package array and keeping the
+solve-local interner shape, the isolated fixture
+`feature_unification_pulls_superset_optional_deps` still timed out at 180.015s.
+This names the next frontier: dense package/feature arrays improve the
+member-only ring wall, but feature-heavy propagation/fixture workloads regress
+past the current nextest timeout under load. The standing perf lane should
+certify under controlled load before treating the percentage as a perf-budget
+number or choosing whether to split domain density from feature density.
 
 - Before this pass, resolve at real scale was **0 / 864 Cargo-resolved package-version rows measured** because there was no vix entrypoint composing workspace manifests into a Rodin `Index`.
 - After the widening pass, the largest measured solve ring is **64 / 146 workspace members -> 65 selected rows**, diffed against the real `Cargo.lock`: **64 / 65 solve rows match Cargo.lock**, with the remaining solve-only row being the pseudo workspace root.
