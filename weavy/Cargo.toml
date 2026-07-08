@@ -26,7 +26,12 @@ jit = ["dep:copypatch"]
 # The async lane's driver uses only `core::future` — no runtime dependency.
 # tokio is dev-only, to provide an executor + timers for the suspend tests.
 [dev-dependencies]
+blake3 = { workspace = true }
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+
+[[bench]]
+name = "blake3_stencil"
+harness = false
 
 [lints]
 workspace = true

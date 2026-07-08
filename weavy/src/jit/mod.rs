@@ -92,6 +92,14 @@ pub mod task_stencils {
     include!(concat!(env!("OUT_DIR"), "/weavy_task_stencils.rs"));
 }
 
+/// Spike stencils for measuring BLAKE3's portable compression as a dedicated
+/// copy-and-patch op. These are exposed so benches can assemble a harness
+/// without promoting hash-specific vocabulary into `weavy::task::Op`.
+#[cfg(feature = "jit")]
+pub mod blake3_stencils {
+    include!(concat!(env!("OUT_DIR"), "/weavy_blake3_stencils.rs"));
+}
+
 // NB: module docs live INSIDE these files (`//!`); an outer `///` here would make rustdoc
 // resolve the merged doc's intra-doc links in THIS scope and break them.
 pub mod debug;

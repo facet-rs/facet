@@ -8716,6 +8716,7 @@ dependencies = [
 name = "weavy"
 version = "0.2.2"
 dependencies = [
+ "blake3",
  "copypatch",
  "tokio",
 ]
