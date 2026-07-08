@@ -1967,8 +1967,11 @@ fn taxon_ladder_builds_taxon_with_real_process_and_hashes_artifacts() -> Result<
         "taxon-root-selected.txt",
         &rendered_result_string(&machine, "taxon_root_selected_names", selected)?,
     )?;
-    let build_script_run =
-        demand_with_rustc_trace(&mut machine, "taxon_blake3_build_script_run", vec![source_arg])?;
+    let build_script_run = demand_with_rustc_trace(
+        &mut machine,
+        "taxon_blake3_build_script_run",
+        vec![source_arg],
+    )?;
     let build_script_stdout = tree_file_bytes(&mut machine, build_script_run, "build.stdout")?;
     write_tier_a_artifact(
         "taxon-blake3-build-stdout-final.txt",
@@ -2044,11 +2047,13 @@ fn taxon_demo_bridge_source(graph: &CargoUnitGraph, host: &str) -> Result<String
     let root = *ids
         .get(&root)
         .ok_or_else(|| format!("taxon root unit {root} was not included"))?;
-    let root_version = taxon_pkg_version(&graph.units[*graph
-        .roots
-        .first()
-        .ok_or_else(|| "taxon cargo unit graph had no root".to_string())?]
-        .pkg_id)?;
+    let root_version = taxon_pkg_version(
+        &graph.units[*graph
+            .roots
+            .first()
+            .ok_or_else(|| "taxon cargo unit graph had no root".to_string())?]
+        .pkg_id,
+    )?;
     let blake3_build = graph
         .units
         .iter()
@@ -2274,12 +2279,16 @@ fn taxon_demo_bridge_source(graph: &CargoUnitGraph, host: &str) -> Result<String
     out.push_str(", ");
     out.push_str(&blake3_lib.to_string());
     out.push_str(");\n");
-    out.push_str("    let blake3 = solution_unit_built(Target::host(), source, index, result, targets, ");
+    out.push_str(
+        "    let blake3 = solution_unit_built(Target::host(), source, index, result, targets, ",
+    );
     out.push_str(&vix_string(host));
     out.push_str(", ");
     out.push_str(&blake3_lib.to_string());
     out.push_str(", \"link\");\n");
-    out.push_str("    let deps = solution_dependency_tree(Target::host(), source, index, result, targets, ");
+    out.push_str(
+        "    let deps = solution_dependency_tree(Target::host(), source, index, result, targets, ",
+    );
     out.push_str(&vix_string(host));
     out.push_str(", blake3_unit, \"link\");\n");
     out.push_str("    let rustc = Rustc::acquire(Target::host());\n");
@@ -2287,7 +2296,9 @@ fn taxon_demo_bridge_source(graph: &CargoUnitGraph, host: &str) -> Result<String
     out.push_str("    let edition = package_edition_from_source(source, manifest);\n");
     out.push_str("    let profile_args = rustc_profile_args(unit.profile);\n");
     out.push_str("    let source_arg = argv_source_interpolation(manifest, unit.source);\n");
-    out.push_str("    let blake3_arg = Arg::Interpolation { tree: blake3, subpath: p\"libblake3.rlib\" };\n");
+    out.push_str(
+        "    let blake3_arg = Arg::Interpolation { tree: blake3, subpath: p\"libblake3.rlib\" };\n",
+    );
     for id in &blake3_transitive_libs {
         let unit = graph
             .units
@@ -2346,7 +2357,9 @@ fn taxon_demo_bridge_source(graph: &CargoUnitGraph, host: &str) -> Result<String
             })
             .ok_or_else(|| format!("missing cargo unit for vix id {id}"))?;
         let crate_name = unit.target.name.replace('-', "_");
-        out.push_str(&format!("        --extern {crate_name}={{dep_{crate_name}_arg}}\n"));
+        out.push_str(&format!(
+            "        --extern {crate_name}={{dep_{crate_name}_arg}}\n"
+        ));
     }
     out.push_str("        --env CARGO_MANIFEST_DIR={manifest}\n");
     out.push_str("        {source_arg}\n");
@@ -2357,7 +2370,9 @@ fn taxon_demo_bridge_source(graph: &CargoUnitGraph, host: &str) -> Result<String
     out.push_str("    let result = solve(index, taxon_problem(), ");
     out.push_str(&vix_string(host));
     out.push_str(");\n");
-    out.push_str("    solution_unit_built(Target::host(), source, index, result, taxon_targets(), ");
+    out.push_str(
+        "    solution_unit_built(Target::host(), source, index, result, taxon_targets(), ",
+    );
     out.push_str(&vix_string(host));
     out.push_str(", ");
     out.push_str(&blake3_lib.to_string());
