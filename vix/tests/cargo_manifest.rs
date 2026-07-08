@@ -43,6 +43,8 @@ const FACET_BUILD: &str = include_str!(
     "../../playgrounds/snark/src/bundled/vix/samples/fixtures/cargo_manifest_real/facet/build.rs"
 );
 
+const TOKIO_1_52_3_SPARSE_ROW: &str = r#"{"name":"tokio","vers":"1.52.3","deps":[],"features":{"default":[],"io-util":[],"macros":[],"net":[],"rt":[],"rt-multi-thread":["rt"],"windows-sys":[]},"yanked":false}"#;
+
 const REAL_MEMBERS: [&str; 3] = ["taxon", "facet-core", "facet"];
 
 #[test]
@@ -554,9 +556,9 @@ fn real_workspace_metadata_baseline_is_counted() -> Result<(), String> {
             .count();
     }
 
-    assert_eq!(workspace_members.len(), 146);
-    assert_eq!(vix_member_count, 146);
-    assert_eq!(total_oracle_deps, 1133);
+    assert_eq!(workspace_members.len(), 147);
+    assert_eq!(vix_member_count, 147);
+    assert_eq!(total_oracle_deps, 1136);
     assert_eq!(before_workspace_allowlist_failures, 765);
     assert_eq!(target_cfg_represented, 55);
 
@@ -581,7 +583,7 @@ fn real_workspace_member_only_index_builds_bounded_ring() -> Result<(), String> 
     )?;
     let workspace_members: BTreeSet<_> = metadata.workspace_members.iter().collect();
 
-    assert_eq!(workspace_members.len(), 146);
+    assert_eq!(workspace_members.len(), 147);
     assert_eq!(package_count, limit + 1);
     assert_eq!(clause_count, 35);
     Ok(())
@@ -868,12 +870,7 @@ fn typed_sparse_row_wrong_field_type_reports_offending_row() -> Result<(), Strin
 #[test]
 fn sparse_feature_closure_preserves_hyphenated_seed_feature() -> Result<(), String> {
     let mut machine = manifest_machine()?;
-    let rows = sparse_snapshot_jsonl_for_crates(BTreeSet::from(["tokio".to_owned()]), "")?;
-    let row = rows
-        .lines()
-        .find(|line| line.contains(r#""vers":"1.52.3""#))
-        .ok_or_else(|| "missing tokio 1.52.3 sparse row".to_owned())?;
-    let row = intern_string(&mut machine, row)?;
+    let row = intern_string(&mut machine, TOKIO_1_52_3_SPARSE_ROW)?;
     let target = intern_string(&mut machine, "x86_64-apple-darwin")?;
     let features = machine.demand_i64(
         "sparse_row_rt_multi_thread_feature_debug",
@@ -893,12 +890,7 @@ fn sparse_feature_closure_preserves_hyphenated_seed_feature() -> Result<(), Stri
 #[test]
 fn sparse_feature_closure_preserves_ring8_tokio_seed_features() -> Result<(), String> {
     let mut machine = manifest_machine()?;
-    let rows = sparse_snapshot_jsonl_for_crates(BTreeSet::from(["tokio".to_owned()]), "")?;
-    let row = rows
-        .lines()
-        .find(|line| line.contains(r#""vers":"1.52.3""#))
-        .ok_or_else(|| "missing tokio 1.52.3 sparse row".to_owned())?;
-    let row = intern_string(&mut machine, row)?;
+    let row = intern_string(&mut machine, TOKIO_1_52_3_SPARSE_ROW)?;
     let target = intern_string(&mut machine, "x86_64-apple-darwin")?;
     let features = machine.demand_i64("sparse_row_tokio_ring8_feature_debug", vec![row, target])?;
     let features = rendered_string(&machine, "sparse_row_tokio_ring8_feature_debug", features)?;
