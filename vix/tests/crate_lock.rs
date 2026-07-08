@@ -201,7 +201,10 @@ fn crate_vix_parses_build_script_stdout_directives_as_pure_vix() -> Result<(), S
         return Err("rustc-env directive was not parsed".into());
     }
 
-    let links = machine.demand_i64("crate_build_script_directive_links_from_stdout", vec![stdout])?;
+    let links = machine.demand_i64(
+        "crate_build_script_directive_links_from_stdout",
+        vec![stdout],
+    )?;
     if rendered_string(
         &machine,
         "crate_build_script_directive_links_from_stdout",
@@ -211,7 +214,10 @@ fn crate_vix_parses_build_script_stdout_directives_as_pure_vix() -> Result<(), S
         return Err("link directives were not recorded as unit data".into());
     }
 
-    let rerun = machine.demand_i64("crate_build_script_directive_rerun_from_stdout", vec![stdout])?;
+    let rerun = machine.demand_i64(
+        "crate_build_script_directive_rerun_from_stdout",
+        vec![stdout],
+    )?;
     if rendered_string(
         &machine,
         "crate_build_script_directive_rerun_from_stdout",
@@ -275,7 +281,9 @@ fn crate_vix_rejects_malformed_build_script_directive_lines() -> Result<(), Stri
             if err.contains("cargo:rustc-cfg") || err.contains("unwrap") {
                 Ok(())
             } else {
-                Err(format!("malformed directive failed with unexpected error: {err}"))
+                Err(format!(
+                    "malformed directive failed with unexpected error: {err}"
+                ))
             }
         }
     }

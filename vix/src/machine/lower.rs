@@ -3638,6 +3638,14 @@ impl<'a> FnLowerer<'a> {
                     pending: None,
                 })
             }
+            ast::Expr::Call(call)
+                if matches!(
+                    &call.callee,
+                    ast::PathRef::Identifier(name) if name.value == "json_typed"
+                ) =>
+            {
+                self.typed_doc_parse_call(call, 1, expected)
+            }
             ast::Expr::Call(call) => self.call(call),
             ast::Expr::MethodCall(call) => self.method_call(call, expected),
             ast::Expr::Map(map) => self.map_literal(map, expected),
@@ -4633,9 +4641,22 @@ impl<'a> FnLowerer<'a> {
             }
             "keys" => {
                 if !call.args.args.is_empty() {
-                    return Err("Doc.keys takes no arguments".into());
+                    return Err("keys takes no arguments".into());
                 }
-                self.expect_schema(&receiver, "Doc")?;
+                if !self.tables.schemas.is_named_schema(&receiver.schema, "Doc") {
+                    let Some((key_schema, _)) =
+                        self.tables.schemas.map_schema_names(&receiver.schema)
+                    else {
+                        return Err(format!("keys called on {}", receiver.schema));
+                    };
+                    if !self
+                        .tables
+                        .schemas
+                        .is_primitive(&key_schema, Primitive::String)
+                    {
+                        return Err(format!("keys requires String map keys, got {key_schema}"));
+                    }
+                }
                 self.doc_keys(&receiver)
             }
             "len" => {
@@ -7244,6 +7265,27 @@ impl<'a> FnLowerer<'a> {
     }
 
     fn doc_parse_call(&mut self, call: &ast::Call, kind: i64) -> Result<ValueSlot, String> {
+        self.document_parser_call(call, kind, None)
+    }
+
+    fn typed_doc_parse_call(
+        &mut self,
+        call: &ast::Call,
+        kind: i64,
+        expected: Option<&str>,
+    ) -> Result<ValueSlot, String> {
+        let Some(expected) = expected else {
+            return Err("json_typed requires a contextual result type".into());
+        };
+        self.document_parser_call(call, kind, Some(expected))
+    }
+
+    fn document_parser_call(
+        &mut self,
+        call: &ast::Call,
+        kind: i64,
+        target_schema: Option<&str>,
+    ) -> Result<ValueSlot, String> {
         let [ast::Arg::Expr(arg)] = call.args.args.as_slice() else {
             return Err("document parser takes one argument".into());
         };
@@ -7266,6 +7308,17 @@ impl<'a> FnLowerer<'a> {
             dst: region + 16,
             src: input.slot,
         });
+        let target_schema_ref = match target_schema {
+            Some(schema) => *self
+                .schema_words
+                .get(schema)
+                .ok_or_else(|| format!("no schema ref for {schema}"))?,
+            None => 0,
+        };
+        self.code.push(Op::ConstI64 {
+            dst: region + 24,
+            value: target_schema_ref,
+        });
         self.code.push(Op::HostCall {
             host: DOC_PARSE_HOST,
         });
@@ -7276,7 +7329,7 @@ impl<'a> FnLowerer<'a> {
         });
         Ok(ValueSlot {
             slot: dst,
-            schema: "Doc".into(),
+            schema: target_schema.unwrap_or("Doc").into(),
             realization: None,
             pending: None,
         })

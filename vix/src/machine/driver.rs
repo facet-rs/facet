@@ -535,6 +535,7 @@ struct DocParseRequest {
     input_slot: usize,
     kind: DocParseKind,
     input: i64,
+    target_schema: Option<String>,
 }
 
 #[derive(Clone, Debug)]
@@ -4089,10 +4090,21 @@ impl Driver {
                     }
                 };
                 let input = read_frame_word(frame, primitive_region + 16);
+                let target_schema = match read_frame_word(frame, primitive_region + 24) {
+                    0 => None,
+                    schema_ref => match schema_name_for(schema_ref, schema_tables) {
+                        Ok(schema) => Some(schema),
+                        Err(err) => {
+                            *host_error.borrow_mut() = Some(err);
+                            return;
+                        }
+                    },
+                };
                 doc_parse_requests.push(DocParseRequest {
                     input_slot,
                     kind,
                     input,
+                    target_schema,
                 });
             };
 
@@ -4928,18 +4940,27 @@ impl Driver {
             let mut doc_keys = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
-                    let doc = read_frame_word(frame, primitive_region + 8);
-                    let map_handle = match doc_payload(&store_cell.borrow(), descriptors, doc)? {
-                        DocPayload::Map(handle) => handle,
-                        DocPayload::Virtual(_) => {
-                            return Err("Doc.keys on virtual Doc is not enumerable".into());
+                    let input = read_frame_word(frame, primitive_region + 8);
+                    let (_, pairs) = {
+                        let store = store_cell.borrow();
+                        let entry = store
+                            .entry(input)
+                            .ok_or_else(|| format!("store handle {input}"))?;
+                        if schemas.is_map(&entry.schema) {
+                            store.map_pairs(input, schemas, schema_tables)?
+                        } else {
+                            let map_handle = match doc_payload(&store, descriptors, input)? {
+                                DocPayload::Map(handle) => handle,
+                                DocPayload::Virtual(_) => {
+                                    return Err("Doc.keys on virtual Doc is not enumerable".into());
+                                }
+                                payload => {
+                                    return Err(format!("keys called on Doc::{payload:?}"));
+                                }
+                            };
+                            store.map_pairs(map_handle, schemas, schema_tables)?
                         }
-                        payload => return Err(format!("Doc.keys called on Doc::{payload:?}")),
                     };
-                    let (_, pairs) =
-                        store_cell
-                            .borrow()
-                            .map_pairs(map_handle, schemas, schema_tables)?;
                     let mut keys = pairs
                         .into_iter()
                         .map(|pair| {
@@ -6944,6 +6965,7 @@ impl Driver {
 
     fn doc_parse_request(&mut self, req: DocParseRequest) -> Result<(usize, i64), String> {
         let input = self.document_input_value(req.input)?;
+        let input_text = document_input_text_for_error(&input);
         let value = match req.kind {
             DocParseKind::Toml => crate::data::parse_toml(input)?,
             DocParseKind::Json => crate::data::parse_json(input)?,
@@ -6951,13 +6973,30 @@ impl Driver {
             DocParseKind::Cfg => crate::data::parse_cfg(input)?,
             DocParseKind::RustcCfg => crate::data::parse_rustc_cfg(input)?,
         };
-        let handle = alloc_doc_from_value(
-            &self.store,
-            &self.descriptors,
-            &self.schemas,
-            &self.schemas,
-            value,
-        )?;
+        let handle = if let Some(schema) = req.target_schema {
+            alloc_typed_from_value(
+                &self.store,
+                &self.descriptors,
+                &self.schemas,
+                &self.schemas,
+                &schema,
+                value,
+            )
+            .map_err(|err| {
+                format!(
+                    "typed {:?} parse into {schema} failed: {err}; offending input: {input_text}",
+                    req.kind
+                )
+            })?
+        } else {
+            alloc_doc_from_value(
+                &self.store,
+                &self.descriptors,
+                &self.schemas,
+                &self.schemas,
+                value,
+            )?
+        };
         Ok((req.input_slot, handle))
     }
 
@@ -7485,6 +7524,173 @@ fn alloc_doc_from_value(
             alloc_doc_variant(store, descriptors, schemas, 0, &[])
         }
         other => Err(format!("document value {other:?} is outside the B5 subset")),
+    }
+}
+
+fn alloc_typed_from_value(
+    store: &RefCell<ValueStore>,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
+    schema_tables: &SchemaTables,
+    schema: &str,
+    value: Value,
+) -> Result<i64, String> {
+    if schemas.is_named_schema(schema, "Doc") {
+        return alloc_doc_from_value(store, descriptors, schemas, schema_tables, value);
+    }
+    if schemas.is_primitive(schema, Primitive::Bool) {
+        let Value::Bool(value) = value else {
+            return Err(format!("expected Bool, got {}", value.short()));
+        };
+        return Ok(i64::from(value));
+    }
+    if schemas.is_primitive(schema, Primitive::I64) {
+        let Value::Int(value) = value else {
+            return Err(format!("expected Int, got {}", value.short()));
+        };
+        return Ok(value);
+    }
+    if schemas.is_primitive(schema, Primitive::F64) {
+        return match value {
+            Value::Float(value) => Ok(super::value::TotalF64::new(value).get().to_bits() as i64),
+            Value::Int(value) => {
+                Ok(super::value::TotalF64::new(value as f64).get().to_bits() as i64)
+            }
+            other => Err(format!("expected Float, got {}", other.short())),
+        };
+    }
+    if schemas.is_primitive(schema, Primitive::String) {
+        let Value::Str(value) = value else {
+            return Err(format!("expected String, got {}", value.short()));
+        };
+        return Ok(store
+            .borrow_mut()
+            .alloc_raw("String", value.into_bytes(), schemas)
+            .0);
+    }
+    if schemas.is_primitive(schema, Primitive::Bytes) {
+        let Value::Blob(value) = value else {
+            return Err(format!("expected Blob, got {}", value.short()));
+        };
+        return Ok(store.borrow_mut().alloc_raw("Blob", value, schemas).0);
+    }
+    if let Some(elem_schema) = array_element_schema(schema) {
+        let Value::Array(values) = value else {
+            return Err(format!("expected {schema}, got {}", value.short()));
+        };
+        let words = values
+            .into_iter()
+            .map(|value| {
+                alloc_typed_from_value(
+                    store,
+                    descriptors,
+                    schemas,
+                    schema_tables,
+                    elem_schema,
+                    value,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        return Ok(store
+            .borrow_mut()
+            .alloc_array_words(elem_schema, words, schemas, schema_tables)?
+            .0);
+    }
+    if let Some((key_schema, value_schema)) = schemas.map_schema_names(schema) {
+        if !schemas.is_primitive(&key_schema, Primitive::String) {
+            return Err(format!(
+                "typed JSON map keys must be String, got {key_schema}"
+            ));
+        }
+        let Value::Map(entries) = value else {
+            return Err(format!("expected {schema}, got {}", value.short()));
+        };
+        let mut pairs = Vec::with_capacity(entries.len());
+        for (key, value) in entries {
+            let Value::Str(key) = key else {
+                return Err(format!("typed JSON object key must be string, got {key:?}"));
+            };
+            let key_word = store
+                .borrow_mut()
+                .alloc_raw("String", key.into_bytes(), schemas)
+                .0;
+            let value_word = alloc_typed_from_value(
+                store,
+                descriptors,
+                schemas,
+                schema_tables,
+                &value_schema,
+                value,
+            )?;
+            pairs.push(MapPair {
+                key_schema: key_schema.clone(),
+                key_word,
+                value_schema: value_schema.clone(),
+                value_word,
+                value_realization: None,
+            });
+        }
+        return Ok(store
+            .borrow_mut()
+            .alloc_map(schema, pairs, schema_tables, descriptors, schemas)?
+            .0);
+    }
+    if let Some(Kind::Struct { fields, .. }) = schemas.kind_for_name(schema).cloned() {
+        let Value::Map(mut entries) = value else {
+            return Err(format!("expected struct {schema}, got {}", value.short()));
+        };
+        let descriptor = descriptors
+            .get(schema)
+            .ok_or_else(|| format!("descriptor for schema `{schema}`"))?;
+        let mut bytes = vec![0u8; descriptor.layout.size];
+        for (field_index, field) in fields.iter().enumerate() {
+            let field_value = entries
+                .remove(&Value::Str(field.name.clone()))
+                .ok_or_else(|| format!("missing field `{}` for {schema}", field.name))?;
+            let field_schema = schemas.display_ref(&field.schema);
+            let word = alloc_typed_from_value(
+                store,
+                descriptors,
+                schemas,
+                schema_tables,
+                &field_schema,
+                field_value,
+            )?;
+            let field_offset = field_offset(descriptor, &bytes, field_index);
+            let field_descriptor = field_descriptor(descriptor, &bytes, field_index);
+            if field_descriptor.layout.size > 8 {
+                return Err(format!(
+                    "typed JSON field `{}` for {schema} has {} bytes",
+                    field.name, field_descriptor.layout.size
+                ));
+            }
+            let word = canonicalize_word_for_schema(schemas, &field_schema, word);
+            bytes[field_offset..field_offset + field_descriptor.layout.size]
+                .copy_from_slice(&word.to_le_bytes()[..field_descriptor.layout.size]);
+        }
+        if !entries.is_empty() {
+            let keys = entries
+                .keys()
+                .map(|key| match key {
+                    Value::Str(key) => key.clone(),
+                    other => format!("{other:?}"),
+                })
+                .collect::<Vec<_>>();
+            return Err(format!("unknown field(s) for {schema}: {}", keys.join(",")));
+        }
+        return Ok(store
+            .borrow_mut()
+            .alloc(schema, bytes, descriptors, schemas)
+            .0);
+    }
+    Err(format!("typed JSON cannot materialize schema {schema}"))
+}
+
+fn document_input_text_for_error(value: &Value) -> String {
+    match value {
+        Value::Str(text) => text.clone(),
+        Value::Tree(_) => "<tree document input>".to_string(),
+        other => other.short(),
     }
 }
 
