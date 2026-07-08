@@ -40,7 +40,6 @@ use taxon::{Kind, Primitive, SchemaRef};
 #[cfg(any(test, feature = "jit"))]
 use weavy::jit::task_lane::{JitProgram, JitTask};
 use weavy::mem::{Access, MapStorage, Presence, SequenceStorage, Tag};
-#[cfg(any(test, feature = "jit"))]
 use weavy::task::Op;
 use weavy::task::{FnId, HostFn, Program, Task, TaskStep, ValueMemories, ValueMemory};
 
