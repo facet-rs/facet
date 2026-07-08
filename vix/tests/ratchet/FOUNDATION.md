@@ -73,7 +73,38 @@ coverage — behavior alone does not advance the ratchet:
 - **The scheduler is passive data**; weavy owns suspension; no shadow
   scheduler, no clock, no poll loops (`block-on-event`).
 
-## 5. What the bands buy the climber
+## 5. The performance floor: budgets with asymptotic gaps
+
+Traces and coverage stop the wrong architecture; budgets stop the *slow
+faithful* one — the interpreter-on-weavy that emits valid traces at ten
+microseconds per operation and climbs the ladder legally. Selected rungs
+carry `//! budget: <wall>, <rss>` headers (the runner kills over-budget
+runs; a killed rung is red) and counter expectations:
+
+```
+scheduler_requests_at_most N   — machinery contacts during the test
+memo_entries_at_most N         — no per-iteration memoization
+store_interns_at_most N        — publish-once: molten until the end
+```
+
+The budgets are honest because the gaps are asymptotic, never
+constant-factor — robust to any machine, unreachable by brute force:
+
+- **Rung 050** (10M-iteration tail loop, 5s): free for a fused interior;
+  100+ seconds for anything touching scheduler/memo/identity machinery
+  per iteration. Forces interior iteration to be *not demand*.
+- **Rung 051** (1M-element array accumulator, 5s): the molten rung.
+  Without uniqueness-mutation and publish-once, each push either copies
+  (O(n²) — ~10¹² word moves, weeks) or interns (forbidden by the
+  counter). There is no third way; that is the rung's entire content.
+- **Rungs 098/100** (the solver, 30s): keeps the capstone honest once
+  everything composes.
+
+Memory budgets are enforced the same way (the previous engine once
+allocated 22GB in four seconds on a 100k-iteration accumulator; the
+budget line exists because that happened).
+
+## 6. What the bands buy the climber
 
 The gates are not bureaucracy; they are the re-architecture Amos is
 worried about, priced at the moment it is cheapest. The trace/chaos/

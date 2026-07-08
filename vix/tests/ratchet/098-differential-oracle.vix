@@ -1,3 +1,5 @@
+//! budget: 30s wall, 2GB rss
+
 // Rung 098 — the differential oracle: our solve matches the recorded
 // expected selection for the standard fixture workspace, package by package.
 test differential_oracle {

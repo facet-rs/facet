@@ -1,3 +1,5 @@
+//! budget: 30s wall, 2GB rss
+
 // Rung 100 — the last rung: the miniature solver from the book's final
 // chapter, whole, on one page. Domains, propagation, selection,
 // backtracking without a trail, learning as values. When this is green,
