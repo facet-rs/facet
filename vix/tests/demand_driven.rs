@@ -252,6 +252,7 @@ fn shared_calls_spawn_once() {
             .filter(|e| matches!(e, DriveEvent::Spawned { .. }))
             .count();
         assert_eq!(spawns, 3, "{lane:?}");
+        assert_eq!(spawned_invocation_count(&m, "square"), 1, "{lane:?}");
     }
 }
 

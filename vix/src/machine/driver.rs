@@ -2726,7 +2726,8 @@ impl Driver {
         let mut runnable: Vec<usize> = Vec::new();
 
         let root = self.spawn(&mut executions, fn_ref, key.clone(), &args)?;
-        debug_assert!(in_flight.started(key.clone()));
+        let inserted = in_flight.started(key.clone());
+        debug_assert!(inserted, "root invocation was already in flight");
         runnable.push(root);
 
         while let Some(ix) = runnable.pop() {
@@ -2735,7 +2736,8 @@ impl Driver {
             match requests {
                 Burst::Done(value) => {
                     let done_key = exec.key.clone();
-                    debug_assert!(in_flight.finished(&done_key));
+                    let removed = in_flight.finished(&done_key);
+                    debug_assert!(removed, "completed invocation was not in flight");
                     let mut value = value;
                     let return_schema = self.lowered(exec.fn_ref).return_schema.clone();
                     if !schema_is_inline_word(&self.schemas, &return_schema) {
@@ -3042,7 +3044,8 @@ impl Driver {
                                     req_key.clone(),
                                     &req.args,
                                 )?;
-                                debug_assert!(in_flight.started(req_key));
+                                let inserted = in_flight.started(req_key);
+                                debug_assert!(inserted, "child invocation was already in flight");
                                 runnable.push(child);
                             }
                         }
