@@ -2,7 +2,6 @@
 title = "draft: the combinator surface"
 +++
 
-# Draft: the combinator surface
 
 *For Amos to tear, on the website. Supersedes the flat v1 list in
 `iteration.md` §1. Every operation shown with code; open questions marked

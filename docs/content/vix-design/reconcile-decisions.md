@@ -2,7 +2,6 @@
 title = "three decisions from the reconciliation pass"
 +++
 
-# Three decisions from the reconciliation pass
 
 Fable, 2026-07-08. The 158-rule reconciliation (verdicts in
 `~/vixenware/notes/machine-spec/reconcile-verdicts.md`) surfaced three

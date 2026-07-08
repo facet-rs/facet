@@ -1,8 +1,7 @@
 +++
-title = "the three planes of identity"
+title = "The three planes of identity"
 +++
 
-# The three planes of identity
 
 *Status: design chapter (Amos + Fable, 2026-07-08 — the location-plane
 conversation). Everything agreed in that conversation is stated here as

@@ -1,8 +1,7 @@
 +++
-title = "std: collections"
+title = "Standard library: collections"
 +++
 
-# Collections
 
 *Status: provisional — this page documents the language as designed; parts
 are not implemented yet.*

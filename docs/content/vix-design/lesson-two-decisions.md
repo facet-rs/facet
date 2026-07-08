@@ -2,7 +2,6 @@
 title = "lesson: the two decisions, from zero"
 +++
 
-# Lesson: the two decisions, from zero
 
 Self-contained. No term is used before it is explained. Each part ends with
 the actual decision in one line. (Supersedes the "decision 1" section of

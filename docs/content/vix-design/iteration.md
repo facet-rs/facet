@@ -2,7 +2,6 @@
 title = "proposal: iteration & the combinator surface"
 +++
 
-# Iteration & the combinator surface
 
 Status: PROPOSAL (Fable, 2026-07-08). For Amos to tear. Grounded in the
 foundation chapter (`/vix/`), the language-gap censuses
