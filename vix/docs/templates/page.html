@@ -1,0 +1,18 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page.title }} - {{ config.title }}{% endblock %}
+
+{% block breadcrumb %}
+{% if section is defined and section %}<a href="{{ section.permalink }}">{{ section.title }}</a><span>›</span>{% endif %}<span>{{ page.title }}</span>
+{% endblock %}
+
+{% block content %}
+<article class="doc">
+    <header class="doc-header">
+        <h1>{{ page.title }}</h1>
+    </header>
+    <div class="doc-body">
+        {{ page.content | safe }}
+    </div>
+</article>
+{% endblock %}

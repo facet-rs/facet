@@ -1,5 +1,6 @@
 +++
-title = "machine: capability boundary"
+title = "Capabilities"
+weight = 12
 +++
 
 The machine-side boundary with capabilities — daemon-advertised toolchains

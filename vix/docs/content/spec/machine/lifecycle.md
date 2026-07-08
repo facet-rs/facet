@@ -1,5 +1,6 @@
 +++
-title = "machine: effect lifecycle & failure"
+title = "Effect lifecycle"
+weight = 7
 +++
 
 What happens when things do not complete cleanly: effect failure, tickets

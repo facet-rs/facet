@@ -1,5 +1,6 @@
 +++
-title = "machine: observability"
+title = "Observability"
+weight = 11
 +++
 
 The observability spine — built first, zero-cost when off, and the reason

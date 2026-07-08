@@ -1,5 +1,6 @@
 +++
-title = "machine: receipts"
+title = "Receipts"
+weight = 10
 +++
 
 Read-sets and receipts — the product's central claim, stated as machine

@@ -1,5 +1,6 @@
 +++
-title = "machine: substrate ABI"
+title = "ABI"
+weight = 14
 +++
 
 The driver↔weavy boundary. Boundary formats calcify into JIT stencils —

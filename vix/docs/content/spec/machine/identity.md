@@ -1,5 +1,6 @@
 +++
-title = "machine: identity"
+title = "Identity"
+weight = 1
 +++
 
 Content identity: what enters hash bytes, what never does, and where hashing

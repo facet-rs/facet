@@ -1,5 +1,6 @@
 +++
-title = "machine: values"
+title = "Values"
+weight = 8
 +++
 
 The value model: how values are typed, constructed, read, and discriminated.

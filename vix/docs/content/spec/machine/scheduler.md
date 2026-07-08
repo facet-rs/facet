@@ -1,5 +1,6 @@
 +++
-title = "machine: scheduler"
+title = "Scheduler"
+weight = 5
 +++
 
 The demand scheduler: passive data, path-shaped tasks, bounded admission.

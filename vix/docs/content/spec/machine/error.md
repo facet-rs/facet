@@ -1,5 +1,6 @@
 +++
-title = "machine: errors"
+title = "Errors"
+weight = 13
 +++
 
 The machine's failure model. The governing incident: a solve failing with

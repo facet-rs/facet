@@ -1,5 +1,6 @@
 +++
-title = "machine: persistence"
+title = "Persistence"
+weight = 4
 +++
 
 Cross-process persistence of values, memo entries, and claims. Today the

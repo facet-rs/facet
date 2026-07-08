@@ -1,5 +1,6 @@
 +++
-title = "machine: memo"
+title = "Memo"
+weight = 2
 +++
 
 Memoization: keys, hit economics, and the three-tier verified-reuse ladder

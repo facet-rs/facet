@@ -1,5 +1,6 @@
 +++
-title = "machine: conventions"
+title = "Conventions"
+weight = 15
 +++
 
 Code conventions with teeth. These are spec rules, not style suggestions,

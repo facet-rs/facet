@@ -1,5 +1,7 @@
 +++
-title = "vix specifications"
+title = "Specification"
+weight = 40
+sort_by = "weight"
 +++
 
 Conjoined specs: each rule here is implemented and verified by annotated

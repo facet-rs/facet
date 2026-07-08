@@ -1,5 +1,7 @@
 +++
-title = "machine: the vix runtime"
+title = "The runtime"
+weight = 2
+sort_by = "weight"
 +++
 
 Normative specification for the vix machine — the demand scheduler,

@@ -1,5 +1,6 @@
 +++
-title = "Standard library: collections"
+title = "Collections"
+weight = 1
 +++
 
 

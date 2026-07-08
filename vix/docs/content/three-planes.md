@@ -1,5 +1,6 @@
 +++
 title = "The three planes of identity"
+weight = 20
 +++
 
 

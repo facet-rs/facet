@@ -1,5 +1,6 @@
 +++
-title = "machine: execution"
+title = "Execution"
+weight = 6
 +++
 
 Execution authority: weavy owns running code; the machine consumes lowering

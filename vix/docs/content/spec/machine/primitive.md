@@ -1,5 +1,6 @@
 +++
-title = "machine: primitives"
+title = "Primitives"
+weight = 9
 +++
 
 Effect primitives: Rust-implemented host services exposed to vix through one

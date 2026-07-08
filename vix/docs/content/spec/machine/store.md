@@ -1,5 +1,6 @@
 +++
-title = "machine: store"
+title = "Store"
+weight = 3
 +++
 
 The content-addressed value store: handles, interning, molten working
