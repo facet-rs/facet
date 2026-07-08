@@ -8855,6 +8855,45 @@ pub fn main() -> Int {
     }
 
     #[test]
+    fn map_get_cache_observes_insert_after_get_after_insert() {
+        let src = r#"
+pub fn main() -> Int {
+    let m: Map<String, Int> = {};
+    let m = m.insert("a", 1);
+    let first = m.get("a").unwrap();
+    let m = m.insert("b", 2);
+    let second = m.get("b").unwrap();
+    let still_first = m.get("a").unwrap();
+    first * 100 + second * 10 + still_first
+}
+"#;
+        for lane in lanes() {
+            let mut reuse = Machine::load_with_lane(src, lane).unwrap();
+            reuse.driver.set_force_molten_copy(false);
+            let reuse_result = reuse.demand_i64("main", vec![]).unwrap();
+            let reuse_trace = reuse.driver.trace.clone();
+            let reuse_bundle = reuse
+                .driver
+                .export_value_bundle(reuse_result, Vec::new())
+                .unwrap();
+
+            let mut copy = Machine::load_with_lane(src, lane).unwrap();
+            copy.driver.set_force_molten_copy(true);
+            let copy_result = copy.demand_i64("main", vec![]).unwrap();
+            let copy_trace = copy.driver.trace.clone();
+            let copy_bundle = copy
+                .driver
+                .export_value_bundle(copy_result, Vec::new())
+                .unwrap();
+
+            assert_eq!(reuse_result, 121, "{lane:?}");
+            assert_eq!(reuse_result, copy_result, "{lane:?}");
+            assert_eq!(reuse_trace, copy_trace, "{lane:?}");
+            assert_eq!(reuse_bundle.values, copy_bundle.values, "{lane:?}");
+        }
+    }
+
+    #[test]
     fn typed_array_pop_preserves_remaining_array_schema() {
         let src = r#"
 pub fn main() -> Int {
