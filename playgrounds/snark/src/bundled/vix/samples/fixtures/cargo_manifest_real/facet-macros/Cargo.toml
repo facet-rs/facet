@@ -1,5 +1,5 @@
 [package]
-name = "facet-macros"
+name = "zzfacet-macros"
 version = "0.50.0-rc.5"
 edition.workspace = true
 rust-version.workspace = true

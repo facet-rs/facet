@@ -1,5 +1,5 @@
 [package]
-name = "facet-testhelpers"
+name = "zzfacet-testhelpers"
 version = "0.50.0-rc.5"
 edition.workspace = true
 rust-version.workspace = true

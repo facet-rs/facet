@@ -142,3 +142,15 @@ slow-timeout = { period = "300s", terminate-after = 2 }
 [[profile.default.overrides]]
 filter = 'package(vix) & binary(reloc_selection)'
 threads-required = "num-cpus"
+
+# The vendored-playground sweeps now shell out to a real JS runtime (node)
+# once per bundle instead of an in-process Boa evaluator, and coverage
+# instrumentation makes subprocess-heavy tests noticeably slower in CI.
+[[profile.default.overrides]]
+filter = 'package(snark-playground) & (test(vendored_playground_samples_parse_from_rust) | test(representative_vendored_playground_samples_parse_from_rust))'
+slow-timeout = { period = "120s", terminate-after = 5 }
+
+# Same coverage-instrumentation slowdown as the fable checker tests above.
+[[profile.default.overrides]]
+filter = 'package(vix) & test(ast_structural_projection_contracts_are_pinned)'
+slow-timeout = { period = "120s", terminate-after = 5 }

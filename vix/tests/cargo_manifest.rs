@@ -43,7 +43,7 @@ const FACET_BUILD: &str = include_str!(
     "../../playgrounds/snark/src/bundled/vix/samples/fixtures/cargo_manifest_real/facet/build.rs"
 );
 
-const REAL_MEMBERS: [&str; 3] = ["taxon", "facet-core", "facet"];
+const REAL_MEMBERS: [&str; 3] = ["zztaxon", "zzfacet-core", "zzfacet"];
 
 #[test]
 fn workspace_members_and_package_identity_come_from_real_manifest_copies() -> Result<(), String> {
@@ -58,9 +58,9 @@ fn workspace_members_and_package_identity_come_from_real_manifest_copies() -> Re
     );
 
     for (name, manifest, path) in [
-        ("taxon", taxon_tree(), "phon/rust/taxon"),
-        ("facet-core", facet_core_tree(), "facet-core"),
-        ("facet", facet_tree(), "facet"),
+        ("zztaxon", taxon_tree(), "phon/rust/taxon"),
+        ("zzfacet-core", facet_core_tree(), "facet-core"),
+        ("zzfacet", facet_tree(), "facet"),
     ] {
         let member = intern_tree(&mut machine, manifest)?;
         let path = intern_string(&mut machine, path)?;
@@ -301,7 +301,7 @@ fn dependency_declarations_extract_workspace_and_detailed_forms() -> Result<(), 
     )?;
     assert_eq!(
         rendered_string(&machine, "dependency_names_text", dependency_names)?,
-        "bytes\nbytestring\ncamino\nchrono\ncompact_str\nconst-fnv1a-hash\niddqd\nimpls\nindexmap\njiff\nlock_api\nnum-complex\nordered-float\nruint\nrust_decimal\nsemver\nsmallvec\nsmartstring\nsmol_str\nstable_deref_trait\ntaxon\ntendril\ntime\nulid\nurl\nuuid\nyoke"
+        "bytes\nbytestring\ncamino\nchrono\ncompact_str\nconst-fnv1a-hash\niddqd\nimpls\nindexmap\njiff\nlock_api\nnum-complex\nordered-float\nruint\nrust_decimal\nsemver\nsmallvec\nsmartstring\nsmol_str\nstable_deref_trait\ntendril\ntime\nulid\nurl\nuuid\nyoke\nzztaxon"
     );
 
     let blake3 = detailed_dep(&mut machine, taxon, workspace, "blake3", "normal")?;
@@ -343,7 +343,7 @@ fn dependency_declarations_extract_workspace_and_detailed_forms() -> Result<(), 
     assert!(field_bool(&tempfile, "workspace")?);
     assert!(!field_bool(&tempfile, "optional")?);
 
-    let facet_core_dep = detailed_dep(&mut machine, facet, workspace, "facet-core", "normal")?;
+    let facet_core_dep = detailed_dep(&mut machine, facet, workspace, "zzfacet-core", "normal")?;
     assert_eq!(
         field_string(&facet_core_dep, "version_req")?,
         "=0.50.0-rc.5"
@@ -351,7 +351,7 @@ fn dependency_declarations_extract_workspace_and_detailed_forms() -> Result<(), 
     assert_eq!(field_string(&facet_core_dep, "path")?, "../facet-core");
     assert!(!field_bool(&facet_core_dep, "default_features")?);
 
-    let macros_dep = detailed_dep(&mut machine, facet, workspace, "facet-macros", "normal")?;
+    let macros_dep = detailed_dep(&mut machine, facet, workspace, "zzfacet-macros", "normal")?;
     assert_eq!(field_string(&macros_dep, "version_req")?, "0.50.0-rc.5");
     assert_eq!(field_string(&macros_dep, "path")?, "../facet-macros");
     assert!(!field_bool(&macros_dep, "default_features")?);
@@ -468,15 +468,15 @@ fn target_shapes_match_cargo_metadata_for_real_members() -> Result<(), String> {
     let mut machine = manifest_machine()?;
     let mut vix_shapes = BTreeSet::new();
     for (package, manifest) in [
-        ("taxon", taxon_tree()),
-        ("facet-core", facet_core_tree()),
-        ("facet", facet_tree()),
+        ("zztaxon", taxon_tree()),
+        ("zzfacet-core", facet_core_tree()),
+        ("zzfacet", facet_tree()),
     ] {
         let manifest = intern_tree(&mut machine, manifest)?;
         let lib = machine.demand_i64("lib_target_shape", vec![manifest])?;
         let lib = record(machine.render_result("lib_target_shape", lib)?)?;
         vix_shapes.insert(target_shape_from_vix(package, &lib)?);
-        if package == "facet-core" || package == "facet" {
+        if package == "zzfacet-core" || package == "zzfacet" {
             let build = machine.demand_i64("build_script_target_shape", vec![manifest])?;
             let build = record(machine.render_result("build_script_target_shape", build)?)?;
             vix_shapes.insert(target_shape_from_vix(package, &build)?);

@@ -1,5 +1,5 @@
 [package]
-name = "facet-default"
+name = "zzfacet-default"
 version = "0.50.0-rc.5"
 edition.workspace = true
 rust-version.workspace = true
