@@ -946,10 +946,21 @@ struct SealedPayload {
     taint: StructuralTaint,
 }
 
-#[derive(Clone, Debug, Default)]
+#[derive(Debug, Default)]
 pub struct ValueStore {
     entries: Vec<StoreEntry>,
     by_content: HashMap<(String, HandleTier, ContentHash), i64>,
+    decoded_map_rows: HashMap<DecodedMapCacheKey, DecodedMapRows>,
+}
+
+impl Clone for ValueStore {
+    fn clone(&self) -> Self {
+        Self {
+            entries: self.entries.clone(),
+            by_content: self.by_content.clone(),
+            decoded_map_rows: HashMap::new(),
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
@@ -1013,6 +1024,24 @@ struct OrderedMapPair {
     value_hash: ContentHash,
     key_taint: Option<StructuralTaint>,
     value_taint: Option<StructuralTaint>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
+struct DecodedMapCacheKey {
+    handle: i64,
+    content_hash: ContentHash,
+}
+
+#[derive(Clone, Debug)]
+struct DecodedMapRow {
+    pair: MapPair,
+    key_hash: ContentHash,
+}
+
+#[derive(Clone, Debug)]
+struct DecodedMapRows {
+    schema: String,
+    rows: Vec<DecodedMapRow>,
 }
 
 #[derive(Clone)]
@@ -1243,6 +1272,62 @@ impl Realization {
     }
 }
 
+fn resolved_map_get_value(
+    pair: MapPair,
+    value_schema: &str,
+) -> Option<(String, i64, Option<Realization>)> {
+    if pair.value_schema == value_schema {
+        return Some((pair.value_schema, pair.value_word, pair.value_realization));
+    }
+    if let Some(inner) = realized_value_schema(value_schema) {
+        if let Some(realization) = pair.value_realization {
+            match realization {
+                Realization::Ready if pair.value_schema == inner => {
+                    return Some((
+                        value_schema.to_string(),
+                        pair.value_word,
+                        Some(Realization::Ready),
+                    ));
+                }
+                Realization::Pending if pair.value_schema == pending_schema(inner) => {
+                    return Some((
+                        value_schema.to_string(),
+                        pair.value_word,
+                        Some(Realization::Pending),
+                    ));
+                }
+                _ => {}
+            }
+        }
+        if pair.value_schema == inner && pair.value_realization.is_none() {
+            return Some((
+                value_schema.to_string(),
+                pair.value_word,
+                Some(Realization::Ready),
+            ));
+        }
+        if pair.value_schema == pending_schema(inner) && pair.value_realization.is_none() {
+            return Some((
+                value_schema.to_string(),
+                pair.value_word,
+                Some(Realization::Pending),
+            ));
+        }
+    }
+    if pair.value_schema == pending_schema(value_schema) {
+        return Some((pair.value_schema, pair.value_word, pair.value_realization));
+    }
+    None
+}
+
+fn option_none_content_hash(value_schema: &str, schema_tables: &SchemaTables) -> ContentHash {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"vix-option");
+    update_schema_name(&mut hasher, schema_tables, &option_schema(value_schema));
+    hasher.update(&0i64.to_le_bytes());
+    finish_hash(hasher)
+}
+
 #[derive(Clone, Debug)]
 enum OptionPayload {
     None,
@@ -1395,6 +1480,50 @@ impl ValueStore {
         ))
     }
 
+    fn decoded_map_rows(
+        &mut self,
+        handle: i64,
+        schemas: &SchemaTables,
+        schema_tables: &SchemaTables,
+    ) -> Result<&DecodedMapRows, String> {
+        let key = {
+            let entry = self
+                .entry(handle)
+                .ok_or_else(|| format!("store handle {handle}"))?;
+            if !schemas.is_map(&entry.schema) {
+                return Err(format!("handle {handle} is `{}`, not a Map", entry.schema));
+            }
+            DecodedMapCacheKey {
+                handle,
+                content_hash: entry.content_hash,
+            }
+        };
+        if !self.decoded_map_rows.contains_key(&key) {
+            let entry = self
+                .entry(handle)
+                .ok_or_else(|| format!("store handle {handle}"))?;
+            let schema = entry.schema.clone();
+            let bytes = entry.bytes.clone();
+            let rows = decode_map_pairs(&bytes, schema_tables)?
+                .into_iter()
+                .map(|pair| {
+                    let key_hash = canonical_word_hash_in_store(
+                        self,
+                        schemas,
+                        &pair.key_schema,
+                        pair.key_word,
+                    );
+                    DecodedMapRow { pair, key_hash }
+                })
+                .collect();
+            self.decoded_map_rows
+                .insert(key, DecodedMapRows { schema, rows });
+        }
+        self.decoded_map_rows
+            .get(&key)
+            .ok_or_else(|| "decoded map cache miss after insert".to_string())
+    }
+
     fn map_get(
         &mut self,
         handle: i64,
@@ -1404,78 +1533,88 @@ impl ValueStore {
         schemas: &SchemaTables,
         schema_tables: &SchemaTables,
     ) -> Result<(i64, bool), String> {
-        let (_, pairs) = self.map_pairs(handle, schemas, schema_tables)?;
         let key_hash = canonical_word_hash_in_store(self, schemas, key_schema, key_word);
-        for pair in pairs {
-            if pair.key_schema != key_schema
-                || canonical_word_hash_in_store(self, schemas, &pair.key_schema, pair.key_word)
-                    != key_hash
-            {
-                continue;
+        self.map_get_by_key_hash(
+            handle,
+            key_schema,
+            key_hash,
+            value_schema,
+            schemas,
+            schema_tables,
+        )
+    }
+
+    fn map_get_by_key_hash(
+        &mut self,
+        handle: i64,
+        key_schema: &str,
+        key_hash: ContentHash,
+        value_schema: &str,
+        schemas: &SchemaTables,
+        schema_tables: &SchemaTables,
+    ) -> Result<(i64, bool), String> {
+        let pair = self
+            .decoded_map_rows(handle, schemas, schema_tables)?
+            .rows
+            .iter()
+            .find(|row| row.pair.key_schema == key_schema && row.key_hash == key_hash)
+            .map(|row| row.pair.clone());
+        let Some(pair) = pair else {
+            return self.alloc_option_none(value_schema, schema_tables);
+        };
+        self.alloc_map_get_some(pair, value_schema, schemas, schema_tables)
+    }
+
+    fn map_get_option_hash_by_key_hash(
+        &mut self,
+        handle: i64,
+        key_schema: &str,
+        key_hash: ContentHash,
+        value_schema: &str,
+        schemas: &SchemaTables,
+        schema_tables: &SchemaTables,
+    ) -> Result<ContentHash, String> {
+        let pair = self
+            .decoded_map_rows(handle, schemas, schema_tables)?
+            .rows
+            .iter()
+            .find(|row| row.pair.key_schema == key_schema && row.key_hash == key_hash)
+            .map(|row| row.pair.clone());
+        let Some(pair) = pair else {
+            return Ok(option_none_content_hash(value_schema, schema_tables));
+        };
+        Ok(match resolved_map_get_value(pair, value_schema) {
+            Some((schema, word, realization)) => {
+                self.option_some_content_hash(&schema, word, realization, schemas, schema_tables)
             }
-            if pair.value_schema == value_schema {
-                return self.alloc_option_some(
-                    &pair.value_schema,
-                    pair.value_word,
-                    pair.value_realization,
-                    schemas,
-                    schema_tables,
-                );
-            }
-            if let Some(inner) = realized_value_schema(value_schema) {
-                if let Some(realization) = pair.value_realization {
-                    match realization {
-                        Realization::Ready if pair.value_schema == inner => {
-                            return self.alloc_option_some(
-                                value_schema,
-                                pair.value_word,
-                                Some(Realization::Ready),
-                                schemas,
-                                schema_tables,
-                            );
-                        }
-                        Realization::Pending if pair.value_schema == pending_schema(inner) => {
-                            return self.alloc_option_some(
-                                value_schema,
-                                pair.value_word,
-                                Some(Realization::Pending),
-                                schemas,
-                                schema_tables,
-                            );
-                        }
-                        _ => {}
-                    }
-                }
-                if pair.value_schema == inner && pair.value_realization.is_none() {
-                    return self.alloc_option_some(
-                        value_schema,
-                        pair.value_word,
-                        Some(Realization::Ready),
-                        schemas,
-                        schema_tables,
-                    );
-                }
-                if pair.value_schema == pending_schema(inner) && pair.value_realization.is_none() {
-                    return self.alloc_option_some(
-                        value_schema,
-                        pair.value_word,
-                        Some(Realization::Pending),
-                        schemas,
-                        schema_tables,
-                    );
-                }
-            }
-            if pair.value_schema == pending_schema(value_schema) {
-                return self.alloc_option_some(
-                    &pair.value_schema,
-                    pair.value_word,
-                    pair.value_realization,
-                    schemas,
-                    schema_tables,
-                );
-            }
+            None => option_none_content_hash(value_schema, schema_tables),
+        })
+    }
+
+    fn alloc_map_get_some(
+        &mut self,
+        pair: MapPair,
+        value_schema: &str,
+        schemas: &SchemaTables,
+        schema_tables: &SchemaTables,
+    ) -> Result<(i64, bool), String> {
+        if let Some((schema, word, realization)) = resolved_map_get_value(pair, value_schema) {
+            return self.alloc_option_some(&schema, word, realization, schemas, schema_tables);
         }
         self.alloc_option_none(value_schema, schema_tables)
+    }
+
+    fn map_pairs_cached(
+        &mut self,
+        handle: i64,
+        schemas: &SchemaTables,
+        schema_tables: &SchemaTables,
+    ) -> Result<(String, Vec<MapPair>), String> {
+        let rows = self.decoded_map_rows(handle, schemas, schema_tables)?;
+        Ok((
+            rows.schema.clone(),
+            rows.rows.iter().map(|row| row.pair.clone()).collect(),
+        ))
     }
 
     fn alloc_option_none(
@@ -1490,11 +1629,7 @@ impl ValueStore {
         bytes.extend_from_slice(&value_ref.to_le_bytes());
         bytes.extend_from_slice(&0i64.to_le_bytes());
         bytes.extend_from_slice(&(-1i64).to_le_bytes());
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"vix-option");
-        update_schema_name(&mut hasher, schema_tables, &option_schema);
-        hasher.update(&0i64.to_le_bytes());
-        let content_hash = finish_hash(hasher);
+        let content_hash = option_none_content_hash(value_schema, schema_tables);
         Ok(self.alloc_with_hash(&option_schema, bytes, content_hash))
     }
 
@@ -1514,7 +1649,6 @@ impl ValueStore {
             _ => hash_schema.to_string(),
         };
         let value_word = canonicalize_word_for_schema(schemas, &canonical_schema, value_word);
-        let value_hash = canonical_word_hash_in_store(self, schemas, &canonical_schema, value_word);
         let mut bytes = Vec::with_capacity(32);
         bytes.extend_from_slice(&1i64.to_le_bytes());
         bytes.extend_from_slice(&value_ref.to_le_bytes());
@@ -1525,18 +1659,41 @@ impl ValueStore {
                 .unwrap_or(-1)
                 .to_le_bytes(),
         );
+        let content_hash = self.option_some_content_hash(
+            value_schema,
+            value_word,
+            realization,
+            schemas,
+            schema_tables,
+        );
+        Ok(self.alloc_with_hash(&option_schema, bytes, content_hash))
+    }
+
+    fn option_some_content_hash(
+        &self,
+        value_schema: &str,
+        value_word: i64,
+        realization: Option<Realization>,
+        schemas: &SchemaTables,
+        schema_tables: &SchemaTables,
+    ) -> ContentHash {
+        let hash_schema = realized_value_schema(value_schema).unwrap_or(value_schema);
+        let canonical_schema = match realization {
+            Some(Realization::Pending) => pending_schema(hash_schema),
+            _ => hash_schema.to_string(),
+        };
+        let value_word = canonicalize_word_for_schema(schemas, &canonical_schema, value_word);
+        let value_hash = canonical_word_hash_in_store(self, schemas, &canonical_schema, value_word);
         let mut hasher = blake3::Hasher::new();
         hasher.update(b"vix-option");
-        update_schema_name(&mut hasher, schema_tables, &option_schema);
+        update_schema_name(&mut hasher, schema_tables, &option_schema(value_schema));
         hasher.update(&1i64.to_le_bytes());
         update_schema_name(&mut hasher, schema_tables, value_schema);
-        // Realization is a declared type wrapper and stays in content identity; HandleTier is store scheduling state and stays out.
         if let Some(realization) = &realization {
             hasher.update(&realization.to_word().to_le_bytes());
         }
         hasher.update(value_hash.as_ref());
-        let content_hash = finish_hash(hasher);
-        Ok(self.alloc_with_hash(&option_schema, bytes, content_hash))
+        finish_hash(hasher)
     }
 
     fn option_payload(
@@ -3319,8 +3476,8 @@ impl Driver {
                                         (schema.clone(), pairs.clone())
                                     }
                                     MoltenValue::Interned(handle) => store_cell
-                                        .borrow()
-                                        .map_pairs(*handle, schemas, schema_tables)?,
+                                        .borrow_mut()
+                                        .map_pairs_cached(*handle, schemas, schema_tables)?,
                                     _ => {
                                         return Err(format!(
                                             "molten handle {map_handle} is not a Map"
@@ -3328,12 +3485,14 @@ impl Driver {
                                     }
                                 }
                             } else {
-                                store_cell
-                                    .borrow()
-                                    .map_pairs(map_handle, schemas, schema_tables)?
+                                store_cell.borrow_mut().map_pairs_cached(
+                                    map_handle,
+                                    schemas,
+                                    schema_tables,
+                                )?
                             }
                         }
-                        Handle::Store(store_ix) => store_cell.borrow().map_pairs(
+                        Handle::Store(store_ix) => store_cell.borrow_mut().map_pairs_cached(
                             store_ix.to_word(),
                             schemas,
                             schema_tables,
@@ -5847,13 +6006,13 @@ impl Driver {
         args: &[i64],
         read_set: &ProjectionReadSet,
     ) -> Result<bool, String> {
-        let store = self.store.borrow();
+        let mut store = self.store.borrow_mut();
         for read in &read_set.entries {
             let Some(&arg) = args.get(read.arg_index) else {
                 return Ok(false);
             };
             let observed = projection_observation_hash(
-                &store,
+                &mut store,
                 &self.descriptors,
                 &self.schemas,
                 &self.schemas,
@@ -9571,7 +9730,7 @@ fn remap_read_set_for_caller(
 }
 
 fn projection_observation_hash(
-    store: &ValueStore,
+    store: &mut ValueStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
     schema_tables: &SchemaTables,
@@ -9634,7 +9793,6 @@ fn projection_observation_hash(
             key_hash,
             value_schema,
         } => {
-            let mut scratch = store.clone();
             let entry = store
                 .entry(handle)
                 .ok_or_else(|| format!("store handle {handle}"))?;
@@ -9644,83 +9802,14 @@ fn projection_observation_hash(
                     entry.schema
                 ));
             }
-            let (_, pairs) = scratch.map_pairs(handle, schemas, schema_tables)?;
-            for pair in pairs {
-                if pair.key_schema == key_schema.as_str()
-                    && canonical_word_hash_in_store(
-                        &scratch,
-                        schemas,
-                        &pair.key_schema,
-                        pair.key_word,
-                    ) == *key_hash
-                {
-                    let (option, _) = if pair.value_schema == value_schema.as_str() {
-                        scratch.alloc_option_some(
-                            &pair.value_schema,
-                            pair.value_word,
-                            pair.value_realization,
-                            schemas,
-                            schema_tables,
-                        )?
-                    } else if let Some(inner) = realized_value_schema(value_schema) {
-                        if let Some(realization) = pair.value_realization {
-                            match realization {
-                                Realization::Ready if pair.value_schema == inner => scratch
-                                    .alloc_option_some(
-                                        value_schema,
-                                        pair.value_word,
-                                        Some(Realization::Ready),
-                                        schemas,
-                                        schema_tables,
-                                    )?,
-                                Realization::Pending
-                                    if pair.value_schema == pending_schema(inner) =>
-                                {
-                                    scratch.alloc_option_some(
-                                        value_schema,
-                                        pair.value_word,
-                                        Some(Realization::Pending),
-                                        schemas,
-                                        schema_tables,
-                                    )?
-                                }
-                                _ => scratch.alloc_option_none(value_schema, schema_tables)?,
-                            }
-                        } else if pair.value_schema == inner {
-                            scratch.alloc_option_some(
-                                value_schema,
-                                pair.value_word,
-                                Some(Realization::Ready),
-                                schemas,
-                                schema_tables,
-                            )?
-                        } else if pair.value_schema == pending_schema(inner) {
-                            scratch.alloc_option_some(
-                                value_schema,
-                                pair.value_word,
-                                Some(Realization::Pending),
-                                schemas,
-                                schema_tables,
-                            )?
-                        } else {
-                            scratch.alloc_option_none(value_schema, schema_tables)?
-                        }
-                    } else if pair.value_schema == pending_schema(value_schema) {
-                        scratch.alloc_option_some(
-                            &pair.value_schema,
-                            pair.value_word,
-                            pair.value_realization,
-                            schemas,
-                            schema_tables,
-                        )?
-                    } else {
-                        scratch.alloc_option_none(value_schema, schema_tables)?
-                    };
-                    return Ok(scratch.entry(option).expect("option handle").content_hash);
-                }
-            }
-            let (option, _) = scratch.alloc_option_none(value_schema, schema_tables)?;
-            Ok(scratch.entry(option).expect("option handle").content_hash)
+            store.map_get_option_hash_by_key_hash(
+                handle,
+                key_schema,
+                *key_hash,
+                value_schema,
+                schemas,
+                schema_tables,
+            )
         }
         ProjectionPath::TreePath { path } => {
             let TreeEntry::Concrete(tree) = store.tree_entry(handle)? else {
