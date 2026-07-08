@@ -21,10 +21,11 @@ where each piece lives:
   tree but under the gitignored `/vix/docs/` prefix; it predates the sha2→blake3 swap
   and the flesh→molten rename, so read it as *thesis*, not current code.
 - Flame evidence (the 23.4 / 29.1 / 13.6 / ~66% / ~95,000× figures) is the **perf-lane
-  solve-class run**; the perf lane is committing the flame notes. **Cite the committed
-  note paths here once they land** — until then these figures are attributed to that
-  run and are not independently reproducible from this branch. Do not bank them as
-  reproduced.
+  solve-class run**; the perf lane is committing the flame notes — cite the committed
+  paths once they land. **The stencil / hash-cost evidence IS committed and pinned:**
+  `notes/blake3-stencil-spike.md` on `origin/blake3-stencil-microbench` (round-1/round-2
+  tables + the post-lever residual projection, `VIX_HASH_WORKLOAD_COUNTS=1` ring
+  harness) — §4 and §6 cite it directly and it is reproducible from that branch.
 
 All `driver.rs:NNNN` code anchors below are verified against the live file.
 
@@ -68,8 +69,9 @@ the canonical value, taint-composed) does not.
 - **Interned store entries** — already carry `content_hash: ContentHash` in `StoreEntry`
   (`ContentHash = [u8;32]`). Today it is *recomputed* at `alloc` (`:1419`) then cached;
   under this proposal the cached field *is* the slot and the recompute path is deleted —
-  the digest arrives already-finished from the molten carried state (§2) or the flat
-  stencil (§4). No layout change; we change *who writes it*.
+  the digest arrives already-finished from the molten carried state (§2) or a
+  flat-memory blake3 pass (§4, `blake3` crate host-call — the stencil is retired). No
+  layout change; we change *who writes it*.
 
 - **Molten (carried) values** — `MoltenEntry` holds `carried_array_hash:
   Option<CarriedArrayHasher>` (`:1141`), wrapping a live `blake3::Hasher` (`:1068`) — the
@@ -123,7 +125,7 @@ value **will** have when frozen. It is valid only while every folded child ident
 equals the **final post-intern identity** that will appear in the frozen bytes. Rules:
 
 1. **Computed at intern** — freezing finalizes Layer A once: O(1) `finish_hash` of the
-   carried midstate if valid, else a flat-bytes stencil pass (§4) over the canonical
+   carried midstate if valid, else a flat-bytes blake3 pass (§4, host-call) over the canonical
    bytes.
 2. **Carried incrementally on molten mutation** — fold the changed child's
    post-canonical identity into the midstate (arrays: append; maps/records: the ordered
@@ -227,76 +229,64 @@ first-epoch ratified boundary (post-V10, additive, hash-neutral) unchanged.
 
 ---
 
-## 4. The blake3 stencil
+## 4. The blake3 stencil — MEASURED DEAD as a perf lever
 
-**Answered from copypatch's actual capabilities.** copypatch "runs and patches bytes — it
-never encodes an instruction or interprets" (`copypatch/src/lib.rs`): a stencil's
-arithmetic is a **host-compiled native body**, patched with immediates. weavy's IR
-(`weavy/src/ir.rs`) is a *memory/aggregate/control* IR (`MemoryOp`, `InitOp`,
-`AggregateOp`, `Control`) — it has **no arithmetic/bitwise op vocabulary** (the `Add` in
-`weavy/src/async.rs` is a toy demo op).
+**Decisive finding (stencil spike round 2 — `notes/blake3-stencil-spike.md` on
+`origin/blake3-stencil-microbench`).** The blake3-as-stencil direction this section
+originally recommended is **retired.** It was measured, and it loses:
 
-This resolves "needed IR ops (rotate at minimum)" **by reframing**:
+- The hand-written **AArch64 NEON stencil** loses to the `blake3` crate host-call path in
+  **every** measured intern, fold, and batch shape — 2.2–3.3× *slower* for single interns,
+  2.6× for the carried parent fold, 1.4–2.9× batched (spike note, Round 2 tables).
+- The **zero-boundary inline-NEON** column (no FFI at all) *also* loses to the host-call
+  crate path — so the loss is not the call boundary, it is that a hand-rolled
+  single-compression NEON stencil is simply not the crate's optimized lane (the crate's SIMD
+  win comes from platform-specific multi-input chunk batching a one-block stencil cannot
+  reach). Even the **native crate ceiling** barely edges the host-call path (0.0114 vs
+  0.0120 s/ring-16).
 
-> **No new arithmetic IR ops are required.** blake3's compression (add/xor/rotate
-> G-mixing) is **not** lowered to vix/weavy IR. It stays in a **stencil body** compiled
-> from the `blake3` crate by the host toolchain — `-O by construction`, exactly
-> copypatch's value. The only IR surface is an `Intrinsic` node (`weavy/src/ir.rs:39`
-> `Intrinsic(Intrinsic)`) that the JIT patches with input pointer/offset, output-digest
-> pointer, and length immediate. Rotate/xor/modular-add never appear as vix ops.
+The IR-vocabulary reasoning below still *holds* (weavy IR has no arithmetic op set —
+`weavy/src/ir.rs`, `MemoryOp`/`InitOp`/`AggregateOp`/`Control`; the `Add` in
+`weavy/src/async.rs` is a toy; so blake3 arithmetic could only ever be a stencil, never
+lowered ops). But the conclusion flips: **there is no reason to build the stencil at all.**
+The `blake3` crate host-call is the fastest available path *and* the correctness anchor.
 
-**IR orchestration.** The JIT orchestrates: (a) obtain flat canonical bytes (a
-`ScalarRun`/`Move` region under the zero-padding law), (b) invoke the blake3 intrinsic
-stencil over that region, (c) store the finalized digest to the reserved slot offset (a
-`ScalarCopy`). Only (b) is new, and it is an intrinsic, not an op-set expansion.
+**Why this does not matter — the money number.** In the hash-as-field world (identity is a
+field; the only residual hashing is `raw_new` intern payloads + carried folds), **all
+hashing for ring-16 costs ~11 ms** (0.0114 s host-call, spike Post-Lever Residual
+Projection) **against the current ~33,800 ms budget** — ~0.03%, rounding error. Hash
+*computation* is not a trunk once identity is a field. The whole "make the hash faster"
+axis (stencil, SIMD, IR-lowered compression) is therefore **closed**: the win is not in
+hashing less, it is in not *building the input to* the hash (§6).
 
-**Interp-lane callability — load-bearing for correctness.** The interpreter calls the
-identical native `blake3` routine as an ordinary Rust call; the JIT patches the same
-routine as a stencil. One compiled compression body ⇒ **byte-identical identity across
-interp and JIT by construction** — no "the JIT hashes differently" failure mode. Same
-guarantee `finish_hash`/`blake3::Hasher` gives today (`:740`), carried into the stencil
-world.
+**Interp/JIT identity parity — preserved trivially.** Both lanes call the identical
+`blake3` crate routine as an ordinary Rust call. One compression body ⇒ byte-identical
+identity across interp and JIT, the same guarantee `finish_hash`/`blake3::Hasher` gives
+today (`:740`). No stencil needed to secure this; the host-call *is* the shared body.
 
-**Stencil-state ABI is process-local only (codex non-blocking note).** `blake3::Hasher`
-is a Rust type, **not** a stable, portable, cross-version memory contract. The carried
-midstate (Layer B) is therefore valid **only within a single process** — it is molten
-scratch, never persisted, never sent cross-version. Persisted/cross-process identity is
-always the *finalized* `ContentHash` (Layer A), never a carried midstate. The stencil ABI
-spec must say this explicitly: the midstate-update stencil operates on
-process-local `blake3::Hasher` state; only finalized 32-byte digests cross any boundary.
+**Carried-midstate ABI is process-local only (codex non-blocking note, still binding).**
+`blake3::Hasher` is a Rust type, not a portable cross-version memory contract. The carried
+midstate (Layer B) is valid **only within a single process** — molten scratch, never
+persisted, never sent cross-version. Persisted/cross-process identity is always the
+*finalized* `ContentHash` (Layer A). This is unchanged by the stencil's retirement (the
+carried hasher is still a `blake3::Hasher`, just always host-side).
 
-**Stencil inventory.** One core compression stencil (G-mix + finalize) covers the
-flat-bytes path; one midstate-update stencil (fold one 64-byte block into carried state)
-covers Layer B. Both live beside `weavy/stencils/{async_ops,hostcall,task_ops}.rs`.
+### Const-eval: compile-time determinism only, NOT a solve-throughput lever
 
-### The const-eval dividend (Amos probe)
+An earlier draft argued machine-side blake3 enables compile-time hashing of literals/static
+schemas, and framed FFI as "costing four optimizations" including const-eval. **The perf
+half of that argument is withdrawn by the measurement above:** since hash *computation* is
+~0.03% of the budget, precomputing constant hashes at lowering time buys **nothing for solve
+throughput**, and the "FFI precludes const-eval" drum **does not apply to hot-path perf** —
+there is no hot-path hashing cost to eliminate.
 
-Machine-side blake3 is not only faster at runtime — it enables **compile-time hashing**,
-which a host-op blake3 structurally cannot. Because the compression body is weavy-visible
-(intrinsic + stencil, §4) rather than an opaque FFI call, the checker/lowerer can evaluate
-it at **lowering time** over operands it knows are constant:
-
-- **Literals, static schemas, constant strings** get their `ContentHash` **baked at
-  lowering** — a `String` literal, a fixed schema descriptor, an interned constant Doc
-  never hashes at runtime; the 32-byte digest is a constant in the emitted program.
-- **Partial evaluation over constant prefixes** — a value assembled from a constant prefix
-  and a dynamic tail (e.g. a record whose first fields are literals) has its **carried
-  midstate precomputed at compile time** over the constant prefix; the runtime folds only
-  the dynamic tail. The blake3 block structure makes this exact: a midstate after N
-  constant 64-byte blocks is itself a constant.
-
-A host-op blake3 **precludes all of this** — the compiler cannot evaluate across an FFI
-boundary, so every literal's identity is recomputed at runtime, every time. This is the
-same drum as Q1(b)'s weavy-native charter, now with the full bill:
-
-> The FFI boundary does not cost one optimization, it costs **four**: **inlining, fusion,
-> register residency, and const-eval.** We can optimize weavy codegen; we can never
-> optimize FFI.
-
-Const-eval is the fourth, and it is the one that is *impossible* rather than merely slow
-across the boundary — a runtime FFI call can at least be fast, but a compile-time FFI call
-into `blake3::Hasher` cannot exist. Machine-side blake3 turns a class of runtime hashing
-into zero-cost constants.
+Const-eval of static hashes may still have value for **compile-time determinism** (a fixed
+schema's `ContentHash` being a genuine compile constant is cleaner for reproducibility and
+for baking cachet coordinates), but that is a *determinism/ergonomics* argument, explicitly
+**not** a throughput one. Marked clearly so no charter mistakes it for a lever: **do not
+build const-eval-of-hashes for performance.** The FFI-boundary cost that *does* remain
+load-bearing is the one in Q1(b) — inlining/fusion/register-residency of **collection
+operations** (map/tree touches), which are real hot-path work; hashing is not.
 
 ---
 
@@ -326,7 +316,7 @@ treated as cold (miss-and-recompute), never migrated.
   reuse forced off must produce **byte-identical** content hashes on the reuse and
   force-copy paths (memcmp-exact under §3). Catches canonicalization/zero-padding bugs *at
   the value*. Note: **relative** — see the canary (§3).
-- **Interp/JIT cross-lane differential** (§4): the shared stencil must agree in both lanes
+- **Interp/JIT cross-lane differential** (§4): the shared `blake3` crate routine must agree in both lanes
   corpus-wide. Also **relative**.
 - **First-vs-second-epoch structural check** — assert the epoch swap changed *names*, not
   *equivalence classes*: equality preservation **and INJECTIVITY** (opus ruling 5;
@@ -361,11 +351,33 @@ fold, per first-epoch discipline.
 
 ## 6. Cost model
 
+### The core mechanism: eliminate the encode-and-allocate pipeline, not the hash
+
+The measurement in §4 forces a correction to how this proposal describes its own biggest
+win. The 23.4% "alloc → `raw_value_content_hash` → blake3" flame trunk **is not blake3.**
+blake3 computation is ~11 ms/ring-16 against a ~33,800 ms budget (§4) — rounding error. The
+23.4% is the **canonical-encoding construction + allocation that *feeds* the hash**:
+`alloc` builds a fresh `Vec<u8>` canonical encoding of the value, then walks it. The cost is
+the *encode* and the *allocate*, not the digest over the result.
+
+So **hash-as-field wins by eliminating the encode-and-allocate pipeline, not by hashing
+less** — and the zero-padding / flat-memory law (§3) is what makes it exact:
+
+> Under flat-memory identity **there is no encoding step.** You hash the bytes that
+> *already exist* in the value's memory (canonically zeroed, weavy-declared layout). No
+> `Vec` is allocated to hold a canonical encoding; no descriptor walk re-serializes the
+> value; the digest reads live value memory in place.
+
+That is the mechanism behind the 23.4% collapse — and it is why §3 is load-bearing for
+*perf*, not only for the second-epoch soundness argument (§2): flat-memory removes the
+allocate-and-encode round-trip that the flame actually charges. The blake3 pass at the end
+was never the cost.
+
 ### Expected wins, per trunk — with the overclaims subtracted
 
 | trunk | today | after | banked? |
 |---|---|---|---|
-| blake3 at every alloc (23.4%) | full descriptor-walk digest per intern (`:1419`, `:11211`) | one flat-bytes stencil pass on materialize, or O(1) finalize of a valid carried midstate | **robust** |
+| alloc→encode→blake3 (23.4%) — the cost is **encode + allocate**, not the hash | `alloc` builds a fresh `Vec` canonical encoding then walks it (`:1419`, `:11211`) | flat-memory: hash live value bytes in place, **no encode, no alloc** (§3); or O(1) finalize of a valid carried midstate | **robust — mechanism is pipeline removal, §3** |
 | observation re-hashing (13.6%) | `projection_observation_hash` per read (`:9980`) | field load of stored `content_hash` for `Whole`; cached child-hash reads for projections | **robust, but smaller than stated — see below** |
 | map re-canonicalization (29.1%) | re-canonicalize + re-hash every pair + sort + dedup per intern (`:10376`) | ordered incremental structure (Q1 b) OR sort-at-finalize (Q1 c) | **CONTINGENT — not banked** |
 
@@ -385,31 +397,47 @@ first (see Q1): if the dominant cost is per-pair *re-hashing* (which stable chil
 identities + cached pair hashes kill) rather than the *sort*, even sort-at-finalize (Q1 c)
 captures most of it, and the ordered-structure research may be unnecessary.
 
-### Amdahl honesty (opus ruling 4/6)
+### Amdahl honesty, and what the residual actually is (opus ruling 4/6, sharpened by §4)
 
 Removing 66% of flame is **≈ 2.9× at best** — and less initially, since the 29.1% is
-contingent. §1–§5 do **not** alone reach 50×. What remains:
+contingent. §1–§5 do **not** alone reach 50×. The measurement sharpens *what remains*, and
+it is the important correction: **the residual after gates 1–2 is memo / demand / interp
+overhead — NOT hashing.** Hashing is solved by the gates (identity is a field; the leftover
+digest work is ~0.03% of the budget, §4). So the remaining ~order of magnitude to the 50×
+bar is entirely **execution-model**:
 - **per-INVOKE memo floor** — every source-level vix call interns molten args for the memo
   key (LINCHPIN #2). Identity-as-field makes the per-step cost a field read but does not
   remove the per-INVOKE intern boundary. Lever: **memo granularity in solver interiors** —
   keep interior iteration molten (tail-loop, landed), pay identity once per interned
   aggregate, not per step.
-- **interp dispatch** — the residual after identity is free. Removed by the **JIT lane**,
-  which identity-as-field is the *precondition* for: §2 Layer-A field read + §4 stencil let
-  the JIT emit identity inline instead of a host-call that would dominate JIT'd code the way
-  `Driver::spawn → compile` did (RESURRECTION JIT anomaly).
+- **interp dispatch** — the per-op match/dispatch loop. Removed by the **JIT lane**, for
+  which identity-as-field is the *precondition*: §2 Layer-A field read lets the JIT emit
+  identity as an inline load instead of a host-call into the digest machinery that would
+  otherwise dominate JIT'd code the way `Driver::spawn → compile` did (RESURRECTION JIT
+  anomaly). (Note: the JIT emits a **field load**, not a blake3 stencil — §4 retired the
+  stencil; identity is already computed and stored by the time the JIT reads it.)
 
-### The path to 50× (both legs load-bearing, not garnish)
+### The path to 50× — hashing is solved by the gates; the rest is execution-model
 
-1. **Identity-as-field** (this proposal, robust trunks first) removes the recompute wall —
-   the existential precondition.
-2. **JIT lane** turns residual interp dispatch into native code; identity is a field
-   load / patched stencil, so the JIT actually pays.
-3. **Memo granularity in solver interiors** — keep interior iteration molten; map identity
-   optimized only *after* a map-heavy profile justifies the ordered/Merkle structure.
+State it plainly, because the measurement licenses it:
 
-The claim is **not** that §1–§5 hit 50×. It is that they remove the one trunk that makes
-50× unreachable *and* are the precondition that makes the JIT win real. That is the arc.
+1. **Identity-as-field (this proposal) solves hashing.** Gates 1–2 remove the
+   encode-and-allocate pipeline (23.4%) and the observation rehash (13.6%); the dense-index
+   transform (§7) or Q1 handles maps (29.1%). After that, hash computation is negligible and
+   there is **nothing left to optimize on the hashing axis** — no stencil, no SIMD, no
+   IR-lowered compression (§4). This axis is **closed**.
+2. **JIT lane** turns residual interpreter dispatch into native code — now unblocked,
+   because identity is a field load rather than a host-call barrier. **Load-bearing.**
+3. **Memo granularity in solver interiors** — keep interior iteration molten; pay identity
+   once per interned aggregate, not per step; reshape the solver `State` (§7) so the trail is
+   an array append. **Load-bearing.**
+
+The honest claim: **hashing is done after the gates; the remaining ~order of magnitude to
+50× is JIT + memo-granularity — an execution-model result, to be *measured* not assumed.**
+Re-flame after gates 1–2 to confirm the residual is dispatch/memo (as the spike projects),
+then the JIT and granularity legs carry the rest. This proposal is the precondition; it is
+not the finish, and it is no longer even the *hashing* finish disguised as one — the hashing
+finish is the gates, full stop.
 
 **Orthogonal solver-specific win — the dense-index transform (§7).** The 29.1% map trunk
 analysis above assumes the solver's `State` stays *map-shaped*. It need not: the solver's
@@ -585,8 +613,10 @@ below are for genuinely content-keyed maps (registry metadata, arbitrary Doc map
   **CHARTER REQUIREMENT (Amos): the persistent Merkle B-tree must be WEAVY-NATIVE.** Its
   nodes are **descriptor-declared values** (weavy-declared layouts, §3's zero-padding law
   applies to them directly), and its operations — insert / get / fold / finalize / the
-  path-copy on mutation — are **lowered to weavy IR and JIT-emitted**, with stencils only
-  where SIMD earns it (the blake3 node hash, §4). They are **NOT Rust host ops.** The
+  path-copy on mutation — are **lowered to weavy IR and JIT-emitted**. (The node blake3
+  hash itself stays a `blake3` crate host-call, not a stencil — §4 measured the stencil
+  losing; the win here is the *collection ops* in weavy IR, not the hash.) They are **NOT
+  Rust host ops.** The
   rationale is the destination of the whole proposal, not a micro-optimization:
 
   > vix maps today are host ops — every touch (`alloc_map`, `map_get`, `canonical_map_pairs`)
@@ -608,11 +638,14 @@ below are for genuinely content-keyed maps (registry metadata, arbitrary Doc map
   **Dependency this puts on the critical path — weavy IR/codegen vocabulary for
   pointer-chasing tree ops.** A persistent tree is *pointer-chasing* (node → child pointer
   → child), and node-sharing across States means those pointers are **owned/shared
-  references into a persistent arena**, not flat offsets. The **stencil spike's finding —
-  that weavy's task/stencil vocabulary lacks a principled pointer/capability argument story
-  (no first-class way to pass a pointer-or-capability into a stencil and have the JIT
-  reason about its provenance/aliasing)** — is therefore now **on the critical path for
-  Q1(b)**, not a side concern. Building a machine-side tree requires weavy to express:
+  references into a persistent arena**, not flat offsets. The **stencil spike's finding
+  (committed: `notes/blake3-stencil-spike.md` on `origin/blake3-stencil-microbench`,
+  round-1 and round-2 infrastructure findings) — that "the typed task vocabulary has no
+  principled pointer/capability argument story" (the bench had to pass raw pointer words in
+  frame slots, "acceptable for the spike but not a real machine ABI for weavy-native
+  collections"), and that the task JIT "has no custom consumer-op extension point"** — is
+  therefore now **on the critical path for Q1(b)**, not a side concern. (The spike's own
+  closing line names this as "the durable proposal input.") Building a machine-side tree requires weavy to express:
   (i) a node pointer/handle as a first-class IR value with declared provenance, (ii)
   load-through and store-through a node reference, (iii) structural-share retain/release
   of a subtree (the persistent-arena refcount), and (iv) the path-copy-on-write shape. This
