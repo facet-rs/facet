@@ -388,3 +388,15 @@ reconciliation pass:
   subsystem is dead (the design conversation had already collapsed it; the
   thorough check found zero soundness residue). Its inverted index survives
   only as the nomination design's worked precedent.
+
+- **Entry-carried identity RATIFIED, "hash-as-field" name retired** (Amos: "I
+  would not call it a field, but yeah, sure"). The mechanism: the content hash
+  is a property of the STORE ENTRY (beside bytes/refcount — never a slot in
+  any value's layout; inline scalars exempt), written once at intern (walk
+  reads children's stored hashes, O(own bytes + 32×handles), once per node
+  ever), read as a load at every later edge; plus the molten carried midstate
+  in MoltenEntry bookkeeping as a droppable cache (freeze = O(1) finalize when
+  valid, full specialized walk when dropped; differential tripwire: same
+  digest both ways). The proposal's §4 flat-memory fallback is amputated with
+  definition B. Rewrite vocabulary: entry-carried identity + carried midstate,
+  not "hash-as-field".
