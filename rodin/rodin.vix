@@ -943,6 +943,7 @@ fn conflict_support(index: Index, pkg: Int, clause_id: Int) -> [Int] {
     }
 }
 
+// r[impl solver.learning.point]
 fn point_region_for_conflict(index: Index, state: State, pkg: Int, clause_id: Int) -> Region {
     let region = region_from_support(index, state, conflict_support(index, pkg, clause_id), empty_region());
     match last_hypothesis(state) {
@@ -1009,6 +1010,8 @@ fn widen_versions_for_clause(index: Index, reference_clause: Int, parent_pkg: In
     }
 }
 
+// r[impl solver.learning.widen.sound] — declared-structure evidence only;
+// read-set widening awaits read-set exposure (rodin/docs/90, Phase-2 gap).
 fn widen_region(index: Index, clause_id: Int, region: Region) -> Region {
     match selected_guard_for_clause(index, clause_id, index.guard_ids) {
         Some(guard_id) => widen_region_for_parent(index, clause_id, region, index.guard_pkgs.get(guard_id).unwrap()),
@@ -1024,6 +1027,7 @@ fn widen_region_for_parent(index: Index, clause_id: Int, region: Region, parent_
     }
 }
 
+// r[impl solver.learning.region] — containment; region-level subtract not yet needed/implemented
 fn region_contains_region(outer: Region, inner: Region) -> Bool {
     region_contains_packages(outer, inner, outer.packages)
 }
@@ -1074,6 +1078,7 @@ fn deactivate_if_contained(fact: LearnedNoGood, region: Region) -> LearnedNoGood
     }
 }
 
+// r[impl solver.learning.frontier]
 fn install_learned_fact(state: State, fact: LearnedNoGood) -> State {
     match bool_or(fact.region.packages.len() == 0, learned_contains_region(state.learned, fact.region)) {
         true => state,
@@ -1084,6 +1089,7 @@ fn install_learned_fact(state: State, fact: LearnedNoGood) -> State {
     }
 }
 
+// r[impl solver.learning.no-good]
 fn learn(index: Index, conflict: ConflictInfo) -> State {
     let pkg = conflict.pkg;
     let clause_id = conflict.clause_id;
@@ -1131,6 +1137,7 @@ fn first_unsatisfied_region_pkg(state: State, region: Region, packages: [Int]) -
     }
 }
 
+// r[impl solver.learning.propagate]
 fn no_good_status(state: State, region: Region) -> NoGoodStatus {
     let count = region_unsatisfied_count(state, region, region.packages, 0);
     match count == disjoint_count() {

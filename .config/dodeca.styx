@@ -23,6 +23,21 @@
 source {
     content docs/content
     repo "https://github.com/facet-rs/facet"
+
+    // Requirement coverage (dodeca's absorbed-tracey model): rules are
+    // `r[...]` blocks in this source's markdown; code carries
+    // `r[impl ...]` / `r[verify ...]` comments.
+    impls (
+        {
+            name rust
+            include ("vix/src/**/*.rs" "weavy/src/**/*.rs")
+            test_include ("vix/tests/**/*.rs" "weavy/tests/**/*.rs")
+        }
+        {
+            name vix
+            include ("rodin/**/*.vix" "vix/std/**/*.vix" "playgrounds/snark/src/bundled/vix/samples/**/*.vix")
+        }
+    )
 }
 
 mounts (
