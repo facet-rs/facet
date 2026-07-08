@@ -11,13 +11,34 @@ r[machine.execution.weavy-owns-mode]
 machine holds no Interp/Jit enum, no private cfg, no mode plumbing — it
 hands weavy a program and receives execution.
 
-r[machine.execution.jit-always]
+r[machine.execution.jit-single-feature]
 
-[SETTLED, scope OPEN] The `jit` cargo feature is abolished: the JIT path
-builds unconditionally and every `#[cfg(feature = "jit")]` gate dies (the
-cfg-gated `Op` import that broke dependency-position builds is the incident
-this rule prevents). OPEN sub-decision: whether phon's own engine `jit`
-feature is included or exempt.
+[SETTLED] There is exactly ONE jit feature in the ecosystem: weavy's. vix,
+phon, and every other weavy consumer carry no jit feature of their own — the
+per-crate `#[cfg(feature = "jit")]` gates that caused the dependency-position
+`Op` build break are abolished. Weavy's `jit` feature is the master switch
+(`jit_active = feature_on ∧ platform_supports`): OFF means off for good,
+nothing downstream can turn JIT on against it; ON means on only where the
+platform supports executable memory. Mechanism:
+
+- Weavy's build script computes `jit_active` from `CARGO_FEATURE_JIT` and
+  `CARGO_CFG_TARGET_OS` (W^X-locked targets — iOS/tvOS/watchOS/visionOS —
+  force it off even when the feature is on) and emits both a
+  `weavy_jit_active` rustc-cfg (gating weavy's own runtime executor + stencil
+  extraction) and `cargo::metadata=jit=1` (via `links = "weavy"`), so every
+  direct dependent's build script reads `DEP_WEAVY_JIT` and gates its own
+  per-crate stencil extraction on the same single decision.
+- The JIT API surface is always compiled; only the copy-patch runtime
+  executor and the build-time stencil extraction are behind `jit_active`.
+  Consumers compile unconditionally and check
+  `NATIVE_COPY_PATCH_AVAILABLE` at runtime.
+
+This means an iOS build falls to the interpreter by construction — no W+X
+code compiled, no per-crate feature, no `default-features` dance at the app
+root — while a desktop/server build JITs. (Resolved by Amos, 2026-07-08;
+compiling the copy-patch machinery is build-time waste, not runtime W+X, so
+the feature is about waste and single-source-of-truth, not a hard W^X
+blocker.)
 
 r[machine.execution.facts-precomputed]
 

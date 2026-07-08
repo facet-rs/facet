@@ -171,13 +171,26 @@ testability (sonnet). Reports in `/tmp/spec-poke-*` and
   capabilities over SchemaRef.
 - `machine.obs.snapshot-no-clone` (C5) — L11's observability half, restored.
 
-## Deferred to Amos (unchanged OPEN rules)
+## Round 2 — Amos decisions (2026-07-08)
+
+- **phon-jit scope RESOLVED → `machine.execution.jit-single-feature`.** One jit
+  feature in the ecosystem: weavy's, a master switch (`jit_active = feature_on
+  ∧ platform_supports`). phon and vix carry none. Off = off for good; on = on
+  where the platform allows executable memory. The forwarding-feature wrench is
+  removed via `links = "weavy"` + `DEP_WEAVY_JIT` (a dependent's build script
+  follows weavy's single decision without owning a feature) and a build-script
+  platform gate that force-disables on W^X-locked targets. API surface always
+  compiled; only the copy-patch runtime executor + stencil extraction are
+  behind `weavy_jit_active`. Key correction that made it clean: compiling the
+  copy-patch machinery is build-time waste, not runtime W+X — so the feature is
+  about waste and single-source-of-truth, not a hard iOS blocker.
+
+## Deferred to Amos (remaining OPEN rules)
 
 - `machine.value.taint-provenance` — V30 vs secrets Q1 taint granularity.
 - `machine.scheduler.executions-as-weavy-tasks` — decision 1.
 - `machine.receipt.certificate-vs-derivation` — walkable derivation.
 - `machine.receipt.sealable-as-cachet` sub-question — cachet vs secret sealing.
-- `machine.execution.jit-always` scope — phon's engine feature.
 
 ## Deferred to a later pass (testability, not correctness)
 
