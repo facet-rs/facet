@@ -74,4 +74,4 @@ callgrind.out.*
 # Local-only docs: sensitive analysis lives in the private repo (vixenware vix-docs-archive).
 # Deliberately untracked here so agents cannot accidentally publish them.
 /RESURRECTION.md
-/vix/docs/
+/vix/docs-internal/
