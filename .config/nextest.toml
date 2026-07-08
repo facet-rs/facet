@@ -30,6 +30,16 @@ command = "bash -c 'exec \"$(git rev-parse --show-toplevel)/scripts/memcap-wrapp
 # the run. Genuinely long tests can opt out via per-test overrides.
 slow-timeout = { period = "60s", terminate-after = 3 }
 
+# snark-dsl/snark-playground shell out to a real JS runtime (node, falling
+# back to bun) once per grammar instead of using an in-process Boa evaluator.
+# Left unbounded, nextest's default per-binary concurrency lets dozens of
+# these run at once, spawning a matching pile of node processes on top of
+# already-heavier coverage-instrumented test binaries — plausibly what
+# starved a self-hosted runner of memory. Cap concurrent node-spawning tests
+# instead of letting them pile up.
+[test-groups.node-subprocess]
+max-threads = 4
+
 [[profile.default.scripts]]
 filter = 'all()'
 platform = { host = "cfg(unix)" }
@@ -149,6 +159,12 @@ threads-required = "num-cpus"
 [[profile.default.overrides]]
 filter = 'package(snark-playground) & (test(vendored_playground_samples_parse_from_rust) | test(representative_vendored_playground_samples_parse_from_rust))'
 slow-timeout = { period = "120s", terminate-after = 5 }
+
+# Bound the number of node processes that can be in flight at once; see the
+# node-subprocess test-group definition above.
+[[profile.default.overrides]]
+filter = 'package(snark-dsl) | package(snark-playground)'
+test-group = 'node-subprocess'
 
 # Same coverage-instrumentation slowdown as the fable checker tests above.
 [[profile.default.overrides]]
