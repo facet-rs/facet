@@ -33,7 +33,8 @@ use std::fmt;
 use std::hash::{BuildHasher, Hash, Hasher};
 #[cfg(any(test, feature = "jit"))]
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::{Arc, mpsc};
+use std::time::Duration;
 
 use facet::Facet;
 use taxon::{Kind, Primitive, SchemaRef};
@@ -506,6 +507,12 @@ struct TextProjectRequest {
     input_slot: usize,
     tree: i64,
     path: i64,
+}
+
+#[derive(Clone, Debug)]
+enum TreeProjectRequest {
+    Tree(ProjectRequest),
+    Text(TextProjectRequest),
 }
 
 #[derive(Clone, Debug)]
@@ -1326,7 +1333,21 @@ struct PendingExecRun {
     completed: Option<(crate::exec::Outcome, crate::exec::ExecEvent)>,
     completion_logged: bool,
     remote: Option<Arc<dyn MachinePendingRun>>,
+    completion:
+        Option<mpsc::Receiver<Result<(crate::exec::Outcome, crate::exec::ExecEvent), String>>>,
     span: Option<(u32, u32)>,
+}
+
+struct PendingFetchRun {
+    key: String,
+    replayed: bool,
+    completion: mpsc::Receiver<Result<crate::fetch::FetchOutput, String>>,
+}
+
+struct StartedFetchRequest {
+    input_slot: usize,
+    key: String,
+    run: PendingFetchRun,
 }
 
 #[derive(Clone, Debug)]
@@ -2836,6 +2857,11 @@ impl Driver {
         let mut executions: Vec<Option<Execution>> = Vec::new();
         let mut waiters: IdentityHashMap<CanonMemoKey, Vec<(usize, usize)>> =
             IdentityHashMap::default();
+        let mut run_waiters: BTreeMap<u64, Vec<(usize, TreeProjectRequest)>> = BTreeMap::new();
+        let mut fetch_waiters: BTreeMap<u64, Vec<(usize, usize)>> = BTreeMap::new();
+        let mut pending_fetches: BTreeMap<u64, PendingFetchRun> = BTreeMap::new();
+        let mut in_flight_fetches: HashMap<String, u64> = HashMap::new();
+        let mut next_fetch_run_id = 0_u64;
         let mut in_flight = InFlightInvocations::default();
         let mut runnable: Vec<usize> = Vec::new();
 
@@ -2844,7 +2870,31 @@ impl Driver {
         debug_assert!(inserted, "root invocation was already in flight");
         runnable.push(root);
 
-        while let Some(ix) = runnable.pop() {
+        loop {
+            self.harvest_pending_runs(
+                false,
+                &mut executions,
+                &mut runnable,
+                &mut run_waiters,
+                &mut fetch_waiters,
+                &mut pending_fetches,
+                &mut in_flight_fetches,
+            )?;
+            let Some(ix) = runnable.pop() else {
+                if run_waiters.is_empty() && pending_fetches.is_empty() {
+                    break;
+                }
+                self.harvest_pending_runs(
+                    true,
+                    &mut executions,
+                    &mut runnable,
+                    &mut run_waiters,
+                    &mut fetch_waiters,
+                    &mut pending_fetches,
+                    &mut in_flight_fetches,
+                )?;
+                continue;
+            };
             let mut exec = executions[ix].take().expect("runnable execution exists");
             let requests = self.burst(&mut exec, ix);
             match requests {
@@ -2954,16 +3004,21 @@ impl Driver {
                         }
                     }
                     for req in fetch_requests {
-                        match self.fetch_request(req) {
-                            Ok((input_slot, value)) => {
-                                if exec.ready.len() <= input_slot {
-                                    exec.ready.resize(input_slot + 1, false);
-                                    exec.awaited.resize(input_slot + 1, 0);
-                                }
-                                exec.ready[input_slot] = true;
-                                exec.awaited[input_slot] = value;
-                            }
-                            Err(err) => return Err(err),
+                        let pending = self.start_fetch_request(req)?;
+                        if let Some(&run_id) = in_flight_fetches.get(&pending.key) {
+                            fetch_waiters
+                                .entry(run_id)
+                                .or_default()
+                                .push((ix, pending.input_slot));
+                        } else {
+                            let run_id = next_fetch_run_id;
+                            next_fetch_run_id = next_fetch_run_id.saturating_add(1);
+                            fetch_waiters
+                                .entry(run_id)
+                                .or_default()
+                                .push((ix, pending.input_slot));
+                            in_flight_fetches.insert(pending.key.clone(), run_id);
+                            pending_fetches.insert(run_id, pending.run);
                         }
                     }
                     for req in doc_parse_requests {
@@ -3005,6 +3060,13 @@ impl Driver {
                         }
                     }
                     for req in project_requests {
+                        if let Some(run_id) = self.project_request_pending_run(req.tree)? {
+                            run_waiters
+                                .entry(run_id)
+                                .or_default()
+                                .push((ix, TreeProjectRequest::Tree(req)));
+                            continue;
+                        }
                         match self.project_request(req, exec.fn_ref, &exec.args, &mut exec.read_set)
                         {
                             Ok((input_slot, value)) => {
@@ -3019,6 +3081,13 @@ impl Driver {
                         }
                     }
                     for req in text_project_requests {
+                        if let Some(run_id) = self.project_request_pending_run(req.tree)? {
+                            run_waiters
+                                .entry(run_id)
+                                .or_default()
+                                .push((ix, TreeProjectRequest::Text(req)));
+                            continue;
+                        }
                         match self.text_project_request(
                             req,
                             exec.fn_ref,
@@ -3187,6 +3256,194 @@ impl Driver {
             .get(&key)
             .map(|entry| entry.value)
             .ok_or_else(|| "root invocation did not complete".to_string())
+    }
+
+    fn harvest_pending_runs(
+        &mut self,
+        block: bool,
+        executions: &mut [Option<Execution>],
+        runnable: &mut Vec<usize>,
+        run_waiters: &mut BTreeMap<u64, Vec<(usize, TreeProjectRequest)>>,
+        fetch_waiters: &mut BTreeMap<u64, Vec<(usize, usize)>>,
+        pending_fetches: &mut BTreeMap<u64, PendingFetchRun>,
+        in_flight_fetches: &mut HashMap<String, u64>,
+    ) -> Result<(), String> {
+        let (ready_runs, ready_fetches) = loop {
+            let mut ready_runs = Vec::new();
+            for &run_id in run_waiters.keys() {
+                if self.poll_run_completion(run_id)? {
+                    ready_runs.push(run_id);
+                }
+            }
+
+            let mut ready_fetches = Vec::new();
+            for (&run_id, run) in pending_fetches.iter() {
+                match run.completion.try_recv() {
+                    Ok(result) => ready_fetches.push((run_id, result)),
+                    Err(mpsc::TryRecvError::Empty) => {}
+                    Err(mpsc::TryRecvError::Disconnected) => {
+                        return Err(format!(
+                            "fetch run {run_id} completion channel disconnected"
+                        ));
+                    }
+                }
+            }
+
+            if !block || !ready_runs.is_empty() || !ready_fetches.is_empty() {
+                break (ready_runs, ready_fetches);
+            }
+            std::thread::sleep(Duration::from_millis(1));
+        };
+
+        let mut woken = BTreeSet::new();
+        for run_id in ready_runs {
+            let Some(waiters) = run_waiters.remove(&run_id) else {
+                continue;
+            };
+            for (waiter_ix, request) in waiters {
+                let exec = executions[waiter_ix]
+                    .as_mut()
+                    .expect("parked run waiter exists");
+                self.fill_tree_project_waiter(exec, request)?;
+                woken.insert(waiter_ix);
+            }
+        }
+
+        for (run_id, result) in ready_fetches {
+            let run = pending_fetches
+                .remove(&run_id)
+                .expect("ready fetch run exists");
+            in_flight_fetches.remove(&run.key);
+            let value = self.finish_fetch_run(run, result?)?;
+            if let Some(waiters) = fetch_waiters.remove(&run_id) {
+                for (waiter_ix, input_slot) in waiters {
+                    let exec = executions[waiter_ix]
+                        .as_mut()
+                        .expect("parked fetch waiter exists");
+                    fill_execution_input(exec, input_slot, value);
+                    woken.insert(waiter_ix);
+                }
+            }
+        }
+        runnable.extend(woken);
+
+        Ok(())
+    }
+
+    fn fill_tree_project_waiter(
+        &mut self,
+        exec: &mut Execution,
+        request: TreeProjectRequest,
+    ) -> Result<(), String> {
+        let (input_slot, value) = match request {
+            TreeProjectRequest::Tree(req) => {
+                self.project_request(req, exec.fn_ref, &exec.args, &mut exec.read_set)?
+            }
+            TreeProjectRequest::Text(req) => {
+                self.text_project_request(req, exec.fn_ref, &exec.args, &mut exec.read_set)?
+            }
+        };
+        fill_execution_input(exec, input_slot, value);
+        Ok(())
+    }
+
+    fn project_request_pending_run(&mut self, tree: i64) -> Result<Option<u64>, String> {
+        let TreeEntry::Exec(run_id) = self.store.borrow().tree_entry(tree)? else {
+            return Ok(None);
+        };
+        if self
+            .runs
+            .get(&run_id)
+            .and_then(|run| run.completed.as_ref())
+            .is_some()
+        {
+            return Ok(None);
+        }
+        if self.exec_backend.is_none()
+            && self
+                .runs
+                .get(&run_id)
+                .and_then(|run| run.remote.as_ref())
+                .is_none()
+        {
+            return Ok(None);
+        }
+        self.ensure_run_started(run_id)?;
+        if self.poll_run_completion(run_id)? {
+            Ok(None)
+        } else {
+            Ok(Some(run_id))
+        }
+    }
+
+    fn poll_run_completion(&mut self, run_id: u64) -> Result<bool, String> {
+        if self
+            .runs
+            .get(&run_id)
+            .ok_or_else(|| format!("run {run_id}"))?
+            .completed
+            .is_some()
+        {
+            return Ok(true);
+        }
+        let result = {
+            let run = self
+                .runs
+                .get(&run_id)
+                .ok_or_else(|| format!("run {run_id}"))?;
+            let Some(completion) = run.completion.as_ref() else {
+                return Ok(false);
+            };
+            match completion.try_recv() {
+                Ok(result) => Some(result),
+                Err(mpsc::TryRecvError::Empty) => None,
+                Err(mpsc::TryRecvError::Disconnected) => {
+                    return Err(format!("run {run_id} completion channel disconnected"));
+                }
+            }
+        };
+        if let Some(result) = result {
+            let (outcome, event) = result?;
+            let run = self.runs.get_mut(&run_id).expect("run checked");
+            run.completed = Some((outcome, event));
+            Ok(true)
+        } else {
+            Ok(false)
+        }
+    }
+
+    fn await_run_completion(
+        &mut self,
+        run_id: u64,
+    ) -> Result<(crate::exec::Outcome, crate::exec::ExecEvent), String> {
+        if let Some(completed) = self
+            .runs
+            .get(&run_id)
+            .ok_or_else(|| format!("run {run_id}"))?
+            .completed
+            .clone()
+        {
+            return Ok(completed);
+        }
+        let completion = {
+            let run = self
+                .runs
+                .get_mut(&run_id)
+                .ok_or_else(|| format!("run {run_id}"))?;
+            run.completion.take()
+        };
+        if let Some(completion) = completion {
+            completion
+                .recv()
+                .map_err(|_| format!("run {run_id} completion channel disconnected"))?
+        } else {
+            let remote = self
+                .runs
+                .get(&run_id)
+                .and_then(|run| run.remote.clone())
+                .ok_or_else(|| format!("run {run_id} has no completion source"))?;
+            remote.flush()
+        }
     }
 
     fn spawn(
@@ -6833,6 +7090,7 @@ impl Driver {
                 completed: None,
                 completion_logged: false,
                 remote: None,
+                completion: None,
                 span: req.span,
             },
         );
@@ -6892,8 +7150,14 @@ impl Driver {
                 }
             };
             let remote = backend.spawn(request)?;
+            let (completion_tx, completion_rx) = mpsc::channel();
+            let completion_remote = Arc::clone(&remote);
+            std::thread::spawn(move || {
+                let _ = completion_tx.send(completion_remote.flush());
+            });
             let run = self.runs.get_mut(&run_id).expect("run checked");
             run.remote = Some(remote);
+            run.completion = Some(completion_rx);
         }
         Ok(())
     }
@@ -6957,8 +7221,13 @@ impl Driver {
         {
             return Ok(outcome);
         }
-        if let Some(remote) = self.runs.get(&run_id).and_then(|run| run.remote.clone()) {
-            let (outcome, event) = remote.flush()?;
+        if self
+            .runs
+            .get(&run_id)
+            .and_then(|run| run.remote.clone())
+            .is_some()
+        {
+            let (outcome, event) = self.await_run_completion(run_id)?;
             let run = self.runs.get_mut(&run_id).expect("run checked");
             run.completed = Some((outcome.clone(), event));
             return Ok(outcome);
@@ -7143,7 +7412,7 @@ impl Driver {
             .collect()
     }
 
-    fn fetch_request(&mut self, req: FetchRequest) -> Result<(usize, i64), String> {
+    fn start_fetch_request(&mut self, req: FetchRequest) -> Result<StartedFetchRequest, String> {
         let url = self.store.borrow().string_value(req.url, "String")?;
         let declared_sha256 = if req.sha256 < 0 {
             None
@@ -7154,31 +7423,51 @@ impl Driver {
             Some(sha) => format!("fetch:{url}:sha256:{sha}"),
             None => format!("fetch:{url}:observed"),
         };
-        let (tree, replayed, pin) = if let Some(pin) = self.journal.get(&key).copied() {
-            let pinned = self.store.borrow().string_value(pin, "String")?;
-            let fetched = self.fetch_backend.fetch(&url, Some(&pinned))?;
-            (fetched.tree, true, pinned)
+        let (expected_sha256, replayed) = if let Some(pin) = self.journal.get(&key).copied() {
+            (Some(self.store.borrow().string_value(pin, "String")?), true)
         } else {
-            let fetched = self.fetch_backend.fetch(&url, declared_sha256.as_deref())?;
-            (fetched.tree, false, fetched.actual_sha256)
+            (declared_sha256, false)
         };
-        if !replayed {
+        let backend = Arc::clone(&self.fetch_backend);
+        let thread_url = url.clone();
+        let thread_expected_sha256 = expected_sha256.clone();
+        let (completion_tx, completion_rx) = mpsc::channel();
+        std::thread::spawn(move || {
+            let result = backend.fetch(&thread_url, thread_expected_sha256.as_deref());
+            let _ = completion_tx.send(result);
+        });
+        Ok(StartedFetchRequest {
+            input_slot: req.input_slot,
+            key: key.clone(),
+            run: PendingFetchRun {
+                key,
+                replayed,
+                completion: completion_rx,
+            },
+        })
+    }
+
+    fn finish_fetch_run(
+        &mut self,
+        run: PendingFetchRun,
+        fetched: crate::fetch::FetchOutput,
+    ) -> Result<i64, String> {
+        if !run.replayed {
             let pin_handle = self
                 .store
                 .borrow_mut()
-                .alloc_raw("String", pin.into_bytes(), &self.schemas)
+                .alloc_raw("String", fetched.actual_sha256.into_bytes(), &self.schemas)
                 .0;
-            self.journal.insert(key.clone(), pin_handle);
+            self.journal.insert(run.key.clone(), pin_handle);
         }
         let timestamp_us = self.next_timestamp();
         self.emit(DriveEvent::Observation {
-            key: hash_u64(&key),
-            replayed,
-            key_text: key,
+            key: hash_u64(&run.key),
+            replayed: run.replayed,
+            key_text: run.key,
             timestamp_us,
         });
-        let handle = self.store.borrow_mut().alloc_tree_concrete(tree).0;
-        Ok((req.input_slot, handle))
+        Ok(self.store.borrow_mut().alloc_tree_concrete(fetched.tree).0)
     }
 
     fn doc_parse_request(&mut self, req: DocParseRequest) -> Result<(usize, i64), String> {
@@ -7639,6 +7928,15 @@ struct BurstPending {
 enum PendingForce {
     Invoke(InvokeRequest),
     Ready { input_slot: usize, value: i64 },
+}
+
+fn fill_execution_input(exec: &mut Execution, input_slot: usize, value: i64) {
+    if exec.ready.len() <= input_slot {
+        exec.ready.resize(input_slot + 1, false);
+        exec.awaited.resize(input_slot + 1, 0);
+    }
+    exec.ready[input_slot] = true;
+    exec.awaited[input_slot] = value;
 }
 
 fn hash_u64(value: impl fmt::Debug) -> u64 {
@@ -11840,12 +12138,87 @@ fn field_descriptor<'a>(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::Mutex;
+    use std::time::{Duration, Instant};
     use weavy::mem::Layout;
     use weavy::mem::declared as declared_mem;
     use weavy::task::{ArgCopy, Fn as TaskFn, Op};
 
     fn memo_key_for_test(fn_hash: u64, arg: u8) -> CanonMemoKey {
         (fn_hash, vec![ContentHash::from([arg; 32])])
+    }
+
+    struct LatencyExecBackend {
+        delay: Duration,
+    }
+
+    impl MachineExecBackend for LatencyExecBackend {
+        fn spawn(&self, request: MachineExecRequest) -> Result<Arc<dyn MachinePendingRun>, String> {
+            Ok(Arc::new(LatencyExecRun {
+                request,
+                delay: self.delay,
+                completed: Mutex::new(None),
+            }))
+        }
+    }
+
+    struct LatencyExecRun {
+        request: MachineExecRequest,
+        delay: Duration,
+        completed: Mutex<Option<(crate::exec::Outcome, crate::exec::ExecEvent)>>,
+    }
+
+    impl MachinePendingRun for LatencyExecRun {
+        fn demand_path(&self, path: &str) -> Result<MachinePathDemand, String> {
+            let completed = self
+                .completed
+                .lock()
+                .map_err(|_| "latency run state poisoned".to_string())?;
+            let Some((outcome, _)) = &*completed else {
+                return Ok(MachinePathDemand::FinishRequired {
+                    path: path.to_string(),
+                });
+            };
+            if let Some(contents) = outcome.outputs.entries.get(path) {
+                Ok(MachinePathDemand::File(contents.clone()))
+            } else {
+                Ok(MachinePathDemand::Missing {
+                    path: path.to_string(),
+                })
+            }
+        }
+
+        fn flush(&self) -> Result<(crate::exec::Outcome, crate::exec::ExecEvent), String> {
+            if let Some(completed) = self
+                .completed
+                .lock()
+                .map_err(|_| "latency run state poisoned".to_string())?
+                .clone()
+            {
+                return Ok(completed);
+            }
+            std::thread::sleep(self.delay);
+            let mut tree = crate::exec::Tree::default();
+            tree.entries.insert(
+                self.request.output.clone(),
+                format!("{};", self.request.output),
+            );
+            let completed = (
+                crate::exec::Outcome {
+                    outputs: tree,
+                    read_set: crate::exec::ReadSet {
+                        entries: BTreeMap::new(),
+                    },
+                    tree_events: Vec::new(),
+                },
+                crate::exec::ExecEvent::Ran,
+            );
+            *self
+                .completed
+                .lock()
+                .map_err(|_| "latency run state poisoned".to_string())? = Some(completed.clone());
+            Ok(completed)
+        }
     }
 
     fn doc_observation_test_tables() -> (DescriptorMap, SchemaTables) {
@@ -12222,6 +12595,211 @@ mod tests {
             primitive_region: 0,
         }];
         (program, fns)
+    }
+
+    fn exec_text_overlap_program() -> (Program, Vec<LoweredFn>) {
+        const REGION: u32 = 128;
+        let mut code = Vec::new();
+        push_exec_request_ops(&mut code, REGION, 0, 0, 8, 16);
+        push_exec_request_ops(&mut code, REGION, 1, 0, 8, 24);
+        code.extend([
+            Op::Await { dst: 48, input: 0 },
+            Op::Await { dst: 56, input: 1 },
+        ]);
+        push_text_project_ops(&mut code, REGION, 2, 48, 32);
+        push_text_project_ops(&mut code, REGION, 3, 56, 40);
+        code.extend([
+            Op::Await { dst: 64, input: 2 },
+            Op::Await { dst: 72, input: 3 },
+            Op::ConstI64 {
+                dst: REGION,
+                value: 80,
+            },
+            Op::CopyI64 {
+                dst: REGION + 8,
+                src: 64,
+            },
+            Op::CopyI64 {
+                dst: REGION + 16,
+                src: 72,
+            },
+            Op::HostCall {
+                host: STRING_CONCAT_HOST,
+            },
+            Op::Ret { src: 80, size: 8 },
+        ]);
+        let body = TaskFn {
+            frame: Layout {
+                size: 320,
+                align: 8,
+            },
+            code,
+        };
+        let program = Program { fns: vec![body] };
+        let fns = vec![LoweredFn {
+            hash: 0xE0EC,
+            task_fn: FnId(0),
+            arg_offsets: vec![0, 8, 16, 24, 32, 40],
+            arg_schemas: vec![
+                "Cc".into(),
+                "String".into(),
+                "String".into(),
+                "String".into(),
+                "Path".into(),
+                "Path".into(),
+            ],
+            return_schema: "String".into(),
+            semantic_comparators: Vec::new(),
+            invoke_region: 0,
+            store_alloc_region: 0,
+            store_read_region: 0,
+            store_tag_region: 0,
+            primitive_region: REGION,
+        }];
+        (program, fns)
+    }
+
+    fn push_exec_request_ops(
+        code: &mut Vec<Op>,
+        region: u32,
+        input_slot: i64,
+        capability_slot: u32,
+        dash_o_slot: u32,
+        output_slot: u32,
+    ) {
+        code.extend([
+            Op::ConstI64 {
+                dst: region,
+                value: input_slot,
+            },
+            Op::ConstI64 {
+                dst: region + 8,
+                value: 0,
+            },
+            Op::CopyI64 {
+                dst: region + 16,
+                src: capability_slot,
+            },
+            Op::ConstI64 {
+                dst: region + 24,
+                value: 2,
+            },
+            Op::ConstI64 {
+                dst: region + 32,
+                value: -1,
+            },
+            Op::ConstI64 {
+                dst: region + 40,
+                value: -1,
+            },
+            Op::ConstI64 {
+                dst: region + 48,
+                value: 0,
+            },
+            Op::CopyI64 {
+                dst: region + 56,
+                src: dash_o_slot,
+            },
+            Op::ConstI64 {
+                dst: region + 64,
+                value: 0,
+            },
+            Op::ConstI64 {
+                dst: region + 72,
+                value: 0,
+            },
+            Op::CopyI64 {
+                dst: region + 80,
+                src: output_slot,
+            },
+            Op::ConstI64 {
+                dst: region + 88,
+                value: 0,
+            },
+            Op::HostCall { host: EXEC_HOST },
+        ]);
+    }
+
+    fn push_text_project_ops(
+        code: &mut Vec<Op>,
+        region: u32,
+        input_slot: i64,
+        tree_slot: u32,
+        path_slot: u32,
+    ) {
+        code.extend([
+            Op::ConstI64 {
+                dst: region,
+                value: input_slot,
+            },
+            Op::CopyI64 {
+                dst: region + 8,
+                src: tree_slot,
+            },
+            Op::CopyI64 {
+                dst: region + 16,
+                src: path_slot,
+            },
+            Op::HostCall {
+                host: TREE_TEXT_HOST,
+            },
+        ]);
+    }
+
+    #[test]
+    fn independent_exec_text_waits_overlap() {
+        let (program, fns) = exec_text_overlap_program();
+        let mut driver = Driver::new(program, fns);
+        let schemas = driver.schemas.clone();
+        let args = {
+            let mut store = driver.store.borrow_mut();
+            vec![
+                store.alloc_raw("Cc", b"cc-fake".to_vec(), &schemas).0,
+                store.alloc_raw("String", b"-o".to_vec(), &schemas).0,
+                store.alloc_raw("String", b"a.o".to_vec(), &schemas).0,
+                store.alloc_raw("String", b"b.o".to_vec(), &schemas).0,
+                store.alloc_raw("Path", b"a.o".to_vec(), &schemas).0,
+                store.alloc_raw("Path", b"b.o".to_vec(), &schemas).0,
+            ]
+        };
+        driver.set_exec_backend(Some(Arc::new(LatencyExecBackend {
+            delay: Duration::from_millis(150),
+        })));
+
+        let started = Instant::now();
+        let value = driver.demand(FnRef::new(0), args).unwrap();
+        let wall = started.elapsed();
+
+        assert_eq!(
+            driver.store.borrow().string_value(value, "String").unwrap(),
+            "a.o;b.o;"
+        );
+        assert!(
+            wall < Duration::from_millis(250),
+            "independent 150ms exec waits serialized instead of overlapping: {wall:?}"
+        );
+        assert!(
+            has_two_run_starts_before_completion(&driver.trace),
+            "{:?}",
+            driver.trace
+        );
+    }
+
+    fn has_two_run_starts_before_completion(trace: &[DriveEvent]) -> bool {
+        let mut starts = 0;
+        for event in trace {
+            match event {
+                DriveEvent::RunStarted { .. } => {
+                    starts += 1;
+                    if starts == 2 {
+                        return true;
+                    }
+                }
+                DriveEvent::RunCompleted { .. } => return false,
+                _ => {}
+            }
+        }
+        false
     }
 
     #[test]
