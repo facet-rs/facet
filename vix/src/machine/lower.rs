@@ -33,8 +33,8 @@ use super::driver::{
     DOC_IS_MAP_HOST, DOC_KEYS_HOST, DOC_PACKAGE_HOST, DOC_PARSE_HOST, DriveEvent, DriveEventSink,
     Driver, ELF_DOC_HOST, EXEC_HOST, FETCH_HOST, FnRef, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn,
     MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST, MOLTEN_DUP_HOST, MachineExecBackend,
-    MoltenStats, OCI_DOC_HOST, OPTION_CONSTRUCT_HOST, OPTION_DESTRUCT_HOST, OPTION_UNWRAP_HOST,
-    PATH_JOIN_HOST, PATH_TO_STRING_HOST, PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST,
+    MapInternStats, MoltenStats, OCI_DOC_HOST, OPTION_CONSTRUCT_HOST, OPTION_DESTRUCT_HOST,
+    OPTION_UNWRAP_HOST, PATH_JOIN_HOST, PATH_TO_STRING_HOST, PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST,
     PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RECORD_UPDATE_HOST, RenderNames, RenderVariant,
     RenderedValue, SEALED_DECLASSIFY_HOST, SEALED_SEAL_HOST, SEALED_TO_STRING_HOST,
     STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_CONTAINS_HOST,
@@ -434,6 +434,10 @@ impl Machine {
 
     pub fn molten_stats(&self) -> MoltenStats {
         self.driver.molten_stats()
+    }
+
+    pub fn map_intern_stats(&self) -> MapInternStats {
+        self.driver.map_intern_stats()
     }
 
     pub fn tree_entries(
@@ -9178,6 +9182,7 @@ pub fn main() -> Int {
             let mut reuse = Machine::load_with_lane(src, lane).unwrap();
             reuse.driver.set_force_molten_copy(false);
             let reuse_result = reuse.demand_i64("main", vec![]).unwrap();
+            let reuse_map_stats = reuse.map_intern_stats();
             let reuse_trace = reuse.driver.trace.clone();
             let reuse_bundle = reuse
                 .driver
@@ -9194,6 +9199,10 @@ pub fn main() -> Int {
                 .unwrap();
 
             assert_eq!(reuse_result, 121, "{lane:?}");
+            assert!(reuse_map_stats.rows_canonicalized > 0, "{lane:?}");
+            assert!(reuse_map_stats.child_identity_reads > 0, "{lane:?}");
+            assert!(reuse_map_stats.sort_rows > 0, "{lane:?}");
+            assert!(reuse_map_stats.hash_rows > 0, "{lane:?}");
             assert_eq!(reuse_result, copy_result, "{lane:?}");
             assert_eq!(reuse_trace, copy_trace, "{lane:?}");
             assert_eq!(reuse_bundle.values, copy_bundle.values, "{lane:?}");
