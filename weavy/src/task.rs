@@ -36,6 +36,48 @@ use core::task::{Context, Poll};
 
 use crate::mem::Layout;
 
+/// One immutable value payload made visible to task code for native reads.
+#[repr(C)]
+#[derive(Clone, Copy, Debug)]
+pub struct ValueMemory {
+    pub ptr: *const u8,
+    pub len: usize,
+}
+
+impl ValueMemory {
+    #[must_use]
+    pub fn from_slice(bytes: &[u8]) -> Self {
+        Self {
+            ptr: bytes.as_ptr(),
+            len: bytes.len(),
+        }
+    }
+
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            ptr: core::ptr::null(),
+            len: 0,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default)]
+pub struct ValueMemories<'a> {
+    pub store: &'a [ValueMemory],
+    pub molten: &'a [ValueMemory],
+}
+
+impl ValueMemories<'_> {
+    #[must_use]
+    pub fn empty() -> Self {
+        Self {
+            store: &[],
+            molten: &[],
+        }
+    }
+}
+
 /// Identifies a function in a [`Program`]'s function table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FnId(pub u32);
@@ -135,6 +177,19 @@ pub enum Op {
         stride: u32,
         src: u32,
     },
+    /// Checked read from a store-backed `Array<T>` word payload.
+    ///
+    /// `frame[array]` is a store handle. The value-memory table entry
+    /// at that handle must be an array-words payload with matching
+    /// `elem_schema_ref`. In-bounds reads write the element to `dst`
+    /// and `1` to `present`; misses write zeroes to both.
+    LoadArrayWord {
+        dst: u32,
+        present: u32,
+        array: u32,
+        index: u32,
+        elem_schema_ref: i64,
+    },
     /// `frame[dst] = f64::from_bits(bits)` — the immediate carries the
     /// BIT PATTERN (keeps `Op: Eq`; the machine is type-blind about a
     /// 64-bit store anyway — the op exists so lowerings and readers
@@ -162,6 +217,11 @@ pub enum Op {
     /// extended to the host boundary. `host` indexes the table passed
     /// to [`Task::run_hosted`].
     HostCall { host: u32 },
+    /// Sync host call that yields to the outer driver after completion.
+    ///
+    /// Use this when host effects change native value-memory provenance and
+    /// the next machine op may read through that provenance.
+    HostCallYield { host: u32 },
 }
 
 /// A synchronous host operation over the current frame's bytes.
@@ -201,6 +261,8 @@ pub enum TraceMode {
 pub enum TaskStep {
     /// The root frame returned; the result is in [`Task::result`].
     Done,
+    /// A sync host call completed and the task can be re-entered immediately.
+    Yielded,
     /// Parked on an unready input — started-and-blocked, the only
     /// kind of suspension that exists.
     Parked { input: u32 },
@@ -302,6 +364,17 @@ impl Task {
         ready: &mut [bool],
         awaited: &[i64],
         hosts: &mut [HostFn<'_>],
+    ) -> TaskStep {
+        self.run_hosted_with_value_memories(program, ready, awaited, hosts, ValueMemories::empty())
+    }
+
+    pub fn run_hosted_with_value_memories(
+        &mut self,
+        program: &Program,
+        ready: &mut [bool],
+        awaited: &[i64],
+        hosts: &mut [HostFn<'_>],
+        value_memories: ValueMemories<'_>,
     ) -> TaskStep {
         loop {
             let frame = self.frames.last().expect("running task has a frame");
@@ -446,6 +519,21 @@ impl Task {
                     write_i64_at(&mut self.arena, at, v);
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
+                Op::LoadArrayWord {
+                    dst,
+                    present,
+                    array,
+                    index,
+                    elem_schema_ref,
+                } => {
+                    let array = read_i64_at(&self.arena, base + array as usize);
+                    let index = read_i64_at(&self.arena, base + index as usize);
+                    let (ok, value) =
+                        load_array_word(value_memories, array, index, elem_schema_ref);
+                    write_i64_at(&mut self.arena, base + dst as usize, value);
+                    write_i64_at(&mut self.arena, base + present as usize, i64::from(ok));
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
                 Op::Trace { id } => {
                     if self.mode == TraceMode::Innards {
                         self.trace.push(TaskEvent::Mark(id));
@@ -481,6 +569,13 @@ impl Task {
                     let end = base + frame_layout.size;
                     hosts[host as usize](&mut self.arena[base..end]);
                     self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::HostCallYield { host } => {
+                    let frame_layout = program.fns[fn_id.0 as usize].frame;
+                    let end = base + frame_layout.size;
+                    hosts[host as usize](&mut self.arena[base..end]);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                    return TaskStep::Yielded;
                 }
                 Op::Await { dst, input } => {
                     let idx = input as usize;
@@ -519,6 +614,7 @@ pub trait Advance {
         ready: &mut [bool],
         awaited: &[i64],
         hosts: &mut [HostFn<'_>],
+        value_memories: ValueMemories<'_>,
     ) -> TaskStep;
     fn result_bytes(&self) -> &[u8];
 }
@@ -535,8 +631,15 @@ impl Advance for Running<'_> {
         ready: &mut [bool],
         awaited: &[i64],
         hosts: &mut [HostFn<'_>],
+        value_memories: ValueMemories<'_>,
     ) -> TaskStep {
-        self.task.run_hosted(self.program, ready, awaited, hosts)
+        self.task.run_hosted_with_value_memories(
+            self.program,
+            ready,
+            awaited,
+            hosts,
+            value_memories,
+        )
     }
 
     fn result_bytes(&self) -> &[u8] {
@@ -615,14 +718,19 @@ impl<A: Advance + Unpin> Future for TaskExec<'_, A> {
             .iter_mut()
             .map(|h| h.as_mut() as HostFn<'_>)
             .collect();
-        match this
-            .lane
-            .advance(&mut this.ready, &this.awaited, &mut host_refs)
-        {
-            TaskStep::Done => Poll::Ready(this.lane.result_bytes().to_vec()),
-            TaskStep::Parked { input } => {
-                this.parked_on = Some(input);
-                Poll::Pending
+        loop {
+            match this.lane.advance(
+                &mut this.ready,
+                &this.awaited,
+                &mut host_refs,
+                ValueMemories::empty(),
+            ) {
+                TaskStep::Done => return Poll::Ready(this.lane.result_bytes().to_vec()),
+                TaskStep::Yielded => {}
+                TaskStep::Parked { input } => {
+                    this.parked_on = Some(input);
+                    return Poll::Pending;
+                }
             }
         }
     }
@@ -634,6 +742,52 @@ fn read_i64_at(arena: &[u8], at: usize) -> i64 {
 
 fn write_i64_at(arena: &mut [u8], at: usize, value: i64) {
     arena[at..at + 8].copy_from_slice(&value.to_le_bytes());
+}
+
+fn load_array_word(
+    value_memories: ValueMemories<'_>,
+    array: i64,
+    index: i64,
+    elem_schema_ref: i64,
+) -> (bool, i64) {
+    let (handle, memories) = if array < 0 {
+        let Some(handle) = (-1i64).checked_sub(array) else {
+            return (false, 0);
+        };
+        let Ok(handle) = usize::try_from(handle) else {
+            return (false, 0);
+        };
+        (handle, value_memories.molten)
+    } else {
+        let Ok(handle) = usize::try_from(array) else {
+            return (false, 0);
+        };
+        (handle, value_memories.store)
+    };
+    let Some(memory) = memories.get(handle).copied() else {
+        return (false, 0);
+    };
+    if memory.ptr.is_null() || memory.len < 24 || index < 0 {
+        return (false, 0);
+    }
+    let bytes = unsafe { core::slice::from_raw_parts(memory.ptr, memory.len) };
+    if read_i64_at(bytes, 0) != 0 || read_i64_at(bytes, 8) != elem_schema_ref {
+        return (false, 0);
+    }
+    let Ok(count) = usize::try_from(read_i64_at(bytes, 16)) else {
+        return (false, 0);
+    };
+    let Some(expected) = count.checked_mul(8).and_then(|n| 24usize.checked_add(n)) else {
+        return (false, 0);
+    };
+    if bytes.len() != expected {
+        return (false, 0);
+    }
+    let index = usize::try_from(index).expect("nonnegative index checked");
+    if index >= count {
+        return (false, 0);
+    }
+    (true, read_i64_at(bytes, 24 + index * 8))
 }
 
 #[cfg(test)]

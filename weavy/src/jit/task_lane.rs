@@ -19,7 +19,9 @@
 use std::collections::HashMap;
 
 use crate::jit::{NativeProgram, StencilLayout, task_stencils};
-use crate::task::{Advance, ArgCopy, FnId, HostFn, Op, Program, TaskEvent, TaskStep, TraceMode};
+use crate::task::{
+    Advance, ArgCopy, FnId, HostFn, Op, Program, TaskEvent, TaskStep, TraceMode, ValueMemories,
+};
 
 /// Threaded state — MUST match `Ctx` in stencils/task_ops.rs.
 #[repr(C)]
@@ -31,6 +33,10 @@ struct Ctx {
     resume: *mut u64,
     await_index: *mut u64,
     exit: *mut i64,
+    store_value_memories: *const crate::task::ValueMemory,
+    store_value_memory_count: usize,
+    molten_value_memories: *const crate::task::ValueMemory,
+    molten_value_memory_count: usize,
 }
 
 /// Whether the task JIT lane is usable on this target.
@@ -198,6 +204,10 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                 task_stencils::STORE_IX,
                 Continuations::Fallthrough(task_stencils::STORE_IX_CONT),
             ),
+            Op::LoadArrayWord { .. } => (
+                task_stencils::LOAD_ARRAY_WORD,
+                Continuations::Fallthrough(task_stencils::LOAD_ARRAY_WORD_CONT),
+            ),
             Op::Await { .. } => (
                 task_stencils::AWAIT,
                 Continuations::Fallthrough(task_stencils::AWAIT_CONT),
@@ -213,6 +223,10 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
             Op::HostCall { .. } => (
                 task_stencils::HOSTCALL,
                 Continuations::Fallthrough(task_stencils::HOSTCALL_CONT),
+            ),
+            Op::HostCallYield { .. } => (
+                task_stencils::HOSTCALL_YIELD,
+                Continuations::Fallthrough(task_stencils::HOSTCALL_YIELD_CONT),
             ),
             // A 64-bit immediate store is type-blind: ConstF64 IS the
             // CONST stencil with float bits in the immediate.
@@ -302,10 +316,11 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
             Op::Jump { .. } => 1,
             Op::JumpIfZero { .. } => 3,
             Op::LoadIndexedI64 { .. } | Op::StoreIndexedI64 { .. } => 4,
+            Op::LoadArrayWord { .. } => 5,
             Op::Await { .. } => 3,
             Op::Call { .. } => 1,
             Op::Ret { .. } => 2,
-            Op::HostCall { .. } | Op::Trace { .. } => 2,
+            Op::HostCall { .. } | Op::HostCallYield { .. } | Op::Trace { .. } => 2,
         };
     }
 
@@ -367,6 +382,23 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                     layout.push_prog_word(root.prog_index, u64::from(*v));
                 }
             }
+            Op::LoadArrayWord {
+                dst,
+                present,
+                array,
+                index,
+                elem_schema_ref,
+            } => {
+                for v in [
+                    u64::from(*dst),
+                    u64::from(*present),
+                    u64::from(*array),
+                    u64::from(*index),
+                    *elem_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
             Op::Await { dst, input } => {
                 // [resume_off = own start, index, dst] — idempotent
                 // suspend point, the proven protocol. Awaits are never
@@ -397,6 +429,11 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                 layout.push_prog_word(root.prog_index, u64::from(*size));
             }
             Op::HostCall { host } => {
+                let continuation = next_emitted(&starts, i + 1, done) as u64;
+                layout.push_prog_word(root.prog_index, continuation);
+                layout.push_prog_word(root.prog_index, u64::from(*host));
+            }
+            Op::HostCallYield { host } => {
                 let continuation = next_emitted(&starts, i + 1, done) as u64;
                 layout.push_prog_word(root.prog_index, continuation);
                 layout.push_prog_word(root.prog_index, u64::from(*host));
@@ -510,6 +547,17 @@ impl JitTask {
         awaited: &[i64],
         hosts: &mut [HostFn<'_>],
     ) -> TaskStep {
+        self.run_hosted_with_value_memories(program, ready, awaited, hosts, ValueMemories::empty())
+    }
+
+    pub fn run_hosted_with_value_memories(
+        &mut self,
+        program: &JitProgram,
+        ready: &mut [bool],
+        awaited: &[i64],
+        hosts: &mut [HostFn<'_>],
+        value_memories: ValueMemories<'_>,
+    ) -> TaskStep {
         self.ready_scratch.clear();
         self.ready_scratch
             .extend(ready.iter().map(|&r| i64::from(r)));
@@ -540,6 +588,10 @@ impl JitTask {
                 resume: &mut resume_scratch,
                 await_index: &mut index_scratch,
                 exit: &mut exit_scratch,
+                store_value_memories: value_memories.store.as_ptr(),
+                store_value_memory_count: value_memories.store.len(),
+                molten_value_memories: value_memories.molten.as_ptr(),
+                molten_value_memory_count: value_memories.molten.len(),
             };
             // SAFETY: `frame.resume` is a chain offset of this compiled
             // function; the copied code uses the extern "C" fn(*mut Ctx)
@@ -627,6 +679,17 @@ impl JitTask {
                     let end = frame.base + compiled.frame_size;
                     hosts[host](&mut self.arena[frame.base..end]);
                 }
+                6 => {
+                    let continuation = usize::try_from(resume_scratch).expect("offset");
+                    let host = usize::try_from(index_scratch).expect("host index");
+                    {
+                        let top = self.frames.last_mut().expect("frame");
+                        top.resume = continuation;
+                    }
+                    let end = frame.base + compiled.frame_size;
+                    hosts[host](&mut self.arena[frame.base..end]);
+                    return TaskStep::Yielded;
+                }
                 code => panic!("task chain exited with code {code} (fell through without Ret?)"),
             }
         }
@@ -646,8 +709,15 @@ impl Advance for JitRunning<'_> {
         ready: &mut [bool],
         awaited: &[i64],
         hosts: &mut [HostFn<'_>],
+        value_memories: ValueMemories<'_>,
     ) -> TaskStep {
-        self.task.run_hosted(self.program, ready, awaited, hosts)
+        self.task.run_hosted_with_value_memories(
+            self.program,
+            ready,
+            awaited,
+            hosts,
+            value_memories,
+        )
     }
 
     fn result_bytes(&self) -> &[u8] {
