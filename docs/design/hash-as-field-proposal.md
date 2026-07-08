@@ -415,6 +415,21 @@ supplies enough pairs to solve the k-sum). Opus is right that the algebra must s
   opus's soundness benefit (dissolves `changed_words` for maps) **without** the additive
   weakness. ~O(log n) small nodes of carried state — far lighter than (a). This is the
   recommendation.
+
+  **The strongest argument for (b) is STRUCTURAL SHARING (Amos's data-structure probe),
+  and it is currently undersold.** Solver `State`s differ by **one domain at a time** — a
+  successor State mutates a single package's domain and leaves every other subtree
+  untouched. A **persistent** (functional) digest-carrying B-tree means successive States
+  **share both memory *and* identity computation** for every unchanged subtree: the path
+  to the changed node is copied (O(log n) nodes, each re-hashed), and the untouched
+  siblings are retained by pointer *with their subtree digests intact* — no re-hash, no
+  re-alloc. This is spike-C's carried-hasher philosophy generalized from a linear
+  accumulator to the **structure itself**: the trail becomes cheap *by construction*,
+  because the identity of a State is a fold over subtree digests that are already computed
+  and already shared. (a)'s flat ~2KB accumulator cannot share — every State carries its
+  own vector — and (c) recomputes the whole sort per intern; only the persistent ordered
+  tree makes both the memory and the identity of a 10,000-domain State differ from its
+  predecessor in O(log n), which is the trail loop's actual access pattern.
 - **(c) Sort-at-finalize (no map carry).** Keep `canonical_map_pairs`' sort; do not carry
   a map midstate. Zero new machinery, realizes the current spec exactly. Arrays,
   whole-value slots, and projection field-reads still pay off (they are independent — gate
@@ -429,6 +444,19 @@ only if the *sort* residual alone still justifies it. Reserve (a) for a future
 multiset-heavy profile that (b) cannot serve — and only with its own written crypto spec.
 **Note:** (b) and (c) realize the current sorted-canonical value-map encoding; **only (a)
 changes it.**
+
+**Small-map hybrid (the representation is invisible to identity).** Per-package domains
+are *tiny* — a handful to a few dozen candidate versions — so a full B-tree per map is
+overkill at that size. Use a **flat sorted-vec representation below ~N entries and the
+persistent tree above** (the usual small-map inline optimization). The hard constraint:
+**the digest algebra must be identical across both representations** — the same canonical
+fold over the same canonical key order — so that a map that grows across the threshold, or
+two maps of the same content stored in different representations, produce the **byte-identical
+`ContentHash`**. Identity must not be able to observe which representation is in use;
+the threshold is a memory/perf decision only, never a canonicalization decision. (This is
+the map analogue of the array/scalar inline-word exemption in §1: representation varies,
+identity does not.) Force-copy differential (§5) covers it directly — force a small map to
+the tree representation and assert the digest is unchanged.
 
 ### Q2 — record carried-hasher × atomic variant switch
 
