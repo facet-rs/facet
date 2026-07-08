@@ -628,8 +628,9 @@ fn dump_failed_root(command: &str, root: &Path, out_root: &Path) -> Result<(), S
             let relative = relative
                 .to_string_lossy()
                 .replace(std::path::MAIN_SEPARATOR, "__");
-            let bytes = fs::read(&path)
-                .map_err(|err| format!("real-process read failed-root `{}`: {err}", path.display()))?;
+            let bytes = fs::read(&path).map_err(|err| {
+                format!("real-process read failed-root `{}`: {err}", path.display())
+            })?;
             fs::write(dump_root.join(format!("{command}__{relative}")), bytes)
                 .map_err(|err| format!("real-process write failed-root dump: {err}"))?;
         }

@@ -713,15 +713,15 @@ fn demand_with_rustc_trace(
         .map_err(|err| format!("{err}\nrustc argv trace:\n{}", rustc_argv_trace(machine)))
 }
 
-struct ArtifactExpectation {
-    path: &'static str,
+struct ArtifactExpectation<'a> {
+    path: &'a str,
     archive: bool,
 }
 
 fn artifact_receipt_table(
     machine: &mut Machine,
     handle: i64,
-    artifacts: &[ArtifactExpectation],
+    artifacts: &[ArtifactExpectation<'_>],
 ) -> Result<String, String> {
     let mut rows = Vec::with_capacity(artifacts.len() + 1);
     rows.push("path\tbytes\tblake3\tarchive".to_string());
@@ -1660,6 +1660,42 @@ fn cargo_facet_core_no_default_unit_graph_oracle() -> Result<CargoUnitGraph, Str
     facet_json::from_str(&stdout).map_err(|err| err.to_string())
 }
 
+fn cargo_facet_default_unit_graph_oracle() -> Result<CargoUnitGraph, String> {
+    if !Command::new("cargo")
+        .arg("+nightly")
+        .arg("--version")
+        .output()
+        .is_ok_and(|output| output.status.success())
+    {
+        return Ok(CargoUnitGraph {
+            units: Vec::new(),
+            roots: Vec::new(),
+        });
+    }
+
+    let output = Command::new("cargo")
+        .arg("+nightly")
+        .arg("build")
+        .arg("--unit-graph")
+        .arg("-Z")
+        .arg("unstable-options")
+        .arg("--locked")
+        .arg("-p")
+        .arg("facet")
+        .output()
+        .map_err(|err| err.to_string())?;
+    if !output.status.success() {
+        return Err(format!(
+            "cargo facet unit graph oracle exited with {}: {}",
+            output.status,
+            String::from_utf8_lossy(&output.stderr)
+        ));
+    }
+
+    let stdout = String::from_utf8(output.stdout).map_err(|err| err.to_string())?;
+    facet_json::from_str(&stdout).map_err(|err| err.to_string())
+}
+
 #[derive(Debug, Facet)]
 struct CargoTarget {
     name: String,
@@ -2172,6 +2208,142 @@ fn facet_core_ladder_builds_facet_core_with_real_process_and_hashes_artifacts() 
     Ok(())
 }
 
+#[test]
+#[ignore = "demo: builds facet default features through real rustc and proc-macro dylibs"]
+fn facet_ladder_builds_facet_with_real_process_proc_macros_and_hashes_artifacts()
+-> Result<(), String> {
+    if !host_rustc_available() {
+        return Ok(());
+    }
+
+    let graph = cargo_facet_default_unit_graph_oracle()?;
+    if graph.units.is_empty() {
+        return Ok(());
+    }
+    assert_facet_unit_graph_shape(&graph)?;
+
+    let host = host_triple()?;
+    let bridge = facet_demo_bridge_source(&graph, &host)?;
+    write_tier_a_artifact("facet-demo-bridge.vix", &bridge)?;
+    let source_tree = facet_demo_source_tree(&graph)?;
+    assert_source_tree_has_build_main(
+        &source_tree,
+        "facet/build.rs",
+        "facet-build-source-head.txt",
+    )?;
+    let source = format!("{RODIN_SOURCE}\n\n{SOURCE}\n\n{bridge}");
+    let backend = Arc::new(RealProcessBackend::new());
+    let mut machine = Machine::load(&source)?.with_exec_backend(backend);
+    let source_arg = machine.intern_arg("Tree", MachineArg::Tree(source_tree))?.0;
+
+    let selected = machine.demand_i64("facet_root_selected_names", Vec::new())?;
+    write_tier_a_artifact(
+        "facet-root-selected.txt",
+        &rendered_result_string(&machine, "facet_root_selected_names", selected)?,
+    )?;
+    let root_deps = machine.demand_i64("facet_root_deps_text", vec![source_arg])?;
+    write_tier_a_artifact(
+        "facet-root-deps.txt",
+        &rendered_result_string(&machine, "facet_root_deps_text", root_deps)?,
+    )?;
+    let build_script_run =
+        demand_with_rustc_trace(&mut machine, "facet_build_script_run", vec![source_arg])?;
+    let build_script_stdout = tree_file_bytes(&mut machine, build_script_run, "build.stdout")?;
+    write_tier_a_artifact(
+        "facet-build-stdout-final.txt",
+        &String::from_utf8_lossy(&build_script_stdout),
+    )?;
+    let cfgs = machine.demand_i64("facet_build_script_cfgs", vec![source_arg])?;
+    write_tier_a_artifact(
+        "facet-build-cfgs.txt",
+        &rendered_result_string(&machine, "facet_build_script_cfgs", cfgs)?,
+    )?;
+    let proc_macro_deps = machine.demand_i64("facet_macros_deps_text", vec![source_arg])?;
+    let proc_macro_deps_text =
+        rendered_result_string(&machine, "facet_macros_deps_text", proc_macro_deps)?;
+    write_tier_a_artifact("facet-macros-deps.txt", &proc_macro_deps_text)?;
+    if !proc_macro_deps_text
+        .lines()
+        .any(|line| line == "facet_macros_impl")
+    {
+        return Err(format!(
+            "facet_macros derived deps did not include facet_macros_impl:\n{proc_macro_deps_text}"
+        ));
+    }
+    let proc_macro_cfgs = machine.demand_i64("facet_macros_cfgs_text", vec![source_arg])?;
+    let proc_macro_cfgs_text =
+        rendered_result_string(&machine, "facet_macros_cfgs_text", proc_macro_cfgs)?;
+    write_tier_a_artifact("facet-macros-cfgs.txt", &proc_macro_cfgs_text)?;
+    if !proc_macro_cfgs_text
+        .lines()
+        .any(|line| line == "feature=\"helpful-derive\"")
+    {
+        return Err(format!(
+            "facet_macros derived cfgs did not include helpful-derive:\n{proc_macro_cfgs_text}"
+        ));
+    }
+
+    let proc_macro =
+        demand_with_rustc_trace(&mut machine, "facet_macros_proc_macro", vec![source_arg])?;
+    let proc_macro_file = facet_proc_macro_artifact_file(&host, "facet_macros");
+    let proc_macro_receipts = artifact_receipt_table(
+        &mut machine,
+        proc_macro,
+        &[ArtifactExpectation {
+            path: &proc_macro_file,
+            archive: false,
+        }],
+    )?;
+    write_tier_a_artifact(
+        "facet-macros-proc-macro-artifact-receipts.tsv",
+        &proc_macro_receipts,
+    )?;
+
+    let built = match demand_with_rustc_trace(&mut machine, "facet_root_link", vec![source_arg]) {
+        Ok(built) => built,
+        Err(err) => {
+            write_tier_a_artifact("facet-final-rustc-trace.txt", &rustc_argv_trace(&machine))?;
+            return Err(err);
+        }
+    };
+    assert_rustc_requests_include_crates(
+        &machine,
+        &[
+            "autocfg",
+            "build_script_build",
+            "facet_core",
+            "facet_macro_parse",
+            "facet_macro_types",
+            "facet_macros_impl",
+            "facet_macros",
+            "proc_macro2",
+            "quote",
+            "strsim",
+            "unsynn",
+            "facet",
+        ],
+    )?;
+
+    let receipts = artifact_receipt_table(
+        &mut machine,
+        built,
+        &[
+            ArtifactExpectation {
+                path: "libfacet.rlib",
+                archive: true,
+            },
+            ArtifactExpectation {
+                path: "libfacet.rmeta",
+                archive: false,
+            },
+        ],
+    )?;
+    write_tier_a_artifact("facet-final-artifact-receipts.tsv", &receipts)?;
+    write_tier_a_artifact("facet-final-rustc-trace.txt", &rustc_argv_trace(&machine))?;
+
+    Ok(())
+}
+
 fn assert_facet_core_unit_graph_shape(graph: &CargoUnitGraph) -> Result<(), String> {
     let root = graph
         .roots
@@ -2214,6 +2386,409 @@ fn assert_facet_core_unit_graph_shape(graph: &CargoUnitGraph) -> Result<(), Stri
         ));
     }
     Ok(())
+}
+
+fn assert_facet_unit_graph_shape(graph: &CargoUnitGraph) -> Result<(), String> {
+    let root = graph
+        .roots
+        .first()
+        .copied()
+        .ok_or_else(|| "facet cargo unit graph had no root".to_string())?;
+    let root_unit = graph
+        .units
+        .get(root)
+        .ok_or_else(|| format!("facet root index {root} was absent"))?;
+    let expected_features = BTreeSet::from([
+        "alloc".to_string(),
+        "default".to_string(),
+        "doc".to_string(),
+        "helpful-derive".to_string(),
+        "std".to_string(),
+    ]);
+    let actual_features = root_unit.features.iter().cloned().collect::<BTreeSet<_>>();
+    if !root_unit.pkg_id.contains("/facet#")
+        || !root_unit.target.kind.iter().any(|kind| kind == "lib")
+        || actual_features != expected_features
+    {
+        return Err(format!(
+            "facet root was not the default-feature lib unit: {root_unit:#?}"
+        ));
+    }
+    let has_facet_proc_macro = graph.units.iter().any(|unit| {
+        unit.pkg_id.contains("/facet-macros#")
+            && unit.mode == "build"
+            && unit.target.kind.iter().any(|kind| kind == "proc-macro")
+    });
+    let has_proc_macro_with_deps = graph.units.iter().any(|unit| {
+        unit.pkg_id.contains("/facet-macros#")
+            && unit.target.kind.iter().any(|kind| kind == "proc-macro")
+            && !unit.dependencies.is_empty()
+    });
+    let has_root_build_script = graph.units.iter().any(|unit| {
+        unit.pkg_id.contains("/facet#")
+            && unit.mode == "build"
+            && unit.target.kind.iter().any(|kind| kind == "custom-build")
+    });
+    if !has_facet_proc_macro || !has_proc_macro_with_deps || !has_root_build_script {
+        return Err(format!(
+            "facet rung missed expected build/proc-macro units: proc_macro={has_facet_proc_macro} proc_macro_deps={has_proc_macro_with_deps} build_script={has_root_build_script}\n{graph:#?}"
+        ));
+    }
+    Ok(())
+}
+
+fn facet_demo_bridge_source(graph: &CargoUnitGraph, host: &str) -> Result<String, String> {
+    let ids = taxon_included_unit_ids(graph);
+    let run_to_build = taxon_run_custom_build_map(graph);
+    let root_cargo_index = graph
+        .roots
+        .first()
+        .copied()
+        .ok_or_else(|| "facet cargo unit graph had no root".to_string())?;
+    let root = *ids
+        .get(&root_cargo_index)
+        .ok_or_else(|| format!("facet root unit {root_cargo_index} was not included"))?;
+    let root_version = taxon_pkg_version(&graph.units[root_cargo_index].pkg_id)?;
+    let build_script = graph
+        .units
+        .iter()
+        .enumerate()
+        .find(|(_, unit)| {
+            unit.pkg_id.contains("/facet#")
+                && unit.mode == "build"
+                && unit.target.kind.iter().any(|kind| kind == "custom-build")
+        })
+        .and_then(|(index, _)| ids.get(&index).copied())
+        .ok_or_else(|| "missing facet custom-build unit".to_string())?;
+    let facet_macros = graph
+        .units
+        .iter()
+        .enumerate()
+        .find(|(_, unit)| {
+            unit.pkg_id.contains("/facet-macros#")
+                && unit.mode == "build"
+                && unit.target.kind.iter().any(|kind| kind == "proc-macro")
+        })
+        .and_then(|(index, _)| ids.get(&index).copied())
+        .ok_or_else(|| "missing facet-macros proc-macro unit".to_string())?;
+    let mut root_link_deps = Vec::new();
+    for dep in &graph.units[root_cargo_index].dependencies {
+        let mapped_dep = run_to_build.get(&dep.index).copied().unwrap_or(dep.index);
+        let Some(dep_id) = ids.get(&mapped_dep).copied() else {
+            continue;
+        };
+        let unit = &graph.units[mapped_dep];
+        if taxon_unit_kind(unit) == "build-script" {
+            continue;
+        }
+        root_link_deps.push((
+            dep_id,
+            unit.target.name.replace('-', "_"),
+            taxon_unit_kind(unit),
+        ));
+    }
+
+    let mut out = String::new();
+    out.push_str("fn facet_index() -> Index {\n");
+    out.push_str("    let names: Map<Int, String> = {};\n");
+    out.push_str("    let version_pkgs: Map<Int, Int> = {};\n");
+    out.push_str("    let version_values: Map<Int, String> = {};\n");
+    out.push_str("    let guard_clause_ids: Map<Int, Int> = {};\n");
+    out.push_str("    let guard_tags: Map<Int, String> = {};\n");
+    out.push_str("    let guard_kinds: Map<Int, Int> = {};\n");
+    out.push_str("    let guard_pkgs: Map<Int, Int> = {};\n");
+    out.push_str("    let guard_version_values: Map<Int, String> = {};\n");
+    out.push_str("    let guard_features: Map<Int, Int> = {};\n");
+    out.push_str("    let consequent_tags: Map<Int, String> = {};\n");
+    out.push_str("    let consequent_pkgs: Map<Int, Int> = {};\n");
+    out.push_str("    let consequent_version_sets: Map<Int, VersionSet> = {};\n");
+    out.push_str("    let consequent_features: Map<Int, Int> = {};\n");
+    out.push_str("    let gate_kinds: Map<Int, String> = {};\n");
+    out.push_str("    let gate_targets: Map<Int, String> = {};\n");
+
+    let mut packages = Vec::new();
+    let mut version_ids = Vec::new();
+    for (cargo_index, id) in &ids {
+        let unit = &graph.units[*cargo_index];
+        packages.push(id.to_string());
+        version_ids.push(id.to_string());
+        out.push_str(&format!(
+            "    let names = names.insert({id}, {});\n",
+            vix_string(&taxon_unit_name(unit, *cargo_index))
+        ));
+        out.push_str(&format!(
+            "    let version_pkgs = version_pkgs.insert({id}, {id});\n"
+        ));
+        out.push_str(&format!(
+            "    let version_values = version_values.insert({id}, {});\n",
+            vix_string(&taxon_pkg_version(&unit.pkg_id)?)
+        ));
+    }
+
+    let mut clause = 0usize;
+    let mut guard = 0usize;
+    for (cargo_index, id) in &ids {
+        let unit = &graph.units[*cargo_index];
+        for dep in &unit.dependencies {
+            let mapped_dep = run_to_build.get(&dep.index).copied().unwrap_or(dep.index);
+            let Some(dep_id) = ids.get(&mapped_dep).copied() else {
+                continue;
+            };
+            let dep_version = taxon_pkg_version(&graph.units[mapped_dep].pkg_id)?;
+            push_taxon_clause(
+                &mut out,
+                &mut clause,
+                &mut guard,
+                *id,
+                dep_id,
+                "*",
+                "in_graph",
+            );
+            push_taxon_clause(
+                &mut out,
+                &mut clause,
+                &mut guard,
+                *id,
+                dep_id,
+                &format!("={dep_version}"),
+                "version_set",
+            );
+        }
+    }
+
+    out.push_str("    Index {\n");
+    out.push_str(&format!("        packages: [{}],\n", packages.join(", ")));
+    out.push_str("        names: names,\n");
+    out.push_str(&format!(
+        "        version_ids: [{}],\n",
+        version_ids.join(", ")
+    ));
+    out.push_str("        version_pkgs: version_pkgs,\n");
+    out.push_str("        version_values: version_values,\n");
+    out.push_str(&format!(
+        "        clause_ids: [{}],\n",
+        (0..clause)
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+    out.push_str(&format!(
+        "        guard_ids: [{}],\n",
+        (0..guard)
+            .map(|id| id.to_string())
+            .collect::<Vec<_>>()
+            .join(", ")
+    ));
+    out.push_str("        guard_clause_ids: guard_clause_ids,\n");
+    out.push_str("        guard_tags: guard_tags,\n");
+    out.push_str("        guard_kinds: guard_kinds,\n");
+    out.push_str("        guard_pkgs: guard_pkgs,\n");
+    out.push_str("        guard_version_values: guard_version_values,\n");
+    out.push_str("        guard_features: guard_features,\n");
+    out.push_str("        consequent_tags: consequent_tags,\n");
+    out.push_str("        consequent_pkgs: consequent_pkgs,\n");
+    out.push_str("        consequent_version_sets: consequent_version_sets,\n");
+    out.push_str("        consequent_features: consequent_features,\n");
+    out.push_str("        gate_kinds: gate_kinds,\n");
+    out.push_str("        gate_targets: gate_targets,\n");
+    out.push_str("    }\n");
+    out.push_str("}\n\n");
+
+    out.push_str("fn facet_problem() -> Problem {\n");
+    out.push_str(&format!(
+        "    Problem {{ root_pkg: {root}, root_req: VersionSet::from_req({}), root_features: [], root_default_feature: 0, root_default_features: true }}\n",
+        vix_string(&format!("={root_version}"))
+    ));
+    out.push_str("}\n\n");
+
+    out.push_str("fn facet_targets() -> UnitTargetTable {\n");
+    out.push_str("    let targets: Map<Int, UnitTarget> = {};\n");
+    for (cargo_index, id) in &ids {
+        let unit = &graph.units[*cargo_index];
+        let logical = taxon_logical_unit_root(unit)?;
+        let source = taxon_unit_source_suffix(unit)?;
+        let kind = taxon_unit_kind(unit);
+        let cfgs = unit
+            .features
+            .iter()
+            .map(|feature| vix_string(&format!("feature=\"{feature}\"")))
+            .collect::<Vec<_>>()
+            .join(", ");
+        let crate_name = unit.target.name.replace('-', "_");
+        let (metadata, link, metadata_file, link_file) = if kind == "build-script" {
+            (
+                "build_script_build.rmeta".to_string(),
+                "build_script".to_string(),
+                "build_script_build.rmeta".to_string(),
+                "build_script".to_string(),
+            )
+        } else if kind == "proc-macro" {
+            let dylib = facet_proc_macro_artifact_file(host, &crate_name);
+            (dylib.clone(), dylib.clone(), dylib.clone(), dylib)
+        } else {
+            (
+                format!("lib{crate_name}.rmeta"),
+                format!("lib{crate_name}.rlib"),
+                format!("lib{crate_name}.rmeta"),
+                format!("lib{crate_name}.rlib"),
+            )
+        };
+        out.push_str(&format!(
+            "    let targets = targets.insert({id}, UnitTarget {{ kind: {}, manifest: p{}, source: p{}, cfgs: [{}], metadata: p{}, link: p{}, metadata_file: {}, link_file: {} }});\n",
+            vix_string(&kind),
+            vix_string(&logical),
+            vix_string(&source),
+            cfgs,
+            vix_string(&metadata),
+            vix_string(&link),
+            vix_string(&metadata_file),
+            vix_string(&link_file),
+        ));
+    }
+    out.push_str(&format!(
+        "    UnitTargetTable {{ root: {root}, targets: targets }}\n"
+    ));
+    out.push_str("}\n\n");
+    out.push_str("fn facet_dep_names(index: Index, deps: [Int], out: [String]) -> [String] {\n");
+    out.push_str("    match deps.len() == 0 {\n");
+    out.push_str("        true => out,\n");
+    out.push_str("        false => match deps.pop() {\n");
+    out.push_str("            popped => facet_dep_names(index, popped.1, out.push(index.names.get(popped.0).unwrap())),\n");
+    out.push_str("        },\n");
+    out.push_str("    }\n");
+    out.push_str("}\n\n");
+    out.push_str("pub fn facet_root_selected_names() -> String {\n");
+    out.push_str("    solve_selected_names_text(facet_index(), facet_problem(), ");
+    out.push_str(&vix_string(host));
+    out.push_str(")\n");
+    out.push_str("}\n\n");
+    out.push_str("pub fn facet_root_deps_text(source: Tree) -> String {\n");
+    out.push_str("    let index = facet_index();\n");
+    out.push_str("    let result = solve(index, facet_problem(), ");
+    out.push_str(&vix_string(host));
+    out.push_str(");\n");
+    out.push_str("    let unit = solution_unit(index, result, facet_targets(), source, ");
+    out.push_str(&vix_string(host));
+    out.push_str(", ");
+    out.push_str(&root.to_string());
+    out.push_str(");\n");
+    out.push_str("    facet_dep_names(index, unit.deps, []).join(\"\\n\")\n");
+    out.push_str("}\n\n");
+    out.push_str("pub fn facet_build_script_run(source: Tree) -> Tree {\n");
+    out.push_str("    let index = facet_index();\n");
+    out.push_str("    let result = solve(index, facet_problem(), ");
+    out.push_str(&vix_string(host));
+    out.push_str(");\n");
+    out.push_str(
+        "    solution_unit_built(Target::host(), source, index, result, facet_targets(), ",
+    );
+    out.push_str(&vix_string(host));
+    out.push_str(", ");
+    out.push_str(&build_script.to_string());
+    out.push_str(", \"link\")\n");
+    out.push_str("}\n\n");
+    out.push_str("pub fn facet_build_script_cfgs(source: Tree) -> String {\n");
+    out.push_str("    let run = facet_build_script_run(source);\n");
+    out.push_str("    build_script_rustc_cfgs(run).join(\" \")\n");
+    out.push_str("}\n\n");
+    out.push_str("pub fn facet_macros_deps_text(source: Tree) -> String {\n");
+    out.push_str("    let index = facet_index();\n");
+    out.push_str("    let result = solve(index, facet_problem(), ");
+    out.push_str(&vix_string(host));
+    out.push_str(");\n");
+    out.push_str("    let unit = solution_unit(index, result, facet_targets(), source, ");
+    out.push_str(&vix_string(host));
+    out.push_str(", ");
+    out.push_str(&facet_macros.to_string());
+    out.push_str(");\n");
+    out.push_str("    facet_dep_names(index, unit.deps, []).join(\"\\n\")\n");
+    out.push_str("}\n\n");
+    out.push_str("pub fn facet_macros_cfgs_text(source: Tree) -> String {\n");
+    out.push_str("    let index = facet_index();\n");
+    out.push_str("    let result = solve(index, facet_problem(), ");
+    out.push_str(&vix_string(host));
+    out.push_str(");\n");
+    out.push_str("    let unit = solution_unit(index, result, facet_targets(), source, ");
+    out.push_str(&vix_string(host));
+    out.push_str(", ");
+    out.push_str(&facet_macros.to_string());
+    out.push_str(");\n");
+    out.push_str("    unit.cfgs.join(\"\\n\")\n");
+    out.push_str("}\n\n");
+    out.push_str("pub fn facet_macros_proc_macro(source: Tree) -> Tree {\n");
+    out.push_str("    let index = facet_index();\n");
+    out.push_str("    let result = solve(index, facet_problem(), ");
+    out.push_str(&vix_string(host));
+    out.push_str(");\n");
+    out.push_str(
+        "    solution_unit_built(Target::host(), source, index, result, facet_targets(), ",
+    );
+    out.push_str(&vix_string(host));
+    out.push_str(", ");
+    out.push_str(&facet_macros.to_string());
+    out.push_str(", \"link\")\n");
+    out.push_str("}\n\n");
+    out.push_str("pub fn facet_root_link(source: Tree) -> Tree {\n");
+    out.push_str("    let index = facet_index();\n");
+    out.push_str("    let result = solve(index, facet_problem(), ");
+    out.push_str(&vix_string(host));
+    out.push_str(");\n");
+    out.push_str("    let targets = facet_targets();\n");
+    out.push_str("    let unit = solution_unit(index, result, targets, source, ");
+    out.push_str(&vix_string(host));
+    out.push_str(", ");
+    out.push_str(&root.to_string());
+    out.push_str(");\n");
+    out.push_str("    let rustc = Rustc::acquire(Target::host());\n");
+    out.push_str("    let manifest = source / unit.manifest;\n");
+    out.push_str("    let edition = package_edition_from_source(source, manifest);\n");
+    out.push_str("    let profile_args = rustc_profile_args(unit.profile);\n");
+    out.push_str("    let build_run = facet_build_script_run(source);\n");
+    out.push_str(
+        "    let cfg_args = push_cfg_args(build_script_rustc_cfgs(build_run), push_cfg_args(unit.cfgs, []));\n",
+    );
+    out.push_str("    let source_arg = argv_source_interpolation(manifest, unit.source);\n");
+    out.push_str(
+        "    let deps = solution_dependency_tree(Target::host(), source, index, result, targets, ",
+    );
+    out.push_str(&vix_string(host));
+    out.push_str(", unit, \"link\");\n");
+    for (id, crate_name, kind) in &root_link_deps {
+        out.push_str(&format!(
+            "    let dep_{crate_name} = solution_unit_built(Target::host(), source, index, result, targets, {}, {id}, \"link\");\n",
+            vix_string(host)
+        ));
+        let subpath = if kind == "proc-macro" {
+            facet_proc_macro_artifact_file(host, crate_name)
+        } else {
+            format!("lib{crate_name}.rlib")
+        };
+        out.push_str(&format!(
+            "    let dep_{crate_name}_arg = Arg::Interpolation {{ tree: dep_{crate_name}, subpath: p{} }};\n",
+            vix_string(&subpath)
+        ));
+    }
+    out.push_str("    rustc! {\n");
+    out.push_str("        --crate-name {unit.name}\n");
+    out.push_str("        --edition {edition}\n");
+    out.push_str("        --crate-type lib\n");
+    out.push_str("        {profile_args}\n");
+    out.push_str("        --emit=metadata={unit.metadata},link={unit.link}\n");
+    out.push_str("        -L dependency={deps}\n");
+    for (_, crate_name, _) in &root_link_deps {
+        out.push_str(&format!("        -L dependency={{dep_{crate_name}}}\n"));
+    }
+    for (_, crate_name, _) in &root_link_deps {
+        out.push_str(&format!(
+            "        --extern {crate_name}={{dep_{crate_name}_arg}}\n"
+        ));
+    }
+    out.push_str("        {cfg_args}\n");
+    out.push_str("        --env CARGO_MANIFEST_DIR={manifest}\n");
+    out.push_str("        {source_arg}\n");
+    out.push_str("    }\n");
+    out.push_str("}\n");
+    Ok(out)
 }
 
 fn facet_core_demo_bridge_source(graph: &CargoUnitGraph, host: &str) -> Result<String, String> {
@@ -2471,9 +3046,14 @@ fn facet_core_demo_bridge_source(graph: &CargoUnitGraph, host: &str) -> Result<S
     out.push_str("    let profile_args = rustc_profile_args(unit.profile);\n");
     out.push_str("    let build_run = facet_core_build_script_run(source);\n");
     out.push_str(
-        "    let cfg_args = push_cfg_args(build_script_rustc_cfgs(build_run), unit.cfgs);\n",
+        "    let cfg_args = push_cfg_args(build_script_rustc_cfgs(build_run), push_cfg_args(unit.cfgs, []));\n",
     );
     out.push_str("    let source_arg = argv_source_interpolation(manifest, unit.source);\n");
+    out.push_str(
+        "    let deps = solution_dependency_tree(Target::host(), source, index, result, targets, ",
+    );
+    out.push_str(&vix_string(host));
+    out.push_str(", unit, \"link\");\n");
     for (id, crate_name) in &root_link_deps {
         out.push_str(&format!(
             "    let dep_{crate_name} = solution_unit_built(Target::host(), source, index, result, targets, {}, {id}, \"link\");\n",
@@ -2489,6 +3069,7 @@ fn facet_core_demo_bridge_source(graph: &CargoUnitGraph, host: &str) -> Result<S
     out.push_str("        --crate-type lib\n");
     out.push_str("        {profile_args}\n");
     out.push_str("        --emit=metadata={unit.metadata},link={unit.link}\n");
+    out.push_str("        -L dependency={deps}\n");
     for (_, crate_name) in &root_link_deps {
         out.push_str(&format!("        -L dependency={{dep_{crate_name}}}\n"));
     }
@@ -3075,6 +3656,10 @@ fn facet_core_demo_source_tree(graph: &CargoUnitGraph) -> Result<Tree, String> {
     Ok(Tree { entries, blobs })
 }
 
+fn facet_demo_source_tree(graph: &CargoUnitGraph) -> Result<Tree, String> {
+    facet_core_demo_source_tree(graph)
+}
+
 fn assert_taxon_source_tree_has_blake3_build_main(source: &Tree) -> Result<(), String> {
     let path = "registry/blake3-1.8.5/build.rs";
     let text = source
@@ -3207,6 +3792,8 @@ fn taxon_unit_source_suffix(unit: &CargoUnit) -> Result<String, String> {
 fn taxon_unit_kind(unit: &CargoUnit) -> String {
     if unit.target.kind.iter().any(|kind| kind == "custom-build") {
         "build-script".to_owned()
+    } else if unit.target.kind.iter().any(|kind| kind == "proc-macro") {
+        "proc-macro".to_owned()
     } else if unit.target.kind.iter().any(|kind| kind == "lib") && unit.profile.debuginfo == 0 {
         "build-dependency".to_owned()
     } else {
@@ -3250,6 +3837,16 @@ fn taxon_pkg_version(pkg_id: &str) -> Result<String, String> {
 
 fn vix_string(value: &str) -> String {
     format!("{value:?}")
+}
+
+fn facet_proc_macro_artifact_file(host: &str, crate_name: &str) -> String {
+    if host.contains("windows") {
+        format!("{crate_name}.dll")
+    } else if host.contains("apple-darwin") {
+        format!("lib{crate_name}.dylib")
+    } else {
+        format!("lib{crate_name}.so")
+    }
 }
 
 fn host_triple() -> Result<String, String> {
