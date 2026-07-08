@@ -1,5 +1,6 @@
 [workspace]
 members = [
+  "arborium-vix",
   "gingembre-snark-spike",
   "snark-ts-diff",
   "vix",

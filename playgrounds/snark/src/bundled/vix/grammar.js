@@ -32,6 +32,16 @@ module.exports = grammar({
 
   word: ($) => $.identifier,
 
+  // The scrutinee/struct-literal split below is resolved BY CONSTRUCTION
+  // (`_scrutinee` is `_expr` minus `struct_literal` — Rust's rule), but
+  // tree-sitter's LR generator still needs the shared-prefix states declared
+  // so it can GLR-split them; without this, `tree-sitter generate` refuses.
+  // Snark's own executor is unaffected (it already handles the facts).
+  conflicts: ($) => [
+    [$._scrutinee, $.struct_literal],
+    [$._expr, $.struct_literal],
+  ],
+
   rules: {
     // Every AST-relevant child carries a field(): the typed AST (and its lowering) is
     // DERIVED from fields + cardinality (bare -> T, optional -> Option<T>, repeat -> Vec<T>)
