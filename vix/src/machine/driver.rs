@@ -30,7 +30,7 @@ use std::cell::RefCell;
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
-use std::hash::Hash;
+use std::hash::{BuildHasher, Hash, Hasher};
 #[cfg(any(test, feature = "jit"))]
 use std::rc::Rc;
 use std::sync::Arc;
@@ -728,6 +728,63 @@ impl From<[u8; 32]> for ContentHash {
     }
 }
 
+type IdentityHashMap<K, V> = HashMap<K, V, IdentityBuildHasher>;
+type IdentityHashSet<K> = HashSet<K, IdentityBuildHasher>;
+
+#[derive(Clone, Default)]
+struct IdentityBuildHasher;
+
+#[derive(Default)]
+struct IdentityHasher {
+    value: u64,
+}
+
+impl BuildHasher for IdentityBuildHasher {
+    type Hasher = IdentityHasher;
+
+    fn build_hasher(&self) -> Self::Hasher {
+        IdentityHasher::default()
+    }
+}
+
+impl Hasher for IdentityHasher {
+    fn finish(&self) -> u64 {
+        self.value
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = [0u8; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            self.write_u64(u64::from_le_bytes(word));
+        }
+    }
+
+    fn write_u8(&mut self, value: u8) {
+        self.write_u64(u64::from(value));
+    }
+
+    fn write_u16(&mut self, value: u16) {
+        self.write_u64(u64::from(value));
+    }
+
+    fn write_u32(&mut self, value: u32) {
+        self.write_u64(u64::from(value));
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.value = self
+            .value
+            .rotate_left(13)
+            .wrapping_mul(0x9e37_79b1_85eb_ca87)
+            ^ value;
+    }
+
+    fn write_usize(&mut self, value: usize) {
+        self.write_u64(value as u64);
+    }
+}
+
 impl fmt::Display for ContentHash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for byte in self.0 {
@@ -830,7 +887,7 @@ pub type MapWordRow = (String, i64, String, i64, Option<i64>);
 
 #[derive(Default)]
 struct InFlightInvocations {
-    keys: HashSet<CanonMemoKey>,
+    keys: IdentityHashSet<CanonMemoKey>,
 }
 
 impl InFlightInvocations {
@@ -969,8 +1026,8 @@ struct SealedPayload {
 #[derive(Debug, Default)]
 pub struct ValueStore {
     entries: Vec<StoreEntry>,
-    by_content: HashMap<(String, HandleTier, ContentHash), i64>,
-    decoded_map_rows: HashMap<DecodedMapCacheKey, DecodedMapRows>,
+    by_content: IdentityHashMap<(String, HandleTier, ContentHash), i64>,
+    decoded_map_rows: IdentityHashMap<DecodedMapCacheKey, DecodedMapRows>,
 }
 
 impl Clone for ValueStore {
@@ -978,7 +1035,7 @@ impl Clone for ValueStore {
         Self {
             entries: self.entries.clone(),
             by_content: self.by_content.clone(),
-            decoded_map_rows: HashMap::new(),
+            decoded_map_rows: IdentityHashMap::default(),
         }
     }
 }
@@ -2283,19 +2340,19 @@ pub struct Driver {
     fns: Vec<LoweredFn>,
     descriptors: DescriptorMap,
     schemas: SchemaTables,
-    memo: HashMap<CanonMemoKey, MemoEntry>,
-    memo_candidates: HashMap<ProjectionCandidateKey, Vec<CanonMemoKey>>,
+    memo: IdentityHashMap<CanonMemoKey, MemoEntry>,
+    memo_candidates: IdentityHashMap<ProjectionCandidateKey, Vec<CanonMemoKey>>,
     journal: BTreeMap<String, i64>,
     exec_cache: crate::exec::ExecCache,
     fetch_backend: Arc<dyn FetchBackend>,
     exec_backend: Option<Arc<dyn MachineExecBackend>>,
-    elf_projection_memo: HashMap<(ContentHash, super::elf::Projection), i64>,
+    elf_projection_memo: IdentityHashMap<(ContentHash, super::elf::Projection), i64>,
     ast_roots: HashMap<i64, i64>,
-    ast_parse_memo: HashMap<ContentHash, Arc<ast::SourceFile>>,
-    ast_projection_memo: HashMap<(ContentHash, super::ast_probe::Projection, String), i64>,
-    crate_archive_memo: HashMap<ContentHash, i64>,
-    oci_projection_memo: HashMap<(ContentHash, super::oci::Projection), i64>,
-    oci_file_memo: HashMap<(ContentHash, String), Option<i64>>,
+    ast_parse_memo: IdentityHashMap<ContentHash, Arc<ast::SourceFile>>,
+    ast_projection_memo: IdentityHashMap<(ContentHash, super::ast_probe::Projection, String), i64>,
+    crate_archive_memo: IdentityHashMap<ContentHash, i64>,
+    oci_projection_memo: IdentityHashMap<(ContentHash, super::oci::Projection), i64>,
+    oci_file_memo: IdentityHashMap<(ContentHash, String), Option<i64>>,
     runs: BTreeMap<u64, PendingExecRun>,
     next_run_id: u64,
     trace_clock: u64,
@@ -2350,19 +2407,19 @@ impl Driver {
             fns,
             descriptors,
             schemas,
-            memo: HashMap::new(),
-            memo_candidates: HashMap::new(),
+            memo: IdentityHashMap::default(),
+            memo_candidates: IdentityHashMap::default(),
             journal: BTreeMap::new(),
             exec_cache: crate::exec::ExecCache::new(),
             fetch_backend: Arc::new(NoFetchBackend),
             exec_backend: None,
-            elf_projection_memo: HashMap::new(),
+            elf_projection_memo: IdentityHashMap::default(),
             ast_roots: HashMap::new(),
-            ast_parse_memo: HashMap::new(),
-            ast_projection_memo: HashMap::new(),
-            crate_archive_memo: HashMap::new(),
-            oci_projection_memo: HashMap::new(),
-            oci_file_memo: HashMap::new(),
+            ast_parse_memo: IdentityHashMap::default(),
+            ast_projection_memo: IdentityHashMap::default(),
+            crate_archive_memo: IdentityHashMap::default(),
+            oci_projection_memo: IdentityHashMap::default(),
+            oci_file_memo: IdentityHashMap::default(),
             runs: BTreeMap::new(),
             next_run_id: 0,
             trace_clock: 0,
@@ -2777,7 +2834,8 @@ impl Driver {
         // Waiters: invocation key → executions parked on it (by index
         // into `executions`) with the slot to fill.
         let mut executions: Vec<Option<Execution>> = Vec::new();
-        let mut waiters: HashMap<CanonMemoKey, Vec<(usize, usize)>> = HashMap::new();
+        let mut waiters: IdentityHashMap<CanonMemoKey, Vec<(usize, usize)>> =
+            IdentityHashMap::default();
         let mut in_flight = InFlightInvocations::default();
         let mut runnable: Vec<usize> = Vec::new();
 
@@ -3353,8 +3411,7 @@ impl Driver {
                 let offset = field_offset(descriptor, &entry.bytes, field_index);
                 let value = read_frame_word(&entry.bytes, offset);
                 let field = field_descriptor(descriptor, &entry.bytes, field_index);
-                let field_schema = descriptor_word_schema(schemas, field);
-                let observed = canonical_word_hash_in_store(&store, schemas, &field_schema, value);
+                let observed = canonical_word_hash_for_descriptor(&store, schemas, field, value);
                 let projection_context = ProjectionRecordContext {
                     arg_schemas: &exec_arg_schemas,
                     args: &exec_args,
@@ -7901,7 +7958,7 @@ struct VirtualDocGetCtx<'a> {
     descriptors: &'a DescriptorMap,
     schemas: &'a SchemaTables,
     schema_tables: &'a SchemaTables,
-    oci_file_memo: &'a RefCell<&'a mut HashMap<(ContentHash, String), Option<i64>>>,
+    oci_file_memo: &'a RefCell<&'a mut IdentityHashMap<(ContentHash, String), Option<i64>>>,
     store_events: &'a RefCell<Vec<DriveEvent>>,
     clock_cell: &'a RefCell<&'a mut u64>,
 }
@@ -9907,6 +9964,26 @@ fn canonicalize_word_for_schema(schemas: &SchemaTables, schema: &str, word: i64)
     }
 }
 
+fn canonicalize_word_for_schema_ref(
+    schemas: &SchemaTables,
+    schema_ref: &SchemaRef,
+    word: i64,
+) -> i64 {
+    if matches!(
+        schemas.kind_for_ref(schema_ref),
+        Some(Kind::Primitive(Primitive::F64))
+    ) {
+        let value = super::value::TotalF64::new(f64::from_bits(word as u64)).get();
+        if value == 0.0 {
+            0.0f64.to_bits() as i64
+        } else {
+            value.to_bits() as i64
+        }
+    } else {
+        word
+    }
+}
+
 fn schema_is_inline_word(schemas: &SchemaTables, schema: &str) -> bool {
     schemas.is_primitive(schema, Primitive::I64)
         || schemas.is_primitive(schema, Primitive::Bool)
@@ -9927,6 +10004,29 @@ fn canonical_word_hash_in_store(
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"vix-scalar-word");
     update_schema_name(&mut hasher, schemas, schema);
+    hasher.update(&word.to_le_bytes());
+    finish_hash(hasher)
+}
+
+fn canonical_word_hash_for_descriptor(
+    store: &ValueStore,
+    schemas: &SchemaTables,
+    descriptor: &VixDescriptor,
+    word: i64,
+) -> ContentHash {
+    let schema_ref = match &descriptor.access {
+        Access::Handle { target } => target,
+        _ => &descriptor.schema,
+    };
+    if let Some(entry) = store.entry(word)
+        && schemas.legacy_ref(&entry.schema) == *schema_ref
+    {
+        return entry.content_hash;
+    }
+    let word = canonicalize_word_for_schema_ref(schemas, schema_ref, word);
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"vix-scalar-word");
+    update_schema_ref(&mut hasher, schema_ref);
     hasher.update(&word.to_le_bytes());
     finish_hash(hasher)
 }
@@ -10098,14 +10198,10 @@ fn projection_observation_hash(
                 .get(schema)
                 .ok_or_else(|| format!("descriptor for schema `{schema}`"))?;
             let field = field_descriptor(descriptor, &entry.bytes, *field_index);
-            let field_schema = descriptor_word_schema(schemas, field);
             let offset = field_offset(descriptor, &entry.bytes, *field_index);
             let value = read_frame_word(&entry.bytes, offset);
-            Ok(canonical_word_hash_in_store(
-                store,
-                schemas,
-                &field_schema,
-                value,
+            Ok(canonical_word_hash_for_descriptor(
+                store, schemas, field, value,
             ))
         }
         ProjectionPath::Tag { schema } => {
