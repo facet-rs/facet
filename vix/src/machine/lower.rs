@@ -9391,6 +9391,42 @@ pub fn main() -> Int {
     }
 
     #[test]
+    fn aggregate_array_identity_matches_force_copy_after_child_interning() {
+        let src = r#"
+struct Pair { left: Int, right: Int }
+
+fn pair(n: Int) -> Pair {
+    Pair { left: n, right: n + 10 }
+}
+
+pub fn main() -> [Pair] {
+    let xs: [Pair] = [];
+    let xs = xs.push(pair(1));
+    xs.push(pair(2))
+}
+"#;
+        for lane in lanes() {
+            let mut reuse = Machine::load_with_lane(src, lane).unwrap();
+            reuse.driver.set_force_molten_copy(false);
+            let reuse_result = reuse.demand_i64("main", vec![]).unwrap();
+            let reuse_bundle = reuse
+                .driver
+                .export_value_bundle(reuse_result, Vec::new())
+                .unwrap();
+
+            let mut copy = Machine::load_with_lane(src, lane).unwrap();
+            copy.driver.set_force_molten_copy(true);
+            let copy_result = copy.demand_i64("main", vec![]).unwrap();
+            let copy_bundle = copy
+                .driver
+                .export_value_bundle(copy_result, Vec::new())
+                .unwrap();
+
+            assert_eq!(reuse_bundle.values, copy_bundle.values, "{lane:?}");
+        }
+    }
+
+    #[test]
     fn molten_tail_loop_array_accumulator_reuses_push_receiver() {
         let src = r#"
 pub fn seed() -> [Int] {

@@ -2280,7 +2280,14 @@ fn intern_molten_word(
                 *word = interned;
             }
             if changed_words {
-                carried_hash = None;
+                carried_hash = Some(recompute_array_element_hasher(
+                    store,
+                    schemas,
+                    schema_tables,
+                    b"vix-array-words",
+                    &elem_schema,
+                    &words,
+                ));
             }
             store.alloc_array_words_with_carried_hash(
                 &elem_schema,
@@ -10366,16 +10373,14 @@ fn canonical_word_hash_in_store(
     schema: &str,
     word: i64,
 ) -> ContentHash {
-    match store.entry(word) {
-        Some(entry) if entry.schema == schema => return entry.content_hash,
-        _ => {}
+    if schema_is_inline_word(schemas, schema) {
+        return canonical_scalar_hash(schemas, schema, word);
     }
-    let word = canonicalize_word_for_schema(schemas, schema, word);
-    let mut hasher = blake3::Hasher::new();
-    hasher.update(b"vix-scalar-word");
-    update_schema_name(&mut hasher, schemas, schema);
-    hasher.update(&word.to_le_bytes());
-    finish_hash(hasher)
+    let entry = store
+        .entry(word)
+        .unwrap_or_else(|| panic!("non-inline `{schema}` word {word} is not interned"));
+    assert_eq!(entry.schema, schema, "stored identity schema mismatch");
+    entry.content_hash
 }
 
 fn canonical_word_hash_for_descriptor(
