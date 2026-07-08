@@ -26,7 +26,7 @@
 //! they join the unified stream when the vix lowering emits Op::Trace
 //! marks with node identities.
 
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::cmp::Ordering;
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
@@ -1035,6 +1035,7 @@ pub struct ValueStore {
     entries: Vec<StoreEntry>,
     by_content: IdentityHashMap<(String, HandleTier, ContentHash), i64>,
     decoded_map_rows: IdentityHashMap<DecodedMapCacheKey, DecodedMapRows>,
+    map_intern_counters: MapInternCounters,
 }
 
 impl Clone for ValueStore {
@@ -1043,6 +1044,7 @@ impl Clone for ValueStore {
             entries: self.entries.clone(),
             by_content: self.by_content.clone(),
             decoded_map_rows: IdentityHashMap::default(),
+            map_intern_counters: self.map_intern_counters.clone(),
         }
     }
 }
@@ -1141,6 +1143,66 @@ struct CarriedMapRows {
 impl fmt::Debug for CarriedArrayHasher {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         f.write_str("CarriedArrayHasher(..)")
+    }
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct MapInternStats {
+    pub rows_canonicalized: usize,
+    pub child_identity_reads: usize,
+    pub sort_rows: usize,
+    pub sort_comparisons: usize,
+    pub hash_rows: usize,
+}
+
+#[derive(Debug, Default)]
+struct MapInternCounters {
+    rows_canonicalized: Cell<usize>,
+    child_identity_reads: Cell<usize>,
+    sort_rows: Cell<usize>,
+    sort_comparisons: Cell<usize>,
+    hash_rows: Cell<usize>,
+}
+
+impl Clone for MapInternCounters {
+    fn clone(&self) -> Self {
+        let cloned = Self::default();
+        cloned.add(self.snapshot());
+        cloned
+    }
+}
+
+impl MapInternCounters {
+    fn add(&self, stats: MapInternStats) {
+        self.rows_canonicalized.set(
+            self.rows_canonicalized
+                .get()
+                .saturating_add(stats.rows_canonicalized),
+        );
+        self.child_identity_reads.set(
+            self.child_identity_reads
+                .get()
+                .saturating_add(stats.child_identity_reads),
+        );
+        self.sort_rows
+            .set(self.sort_rows.get().saturating_add(stats.sort_rows));
+        self.sort_comparisons.set(
+            self.sort_comparisons
+                .get()
+                .saturating_add(stats.sort_comparisons),
+        );
+        self.hash_rows
+            .set(self.hash_rows.get().saturating_add(stats.hash_rows));
+    }
+
+    fn snapshot(&self) -> MapInternStats {
+        MapInternStats {
+            rows_canonicalized: self.rows_canonicalized.get(),
+            child_identity_reads: self.child_identity_reads.get(),
+            sort_rows: self.sort_rows.get(),
+            sort_comparisons: self.sort_comparisons.get(),
+            hash_rows: self.hash_rows.get(),
+        }
     }
 }
 
@@ -1519,11 +1581,16 @@ impl ValueStore {
         let descriptor = descriptors
             .get(schema)
             .unwrap_or_else(|| panic!("descriptor for schema `{schema}`"));
+        assert_canonical_zero_padding(schema, descriptor, &bytes);
         let taint = taint_for_value_bytes(self, descriptor, &bytes);
-        let content_hash = hash_with_taint(
-            hash_value_bytes(descriptors, schemas, descriptor, &bytes, self),
-            &taint,
-        );
+        let content_hash = if descriptor_supports_flat_identity(descriptor) {
+            raw_value_content_hash(schema, &bytes, schemas, &taint)
+        } else {
+            hash_with_taint(
+                hash_value_bytes(descriptors, schemas, descriptor, &bytes, self),
+                &taint,
+            )
+        };
         let key = (schema.to_string(), HandleTier::Ready, content_hash);
         if let Some(handle) = self.by_content.get(&key).copied() {
             return (handle, true);
@@ -1604,8 +1671,16 @@ impl ValueStore {
     ) -> Result<(i64, bool), String> {
         let bytes = encode_map_pairs(&ordered, schema_tables)?;
         let taint = taint_for_ordered_map_pairs(&ordered);
+        self.map_intern_counters.add(MapInternStats {
+            hash_rows: ordered.len(),
+            ..MapInternStats::default()
+        });
         let content_hash = hash_with_taint(hash_map_pairs(schema, &ordered, schema_tables), &taint);
         Ok(self.alloc_with_hash_tainted(schema, bytes, content_hash, taint))
+    }
+
+    fn map_intern_stats(&self) -> MapInternStats {
+        self.map_intern_counters.snapshot()
     }
 
     fn map_pairs(
@@ -2512,6 +2587,10 @@ impl Driver {
 
     pub fn molten_stats(&self) -> MoltenStats {
         self.molten_stats
+    }
+
+    pub fn map_intern_stats(&self) -> MapInternStats {
+        self.store.borrow().map_intern_stats()
     }
 
     fn emit(&mut self, event: DriveEvent) {
@@ -3576,6 +3655,11 @@ impl Driver {
                     .get(&schema)
                     .unwrap_or_else(|| panic!("descriptor for schema `{schema}`"));
                 let mut bytes = vec![0u8; descriptor.layout.size];
+                zero_inactive_enum_payload(
+                    &mut bytes,
+                    descriptor,
+                    usize::try_from(variant_index).expect("variant index non-negative"),
+                );
                 write_variant_tag(&mut bytes, descriptor, variant_index as u64);
                 write_alloc_fields(
                     &mut bytes,
@@ -6154,6 +6238,15 @@ impl Driver {
                                 .entry_mut(base_handle)
                                 .ok_or_else(|| format!("molten handle {base}"))?;
                             if let MoltenValue::Record { bytes, .. } = &mut entry.value {
+                                if matches!(descriptor.access, Access::Enum(_)) {
+                                    zero_inactive_enum_payload(bytes, descriptor, variant_index);
+                                    if variant_index
+                                        != usize::try_from(read_variant_tag(bytes, descriptor))
+                                            .unwrap_or(usize::MAX)
+                                    {
+                                        write_variant_tag(bytes, descriptor, variant_index as u64);
+                                    }
+                                }
                                 for update_index in 0..update_count {
                                     let field_index = usize::try_from(read_frame_word(
                                         frame,
@@ -6176,8 +6269,12 @@ impl Driver {
                                             store_alloc_region + 48 + update_index * 16,
                                         ),
                                     );
-                                    bytes[field_offset..field_offset + field.layout.size]
-                                        .copy_from_slice(&value.to_le_bytes()[..field.layout.size]);
+                                    write_canonical_word_field(
+                                        bytes,
+                                        field_offset,
+                                        field.layout.size,
+                                        value,
+                                    );
                                 }
                                 write_frame_word(frame, dst_slot, base);
                                 return Ok(());
@@ -6248,12 +6345,14 @@ impl Driver {
                                 .clone()
                         }
                     };
-                    if matches!(descriptor.access, Access::Enum(_))
-                        && variant_index
+                    if matches!(descriptor.access, Access::Enum(_)) {
+                        zero_inactive_enum_payload(&mut bytes, descriptor, variant_index);
+                        if variant_index
                             != usize::try_from(read_variant_tag(&bytes, descriptor))
                                 .unwrap_or(usize::MAX)
-                    {
-                        write_variant_tag(&mut bytes, descriptor, variant_index as u64);
+                        {
+                            write_variant_tag(&mut bytes, descriptor, variant_index as u64);
+                        }
                     }
                     for update_index in 0..update_count {
                         let field_index = usize::try_from(read_frame_word(
@@ -6274,8 +6373,12 @@ impl Driver {
                             &schemas.display_ref(&field.schema),
                             read_frame_word(frame, store_alloc_region + 48 + update_index * 16),
                         );
-                        bytes[field_offset..field_offset + field.layout.size]
-                            .copy_from_slice(&value.to_le_bytes()[..field.layout.size]);
+                        write_canonical_word_field(
+                            &mut bytes,
+                            field_offset,
+                            field.layout.size,
+                            value,
+                        );
                     }
                     let handle = molten_cell.borrow_mut().alloc(MoltenValue::Record {
                         schema: schema.clone(),
@@ -8231,10 +8334,15 @@ fn alloc_doc_variant(
         .get("Doc")
         .ok_or_else(|| "missing Doc descriptor".to_string())?;
     let mut bytes = vec![0u8; descriptor.layout.size];
+    zero_inactive_enum_payload(
+        &mut bytes,
+        descriptor,
+        usize::try_from(variant_index).expect("variant index fits usize"),
+    );
     write_variant_tag(&mut bytes, descriptor, variant_index);
     for (index, value) in fields.iter().enumerate() {
         let offset = field_offset(descriptor, &bytes, index);
-        bytes[offset..offset + 8].copy_from_slice(&value.to_le_bytes());
+        write_canonical_word_field(&mut bytes, offset, 8, *value);
     }
     Ok(store
         .borrow_mut()
@@ -10943,6 +11051,12 @@ fn canonical_map_pairs(
     schemas: &SchemaTables,
     schema_tables: &SchemaTables,
 ) -> Result<Vec<OrderedMapPair>, String> {
+    store.map_intern_counters.add(MapInternStats {
+        rows_canonicalized: pairs.len(),
+        child_identity_reads: pairs.len().saturating_mul(2),
+        sort_rows: pairs.len(),
+        ..MapInternStats::default()
+    });
     let mut pairs: Vec<OrderedMapPair> = pairs
         .into_iter()
         .map(|pair| ordered_map_pair(store, schemas, pair))
@@ -10994,6 +11108,10 @@ fn sort_and_dedup_ordered_map_pairs(
     pairs: &mut Vec<OrderedMapPair>,
 ) -> Result<(), String> {
     pairs.sort_by(|a, b| {
+        store.map_intern_counters.add(MapInternStats {
+            sort_comparisons: 1,
+            ..MapInternStats::default()
+        });
         compare_ordered_map_pairs(store, descriptors, schemas, schema_tables, a, b)
             .unwrap_or_else(|_| a.key_hash.as_ref().cmp(b.key_hash.as_ref()))
     });
@@ -11609,6 +11727,11 @@ fn intern_structured_target(
         .get("Os")
         .ok_or_else(|| "missing Os descriptor".to_string())?;
     let mut os_bytes = vec![0u8; os_descriptor.layout.size];
+    zero_inactive_enum_payload(
+        &mut os_bytes,
+        os_descriptor,
+        usize::try_from(os_index).expect("os index fits usize"),
+    );
     write_variant_tag(&mut os_bytes, os_descriptor, os_index);
     let os = store
         .borrow_mut()
@@ -11619,6 +11742,11 @@ fn intern_structured_target(
         .get("Arch")
         .ok_or_else(|| "missing Arch descriptor".to_string())?;
     let mut arch_bytes = vec![0u8; arch_descriptor.layout.size];
+    zero_inactive_enum_payload(
+        &mut arch_bytes,
+        arch_descriptor,
+        usize::try_from(arch_index).expect("arch index fits usize"),
+    );
     write_variant_tag(&mut arch_bytes, arch_descriptor, arch_index);
     let arch = store
         .borrow_mut()
@@ -11630,9 +11758,9 @@ fn intern_structured_target(
         .ok_or_else(|| "missing Target descriptor".to_string())?;
     let mut target_bytes = vec![0u8; target_descriptor.layout.size];
     let os_offset = field_offset(target_descriptor, &target_bytes, 0);
-    target_bytes[os_offset..os_offset + 8].copy_from_slice(&os.to_le_bytes());
+    write_canonical_word_field(&mut target_bytes, os_offset, 8, os);
     let arch_offset = field_offset(target_descriptor, &target_bytes, 1);
-    target_bytes[arch_offset..arch_offset + 8].copy_from_slice(&arch.to_le_bytes());
+    write_canonical_word_field(&mut target_bytes, arch_offset, 8, arch);
     Ok(store
         .borrow_mut()
         .alloc("Target", target_bytes, descriptors, schemas))
@@ -11787,6 +11915,24 @@ fn pending_exec_identity_hash(
         }
     }
     finish_hash(hasher)
+}
+
+fn descriptor_supports_flat_identity(descriptor: &VixDescriptor) -> bool {
+    match &descriptor.access {
+        Access::Scalar => true,
+        Access::Record(record) => record
+            .fields
+            .iter()
+            .all(|field| descriptor_supports_flat_identity(&field.descriptor)),
+        Access::Enum(access) => access.variants.iter().all(|variant| {
+            variant
+                .payload
+                .fields
+                .iter()
+                .all(|field| descriptor_supports_flat_identity(&field.descriptor))
+        }),
+        _ => false,
+    }
 }
 
 fn hash_value_bytes(
@@ -12000,6 +12146,102 @@ fn read_presence_tag(bytes: &[u8], offset: usize, width: usize) -> u64 {
     }
 }
 
+fn assert_canonical_zero_padding(schema: &str, descriptor: &VixDescriptor, bytes: &[u8]) {
+    assert_eq!(
+        bytes.len(),
+        descriptor.layout.size,
+        "canonical-zero canary requires full `{schema}` bytes"
+    );
+    match &descriptor.access {
+        Access::Record(record) => {
+            for range in &record.byte_ownership.ranges {
+                if range.owner != weavy::mem::ByteOwner::Padding {
+                    continue;
+                }
+                let end = range
+                    .offset
+                    .checked_add(range.len)
+                    .expect("padding range end");
+                assert!(
+                    bytes[range.offset..end].iter().all(|byte| *byte == 0),
+                    "canonical-zero canary failed for `{schema}` padding {}..{}",
+                    range.offset,
+                    end
+                );
+            }
+        }
+        Access::Enum(access) => {
+            let selector = read_variant_tag(bytes, descriptor);
+            let variant = access
+                .variants
+                .iter()
+                .find(|variant| variant.selector == selector)
+                .unwrap_or_else(|| panic!("enum selector {selector}"));
+            for offset in 0..bytes.len() {
+                if enum_tag_owns_byte(access, offset)
+                    || variant
+                        .payload
+                        .fields
+                        .iter()
+                        .any(|field| field_owns_byte(field, offset))
+                {
+                    continue;
+                }
+                assert_eq!(
+                    bytes[offset], 0,
+                    "canonical-zero canary failed for `{schema}` inactive enum byte {offset}"
+                );
+            }
+        }
+        _ => {}
+    }
+}
+
+fn enum_tag_owns_byte<SchemaRef>(access: &weavy::mem::EnumAccess<SchemaRef>, offset: usize) -> bool {
+    match access.tag {
+        Tag::Direct {
+            offset: tag_offset,
+            width,
+        } => offset >= tag_offset && offset < tag_offset + width,
+        Tag::Niche { .. } | Tag::Thunk { .. } => false,
+    }
+}
+
+fn field_owns_byte<SchemaRef>(field: &weavy::mem::FieldAccess<SchemaRef>, offset: usize) -> bool {
+    let end = field
+        .offset
+        .checked_add(field.descriptor.layout.size)
+        .expect("field end");
+    offset >= field.offset && offset < end
+}
+
+fn zero_inactive_enum_payload(bytes: &mut [u8], descriptor: &VixDescriptor, variant_index: usize) {
+    let Access::Enum(access) = &descriptor.access else {
+        return;
+    };
+    let variant = access
+        .variants
+        .get(variant_index)
+        .unwrap_or_else(|| panic!("variant index {variant_index}"));
+    for offset in 0..bytes.len() {
+        if enum_tag_owns_byte(access, offset)
+            || variant
+                .payload
+                .fields
+                .iter()
+                .any(|field| field_owns_byte(field, offset))
+        {
+            continue;
+        }
+        bytes[offset] = 0;
+    }
+}
+
+fn write_canonical_word_field(bytes: &mut [u8], offset: usize, field_size: usize, value: i64) {
+    bytes[offset..offset + field_size].fill(0);
+    bytes[offset..offset + field_size].copy_from_slice(&value.to_le_bytes()[..field_size]);
+}
+
 fn write_variant_tag(bytes: &mut [u8], descriptor: &VixDescriptor, selector: u64) {
     let Access::Enum(access) = &descriptor.access else {
         return;
@@ -12081,7 +12323,7 @@ fn write_alloc_fields(
             i,
             field_size
         );
-        bytes[dst..dst + field_size].copy_from_slice(&value.to_le_bytes()[..field_size]);
+        write_canonical_word_field(bytes, dst, field_size, value);
     }
 }
 
@@ -12558,6 +12800,35 @@ mod tests {
             }
 
             assert_array_hash_matches_recomputed(&store, &schemas, &carried_hash, &words);
+        }
+    }
+
+    #[test]
+    fn inactive_enum_payload_is_zeroed_before_retag() {
+        let schemas = SchemaTables::empty();
+        let descriptor = declared_mem::declared_enum(
+            schemas.legacy_ref("Choice"),
+            vec![
+                vec![declared_mem::i64_(schemas.legacy_ref("Wide"))],
+                vec![declared_mem::bool_(schemas.legacy_ref("Narrow"))],
+            ],
+        );
+        let mut bytes = vec![0u8; descriptor.layout.size];
+        write_variant_tag(&mut bytes, &descriptor, 0);
+        let wide_offset = field_offset(&descriptor, &bytes, 0);
+        write_canonical_word_field(&mut bytes, wide_offset, 8, 0x7f7e_7d7c_7b7a_7978);
+
+        zero_inactive_enum_payload(&mut bytes, &descriptor, 1);
+        write_variant_tag(&mut bytes, &descriptor, 1);
+        let narrow_offset = field_offset(&descriptor, &bytes, 0);
+        write_canonical_word_field(&mut bytes, narrow_offset, 1, 1);
+
+        assert_canonical_zero_padding("Choice", &descriptor, &bytes);
+        for (offset, byte) in bytes.iter().enumerate() {
+            if offset == 0 || offset == narrow_offset {
+                continue;
+            }
+            assert_eq!(*byte, 0, "inactive payload byte {offset}");
         }
     }
 
