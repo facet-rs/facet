@@ -176,21 +176,22 @@ pub const MOLTEN_INTERN_HOST: u32 = 43;
 pub const ARRAY_PUSH_HOST: u32 = 44;
 pub const ARRAY_POP_HOST: u32 = 45;
 pub const ARRAY_SET_HOST: u32 = 46;
-pub const MOLTEN_DUP_HOST: u32 = 47;
-pub const RECORD_UPDATE_HOST: u32 = 48;
-pub const CRATE_ARCHIVE_HOST: u32 = 49;
-pub const VERSION_FIELD_HOST: u32 = 50;
-pub const OPTION_CONSTRUCT_HOST: u32 = 51;
-pub const OPTION_DESTRUCT_HOST: u32 = 52;
-pub const STRING_SPLIT_HOST: u32 = 53;
-pub const STRING_PARSE_INT_HOST: u32 = 54;
-pub const STRING_CONTAINS_HOST: u32 = 55;
-pub const STRING_IS_NUMERIC_HOST: u32 = 56;
-pub const PATH_JOIN_HOST: u32 = 57;
-pub const PATH_TO_STRING_HOST: u32 = 58;
-pub const DOC_IS_MAP_HOST: u32 = 59;
-pub const TREE_TEXT_HOST: u32 = 60;
-pub const DOC_KEYS_HOST: u32 = 61;
+pub const ARRAY_GET_HOST: u32 = 47;
+pub const MOLTEN_DUP_HOST: u32 = 48;
+pub const RECORD_UPDATE_HOST: u32 = 49;
+pub const CRATE_ARCHIVE_HOST: u32 = 50;
+pub const VERSION_FIELD_HOST: u32 = 51;
+pub const OPTION_CONSTRUCT_HOST: u32 = 52;
+pub const OPTION_DESTRUCT_HOST: u32 = 53;
+pub const STRING_SPLIT_HOST: u32 = 54;
+pub const STRING_PARSE_INT_HOST: u32 = 55;
+pub const STRING_CONTAINS_HOST: u32 = 56;
+pub const STRING_IS_NUMERIC_HOST: u32 = 57;
+pub const PATH_JOIN_HOST: u32 = 58;
+pub const PATH_TO_STRING_HOST: u32 = 59;
+pub const DOC_IS_MAP_HOST: u32 = 60;
+pub const TREE_TEXT_HOST: u32 = 61;
+pub const DOC_KEYS_HOST: u32 = 62;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -3600,6 +3601,7 @@ impl Driver {
             let lowered_fns = &self.fns;
             let store_events = RefCell::new(Vec::new());
             let projection_reads = RefCell::new(Vec::new());
+            let host_error = RefCell::new(None::<String>);
             let exec_arg_schemas = lowered_fns[exec.fn_ref.index()].arg_schemas.clone();
             let exec_args = exec.args.clone();
             let force_molten_copy = self.force_molten_copy;
@@ -3691,6 +3693,9 @@ impl Driver {
             };
 
             let mut store_read = |frame: &mut [u8]| {
+                if host_error.borrow().is_some() {
+                    return;
+                }
                 let dst_slot = read_frame_word(frame, store_read_region) as usize;
                 let mut handle = read_frame_word(frame, store_read_region + 8);
                 let field_index = read_frame_word(frame, store_read_region + 16) as usize;
@@ -3869,9 +3874,6 @@ impl Driver {
                     i64::try_from(tag).expect("variant tag fits i64"),
                 );
             };
-
-            let host_error = RefCell::new(None::<String>);
-
             let mut map_empty = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, store_alloc_region) as usize;
@@ -6187,6 +6189,44 @@ impl Driver {
                 }
             };
 
+            let mut array_get = |frame: &mut [u8]| {
+                let result = (|| {
+                    let dst_slot = read_frame_word(frame, primitive_region) as usize;
+                    let array = read_frame_word(frame, primitive_region + 8);
+                    let index = usize::try_from(read_frame_word(frame, primitive_region + 16))
+                        .map_err(|_| "negative array index".to_string())?;
+                    let words = {
+                        let store = store_cell.borrow();
+                        if matches!(Handle::from_word(array), Handle::Store(_)) {
+                            record_whole_args_if_projectable_static(
+                                &mut projection_reads.borrow_mut(),
+                                &exec_arg_schemas,
+                                &exec_args,
+                                &store,
+                                descriptors,
+                                schemas,
+                                [array],
+                            );
+                        }
+                        match molten_cell
+                            .borrow()
+                            .array_entry(&store, array, schema_tables)?
+                        {
+                            ArrayEntry::Words { words, .. }
+                            | ArrayEntry::Pending { pending: words, .. } => words,
+                        }
+                    };
+                    let value = words.get(index).copied().ok_or_else(|| {
+                        format!("array index {index} out of bounds {}", words.len())
+                    })?;
+                    write_frame_word(frame, dst_slot, value);
+                    Ok(())
+                })();
+                if let Err(err) = result {
+                    *host_error.borrow_mut() = Some(err);
+                }
+            };
+
             let mut molten_dup = |frame: &mut [u8]| {
                 let dst_slot = read_frame_word(frame, primitive_region) as usize;
                 let src = read_frame_word(frame, primitive_region + 8);
@@ -6394,7 +6434,7 @@ impl Driver {
                 }
             };
 
-            let mut hosts: [HostFn<'_>; 62] = [
+            let mut hosts: [HostFn<'_>; 63] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -6442,6 +6482,7 @@ impl Driver {
                 &mut array_push,
                 &mut array_pop,
                 &mut array_set,
+                &mut array_get,
                 &mut molten_dup,
                 &mut record_update,
                 &mut crate_archive_host,

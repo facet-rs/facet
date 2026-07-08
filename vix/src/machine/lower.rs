@@ -27,16 +27,17 @@ use weavy::task::{Fn as TaskFn, FnId, Op, Program};
 
 use super::TotalF64;
 use super::driver::{
-    ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_FILTER_EXCLUDE_HOST, ARRAY_JOIN_HOST,
-    ARRAY_LEN_HOST, ARRAY_MAP_PENDING_HOST, ARRAY_POP_HOST, ARRAY_PUSH_HOST, ARRAY_SET_HOST,
-    AST_DOC_HOST, AST_FN_HOST, CRATE_ARCHIVE_HOST, CodeBundle, DOC_COERCE_HOST, DOC_GET_HOST,
-    DOC_IS_MAP_HOST, DOC_KEYS_HOST, DOC_PACKAGE_HOST, DOC_PARSE_HOST, DriveEvent, DriveEventSink,
-    Driver, ELF_DOC_HOST, EXEC_HOST, FETCH_HOST, FnRef, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn,
-    MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST, MOLTEN_DUP_HOST, MachineExecBackend,
-    MapInternStats, MoltenStats, OCI_DOC_HOST, OPTION_CONSTRUCT_HOST, OPTION_DESTRUCT_HOST,
-    OPTION_UNWRAP_HOST, PATH_JOIN_HOST, PATH_TO_STRING_HOST, PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST,
-    PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RECORD_UPDATE_HOST, RenderNames, RenderVariant,
-    RenderedValue, SEALED_DECLASSIFY_HOST, SEALED_SEAL_HOST, SEALED_TO_STRING_HOST,
+    ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_FILTER_EXCLUDE_HOST, ARRAY_GET_HOST,
+    ARRAY_JOIN_HOST, ARRAY_LEN_HOST, ARRAY_MAP_PENDING_HOST, ARRAY_POP_HOST, ARRAY_PUSH_HOST,
+    ARRAY_SET_HOST, AST_DOC_HOST, AST_FN_HOST, CRATE_ARCHIVE_HOST, CodeBundle, DOC_COERCE_HOST,
+    DOC_GET_HOST, DOC_IS_MAP_HOST, DOC_KEYS_HOST, DOC_PACKAGE_HOST, DOC_PARSE_HOST, DriveEvent,
+    DriveEventSink, Driver, ELF_DOC_HOST, EXEC_HOST, FETCH_HOST, FnRef, GLOB_HOST, INVOKE_HOST,
+    Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST, MOLTEN_DUP_HOST,
+    MachineExecBackend, MapInternStats, MoltenStats, OCI_DOC_HOST, OPTION_CONSTRUCT_HOST,
+    OPTION_DESTRUCT_HOST, OPTION_UNWRAP_HOST, PATH_JOIN_HOST, PATH_TO_STRING_HOST,
+    PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST,
+    RECORD_UPDATE_HOST, RenderNames, RenderVariant, RenderedValue, SEALED_DECLASSIFY_HOST,
+    SEALED_SEAL_HOST, SEALED_TO_STRING_HOST,
     STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_CONTAINS_HOST,
     STRING_DEFAULT_HOST, STRING_IS_NUMERIC_HOST, STRING_LOWER_HOST, STRING_PARSE_INT_HOST,
     STRING_SPLIT_HOST, STRING_UPPER_HOST, SemanticComparator, StepMode, StoreHandle, TARGET_HOST,
@@ -2369,6 +2370,13 @@ fn collect_expr_schemas(
                     let tuple = tuple_schema(&[elem_schema, schema.to_string()]);
                     push_schema_closure(&tuple, out);
                     Ok(Some(tuple))
+                }
+                ("get", Some(schema)) if tables.schemas.is_list(schema) => {
+                    let elem_schema = array_element_schema(schema)
+                        .ok_or_else(|| format!("{schema} is not an Array<T>"))?
+                        .to_string();
+                    push_schema_closure(&elem_schema, out);
+                    Ok(Some(elem_schema))
                 }
                 ("get", Some("Doc")) | ("get", Some("Realized<Doc>")) => {
                     Ok(Some(option_schema("Realized<Doc>")))
@@ -4772,6 +4780,13 @@ impl<'a> FnLowerer<'a> {
                 self.map_insert(&receiver, key, value, &key_schema, logical_value_schema)
             }
             "get" => {
+                if self.tables.schemas.is_list(&receiver.schema) {
+                    let [index_arg] = call.args.args.as_slice() else {
+                        return Err("Array.get takes one index".into());
+                    };
+                    let index = self.method_arg(index_arg, Some("Int"))?;
+                    return self.array_get(&receiver, &index);
+                }
                 if self.tables.schemas.is_named_schema(&receiver.schema, "Doc") {
                     if call.args.args.len() != 1 {
                         return Err("Doc.get takes one key".into());
@@ -6924,6 +6939,37 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: dst,
             schema: receiver.schema.clone(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn array_get(&mut self, receiver: &ValueSlot, index: &ValueSlot) -> Result<ValueSlot, String> {
+        self.expect_schema(receiver, "Array")?;
+        self.expect_schema(index, "Int")?;
+        let elem_schema = array_element_schema(&receiver.schema)
+            .ok_or_else(|| format!("{} is not an Array<T>", receiver.schema))?
+            .to_string();
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: receiver.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: index.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: ARRAY_GET_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: elem_schema,
             realization: None,
             pending: None,
         })
@@ -10097,6 +10143,30 @@ pub fn second() -> String {
                 machine.driver.raw_string(second, "String").unwrap(),
                 "two,tail"
             );
+        }
+    }
+
+    #[test]
+    fn store_backed_array_get_prevents_projection_reuse() {
+        let src = r#"
+fn append_get(values: [String], value: String) -> String {
+    values.get(0)
+}
+
+pub fn first() -> String {
+    append_get(["one"], "tail")
+}
+
+pub fn second() -> String {
+    append_get(["two"], "tail")
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let first = machine.demand_i64("first", vec![]).unwrap();
+            assert_eq!(machine.driver.raw_string(first, "String").unwrap(), "one");
+            let second = machine.demand_i64("second", vec![]).unwrap();
+            assert_eq!(machine.driver.raw_string(second, "String").unwrap(), "two");
         }
     }
 
