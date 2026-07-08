@@ -9202,10 +9202,30 @@ pub fn main() -> Int {
             assert!(reuse_map_stats.rows_canonicalized > 0, "{lane:?}");
             assert!(reuse_map_stats.child_identity_reads > 0, "{lane:?}");
             assert!(reuse_map_stats.sort_rows > 0, "{lane:?}");
+            assert!(reuse_map_stats.sort_comparisons > 0, "{lane:?}");
             assert!(reuse_map_stats.hash_rows > 0, "{lane:?}");
             assert_eq!(reuse_result, copy_result, "{lane:?}");
             assert_eq!(reuse_trace, copy_trace, "{lane:?}");
             assert_eq!(reuse_bundle.values, copy_bundle.values, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn narrow_bool_record_field_reads_use_declared_field_width() {
+        let src = r#"
+struct Flag { active: Bool }
+
+pub fn main() -> Int {
+    let flag = Flag { active: true };
+    match flag.active {
+        true => 1,
+        false => 0,
+    }
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 1, "{lane:?}");
         }
     }
 
@@ -9567,6 +9587,58 @@ fn ba() -> Map<String, Float> {
                 ab, ba,
                 "dedupe returns the same canonical handle on {lane:?}"
             );
+        }
+    }
+
+    #[test]
+    fn structural_identity_is_injective_on_distinct_value_corpus() {
+        let src = r#"
+struct Pair { left: Int, right: Int }
+enum Choice { A, B(Int), C(Int) }
+
+fn rec_a() -> Pair { Pair { left: 1, right: 2 } }
+fn rec_b() -> Pair { Pair { left: 1, right: 3 } }
+
+fn arr_a() -> [Pair] { [rec_a(), rec_b()] }
+fn arr_b() -> [Pair] { [rec_b(), rec_a()] }
+
+fn map_a() -> Map<String, Pair> {
+    let m: Map<String, Pair> = {};
+    m.insert("x", rec_a()).insert("y", rec_b())
+}
+
+fn map_b() -> Map<String, Pair> {
+    let m: Map<String, Pair> = {};
+    m.insert("x", rec_b()).insert("y", rec_a())
+}
+
+fn enum_a() -> Choice { Choice::A }
+fn enum_b() -> Choice { Choice::B(1) }
+fn enum_c() -> Choice { Choice::C(1) }
+"#;
+        let functions = [
+            "rec_a", "rec_b", "arr_a", "arr_b", "map_a", "map_b", "enum_a", "enum_b", "enum_c",
+        ];
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let mut identities = BTreeSet::new();
+            for function in functions {
+                let handle = machine.demand_i64(function, vec![]).unwrap();
+                let bundle = machine
+                    .driver
+                    .export_value_bundle(handle, Vec::new())
+                    .expect("root bundle");
+                let entry = bundle
+                    .values
+                    .iter()
+                    .find(|entry| entry.handle == bundle.root)
+                    .expect("stored root");
+                let identity = (entry.schema.clone(), entry.content_hash.to_vec());
+                assert!(
+                    identities.insert(identity),
+                    "distinct value `{function}` reused a structural identity on {lane:?}"
+                );
+            }
         }
     }
 
