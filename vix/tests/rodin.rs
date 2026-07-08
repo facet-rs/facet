@@ -62,3 +62,26 @@ fn user_type_owns_its_comparison_operator() {
         .expect("rodin.vix rank_probe runs");
     assert_eq!(value, 1);
 }
+
+#[test]
+fn dense_state_array_indexed_get_language_gap_is_pinned() {
+    let source = r#"
+struct Domain {
+    active: Bool,
+}
+
+pub fn main() -> Bool {
+    let domains = [Domain { active: true }];
+    domains.get(0).unwrap().active
+}
+"#;
+
+    let err = match Machine::load(source) {
+        Ok(_) => panic!("array indexed get unexpectedly lowered"),
+        Err(err) => err,
+    };
+    assert!(
+        err.contains("get called on") && err.contains("Array<Domain>"),
+        "{err}"
+    );
+}
