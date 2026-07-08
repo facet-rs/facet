@@ -3,14 +3,8 @@ title = "The three planes of identity"
 +++
 
 
-*Status: design chapter (Amos + Fable, 2026-07-08 — the location-plane
-conversation). Everything agreed in that conversation is stated here as
-design; formal rules get extracted in a later pass, and two empirical
-inputs are still in flight (the hash-consumption census and the prior-art
-grounding). This chapter is written as a textbook, because the spec is a
-textbook: it exists so that we — and anyone who walks in later — can
-contend with this machine, its opportunities, and the rationale for why it
-is so different from everything else they know.*
+*Status: provisional — this chapter states the design; formal rules are
+extracted from it.*
 
 ## The story this chapter must explain
 
@@ -85,12 +79,12 @@ verification. It can never serve a stale value.
 This one law is what makes the whole plane buildable. It puts the location
 function on the same footing as the island partition: an implementation-
 plane choice, *chosen not commanded*, revisable as the cost model learns,
-shippable as a v1 heuristic with a diagnostic. There is no epoch
-discipline here, no committee gate on changing it, no need to get it right
-the first time — because it cannot be wrong in the direction that matters.
-Contrast the content plane, where changing the hash construction is a
-sanctioned identity break with its own gates. The two planes have opposite
-change economics, and that is by design.
+shippable as a v1 heuristic with a diagnostic. There is no ceremony about
+changing it and no need to get it right the first time — because it cannot
+be wrong in the direction that matters. Contrast the content plane: its
+definition is part of the language, and changing it invalidates every
+stored hash. The two planes have opposite change economics, and that is by
+design.
 
 ## Why locations are computable at all: the demand-time property
 
@@ -182,15 +176,12 @@ come from provenance: a watched tree on a developer's machine is located
 at (daemon installation UUID, local path); a registry crate at (registry,
 package, version). Content-free, stable, and exactly the vocabulary the
 receipts and journal already speak — the location plane is where "this
-came from *that* laptop" was always going to live. (*"Provenance
-coordinate" is a term coined in this conversation — the halves are earned
-elsewhere (SLSA provenance; Maven coordinates), the compound is ours.*)
+came from *that* laptop" was always going to live.
 
-## The store this implies is not a dumb KV — sketch, pending grounding
+## The store this implies is not a dumb KV
 
 A hundred thousand prior runs must be queryable by location, including
-suffix matches, without scanning. The shapes (stated as a sketch; the
-prior-art pass will confirm or correct):
+suffix matches, without scanning. The shapes (directional, not final):
 
 - **Nomination index: a trie over reversed paths.** Locations are name
   sequences; index them leaf-first, and longest-suffix matching is a walk
@@ -208,54 +199,50 @@ prior-art pass will confirm or correct):
   verification (the safe direction). Candidate structure: ribbon filters
   or successors — to be grounded, not assumed.
 
-Prior-art posture — grounded (the pass ran 2026-07-08; full report:
-`~/vixenware/notes/machine-spec/location-plane-prior-art.md`):
+How this sits against prior art:
 
-- **Nomination-never-validation is restated doctrine, not invention** —
-  `vx-store-as-vix-memo.md` already specified the five-step lookup order
-  (local exact → persistent exact → local projection → persistent
-  projection, each verified → spawn), and the machine spec ratified it as
-  rules. What no page specified was how a projection candidate is *found*:
-  `machine.persistence.trait-boundary` literally stubs "enumerate
-  projection candidates" with no backing mechanism. The location plane
-  fills a real hole in our own ratified spec.
-- **Names-not-bodies has two shipped precedents inside this very system**,
-  reached independently: exec mounts at role-stable paths ("content-derived
-  paths would leak the world into the identity and kill tier 2") and
-  capability *names* not indices in lowered programs (survives registry
-  reordering across reload). Same doctrine, third layer.
-- **Nominal Adapton**: the thesis transfers (names ≠ content, used only to
-  find reuse candidates, correctness by construction); the allocation
-  mechanism does not — Adapton's names are programmer-allocated and
-  opt-in (explicit name-forking through loops), which "no programmer draws
-  islands" rules out on principle. Our derivation is automatic and
-  structural (call site + input position), and must be.
-- **Salsa's stamps solve a different sub-problem than the trie** — this is
-  the pass's sharpest scoping correction. Salsa's durability/revision
-  shortcut makes re-verifying a dependency edge *you already have* O(1);
-  it never needed nomination because its query keys are exact. So in this
-  design: the trie *finds* the candidate; the stamp makes *confirming* it
-  cheap. Complementary mechanisms, and the spec should scope them as such.
+- **Nomination-never-validation is not new here** — the store design
+  already specified the tiered lookup order (local exact → persistent
+  exact → local projection → persistent projection, each verified →
+  spawn); what no design specified was how a projection candidate is
+  *found*. The location plane fills that hole.
+- **Names-not-bodies already exists twice in this system**, reached
+  independently: exec mounts at role-stable paths (content-derived paths
+  would leak the world into the identity) and capability *names* rather
+  than indices in lowered programs (survives registry reordering across
+  reload). Same doctrine, third layer.
+- **Nominal Adapton** proved the thesis: names distinct from content,
+  used only to find reuse candidates, with correctness enforced elsewhere.
+  Its allocation mechanism doesn't transfer — Adapton's names are
+  programmer-allocated and opt-in (explicit name-forking through loops),
+  which "no programmer draws islands" rules out on principle. Vix's
+  derivation is automatic and structural (call site + input position),
+  and must be.
+- **Salsa's durability stamps solve a different sub-problem than the
+  trie**: they make re-verifying a dependency edge *you already have*
+  O(1); Salsa never needed nomination because its query keys are exact.
+  Here the trie *finds* the candidate; the stamp makes *confirming* it
+  cheap. Complementary mechanisms.
 - **Skyframe's SkyKey** proves stable nominal keys work at production
   build-graph scale — but it conflates nomination and validation in one
-  key (no separate content-verification layer) and has no fallback when
-  the exact key misses: a renamed target is an unrecoverable cache miss.
-  The suffix-match fallback is exactly what it lacks. Watchman's clockspec
-  is the clean precedent for the daemon-owned monotonic delta stream.
-- **Ribbon filters** (Dillinger & Walzer 2021; BuRR follow-up) are
-  confirmed current and fit the false-positives-are-safe direction
-  precisely. But probabilistic structures would be a *first* for this
-  corpus — every existing "did what I read change" check is exact, and
-  the corpus's one worked analog of this intersection problem chose an
-  exact inverted index (see the warm-facts question below). Choosing
-  probabilistic here is a scale-driven judgment call to make consciously,
-  not a default.
-- **Genuinely new territory, confirmed by absence in both corpora**: the
-  content-free path identity for demand-graph nodes itself, suffix
-  matching as fallback nomination (no build system or paper does it —
-  nearest citation is GreenTrie's constraint-entailment caching, already
-  adjudicated in the corpus for the solver domain), and the reversed-path
-  trie as nomination index.
+  key and has no fallback when the exact key misses: a renamed target is
+  an unrecoverable cache miss. The suffix-match fallback is exactly what
+  it lacks. Watchman's clockspec is the clean precedent for the
+  daemon-owned monotonic delta stream.
+- **Ribbon filters** (Dillinger & Walzer 2021) fit the
+  false-positives-are-safe direction precisely. The scale argument for a
+  probabilistic structure is real but must be earned: the one worked
+  analog of this intersection problem in vix's own design history — the
+  solver's premise→facts invalidation index — chose an *exact* structure,
+  at a scale where exact is free (a learned fact rests on one or two
+  premises). The build-graph target is a hundred thousand runs, two to
+  three orders larger; where the crossover sits is a measurement, not an
+  argument.
+- **New territory, confirmed by absence**: the content-free path identity
+  for demand-graph nodes, suffix matching as fallback nomination (no
+  build system or paper does it — the nearest relative is GreenTrie's
+  constraint-entailment caching, a different domain), and the
+  reversed-path trie as nomination index.
 
 ## What this chapter deliberately leaves open
 
@@ -266,33 +253,3 @@ Prior-art posture — grounded (the pass ran 2026-07-08; full report:
 2. **Trajectory-class edges** — the exact rule for when a demand is
    trajectory-born, and whether depth-disambiguation is ever worth
    offering as a nomination hint.
-3. **The mechanism question underneath content hashing** (framed encoding
-   vs canonical memory) — a separate adjudication, now better-posed: most
-   values only ever need a location; only edge-crossing values need
-   content identity at all. The consumption census will say whether the
-   implementation agrees.
-4. **Vocabulary ratification** — "location hash," "provenance coordinate,"
-   and the plane names themselves await the explicit *bank it*.
-5. **The warm-facts fork — RESOLVED by mechanism mapping, pending Amos's
-   ratification** (full verdict:
-   `~/vixenware/notes/machine-spec/warm-facts-fork-verdict.md`). All 18
-   mechanisms of `warm-facts-spec.md` were mapped against the ratified
-   adjudication requirements and the generic machine spec. The fork splits
-   along soundness vs. acceleration: **every soundness mechanism is
-   subsumed** — several by rules that cite warm-facts *by name*
-   (`proof_digest` → `hashing-is-ambient`; replay-before-install →
-   `reverify-on-load`, "same rule for exec tier-2, projection candidates,
-   and warm solver facts, stated once"; absence witnesses →
-   `misses-recorded`; quarantine → `value-vs-claim`, "not a bespoke
-   path"). **One genuine residue: the exact inverted `premise → facts`
-   index — as acceleration/nomination only**, which is precisely the
-   candidate-nomination hole this chapter fills. So the old spec's index
-   survives as this chapter's worked *precedent*, not as machinery.
-   Nothing is contradicted. Scale pricing for the filter choice: solver
-   scale is ~1–2 premises/fact and absence keys in the low hundreds —
-   exact indexing is free there; this chapter's ~100k-run target is 2–3
-   orders larger, so probabilistic-over-exact is a conscious scale
-   departure whose crossover is a *measurement*, not a corpus answer.
-   Recommendation on Amos's desk: retire the bespoke
-   `Premise`/`WarmFactVerifier` subsystem (soundness), keep the index as
-   the nomination precedent.

@@ -35,7 +35,7 @@ artifacts and never second-guesses the substrate.
 >
 > This means an iOS build falls to the interpreter by construction — no W+X
 > code compiled, no per-crate feature, no `default-features` dance at the app
-> root — while a desktop/server build JITs. (Resolved by Amos, 2026-07-08;
+> root — while a desktop/server build JITs. (Rationale:
 > compiling the copy-patch machinery is build-time waste, not runtime W+X, so
 > the feature is about waste and single-source-of-truth, not a hard W^X
 > blocker.)

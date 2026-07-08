@@ -139,8 +139,8 @@ not a thousand tasks.
 > stack is derived. The preconditions are load-bearing rules elsewhere:
 > `machine.lifecycle.freeze-transactional` (a killed task's partial work is
 > unreachable garbage), `machine.lifecycle.stable-snapshot` (replay sees the
-> same world), and `machine.scheduler.tickets-outlive-tasks`. (Resolved by
-> Amos, 2026-07-08.)
+> same world), and `machine.scheduler.tickets-outlive-tasks`.
+>
 
 > r[machine.scheduler.suspension-is-acceleration]
 >

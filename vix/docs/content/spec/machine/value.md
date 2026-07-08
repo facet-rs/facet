@@ -65,7 +65,7 @@ The value model: how values are typed, constructed, read, and discriminated.
 
 > r[machine.value.taint-provenance]
 >
-> [OPEN] Sub-value taint granularity is unresolved between two Amos rulings:
+> [OPEN] Sub-value taint granularity is unresolved between two prior rulings:
 > `vix-spec.md` V30 ("provenance is graph-side; sub-value taint is a
 > non-goal") and `secrets-as-sealed-values.md` Q1 (per-leaf structural
 > precision where the machine understands the derivation, whole-output taint

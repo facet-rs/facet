@@ -9,7 +9,7 @@ This spec governs the runtime rewrite: implementations carry `r[impl id]`
 references from their first commit, tests carry `r[verify id]`, and
 `ddc coverage` is the fidelity authority.
 
-Provenance: the 30-law audit constitution and battle plan (2026-07-08), the
+Provenance: the audit constitution and battle plan, the
 hostcall census, `rodin/docs/90-substrate-ledger.md`, the hash-as-field
 proposal (committee-converged), the vixen KB design corpus, and an
 archaeology sweep of the current driver ("the accidental spec") whose
@@ -17,7 +17,7 @@ correct semantics are preserved here and whose defects are explicitly not.
 
 Every rule carries a confidence marker:
 
-- **[SETTLED]** — decreed or committee-converged; changing it needs Amos.
+- **[SETTLED]** — decreed or committee-converged; changing it is a project decision, not an implementation choice.
 - **[DESIGN]** — concrete agreed design; changing it needs a written reason.
 - **[OPEN]** — a decision is required before or during implementation; the
   rule states the alternatives rather than picking one.
