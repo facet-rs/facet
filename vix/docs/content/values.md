@@ -1,0 +1,104 @@
++++
+title = "Values"
+weight = 5
++++
+
+*Status: provisional — this page documents the language as designed; parts
+are not implemented yet.*
+
+Everything in vix is a value. A string is a value. A parsed manifest is a
+value. A compiled crate is a value. A test outcome is a value. A solved
+dependency graph is a value. If something doesn't evaluate to a tangible
+value, it does not exist in the language — there are no statements that
+"do" things, no effect-objects, no null.
+
+## Constructing values
+
+```vix
+struct Point { x: Int, y: Int }
+enum Shape { Circle(Int), Rect { w: Int, h: Int } }
+
+let p = Point { x: 3, y: 4 };
+let s = Shape::Rect { w: 10, h: 20 };
+let pair = (p, s);
+let xs = [1, 2, 3];
+```
+
+Records, enums with payloads, tuples, arrays. Field access is `p.x`;
+enums are consumed with `match` (see the pattern-matching chapter);
+arrays are structs whose fields are named `0`, `1`, `2` (see
+[Collections](/vix/std/collections)).
+
+## Nothing mutates
+
+Every operation yields a fresh value. There is no assignment to a field,
+no method that changes its receiver, no interior mutability, no escape
+hatch. "Updating" a record means describing a new one:
+
+```vix
+let moved = Point { x: p.x + 1, ..p };
+```
+
+`moved` is a new value; `p` is untouched and every other user of `p` is
+unaffected — nothing aliases, so nothing can be affected. Code that looks
+like it accumulates (building up state across a fold, inserting into a
+map) is describing a *sequence of values*, each fresh:
+
+```vix
+fn put_domain(state: State, pkg: PkgId, domain: Domain) -> State {
+    State { domains: state.domains.insert(pkg, domain), ..state }
+}
+```
+
+`insert` returns a new map; the record spread builds a new state around
+it. Whether the implementation actually copies anything is its own
+business — semantically, you were never sharing.
+
+**Coming from Rust**: ownership, borrowing, lifetimes, `&`, `&mut`,
+`Clone`, `Rc` — none of it exists here, and not because everything is
+secretly copied. There is nothing to coordinate: no aliasing means the
+questions those features answer never come up. Write as if copies were
+free; making that true is the implementation's job, not yours.
+
+**Coming from JS/Python**: there is no reference semantics to be surprised
+by. Passing a value somewhere cannot let that somewhere change it under
+you; two names never point at one mutable thing.
+
+**Coming from Haskell/Clojure**: this is the persistent-data-structure
+world you know, taken as the only world — with no `IORef`/atom escape
+valve anywhere in the language.
+
+## Equality, ordering, and hashing are ambient
+
+Every value supports `==`, `<=>` (three-way comparison), and content
+hashing, by construction. You never derive them, never implement a trait,
+never discover at the worst moment that some type deep in a structure
+isn't comparable:
+
+```vix
+let same    = a == b;          // structural, any type
+let ord     = a <=> b;         // Ordering: Less | Equal | Greater
+let sorted  = things.sorted(); // no bounds to satisfy
+```
+
+This is not a convenience feature; it is load-bearing. Values are
+content-addressed — a value's identity is derived from what it *is* — and
+that is what makes builds cacheable, results shippable between machines,
+and collections deterministically orderable. The [three planes of
+identity](/vix/three-planes) chapter tells the whole story.
+
+**Coming from Rust**: no `#[derive(PartialEq, Eq, Hash, Ord)]` stanzas,
+and no types that opt out. Functions and values containing them are
+compared by identity of their definition, not excluded from comparison.
+
+## Why by-value is the load-bearing wall
+
+Because nothing is shared and nothing mutates, a value can be handed to
+another thread, another process, or another machine without any
+coordination — there is no lock to take, no ownership to transfer, no
+race to imagine. The same property lets the implementation cache any
+value, recompute instead of share when that's cheaper, and replay any
+in-flight work from scratch without your program being able to tell.
+Those freedoms — and their one governing law — are the subject of the
+under-the-hood chapters; as a user you only need the guarantee they rest
+on: **a value is only ever what it says it is.**
