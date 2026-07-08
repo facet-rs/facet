@@ -45,6 +45,19 @@ pub struct Ctx {
     /// 3 = ret (driver pops the frame), 4 = sync host call (driver
     /// invokes the host over the frame, re-enters at the continuation).
     pub exit: *mut i64,
+    /// Read-only value payload table for native store-backed loads.
+    pub store_value_memories: *const ValueMemory,
+    pub store_value_memory_count: usize,
+    pub molten_value_memories: *const ValueMemory,
+    pub molten_value_memory_count: usize,
+}
+
+/// MUST match `crate::task::ValueMemory`.
+#[repr(C)]
+#[derive(Clone, Copy)]
+pub struct ValueMemory {
+    pub ptr: *const u8,
+    pub len: usize,
 }
 
 extern "C" {
@@ -92,6 +105,60 @@ unsafe fn write_i64(frame: *mut u8, off: u64, value: i64) {
     (frame.add(off as usize) as *mut i64).write_unaligned(value);
 }
 
+#[inline(always)]
+unsafe fn read_i64_from(ptr: *const u8, off: usize) -> i64 {
+    (ptr.add(off) as *const i64).read_unaligned()
+}
+
+#[inline(always)]
+unsafe fn load_array_word(
+    store_memories: *const ValueMemory,
+    store_memory_count: usize,
+    molten_memories: *const ValueMemory,
+    molten_memory_count: usize,
+    array: i64,
+    index: i64,
+    elem_schema_ref: i64,
+) -> (i64, i64) {
+    if index < 0 {
+        return (0, 0);
+    }
+    let (memories, memory_count, handle) = if array < 0 {
+        let Some(handle) = (-1i64).checked_sub(array) else {
+            return (0, 0);
+        };
+        (molten_memories, molten_memory_count, handle as usize)
+    } else {
+        (store_memories, store_memory_count, array as usize)
+    };
+    if handle >= memory_count {
+        return (0, 0);
+    }
+    let memory = *memories.add(handle);
+    if memory.ptr.is_null() || memory.len < 24 {
+        return (0, 0);
+    }
+    if read_i64_from(memory.ptr, 0) != 0 || read_i64_from(memory.ptr, 8) != elem_schema_ref {
+        return (0, 0);
+    }
+    let count = read_i64_from(memory.ptr, 16);
+    if count < 0 {
+        return (0, 0);
+    }
+    let count = count as usize;
+    let Some(expected) = count.checked_mul(8).and_then(|n| 24usize.checked_add(n)) else {
+        return (0, 0);
+    };
+    if memory.len != expected {
+        return (0, 0);
+    }
+    let index = index as usize;
+    if index >= count {
+        return (0, 0);
+    }
+    (1, read_i64_from(memory.ptr, 24 + index * 8))
+}
+
 /// `frame[dst] = value` — immediates: [dst, value].
 #[no_mangle]
 pub unsafe extern "C" fn weavy_task_const(cx: *mut Ctx) {
@@ -111,7 +178,11 @@ pub unsafe extern "C" fn weavy_task_add(cx: *mut Ctx) {
     let a = *c.prog.add(1);
     let b = *c.prog.add(2);
     c.prog = c.prog.add(3);
-    write_i64(c.frame, dst, read_i64(c.frame, a).wrapping_add(read_i64(c.frame, b)));
+    write_i64(
+        c.frame,
+        dst,
+        read_i64(c.frame, a).wrapping_add(read_i64(c.frame, b)),
+    );
     cont!(cx);
 }
 
@@ -123,7 +194,11 @@ pub unsafe extern "C" fn weavy_task_mul(cx: *mut Ctx) {
     let a = *c.prog.add(1);
     let b = *c.prog.add(2);
     c.prog = c.prog.add(3);
-    write_i64(c.frame, dst, read_i64(c.frame, a).wrapping_mul(read_i64(c.frame, b)));
+    write_i64(
+        c.frame,
+        dst,
+        read_i64(c.frame, a).wrapping_mul(read_i64(c.frame, b)),
+    );
     cont!(cx);
 }
 
@@ -135,7 +210,11 @@ pub unsafe extern "C" fn weavy_task_sub(cx: *mut Ctx) {
     let a = *c.prog.add(1);
     let b = *c.prog.add(2);
     c.prog = c.prog.add(3);
-    write_i64(c.frame, dst, read_i64(c.frame, a).wrapping_sub(read_i64(c.frame, b)));
+    write_i64(
+        c.frame,
+        dst,
+        read_i64(c.frame, a).wrapping_sub(read_i64(c.frame, b)),
+    );
     cont!(cx);
 }
 
@@ -235,6 +314,31 @@ pub unsafe extern "C" fn weavy_task_store_ix(cx: *mut Ctx) {
     cont!(cx);
 }
 
+/// Checked store-backed array word read — immediates:
+/// [dst, present, array, index, elem_schema_ref].
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_load_array_word(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let present = *c.prog.add(1);
+    let array = *c.prog.add(2);
+    let index = *c.prog.add(3);
+    let elem_schema_ref = *c.prog.add(4) as i64;
+    c.prog = c.prog.add(5);
+    let (ok, value) = load_array_word(
+        c.store_value_memories,
+        c.store_value_memory_count,
+        c.molten_value_memories,
+        c.molten_value_memory_count,
+        read_i64(c.frame, array),
+        read_i64(c.frame, index),
+        elem_schema_ref,
+    );
+    write_i64(c.frame, dst, value);
+    write_i64(c.frame, present, ok);
+    cont!(cx);
+}
+
 /// AWAIT — immediates: [resume_off, index, dst], NOT consumed on the
 /// pending path so a resume re-reads the same descriptor. The ready token is
 /// consumed on the successful read path.
@@ -329,6 +433,20 @@ pub unsafe extern "C" fn weavy_task_hostcall(cx: *mut Ctx) {
     *c.resume = continuation;
     *c.await_index = host;
     *c.exit = 4;
+}
+
+/// SYNC HOST CALL YIELD — same immediates as HOST CALL, but exit code
+/// 6 tells the driver to return after invoking the host so native
+/// provenance tables can be rebuilt before re-entry.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_hostcall_yield(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let continuation = *c.prog;
+    let host = *c.prog.add(1);
+    c.prog = c.prog.add(2);
+    *c.resume = continuation;
+    *c.await_index = host;
+    *c.exit = 6;
 }
 
 /// TRACE MARK — immediates: [continuation, id], consumed before exit

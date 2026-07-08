@@ -33,16 +33,17 @@ use super::driver::{
     DOC_GET_HOST, DOC_IS_MAP_HOST, DOC_KEYS_HOST, DOC_PACKAGE_HOST, DOC_PARSE_HOST, DriveEvent,
     DriveEventSink, Driver, ELF_DOC_HOST, EXEC_HOST, FETCH_HOST, FnRef, GLOB_HOST, INVOKE_HOST,
     Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST, MOLTEN_DUP_HOST,
-    MachineExecBackend, MapInternStats, MoltenStats, OCI_DOC_HOST, OPTION_CONSTRUCT_HOST,
+    MachineExecBackend, MapInternStats, MoltenStats, NATIVE_OPTION_UNWRAP_NONE_HOST,
+    OCI_DOC_HOST, OPTION_CONSTRUCT_HOST,
     OPTION_DESTRUCT_HOST, OPTION_UNWRAP_HOST, PATH_JOIN_HOST, PATH_TO_STRING_HOST,
     PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST,
     RECORD_UPDATE_HOST, RenderNames, RenderVariant, RenderedValue, SEALED_DECLASSIFY_HOST,
-    SEALED_SEAL_HOST, SEALED_TO_STRING_HOST,
-    STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_CONTAINS_HOST,
-    STRING_DEFAULT_HOST, STRING_IS_NUMERIC_HOST, STRING_LOWER_HOST, STRING_PARSE_INT_HOST,
-    STRING_SPLIT_HOST, STRING_UPPER_HOST, SemanticComparator, StepMode, StoreHandle, TARGET_HOST,
-    TREE_PROJECT_HOST, TREE_TEXT_HOST, VALUE_COMPARE_HOST, VERSION_PARSE_HOST, VERSION_SET_OP_HOST,
-    VERSION_SET_PARSE_HOST, ValueBundle,
+    SEALED_SEAL_HOST, SEALED_TO_STRING_HOST, STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST,
+    STRING_CONCAT_HOST, STRING_CONTAINS_HOST, STRING_DEFAULT_HOST, STRING_IS_NUMERIC_HOST,
+    STRING_LOWER_HOST, STRING_PARSE_INT_HOST, STRING_SPLIT_HOST, STRING_UPPER_HOST,
+    SemanticComparator, StepMode, StoreHandle, TARGET_HOST, TREE_PROJECT_HOST, TREE_TEXT_HOST,
+    VALUE_COMPARE_HOST, VERSION_PARSE_HOST, VERSION_SET_OP_HOST, VERSION_SET_PARSE_HOST,
+    ValueBundle,
 };
 use crate::ast;
 use crate::fetch::FetchBackend;
@@ -4785,6 +4786,12 @@ impl<'a> FnLowerer<'a> {
                         return Err("Array.get takes one index".into());
                     };
                     let index = self.method_arg(index_arg, Some("Int"))?;
+                    let elem_schema = array_element_schema(&receiver.schema)
+                        .ok_or_else(|| format!("{} is not an Array<T>", receiver.schema))?
+                        .to_string();
+                    if schema_is_inline_word(&self.tables.schemas, &elem_schema) {
+                        return self.array_get_word(&receiver, &index, &elem_schema);
+                    }
                     return self.array_get(&receiver, &index);
                 }
                 if self.tables.schemas.is_named_schema(&receiver.schema, "Doc") {
@@ -5848,7 +5855,7 @@ impl<'a> FnLowerer<'a> {
                 src: field.slot,
             });
         }
-        self.code.push(Op::HostCall {
+        self.code.push(Op::HostCallYield {
             host: STORE_ALLOC_HOST,
         });
         Ok(ValueSlot {
@@ -5904,7 +5911,7 @@ impl<'a> FnLowerer<'a> {
                 src: value.slot,
             });
         }
-        self.code.push(Op::HostCall {
+        self.code.push(Op::HostCallYield {
             host: RECORD_UPDATE_HOST,
         });
         Ok(ValueSlot {
@@ -5974,7 +5981,7 @@ impl<'a> FnLowerer<'a> {
             dst: region + 8,
             src: value.slot,
         });
-        self.code.push(Op::HostCall {
+        self.code.push(Op::HostCallYield {
             host: MOLTEN_DUP_HOST,
         });
         Ok(ValueSlot {
@@ -6182,6 +6189,47 @@ impl<'a> FnLowerer<'a> {
     }
 
     fn option_unwrap(&mut self, option: &ValueSlot, value_schema: &str) -> ValueSlot {
+        if let Some(present) = option.realization
+            && option_value_schema(&option.schema).is_some()
+        {
+            let miss_jump = self.code.len();
+            self.code.push(Op::JumpIfZero {
+                value: present,
+                target: 0,
+            });
+            let dst = self.alloc();
+            self.code.push(Op::CopyI64 {
+                dst,
+                src: option.slot,
+            });
+            let done_jump = self.code.len();
+            self.code.push(Op::Jump { target: 0 });
+            let miss_target = u32::try_from(self.code.len()).expect("code index fits u32");
+            self.code[miss_jump] = Op::JumpIfZero {
+                value: present,
+                target: miss_target,
+            };
+            let error_input = self.next_input_slot;
+            self.next_input_slot += 1;
+            let error_dst = self.alloc();
+            self.code.push(Op::HostCall {
+                host: NATIVE_OPTION_UNWRAP_NONE_HOST,
+            });
+            self.code.push(Op::Await {
+                dst: error_dst,
+                input: u32::try_from(error_input).expect("input slot fits u32"),
+            });
+            let done_target = u32::try_from(self.code.len()).expect("code index fits u32");
+            self.code[done_jump] = Op::Jump {
+                target: done_target,
+            };
+            return ValueSlot {
+                slot: dst,
+                schema: value_schema.to_string(),
+                realization: None,
+                pending: None,
+            };
+        }
         let input_slot = self.next_input_slot;
         self.next_input_slot += 1;
         let realization_slot = realized_value_schema(value_schema).map(|_| {
@@ -6389,7 +6437,7 @@ impl<'a> FnLowerer<'a> {
             dst: region + 16,
             src: target.slot,
         });
-        self.code.push(Op::HostCall { host: ACQUIRE_HOST });
+        self.code.push(Op::HostCallYield { host: ACQUIRE_HOST });
         Ok(ValueSlot {
             slot: dst,
             schema: kind.to_string(),
@@ -6584,7 +6632,7 @@ impl<'a> FnLowerer<'a> {
                 src: elem.slot,
             });
         }
-        self.code.push(Op::HostCall {
+        self.code.push(Op::HostCallYield {
             host: ARRAY_ALLOC_HOST,
         });
         Ok(ValueSlot {
@@ -6805,6 +6853,35 @@ impl<'a> FnLowerer<'a> {
         })
     }
 
+    fn array_get_word(
+        &mut self,
+        receiver: &ValueSlot,
+        index: &ValueSlot,
+        elem_schema: &str,
+    ) -> Result<ValueSlot, String> {
+        self.expect_schema(receiver, "Array")?;
+        self.expect_schema(index, "Int")?;
+        let elem_schema_ref = *self
+            .schema_words
+            .get(elem_schema)
+            .ok_or_else(|| format!("no schema ref for {elem_schema}"))?;
+        let dst = self.alloc();
+        let present = self.alloc();
+        self.code.push(Op::LoadArrayWord {
+            dst,
+            present,
+            array: receiver.slot,
+            index: index.slot,
+            elem_schema_ref,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: option_schema(elem_schema),
+            realization: Some(present),
+            pending: None,
+        })
+    }
+
     fn array_push(
         &mut self,
         receiver: &ValueSlot,
@@ -6845,7 +6922,7 @@ impl<'a> FnLowerer<'a> {
             dst: region + 32,
             value: i64::from(consuming_receiver),
         });
-        self.code.push(Op::HostCall {
+        self.code.push(Op::HostCallYield {
             host: ARRAY_PUSH_HOST,
         });
         Ok(ValueSlot {
@@ -6873,7 +6950,7 @@ impl<'a> FnLowerer<'a> {
             dst: region + 16,
             src: receiver.slot,
         });
-        self.code.push(Op::HostCall {
+        self.code.push(Op::HostCallYield {
             host: ARRAY_POP_HOST,
         });
         let elem_schema = array_element_schema(&receiver.schema)
@@ -6933,7 +7010,7 @@ impl<'a> FnLowerer<'a> {
             dst: region + 24,
             src: value.slot,
         });
-        self.code.push(Op::HostCall {
+        self.code.push(Op::HostCallYield {
             host: ARRAY_SET_HOST,
         });
         Ok(ValueSlot {
@@ -8143,6 +8220,12 @@ fn array_element_schema(schema: &str) -> Option<&str> {
     Some(elem)
 }
 
+fn schema_is_inline_word(schemas: &SchemaTables, schema: &str) -> bool {
+    schemas.is_primitive(schema, Primitive::I64)
+        || schemas.is_primitive(schema, Primitive::Bool)
+        || schemas.is_primitive(schema, Primitive::F64)
+}
+
 fn legacy_generic_schema(schema: &str) -> Option<(&str, Vec<&str>)> {
     let (base, rest) = schema.split_once('<')?;
     let inner = rest.strip_suffix('>')?;
@@ -9290,6 +9373,51 @@ pub fn main() -> Int {
     }
 
     #[test]
+    fn scalar_array_get_unwrap_lowers_to_native_word_load() {
+        let src = r#"
+pub fn main() -> Int {
+    let values: Array<Int> = [10, 20, 30];
+    values.get(1).unwrap()
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 20, "{lane:?}");
+            assert_eq!(
+                host_call_count(&machine, "main", OPTION_UNWRAP_HOST),
+                0,
+                "{lane:?}"
+            );
+            assert_eq!(
+                machine
+                    .fn_ops("main")
+                    .unwrap()
+                    .iter()
+                    .filter(|op| matches!(op, Op::LoadArrayWord { .. }))
+                    .count(),
+                1,
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn scalar_array_get_unwrap_out_of_bounds_errors() {
+        let src = r#"
+pub fn main() -> Int {
+    let values: Array<Int> = [10, 20, 30];
+    values.get(99).unwrap()
+}
+"#;
+        for lane in lanes() {
+            let err = Machine::load_with_lane(src, lane)
+                .and_then(|mut machine| machine.demand_i64("main", vec![]))
+                .unwrap_err();
+            assert!(err.contains("unwrap on None"), "{lane:?}: {err}");
+        }
+    }
+
+    #[test]
     fn empty_arrays_keep_their_declared_element_identity() {
         let src = r#"
 pub fn ints() -> [Int] { [] }
@@ -9524,7 +9652,7 @@ pub fn grow(n: Int, acc: [Int]) -> [Int] {
                 .filter(|op| {
                     matches!(
                         op,
-                        Op::HostCall {
+                        Op::HostCallYield {
                             host: MOLTEN_DUP_HOST
                         }
                     )
@@ -9535,7 +9663,7 @@ pub fn grow(n: Int, acc: [Int]) -> [Int] {
                 .filter(|op| {
                     matches!(
                         op,
-                        Op::HostCall {
+                        Op::HostCallYield {
                             host: ARRAY_PUSH_HOST
                         }
                     )
@@ -12438,7 +12566,9 @@ pub fn lazy(n: Int) -> Map<String, Float> {
             .fn_ops(name)
             .expect("function ops")
             .iter()
-            .filter(|op| matches!(op, Op::HostCall { host: op_host } if *op_host == host))
+            .filter(|op| {
+                matches!(op, Op::HostCall { host: op_host } | Op::HostCallYield { host: op_host } if *op_host == host)
+            })
             .count()
     }
 

@@ -43,7 +43,7 @@ use weavy::jit::task_lane::{JitProgram, JitTask};
 use weavy::mem::{Access, MapStorage, Presence, SequenceStorage, Tag};
 #[cfg(any(test, feature = "jit"))]
 use weavy::task::Op;
-use weavy::task::{FnId, HostFn, Program, Task, TaskStep};
+use weavy::task::{FnId, HostFn, Program, Task, TaskStep, ValueMemories, ValueMemory};
 
 use crate::ast;
 use crate::fetch::{FetchBackend, NoFetchBackend};
@@ -192,6 +192,7 @@ pub const PATH_TO_STRING_HOST: u32 = 59;
 pub const DOC_IS_MAP_HOST: u32 = 60;
 pub const TREE_TEXT_HOST: u32 = 61;
 pub const DOC_KEYS_HOST: u32 = 62;
+pub const NATIVE_OPTION_UNWRAP_NONE_HOST: u32 = 63;
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub enum Lane {
@@ -669,11 +670,20 @@ impl LaneTask {
         ready: &mut [bool],
         awaited: &[i64],
         hosts: &mut [HostFn<'_>],
+        value_memories: ValueMemories<'_>,
     ) -> TaskStep {
         match self {
-            Self::Interp(task) => task.run_hosted(program, ready, awaited, hosts),
+            Self::Interp(task) => {
+                task.run_hosted_with_value_memories(program, ready, awaited, hosts, value_memories)
+            }
             #[cfg(any(test, feature = "jit"))]
-            Self::Jit { program, task } => task.run_hosted(program.as_ref(), ready, awaited, hosts),
+            Self::Jit { program, task } => task.run_hosted_with_value_memories(
+                program.as_ref(),
+                ready,
+                awaited,
+                hosts,
+                value_memories,
+            ),
         }
     }
 
@@ -4190,6 +4200,10 @@ impl Driver {
                 });
             };
 
+            let mut native_option_unwrap_none = |_frame: &mut [u8]| {
+                *host_error.borrow_mut() = Some("unwrap on None".to_string());
+            };
+
             let mut acquire = |frame: &mut [u8]| {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
@@ -6434,7 +6448,7 @@ impl Driver {
                 }
             };
 
-            let mut hosts: [HostFn<'_>; 63] = [
+            let mut hosts: [HostFn<'_>; 64] = [
                 &mut invoke,
                 &mut store_alloc,
                 &mut store_read,
@@ -6498,10 +6512,44 @@ impl Driver {
                 &mut doc_is_map,
                 &mut tree_text,
                 &mut doc_keys,
+                &mut native_option_unwrap_none,
             ];
-            let step = exec
-                .task
-                .advance(&self.program, &mut exec.ready, &exec.awaited, &mut hosts);
+            let store_payloads = store_cell
+                .borrow()
+                .entries
+                .iter()
+                .map(|entry| entry.bytes.clone())
+                .collect::<Vec<_>>();
+            let store_value_memories = store_payloads
+                .iter()
+                .map(|bytes| ValueMemory::from_slice(bytes))
+                .collect::<Vec<_>>();
+            let molten_payloads = molten_cell
+                .borrow()
+                .entries
+                .iter()
+                .map(|entry| molten_value_payload(entry, schema_tables))
+                .collect::<Vec<_>>();
+            let molten_value_memories = molten_payloads
+                .iter()
+                .map(|payload| {
+                    payload
+                        .as_deref()
+                        .map(ValueMemory::from_slice)
+                        .unwrap_or_else(ValueMemory::empty)
+                })
+                .collect::<Vec<_>>();
+            let value_memories = ValueMemories {
+                store: &store_value_memories,
+                molten: &molten_value_memories,
+            };
+            let step = exec.task.advance(
+                &self.program,
+                &mut exec.ready,
+                &exec.awaited,
+                &mut hosts,
+                value_memories,
+            );
             drop(hosts);
             for event in store_events.into_inner() {
                 self.emit(event);
@@ -6518,6 +6566,7 @@ impl Driver {
                     let value = exec.task.result_i64();
                     return Burst::Done(value);
                 }
+                TaskStep::Yielded => continue,
                 TaskStep::Parked { input } => {
                     let input = input as usize;
                     if exec.ready.len() <= input {
@@ -10227,11 +10276,13 @@ fn op_name(op: &Op) -> &'static str {
         Op::Await { .. } => "Await",
         Op::LoadIndexedI64 { .. } => "LoadIndexedI64",
         Op::StoreIndexedI64 { .. } => "StoreIndexedI64",
+        Op::LoadArrayWord { .. } => "LoadArrayWord",
         Op::ConstF64 { .. } => "ConstF64",
         Op::AddF64 { .. } => "AddF64",
         Op::MulF64 { .. } => "MulF64",
         Op::Trace { .. } => "Trace",
         Op::HostCall { .. } => "HostCall",
+        Op::HostCallYield { .. } => "HostCallYield",
     }
 }
 
@@ -11569,6 +11620,34 @@ fn decode_handle_list(bytes: &[u8]) -> Result<Vec<i64>, String> {
     Ok((0..count)
         .map(|i| read_frame_word(bytes, 16 + i * 8))
         .collect())
+}
+
+fn encode_array_word_payload(elem_schema_ref: i64, words: &[i64]) -> Vec<u8> {
+    let mut bytes = Vec::with_capacity(24 + words.len() * 8);
+    bytes.extend_from_slice(&0i64.to_le_bytes());
+    bytes.extend_from_slice(&elem_schema_ref.to_le_bytes());
+    bytes.extend_from_slice(
+        &i64::try_from(words.len())
+            .expect("array length fits i64")
+            .to_le_bytes(),
+    );
+    for word in words {
+        bytes.extend_from_slice(&word.to_le_bytes());
+    }
+    bytes
+}
+
+fn molten_value_payload(entry: &MoltenEntry, schemas: &SchemaTables) -> Option<Vec<u8>> {
+    match &entry.value {
+        MoltenValue::ArrayWords { elem_schema, words } => Some(encode_array_word_payload(
+            schemas.frame_word_for_name(elem_schema),
+            words,
+        )),
+        MoltenValue::Record { .. }
+        | MoltenValue::Map { .. }
+        | MoltenValue::Interned(_)
+        | MoltenValue::Interning => None,
+    }
 }
 
 fn hash_handle_list(
