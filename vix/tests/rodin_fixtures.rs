@@ -21,8 +21,13 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
-use vix::machine::{DriveEvent, Machine, MachineArg, NamedArg, RenderedValue};
+use vix::machine::driver::StepCommand;
+use vix::machine::{
+    DriveEvent, Machine, MachineArg, MachineDiagSnapshot, NamedArg, RenderedValue,
+    machine_diag_snapshot, reset_machine_diag, set_machine_diag_enabled,
+};
 
 const LINUX: &str = "x86_64-unknown-linux-gnu";
 const WINDOWS: &str = "x86_64-pc-windows-msvc";
@@ -1194,6 +1199,146 @@ fn trace_tail(machine: &Machine) -> String {
     out
 }
 
+fn trace_summary(machine: &Machine) -> BTreeMap<&'static str, usize> {
+    let mut counts = BTreeMap::new();
+    for event in machine.trace() {
+        let key = match event {
+            DriveEvent::Demanded { .. } => "demanded",
+            DriveEvent::MemoHit { .. } => "memo_hit",
+            DriveEvent::MemoProjectionHit { .. } => "memo_projection_hit",
+            DriveEvent::MemoSemanticHit { .. } => "memo_semantic_hit",
+            DriveEvent::Spawned { .. } => "spawned",
+            DriveEvent::ParkedOn { .. } => "parked_on",
+            DriveEvent::Completed { .. } => "completed",
+            DriveEvent::SpawnedInvocation { .. } => "spawned_invocation",
+            DriveEvent::StoreAlloc { .. } => "store_alloc",
+            DriveEvent::RunRequested { .. } => "run_requested",
+            DriveEvent::RunStarted { .. } => "run_started",
+            DriveEvent::RunCompleted { .. } => "run_completed",
+            DriveEvent::Observation { .. } => "observation",
+            DriveEvent::ArtifactProbe { .. } => "artifact_probe",
+        };
+        *counts.entry(key).or_default() += 1;
+    }
+    counts
+}
+
+fn fn_event_summary(machine: &Machine, names: &[&str]) -> Vec<(String, Option<TraceCounts>)> {
+    names
+        .iter()
+        .map(|name| ((*name).to_owned(), trace_counts(machine, &[*name]).ok()))
+        .collect()
+}
+
+fn feature_unification_superset_fixture() -> Fixture {
+    Fixture::new("feature-unification-superset", "app")
+        .krate(FixtureCrate::new("left_dep"))
+        .krate(FixtureCrate::new("right_dep"))
+        .krate(
+            FixtureCrate::new("shared")
+                .feature("left", &["dep:left_dep"])
+                .feature("right", &["dep:right_dep"])
+                .dep(FixtureDep::new("left_dep").optional())
+                .dep(FixtureDep::new("right_dep").optional()),
+        )
+        .krate(
+            FixtureCrate::new("a").dep(
+                FixtureDep::new("shared")
+                    .default_features(false)
+                    .feature("left"),
+            ),
+        )
+        .krate(
+            FixtureCrate::new("b").dep(
+                FixtureDep::new("shared")
+                    .default_features(false)
+                    .feature("right"),
+            ),
+        )
+        .krate(
+            FixtureCrate::new("app")
+                .dep(FixtureDep::new("a"))
+                .dep(FixtureDep::new("b")),
+        )
+}
+
+fn append_diag_snapshot(out: &mut String, diag: &MachineDiagSnapshot) {
+    writeln!(
+        out,
+        "diag\twhole_projection_reads\t{}",
+        diag.whole_projection_reads
+    )
+    .ok();
+    writeln!(
+        out,
+        "diag\twhole_array_projection_reads\t{}",
+        diag.whole_array_projection_reads
+    )
+    .ok();
+    writeln!(
+        out,
+        "diag\tcanonical_word_hash_calls\t{}",
+        diag.canonical_word_hash_calls
+    )
+    .ok();
+    writeln!(
+        out,
+        "diag\tcanonical_word_hash_store_hits\t{}",
+        diag.canonical_word_hash_store_hits
+    )
+    .ok();
+    writeln!(
+        out,
+        "diag\traw_value_hash_calls\t{}",
+        diag.raw_value_hash_calls
+    )
+    .ok();
+    writeln!(
+        out,
+        "diag\traw_value_hash_bytes\t{}",
+        diag.raw_value_hash_bytes
+    )
+    .ok();
+    writeln!(
+        out,
+        "diag\tstructured_value_hash_calls\t{}",
+        diag.structured_value_hash_calls
+    )
+    .ok();
+    writeln!(
+        out,
+        "diag\tstructured_value_hash_bytes\t{}",
+        diag.structured_value_hash_bytes
+    )
+    .ok();
+    writeln!(
+        out,
+        "diag\tstructured_array_elements\t{}",
+        diag.structured_array_elements
+    )
+    .ok();
+    writeln!(
+        out,
+        "diag\tstructured_sequence_elements\t{}",
+        diag.structured_sequence_elements
+    )
+    .ok();
+    writeln!(
+        out,
+        "diag\tstructured_map_pairs\t{}",
+        diag.structured_map_pairs
+    )
+    .ok();
+    for (schema, count) in &diag.projection_schemas {
+        writeln!(out, "projection_schema\t{schema}\t{count}").ok();
+    }
+}
+
+#[derive(Debug)]
+struct DenseDiagEventLimit;
+
+const DENSE_DIAG_EVENT_LIMIT: u64 = 200_000;
+
 fn pkg_fn(name: &str) -> String {
     let mut out = String::from("pkg_");
     for ch in name.chars() {
@@ -1353,35 +1498,7 @@ fn weak_feature_never_pulls_optional_dep_without_activation() {
 
 #[test]
 fn feature_unification_pulls_superset_optional_deps() {
-    let fixture = Fixture::new("feature-unification-superset", "app")
-        .krate(FixtureCrate::new("left_dep"))
-        .krate(FixtureCrate::new("right_dep"))
-        .krate(
-            FixtureCrate::new("shared")
-                .feature("left", &["dep:left_dep"])
-                .feature("right", &["dep:right_dep"])
-                .dep(FixtureDep::new("left_dep").optional())
-                .dep(FixtureDep::new("right_dep").optional()),
-        )
-        .krate(
-            FixtureCrate::new("a").dep(
-                FixtureDep::new("shared")
-                    .default_features(false)
-                    .feature("left"),
-            ),
-        )
-        .krate(
-            FixtureCrate::new("b").dep(
-                FixtureDep::new("shared")
-                    .default_features(false)
-                    .feature("right"),
-            ),
-        )
-        .krate(
-            FixtureCrate::new("app")
-                .dep(FixtureDep::new("a"))
-                .dep(FixtureDep::new("b")),
-        );
+    let fixture = feature_unification_superset_fixture();
 
     let selected = fixture.assert_selection_matches(LINUX).unwrap();
     assert!(
@@ -1392,6 +1509,131 @@ fn feature_unification_pulls_superset_optional_deps() {
         selected.contains("right_dep"),
         "right feature activation selected: {selected:?}"
     );
+}
+
+#[test]
+#[ignore = "tier-A dense-state diagnostic: feature-heavy fixture trace summary"]
+fn dense_state_feature_unification_diagnostic_trace() -> Result<(), String> {
+    let fixture = feature_unification_superset_fixture();
+    let source = format!("{}\n\n{}", rodin_source()?, fixture.vix_fixture_source());
+    reset_machine_diag();
+    set_machine_diag_enabled(true);
+    let started = Instant::now();
+    type DiagnosticRun = (
+        &'static str,
+        usize,
+        BTreeSet<String>,
+        MachineDiagSnapshot,
+        BTreeMap<&'static str, usize>,
+        Vec<(String, Option<TraceCounts>)>,
+    );
+    let result: Result<DiagnosticRun, String> = (|| {
+        let mut machine = Machine::load(&source)?;
+        machine.set_force_molten_copy(true);
+        let mut event_count = 0_u64;
+        machine.set_event_sink(Some(Box::new(move |_| {
+            event_count = event_count.saturating_add(1);
+            if event_count >= DENSE_DIAG_EVENT_LIMIT {
+                std::panic::panic_any(DenseDiagEventLimit);
+            }
+            StepCommand::Step
+        })));
+        let selected = match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            machine.call(
+                "fixture_selected",
+                &[NamedArg {
+                    name: "target".to_owned(),
+                    value: MachineArg::String(LINUX.to_owned()),
+                }],
+            )
+        })) {
+            Ok(Ok(selected)) => {
+                let rendered = machine
+                    .render_result("fixture_selected", selected.0)
+                    .map_err(|err| format!("render fixture_selected: {err}"))?;
+                rendered_name_set(rendered)?
+            }
+            Ok(Err(err)) => {
+                return Err(format!(
+                    "call fixture_selected: {err}\n{}",
+                    trace_tail(&machine)
+                ));
+            }
+            Err(payload) if payload.is::<DenseDiagEventLimit>() => BTreeSet::new(),
+            Err(payload) => std::panic::resume_unwind(payload),
+        };
+        let status = if selected.is_empty() {
+            "event_limit"
+        } else {
+            "completed"
+        };
+        let diag = machine_diag_snapshot();
+        let trace = trace_summary(&machine);
+        let fn_counts = fn_event_summary(
+            &machine,
+            &[
+                "propagate",
+                "propagate_loop",
+                "apply_clauses",
+                "apply_one_clause",
+                "enable_feature",
+                "feature_enabled",
+                "domain_for",
+                "force_singletons_over",
+                "selected_from_state",
+            ],
+        );
+        Ok((
+            status,
+            machine.trace().len(),
+            selected,
+            diag,
+            trace,
+            fn_counts,
+        ))
+    })();
+    set_machine_diag_enabled(false);
+    let (status, trace_len, selected, diag, trace, fn_counts) = result?;
+    let wall = started.elapsed();
+    let mut out = String::new();
+    writeln!(out, "metric\tname\tvalue").ok();
+    writeln!(out, "run\tfixture\tfeature_unification_superset").ok();
+    writeln!(out, "run\tforce_molten_copy\ttrue").ok();
+    writeln!(out, "run\tstatus\t{status}").ok();
+    writeln!(out, "run\tevent_limit\t{DENSE_DIAG_EVENT_LIMIT}").ok();
+    writeln!(out, "run\twall_ms\t{}", wall.as_millis()).ok();
+    writeln!(out, "run\ttrace_len\t{trace_len}").ok();
+    writeln!(out, "run\tselected_count\t{}", selected.len()).ok();
+    for name in &selected {
+        writeln!(out, "selected\t{name}\t1").ok();
+    }
+    for (event, count) in trace {
+        writeln!(out, "trace_event\t{event}\t{count}").ok();
+    }
+    for (name, counts) in fn_counts {
+        if let Some(counts) = counts {
+            writeln!(out, "fn_demanded\t{name}\t{}", counts.demanded).ok();
+            writeln!(
+                out,
+                "fn_spawned_invocations\t{name}\t{}",
+                counts.spawned_invocations
+            )
+            .ok();
+        } else {
+            writeln!(out, "fn_missing\t{name}\t1").ok();
+        }
+    }
+    append_diag_snapshot(&mut out, &diag);
+
+    let out_dir = std::env::var_os("TIER_A_OUT")
+        .map(PathBuf::from)
+        .unwrap_or_else(|| PathBuf::from("/tmp/tier-a-scale-measurement"));
+    std::fs::create_dir_all(&out_dir).map_err(|err| err.to_string())?;
+    std::fs::write(
+        out_dir.join("dense-state-feature-fixture-diagnostics.tsv"),
+        out,
+    )
+    .map_err(|err| err.to_string())
 }
 
 /// 2. A default-on feature (`bundle-platform`) references an optional dep

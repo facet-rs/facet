@@ -33,7 +33,11 @@ use std::fmt;
 use std::hash::{BuildHasher, Hash, Hasher};
 #[cfg(any(test, feature = "jit"))]
 use std::rc::Rc;
-use std::sync::{Arc, mpsc};
+use std::sync::{
+    Arc, Mutex, OnceLock,
+    atomic::{AtomicU64, Ordering as AtomicOrdering},
+    mpsc,
+};
 use std::time::Duration;
 
 use facet::Facet;
@@ -351,6 +355,112 @@ pub enum DriveEvent {
         cache_hit: bool,
         timestamp_us: u64,
     },
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct MachineDiagSnapshot {
+    pub whole_projection_reads: u64,
+    pub whole_array_projection_reads: u64,
+    pub projection_schemas: Vec<(String, u64)>,
+    pub canonical_word_hash_calls: u64,
+    pub canonical_word_hash_store_hits: u64,
+    pub raw_value_hash_calls: u64,
+    pub raw_value_hash_bytes: u64,
+    pub structured_value_hash_calls: u64,
+    pub structured_value_hash_bytes: u64,
+    pub structured_array_elements: u64,
+    pub structured_sequence_elements: u64,
+    pub structured_map_pairs: u64,
+}
+
+static DIAG_WHOLE_PROJECTION_READS: AtomicU64 = AtomicU64::new(0);
+static DIAG_WHOLE_ARRAY_PROJECTION_READS: AtomicU64 = AtomicU64::new(0);
+static DIAG_CANONICAL_WORD_HASH_CALLS: AtomicU64 = AtomicU64::new(0);
+static DIAG_CANONICAL_WORD_HASH_STORE_HITS: AtomicU64 = AtomicU64::new(0);
+static DIAG_RAW_VALUE_HASH_CALLS: AtomicU64 = AtomicU64::new(0);
+static DIAG_RAW_VALUE_HASH_BYTES: AtomicU64 = AtomicU64::new(0);
+static DIAG_STRUCTURED_VALUE_HASH_CALLS: AtomicU64 = AtomicU64::new(0);
+static DIAG_STRUCTURED_VALUE_HASH_BYTES: AtomicU64 = AtomicU64::new(0);
+static DIAG_STRUCTURED_ARRAY_ELEMENTS: AtomicU64 = AtomicU64::new(0);
+static DIAG_STRUCTURED_SEQUENCE_ELEMENTS: AtomicU64 = AtomicU64::new(0);
+static DIAG_STRUCTURED_MAP_PAIRS: AtomicU64 = AtomicU64::new(0);
+static DIAG_ENABLED: AtomicU64 = AtomicU64::new(0);
+static DIAG_PROJECTION_SCHEMAS: OnceLock<Mutex<BTreeMap<String, u64>>> = OnceLock::new();
+
+fn machine_diag_enabled() -> bool {
+    DIAG_ENABLED.load(AtomicOrdering::Relaxed) != 0 || std::env::var_os("VIX_SOLVE_DIAG").is_some()
+}
+
+fn diag_add(counter: &AtomicU64, value: u64) {
+    if machine_diag_enabled() {
+        counter.fetch_add(value, AtomicOrdering::Relaxed);
+    }
+}
+
+fn diag_record_projection_schema(schema: &str) {
+    if machine_diag_enabled() {
+        let mut schemas = DIAG_PROJECTION_SCHEMAS
+            .get_or_init(|| Mutex::new(BTreeMap::new()))
+            .lock()
+            .expect("diag projection schema lock");
+        *schemas.entry(schema.to_owned()).or_default() += 1;
+    }
+}
+
+pub fn reset_machine_diag() {
+    for counter in [
+        &DIAG_WHOLE_PROJECTION_READS,
+        &DIAG_WHOLE_ARRAY_PROJECTION_READS,
+        &DIAG_CANONICAL_WORD_HASH_CALLS,
+        &DIAG_CANONICAL_WORD_HASH_STORE_HITS,
+        &DIAG_RAW_VALUE_HASH_CALLS,
+        &DIAG_RAW_VALUE_HASH_BYTES,
+        &DIAG_STRUCTURED_VALUE_HASH_CALLS,
+        &DIAG_STRUCTURED_VALUE_HASH_BYTES,
+        &DIAG_STRUCTURED_ARRAY_ELEMENTS,
+        &DIAG_STRUCTURED_SEQUENCE_ELEMENTS,
+        &DIAG_STRUCTURED_MAP_PAIRS,
+    ] {
+        counter.store(0, AtomicOrdering::Relaxed);
+    }
+    if let Some(schemas) = DIAG_PROJECTION_SCHEMAS.get() {
+        schemas.lock().expect("diag projection schema lock").clear();
+    }
+}
+
+pub fn set_machine_diag_enabled(enabled: bool) {
+    DIAG_ENABLED.store(u64::from(enabled), AtomicOrdering::Relaxed);
+}
+
+pub fn machine_diag_snapshot() -> MachineDiagSnapshot {
+    let projection_schemas = DIAG_PROJECTION_SCHEMAS
+        .get()
+        .map(|schemas| {
+            schemas
+                .lock()
+                .expect("diag projection schema lock")
+                .iter()
+                .map(|(schema, count)| (schema.clone(), *count))
+                .collect()
+        })
+        .unwrap_or_default();
+    MachineDiagSnapshot {
+        whole_projection_reads: DIAG_WHOLE_PROJECTION_READS.load(AtomicOrdering::Relaxed),
+        whole_array_projection_reads: DIAG_WHOLE_ARRAY_PROJECTION_READS
+            .load(AtomicOrdering::Relaxed),
+        projection_schemas,
+        canonical_word_hash_calls: DIAG_CANONICAL_WORD_HASH_CALLS.load(AtomicOrdering::Relaxed),
+        canonical_word_hash_store_hits: DIAG_CANONICAL_WORD_HASH_STORE_HITS
+            .load(AtomicOrdering::Relaxed),
+        raw_value_hash_calls: DIAG_RAW_VALUE_HASH_CALLS.load(AtomicOrdering::Relaxed),
+        raw_value_hash_bytes: DIAG_RAW_VALUE_HASH_BYTES.load(AtomicOrdering::Relaxed),
+        structured_value_hash_calls: DIAG_STRUCTURED_VALUE_HASH_CALLS.load(AtomicOrdering::Relaxed),
+        structured_value_hash_bytes: DIAG_STRUCTURED_VALUE_HASH_BYTES.load(AtomicOrdering::Relaxed),
+        structured_array_elements: DIAG_STRUCTURED_ARRAY_ELEMENTS.load(AtomicOrdering::Relaxed),
+        structured_sequence_elements: DIAG_STRUCTURED_SEQUENCE_ELEMENTS
+            .load(AtomicOrdering::Relaxed),
+        structured_map_pairs: DIAG_STRUCTURED_MAP_PAIRS.load(AtomicOrdering::Relaxed),
+    }
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -3711,7 +3821,8 @@ impl Driver {
                                             descriptors.get(schema).unwrap_or_else(|| {
                                                 panic!("descriptor for schema `{schema}`")
                                             });
-                                        let field = field_descriptor(descriptor, bytes, field_index);
+                                        let field =
+                                            field_descriptor(descriptor, bytes, field_index);
                                         let offset = field_offset(descriptor, bytes, field_index);
                                         Some(read_word_at(bytes, offset, field.layout.size))
                                     }
@@ -10538,12 +10649,14 @@ fn canonical_word_hash_in_store(
     schema: &str,
     word: i64,
 ) -> ContentHash {
+    diag_add(&DIAG_CANONICAL_WORD_HASH_CALLS, 1);
     if schema_is_inline_word(schemas, schema) {
         return canonical_scalar_hash(schemas, schema, word);
     }
     let entry = store
         .entry(word)
         .unwrap_or_else(|| panic!("non-inline `{schema}` word {word} is not interned"));
+    diag_add(&DIAG_CANONICAL_WORD_HASH_STORE_HITS, 1);
     assert!(
         identity_schema_matches(&entry.schema, schema),
         "stored identity schema mismatch: left `{}`, right `{schema}`",
@@ -10590,6 +10703,8 @@ fn raw_value_content_hash(
     schemas: &SchemaTables,
     taint: &Option<StructuralTaint>,
 ) -> ContentHash {
+    diag_add(&DIAG_RAW_VALUE_HASH_CALLS, 1);
+    diag_add(&DIAG_RAW_VALUE_HASH_BYTES, bytes.len() as u64);
     let mut hasher = blake3::Hasher::new();
     hasher.update(b"vix-raw-value");
     update_schema_name(&mut hasher, schemas, schema);
@@ -10670,6 +10785,11 @@ fn record_whole_args_if_projectable_static(
         for (arg_index, (&arg, schema)) in args.iter().zip(arg_schemas).enumerate() {
             if arg == handle && is_projectable_arg_static(schema, arg, store, descriptors, schemas)
             {
+                diag_add(&DIAG_WHOLE_PROJECTION_READS, 1);
+                if schemas.is_list(schema) {
+                    diag_add(&DIAG_WHOLE_ARRAY_PROJECTION_READS, 1);
+                }
+                diag_record_projection_schema(schema);
                 reads.push(ProjectionRead {
                     arg_index,
                     path: ProjectionPath::Whole {
@@ -12003,6 +12123,8 @@ fn hash_value_bytes(
     bytes: &[u8],
     store: &ValueStore,
 ) -> ContentHash {
+    diag_add(&DIAG_STRUCTURED_VALUE_HASH_CALLS, 1);
+    diag_add(&DIAG_STRUCTURED_VALUE_HASH_BYTES, bytes.len() as u64);
     let mut hasher = blake3::Hasher::new();
     hash_value_into(descriptors, schemas, &mut hasher, descriptor, bytes, store);
     finish_hash(hasher)
@@ -12079,6 +12201,7 @@ fn hash_value_into(
             stride,
         } => {
             hasher.update(b"array");
+            diag_add(&DIAG_STRUCTURED_ARRAY_ELEMENTS, *count as u64);
             for i in 0..*count {
                 let start = i * *stride;
                 let end = start + element.layout.size;
@@ -12105,6 +12228,7 @@ fn hash_value_into(
             hasher.update(b"sequence");
             hasher.update(&kind.to_le_bytes());
             update_hash_len(hasher, count);
+            diag_add(&DIAG_STRUCTURED_SEQUENCE_ELEMENTS, count as u64);
             for i in 0..count {
                 let word = read_frame_word(bytes, 24 + i * 8);
                 let elem_schema = descriptor_word_schema(schemas, &sequence.element);
@@ -12124,6 +12248,7 @@ fn hash_value_into(
             let pairs = decode_map_pairs(bytes, schemas).unwrap_or_else(|err| {
                 panic!("map descriptor hashing failed for `{schema}`: {err}")
             });
+            diag_add(&DIAG_STRUCTURED_MAP_PAIRS, pairs.len() as u64);
             let ordered = ordered_map_pairs_from_decoded(store, pairs, schemas);
             let already_canonical = ordered.windows(2).all(|window| {
                 compare_ordered_map_pairs(
@@ -12258,7 +12383,10 @@ fn assert_canonical_zero_padding(schema: &str, descriptor: &VixDescriptor, bytes
     }
 }
 
-fn enum_tag_owns_byte<SchemaRef>(access: &weavy::mem::EnumAccess<SchemaRef>, offset: usize) -> bool {
+fn enum_tag_owns_byte<SchemaRef>(
+    access: &weavy::mem::EnumAccess<SchemaRef>,
+    offset: usize,
+) -> bool {
     match access.tag {
         Tag::Direct {
             offset: tag_offset,

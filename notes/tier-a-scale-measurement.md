@@ -81,6 +81,61 @@ past the current nextest timeout under load. The standing perf lane should
 certify under controlled load before treating the percentage as a perf-budget
 number or choosing whether to split domain density from feature density.
 
+Dense regression investigation, bounded diagnostic pass:
+
+The feature-heavy fixture diagnostic is intentionally ignored and trace-bounded:
+
+```sh
+TIER_A_OUT=/tmp/tier-a-dense-investigation cargo nextest run -p vix --features real-process --run-ignored only -E 'test(=dense_state_feature_unification_diagnostic_trace)'
+```
+
+The diagnostic uses the same `feature_unification_pulls_superset_optional_deps`
+fixture, records machine counters, and writes a TSV before completion if the
+event budget is reached. Baseline means `b49fba320` plus only the diagnostic
+instrumentation; dense means the solve-local SOA state branch. The baseline
+completed. Dense hit the 200k event budget before selection.
+
+Artifacts:
+
+- `notes/tier-a-dense-state-feature-baseline-diagnostics.tsv`
+- `notes/tier-a-dense-state-feature-dense-diagnostics.tsv`
+
+| Measure | Baseline `b49fba320` | Dense SOA |
+|---|---:|---:|
+| run status | completed | event_limit |
+| trace events | 11,343 | 200,000 |
+| selected packages | 6 | 0 before budget |
+| wall ms | 3,089 | 30,563 |
+| demanded | 2,695 | 50,660 |
+| memo hits + projection hits | 923 | 21,977 |
+| memo hit share of demands | 34.2% | 43.4% |
+| whole projection reads | 1,093 | 19,463 |
+| whole array projection reads | 823 | 12,441 |
+| canonical word hash calls | 43,787 | 20,419,059 |
+| canonical word hash calls / trace event | 3.86 | 102.10 |
+| structured value hash bytes | 12,192 | 295,888 |
+| structured array elements hashed | 0 | 0 |
+| `propagate` demanded | 5 | 293 |
+| `apply_clauses` demanded | 10 | 294 |
+| `enable_feature` demanded | 31 | 585 |
+| `domain_for` demanded | 277 | 3,550 |
+| `force_singletons_over` demanded | 10 | 294 |
+
+Hypothesis attribution:
+
+| Hypothesis | Evidence | Current verdict |
+|---|---|---|
+| H0: load noise | The quiet rerun precondition was not met. `uptime` checks during this pass were still high: `137.52 82.78 58.52`, `46.77 69.29 57.09`, and `68.32 67.72 58.29`, all above the requested `<5` threshold. | Pending. The 180s timeout still needs a quiet-machine rerun before it can be called a hard wall. |
+| H1: whole-array receipt invalidation storm | `record_whole_args_if_projectable_static` does fire on array-shaped state during dense propagation: dense projection schemas include `Array<Int>` 11,557, `Array<LearnedNoGood>` 294, `Array<Version>` 590, and `State` 6,730. Baseline also records whole-array reads and has a slightly higher per-event whole-array rate (823 / 11,343 = 0.073) than dense (12,441 / 200,000 = 0.062). | Present but not sufficient as the primary regression by itself. If these are solve-local append-grown arrays, element-granular receipts may still be needed, but the event-normalized rate does not explain the timeout alone. |
+| H2: quadratic identity recompute | Canonical word hash demand explodes: 43,787 baseline calls vs 20,419,059 dense calls before the event budget, about 26.5x more per trace event. However structured array-element hashing is 0 in both runs and structured hash bytes only scale with event count, so this pass does not prove repeated full-array byte rehashing. | Hash-demand amplification survives; full O(n^2) array-byte recompute is not confirmed by these counters. |
+| H3: memo granularity collapse | Memo hit share does not collapse: baseline has 923 memo/projection hits over 2,695 demands (34.2%); dense has 21,977 over 50,660 (43.4%). Hot functions such as `domain_for` and `feature_enabled` still show many demands served by memo after first spawn. | Killed for this fixture. |
+| H4: algorithmic fixpoint iteration order/termination | Baseline completes with `propagate` demanded 5 times, `apply_clauses` 10, and `force_singletons_over` 10. Dense reaches the event budget with `propagate` 293, `apply_clauses` 294, and `force_singletons_over` 294 before any selected output. | Survives and is the strongest current explanation: the dense state shape changed propagation progress/termination behavior, with hash-demand amplification riding on that churn. |
+
+Next investigation step: rerun `feature_unification_pulls_superset_optional_deps`
+alone when load is below 5 to settle H0, then inspect why dense `propagate` /
+`apply_clauses` / `force_singletons_over` iterate roughly 30-60x more than the
+baseline on the same fixture before changing the dense representation again.
+
 - Before this pass, resolve at real scale was **0 / 864 Cargo-resolved package-version rows measured** because there was no vix entrypoint composing workspace manifests into a Rodin `Index`.
 - After the widening pass, the largest measured solve ring is **64 / 146 workspace members -> 65 selected rows**, diffed against the real `Cargo.lock`: **64 / 65 solve rows match Cargo.lock**, with the remaining solve-only row being the pseudo workspace root.
 - The explicit ignored scale probe still builds the full member-only index: **146 / 146 workspace members -> 147 package domains**; root clauses are now the old 2-per-member baseline plus root default-feature clauses.
