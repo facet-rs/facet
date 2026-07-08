@@ -10437,7 +10437,7 @@ fn taint_for_ordered_map_pairs(pairs: &[OrderedMapPair]) -> Option<StructuralTai
 }
 
 fn canonicalize_word_for_schema(schemas: &SchemaTables, schema: &str, word: i64) -> i64 {
-    if schemas.is_primitive(schema, Primitive::F64) {
+    if schema_matches_primitive(schemas, schema, Primitive::F64) {
         let value = super::value::TotalF64::new(f64::from_bits(word as u64)).get();
         if value == 0.0 {
             0.0f64.to_bits() as i64
@@ -10469,10 +10469,24 @@ fn canonicalize_word_for_schema_ref(
     }
 }
 
+fn schema_matches_primitive(schemas: &SchemaTables, schema: &str, primitive: Primitive) -> bool {
+    schemas.is_primitive(schema, primitive)
+        || matches!(
+            (schema, primitive),
+            ("Int", Primitive::I64) | ("Bool", Primitive::Bool) | ("Float", Primitive::F64)
+        )
+}
+
 fn schema_is_inline_word(schemas: &SchemaTables, schema: &str) -> bool {
-    schemas.is_primitive(schema, Primitive::I64)
-        || schemas.is_primitive(schema, Primitive::Bool)
-        || schemas.is_primitive(schema, Primitive::F64)
+    schema_matches_primitive(schemas, schema, Primitive::I64)
+        || schema_matches_primitive(schemas, schema, Primitive::Bool)
+        || schema_matches_primitive(schemas, schema, Primitive::F64)
+}
+
+fn identity_schema_matches(stored: &str, expected: &str) -> bool {
+    stored == expected
+        || pending_value_schema(expected) == Some(stored)
+        || map_schema_is_realized_projection(expected, stored)
 }
 
 fn canonical_word_hash_in_store(
@@ -10487,7 +10501,11 @@ fn canonical_word_hash_in_store(
     let entry = store
         .entry(word)
         .unwrap_or_else(|| panic!("non-inline `{schema}` word {word} is not interned"));
-    assert_eq!(entry.schema, schema, "stored identity schema mismatch");
+    assert!(
+        identity_schema_matches(&entry.schema, schema),
+        "stored identity schema mismatch: left `{}`, right `{schema}`",
+        entry.schema
+    );
     entry.content_hash
 }
 
