@@ -670,8 +670,9 @@ fn compile_module_set(
             &tables.fn_modules[*name],
             name,
         ));
-        let (task_fn, info) = if parked_generic_or_fn_typed(item) {
-            parked_stub(item)?
+        let (task_fn, info, mut lower_diagnostics) = if parked_generic_or_fn_typed(item) {
+            let (task_fn, info) = parked_stub(item)?;
+            (task_fn, info, Vec::new())
         } else {
             FnLowerer::lower(
                 item,
@@ -689,6 +690,7 @@ fn compile_module_set(
             )
             .map_err(|e| format!("lowering {name}: {e}"))?
         };
+        diagnostics.append(&mut lower_diagnostics);
         task_fns.push(task_fn);
         let arg_schemas = item
             .params
@@ -2923,6 +2925,11 @@ enum TailOutcome {
     Jumped,
 }
 
+enum TailJump {
+    Emitted,
+    FellOff(String),
+}
+
 #[derive(Clone, Debug, PartialEq, Eq)]
 enum TemplatePart {
     Text(String),
@@ -3132,6 +3139,7 @@ struct FnLowerer<'a> {
     next_input_slot: i64,
     consume_receiver: Option<String>,
     force_tail_invoke: bool,
+    diagnostics: Vec<String>,
 }
 
 struct FnLowererSnapshot {
@@ -3143,7 +3151,10 @@ struct FnLowererSnapshot {
 }
 
 impl<'a> FnLowerer<'a> {
-    fn lower(item: &ast::FnItem, env: LowerEnv<'a>) -> Result<(TaskFn, LoweredInfo), String> {
+    fn lower(
+        item: &ast::FnItem,
+        env: LowerEnv<'a>,
+    ) -> Result<(TaskFn, LoweredInfo, Vec<String>), String> {
         let mut this = FnLowerer {
             tables: env.tables,
             current_module: env.current_module,
@@ -3166,6 +3177,7 @@ impl<'a> FnLowerer<'a> {
             next_input_slot: 0,
             consume_receiver: None,
             force_tail_invoke: env.lower_options.force_tail_invoke,
+            diagnostics: Vec::new(),
         };
 
         let mut arg_offsets = Vec::new();
@@ -3224,6 +3236,7 @@ impl<'a> FnLowerer<'a> {
             size: this.next as usize,
             align: 8,
         };
+        let diagnostics = this.diagnostics;
         Ok((
             TaskFn {
                 frame,
@@ -3237,6 +3250,7 @@ impl<'a> FnLowerer<'a> {
                 store_tag_region: this.store_tag_region,
                 primitive_region: this.primitive_region,
             },
+            diagnostics,
         ))
     }
 
@@ -4363,11 +4377,15 @@ impl<'a> FnLowerer<'a> {
             allow_partial: false,
             tail_identifier_uses: Some(&tail_identifier_uses),
         })?;
-        if self.emit_self_tail_jump(bound.args, &param_schemas)? {
-            Ok(Some(TailOutcome::Jumped))
-        } else {
-            self.restore(snapshot);
-            Ok(None)
+        match self.emit_self_tail_jump(bound.args, &param_schemas)? {
+            TailJump::Emitted => Ok(Some(TailOutcome::Jumped)),
+            TailJump::FellOff(reason) => {
+                self.restore(snapshot);
+                self.diagnostics.push(format!(
+                    "self-tail call to `{resolved_name}` lowers through INVOKE: {reason}"
+                ));
+                Ok(None)
+            }
         }
     }
 
@@ -4375,7 +4393,7 @@ impl<'a> FnLowerer<'a> {
         &mut self,
         args: Vec<ValueSlot>,
         param_schemas: &[String],
-    ) -> Result<bool, String> {
+    ) -> Result<TailJump, String> {
         if args.len() != self.param_slots.len() || args.len() != param_schemas.len() {
             return Err(format!(
                 "self-tail-call argument count {} did not match parameter count {}",
@@ -4384,10 +4402,13 @@ impl<'a> FnLowerer<'a> {
             ));
         }
         let mut temps = Vec::with_capacity(args.len());
-        for (arg, schema) in args.into_iter().zip(param_schemas) {
+        for (index, (arg, schema)) in args.into_iter().zip(param_schemas).enumerate() {
             let arg = self.coerce_to_schema(arg, schema)?;
             if arg.schema != *schema {
-                return Ok(false);
+                return Ok(TailJump::FellOff(format!(
+                    "argument {index} lowered as {}, expected {schema}",
+                    arg.schema
+                )));
             }
             temps.push(self.copy_value(&arg));
         }
@@ -4400,7 +4421,7 @@ impl<'a> FnLowerer<'a> {
         self.code.push(Op::Jump {
             target: self.loop_header,
         });
-        Ok(true)
+        Ok(TailJump::Emitted)
     }
 
     fn fn_name_for_ref(&self, fn_ref: usize) -> Result<&str, String> {
@@ -9758,6 +9779,128 @@ pub fn grow(n: Int, acc: [Int]) -> [Int] {
             assert_eq!(words.len(), 257, "{lane:?}");
             assert_eq!(stats.array_push_reused, 255, "{lane:?}");
             assert_eq!(stats.array_push_copied, 1, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn self_tail_call_over_aggregate_local_with_match_field_control_loops() {
+        let src = r#"
+use vix::Map;
+
+struct Index {
+    packages: [Int],
+}
+
+struct Domain {
+    active: Bool,
+}
+
+struct State {
+    pkg_slots: Map<Int, Int>,
+    domains: [Domain],
+    feature_slots: Map<Int, Int>,
+    features: [Bool],
+    changed: Bool,
+    conflict: Bool,
+}
+
+fn domain_for(state: State, pkg: Int) -> Domain {
+    match state.pkg_slots.get(pkg) {
+        Some(slot) => state.domains.get(slot),
+        None => Domain { active: false },
+    }
+}
+
+fn put_domain(state: State, pkg: Int, domain: Domain) -> State {
+    match state.pkg_slots.get(pkg) {
+        Some(slot) => State { domains: state.domains.set(slot, domain), ..state },
+        None => State {
+            pkg_slots: state.pkg_slots.insert(pkg, state.domains.len()),
+            domains: state.domains.push(domain),
+            ..state
+        },
+    }
+}
+
+fn pass_nonempty(state: State) -> State {
+    let domain = domain_for(state, 0);
+    match domain.active {
+        true => State { changed: false, conflict: false, ..state },
+        false => State {
+            changed: true,
+            conflict: false,
+            ..put_domain(state, 0, Domain { active: true })
+        },
+    }
+}
+
+fn pass(index: Index, state: State, target: String) -> State {
+    match target == "" {
+        true => State { conflict: true, ..state },
+        false => match index.packages.len() {
+            0 => State { changed: false, conflict: false, ..state },
+            _ => pass_nonempty(state),
+        },
+    }
+}
+
+pub fn loop_state(index: Index, state: State, target: String) -> State {
+    let next = pass(index, state, target);
+    match next.conflict {
+        true => next,
+        false => match next.changed {
+            true => loop_state(index, next, target),
+            false => next,
+        },
+    }
+}
+
+pub fn main() -> Int {
+    let pkg_slots: Map<Int, Int> = {};
+    let feature_slots: Map<Int, Int> = {};
+    let index = Index { packages: [0] };
+    let state = State {
+        pkg_slots: pkg_slots,
+        domains: [],
+        feature_slots: feature_slots,
+        features: [],
+        changed: true,
+        conflict: false,
+    };
+    let final = loop_state(index, state, "linux");
+    match domain_for(final, 0).active {
+        true => 1,
+        false => 0,
+    }
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 1, "{lane:?}");
+            assert_eq!(spawned_count(&machine, "loop_state"), 1, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn self_tail_call_falloff_reports_invoke_reason() {
+        let src = r#"
+pub fn bad_tail(n: Int) -> Int {
+    match n {
+        0 => 0,
+        _ => bad_tail("not an int"),
+    }
+}
+"#;
+        for lane in lanes() {
+            let machine = load_with_lane(src, lane);
+            assert!(
+                machine.diagnostics().iter().any(|diagnostic| {
+                    diagnostic.contains("self-tail call to `bad_tail` lowers through INVOKE")
+                        && diagnostic.contains("argument 0 lowered as String, expected Int")
+                }),
+                "{lane:?}: {:?}",
+                machine.diagnostics()
+            );
         }
     }
 
