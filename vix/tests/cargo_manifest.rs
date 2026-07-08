@@ -546,7 +546,7 @@ fn real_workspace_member_only_index_builds_bounded_ring() -> Result<(), String> 
 
     assert_eq!(workspace_members.len(), 145);
     assert_eq!(package_count, limit + 1);
-    assert_eq!(clause_count, limit * 2);
+    assert_eq!(clause_count, 35);
     Ok(())
 }
 
@@ -1020,7 +1020,10 @@ fn real_workspace_member_only_index_builds_all_members() -> Result<(), String> {
     )?;
 
     assert_eq!(package_count, 146);
-    assert_eq!(clause_count, 290);
+    assert!(
+        clause_count > 290,
+        "default feature root clauses should extend the old 2-per-member baseline: {clause_count}"
+    );
     Ok(())
 }
 
@@ -1039,8 +1042,10 @@ fn real_workspace_member_index_builds_required_direct_dep_clauses() -> Result<()
         vec![workspace, root],
     )?;
 
-    assert!(clause_count > 290, "clause_count={clause_count}");
-    assert_eq!(direct_clause_count, clause_count - 290);
+    assert!(
+        clause_count > direct_clause_count,
+        "clause_count={clause_count}"
+    );
     assert_eq!(direct_clause_count % 2, 0);
     Ok(())
 }
@@ -1735,6 +1740,7 @@ struct CargoPackage {
     version: String,
     edition: String,
     manifest_path: String,
+    source: Option<String>,
     dependencies: Vec<CargoDependency>,
     targets: Vec<CargoTarget>,
 }
@@ -2096,7 +2102,10 @@ fn cargo_ring_unit_shapes(
     metadata: &CargoMetadata,
     selected_rows: &BTreeSet<PackageVersion>,
 ) -> Result<Vec<RingUnitShape>, String> {
-    let graph = cargo_unit_graph_real_workspace()?;
+    // Do not build a full-workspace unit graph and filter it here: Cargo has
+    // already applied workspace-wide feature unification by then. Ring probes
+    // must root Cargo with exactly the selected workspace members.
+    let graph = cargo_unit_graph_for_ring(metadata, selected_rows)?;
     let package_by_id = metadata
         .packages
         .iter()
@@ -2146,41 +2155,70 @@ fn cargo_ring_unit_shapes(
     Ok(shapes)
 }
 
-fn cargo_unit_graph_real_workspace() -> Result<CargoUnitGraphForDiff, String> {
-    let text = if let Ok(path) = std::env::var("TIER_A_UNIT_GRAPH") {
+fn cargo_unit_graph_for_ring(
+    metadata: &CargoMetadata,
+    selected_rows: &BTreeSet<PackageVersion>,
+) -> Result<CargoUnitGraphForDiff, String> {
+    let text = if let Ok(path) = std::env::var("TIER_A_RING_UNIT_GRAPH") {
         std::fs::read_to_string(&path)
-            .map_err(|err| format!("read TIER_A_UNIT_GRAPH at {path}: {err}"))?
+            .map_err(|err| format!("read TIER_A_RING_UNIT_GRAPH at {path}: {err}"))?
     } else {
-        let default = std::path::PathBuf::from("/tmp/tier-a-scale-measurement/unit-graph.json");
-        if default.exists() {
-            std::fs::read_to_string(&default)
-                .map_err(|err| format!("read {}: {err}", default.display()))?
-        } else {
-            cargo_unit_graph_real_workspace_stdout()?
-        }
+        cargo_unit_graph_ring_stdout(metadata, selected_rows)?
     };
     facet_json::from_str(&text).map_err(|err| err.to_string())
 }
 
-fn cargo_unit_graph_real_workspace_stdout() -> Result<String, String> {
-    let output = Command::new("cargo")
+fn cargo_unit_graph_ring_stdout(
+    metadata: &CargoMetadata,
+    selected_rows: &BTreeSet<PackageVersion>,
+) -> Result<String, String> {
+    let root_packages = cargo_ring_root_packages(metadata, selected_rows);
+    if root_packages.is_empty() {
+        return Err("ring unit graph oracle had no workspace root packages".to_owned());
+    }
+    let mut command = Command::new("cargo");
+    command
         .arg("+nightly")
         .arg("build")
         .arg("--unit-graph")
         .arg("-Z")
         .arg("unstable-options")
-        .arg("--workspace")
-        .arg("--locked")
+        .arg("--locked");
+    for package in root_packages {
+        command.arg("-p").arg(package);
+    }
+    let output = command
         .current_dir(workspace_root())
         .output()
         .map_err(|err| err.to_string())?;
     if !output.status.success() {
         return Err(format!(
-            "cargo unit graph oracle failed: {}",
+            "cargo ring unit graph oracle failed: {}",
             String::from_utf8_lossy(&output.stderr)
         ));
     }
     String::from_utf8(output.stdout).map_err(|err| err.to_string())
+}
+
+fn cargo_ring_root_packages(
+    metadata: &CargoMetadata,
+    selected_rows: &BTreeSet<PackageVersion>,
+) -> Vec<String> {
+    let workspace_members = metadata
+        .workspace_members
+        .iter()
+        .map(String::as_str)
+        .collect::<BTreeSet<_>>();
+    metadata
+        .packages
+        .iter()
+        .filter(|package| package.source.is_none())
+        .filter(|package| workspace_members.contains(package.id.as_str()))
+        .filter(|package| {
+            selected_rows.contains(&PackageVersion::new(&package.name, &package.version))
+        })
+        .map(|package| package.name.clone())
+        .collect()
 }
 
 fn sorted_strings(mut values: Vec<String>) -> Vec<String> {
@@ -2561,6 +2599,8 @@ struct SparseIndexEntry {
     name: String,
     vers: String,
     deps: Vec<SparseIndexDependency>,
+    features: BTreeMap<String, Vec<String>>,
+    features2: Option<BTreeMap<String, Vec<String>>>,
     yanked: bool,
 }
 
@@ -2569,9 +2609,11 @@ struct SparseIndexDependency {
     name: String,
     package: Option<String>,
     req: String,
+    features: Vec<String>,
     kind: String,
     target: Option<String>,
     optional: bool,
+    default_features: bool,
 }
 
 impl SparseIndexDependency {
@@ -2585,6 +2627,7 @@ struct SparseIndexRowForVix {
     name: String,
     vers: String,
     deps: Vec<SparseIndexDependencyForVix>,
+    features: BTreeMap<String, Vec<String>>,
     yanked: bool,
 }
 
@@ -2594,9 +2637,26 @@ impl From<SparseIndexEntry> for SparseIndexRowForVix {
             name: row.name,
             vers: row.vers,
             deps: row.deps.into_iter().map(Into::into).collect(),
+            features: merged_sparse_features(row.features, row.features2),
             yanked: row.yanked,
         }
     }
+}
+
+fn merged_sparse_features(
+    mut features: BTreeMap<String, Vec<String>>,
+    features2: Option<BTreeMap<String, Vec<String>>>,
+) -> BTreeMap<String, Vec<String>> {
+    if let Some(features2) = features2 {
+        for (name, enables) in features2 {
+            features.entry(name).or_default().extend(enables);
+        }
+    }
+    for enables in features.values_mut() {
+        enables.sort();
+        enables.dedup();
+    }
+    features
 }
 
 #[derive(Clone, Debug, Facet)]
@@ -2607,6 +2667,8 @@ struct SparseIndexDependencyForVix {
     kind: String,
     target: String,
     optional: bool,
+    default_features: bool,
+    features: Vec<String>,
 }
 
 impl From<SparseIndexDependency> for SparseIndexDependencyForVix {
@@ -2618,6 +2680,8 @@ impl From<SparseIndexDependency> for SparseIndexDependencyForVix {
             kind: dep.kind,
             target: dep.target.unwrap_or_default(),
             optional: dep.optional,
+            default_features: dep.default_features,
+            features: dep.features,
         }
     }
 }

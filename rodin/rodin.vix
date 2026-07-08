@@ -204,6 +204,7 @@ pub struct Problem {
 struct SolveResult {
     selected: Map<Int, Version>,
     enabled_features: Map<Int, Map<String, Bool>>,
+    enabled_feature_ids: [Int],
     learned_count: Int,
 }
 
@@ -284,7 +285,7 @@ fn empty_state() -> State {
 fn empty_result() -> SolveResult {
     let selected: Map<Int, Version> = {};
     let enabled_features: Map<Int, Map<String, Bool>> = {};
-    SolveResult { selected: selected, enabled_features: enabled_features, learned_count: 0 }
+    SolveResult { selected: selected, enabled_features: enabled_features, enabled_feature_ids: [], learned_count: 0 }
 }
 
 fn bool_or(left: Bool, right: Bool) -> Bool {
@@ -1371,6 +1372,7 @@ fn solve_result(index: Index, state: State) -> SolveResult {
     SolveResult {
         selected: selected_from_state(index.packages, state, selected),
         enabled_features: enabled_features,
+        enabled_feature_ids: enabled_feature_ids_from_index(index, state, index.clause_ids, []),
         learned_count: active_learned_count(state.learned, 0),
     }
 }
@@ -1381,7 +1383,49 @@ fn failed_result(state: State) -> SolveResult {
     SolveResult {
         selected: selected,
         enabled_features: enabled_features,
+        enabled_feature_ids: [],
         learned_count: active_learned_count(state.learned, 0),
+    }
+}
+
+fn enabled_feature_ids_from_index(index: Index, state: State, clause_ids: [Int], out: [Int]) -> [Int] {
+    match clause_ids.len() == 0 {
+        true => out,
+        false => enabled_feature_ids_from_index_tuple(index, state, clause_ids.pop(), out),
+    }
+}
+
+fn enabled_feature_ids_from_index_tuple(index: Index, state: State, popped: (Int, [Int]), out: [Int]) -> [Int] {
+    let out = enabled_feature_ids_from_clause(index, state, popped.0, out);
+    enabled_feature_ids_from_index(index, state, popped.1, out)
+}
+
+fn enabled_feature_ids_from_clause(index: Index, state: State, clause_id: Int, out: [Int]) -> [Int] {
+    let tag = index.consequent_tags.get(clause_id).unwrap();
+    match bool_or(tag == "in_graph", tag == "version_set") {
+        true => out,
+        false => enabled_feature_ids_insert(state, index.consequent_features.get(clause_id).unwrap(), out),
+    }
+}
+
+fn enabled_feature_ids_insert(state: State, feature: Int, out: [Int]) -> [Int] {
+    match feature_enabled(state, feature) && int_list_contains(out, feature) == false {
+        true => out.push(feature),
+        false => out,
+    }
+}
+
+fn int_list_contains(values: [Int], needle: Int) -> Bool {
+    match values.len() == 0 {
+        true => false,
+        false => int_list_contains_tuple(values.pop(), needle),
+    }
+}
+
+fn int_list_contains_tuple(popped: (Int, [Int]), needle: Int) -> Bool {
+    match popped.0 == needle {
+        true => true,
+        false => int_list_contains(popped.1, needle),
     }
 }
 

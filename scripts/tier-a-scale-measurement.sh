@@ -108,7 +108,19 @@ cargo nextest run "${nextest_timeout[@]}" -p vix --run-ignored only -E 'test(=re
     du -sh "$sparse_out"
     shasum -a 256 "$sparse_out/snapshot-manifest.tsv"
   fi
-  for artifact in tiny-solve-vs-lock-summary.tsv real-ring-16-solve-vs-lock-summary.tsv real-ring-32-solve-vs-lock-summary.tsv real-ring-64-solve-vs-lock-summary.tsv real-ring-145-solve-vs-lock-summary.tsv lock-fixture-unit-diff-summary.tsv real-direct-ring-8-unit-diff-summary.tsv real-direct-ring-8-unit-divergence-categories.tsv; do
+  summary_artifacts=(
+    tiny-solve-vs-lock-summary.tsv
+    real-ring-16-solve-vs-lock-summary.tsv
+    real-ring-32-solve-vs-lock-summary.tsv
+    real-ring-64-solve-vs-lock-summary.tsv
+    lock-fixture-unit-diff-summary.tsv
+    real-direct-ring-8-unit-diff-summary.tsv
+    real-direct-ring-8-unit-divergence-categories.tsv
+  )
+  if [[ "${TIER_A_FULL_MEMBER_RING:-0}" == "1" ]]; then
+    summary_artifacts+=(real-ring-145-solve-vs-lock-summary.tsv)
+  fi
+  for artifact in "${summary_artifacts[@]}"; do
     if [[ -f "$OUT/$artifact" ]]; then
       echo
       echo "$artifact:"
