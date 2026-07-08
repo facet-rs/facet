@@ -87,6 +87,19 @@ complete, and before a solve/diff artifact emits. The current typed-deserializat
 frontier is therefore solve-scale work for the 32-member direct sparse ring, not
 an unexplained version selection divergence.
 
+Native Rust reference solve column, over the exact `Index` emitted by the Vix
+direct sparse ring probes:
+
+| Ring | Sparse rows | Package domains | Clauses | Native solve ms | Native repeats | Vix solve / native solve |
+|---:|---:|---:|---:|---:|---:|---:|
+| direct 16 + typed sparse rows | 2,638 | 67 | 160 | 0.426006 | 20 | ~95k× |
+| direct 32 + typed sparse rows | 4,424 | 114 | 449 | 2.367375 | 20 | >76k× |
+
+Scope caveat: the native reference solves the package-version portion of the
+exact Vix-composed index and counts feature clauses, but it does not implement
+feature-unit derivation. Feature clauses are therefore excluded from native
+package-version propagation while remaining visible in the clause count.
+
 Stage two composition note: this stage keeps the parser as one host-family
 atomic operation and writes ordinary store values through schema descriptors.
 The next design step is to lower per-schema deserializers to weavy so the same

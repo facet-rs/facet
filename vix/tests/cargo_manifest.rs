@@ -1,10 +1,12 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::Path;
 use std::process::Command;
+use std::sync::Arc;
 use std::sync::OnceLock;
 use std::time::{Duration, Instant};
 
 use facet::Facet;
+use semver::{Version as SemverVersion, VersionReq};
 use vix::exec::Tree;
 use vix::machine::driver::Lane;
 use vix::machine::{Machine, MachineArg, RenderedValue};
@@ -778,6 +780,26 @@ real_workspace_member_direct_sparse_solve_ring_lock_diff_test!(
     32
 );
 
+macro_rules! real_workspace_member_direct_sparse_native_reference_ring_test {
+    ($name:ident, $limit:expr) => {
+        #[test]
+        #[ignore = "tier-A measurement probe: native Rust solve-only reference over exact Vix direct sparse index"]
+        fn $name() -> Result<(), String> {
+            let row = real_workspace_member_direct_sparse_native_reference_ring($limit)?;
+            write_native_reference_summary(&[row])
+        }
+    };
+}
+
+real_workspace_member_direct_sparse_native_reference_ring_test!(
+    real_workspace_member_direct_sparse_native_reference_ring_16,
+    16
+);
+real_workspace_member_direct_sparse_native_reference_ring_test!(
+    real_workspace_member_direct_sparse_native_reference_ring_32,
+    32
+);
+
 #[test]
 #[ignore = "tier-A measurement probe: real workspace member + direct sparse dep unit diff"]
 fn real_workspace_member_direct_sparse_unit_diff_8() -> Result<(), String> {
@@ -1107,6 +1129,61 @@ fn real_workspace_member_direct_sparse_unit_diff(limit: i64) -> Result<(), Strin
         "uncategorized unit divergences remain: {diff:#?}"
     );
     Ok(())
+}
+
+fn real_workspace_member_direct_sparse_native_reference_ring(
+    limit: i64,
+) -> Result<NativeReferenceRingRow, String> {
+    let metadata = cargo_metadata_real_workspace()?;
+    let mut machine = manifest_machine()?;
+    let workspace = intern_tree(&mut machine, real_workspace_manifest_tree(&metadata)?)?;
+    let root = intern_path(&mut machine, "")?;
+    let sparse_jsonl_text =
+        direct_sparse_snapshot_jsonl_for_ring(&mut machine, &metadata, workspace, limit)?;
+    let sparse_jsonl = intern_string(&mut machine, &sparse_jsonl_text)?;
+    let sparse_row_count = machine.demand_i64("workspace_sparse_row_count", vec![sparse_jsonl])?;
+    let index_dump = machine.demand_i64(
+        "workspace_member_direct_sparse_index_dump_limit",
+        vec![workspace, root, sparse_jsonl, limit],
+    )?;
+    let index_dump = rendered_string(
+        &machine,
+        "workspace_member_direct_sparse_index_dump_limit",
+        index_dump,
+    )?;
+    let native_index = NativeResolveIndex::from_dump(&index_dump)?;
+    write_tier_a_artifact(
+        &format!("real-direct-ring-{limit}-native-reference-index.tsv"),
+        &index_dump,
+    )?;
+
+    let repeats = native_reference_repeats();
+    let native_started = Instant::now();
+    let mut native_rows = BTreeSet::new();
+    for _ in 0..repeats {
+        native_rows = std::hint::black_box(native_index.solve_rows()?);
+    }
+    let native_total = native_started.elapsed();
+
+    let lock_rows = cargo_lock_package_rows(&workspace_root().join("Cargo.lock"))?;
+    let metadata_rows = metadata.package_rows();
+    let diff = diff_package_versions_against_lock(&native_rows, &lock_rows, &metadata_rows);
+    write_tier_a_artifact(
+        &format!("real-direct-ring-{limit}-native-reference-solve-rows.tsv"),
+        &package_rows_table(&native_rows),
+    )?;
+
+    Ok(NativeReferenceRingRow {
+        ring: limit,
+        sparse_rows: sparse_row_count as usize,
+        packages: native_index.package_count(),
+        clauses: native_index.clause_count(),
+        solve_rows: diff.solve_rows,
+        matches: diff.matches,
+        version_skew_names: diff.version_skew_names,
+        native_total,
+        native_repeats: repeats,
+    })
 }
 
 fn assert_all_req_lines(actual: &str, expected: &str, context: &str) -> Result<(), String> {
@@ -2119,6 +2196,363 @@ fn package_rows_table(rows: &BTreeSet<PackageVersion>) -> String {
     );
     lines.push(String::new());
     lines.join("\n")
+}
+
+#[derive(Clone)]
+struct NativeResolveIndex {
+    packages: Vec<usize>,
+    names: Vec<String>,
+    versions: Vec<NativeVersionRow>,
+    clauses: Vec<NativeClause>,
+    feature_clauses: usize,
+    selected_guard_pkgs: BTreeSet<usize>,
+}
+
+#[derive(Clone)]
+struct NativeVersionRow {
+    pkg: usize,
+    version: SemverVersion,
+}
+
+#[derive(Clone)]
+struct NativeClause {
+    parent_pkg: usize,
+    parent_version: SemverVersion,
+    consequent: NativeConsequent,
+    kind: String,
+}
+
+#[derive(Clone)]
+enum NativeConsequent {
+    Activate { pkg: usize },
+    Require { pkg: usize, req: Arc<VersionReq> },
+}
+
+#[derive(Clone, Default)]
+struct NativeDomain {
+    active: bool,
+    reqs: Vec<Arc<VersionReq>>,
+    selected: Option<SemverVersion>,
+}
+
+#[derive(Clone)]
+struct NativeResolveState {
+    domains: Vec<NativeDomain>,
+}
+
+struct NativeReferenceRingRow {
+    ring: i64,
+    sparse_rows: usize,
+    packages: usize,
+    clauses: usize,
+    solve_rows: usize,
+    matches: usize,
+    version_skew_names: usize,
+    native_total: Duration,
+    native_repeats: usize,
+}
+
+impl NativeResolveIndex {
+    fn from_dump(text: &str) -> Result<Self, String> {
+        let mut index = Self {
+            packages: Vec::new(),
+            names: Vec::new(),
+            versions: Vec::new(),
+            clauses: Vec::new(),
+            feature_clauses: 0,
+            selected_guard_pkgs: BTreeSet::new(),
+        };
+        for line in text.lines().filter(|line| !line.trim().is_empty()) {
+            let parts = line.split('\t').collect::<Vec<_>>();
+            match parts.as_slice() {
+                ["p", name] => {
+                    index.register_package_name(name);
+                }
+                ["v", name, version] => {
+                    index.register_package(name, version)?;
+                }
+                [
+                    "c",
+                    parent_name,
+                    parent_version,
+                    tag,
+                    dep_name,
+                    req_text,
+                    kind,
+                ] => {
+                    let parent_pkg = index.package_id(parent_name).ok_or_else(|| {
+                        format!("native index clause referenced unknown parent {parent_name:?}")
+                    })?;
+                    let dep_pkg = index.package_id(dep_name).ok_or_else(|| {
+                        format!("native index clause referenced unknown dep {dep_name:?}")
+                    })?;
+                    if *tag == "feature" {
+                        index.feature_clauses += 1;
+                        index.selected_guard_pkgs.insert(parent_pkg);
+                        continue;
+                    }
+                    let consequent = match *tag {
+                        "in_graph" => NativeConsequent::Activate { pkg: dep_pkg },
+                        "version_set" => NativeConsequent::Require {
+                            pkg: dep_pkg,
+                            req: Arc::new(parse_req(req_text)?),
+                        },
+                        other => {
+                            return Err(format!(
+                                "native index has unsupported consequent tag {other:?}"
+                            ));
+                        }
+                    };
+                    index.add_selected_guard_clause(
+                        parent_pkg,
+                        parent_version,
+                        consequent,
+                        kind,
+                    )?;
+                }
+                _ => return Err(format!("bad native index line {line:?}")),
+            }
+        }
+        Ok(index)
+    }
+
+    fn register_package_name(&mut self, name: &str) -> usize {
+        if let Some(pkg) = self.package_id(name) {
+            return pkg;
+        }
+        let pkg = self.packages.len();
+        self.packages.push(pkg);
+        self.names.push(name.to_owned());
+        pkg
+    }
+
+    fn register_package(&mut self, name: &str, version: &str) -> Result<usize, String> {
+        let pkg = self.register_package_name(name);
+        self.versions.push(NativeVersionRow {
+            pkg,
+            version: parse_version(version)?,
+        });
+        Ok(pkg)
+    }
+
+    fn add_selected_guard_clause(
+        &mut self,
+        parent_pkg: usize,
+        parent_version: &str,
+        consequent: NativeConsequent,
+        kind: &str,
+    ) -> Result<(), String> {
+        self.selected_guard_pkgs.insert(parent_pkg);
+        self.clauses.push(NativeClause {
+            parent_pkg,
+            parent_version: parse_version(parent_version)?,
+            consequent,
+            kind: kind.to_owned(),
+        });
+        Ok(())
+    }
+
+    fn package_id(&self, name: &str) -> Option<usize> {
+        self.names.iter().position(|candidate| candidate == name)
+    }
+
+    fn package_count(&self) -> usize {
+        self.packages.len()
+    }
+
+    fn clause_count(&self) -> usize {
+        self.clauses.len() + self.feature_clauses
+    }
+
+    fn solve_rows(&self) -> Result<BTreeSet<PackageVersion>, String> {
+        let mut state = NativeResolveState {
+            domains: vec![NativeDomain::default(); self.packages.len()],
+        };
+        let root = self
+            .package_id("__workspace__")
+            .ok_or_else(|| "native index did not include __workspace__".to_string())?;
+        state.domains[root].active = true;
+        let state = self.search(state)?;
+        Ok(self
+            .packages
+            .iter()
+            .filter_map(|&pkg| {
+                state.domains[pkg].selected.as_ref().map(|version| {
+                    PackageVersion::new(&self.names[pkg], &selected_version_text(version))
+                })
+            })
+            .collect())
+    }
+
+    fn search(&self, mut state: NativeResolveState) -> Result<NativeResolveState, String> {
+        self.propagate(&mut state)?;
+        let Some(pkg) = self.next_undecided(&state) else {
+            return Ok(state);
+        };
+        let mut candidates = self.candidates(pkg, &state.domains[pkg]);
+        let mut last_error = None;
+        while let Some(version) = candidates.pop() {
+            let mut branch = state.clone();
+            branch.domains[pkg].active = true;
+            branch.domains[pkg].selected = Some(version);
+            match self.search(branch) {
+                Ok(solution) => return Ok(solution),
+                Err(err) => last_error = Some(err),
+            }
+        }
+        let cause = last_error
+            .map(|err| format!("; last branch error: {err}"))
+            .unwrap_or_default();
+        Err(format!(
+            "native solve exhausted candidates for {}{cause}",
+            self.names[pkg]
+        ))
+    }
+
+    fn propagate(&self, state: &mut NativeResolveState) -> Result<(), String> {
+        loop {
+            let mut changed = self.force_singletons(state)?;
+            for clause in self.clauses.iter().filter(|clause| clause.kind != "dev") {
+                if !self.selected_matches(state, clause.parent_pkg, &clause.parent_version) {
+                    continue;
+                }
+                match &clause.consequent {
+                    NativeConsequent::Activate { pkg } => {
+                        let domain = &mut state.domains[*pkg];
+                        if !domain.active {
+                            domain.active = true;
+                            changed = true;
+                        }
+                    }
+                    NativeConsequent::Require { pkg, req } => {
+                        let domain = &mut state.domains[*pkg];
+                        if let Some(selected) = &domain.selected
+                            && !native_req_matches(req, selected)
+                        {
+                            return Err(format!(
+                                "native selected {} {} violates {}",
+                                self.names[*pkg], selected, req
+                            ));
+                        }
+                        domain.active = true;
+                        if !domain.reqs.iter().any(|existing| existing == req) {
+                            domain.reqs.push(req.clone());
+                            changed = true;
+                        }
+                    }
+                }
+            }
+            if !changed {
+                return Ok(());
+            }
+        }
+    }
+
+    fn force_singletons(&self, state: &mut NativeResolveState) -> Result<bool, String> {
+        let mut changed = false;
+        for &pkg in &self.packages {
+            let domain = &state.domains[pkg];
+            if !domain.active || domain.selected.is_some() {
+                continue;
+            }
+            let candidates = self.candidates(pkg, domain);
+            if candidates.is_empty() {
+                return Err(format!(
+                    "native package {} has no candidates",
+                    self.names[pkg]
+                ));
+            }
+            if candidates.len() == 1 && !self.selected_guard_pkgs.contains(&pkg) {
+                state.domains[pkg].selected = candidates.first().cloned();
+                changed = true;
+            }
+        }
+        Ok(changed)
+    }
+
+    fn selected_matches(
+        &self,
+        state: &NativeResolveState,
+        pkg: usize,
+        version: &SemverVersion,
+    ) -> bool {
+        state.domains[pkg]
+            .selected
+            .as_ref()
+            .is_some_and(|selected| selected == version)
+    }
+
+    fn next_undecided(&self, state: &NativeResolveState) -> Option<usize> {
+        self.packages.iter().copied().find(|&pkg| {
+            let domain = &state.domains[pkg];
+            domain.active && domain.selected.is_none()
+        })
+    }
+
+    fn candidates(&self, pkg: usize, domain: &NativeDomain) -> Vec<SemverVersion> {
+        let mut candidates = self
+            .versions
+            .iter()
+            .filter(|row| row.pkg == pkg)
+            .filter(|row| {
+                domain
+                    .reqs
+                    .iter()
+                    .all(|req| native_req_matches(req, &row.version))
+            })
+            .map(|row| row.version.clone())
+            .collect::<Vec<_>>();
+        candidates.sort();
+        candidates
+    }
+}
+
+fn parse_req(text: &str) -> Result<VersionReq, String> {
+    VersionReq::parse(text).map_err(|err| format!("parse native VersionReq {text:?}: {err}"))
+}
+
+fn parse_version(text: &str) -> Result<SemverVersion, String> {
+    SemverVersion::parse(text).map_err(|err| format!("parse native Version {text:?}: {err}"))
+}
+
+fn native_req_matches(req: &VersionReq, version: &SemverVersion) -> bool {
+    req.to_string() == "*" || req.matches(version)
+}
+
+fn selected_version_text(version: &SemverVersion) -> String {
+    version.to_string()
+}
+
+fn native_reference_repeats() -> usize {
+    std::env::var("TIER_A_NATIVE_REFERENCE_REPEATS")
+        .ok()
+        .and_then(|value| value.parse::<usize>().ok())
+        .filter(|&value| value > 0)
+        .unwrap_or(20)
+}
+
+fn write_native_reference_summary(rows: &[NativeReferenceRingRow]) -> Result<(), String> {
+    let mut lines = vec![
+        "ring\tsparse_rows\tpackages\tclauses\tsolve_rows\tmatches\tversion_skew_names\tnative_solve_ms\tnative_repeats".to_owned(),
+    ];
+    lines.extend(rows.iter().map(|row| {
+        let native_ms = row.native_total.as_secs_f64() * 1000.0 / row.native_repeats as f64;
+        format!(
+            "{}\t{}\t{}\t{}\t{}\t{}\t{}\t{native_ms:.6}\t{}",
+            row.ring,
+            row.sparse_rows,
+            row.packages,
+            row.clauses,
+            row.solve_rows,
+            row.matches,
+            row.version_skew_names,
+            row.native_repeats
+        )
+    }));
+    lines.push(String::new());
+    let table = lines.join("\n");
+    eprintln!("{table}");
+    write_tier_a_artifact("real-direct-native-reference-summary.tsv", &table)
 }
 
 #[derive(Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
