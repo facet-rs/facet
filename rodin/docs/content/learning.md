@@ -1,6 +1,6 @@
 +++
-title = "Solver learning"
-weight = 1
+title = "Conflict learning"
+weight = 10
 +++
 
 Normative rules for rodin's region-based conflict learning. Distillation and
