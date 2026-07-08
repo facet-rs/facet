@@ -143,7 +143,32 @@ The as-if consequences fall out for free and should become tripwires:
   fusion precondition. Where per-element demand is observable (effectful f),
   fusion was already forbidden. The theorem does the work.
 
-### 4. `for` sugar — deferred, with a lean
+### 4. Ordering & determinism (Amos, 2026-07-08 — doctrine, not optional)
+
+The output of every combinator is deterministic regardless of execution
+shape. Fan-out may *evaluate* elements in any order, on any number of
+threads — that's the implementation plane. What is *observable* is fixed:
+
+- **Ordered sources stay positional.** `ys = xs.map(f)` has `ys[i] =
+  f(xs[i])` — output order is input order, structurally, no matter what
+  order the fan-out completed in. Same for `filter`/`filter_map`/`flat_map`
+  (input order, gaps closed).
+- **Unordered aggregations observe in canonical value order.** Anything
+  that collects results without an inherited positional order — collecting
+  a set, map keys, glob results, tree merges — is observable in *increasing
+  (lexicographical) order of the values themselves*. This works because
+  every vix value is comparable, hashable, and serializable: a total order
+  always exists, so "sorted ascending" is always well-defined and
+  implementation-independent. The existing `array_collect` already does
+  sort-then-alloc — this doctrine is why, now stated as surface semantics
+  rather than an implementation habit.
+- Consequence: the fused/fanned differential oracle (§3) is only possible
+  *because* of this — bit-identical results require deterministic order.
+- Known violation to fix on contact: the rodin mission logged "`[String]`
+  returns unstable" — that instability is a bug under this doctrine, not
+  an accepted quirk.
+
+### 5. `for` sugar — deferred, with a lean
 
 A `for x in xs { ... }` expression form is *pure sugar* over `fold`/`map` and
 adds nothing semantically. Lean: don't add it in v1. The combinators must be
@@ -153,7 +178,7 @@ that's the evidence a `for` proposal needs. (Also: a statement-shaped `for`
 invites action-thinking, which Vix 101 spends its whole first section
 killing. If sugar comes, it should be expression/comprehension-shaped.)
 
-### 5. What this does NOT touch
+### 6. What this does NOT touch
 
 - `?`-shaped propagation for user enums (`Step::Conflict` threading) —
   parked by Amos, 2026-07-08. `fold` reduces the pain (the propagation
@@ -162,7 +187,7 @@ killing. If sugar comes, it should be expression/comprehension-shaped.)
   change what a function call is; they change how much code needs to be
   function calls.
 
-### 6. Acceptance (oracle-first)
+### 7. Acceptance (oracle-first)
 
 1. Corpus rewrite of the worst census sites: rodin walker count 45 → 0,
    `_tuple` helpers 26 → 0 (grep-checkable), differential fixtures vs real
