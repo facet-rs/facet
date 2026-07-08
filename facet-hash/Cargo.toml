@@ -15,7 +15,6 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [features]
 default = []
-jit = ["weavy/jit", "dep:copypatch"]
 net = ["facet-core/net"]
 
 [dependencies]
@@ -23,7 +22,7 @@ facet-core = { workspace = true }
 weavy = { workspace = true }
 
 [build-dependencies]
-copypatch = { workspace = true, features = ["build"], optional = true }
+copypatch = { workspace = true, features = ["build"] }
 
 [dev-dependencies]
 divan = { workspace = true }

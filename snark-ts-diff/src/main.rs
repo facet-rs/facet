@@ -24,8 +24,8 @@
 //!   # strict parse with the same execution counters as hostcalls mode
 //!   `cargo run --release -p snark-ts-diff -- report <grammar.js|grammar.json> <input-file> [iters]`
 //!
-//!   # strict parse through Weavy host-call blocks; requires --features jit
-//!   `cargo run --release -p snark-ts-diff --features jit -- hostcalls <grammar.js|grammar.json> <input-file> [iters]`
+//!   # strict parse through Weavy host-call blocks; requires 
+//!   `cargo run --release -p snark-ts-diff hostcalls <grammar.js|grammar.json> <input-file> [iters]`
 //!
 //!   # lowering/JIT readiness for one grammar
 //!   cargo run --release -p snark-ts-diff -- readiness <grammar.js|grammar.json>
@@ -61,7 +61,6 @@ use snark::{
 };
 
 #[cfg(all(
-    feature = "jit",
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -385,7 +384,6 @@ fn report_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyParse
 }
 
 #[cfg(all(
-    feature = "jit",
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -396,7 +394,6 @@ fn hostcalls_once(p: &Prepared, input: &str) -> Result<(), WeavyParseError> {
 }
 
 #[cfg(all(
-    feature = "jit",
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -442,7 +439,6 @@ fn best_report_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, WeavyP
 }
 
 #[cfg(all(
-    feature = "jit",
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -1159,7 +1155,6 @@ fn main() {
 
     if args.get(1).map(|s| s == "hostcalls").unwrap_or(false) {
         #[cfg(all(
-            feature = "jit",
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -1202,7 +1197,6 @@ fn main() {
             return;
         }
         #[cfg(not(all(
-            feature = "jit",
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -1210,7 +1204,7 @@ fn main() {
         )))]
         {
             eprintln!(
-                "Weavy hostcall parse requires `--features jit` on a supported copy-patch target"
+                "Weavy hostcall parse requires `` on a supported copy-patch target"
             );
             std::process::exit(1);
         }

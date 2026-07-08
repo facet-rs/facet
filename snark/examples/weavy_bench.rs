@@ -27,7 +27,7 @@ use snark::{
 use weavy::{RunStats, ir::lowered_analysis};
 
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -47,7 +47,7 @@ enum BenchMode {
     StrictReport,
     Recovering,
     #[cfg(all(
-        feature = "jit",
+        snark_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -74,7 +74,7 @@ impl BenchMode {
     }
 
     #[cfg(all(
-        feature = "jit",
+        snark_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -85,7 +85,7 @@ impl BenchMode {
     }
 
     #[cfg(not(all(
-        feature = "jit",
+        snark_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -116,7 +116,7 @@ impl BenchMode {
     }
 
     #[cfg(all(
-        feature = "jit",
+        snark_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -399,7 +399,7 @@ fn main() {
     });
 
     #[cfg(all(
-        feature = "jit",
+        snark_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -587,7 +587,7 @@ fn main() {
         print_bench_totals("weavy recovering, warm", &totals, iters);
     }
     #[cfg(all(
-        feature = "jit",
+        snark_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")

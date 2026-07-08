@@ -15,7 +15,7 @@ use std::{
 };
 
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -1987,7 +1987,7 @@ struct HostCallChainLayoutFacts {
 }
 
 fn hostcall_chain_layout_for_sites(hostcall_sites: usize) -> HostCallChainLayoutFacts {
-    #[cfg(feature = "jit")]
+    #[cfg(snark_jit_active)]
     {
         let layout = weavy::jit::HostCallChainLayout::for_hostcall_sites(hostcall_sites);
         HostCallChainLayoutFacts {
@@ -1995,7 +1995,7 @@ fn hostcall_chain_layout_for_sites(hostcall_sites: usize) -> HostCallChainLayout
             copied_stencils: layout.copied_stencils,
         }
     }
-    #[cfg(not(feature = "jit"))]
+    #[cfg(not(snark_jit_active))]
     {
         HostCallChainLayoutFacts {
             hostcall_sites,
@@ -2025,7 +2025,7 @@ fn hostcall_block_barrier(block: &[DenseSnarkWeavyOp]) -> Option<WeavyHostCallBl
 }
 
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -2037,7 +2037,7 @@ struct RuntimeWeavyHostCallBlockCache {
 }
 
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -2052,7 +2052,7 @@ impl fmt::Debug for RuntimeWeavyHostCallBlockCache {
 }
 
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -2123,7 +2123,7 @@ impl RuntimeWeavyHostCallBlockCache {
 }
 
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -2134,7 +2134,7 @@ struct RuntimeWeavyHostCallInfo {
 }
 
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -2146,7 +2146,7 @@ struct RuntimeWeavyHostCallBlockState<'a, 'stepper> {
 }
 
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -2195,7 +2195,7 @@ pub struct WeavyParsePlan {
     resolved_cst_names: parser_ir::ResolvedCstNames,
     auto_close_index: RuntimeWeavyAutoCloseIndex,
     #[cfg(all(
-        feature = "jit",
+        snark_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -2217,7 +2217,7 @@ impl WeavyParsePlan {
         let resolved_cst_names = parser_ir::ResolvedCstNames::from_parser(parser);
         let auto_close_index = RuntimeWeavyAutoCloseIndex::new(parser, &lexer_program);
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -2230,7 +2230,7 @@ impl WeavyParsePlan {
             resolved_cst_names,
             auto_close_index,
             #[cfg(all(
-                feature = "jit",
+                snark_jit_active,
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")
@@ -2921,11 +2921,11 @@ impl WeavyParsePlanReadiness {
 
 #[must_use]
 const fn copy_patch_jit_available() -> bool {
-    #[cfg(feature = "jit")]
+    #[cfg(snark_jit_active)]
     {
         weavy::jit::NATIVE_COPY_PATCH_AVAILABLE
     }
-    #[cfg(not(feature = "jit"))]
+    #[cfg(not(snark_jit_active))]
     {
         false
     }
@@ -6998,7 +6998,7 @@ pub fn parse_prepared_weavy_metered_with_report_and_scanner(
 
 /// Execute a prepared Weavy plan through host-call blocks.
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -7015,7 +7015,7 @@ pub fn parse_prepared_weavy_hostcalls_with_report(
 
 /// Execute a prepared Weavy plan through host-call blocks with a scanner host.
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -7054,7 +7054,7 @@ pub fn parse_prepared_weavy_hostcalls_with_report_and_scanner(
 
 /// Execute a prepared Weavy plan through host-call blocks and return only the tree.
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -7072,7 +7072,7 @@ pub fn parse_prepared_weavy_hostcalls_tree(
 /// Execute a prepared Weavy plan through host-call blocks with a scanner host and return
 /// only the tree.
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -7112,7 +7112,7 @@ pub fn parse_prepared_weavy_hostcalls_tree_and_scanner(
 
 /// Execute a prepared Weavy plan through host-call blocks and return the ranged CST.
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -7130,7 +7130,7 @@ pub fn parse_prepared_weavy_hostcalls_resolved_tree(
 /// Execute a prepared Weavy plan through host-call blocks with a scanner host and return
 /// the ranged CST.
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -7916,7 +7916,7 @@ fn runtime_weavy_action_block_for_execution(
             .runtime_action_block(_state, _entry_index, _action_index, _action)
             .map(Some),
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -7944,7 +7944,7 @@ fn runtime_weavy_state_block_for_execution(
             .runtime_state_block(_state)
             .map(Some),
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -9037,7 +9037,7 @@ pub enum WeavyParseExecutionLane {
     Metered,
     /// Copy-and-patch host-call block runner.
     #[cfg(all(
-        feature = "jit",
+        snark_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -9271,7 +9271,7 @@ enum RuntimeWeavyBlockExecution {
     #[cfg(test)]
     Metered,
     #[cfg(all(
-        feature = "jit",
+        snark_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -9295,7 +9295,7 @@ impl RuntimeWeavyBlockExecution {
             #[cfg(test)]
             Self::Metered => WeavyParseExecutionLane::Metered,
             #[cfg(all(
-                feature = "jit",
+                snark_jit_active,
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")
@@ -10095,7 +10095,7 @@ fn run_runtime_weavy_block(
     hostcall_stats: &mut WeavyHostCallExecutionStats,
 ) -> Result<RunStats, RuntimeWeavyStepError> {
     #[cfg(not(all(
-        feature = "jit",
+        snark_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -10115,7 +10115,7 @@ fn run_runtime_weavy_block(
                 .map(|()| RunStats::default())
         }
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -14967,7 +14967,7 @@ mod tests {
             resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
-                feature = "jit",
+                snark_jit_active,
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")
@@ -15258,12 +15258,12 @@ mod tests {
 
     #[test]
     fn copy_patch_jit_availability_follows_snark_feature_gate() {
-        #[cfg(feature = "jit")]
+        #[cfg(snark_jit_active)]
         assert_eq!(
             copy_patch_jit_available(),
             weavy::jit::NATIVE_COPY_PATCH_AVAILABLE
         );
-        #[cfg(not(feature = "jit"))]
+        #[cfg(not(snark_jit_active))]
         assert!(!copy_patch_jit_available());
     }
 
@@ -15292,7 +15292,7 @@ mod tests {
             resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
-                feature = "jit",
+                snark_jit_active,
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")
@@ -15356,7 +15356,7 @@ mod tests {
             resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
-                feature = "jit",
+                snark_jit_active,
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")
@@ -15490,7 +15490,7 @@ mod tests {
             resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
-                feature = "jit",
+                snark_jit_active,
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")
@@ -15635,7 +15635,7 @@ mod tests {
             resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
-                feature = "jit",
+                snark_jit_active,
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")
@@ -15794,7 +15794,7 @@ mod tests {
         )
         .unwrap();
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -15815,7 +15815,7 @@ mod tests {
         .unwrap()
         .expect("tiny grammar is deterministic through host-call report blocks");
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -15824,7 +15824,7 @@ mod tests {
         let hostcalls =
             parse_prepared_weavy_hostcalls_with_report(&plan, &parser, &table, "ab").unwrap();
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -15833,7 +15833,7 @@ mod tests {
         let hostcalls_tree =
             parse_prepared_weavy_hostcalls_tree(&plan, &parser, &table, "ab").unwrap();
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -15866,7 +15866,7 @@ mod tests {
         assert_eq!(deterministic_resolved, report_resolved);
         assert_eq!(resolved_tree, report_resolved);
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -15899,7 +15899,7 @@ mod tests {
         assert_eq!(recovering_direct.accepted_count(), 1);
         assert_eq!(recovering_direct.failure_count(), 0);
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -15918,7 +15918,7 @@ mod tests {
             );
         }
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -15926,7 +15926,7 @@ mod tests {
         ))]
         assert_eq!(&hostcalls_tree, default_direct.tree());
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -16033,7 +16033,7 @@ mod tests {
             == SnarkStencilExecution::LexerGraph
             && summary.lexer_count > 0));
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -16166,7 +16166,7 @@ mod tests {
             resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
-                feature = "jit",
+                snark_jit_active,
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")
@@ -16598,7 +16598,7 @@ mod tests {
             resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
-                feature = "jit",
+                snark_jit_active,
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")
@@ -16668,7 +16668,7 @@ mod tests {
             resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
-                feature = "jit",
+                snark_jit_active,
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")

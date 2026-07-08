@@ -21,7 +21,6 @@ pub(crate) struct PlannedEquality<T> {
 
 enum PlannedEqualityBackend<T> {
     #[cfg(all(
-        feature = "jit",
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -44,7 +43,6 @@ impl<T> Clone for PlannedEqualityBackend<T> {
     fn clone(&self) -> Self {
         match self {
             #[cfg(all(
-                feature = "jit",
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")
@@ -63,7 +61,6 @@ where
 {
     pub(crate) fn new() -> Self {
         #[cfg(all(
-            feature = "jit",
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -77,7 +74,6 @@ where
             PlannedEqualityBackend::None
         };
         #[cfg(not(all(
-            feature = "jit",
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -98,7 +94,6 @@ where
 
     #[cfg(all(
         test,
-        feature = "jit",
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -120,7 +115,6 @@ where
 
         match &self.backend {
             #[cfg(all(
-                feature = "jit",
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")
@@ -519,7 +513,6 @@ mod tests {
     }
 
     #[cfg(all(
-        feature = "jit",
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")

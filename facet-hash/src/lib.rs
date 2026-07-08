@@ -27,7 +27,7 @@ use weavy::ir::{
 use weavy::{BlockRef, Control, DenseLowered, Lowered, Program, RunError, RunStats, Step};
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -35,7 +35,7 @@ use weavy::{BlockRef, Control, DenseLowered, Lowered, Program, RunError, RunStat
 ))]
 mod native;
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")

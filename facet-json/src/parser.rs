@@ -335,7 +335,7 @@ pub(crate) struct OrderedObjectProbeSave {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -348,7 +348,7 @@ pub(crate) struct NativeOrderedRootCursor<'de> {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -1972,7 +1972,7 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
     }
 
     #[cfg(all(
-        feature = "jit",
+        facet_json_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -1983,7 +1983,7 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
     }
 
     #[cfg(all(
-        feature = "jit",
+        facet_json_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -2011,7 +2011,7 @@ impl<'de, const TRUSTED_UTF8: bool> JsonParser<'de, TRUSTED_UTF8> {
     }
 
     #[cfg(all(
-        feature = "jit",
+        facet_json_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -2753,7 +2753,7 @@ impl<'de, const TRUSTED_UTF8: bool> FormatParser<'de> for JsonParser<'de, TRUSTE
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")

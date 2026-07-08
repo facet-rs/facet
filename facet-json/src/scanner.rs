@@ -323,7 +323,7 @@ impl Scanner {
     }
 
     #[cfg(all(
-        feature = "jit",
+        facet_json_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -372,7 +372,7 @@ impl Scanner {
     }
 
     #[cfg(all(
-        feature = "jit",
+        facet_json_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -463,7 +463,7 @@ impl Scanner {
     }
 
     #[cfg(all(
-        feature = "jit",
+        facet_json_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -489,7 +489,7 @@ impl Scanner {
     }
 
     #[cfg(all(
-        feature = "jit",
+        facet_json_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -511,7 +511,7 @@ impl Scanner {
     }
 
     #[cfg(all(
-        feature = "jit",
+        facet_json_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -570,7 +570,7 @@ impl Scanner {
     }
 
     #[cfg(all(
-        feature = "jit",
+        facet_json_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -646,7 +646,7 @@ impl Scanner {
     }
 
     #[cfg(all(
-        feature = "jit",
+        facet_json_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -659,7 +659,7 @@ impl Scanner {
     }
 
     #[cfg(all(
-        feature = "jit",
+        facet_json_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -1706,7 +1706,7 @@ fn parse_number_inner(
 
 #[cfg(all(
     not(feature = "lexical-parse"),
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -1977,7 +1977,7 @@ mod tests {
     }
 
     #[cfg(all(
-        feature = "jit",
+        facet_json_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -2000,7 +2000,7 @@ mod tests {
     }
 
     #[cfg(all(
-        feature = "jit",
+        facet_json_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -2014,7 +2014,7 @@ mod tests {
     }
 
     #[cfg(all(
-        feature = "jit",
+        facet_json_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")

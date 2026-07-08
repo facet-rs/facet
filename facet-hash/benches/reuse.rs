@@ -4,7 +4,7 @@ use divan::{Bencher, black_box};
 use facet::Facet;
 use facet_hash::{EqualityPlan, HashPlan};
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -132,7 +132,7 @@ fn point_equality_plan_different(bencher: Bencher<'_, '_>) {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -146,7 +146,7 @@ fn point_value_native_jit(bencher: Bencher<'_, '_>) {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -161,7 +161,7 @@ fn point_equality_native_jit_equal(bencher: Bencher<'_, '_>) {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -247,7 +247,7 @@ fn mixed_equality_plan_equal(bencher: Bencher<'_, '_>) {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -261,7 +261,7 @@ fn mixed_value_native_jit(bencher: Bencher<'_, '_>) {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -301,7 +301,7 @@ fn point_array_equality_plan_equal(bencher: Bencher<'_, '_>) {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -315,7 +315,7 @@ fn point_array_value_native_jit(bencher: Bencher<'_, '_>) {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -391,7 +391,7 @@ fn float_equality_plan_equal(bencher: Bencher<'_, '_>) {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -409,7 +409,7 @@ fn float_value_native_jit(bencher: Bencher<'_, '_>) {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
