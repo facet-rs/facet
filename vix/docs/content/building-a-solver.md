@@ -163,3 +163,16 @@ learning. About fifteen hundred lines in the real one. It's called rodin,
 it resolves real Cargo workspaces against the real crates.io index and
 matches `cargo tree` on the fixtures that count, and its specification is
 at [/rodin](/rodin). This chapter is its postcard.
+
+> **"Surely it doesn't fit in thirty lines."** It doesn't, and the gap is
+> instructive. The *kernel* — pick, propagate, learn, backtrack — really
+> is about the size shown on this page, in the real source too. The other
+> fourteen hundred lines are not solver machinery; they are Cargo's
+> semantics: feature resolution (feature keys and enables, `dep:` syntax,
+> weak optional dependencies, default-feature unification — the single
+> biggest chunk), target gating (`cfg(...)` expressions parsed and
+> evaluated against per-target compiler facts), sparse-index decoding
+> (JSONL rows, yanked versions, renames), and semver set algebra. That
+> dirt would be the same size in any language — what vix removed is the
+> *engine*: the caches, the trail, the persistence, the invalidation. The
+> domain remains yours to model, which is the correct division of labor.
