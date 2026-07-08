@@ -37,11 +37,15 @@ r[machine.store.dedup]
 
 [DESIGN] The store indexes every value by `(SchemaRef, HandleTier,
 ContentHash)` and returns the existing handle for identical content,
-observable via a `StoreAlloc { deduped }` event. Note the preserved
-subtlety: tier is a dedup-key axis (a pending and a realized slot with the
-same declared identity are distinct slots) even though tier never enters
-hash bytes (`machine.identity.tier-not-in-hash`). Doc-90's two-element key
-is a documented error.
+observable via a `StoreAlloc { deduped }` event. Tier is a dedup-key axis
+(pending and realized slots are distinct) even though tier never enters hash
+bytes (`machine.identity.tier-not-in-hash`); a pending slot's `ContentHash`
+component is its promise identity, a realized slot's is its value identity,
+and they are NOT equal (`machine.identity.pending-identity`), so the two
+never contend for one slot. Doc-90's two-element key is a documented error.
+Note: only realized-tier values persist (`machine.persistence...`), so tier
+is constant at the persistence boundary and the persistence key needs no tier
+axis.
 
 r[machine.store.immutable-bytes]
 

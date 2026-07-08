@@ -34,10 +34,15 @@ verification arms.)
 
 r[machine.receipt.misses-recorded]
 
-[DESIGN] Absence is an observation: reads that find nothing (absent paths,
-empty listings) are recorded as first-class read-set entries. Tier-2 style
-reuse is sound against "a file appeared" only because misses are receipts
-too. (Preserved from `ReadObservation::Absent`/`Listing`.)
+[DESIGN] Absence is an observation: reads that find nothing are recorded as
+first-class read-set entries — and this extends to PATH RESOLUTION, not just
+direct lookups. Search-path/PATH/include/symlink/enumeration/mount-boundary
+decisions that can affect the chosen path each record their candidate misses
+and listings (distinguishing "directory present and empty" from "directory
+absent"). The command grammar declares which arguments trigger resolution.
+Tier-2 reuse is sound against "a file appeared" only because every candidate
+miss along the resolution is a receipt. (Extends
+`ReadObservation::Absent`/`Listing`.)
 
 r[machine.receipt.read-set-as-value]
 
@@ -51,6 +56,20 @@ demand's certificate is itself demandable). This closes doc-90's gap 1 by
 construction and is what makes read-set widening (doc 50) expressible.
 Field-level consumption tracking (which *fields* of an index row were read,
 warm-facts §5) is the forward-looking requirement on this same surface.
+Demanding a certificate is a machine-meta demand: it does NOT itself produce a
+second-order receipt (no receipt-of-receipt recursion), and reading a receipt
+value is not an input observation of the reader's own computation.
+
+r[machine.receipt.journal]
+
+[DESIGN] Mandatory observations — secret reveals, provenance facts,
+capability acquisitions — live in a JOURNAL: a persistent observation store
+with a defined lifetime, distinct from the no-op-able event sink
+(`machine.obs.event-sink`) and distinct from the banned "fetch journal cache"
+(a naming collision — that was a private result cache, this is a receipt
+authority). Journal observations survive reload and are not elided when the
+event sink is off; "provable by trace absence" (reveal) means absence in the
+journal, not in the transient event stream.
 
 r[machine.receipt.certificate-vs-derivation]
 

@@ -28,9 +28,23 @@ full, only work that unblocks a parked task admits; new roots wait.
 
 r[machine.scheduler.live-budget]
 
-[SETTLED] Admission is bounded by a live budget counting active AND parked
-tasks (parked tasks hold frames and molten state; they are the memory).
-Sizing rule: budget ≈ effect-pool size + active CPU paths + a join margin.
+[SETTLED] Admission bounds WIDTH — concurrent independent paths — not depth. A
+task that parks on a fresh child HANDS ITS ADMISSION SLOT to that child, so a
+dependency chain always makes progress regardless of its length. (A strict
+budget counting active+parked would deadlock on any acyclic chain longer than
+the budget: the correctness reviews found this, and it is a correction to the
+original battle-plan model.) Parked frames still count against MEMORY
+accounting; they do not consume a critical-chain admission slot. Sizing rule:
+budget ≈ effect-pool size + independent CPU paths + a join margin.
+
+r[machine.scheduler.progress-invariant]
+
+[DESIGN] Guaranteed progress: at all times the deepest unfinished demand
+chain holds an admission slot (via slot handoff on park), and every parked
+task waits only on already-admitted work or an external completion. A newly
+materialized dependency of a parked task is an unblocker and admits even at
+full width-budget. The scheduler emits an event if it must admit over budget
+(bounded progress debt), never silently stalls.
 
 r[machine.scheduler.passive-no-loop]
 
@@ -71,6 +85,28 @@ r[machine.scheduler.completion-resumes-direct]
 [DESIGN] An effect completion resumes its parked task directly. Completion
 delivery is typed; a completion-sender's death is a loud typed event, never
 a stringly disconnect error.
+
+r[machine.scheduler.join-atomic]
+
+[DESIGN] `join(key, waiter)` is one atomic scheduler mutation: under a single
+mutation it either observes the memoized completion and returns it, or
+installs the waiter before any `publish(key)` can drain waiters — no lost
+wakeup between "observe running" and "register." The scheduler maintains a
+wait-for graph; a cycle (A joins B, B joins A) is a typed `MachineError`
+unless the key class explicitly declares recursive/fixpoint semantics.
+
+r[machine.scheduler.demand-services]
+
+[DESIGN] The scheduler-as-primitive surface includes the demand/call services
+(census class C): invoke, pending alloc/coerce/invoke, tree project, tree
+text, array-map-pending. Each mutates passive scheduler data; none opens a
+private cache or a side channel.
+
+r[machine.scheduler.observation-recording]
+
+[DESIGN] Capability acquisition journals its observation deduped by content
+hash and emits a timestamped event, so acquiring the same capability twice is
+one journaled fact, observable in the trace.
 
 r[machine.scheduler.no-shadow-scheduler]
 

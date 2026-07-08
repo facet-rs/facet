@@ -24,10 +24,32 @@ families match. (Supersedes the stale SHA-256 recommendation in
 
 r[machine.identity.canonical-memory]
 
-[SETTLED] Store bytes are canonical zero-padded memory and value identity is
-`blake3(memory)`. There is no separate canonical encoding to decode from:
-reads are typed views over the same bytes that were hashed. Freeze = hash +
-intern, no re-encode.
+[SETTLED] Store bytes are canonical zero-padded memory and a value's
+`ContentHash` is `blake3(memory)`. There is no separate canonical encoding to
+decode from: reads are typed views over the same bytes that were hashed.
+Freeze = hash + intern, no re-encode. (Note: `ContentHash` is the byte
+component of identity, not identity itself — see
+`machine.identity.value-identity-pair`.)
+
+r[machine.identity.value-identity-pair]
+
+[SETTLED] Semantic value identity is the pair `(SchemaRef, ContentHash)`, not
+`ContentHash` alone. `blake3(memory)` collides values with identical bytes
+and different schemas (`Bool(false)` and `Int(0)`, newtypes over one word,
+`None` singletons, layout-equal records with different field meaning). Every
+consumer — memo keys, receipts, dedup, persistence claims — uses the pair. A
+vx-store object may be addressed by digest, but vix semantic identity is the
+typed pair.
+
+r[machine.identity.framed-encoding]
+
+[SETTLED] The identity module exposes only FRAMED writer APIs: start(domain,
+schema, arity), field(index, schema), variant(tag), seq-len, map-pair,
+bytes-len. Every variable-length or role-bearing component is length-prefixed
+or role-tagged, so the hashed byte stream is prefix-free and unambiguous.
+Raw `hasher.update(user_bytes)` outside these APIs is banned. (Streaming-
+combine bans additive combination; framing closes the remaining
+ambiguous-concatenation and cross-domain-reuse surface.)
 
 r[machine.identity.zero-padding]
 
@@ -49,25 +71,36 @@ drift silently invalidates every existing hash.)
 
 r[machine.identity.streaming-combine]
 
-[SETTLED] Aggregate identity is a pure function of an ordered byte stream
-fed to one hasher. Commutative or additive combination of pre-hashed
-children is banned (the Wagner k-sum attack class: additive combines over
-attacker-influenced content admit forged collisions). Corpus obligation: an
-N-step incrementally built aggregate hashes bit-identically to a bulk build.
+[SETTLED] Aggregate identity is a pure function of a framed, ordered byte
+stream fed to one hasher. Commutative or additive combination of pre-hashed
+children is banned — additive combines over attacker-influenced content admit
+forged collisions (the class the committee referred to as "Wagner k-sum";
+the label is session vocabulary, the mechanism is the ban on summation).
+Corpus obligation: an N-step incrementally built aggregate hashes
+bit-identically to a bulk build.
 
 r[machine.identity.carried-hasher]
 
-[SETTLED] Growing aggregates carry incremental hash state (a live hasher)
-across mutation; recomputing an aggregate's hash from scratch per intern
-crossing is banned. (The measured O(N²): 86% of solver CPU in hash
-recompression because the aggregate hash had no memory between crossings.)
+[SETTLED] Ordered append-only aggregates (arrays, lists, handle lists) carry
+incremental hash state across mutation; recomputing their hash from scratch
+per intern crossing is banned (the measured O(N²): 86% of solver CPU in hash
+recompression because the aggregate hash had no memory between crossings).
+This rule is scoped to ordered aggregates: maps use sort-first-then-stream
+(`machine.identity.map-order-independence`) because insertion order is not
+semantic order, so a carried streaming hasher over insertion is unsound for
+them until the OPEN Merkle-map design lands.
 
 r[machine.identity.hash-at-construction]
 
 [DESIGN] Value identity is computed once — at construction for immutable
-values, at freeze for molten ones — and carried as a field (write-once
-identity slot; droppable cache on molten mutation). Per-lookup identity
-recomputation is banned; the memo reads stored identity slots.
+values, at freeze for molten ones — and carried as a field (the term
+"write-once identity slot" is session vocabulary; droppable cache on molten
+mutation). Per-lookup recomputation is banned; the memo reads stored slots. A
+MOLTEN aggregate has no public final identity until freeze: its carried
+identity is valid only over final child identities, so a demand key over a
+molten aggregate forces freeze first. (The hash-as-field distinction: an
+interned value's `ContentHash` is write-once; a molten value's carried
+identity is validity-tracked and droppable.)
 
 r[machine.identity.handle-by-referent]
 
@@ -85,11 +118,23 @@ driver, comments at the three hash sites.)
 
 r[machine.identity.pending-identity]
 
-[DESIGN] A not-yet-invoked closure has content identity before it runs:
-`PendingInvocation { closure_hash, canonicalized args }` hashes at
-allocation, so identical pending invocations dedup to one handle before
-either resolves. `Pending<T>`/`Realized<T>` wrappers are part of schema
-identity.
+[DESIGN] A pending invocation is identified by its `DemandKey` (its
+`PromiseId`): `blake3` of the framed (closure identity, canonicalized args),
+so identical pending invocations share one promise and one waiter set before
+either resolves. This is NOT the realized value's `ContentHash` — under
+flat-memory hashing the pending bytes (closure/args/promise state) and the
+result bytes are different, so a pending value and its eventual realized
+value do NOT share a content hash. The "recognize the value I awaited"
+property is served by the memo (`DemandKey → result`), not by identity
+collision. `Pending<T>`/`Realized<T>` remain distinct schema wrappers.
+
+r[machine.identity.hashing-is-ambient]
+
+[SETTLED] Content-hashing is a free, always-available property of any
+DAG-shaped value the machine builds — never something a consumer
+re-implements. (Warm-facts' `proof_digest` is meant to be the demand
+machine's own content hash of the proof structure; this rule is the
+substrate obligation that makes proof-bearing facts affordable.)
 
 r[machine.identity.map-order-independence]
 
@@ -116,11 +161,14 @@ identity (prefix), never re-mixed.
 
 r[machine.identity.taint-in-identity]
 
-[SETTLED] Structural taint (sealed values) is identity-affecting: a
-container holding a sealed value hashes differently from the same-shaped
-container holding untainted content, and child taints union into composite
-identity. Taint cannot be dropped by a copy path that looks only at raw
-bytes. (Preserved from `hash_with_taint`/`combine_taints`.)
+[SETTLED] Structural taint (sealed values) is identity-affecting: a container
+holding a sealed value hashes differently from the same-shaped container
+holding untainted content. Taint identity is a CANONICAL LEAF-SET — a sorted,
+deduplicated set of leaf taint ids — and union flattens (associative,
+commutative, idempotent), so grouping cannot affect identity
+(`union(a, union(b,c))` = `union(union(a,b), c)`). Taint cannot be dropped by
+a copy path that looks only at raw bytes. (Preserved from
+`hash_with_taint`/`combine_taints`, with the union algebra now specified.)
 
 r[machine.identity.secret-plaintext-never-hashed]
 

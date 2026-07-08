@@ -38,9 +38,13 @@ name: glob over an already-concrete tree is pure.
 
 r[machine.execution.comparator-direct]
 
-[DESIGN] Semantic-comparator invocation is a direct weavy call — vix-native,
-enforced at lowering with a loud diagnostic if a comparator isn't — not a
-full demand with per-pair allocation.
+[DESIGN] Semantic comparators ARE the memo's semantic tier: their invocation
+is a demand and can recurse through the memo (`machine.memo.three-tier-reuse`
+— this is the preserved, correct behavior). The performance rule is about the
+comparator BODY, not its dispatch: it must lower to native weavy ops with no
+per-pair allocation, enforced at lowering with a loud diagnostic if a
+comparator isn't vix-native. (The earlier "direct call, not a demand"
+phrasing wrongly denied the demand to state a perf property.)
 
 r[machine.execution.lowering-diagnostics]
 

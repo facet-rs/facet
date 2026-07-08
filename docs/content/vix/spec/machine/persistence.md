@@ -10,11 +10,13 @@ cache.
 
 r[machine.persistence.trait-boundary]
 
-[SETTLED] The persistence seam is a trait defined purely in vix semantic
-terms (get value by (schema, hash); look up memo by demand key; enumerate
-projection candidates). Open vix depends on no product crate; the
-proprietary side implements the trait against vx-store. This is the
-open/proprietary seam applied to persistence.
+[DESIGN] The persistence seam is a trait defined purely in vix semantic terms
+(get value by (schema, hash) — only realized-tier values persist, so no tier
+axis is needed; look up memo by demand key; enumerate projection candidates).
+Open vix depends on no product crate; the proprietary side implements the
+trait against vx-store. This is the open/proprietary seam applied to
+persistence. [DESIGN not SETTLED: the interface is load-bearing but its shape
+comes from a doc with its own open questions.]
 
 r[machine.persistence.value-vs-claim]
 
@@ -35,8 +37,13 @@ and warm solver facts, stated once.
 r[machine.persistence.lookup-order]
 
 [DESIGN] Demand lookup order with persistence: process-local exact memo →
-persistent exact claim → local projection candidates → persistent
-projection candidates (each verified before acceptance) → spawn.
+persistent exact claim (accepted only after receipt/policy check) → local
+projection candidates → persistent projection candidates (each verified
+before acceptance) → spawn. Persistent EXACT claims are read-set-gated too,
+not accepted on `DemandKey` equality alone, unless the function class is
+proven pure over only content-addressed arguments (then the key is the
+proof). This prevents a stale or cross-tenant persisted exact claim from
+serving without verification.
 
 r[machine.persistence.ephemeral-stays-ephemeral]
 

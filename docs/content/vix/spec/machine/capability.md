@@ -18,11 +18,19 @@ identity, daemon-advertised, fingerprinted, continuously re-verified.
 
 r[machine.capability.fingerprint-in-identity]
 
-[SETTLED] Exec references an ambient capability by its advertised
-fingerprint; the fingerprint enters exec identity and the receipt records
-it. The machine never re-probes-and-trusts per invocation — advertisement
-is the trust event, refined by the probed-toolchain rule
-(`machine.primitive.exec-probed-toolchain`).
+[SETTLED] The daemon's advertised fingerprint is the SINGLE source of truth
+for an ambient capability's identity; it enters exec identity and the receipt
+records it. A backend may probe per invocation only to VERIFY the advertised
+fingerprint or to raise a poison event on mismatch — never to silently mint a
+new competing identity. Advertisement is the trust event; the probe is
+verification, not a second authority.
+
+r[machine.capability.projectability-owned]
+
+[DESIGN] Projectability — which of a value's shapes a capability knows how to
+observe and record — is owned by the capability over `SchemaRef`, not by a
+stringly ontology hardcoded in the machine (the old `is_projectable_schema`
+name-match).
 
 r[machine.capability.poison-honored]
 

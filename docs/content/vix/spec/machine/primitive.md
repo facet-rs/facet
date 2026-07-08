@@ -33,10 +33,18 @@ touches zero machine code.
 
 r[machine.primitive.memo-policy]
 
-[DESIGN] Each primitive declares `Hermetic` (fully memoizable: exec under
-observation), `Pinned` (memoizable by observation pin: fetch), or `Volatile`
-(never). The machine applies policy uniformly through the memo
-(`machine.memo.effect-results`).
+[DESIGN] Each primitive declares `Hermetic` (fully memoizable), `Pinned`
+(memoizable by observation pin: fetch), or `Volatile` (never). `Hermetic` is
+a real obligation, not a label: it requires determinism PLUS interposition
+for every non-store input (files, env, time, randomness, network, process
+state) so that every input is a witnessed observation or pin. A backend that
+performs ambient OS/global reads it cannot witness (the current real-process
+backend outside declared roles) is NOT `Hermetic` — it is `Volatile` or
+produces non-persistent claims only. `EffectCtx` witness discipline
+(`machine.primitive.effectctx-witness-only`) is necessary but not sufficient
+for hermeticity; the confinement is. The machine applies policy uniformly
+through the memo (`machine.memo.effect-results`); a source that cannot be
+snapshotted (`machine.lifecycle.stable-snapshot`) forces `Volatile`.
 
 r[machine.primitive.effectctx-witness-only]
 
@@ -82,11 +90,14 @@ moves out of hand-rolled Rust.
 r[machine.primitive.exec-probed-toolchain]
 
 [SETTLED] A declared capability token is NOT sufficient exec identity: the
-backend probes the live toolchain (`rustc -vV`, `cc --version`) at
-resolution time and folds probe output into the effective identity. Two
-hosts with different compiler builds and the same declared token must not
-collide. (Preserved from the real-process backend; this is the
-runner-advertised-capability mechanism.)
+live toolchain's probe output (`rustc -vV`, `cc --version`) enters the
+effective identity, so two hosts with different compiler builds and the same
+declared token do not collide. Authority is single
+(`machine.capability.fingerprint-in-identity`): the DAEMON advertises the
+fingerprint as the source of truth; a backend probe VERIFIES the advertised
+fingerprint (or emits a poison event on mismatch) and never silently mints a
+competing identity. For a materializable toolchain the "probe" is just
+hashing the mounted content.
 
 r[machine.primitive.exec-hermetic-traps]
 

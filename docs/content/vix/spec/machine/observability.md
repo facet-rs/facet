@@ -43,6 +43,12 @@ r[machine.obs.ir-dump]
 [DESIGN] Lowered weavy IR has a first-class text dump. A machine whose
 compiled form cannot be read is unreviewable by construction.
 
+r[machine.obs.snapshot-no-clone]
+
+[SETTLED] Observability surfaces do not clone the world: a debug/inspection
+snapshot is a view, iterator, or copy-on-write, never an O(store) allocation.
+(L11's observability half; the store half is `machine.store.snapshot-no-clone`.)
+
 r[machine.obs.loud-fallbacks]
 
 [SETTLED] Every conservative fallback — safe-miss, safe-rebuild, safe-false

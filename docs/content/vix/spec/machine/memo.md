@@ -8,11 +8,17 @@ right).
 
 r[machine.memo.demand-key]
 
-[DESIGN] The memo is keyed by `DemandKey`: a fixed-size digest formed by an
-ordered, domain-separated combine of the closure identity and argument
-identities (`machine.identity.streaming-combine` applies), computed once at
-demand entry. The heap-allocated tuple key (`(u64, Vec<ContentHash>)`) and
-its per-lookup element hashing are banned.
+[DESIGN] The memo is keyed by `DemandKey`: a fixed-size digest formed by a
+framed combine of the closure identity and argument identities (each argument
+identity is the pair `(SchemaRef, ContentHash)`, per
+`machine.identity.value-identity-pair`), computed once at demand entry. The
+heap-allocated tuple key and its per-lookup element hashing are banned. To
+prevent a digest collision serving a wrong value, each memo entry also
+carries the exact key preimage `(closure identity, arity,
+[(SchemaRef, ContentHash)])`, and exact lookup compares the preimage after
+the digest map hit. An implementation that instead relies on blake3
+collision-resistance must state that as its trust assumption and reject
+untrusted persistent exact claims unless policy permits it.
 
 r[machine.memo.no-recompute-at-lookup]
 
@@ -41,7 +47,19 @@ re-checks every recorded read against the current world before serving. An
 entry with an empty read-set is never a projection candidate. Verification
 against an under-recorded read-set is unsound in the dangerous direction —
 it serves stale values — which is why read-set completeness is structural
-(`machine.receipt.witness-reads`), not conventional.
+(`machine.receipt.witness-reads`), not conventional. The reads the machine
+performs TO re-verify a candidate are machine-meta operations and are not
+themselves recorded into any receipt (they are not the demanded
+computation's reads).
+
+r[machine.memo.receipt-remap]
+
+[DESIGN] A memo hit contributes the cached entry's read-set to the CALLER's
+receipt (the caller depended on everything the cached computation read). This
+remapping is what keeps receipts complete across nested reuse. Exact hits
+stay allocation-free (`machine.memo.allocation-free-hits`) by pre-materializing
+the exposable read-set value at miss time, so the hit path only references
+it. (Preserved from the driver's nested-hit read-set remapping.)
 
 r[machine.memo.hit-carries-receipt]
 

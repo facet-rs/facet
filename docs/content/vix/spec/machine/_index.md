@@ -66,8 +66,12 @@ subsystem lands without its counter.
 
 r[machine.arch.reuse-axes-distinct]
 
-[DESIGN] The machine has four distinct reuse mechanisms with separate
-verification stories and separate events: pure-function memo
-(exact/projection/semantic), store dedup, exec tier-1/tier-2, and
-artifact-probe caching. They are never merged into one generic "cache hit"
-concept. (Preserved from the current driver's event vocabulary.)
+[DESIGN] The machine has four distinct reuse EVENT FAMILIES with separate
+verification stories: pure-function memo (exact/projection/semantic), store
+dedup, exec tier-1/tier-2, and artifact-probe reuse. These are four event
+shapes, not four caches: there are still exactly three CACHE KINDS
+(`machine.cache.three-kinds`). Artifact probes are memoized primitive calls —
+their key is (primitive id, request value), their receipt is the primitive
+receipt, their storage is the memo. The distinction the rule preserves is
+that the four families are never collapsed into one generic "cache hit"
+event.
