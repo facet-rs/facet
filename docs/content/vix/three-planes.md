@@ -274,18 +274,26 @@ Prior-art posture — grounded (the pass ran 2026-07-08; full report:
    implementation agrees.
 4. **Vocabulary ratification** — "location hash," "provenance coordinate,"
    and the plane names themselves await the explicit *bank it*.
-5. **The warm-facts fork** (surfaced by the grounding pass; needs an Amos
-   ruling). The corpus holds two irreconcilable versions of Rodin's
-   warm-fact design: `warm-facts-spec.md` (vixenware, 2026-07-07) — an
-   elaborate bespoke subsystem with a `Premise` enum, first-class absence
-   witnesses, and an **exact** inverted `premise → facts` index — and this
-   repo's `solver-learning.md` (2026-07-08), which collapses it to one
-   line: "reuse soundness is the substrate's memo verification," no
-   hand-rolled indexing. This chapter already leans on the new version
-   (solver facts are trajectory-born, content-keyed). The ruling needed:
-   is the old design (a) dead, superseded by the generic memo — in which
-   case the filter design here has no in-corpus worked precedent — or
-   (b) the intended *implementation detail* underneath the terse new rule
-   — in which case its exact-index choice is the closest existing worked
-   design for read-set × delta intersection and the probabilistic-filter
-   proposal should be measured against it deliberately.
+5. **The warm-facts fork — RESOLVED by mechanism mapping, pending Amos's
+   ratification** (full verdict:
+   `~/vixenware/notes/machine-spec/warm-facts-fork-verdict.md`). All 18
+   mechanisms of `warm-facts-spec.md` were mapped against the ratified
+   adjudication requirements and the generic machine spec. The fork splits
+   along soundness vs. acceleration: **every soundness mechanism is
+   subsumed** — several by rules that cite warm-facts *by name*
+   (`proof_digest` → `hashing-is-ambient`; replay-before-install →
+   `reverify-on-load`, "same rule for exec tier-2, projection candidates,
+   and warm solver facts, stated once"; absence witnesses →
+   `misses-recorded`; quarantine → `value-vs-claim`, "not a bespoke
+   path"). **One genuine residue: the exact inverted `premise → facts`
+   index — as acceleration/nomination only**, which is precisely the
+   candidate-nomination hole this chapter fills. So the old spec's index
+   survives as this chapter's worked *precedent*, not as machinery.
+   Nothing is contradicted. Scale pricing for the filter choice: solver
+   scale is ~1–2 premises/fact and absence keys in the low hundreds —
+   exact indexing is free there; this chapter's ~100k-run target is 2–3
+   orders larger, so probabilistic-over-exact is a conscious scale
+   departure whose crossover is a *measurement*, not a corpus answer.
+   Recommendation on Amos's desk: retire the bespoke
+   `Premise`/`WarmFactVerifier` subsystem (soundness), keep the index as
+   the nomination precedent.
