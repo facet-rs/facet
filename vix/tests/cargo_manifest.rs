@@ -6,7 +6,9 @@ use std::time::{Duration, Instant};
 
 use facet::Facet;
 use vix::exec::Tree;
-use vix::machine::driver::Lane;
+use vix::machine::driver::{
+    Lane, hash_workload_snapshot, hash_workload_tsv, reset_hash_workload_counters,
+};
 use vix::machine::{Machine, MachineArg, RenderedValue};
 
 const SOURCE: &str =
@@ -895,6 +897,7 @@ fn sparse_feature_closure_preserves_ring8_tokio_seed_features() -> Result<(), St
 }
 
 fn real_workspace_member_direct_sparse_solve_ring_lock_diff(limit: i64) -> Result<(), String> {
+    reset_hash_workload_counters();
     let metadata = cargo_metadata_real_workspace()?;
     let mut machine = manifest_machine()?;
     let workspace = intern_tree(&mut machine, real_workspace_manifest_tree(&metadata)?)?;
@@ -909,6 +912,7 @@ fn real_workspace_member_direct_sparse_solve_ring_lock_diff(limit: i64) -> Resul
         &format!("real-direct-ring-{limit}-timings.tsv"),
         &ring_timings_table(&timings),
     )?;
+    write_hash_workload_artifact(limit, "sparse-snapshot")?;
     if let Some(tokio_row) = sparse_jsonl_text
         .lines()
         .find(|line| line.contains(r#""name":"tokio""#) && line.contains(r#""vers":"1.52.3""#))
@@ -926,6 +930,7 @@ fn real_workspace_member_direct_sparse_solve_ring_lock_diff(limit: i64) -> Resul
         &format!("real-direct-ring-{limit}-timings.tsv"),
         &ring_timings_table(&timings),
     )?;
+    write_hash_workload_artifact(limit, "typed-row-count")?;
     let started = Instant::now();
     let package_count = machine.demand_i64(
         "workspace_member_direct_sparse_index_package_count_limit",
@@ -959,6 +964,7 @@ fn real_workspace_member_direct_sparse_solve_ring_lock_diff(limit: i64) -> Resul
         &format!("real-direct-ring-{limit}-timings.tsv"),
         &ring_timings_table(&timings),
     )?;
+    write_hash_workload_artifact(limit, "typed-index-debug")?;
     write_tier_a_artifact(
         &format!("real-direct-ring-{limit}-index-counts.tsv"),
         &format!(
@@ -994,6 +1000,7 @@ fn real_workspace_member_direct_sparse_solve_ring_lock_diff(limit: i64) -> Resul
         &format!("real-direct-ring-{limit}-timings.tsv"),
         &ring_timings_table(&timings),
     )?;
+    write_hash_workload_artifact(limit, "solve-lock-diff")?;
 
     write_tier_a_artifact(
         &format!("real-direct-ring-{limit}-solve-vs-lock-summary.tsv"),
@@ -1008,6 +1015,14 @@ fn real_workspace_member_direct_sparse_solve_ring_lock_diff(limit: i64) -> Resul
         "direct sparse ring {limit} produced no member-root solve: {diff:#?}"
     );
     Ok(())
+}
+
+fn write_hash_workload_artifact(limit: i64, phase: &str) -> Result<(), String> {
+    let snapshot = hash_workload_snapshot();
+    write_tier_a_artifact(
+        &format!("real-direct-ring-{limit}-hash-workload-{phase}.tsv"),
+        &hash_workload_tsv(&snapshot),
+    )
 }
 
 fn real_workspace_member_direct_sparse_unit_diff(limit: i64) -> Result<(), String> {

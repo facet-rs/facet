@@ -33,7 +33,8 @@ use std::fmt;
 use std::hash::Hash;
 #[cfg(any(test, feature = "jit"))]
 use std::rc::Rc;
-use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
+use std::sync::{Arc, OnceLock};
 
 use facet::Facet;
 use taxon::{Kind, Primitive, SchemaRef};
@@ -728,6 +729,123 @@ impl From<[u8; 32]> for ContentHash {
     }
 }
 
+const HASH_WORKLOAD_BUCKET_LABELS: [&str; 5] =
+    ["0..32", "33..128", "129..256", "257..1024", ">1024"];
+
+static HASH_WORKLOAD_RAW_ATTEMPTS: AtomicU64 = AtomicU64::new(0);
+static HASH_WORKLOAD_RAW_NEW: AtomicU64 = AtomicU64::new(0);
+static HASH_WORKLOAD_CARRIED_FOLDS: AtomicU64 = AtomicU64::new(0);
+static HASH_WORKLOAD_RAW_ATTEMPT_BUCKETS: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
+static HASH_WORKLOAD_RAW_NEW_BUCKETS: [AtomicU64; 5] = [const { AtomicU64::new(0) }; 5];
+
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct HashWorkloadSnapshot {
+    pub raw_hash_attempts: u64,
+    pub raw_hash_new: u64,
+    pub carried_folds: u64,
+    pub raw_attempt_buckets: [u64; 5],
+    pub raw_new_buckets: [u64; 5],
+}
+
+fn hash_workload_enabled() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| std::env::var_os("VIX_HASH_WORKLOAD_COUNTS").is_some())
+}
+
+fn hash_workload_bucket(len: usize) -> usize {
+    match len {
+        0..=32 => 0,
+        33..=128 => 1,
+        129..=256 => 2,
+        257..=1024 => 3,
+        _ => 4,
+    }
+}
+
+fn record_raw_hash_attempt(len: usize) {
+    if !hash_workload_enabled() {
+        return;
+    }
+    HASH_WORKLOAD_RAW_ATTEMPTS.fetch_add(1, AtomicOrdering::Relaxed);
+    HASH_WORKLOAD_RAW_ATTEMPT_BUCKETS[hash_workload_bucket(len)]
+        .fetch_add(1, AtomicOrdering::Relaxed);
+}
+
+fn record_raw_hash_new(len: usize) {
+    if !hash_workload_enabled() {
+        return;
+    }
+    HASH_WORKLOAD_RAW_NEW.fetch_add(1, AtomicOrdering::Relaxed);
+    HASH_WORKLOAD_RAW_NEW_BUCKETS[hash_workload_bucket(len)].fetch_add(1, AtomicOrdering::Relaxed);
+}
+
+fn record_carried_fold() {
+    if hash_workload_enabled() {
+        HASH_WORKLOAD_CARRIED_FOLDS.fetch_add(1, AtomicOrdering::Relaxed);
+    }
+}
+
+pub fn reset_hash_workload_counters() {
+    HASH_WORKLOAD_RAW_ATTEMPTS.store(0, AtomicOrdering::Relaxed);
+    HASH_WORKLOAD_RAW_NEW.store(0, AtomicOrdering::Relaxed);
+    HASH_WORKLOAD_CARRIED_FOLDS.store(0, AtomicOrdering::Relaxed);
+    for bucket in &HASH_WORKLOAD_RAW_ATTEMPT_BUCKETS {
+        bucket.store(0, AtomicOrdering::Relaxed);
+    }
+    for bucket in &HASH_WORKLOAD_RAW_NEW_BUCKETS {
+        bucket.store(0, AtomicOrdering::Relaxed);
+    }
+}
+
+pub fn hash_workload_snapshot() -> HashWorkloadSnapshot {
+    let mut raw_attempt_buckets = [0u64; 5];
+    let mut raw_new_buckets = [0u64; 5];
+    for (dst, bucket) in raw_attempt_buckets
+        .iter_mut()
+        .zip(HASH_WORKLOAD_RAW_ATTEMPT_BUCKETS.iter())
+    {
+        *dst = bucket.load(AtomicOrdering::Relaxed);
+    }
+    for (dst, bucket) in raw_new_buckets
+        .iter_mut()
+        .zip(HASH_WORKLOAD_RAW_NEW_BUCKETS.iter())
+    {
+        *dst = bucket.load(AtomicOrdering::Relaxed);
+    }
+    HashWorkloadSnapshot {
+        raw_hash_attempts: HASH_WORKLOAD_RAW_ATTEMPTS.load(AtomicOrdering::Relaxed),
+        raw_hash_new: HASH_WORKLOAD_RAW_NEW.load(AtomicOrdering::Relaxed),
+        carried_folds: HASH_WORKLOAD_CARRIED_FOLDS.load(AtomicOrdering::Relaxed),
+        raw_attempt_buckets,
+        raw_new_buckets,
+    }
+}
+
+pub fn hash_workload_tsv(snapshot: &HashWorkloadSnapshot) -> String {
+    let mut out = String::new();
+    out.push_str("metric\tcount\n");
+    out.push_str(&format!(
+        "raw_hash_attempts\t{}\n",
+        snapshot.raw_hash_attempts
+    ));
+    out.push_str(&format!("raw_hash_new\t{}\n", snapshot.raw_hash_new));
+    out.push_str(&format!("carried_folds\t{}\n", snapshot.carried_folds));
+    out.push_str("\nkind\tbucket\tcount\n");
+    for (label, count) in HASH_WORKLOAD_BUCKET_LABELS
+        .iter()
+        .zip(snapshot.raw_attempt_buckets)
+    {
+        out.push_str(&format!("raw_attempt\t{label}\t{count}\n"));
+    }
+    for (label, count) in HASH_WORKLOAD_BUCKET_LABELS
+        .iter()
+        .zip(snapshot.raw_new_buckets)
+    {
+        out.push_str(&format!("raw_new\t{label}\t{count}\n"));
+    }
+    out
+}
+
 impl fmt::Display for ContentHash {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         for byte in self.0 {
@@ -786,6 +904,11 @@ fn start_array_element_hasher(
 
 fn update_array_element_hash(hasher: &mut CarriedArrayHasher, element_hash: ContentHash) {
     hasher.hasher.update(element_hash.as_ref());
+}
+
+fn update_array_element_hash_counted(hasher: &mut CarriedArrayHasher, element_hash: ContentHash) {
+    record_carried_fold();
+    update_array_element_hash(hasher, element_hash);
 }
 
 fn recompute_array_element_hasher(
@@ -1446,11 +1569,13 @@ impl ValueStore {
         schemas: &SchemaTables,
         taint: Option<StructuralTaint>,
     ) -> (i64, bool) {
+        record_raw_hash_attempt(bytes.len());
         let content_hash = raw_value_content_hash(schema, &bytes, schemas, &taint);
         let key = (schema.to_string(), HandleTier::Ready, content_hash);
         if let Some(handle) = self.by_content.get(&key).copied() {
             return (handle, true);
         }
+        record_raw_hash_new(bytes.len());
         let handle = i64::try_from(self.entries.len()).expect("store handle fits i64");
         self.entries.push(StoreEntry {
             schema: schema.to_string(),
@@ -5440,7 +5565,7 @@ impl Driver {
                                     value,
                                 );
                                 if let Some(carried_hash) = &mut entry.carried_array_hash {
-                                    update_array_element_hash(carried_hash, element_hash);
+                                    update_array_element_hash_counted(carried_hash, element_hash);
                                 }
                                 words.push(value);
                                 molten_stats.borrow_mut().array_push_reused += 1;
