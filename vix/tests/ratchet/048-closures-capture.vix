@@ -1,0 +1,7 @@
+// Rung 048 — closures capture values (by value, like everything).
+test closures_capture {
+    let base = 100;
+    let add_base = |n| n + base;
+    expect_eq(add_base(1), 101);
+    expect_eq([1, 2, 3].map(add_base), [101, 102, 103]);
+}

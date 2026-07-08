@@ -1,0 +1,8 @@
+// Rung 034 — filter returns a Multiset: positions die honestly.
+test multiset_filter {
+    let heavy = [12, 3, 40, 7].values().filter(|n| n > 10);
+    expect_eq(heavy.len(), 2);
+    expect(heavy.contains(12));
+    expect(heavy.contains(40));
+    expect(!heavy.contains(3));
+}

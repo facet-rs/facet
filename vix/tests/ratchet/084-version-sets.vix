@@ -1,0 +1,10 @@
+// Rung 084 — VersionSet algebra: contains, intersect, emptiness.
+test version_sets {
+    let caret = parse_req("^1.2");
+    expect(caret.contains(parse_version("1.9.0")));
+    expect(!caret.contains(parse_version("2.0.0")));
+    let narrow = caret.intersect(parse_req(">=1.5, <1.7"));
+    expect(narrow.contains(parse_version("1.6.0")));
+    expect(!narrow.contains(parse_version("1.8.0")));
+    expect(caret.intersect(parse_req("^2.0")).is_empty());
+}

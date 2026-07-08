@@ -1,0 +1,14 @@
+// Rung 020 — tuple patterns in match arms.
+fn describe(pair: (Int, Int)) -> String {
+    match pair {
+        (0, 0) => "origin",
+        (x, y) if x == y => "diagonal",
+        (_, _) => "elsewhere",
+    }
+}
+
+test match_destructuring {
+    expect_eq(describe((0, 0)), "origin");
+    expect_eq(describe((3, 3)), "diagonal");
+    expect_eq(describe((1, 2)), "elsewhere");
+}

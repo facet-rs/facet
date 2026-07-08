@@ -1,0 +1,7 @@
+// Rung 028 — enumerate pairs each element with its position.
+test array_enumerate {
+    let xs = ["a", "b", "c"];
+    let tagged = xs.enumerate();
+    expect_eq(tagged[0], (0, "a"));
+    expect_eq(tagged[2], (2, "c"));
+}

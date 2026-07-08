@@ -1,0 +1,8 @@
+// Rung 030 — any, all, contains.
+test array_predicates {
+    let xs = [2, 4, 6];
+    expect(xs.all(|n| n % 2 == 0));
+    expect(xs.any(|n| n > 5));
+    expect(xs.contains(4));
+    expect(!xs.contains(5));
+}

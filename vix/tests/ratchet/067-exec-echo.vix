@@ -1,0 +1,6 @@
+// Rung 067 — exec: run a process, its output is a value. (effects)
+test exec_echo {
+    let out = exec! { echo "hello ratchet" };
+    expect_eq(out.status, 0);
+    expect_eq(out.stdout.trim(), "hello ratchet");
+}

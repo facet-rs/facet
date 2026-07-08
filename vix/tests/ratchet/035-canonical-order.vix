@@ -1,0 +1,7 @@
+// Rung 035 — sorted(): multisets observe in canonical (increasing) order.
+test canonical_order {
+    let ms = [30, 10, 20].values();
+    expect_eq(ms.sorted(), [10, 20, 30]);
+    let words = ["pear", "apple", "quince"].values();
+    expect_eq(words.sorted(), ["apple", "pear", "quince"]);
+}

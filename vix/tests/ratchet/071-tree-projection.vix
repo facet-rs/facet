@@ -1,0 +1,8 @@
+// Rung 071 — project one file from a tree; depend on that file alone.
+test tree_projection {
+    let tree = fixture_tree("small-crate");     // a Tree fixture shipped with the suite
+    let manifest = (tree / "Cargo.toml").text();
+    expect(manifest.contains("[package]"));
+} expecting {
+    never_read "small-crate/src/lib.rs";
+}

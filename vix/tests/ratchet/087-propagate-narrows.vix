@@ -1,0 +1,23 @@
+// Rung 087 — propagation narrows a domain; state is a fresh value.
+struct State { domains: Map<String, VersionSet>, selected: Map<String, Version> }
+enum Step { Pass(State), Conflict(String) }
+
+fn apply_dep(s: State, pkg: String, req: VersionSet) -> Step {
+    let narrowed = s.domains.get(pkg).unwrap().intersect(req);
+    if narrowed.is_empty() {
+        Step::Conflict(pkg)
+    } else {
+        Step::Pass(State { domains: s.domains.insert(pkg, narrowed), ..s })
+    }
+}
+
+test propagate_narrows {
+    let s = State { domains: {}.insert("libb", parse_req("^2.0")), selected: {} };
+    match apply_dep(s, "libb", parse_req(">=2.1")) {
+        Step::Pass(s2) => {
+            expect(!s2.domains.get("libb").unwrap().contains(parse_version("2.0.0")));
+            expect(s.domains.get("libb").unwrap().contains(parse_version("2.0.0")));
+        },
+        Step::Conflict(_) => expect(false),
+    }
+}

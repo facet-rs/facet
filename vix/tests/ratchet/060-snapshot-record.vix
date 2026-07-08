@@ -1,0 +1,7 @@
+// Rung 060 — snapshots: any value renders structurally, no Debug impls.
+struct Dep { name: String, req: String, optional: Bool }
+
+test snapshot_record {
+    let d = Dep { name: "mio", req: "^0.8", optional: false };
+    expect_snapshot(d, "dep-mio");
+}

@@ -1,0 +1,8 @@
+// Rung 039 — the Indexed<T> trick: carry positions through position-
+// destroying operations, sort to restore original order. (collections.md)
+test indexed_roundtrip {
+    let xs = [50, 10, 40, 20];
+    let kept = xs.enumerate().values().filter(|(i, n)| n >= 20);
+    let back: [Indexed<Int>] = kept.sorted();
+    expect_eq(back, [(0, 50), (2, 40), (3, 20)]);
+}

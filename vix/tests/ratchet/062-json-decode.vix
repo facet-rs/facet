@@ -1,0 +1,9 @@
+// Rung 062 — typed decode: JSON lands directly on a struct. (typed decode)
+struct PkgRow { name: String, vers: String, yanked: Bool }
+
+test json_decode {
+    let row: PkgRow = json_decode("{\"name\":\"mio\",\"vers\":\"0.8.11\",\"yanked\":false}");
+    expect_eq(row.name, "mio");
+    expect_eq(row.vers, "0.8.11");
+    expect(!row.yanked);
+}

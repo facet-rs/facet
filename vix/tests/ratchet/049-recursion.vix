@@ -1,0 +1,8 @@
+// Rung 049 — plain recursion.
+fn fib(n: Int) -> Int {
+    if n < 2 { n } else { fib(n - 1) + fib(n - 2) }
+}
+
+test recursion {
+    expect_eq(fib(10), 55);
+}

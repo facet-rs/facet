@@ -1,0 +1,8 @@
+//! reject: unknown method pop
+//! at: 6
+
+// Rung 032 — pop does not exist; mutation-shaped names have no referent.
+test no_pop {
+    let xs = [1, 2, 3];
+    expect_eq(xs.pop(), (3, [1, 2]));
+}

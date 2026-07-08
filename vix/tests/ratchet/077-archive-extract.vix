@@ -1,0 +1,7 @@
+// Rung 077 — extract an archive into a Tree; project into it.
+test archive_extract {
+    let crate_bytes = fetch(fixture_registry().url("tokio-1.52.3.crate"));
+    let tree = untar(crate_bytes);
+    let manifest = (tree / "Cargo.toml").text();
+    expect(manifest.contains("name = \"tokio\""));
+}

@@ -1,0 +1,8 @@
+//! reject: undeclared capability
+//! at: 6
+
+// Rung 070 — using a tool without declaring its capability is loud. (effects)
+test undeclared_capability {
+    let out = exec! { cc -o hello hello.c };
+    expect_eq(out.status, 0);
+}

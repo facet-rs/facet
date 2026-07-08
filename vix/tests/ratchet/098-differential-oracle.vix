@@ -1,0 +1,13 @@
+// Rung 098 — the differential oracle: our solve matches the recorded
+// expected selection for the standard fixture workspace, package by package.
+test differential_oracle {
+    let ws = fixture_workspace("kitchen-sink");   // 12 packages, diamonds, features
+    match mini_solve(fixture_index(), ws.requirements()) {
+        Some(sel) => {
+            let expected = ws.expected_selection();  // recorded from the reference resolver
+            expect_eq(sel.len(), expected.len());
+            expect(expected.keys().all(|pkg| sel.get(pkg) == expected.get(pkg)));
+        },
+        None => expect(false),
+    }
+}

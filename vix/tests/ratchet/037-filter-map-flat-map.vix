@@ -1,0 +1,11 @@
+// Rung 037 — filter_map and flat_map on multisets.
+fn half(n: Int) -> Option<Int> {
+    if n % 2 == 0 { Some(n / 2) } else { None }
+}
+
+test filter_map_flat_map {
+    let halves = [1, 2, 3, 4].values().filter_map(half);
+    expect_eq(halves.sorted(), [1, 2]);
+    let doubled = [1, 2].values().flat_map(|n| [n, n * 10].values());
+    expect_eq(doubled.sorted(), [1, 2, 10, 20]);
+}

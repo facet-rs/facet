@@ -1,0 +1,10 @@
+// Rung 008 — record update via spread: a fresh value, original untouched.
+struct Point { x: Int, y: Int }
+
+test spread {
+    let p = Point { x: 3, y: 4 };
+    let moved = Point { x: p.x + 1, ..p };
+    expect_eq(moved.x, 4);
+    expect_eq(moved.y, 4);
+    expect_eq(p.x, 3);
+}

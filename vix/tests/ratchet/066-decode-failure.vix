@@ -1,0 +1,10 @@
+// Rung 066 — a decode that can fail returns a result value, not a crash.
+struct PkgRow { name: String, vers: String }
+
+test decode_failure {
+    let bad = try_json_decode<PkgRow>("{\"name\": 42}");
+    match bad {
+        Ok(_) => expect(false),
+        Err(e) => expect(e.message.contains("name")),
+    }
+}

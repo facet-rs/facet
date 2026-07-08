@@ -1,0 +1,8 @@
+// Rung 033 — values(): arrays forget positions into a Multiset.
+test multiset_conversion {
+    let xs = [3, 1, 2];
+    let ms = xs.values();
+    expect_eq(ms.len(), 3);
+    expect(ms.contains(1));
+    expect(ms.contains(3));
+}

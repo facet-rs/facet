@@ -1,0 +1,8 @@
+// Rung 036 — multiset fold runs in canonical order: deterministic,
+// and NOT source order. (collections.md, the entry with teeth)
+test multiset_fold {
+    let ms = ["c", "a", "b"].values();
+    expect_eq(ms.fold("", |acc, s| acc + s), "abc");
+    let sum = [3, 1, 2].values().fold(0, |acc, n| acc + n);
+    expect_eq(sum, 6);
+}

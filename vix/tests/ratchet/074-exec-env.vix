@@ -1,0 +1,5 @@
+// Rung 074 — environment variables are declared values, not ambient leaks.
+test exec_env {
+    let out = exec! { env GREETING = "hi" ; sh -c "echo $GREETING" };
+    expect_eq(out.stdout.trim(), "hi");
+}

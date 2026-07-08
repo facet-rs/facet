@@ -1,0 +1,11 @@
+// Rung 056 — described-but-undemanded costs nothing. (demand.md)
+fn cheap() -> Int { 1 }
+fn landmine() -> Int { 1 / 0 }
+
+test undemanded_is_free {
+    let useful = cheap();
+    let unused = landmine();
+    expect_eq(useful, 1);
+} expecting {
+    never_demanded landmine;
+}

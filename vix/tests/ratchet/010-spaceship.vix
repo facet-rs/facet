@@ -1,0 +1,6 @@
+// Rung 010 — <=> yields Ordering; ambient on scalars and strings.
+test spaceship {
+    expect_eq(1 <=> 2, Ordering::Less);
+    expect_eq(2 <=> 2, Ordering::Equal);
+    expect_eq("b" <=> "a", Ordering::Greater);
+}

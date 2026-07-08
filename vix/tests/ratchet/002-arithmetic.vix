@@ -1,0 +1,6 @@
+// Rung 002 — integer literals and arithmetic; expect_eq on Int.
+test arithmetic {
+    expect_eq(2 + 2, 4);
+    expect_eq(10 - 3 * 2, 4);
+    expect_ne(1, 2);
+}

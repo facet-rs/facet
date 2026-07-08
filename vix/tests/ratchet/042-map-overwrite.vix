@@ -1,0 +1,8 @@
+// Rung 042 — inserting an existing key describes a map with the new value.
+test map_overwrite {
+    let m = {}.insert("k", 1);
+    let m2 = m.insert("k", 2);
+    expect_eq(m.get("k"), Some(1));
+    expect_eq(m2.get("k"), Some(2));
+    expect_eq(m2.len(), 1);
+}

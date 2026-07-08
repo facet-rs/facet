@@ -1,0 +1,14 @@
+// Rung 022 — record patterns, including nested.
+struct Point { x: Int, y: Int }
+struct Line { a: Point, b: Point }
+
+fn is_vertical(l: Line) -> Bool {
+    match l {
+        Line { a: Point { x: ax, .. }, b: Point { x: bx, .. } } => ax == bx,
+    }
+}
+
+test record_patterns {
+    let l = Line { a: Point { x: 2, y: 0 }, b: Point { x: 2, y: 9 } };
+    expect(is_vertical(l));
+}

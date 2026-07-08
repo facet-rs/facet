@@ -1,0 +1,9 @@
+//! reject: expression statement
+//! at: 7
+
+// Rung 013 — a value that goes nowhere is not a sentence. (values.md aside)
+struct S { n: Int }
+fn f(s: S) -> S {
+    S { n: s.n + 1, ..s };
+    s
+}

@@ -1,0 +1,8 @@
+// Rung 006 — record declaration, literals, field access. (values.md)
+struct Point { x: Int, y: Int }
+
+test records {
+    let p = Point { x: 3, y: 4 };
+    expect_eq(p.x, 3);
+    expect_eq(p.y, 4);
+}

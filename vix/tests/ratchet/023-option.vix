@@ -1,0 +1,14 @@
+// Rung 023 — Option construction and matching.
+fn checked_div(a: Int, b: Int) -> Option<Int> {
+    if b == 0 { None } else { Some(a / b) }
+}
+
+test option {
+    expect_some(checked_div(10, 2));
+    expect_none(checked_div(1, 0));
+    let doubled = match checked_div(10, 2) {
+        Some(n) => n * 2,
+        None => 0,
+    };
+    expect_eq(doubled, 10);
+}

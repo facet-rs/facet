@@ -1,0 +1,14 @@
+// Rung 078 — the harness can see exactly what a computation read.
+fn manifest_name(tree: Tree) -> String {
+    let m: Manifest = toml_decode((tree / "Cargo.toml").text());
+    m.package.name
+}
+struct Package { name: String, version: String }
+struct Manifest { package: Package }
+
+test receipts_record_reads {
+    expect_eq(manifest_name(fixture_tree("small-crate")), "small-crate");
+} expecting {
+    read "small-crate/Cargo.toml";
+    never_read "small-crate/src/lib.rs";
+}

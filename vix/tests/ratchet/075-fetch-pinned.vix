@@ -1,0 +1,7 @@
+// Rung 075 — fetch against the fixture registry, pinned by content hash.
+test fetch_pinned {
+    let bytes = fetch(fixture_registry().url("tokio-1.52.3.crate"));
+    expect_eq(bytes.len(), 4096);
+} expecting {
+    fetched 1;
+}

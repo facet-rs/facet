@@ -1,0 +1,18 @@
+// Rung 065 — string-or-table decode: the Cargo dependency shape.
+enum DepSpec {
+    Req(String),
+    Detailed { version: Option<String>, optional: Bool },
+}
+
+test decode_enum_forms {
+    let simple: DepSpec = json_decode("\"^1.2\"");
+    expect_eq(simple, DepSpec::Req("^1.2"));
+    let detailed: DepSpec = json_decode("{\"version\":\"^2.0\",\"optional\":true}");
+    match detailed {
+        DepSpec::Detailed { version, optional } => {
+            expect_eq(version, Some("^2.0"));
+            expect(optional);
+        },
+        DepSpec::Req(_) => expect(false),
+    }
+}

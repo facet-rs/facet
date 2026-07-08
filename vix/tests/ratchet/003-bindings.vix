@@ -1,0 +1,7 @@
+// Rung 003 — let bindings and string literals.
+test bindings {
+    let greeting = "hello";
+    let count = 3;
+    expect_eq(greeting, "hello");
+    expect_eq(count + 1, 4);
+}

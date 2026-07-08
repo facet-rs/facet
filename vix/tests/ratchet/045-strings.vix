@@ -1,0 +1,10 @@
+// Rung 045 — string operations: concat, contains, split, parse.
+test strings {
+    let s = "tokio" + "-" + "1.52";
+    expect_eq(s, "tokio-1.52");
+    expect(s.contains("-"));
+    let (name, version) = s.split_once("-");
+    expect_eq(name, "tokio");
+    expect_eq(version.parse_int(), None);
+    expect_eq("42".parse_int(), Some(42));
+}

@@ -1,0 +1,7 @@
+// Rung 015 — ||, &&, ! as ordinary boolean operators.
+test boolean_operators {
+    expect(true || false);
+    expect(!(false && true));
+    expect_eq(!true, false);
+    expect((1 < 2) || (2 < 1));
+}

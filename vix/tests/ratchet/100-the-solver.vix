@@ -1,0 +1,80 @@
+// Rung 100 — the last rung: the miniature solver from the book's final
+// chapter, whole, on one page. Domains, propagation, selection,
+// backtracking without a trail, learning as values. When this is green,
+// the language in the book exists. (building-a-solver.md)
+
+struct State {
+    domains: Map<String, VersionSet>,
+    selected: Map<String, Version>,
+    learned: Multiset<NoGood>,
+}
+struct NoGood { pkg: String, region: VersionSet }
+enum Step { Pass(State), Conflict(NoGood) }
+enum Outcome { Solved(Map<String, Version>), Exhausted(NoGood) }
+
+fn propagate(s: State, pkg: String, version: Version) -> Step {
+    fixture_index().row(pkg, version).deps.values().fold(
+        Step::Pass(State { selected: s.selected.insert(pkg, version), ..s }),
+        |step, dep| match step {
+            Step::Conflict(ng) => Step::Conflict(ng),
+            Step::Pass(st) => {
+                let dom = match st.domains.get(dep.name) {
+                    Some(d) => d,
+                    None => parse_req("*"),
+                };
+                let narrowed = dom.intersect(parse_req(dep.req));
+                if narrowed.is_empty() {
+                    Step::Conflict(NoGood { pkg: dep.name, region: dom })
+                } else {
+                    Step::Pass(State { domains: st.domains.insert(dep.name, narrowed), ..st })
+                }
+            },
+        },
+    )
+}
+
+fn candidates(s: State, pkg: String) -> [Version] {
+    fixture_index().versions(pkg).values()
+        .filter(|v| s.domains.get(pkg).unwrap().contains(v))
+        .filter(|v| !s.learned.any(|ng| ng.pkg == pkg && ng.region.contains(v)))
+        .sorted()
+}
+
+fn pick_undecided(s: State) -> Option<String> {
+    s.domains.keys().filter(|p| s.selected.get(p) == None).sorted().split_last()
+        .map(|(last, _)| last)
+}
+
+fn search(s: State) -> Outcome {
+    match pick_undecided(s) {
+        None => Outcome::Solved(s.selected),
+        Some(pkg) => try_candidates(s, pkg, candidates(s, pkg)),
+    }
+}
+
+fn try_candidates(s: State, pkg: String, cands: [Version]) -> Outcome {
+    match cands.split_last() {
+        None => Outcome::Exhausted(NoGood { pkg: pkg, region: s.domains.get(pkg).unwrap() }),
+        Some((v, rest)) => match propagate(s, pkg, v) {
+            Step::Conflict(ng) =>
+                try_candidates(State { learned: s.learned.insert(ng), ..s }, pkg, rest),
+            Step::Pass(s2) => match search(s2) {
+                Outcome::Solved(sel) => Outcome::Solved(sel),
+                Outcome::Exhausted(ng) =>
+                    try_candidates(State { learned: s.learned.insert(ng), ..s }, pkg, rest),
+            },
+        },
+    }
+}
+
+test the_solver {
+    let ws = fixture_workspace("kitchen-sink");
+    let init = State { domains: ws.requirements(), selected: {}, learned: [].values() };
+    match search(init) {
+        Outcome::Solved(sel) => {
+            let expected = ws.expected_selection();
+            expect(expected.keys().all(|pkg| sel.get(pkg) == expected.get(pkg)));
+        },
+        Outcome::Exhausted(_) => expect(false),
+    }
+}

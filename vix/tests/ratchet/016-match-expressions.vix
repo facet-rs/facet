@@ -1,0 +1,15 @@
+// Rung 016 — match as expression over enums and bools without pyramids.
+enum Signal { Red, Amber, Green }
+
+fn go(s: Signal) -> Bool {
+    match s {
+        Signal::Green => true,
+        Signal::Amber => false,
+        Signal::Red => false,
+    }
+}
+
+test match_expressions {
+    expect(go(Signal::Green));
+    expect(!go(Signal::Red));
+}

@@ -1,0 +1,10 @@
+// Rung 097 — and without the feature, the optional dep never enters the graph.
+test features_off {
+    let reqs = {}.insert("libe", parse_req("^1.0"));
+    match mini_solve_with_features(fixture_index(), reqs, {}) {
+        Some(sel) => expect_none(sel.get("libnet")),
+        None => expect(false),
+    }
+} expecting {
+    never_read "index/libnet";
+}

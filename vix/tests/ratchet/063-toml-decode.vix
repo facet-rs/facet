@@ -1,0 +1,9 @@
+// Rung 063 — typed decode from TOML: manifests without Doc-walking.
+struct Package { name: String, version: String }
+struct Manifest { package: Package }
+
+test toml_decode {
+    let m: Manifest = toml_decode("[package]\nname = \"taxon\"\nversion = \"0.1.0\"\n");
+    expect_eq(m.package.name, "taxon");
+    expect_eq(m.package.version, "0.1.0");
+}

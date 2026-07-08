@@ -1,0 +1,9 @@
+// Rung 093 — two demands of the same solve are one computation, one answer.
+test solve_is_deterministic {
+    let reqs = {}.insert("liba", parse_req("^1.0"));
+    let a = mini_solve(fixture_index(), reqs);
+    let b = mini_solve(fixture_index(), reqs);
+    expect_eq(a, b);
+} expecting {
+    demanded_once mini_solve;
+}

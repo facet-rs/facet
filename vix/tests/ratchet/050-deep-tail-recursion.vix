@@ -1,0 +1,9 @@
+// Rung 050 — tail recursion survives 100k iterations (no stack overflow;
+// the accumulator stays cheap).
+fn count_up(n: Int, limit: Int, acc: Int) -> Int {
+    if n == limit { acc } else { count_up(n + 1, limit, acc + n) }
+}
+
+test deep_tail_recursion {
+    expect_eq(count_up(0, 100000, 0), 4999950000);
+}

@@ -1,0 +1,9 @@
+// Rung 090 — backtracking without a trail: the newest liba fails (its dep
+// conflicts), the solver retries from the OLD state and picks the older one.
+test backtracking {
+    let reqs = {}.insert("liba", parse_req("^1.0")).insert("libc", parse_req("=1.0.0"));
+    match mini_solve(fixture_index(), reqs) {
+        Some(sel) => expect_eq(sel.get("liba"), Some(parse_version("1.2.0"))),
+        None => expect(false),
+    }
+}

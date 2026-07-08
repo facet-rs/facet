@@ -1,0 +1,9 @@
+// Rung 057 — projecting one mapped element demands one application.
+fn slow_square(n: Int) -> Int { n * n }
+
+test element_independence {
+    let ys = [2, 3, 4].map(slow_square);
+    expect_eq(ys[1], 9);
+} expecting {
+    demanded_once slow_square;
+}

@@ -1,0 +1,11 @@
+// Rung 054 — a field access depends on that field alone. (demand.md)
+struct Point { x: Int, y: Int }
+fn cheap() -> Int { 41 }
+fn expensive() -> Int { 999 }
+
+test partial_dependency {
+    let p = Point { x: cheap(), y: expensive() };
+    expect_eq(p.x + 1, 42);
+} expecting {
+    never_demanded expensive;
+}

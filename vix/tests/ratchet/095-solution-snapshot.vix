@@ -1,0 +1,5 @@
+// Rung 095 — the whole solution renders canonically: one stable snapshot.
+test solution_snapshot {
+    let reqs = {}.insert("liba", parse_req("^1.0")).insert("libb", parse_req("^2.0"));
+    expect_snapshot(mini_solve(fixture_index(), reqs), "solution-ab");
+}

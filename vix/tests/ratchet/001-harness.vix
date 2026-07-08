@@ -1,0 +1,5 @@
+// Rung 001 — the harness itself: a test declaration is a demandable check.
+// Certifies: testing.md `test NAME { }`, expect().
+test the_ratchet_begins {
+    expect(true);
+}

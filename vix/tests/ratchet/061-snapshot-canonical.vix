@@ -1,0 +1,5 @@
+// Rung 061 — snapshotting a multiset shows canonical order: stable forever.
+test snapshot_canonical {
+    let ms = ["gamma", "alpha", "beta"].values();
+    expect_snapshot(ms, "greek-letters");
+}

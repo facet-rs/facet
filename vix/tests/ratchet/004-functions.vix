@@ -1,0 +1,8 @@
+// Rung 004 — function declaration and application.
+fn double(n: Int) -> Int { n * 2 }
+fn add(a: Int, b: Int) -> Int { a + b }
+
+test functions {
+    expect_eq(double(21), 42);
+    expect_eq(add(double(3), 4), 10);
+}

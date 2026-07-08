@@ -1,0 +1,7 @@
+// Rung 072 — glob over a materialized tree yields paths, canonically ordered.
+test glob {
+    let tree = fixture_tree("small-crate");
+    let sources = tree.glob("src/*.rs");
+    expect_eq(sources.len(), 2);
+    expect_eq(sources.sorted()[0].to_string(), "src/lib.rs");
+}

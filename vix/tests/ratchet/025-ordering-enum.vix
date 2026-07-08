@@ -1,0 +1,13 @@
+// Rung 025 — Ordering is an ordinary enum: match on comparison results.
+fn describe(a: Int, b: Int) -> String {
+    match a <=> b {
+        Ordering::Less => "ascending",
+        Ordering::Equal => "same",
+        Ordering::Greater => "descending",
+    }
+}
+
+test ordering_enum {
+    expect_eq(describe(1, 2), "ascending");
+    expect_eq(describe(5, 5), "same");
+}

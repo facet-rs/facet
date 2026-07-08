@@ -1,0 +1,13 @@
+// Rung 053 — arguments are wires, not promises to compute. (demand.md)
+fn pick(flag: Bool, a: Int, b: Int) -> Int {
+    if flag { a } else { b }
+}
+fn cheap() -> Int { 1 }
+fn expensive() -> Int { 999 }
+
+test args_are_wires {
+    expect_eq(pick(true, cheap(), expensive()), 1);
+} expecting {
+    demanded cheap;
+    never_demanded expensive;
+}

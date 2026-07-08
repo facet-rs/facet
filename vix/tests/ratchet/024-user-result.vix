@@ -1,0 +1,18 @@
+// Rung 024 — user-defined result-shaped enums; generic payloads.
+enum Outcome<T> {
+    Ok(T),
+    Err(String),
+}
+
+fn parse_flag(s: String) -> Outcome<Bool> {
+    match s {
+        "true" => Outcome::Ok(true),
+        "false" => Outcome::Ok(false),
+        _ => Outcome::Err("not a flag"),
+    }
+}
+
+test user_result {
+    expect_eq(parse_flag("true"), Outcome::Ok(true));
+    expect_eq(parse_flag("nope"), Outcome::Err("not a flag"));
+}

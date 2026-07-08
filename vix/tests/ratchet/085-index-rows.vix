@@ -1,0 +1,10 @@
+// Rung 085 — the fixture index: rows decode to typed values on demand.
+struct IndexRow { name: String, vers: String, deps: [RowDep], yanked: Bool }
+struct RowDep { name: String, req: String, optional: Bool }
+
+test index_rows {
+    let rows = fixture_index().rows("libb");
+    expect_eq(rows.len(), 3);
+    let newest = rows.values().sorted_by(|a, b| parse_version(a.vers) <=> parse_version(b.vers));
+    expect_eq(newest[2].vers, "2.0.0");
+}
