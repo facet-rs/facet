@@ -359,3 +359,32 @@ reconciliation pass:
   plans violates `machine.primitive.requests-are-values` (requests are
   ordinary content-addressed vix values) — it joins the ad-hoc-cache kill
   list; exec keys through the same mechanism's tiers like everything else.
+
+### Round 5, final addendum — the content-hash ruling (Amos)
+
+- **Content hash = Definition A: the framed walked encoding**, schema-
+  specialized and LOWERED AS WEAVY IR (schema-const walk, framing constants
+  folded; the descriptor-interpreting Rust implementation was an
+  implementation crime, not the definition's nature). Deciding principle,
+  stated once and forever: **the structural hash of a value must not depend
+  on the ABI** — layout exists to be changed for performance (NRVO, niches,
+  reordering), and coupling identity to it would freeze the very freedom
+  weavy-declared layout exists to provide. B was a plane smear (implementation
+  plane leaking into the semantic plane) — the same disease as
+  Pending-shares-identity, killed the same way.
+- Consequences for the rewrite: `identity.canonical-memory` STRIKES as an
+  identity mechanism (zero-padding demotes from identity-load-bearing to
+  hygiene/canary — its rule gets re-scoped); the driver's flat-identity raw
+  fast path (driver.rs:1598) is the unblessed fork's dead branch; lowering
+  the walk into weavy IR becomes a design requirement of the successor
+  (`execution.facts-precomputed` applies — the specialized walk is a lowering
+  artifact).
+- Context recorded for the perf lane: the walk was twice measured at "0.03%
+  of execution time, not worth lowering" — against a program later shown to
+  be ~70,000× slower than reference. A number without its control is a vibe
+  (resolution 3); hashing cost must be re-measured against the successor's
+  baseline, never the old engine's.
+- Part-1 confirmation recorded without ceremony: the bespoke warm-facts
+  subsystem is dead (the design conversation had already collapsed it; the
+  thorough check found zero soundness residue). Its inverted index survives
+  only as the nomination design's worked precedent.
