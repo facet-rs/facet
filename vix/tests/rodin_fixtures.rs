@@ -1526,6 +1526,7 @@ fn dense_state_feature_unification_diagnostic_trace() -> Result<(), String> {
         MachineDiagSnapshot,
         BTreeMap<&'static str, usize>,
         Vec<(String, Option<TraceCounts>)>,
+        Vec<String>,
     );
     let result: Result<DiagnosticRun, String> = (|| {
         let mut machine = Machine::load(&source)?;
@@ -1583,6 +1584,7 @@ fn dense_state_feature_unification_diagnostic_trace() -> Result<(), String> {
                 "selected_from_state",
             ],
         );
+        let diagnostics = machine.diagnostics().to_vec();
         Ok((
             status,
             machine.trace().len(),
@@ -1590,10 +1592,11 @@ fn dense_state_feature_unification_diagnostic_trace() -> Result<(), String> {
             diag,
             trace,
             fn_counts,
+            diagnostics,
         ))
     })();
     set_machine_diag_enabled(false);
-    let (status, trace_len, selected, diag, trace, fn_counts) = result?;
+    let (status, trace_len, selected, diag, trace, fn_counts, diagnostics) = result?;
     let wall = started.elapsed();
     let mut out = String::new();
     writeln!(out, "metric\tname\tvalue").ok();
@@ -1609,6 +1612,9 @@ fn dense_state_feature_unification_diagnostic_trace() -> Result<(), String> {
     }
     for (event, count) in trace {
         writeln!(out, "trace_event\t{event}\t{count}").ok();
+    }
+    for diagnostic in diagnostics {
+        writeln!(out, "diagnostic\t{}\t1", diagnostic.replace('\n', "\\n")).ok();
     }
     for (name, counts) in fn_counts {
         if let Some(counts) = counts {

@@ -135,6 +135,10 @@ struct State {
     features: [Bool],
     hypotheses: [Hypothesis],
     learned: [LearnedNoGood],
+    changed: Bool,
+    conflict: Bool,
+    conflict_pkg: Int,
+    conflict_clause: Int,
 }
 
 // ---------------------------------------------------------------------------
@@ -279,7 +283,18 @@ fn hypothesis_from_realized(hypothesis: Hypothesis) -> Hypothesis {
 fn empty_state() -> State {
     let pkg_slots: Map<Int, Int> = {};
     let feature_slots: Map<Int, Int> = {};
-    stored_state(State { pkg_slots: pkg_slots, domains: [], feature_slots: feature_slots, features: [], hypotheses: [], learned: [] })
+    State {
+        pkg_slots: pkg_slots,
+        domains: [],
+        feature_slots: feature_slots,
+        features: [],
+        hypotheses: [],
+        learned: [],
+        changed: false,
+        conflict: false,
+        conflict_pkg: no_clause_id(),
+        conflict_clause: no_clause_id(),
+    }
 }
 
 fn empty_result() -> SolveResult {
@@ -314,6 +329,43 @@ fn conflict_info(state: State, pkg: Int, clause_id: Int) -> ConflictInfo {
     ConflictInfo { state: state, pkg: pkg, clause_id: clause_id }
 }
 
+fn state_for_pass(state: State) -> State {
+    State {
+        changed: false,
+        conflict: false,
+        conflict_pkg: no_clause_id(),
+        conflict_clause: no_clause_id(),
+        ..state
+    }
+}
+
+fn state_mark_changed(state: State) -> State {
+    State { changed: true, ..state }
+}
+
+fn state_mark_conflict(state: State, pkg: Int, clause_id: Int) -> State {
+    State {
+        conflict: true,
+        conflict_pkg: pkg,
+        conflict_clause: clause_id,
+        ..state
+    }
+}
+
+fn step_state(step: Step) -> State {
+    match step {
+        Step::Conflict(conflict) => state_mark_conflict(conflict.state, conflict.pkg, conflict.clause_id),
+        Step::Pass { state: state, changed: changed } => match changed {
+            true => state_mark_changed(state),
+            false => state,
+        },
+    }
+}
+
+fn state_conflict_info(state: State) -> ConflictInfo {
+    conflict_info(state, state.conflict_pkg, state.conflict_clause)
+}
+
 fn default_domain() -> Domain {
     stored_domain(Domain { active: false, allowed: universe(), selected: None })
 }
@@ -343,12 +395,12 @@ fn domain_for(state: State, pkg: Int) -> Domain {
 
 fn put_domain(state: State, pkg: Int, domain: Domain) -> State {
     match state.pkg_slots.get(pkg) {
-        Some(slot) => stored_state(State { domains: state.domains.set(slot, domain), ..state }),
-        None => stored_state(State {
+        Some(slot) => State { domains: state.domains.set(slot, domain), ..state },
+        None => State {
             pkg_slots: state.pkg_slots.insert(pkg, state.domains.len()),
             domains: state.domains.push(domain),
             ..state
-        }),
+        },
     }
 }
 
@@ -361,12 +413,12 @@ fn feature_enabled(state: State, feature: Int) -> Bool {
 
 fn put_enabled_feature(state: State, feature: Int) -> State {
     match state.feature_slots.get(feature) {
-        Some(slot) => stored_state(State { features: state.features.set(slot, true), ..state }),
-        None => stored_state(State {
+        Some(slot) => State { features: state.features.set(slot, true), ..state },
+        None => State {
             feature_slots: state.feature_slots.insert(feature, state.features.len()),
             features: state.features.push(true),
             ..state
-        }),
+        },
     }
 }
 
@@ -1235,11 +1287,40 @@ fn propagate_pass(index: Index, state: State, target: String) -> Step {
 }
 
 fn propagate(index: Index, state: State, target: String) -> SearchResult {
-    match propagate_pass(index, state, target) {
-        Step::Conflict(conflict) => SearchResult::Failed(learn(index, conflict)),
-        Step::Pass { state: next, changed: changed } => match changed {
-            true => propagate(index, next, target),
-            false => SearchResult::Solved(next),
+    let next = propagate_loop(index, state, target);
+    match next.conflict {
+        true => SearchResult::Failed(learn(index, state_conflict_info(next))),
+        false => SearchResult::Solved(next),
+    }
+}
+
+fn propagate_pass_state(index: Index, state: State, target: String) -> State {
+    let start = state_for_pass(state);
+    match step_state(apply_learned_no_goods(index, start)) {
+        learned => match learned.conflict {
+            true => learned,
+            false => match step_state(force_singletons(index, learned)) {
+                forced => match forced.conflict {
+                    true => forced,
+                    false => match step_state(apply_clauses(index, forced, target)) {
+                        clauses => match clauses.conflict {
+                            true => clauses,
+                            false => step_state(check_feature_exclusions(clauses)),
+                        },
+                    },
+                },
+            },
+        },
+    }
+}
+
+fn propagate_loop(index: Index, state: State, target: String) -> State {
+    let next = propagate_pass_state(index, state, target);
+    match next.conflict {
+        true => next,
+        false => match next.changed {
+            true => propagate_loop(index, next, target),
+            false => next,
         },
     }
 }
@@ -1313,12 +1394,8 @@ fn try_candidate(index: Index, state: State, target: String, pkg: Int, version: 
 
 fn state_with_learned(state: State, learned_state: State) -> State {
     stored_state(State {
-        pkg_slots: state.pkg_slots,
-        domains: state.domains,
-        feature_slots: state.feature_slots,
-        features: state.features,
-        hypotheses: state.hypotheses,
         learned: learned_state.learned,
+        ..state
     })
 }
 

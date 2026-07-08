@@ -136,6 +136,81 @@ alone when load is below 5 to settle H0, then inspect why dense `propagate` /
 `apply_clauses` / `force_singletons_over` iterate roughly 30-60x more than the
 baseline on the same fixture before changing the dense representation again.
 
+Fix attempt after H4 attribution:
+
+Amos's structural hypothesis was tested in vix: keep propagation bookkeeping
+private inside `State`, convert each pass's `Step` into private `changed` /
+`conflict` fields, and publish `SearchResult` only after `propagate_loop`
+converges. The hot setters were also changed to stop calling `stored_state` on
+every domain/feature array mutation. This is the intended shape for "publish
+once at the end", but the current vix tail-loop lowering does not rewrite the
+resulting aggregate-state self-tail call.
+
+Artifact:
+
+- `notes/tier-a-dense-state-feature-state-flags-attempt.tsv`
+
+| Measure | Dense before | State-flags attempt |
+|---|---:|---:|
+| run status | event_limit | event_limit |
+| trace events | 200,000 | 200,000 |
+| selected packages | 0 | 0 |
+| demanded | 50,660 | 50,715 |
+| memo hits + projection hits | 21,977 | 21,952 |
+| whole array projection reads | 12,441 | 12,107 |
+| canonical word hash calls | 20,419,059 | 19,412,508 |
+| canonical word hash calls / trace event | 102.10 | 97.06 |
+| `propagate` demanded | 293 | 285 |
+| `propagate_loop` demanded | missing | 285 |
+| `apply_clauses` demanded | 294 | 286 |
+| `force_singletons_over` demanded | 294 | 286 |
+
+Language gap / minimal repro shape:
+
+```vix
+struct State {
+    pkg_slots: Map<Int, Int>,
+    domains: [Domain],
+    feature_slots: Map<Int, Int>,
+    features: [Bool],
+    changed: Bool,
+    conflict: Bool,
+    // ...
+}
+
+fn propagate_loop(index: Index, state: State, target: String) -> State {
+    let next = propagate_pass_state(index, state, target);
+    match next.conflict {
+        true => next,
+        false => match next.changed {
+            true => propagate_loop(index, next, target),
+            false => next,
+        },
+    }
+}
+```
+
+Expected lowering: one `propagate_loop` demand/spawn and an internal tail jump,
+matching the `tail_loop_array_accumulator_stays_molten` shape.
+
+Observed lowering: the recursive self-call still lowers through `INVOKE`.
+The diagnostic fixture records `propagate_loop` demanded/spawned 285 times before
+the 200k event budget, with no non-tail diagnostic for that call. The only
+non-tail diagnostics are unrelated helpers (`cfg_expr_eval` through `&&` and
+`region_contains_packages` through `&&`). A direct nested bool field pattern
+would make the self-call arm syntactically direct, but that construct is also
+outside the current machine slice:
+
+```text
+lowering propagate_loop: nested pattern Bool(...) is outside the machine slice-2 subset
+```
+
+So the requested "private-until-published propagation loop" is blocked on a vix
+lowering/language item: self-tail-call lowering must handle aggregate `State`
+locals produced by a previous call and used in match-field control flow, or the
+language needs an explicit local loop/worklist construct that does not cross a
+memo boundary on each iteration.
+
 - Before this pass, resolve at real scale was **0 / 864 Cargo-resolved package-version rows measured** because there was no vix entrypoint composing workspace manifests into a Rodin `Index`.
 - After the widening pass, the largest measured solve ring is **64 / 146 workspace members -> 65 selected rows**, diffed against the real `Cargo.lock`: **64 / 65 solve rows match Cargo.lock**, with the remaining solve-only row being the pseudo workspace root.
 - The explicit ignored scale probe still builds the full member-only index: **146 / 146 workspace members -> 147 package domains**; root clauses are now the old 2-per-member baseline plus root default-feature clauses.
