@@ -21,7 +21,7 @@ fn walk(xs: [Row], acc: Int) -> Int {
         false => walk_tuple(xs.pop(), acc),
     }
 }
-fn walk_tuple(t: (Row, [Row]), acc: Int) -> Int { ... }
+fn walk_tuple(t: (Row, [Row]), acc: Int) -> Int { walk(t.1, acc + t.0.weight) }
 ```
 
 Two lines of intent, eight lines of scaffolding, and a freestanding `_tuple`
@@ -39,6 +39,19 @@ created = "2026-07-08T17:36:54.802651+00:00"
 quote = "and a freestanding _tuple helper because pop()'s tuple can't be destructured in a match arm"
 +++
 Okay, so already just update the page. Saying here's what it looks like. If we do the obvious thing and allow destructuring tuples.
+-->
+
+<!-- note
++++
+author = "claude"
+id = "43b9671206e6c40535a3cc2bcc0a97d5"
+created = "2026-07-08T17:44:18Z"
++++
+Done — the section now shows the staircase right after the wound: destructuring
+alone (helper dies), + `if`/`else` (bool-match dies), + `fold` (walker dies).
+Also made the original example's helper body concrete so the before/after is
+comparable, and it uses `split_last()` per the ratified naming. (Your note
+submitted three times; the two below are duplicates of this one.)
 -->
 
 <!-- note
@@ -62,6 +75,42 @@ quote = "and a freestanding _tuple helper because pop()'s tuple can't be destruc
 +++
 Okay, so already just update the page. Saying here's what it looks like. If we do the obvious thing and allow destructuring tuples.
 -->
+
+Do the obvious thing — allow destructuring a tuple in a `let` or a match
+arm — and the helper evaporates before any combinator enters the picture:
+
+```vix
+fn walk(rows: [Row], acc: Int) -> Int {
+    match rows.len() == 0 {
+        true  => acc,
+        false => {
+            let (row, rest) = rows.split_last();
+            walk(rest, acc + row.weight)
+        },
+    }
+}
+```
+
+Add the boolean surface (`if`/`else` — ratified separately, "obvious, add
+it") and the bool-match scaffolding goes too:
+
+```vix
+fn walk(rows: [Row], acc: Int) -> Int {
+    if rows.len() == 0 { acc }
+    else {
+        let (row, rest) = rows.split_last();
+        walk(rest, acc + row.weight)
+    }
+}
+```
+
+That's the staircase: destructuring kills the 78+ `_tuple` helpers,
+`if`/`else` kills the boolean-match pyramids, and the walker itself only
+dies when `fold` arrives:
+
+```vix
+rows.fold(0, |acc, r| acc + r.weight)
+```
 
 ## What exists today (read before proposing, per the method)
 
