@@ -51,6 +51,39 @@ Two consequences worth internalizing early:
   concept. (Observability exists — richly — but as a property of the
   system around the program, not as effects inside it.)
 
+> **What doesn't happen: eager arguments.** Watch the same call in JS and
+> in vix:
+>
+> ```js
+> const report = pick(mode, cheapSummary(data), fullAudit(data));
+> // JS: BOTH summaries are computed before pick even starts.
+> ```
+>
+> ```vix
+> let report = pick(mode, cheap_summary(data), full_audit(data));
+> // vix: pick's result is wired to its arguments; whichever one the
+> // result actually depends on is the only one ever computed.
+> ```
+>
+> In strict languages, passing an expression to a function is a promise
+> to compute it. In vix it's a wire. Helper functions stop being
+> performance decisions — you cannot accidentally compute the expensive
+> path by mentioning it.
+
+A concrete free-description example — this is idiomatic, not wasteful:
+
+```vix
+pub fn solution(ws: Workspace) -> Solution { ... }
+pub fn report(ws: Workspace) -> Report { render(solution(ws)) }
+pub fn debug_dump(ws: Workspace) -> Text { render_full_graph(solution(ws)) }
+```
+
+`vx build report` computes `solution` and `report`. The `debug_dump`
+description sits there costing nothing — until the day something demands
+it, at which point `solution` is already memoized and the dump costs only
+its own rendering. You don't comment out expensive diagnostics in vix;
+you just don't demand them.
+
 ## Dependencies are exact, and partial
 
 ```vix

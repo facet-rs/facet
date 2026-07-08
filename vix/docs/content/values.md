@@ -54,6 +54,47 @@ fn put_domain(state: State, pkg: PkgId, domain: Domain) -> State {
 it. Whether the implementation actually copies anything is its own
 business — semantically, you were never sharing.
 
+> **What doesn't happen: the fire-and-forget "update".** In most languages
+> this line does something:
+>
+> ```js
+> state.domains.set(pkg, domain);   // JS: state is now different
+> ```
+>
+> ```vix
+> state.domains.insert(pkg, domain)   // vix: not a sentence
+> ```
+>
+> In vix it isn't even grammatical — there are no expression statements,
+> because an expression whose value goes nowhere *describes nothing*. The
+> compiler rejects it, and that rejection is the language telling you the
+> truth: `insert` never changed anything; it denoted a new map you didn't
+> name. The bug class "I called the update method and threw away the
+> result" cannot be written.
+
+Three languages, one situation — two names for one collection:
+
+```rust
+let mut a = vec![1, 2, 3];
+let b = &a;
+a.push(4);            // Rust: rejected — cannot mutate while borrowed
+```
+
+```js
+const a = [1, 2, 3];
+const b = a;
+b.push(4);            // JS: accepted — and `a` changed. Spooky.
+```
+
+```vix
+let a = [1, 2, 3];
+let b = a;            // vix: b IS a, forever. Nothing to reject,
+                      // nothing to be spooked by — neither can change.
+```
+
+Rust protects you from aliased mutation with a borrow checker you must
+negotiate with. JS just lets it happen. Vix removes the phenomenon.
+
 **Coming from Rust**: ownership, borrowing, lifetimes, `&`, `&mut`,
 `Clone`, `Rc` — none of it exists here, and not because everything is
 secretly copied. There is nothing to coordinate: no aliasing means the
