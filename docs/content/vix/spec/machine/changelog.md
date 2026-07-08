@@ -340,3 +340,22 @@ reconciliation pass:
 - **Spec-as-textbook doctrine** (Amos): the spec is a textbook for the
   amalgamation, not a list of prose-tests — chapters are written to teach the
   rationale, not just to bind rules.
+
+### Round 5 addenda (same conversation, after the hash census)
+
+- **Canonical order is CONTENT order, never hash order** (Amos: "content order
+  not index order" — agreed landmine). The census found map ordering, dedup
+  walks, and the value-ordering fallback comparing hash BYTES; that makes
+  observable program output depend on the hash mechanism, turning any identity
+  epoch break into a semantic change. Canonical ordering must be defined over
+  value order (`<=>`); hash bytes may never be ordering-visible. Tripwire test
+  owed.
+- **ONE hash mechanism — the hybrid is an unblessed fork, not a design**
+  (Amos, verbatim intent: "absolutely not... there is one mechanism, it has
+  three different tiers"). The census's finding that the code runs raw-bytes
+  hashing for flat descriptors and a framed walk for handle-bearing ones
+  (driver.rs:1598) is a fork to ELIMINATE via the one sanctioned epoch, not a
+  state to bless. Corollary: exec's private `exec::Blake3Hash` domain over
+  plans violates `machine.primitive.requests-are-values` (requests are
+  ordinary content-addressed vix values) — it joins the ad-hoc-cache kill
+  list; exec keys through the same mechanism's tiers like everything else.
