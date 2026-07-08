@@ -1302,7 +1302,7 @@ fn solution_lib_with_deps(target: Target, source: Tree, index: Index, result: So
     let direct_deps = unit.deps;
     let externs = solution_extern_args(target, index, result, targets, source, target_name, direct_deps, mode, []);
     let profile_args = rustc_profile_args(unit.profile);
-    let cfg_args = solution_build_script_cfg_args(target, source, index, result, targets, target_name, direct_deps, unit.cfgs);
+    let cfg_args = solution_build_script_cfg_args(target, source, index, result, targets, target_name, direct_deps, push_cfg_args(unit.cfgs, []));
     let deps = solution_dependency_tree(target, source, index, result, targets, target_name, unit, mode);
     let source_arg = argv_source_interpolation(manifest, unit.source);
 
@@ -1324,6 +1324,31 @@ fn solution_lib(target: Target, source: Tree, index: Index, result: SolveResult,
     match unit.deps.len() == 0 {
         true => solution_lib_no_deps(target, source, unit),
         false => solution_lib_with_deps(target, source, index, result, targets, target_name, unit, mode),
+    }
+}
+
+fn solution_proc_macro(source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, unit: ResolvedUnit) -> Tree {
+    let rustc = Rustc::acquire(Target::host());
+    let manifest = source / unit.manifest;
+    let edition = package_edition_from_source(source, manifest);
+    let externs = solution_extern_args(Target::host(), index, result, targets, source, target_name, unit.deps, "link", []);
+    let profile_args = rustc_profile_args(unit.profile);
+    let cfg_args = push_cfg_args(unit.cfgs, []);
+    let deps = solution_dependency_tree(Target::host(), source, index, result, targets, target_name, unit, "link");
+    let source_arg = argv_source_interpolation(manifest, unit.source);
+
+    rustc! {
+        --crate-name {unit.name}
+        --edition {edition}
+        --crate-type proc-macro
+        {profile_args}
+        --emit=link={unit.link}
+        -L dependency={deps}
+        --extern proc_macro
+        {externs}
+        {cfg_args}
+        --env CARGO_MANIFEST_DIR={manifest}
+        {source_arg}
     }
 }
 
@@ -1563,6 +1588,7 @@ fn solution_build_script_run(source: Tree, target_name: String, unit: ResolvedUn
         --env CARGO_PKG_VERSION_PRE=
         --env TARGET={target_name}
         --env HOST={target_name}
+        --env RUSTC=rustc
         --env OPT_LEVEL=3
         --env PROFILE=debug
         --env CARGO_CFG_TARGET_ARCH={arch}
@@ -1585,7 +1611,7 @@ fn solution_unit_built(target: Target, source: Tree, index: Index, result: Solve
         false => match unit.kind == "build-dependency" {
             true => solution_lib(target, source, index, result, targets, target_name, unit, mode),
             false => match unit.kind == "proc-macro" {
-                true => generic_proc_macro(source, unit),
+                true => solution_proc_macro(source, index, result, targets, target_name, unit),
                 false => match unit.kind == "build-script" {
                     true => solution_build_script(target, source, index, result, targets, target_name, pkg, unit),
                     false => solution_bin(target, source, index, result, targets, target_name, unit, mode),
@@ -1646,6 +1672,7 @@ fn build_script_run(manifest: Tree, binary: Tree) -> Tree {
         --env CARGO_PKG_VERSION_PRE=
         --env TARGET=x86_64-unknown-linux-gnu
         --env HOST=x86_64-unknown-linux-gnu
+        --env RUSTC=rustc
         --env OPT_LEVEL=0
         --env PROFILE=debug
     }

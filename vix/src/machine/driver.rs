@@ -4804,13 +4804,26 @@ impl Driver {
                 let result = (|| {
                     let dst_slot = read_frame_word(frame, primitive_region) as usize;
                     let array = read_frame_word(frame, primitive_region + 8);
-                    let len = match molten_cell.borrow().array_entry(
-                        &store_cell.borrow(),
-                        array,
-                        schema_tables,
-                    )? {
-                        ArrayEntry::Words { words, .. } => words.len(),
-                        ArrayEntry::Pending { pending, .. } => pending.len(),
+                    let len = {
+                        let store = store_cell.borrow();
+                        if matches!(Handle::from_word(array), Handle::Store(_)) {
+                            record_whole_args_if_projectable_static(
+                                &mut projection_reads.borrow_mut(),
+                                &exec_arg_schemas,
+                                &exec_args,
+                                &store,
+                                descriptors,
+                                schemas,
+                                [array],
+                            );
+                        }
+                        match molten_cell
+                            .borrow()
+                            .array_entry(&store, array, schema_tables)?
+                        {
+                            ArrayEntry::Words { words, .. } => words.len(),
+                            ArrayEntry::Pending { pending, .. } => pending.len(),
+                        }
                     };
                     write_frame_word(
                         frame,
@@ -4863,6 +4876,17 @@ impl Driver {
                         store.entry(word).and_then(|entry| entry.taint.clone())
                     }));
                     let separator = store.string_value(separator, "String")?;
+                    if matches!(Handle::from_word(array), Handle::Store(_)) {
+                        record_whole_args_if_projectable_static(
+                            &mut projection_reads.borrow_mut(),
+                            &exec_arg_schemas,
+                            &exec_args,
+                            &store,
+                            descriptors,
+                            schemas,
+                            [array],
+                        );
+                    }
                     let array_entry =
                         molten_cell
                             .borrow()
@@ -5598,13 +5622,28 @@ impl Driver {
                             }
                         }
                     }
-                    let (mut elem_schema, mut words) = match molten_cell.borrow().array_entry(
-                        &store_cell.borrow(),
-                        array,
-                        schema_tables,
-                    )? {
-                        ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
-                        ArrayEntry::Pending { .. } => return Err("push on pending array".into()),
+                    let (mut elem_schema, mut words) = {
+                        let store = store_cell.borrow();
+                        if matches!(Handle::from_word(array), Handle::Store(_)) {
+                            record_whole_args_if_projectable_static(
+                                &mut projection_reads.borrow_mut(),
+                                &exec_arg_schemas,
+                                &exec_args,
+                                &store,
+                                descriptors,
+                                schemas,
+                                [array],
+                            );
+                        }
+                        match molten_cell
+                            .borrow()
+                            .array_entry(&store, array, schema_tables)?
+                        {
+                            ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
+                            ArrayEntry::Pending { .. } => {
+                                return Err("push on pending array".into());
+                            }
+                        }
                     };
                     if words.is_empty() {
                         elem_schema = pushed_schema;
@@ -5663,13 +5702,28 @@ impl Driver {
                             }
                         }
                     }
-                    let (elem_schema, mut words) = match molten_cell.borrow().array_entry(
-                        &store_cell.borrow(),
-                        array,
-                        schema_tables,
-                    )? {
-                        ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
-                        ArrayEntry::Pending { .. } => return Err("pop on pending array".into()),
+                    let (elem_schema, mut words) = {
+                        let store = store_cell.borrow();
+                        if matches!(Handle::from_word(array), Handle::Store(_)) {
+                            record_whole_args_if_projectable_static(
+                                &mut projection_reads.borrow_mut(),
+                                &exec_arg_schemas,
+                                &exec_args,
+                                &store,
+                                descriptors,
+                                schemas,
+                                [array],
+                            );
+                        }
+                        match molten_cell
+                            .borrow()
+                            .array_entry(&store, array, schema_tables)?
+                        {
+                            ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
+                            ArrayEntry::Pending { .. } => {
+                                return Err("pop on pending array".into());
+                            }
+                        }
                     };
                     let value = words
                         .pop()
@@ -5738,13 +5792,28 @@ impl Driver {
                             }
                         }
                     }
-                    let (elem_schema, mut words) = match molten_cell.borrow().array_entry(
-                        &store_cell.borrow(),
-                        array,
-                        schema_tables,
-                    )? {
-                        ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
-                        ArrayEntry::Pending { .. } => return Err("set on pending array".into()),
+                    let (elem_schema, mut words) = {
+                        let store = store_cell.borrow();
+                        if matches!(Handle::from_word(array), Handle::Store(_)) {
+                            record_whole_args_if_projectable_static(
+                                &mut projection_reads.borrow_mut(),
+                                &exec_arg_schemas,
+                                &exec_args,
+                                &store,
+                                descriptors,
+                                schemas,
+                                [array],
+                            );
+                        }
+                        match molten_cell
+                            .borrow()
+                            .array_entry(&store, array, schema_tables)?
+                        {
+                            ArrayEntry::Words { elem_schema, words } => (elem_schema, words),
+                            ArrayEntry::Pending { .. } => {
+                                return Err("set on pending array".into());
+                            }
+                        }
                     };
                     value = intern_molten_word(
                         &mut store_cell.borrow_mut(),

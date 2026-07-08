@@ -9954,6 +9954,36 @@ pub fn cross_rustc() -> Rustc {
     }
 
     #[test]
+    fn store_backed_array_reads_prevent_projection_reuse() {
+        let src = r#"
+fn append_join(values: [String], value: String) -> String {
+    values.push(value).join(",")
+}
+
+pub fn first() -> String {
+    append_join(["one"], "tail")
+}
+
+pub fn second() -> String {
+    append_join(["two"], "tail")
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let first = machine.demand_i64("first", vec![]).unwrap();
+            assert_eq!(
+                machine.driver.raw_string(first, "String").unwrap(),
+                "one,tail"
+            );
+            let second = machine.demand_i64("second", vec![]).unwrap();
+            assert_eq!(
+                machine.driver.raw_string(second, "String").unwrap(),
+                "two,tail"
+            );
+        }
+    }
+
+    #[test]
     fn lua_vix_runs_on_machine_with_exec_depth_contract() {
         const FETCH_PIN: &str = "fetch:https://www.lua.org/ftp/lua-5.4.8.tar.gz:sha256:f5c9123295667d2cc0841c03490f04d6e66d0eac5e440ab386a944eec30e64d7";
         let src = include_str!("../../../playgrounds/snark/src/bundled/vix/samples/lua.vix");
