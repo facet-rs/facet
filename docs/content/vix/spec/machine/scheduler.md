@@ -115,14 +115,55 @@ owns yield/resume; the machine owns admission and bookkeeping only. Async
 vocabulary (await/poll/pending) means actual suspension
 (`machine.arch.one-authority`).
 
-r[machine.scheduler.executions-as-weavy-tasks]
+r[machine.scheduler.replay-is-semantics]
 
-[OPEN — decision 1] Whether path executions run AS weavy tasks (pending =
-yield, completion = resume; the burst protocol absorbed by the substrate)
-requires Amos's ruling, with the constraint already set: task creation is
-lazy-on-demand-pull and bounded by admission — the model must never imply
-task-per-target. If ruled no, a written justification per Law 20 is
-required.
+[SETTLED] The semantic model of execution is REPLAY: every execution is
+restartable from its `DemandKey` at any moment, and killing any in-flight
+task is always sound — it loses time, never correctness, and changes no
+observable result. Execution state's canonical form is the memo + demand
+map (content-addressed, persistent, shippable); anything held in a live
+stack is derived. The preconditions are load-bearing rules elsewhere:
+`machine.lifecycle.freeze-transactional` (a killed task's partial work is
+unreachable garbage), `machine.lifecycle.stable-snapshot` (replay sees the
+same world), and `machine.scheduler.tickets-outlive-tasks`. (Resolved by
+Amos, 2026-07-08.)
+
+r[machine.scheduler.suspension-is-acceleration]
+
+[SETTLED] Executions run as weavy tasks — pending = yield, completion =
+resume; the substrate owns suspension (Law 20) — and a suspended task's
+state is a DISCARDABLE CACHE of replay progress, never the source of truth.
+This is the executor's interp/JIT relationship applied to the scheduler
+(the slow honest mechanism defines semantics; the fast one must be
+observably equivalent), and the store's molten/interned duality applied to
+scheduling state. Task creation remains lazy-on-demand-pull and bounded by
+admission; the model never implies task-per-target. Steady state is
+suspension; restart is the exception path (kill, migrate, evict, crash) —
+which is why the restart-only N² replay tax does not apply.
+
+r[machine.scheduler.tickets-outlive-tasks]
+
+[SETTLED] Effect tickets are owned by the DEMAND, not the requesting task.
+Killing a task with an in-flight effect does not cancel the effect (unless
+policy explicitly cancels the demand); the replay joins the same in-flight
+ticket or reuses its memoized completion.
+
+r[machine.scheduler.eviction-is-policy]
+
+[DESIGN] Memory pressure is an eviction policy, not a structural limit: the
+budget may kill parked tasks (least-progressed first, or by policy),
+reclaiming their frames and molten arenas entirely; the killed executions
+re-enter as queued demands and replay later. Parked-task memory is a cache
+with an eviction policy. Migration is the same move across machines: kill
+locally, ship the DemandKey, restart remotely against warm memo.
+
+r[machine.scheduler.chaos-kill-oracle]
+
+[SETTLED — day one] The replay/suspension equivalence is enforced by a
+standing chaos oracle from R0: a test mode that randomly kills parked and
+running tasks mid-suite and asserts results identical to the unkilled run.
+It runs always (CI-standing, not opt-in); the kill-anytime invariant rots
+silently without it, and every future scheduler feature must pass it.
 
 r[machine.scheduler.effect-overlap]
 

@@ -185,11 +185,33 @@ testability (sonnet). Reports in `/tmp/spec-poke-*` and
   copy-patch machinery is build-time waste, not runtime W+X — so the feature is
   about waste and single-source-of-truth, not a hard iOS blocker.
 
+- **Executions-as-weavy-tasks RESOLVED → the replay/suspension cluster.**
+  Amos's synthesis dissolved the suspend-vs-restart fork by making them
+  different kinds of thing: RESTART IS THE SEMANTICS
+  (`scheduler.replay-is-semantics` — kill-anytime is always sound; canonical
+  execution state is memo + demand map), SUSPENSION IS THE ACCELERATION
+  (`scheduler.suspension-is-acceleration` — executions run as weavy tasks;
+  parked state is a discardable replay cache). The executor's interp/JIT
+  relationship, applied to the scheduler; the store's molten/interned
+  duality, applied to scheduling state. Supporting rules:
+  `tickets-outlive-tasks` (effects owned by demands),
+  `eviction-is-policy` (parked memory is an evictable cache; migration =
+  kill + ship DemandKey + replay), `chaos-kill-oracle` (SETTLED day one:
+  standing CI chaos mode randomly kills tasks and asserts identical
+  results), and `execution.safepoints` (lowering-injected patchable
+  safepoints, multiplexed for kill barriers / perf counters / future GC —
+  lowering acknowledged as load-bearing substrate for the whole monorepo).
+  Two named taxes accepted: the equivalence discipline is forever
+  (chaos oracle enforces), and safepoint placement is real, perf-gated
+  lowering work. Side effect: `receipt.certificate-vs-derivation` is now
+  easier — replay makes a derivation re-obtainable on demand, so "walkable"
+  need not mean "retained."
+
 ## Deferred to Amos (remaining OPEN rules)
 
 - `machine.value.taint-provenance` — V30 vs secrets Q1 taint granularity.
-- `machine.scheduler.executions-as-weavy-tasks` — decision 1.
-- `machine.receipt.certificate-vs-derivation` — walkable derivation.
+- `machine.receipt.certificate-vs-derivation` — walkable derivation
+  (note: weakened by the replay resolution; see above).
 - `machine.receipt.sealable-as-cachet` sub-question — cachet vs secret sealing.
 
 ## Deferred to a later pass (testability, not correctness)

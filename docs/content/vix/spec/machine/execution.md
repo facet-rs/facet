@@ -67,6 +67,21 @@ per-pair allocation, enforced at lowering with a loud diagnostic if a
 comparator isn't vix-native. (The earlier "direct call, not a demand"
 phrasing wrongly denied the demand to state a perf property.)
 
+r[machine.execution.safepoints]
+
+[SETTLED] Lowering injects a general SAFEPOINT mechanism at demand
+boundaries and loop back-edges — patchable no-ops in the copy-patch lanes,
+patched into real checks only when a consumer is pending. Safepoints are
+shared infrastructure multiplexed across consumers: kill/migration barriers
+(`machine.scheduler.replay-is-semantics`), performance counters
+(`machine.obs.counters`), future GC points, and debugging. This is possible
+because weavy owns lowering for every program it runs — the capability rustc
+cannot offer arbitrary code — and it is a reason lowering is LOAD-BEARING
+SUBSTRATE for the monorepo's projects (vix, phon, snark, fable, the
+generated deserializers), to be engineered with that seriousness: safepoint
+placement is a specified, perf-gated lowering decision, not an
+implementation afterthought.
+
 r[machine.execution.lowering-diagnostics]
 
 [DESIGN] When a shape falls off a fast path — a syntactically tail-ish call
