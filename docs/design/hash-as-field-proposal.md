@@ -430,6 +430,45 @@ supplies enough pairs to solve the k-sum). Opus is right that the algebra must s
   own vector — and (c) recomputes the whole sort per intern; only the persistent ordered
   tree makes both the memory and the identity of a 10,000-domain State differ from its
   predecessor in O(log n), which is the trail loop's actual access pattern.
+
+  **CHARTER REQUIREMENT (Amos): the persistent Merkle B-tree must be WEAVY-NATIVE.** Its
+  nodes are **descriptor-declared values** (weavy-declared layouts, §3's zero-padding law
+  applies to them directly), and its operations — insert / get / fold / finalize / the
+  path-copy on mutation — are **lowered to weavy IR and JIT-emitted**, with stencils only
+  where SIMD earns it (the blake3 node hash, §4). They are **NOT Rust host ops.** The
+  rationale is the destination of the whole proposal, not a micro-optimization:
+
+  > vix maps today are host ops — every touch (`alloc_map`, `map_get`, `canonical_map_pairs`)
+  > crosses into opaque Rust that **decodes** canonical payload bytes, manipulates, and
+  > **re-encodes**. The crossing itself costs ~2ns, but the **opacity is fatal**: the JIT
+  > can never inline or fuse across the FFI boundary, never keep a hot map in registers,
+  > never elide the decode/encode round-trip. *We can optimize weavy codegen but we can
+  > never optimize FFI.*
+
+  Therefore **host-side map ops are explicitly the INTERIM implementation.** The
+  destination is **machine-side collections over declared layouts**: the typed-collections
+  epoch (V1/V3, landed) laid the *descriptors*; the *operations* must now follow them onto
+  the machine side. A weavy-native persistent B-tree is not just the fastest map hash — it
+  is the vehicle by which vix's core collection stops being an FFI black box the JIT must
+  treat as a barrier. This reframes Q1(b) from "the safe map-hash construction" to "the
+  first machine-side collection," and it is why (b) is the recommendation even though (c)
+  is cheaper to reach: (c) keeps maps host-side forever.
+
+  **Dependency this puts on the critical path — weavy IR/codegen vocabulary for
+  pointer-chasing tree ops.** A persistent tree is *pointer-chasing* (node → child pointer
+  → child), and node-sharing across States means those pointers are **owned/shared
+  references into a persistent arena**, not flat offsets. The **stencil spike's finding —
+  that weavy's task/stencil vocabulary lacks a principled pointer/capability argument story
+  (no first-class way to pass a pointer-or-capability into a stencil and have the JIT
+  reason about its provenance/aliasing)** — is therefore now **on the critical path for
+  Q1(b)**, not a side concern. Building a machine-side tree requires weavy to express:
+  (i) a node pointer/handle as a first-class IR value with declared provenance, (ii)
+  load-through and store-through a node reference, (iii) structural-share retain/release
+  of a subtree (the persistent-arena refcount), and (iv) the path-copy-on-write shape. This
+  vocabulary gap gates the weavy-native tree; the charter must sequence it *before* gate 5
+  (map/record carry) and fund it as part of that sub-epoch, not assume it exists. Until it
+  does, (c) (host-side sort-at-finalize) is the honest interim — which is exactly why the
+  gate split (§5) keeps the array/whole-value wins independent of it.
 - **(c) Sort-at-finalize (no map carry).** Keep `canonical_map_pairs`' sort; do not carry
   a map midstate. Zero new machinery, realizes the current spec exactly. Arrays,
   whole-value slots, and projection field-reads still pay off (they are independent — gate
