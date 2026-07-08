@@ -60,10 +60,11 @@ surface, the *fused* execution shape, and the decision rule between shapes.
    `xs.fold(0, |acc, x| acc + x)` is not a loop that runs; it is a value that
    depends on `xs`. There is no iteration "statement" anywhere in this
    proposal and there never will be.
-2. **Semantically element-wise.** `ys = xs.map(f)` denotes an array whose
-   element `ys[i]` depends on `f(xs[i])` — and on nothing else. Projections
-   preserve partial dependency: a consumer of `ys[3]` depends on `f(xs[3])`
-   only. This is the semantic plane and it never changes.
+2. **Semantically element-wise.** `ys = xs.map(f)` denotes a collection
+   whose elements are exactly the `f`-images of `xs`'s elements — each
+   output element depends on one input element and nothing else. (What
+   *order* those elements are observable in is a separate question — §4,
+   and the answer is not "input order.")
 3. **Execution shape belongs to the partition.** Whether `map` runs as a
    fused island-interior loop or fans out as N demands is vixc's call under
    the as-if law — *chosen, not commanded*, invisible at the semantic plane,
@@ -143,30 +144,66 @@ The as-if consequences fall out for free and should become tripwires:
   fusion precondition. Where per-element demand is observable (effectful f),
   fusion was already forbidden. The theorem does the work.
 
-### 4. Ordering & determinism (Amos, 2026-07-08 — doctrine, not optional)
+### 4. Ordering & determinism (Amos, 2026-07-08 — doctrine; supersedes the first draft's two-rule split)
 
-The output of every combinator is deterministic regardless of execution
-shape. Fan-out may *evaluate* elements in any order, on any number of
-threads — that's the implementation plane. What is *observable* is fixed:
+**The ruling: positional order dies; automatic concurrency wins.** Amos,
+from the original vix design rounds: in a build-graph language you must
+give away either positional order or automatic concurrency — you cannot
+have both. Vix cares more about automatic concurrency, and about removing
+the footgun where everything gets serialized by accident, than about
+positional order.
 
-- **Ordered sources stay positional.** `ys = xs.map(f)` has `ys[i] =
-  f(xs[i])` — output order is input order, structurally, no matter what
-  order the fan-out completed in. Same for `filter`/`filter_map`/`flat_map`
-  (input order, gaps closed).
-- **Unordered aggregations observe in canonical value order.** Anything
-  that collects results without an inherited positional order — collecting
-  a set, map keys, glob results, tree merges — is observable in *increasing
-  (lexicographical) order of the values themselves*. This works because
-  every vix value is comparable, hashable, and serializable: a total order
-  always exists, so "sorted ascending" is always well-defined and
-  implementation-independent. The existing `array_collect` already does
-  sort-then-alloc — this doctrine is why, now stated as surface semantics
-  rather than an implementation habit.
-- Consequence: the fused/fanned differential oracle (§3) is only possible
-  *because* of this — bit-identical results require deterministic order.
-- Known violation to fix on contact: the rodin mission logged "`[String]`
-  returns unstable" — that instability is a bug under this doctrine, not
-  an accepted quirk.
+- **All aggregate observation is in canonical value order**: increasing
+  (lexicographic) order *of the values themselves*. This is always
+  well-defined because every vix value is comparable, hashable, and
+  serializable — a total order exists for anything. Fan-out may evaluate
+  in any order on any number of threads; observation order is canonical
+  regardless. Deterministic output with zero order bookkeeping.
+- **Positional order is opt-in, by carrying the position in the value.**
+  Wrap elements as `(index, value)` tuples: canonical order over those
+  tuples *is* index order (the index sorts first), so order-sensitive code
+  gets exact positional semantics back — paid for explicitly, visible in
+  the types. Candidate type alias: `Indexed<T> = (Int, T)`; `enumerate()`
+  produces it and therefore moves INTO the v1 combinator set.
+- The existing `array_collect` already does sort-then-alloc — this
+  doctrine is why; it now graduates from implementation habit to surface
+  semantics. The rodin-logged "`[String]` returns unstable" is a violation
+  of it — a bug, not a quirk.
+- The fused/fanned differential oracle (§3) is only possible because of
+  this: bit-identical results require deterministic order.
+
+**Consequences stated honestly, not hidden:**
+
+- `ys[i] = f(xs[i])` is dead. `ys = xs.map(f)` observes the f-images in
+  *their* canonical order; index `i` means "i-th smallest," which depends
+  on the ranking of all elements — so positional projection of a bare map
+  result no longer gives per-element partial dependency. Per-element
+  dependency survives through `enumerate` (project the tuple whose index
+  is `i`) or keyed access. Order-sensitive pipelines write
+  `xs.enumerate().map(|(i, x)| (i, f(x)))` — and the cost they're paying
+  (a serialization constraint) is now visible in the code instead of
+  ambient.
+- `fold` runs in canonical element order — deterministic always, but
+  source-order only if you folded over `Indexed<T>`. A non-commutative
+  fold over a bare collection is well-defined (canonical order), just not
+  "insertion order," which no longer exists as a concept.
+- `find_map` returns the first hit *in canonical order* — deterministic,
+  parallelizable (compute all candidates, take the least), and free of
+  the leftmost-bias that would have forced serial evaluation.
+- `any`/`all` are order-free and unaffected.
+
+**Open questions this raises** (for Amos, follow-up round):
+
+1. Does positional order die at *construction* too? A literal `[a, b, c]`
+   and today's `pop()` head/tail decomposition are positional concepts.
+   Options: (i) `[T]` stays a positional structure and only *derived*
+   aggregates (map/filter/collect results) are canonical — two collection
+   flavors; (ii) positional order dies everywhere and `[a, b, c]` denotes
+   a bag observed canonically, with `pop()` meaning "remove the least" —
+   one rule, bigger corpus impact. The doctrine's logic leans (ii); the
+   corpus rewrite cost leans (i).
+2. If (ii): is `Indexed<T>` a blessed alias with literal/constructor
+   support, or just a convention?
 
 ### 5. `for` sugar — deferred, with a lean
 
