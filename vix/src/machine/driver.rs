@@ -28,7 +28,7 @@
 
 use std::cell::RefCell;
 use std::cmp::Ordering;
-use std::collections::{BTreeMap, BTreeSet, HashMap};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::fmt;
 use std::hash::Hash;
 #[cfg(any(test, feature = "jit"))]
@@ -818,6 +818,25 @@ type CanonMemoKey = (u64, Vec<ContentHash>);
 type ProjectionCandidateKey = (u64, Vec<ProjectionArgKey>);
 #[cfg(test)]
 pub type MapWordRow = (String, i64, String, i64, Option<i64>);
+
+#[derive(Default)]
+struct InFlightInvocations {
+    keys: HashSet<CanonMemoKey>,
+}
+
+impl InFlightInvocations {
+    fn is_running(&self, key: &CanonMemoKey) -> bool {
+        self.keys.contains(key)
+    }
+
+    fn started(&mut self, key: CanonMemoKey) -> bool {
+        self.keys.insert(key)
+    }
+
+    fn finished(&mut self, key: &CanonMemoKey) -> bool {
+        self.keys.remove(key)
+    }
+}
 
 #[derive(Clone, Debug)]
 struct MemoEntry {
@@ -2689,9 +2708,11 @@ impl Driver {
         // into `executions`) with the slot to fill.
         let mut executions: Vec<Option<Execution>> = Vec::new();
         let mut waiters: HashMap<CanonMemoKey, Vec<(usize, usize)>> = HashMap::new();
+        let mut in_flight = InFlightInvocations::default();
         let mut runnable: Vec<usize> = Vec::new();
 
         let root = self.spawn(&mut executions, fn_ref, key.clone(), &args)?;
+        debug_assert!(in_flight.started(key.clone()));
         runnable.push(root);
 
         while let Some(ix) = runnable.pop() {
@@ -2700,6 +2721,7 @@ impl Driver {
             match requests {
                 Burst::Done(value) => {
                     let done_key = exec.key.clone();
+                    debug_assert!(in_flight.finished(&done_key));
                     let mut value = value;
                     let return_schema = self.lowered(exec.fn_ref).return_schema.clone();
                     if !schema_is_inline_word(&self.schemas, &return_schema) {
@@ -2970,15 +2992,23 @@ impl Driver {
                             exec.read_set.extend(&remapped);
                         } else {
                             exec.feeds.insert(req.input_slot, req_key.clone());
-                            let already_running = waiters.contains_key(&req_key)
-                                || executions.iter().flatten().any(|e| e.key == req_key);
+                            let already_running = in_flight.is_running(&req_key);
+                            debug_assert!(
+                                !waiters.contains_key(&req_key) || already_running,
+                                "waiter without matching in-flight invocation"
+                            );
                             waiters
                                 .entry(req_key.clone())
                                 .or_default()
                                 .push((req.caller, req.input_slot));
                             if !already_running {
-                                let child =
-                                    self.spawn(&mut executions, req.fn_ref, req_key, &req.args)?;
+                                let child = self.spawn(
+                                    &mut executions,
+                                    req.fn_ref,
+                                    req_key.clone(),
+                                    &req.args,
+                                )?;
+                                debug_assert!(in_flight.started(req_key));
                                 runnable.push(child);
                             }
                         }
@@ -11033,6 +11063,42 @@ mod tests {
     use weavy::mem::Layout;
     use weavy::mem::declared as declared_mem;
     use weavy::task::{ArgCopy, Fn as TaskFn, Op};
+
+    fn memo_key_for_test(fn_hash: u64, arg: u8) -> CanonMemoKey {
+        (fn_hash, vec![ContentHash::from([arg; 32])])
+    }
+
+    #[test]
+    fn in_flight_rejects_duplicate_registration_until_finish() {
+        let key = memo_key_for_test(1, 7);
+        let mut in_flight = InFlightInvocations::default();
+
+        assert!(!in_flight.is_running(&key));
+        assert!(in_flight.started(key.clone()));
+        assert!(in_flight.is_running(&key));
+        assert!(!in_flight.started(key.clone()));
+        assert!(in_flight.is_running(&key));
+        assert!(in_flight.finished(&key));
+        assert!(!in_flight.finished(&key));
+        assert!(!in_flight.is_running(&key));
+    }
+
+    #[test]
+    fn in_flight_finish_reopens_key_for_later_invocation() {
+        let key = memo_key_for_test(1, 7);
+        let other = memo_key_for_test(1, 8);
+        let mut in_flight = InFlightInvocations::default();
+
+        assert!(in_flight.started(key.clone()));
+        assert!(in_flight.started(other.clone()));
+        assert!(in_flight.finished(&key));
+
+        assert!(!in_flight.is_running(&key));
+        assert!(in_flight.is_running(&other));
+
+        assert!(in_flight.started(key.clone()));
+        assert!(in_flight.is_running(&key));
+    }
 
     fn seed_memo(driver: &mut Driver, key: CanonMemoKey, value: i64) {
         let args = key.1.iter().map(|_| 0).collect();
