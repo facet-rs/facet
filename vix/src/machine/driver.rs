@@ -1445,11 +1445,7 @@ impl ValueStore {
         schemas: &SchemaTables,
         taint: Option<StructuralTaint>,
     ) -> (i64, bool) {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"vix-raw-value");
-        update_schema_name(&mut hasher, schemas, schema);
-        hasher.update(&bytes);
-        let content_hash = hash_with_taint(finish_hash(hasher), &taint);
+        let content_hash = raw_value_content_hash(schema, &bytes, schemas, &taint);
         let key = (schema.to_string(), HandleTier::Ready, content_hash);
         if let Some(handle) = self.by_content.get(&key).copied() {
             return (handle, true);
@@ -9646,6 +9642,19 @@ fn canonical_scalar_hash(schemas: &SchemaTables, schema: &str, word: i64) -> Con
     finish_hash(hasher)
 }
 
+fn raw_value_content_hash(
+    schema: &str,
+    bytes: &[u8],
+    schemas: &SchemaTables,
+    taint: &Option<StructuralTaint>,
+) -> ContentHash {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"vix-raw-value");
+    update_schema_name(&mut hasher, schemas, schema);
+    hasher.update(bytes);
+    hash_with_taint(finish_hash(hasher), taint)
+}
+
 fn is_projectable_schema_static(
     schema: &str,
     descriptors: &DescriptorMap,
@@ -9953,7 +9962,7 @@ fn projection_observation_hash(
 }
 
 fn doc_get_observation_hash(
-    store: &ValueStore,
+    store: &mut ValueStore,
     descriptors: &DescriptorMap,
     schemas: &SchemaTables,
     schema_tables: &SchemaTables,
@@ -9961,6 +9970,42 @@ fn doc_get_observation_hash(
     key: &str,
 ) -> Result<ContentHash, String> {
     if let Some(input) = oci_virtual_files_input(store, descriptors, handle)? {
+        return doc_get_observation_hash_via_allocation(
+            store,
+            descriptors,
+            schemas,
+            schema_tables,
+            handle,
+            key,
+            Some(input),
+        );
+    }
+
+    let payload = doc_payload(store, descriptors, handle)?;
+    let DocPayload::Map(map) = payload else {
+        return Ok(option_none_content_hash("Realized<Doc>", schema_tables));
+    };
+    let key_hash = raw_value_content_hash("String", key.as_bytes(), schemas, &None);
+    store.map_get_option_hash_by_key_hash(
+        map,
+        "String",
+        key_hash,
+        "Realized<Doc>",
+        schemas,
+        schema_tables,
+    )
+}
+
+fn doc_get_observation_hash_via_allocation(
+    store: &ValueStore,
+    descriptors: &DescriptorMap,
+    schemas: &SchemaTables,
+    schema_tables: &SchemaTables,
+    handle: i64,
+    key: &str,
+    virtual_input: Option<i64>,
+) -> Result<ContentHash, String> {
+    if let Some(input) = virtual_input {
         let tree = oci_tree_from_store(store, schemas, input)?;
         let layout = super::oci::parse_layout(tree)?;
         let projected = super::oci::project_file(&layout, key)?;
@@ -11308,6 +11353,97 @@ mod tests {
 
     fn memo_key_for_test(fn_hash: u64, arg: u8) -> CanonMemoKey {
         (fn_hash, vec![ContentHash::from([arg; 32])])
+    }
+
+    fn doc_observation_test_tables() -> (DescriptorMap, SchemaTables) {
+        let tables = crate::module::load_module_tables_from_modules(
+            "root",
+            &BTreeMap::from([("root".to_string(), "pub fn main() -> Int { 0 }".to_string())]),
+        )
+        .unwrap();
+        let mut schemas = tables.schemas;
+        schemas.register_frame_names([
+            "String".to_string(),
+            "Doc".to_string(),
+            "Map<String,Doc>".to_string(),
+            "Realized<Doc>".to_string(),
+            "Option<Realized<Doc>>".to_string(),
+        ]);
+        let mut descriptors = tables.descriptors;
+        descriptors.insert_named(
+            &schemas,
+            "Doc",
+            declared_mem::declared_enum(
+                schemas.legacy_ref("Doc"),
+                vec![
+                    vec![],
+                    vec![declared_mem::i64_(schemas.legacy_ref("DocBool"))],
+                    vec![declared_mem::i64_(schemas.legacy_ref("DocInt"))],
+                    vec![declared_mem::f64_(schemas.legacy_ref("DocFloat"))],
+                    vec![declared_mem::handle(
+                        schemas.legacy_ref("DocString"),
+                        schemas.legacy_ref("String"),
+                    )],
+                    vec![declared_mem::handle(
+                        schemas.legacy_ref("DocArray"),
+                        schemas.legacy_ref("Array<Doc>"),
+                    )],
+                    vec![declared_mem::handle(
+                        schemas.legacy_ref("DocMap"),
+                        schemas.legacy_ref("Map<String,Doc>"),
+                    )],
+                    vec![declared_mem::handle(
+                        schemas.legacy_ref("DocVirtual"),
+                        schemas.legacy_ref("String"),
+                    )],
+                    vec![declared_mem::handle(
+                        schemas.legacy_ref("DocBlob"),
+                        schemas.legacy_ref("Blob"),
+                    )],
+                ],
+            ),
+        );
+        (descriptors, schemas)
+    }
+
+    #[test]
+    fn doc_get_observation_direct_hash_matches_allocating_path() {
+        let (descriptors, schemas) = doc_observation_test_tables();
+        let store = RefCell::new(ValueStore::default());
+        let doc = alloc_doc_from_value(
+            &store,
+            &descriptors,
+            &schemas,
+            &schemas,
+            Value::Map(BTreeMap::from([(
+                Value::Str("name".to_string()),
+                Value::Str("facet".to_string()),
+            )])),
+        )
+        .unwrap();
+
+        for key in ["name", "missing"] {
+            let allocating = doc_get_observation_hash_via_allocation(
+                &store.borrow(),
+                &descriptors,
+                &schemas,
+                &schemas,
+                doc,
+                key,
+                None,
+            )
+            .unwrap();
+            let direct = doc_get_observation_hash(
+                &mut store.borrow_mut(),
+                &descriptors,
+                &schemas,
+                &schemas,
+                doc,
+                key,
+            )
+            .unwrap();
+            assert_eq!(direct, allocating, "{key}");
+        }
     }
 
     #[test]
