@@ -829,6 +829,22 @@ fn pinned_sparse_row_parses_in_cargo_manifest_module() -> Result<(), String> {
 }
 
 #[test]
+fn typed_sparse_row_missing_required_field_reports_offending_row() -> Result<(), String> {
+    assert_sparse_row_schema_error(
+        r#"{"name":"blake3","deps":[],"features":{},"yanked":false}"#,
+        "missing field `vers` for SparseIndexRow",
+    )
+}
+
+#[test]
+fn typed_sparse_row_wrong_field_type_reports_offending_row() -> Result<(), String> {
+    assert_sparse_row_schema_error(
+        r#"{"name":"blake3","vers":"0.0.0","deps":[],"features":[],"yanked":false}"#,
+        "expected Map<String,Array<String>>, got []",
+    )
+}
+
+#[test]
 fn sparse_feature_closure_preserves_hyphenated_seed_feature() -> Result<(), String> {
     let mut machine = manifest_machine()?;
     let rows = sparse_snapshot_jsonl_for_crates(BTreeSet::from(["tokio".to_owned()]), "")?;
@@ -1394,6 +1410,31 @@ fn manifest_machine() -> Result<Machine, String> {
 
 fn manifest_machine_with_lane(lane: Lane) -> Result<Machine, String> {
     Machine::load_with_lane(&format!("{RODIN_SOURCE}\n\n{SOURCE}"), lane)
+}
+
+fn assert_sparse_row_schema_error(row: &str, expected_fragment: &str) -> Result<(), String> {
+    let mut machine = manifest_machine()?;
+    let row_arg = intern_string(&mut machine, row)?;
+    match machine.demand_i64("workspace_sparse_row_count", vec![row_arg]) {
+        Ok(count) => Err(format!(
+            "typed sparse row schema mismatch was silently accepted as count {count}"
+        )),
+        Err(err) => {
+            for fragment in [
+                "typed Json parse into SparseIndexRow failed",
+                expected_fragment,
+                "offending input:",
+                row,
+            ] {
+                if !err.contains(fragment) {
+                    return Err(format!(
+                        "schema error did not include `{fragment}`\nerror: {err}"
+                    ));
+                }
+            }
+            Ok(())
+        }
+    }
 }
 
 fn detailed_dep(
