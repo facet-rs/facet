@@ -2653,8 +2653,9 @@ impl Driver {
             .descriptors
             .get(&entry.schema)
             .ok_or_else(|| format!("descriptor for schema `{}`", entry.schema))?;
+        let field = field_descriptor(descriptor, &entry.bytes, field_index);
         let offset = field_offset(descriptor, &entry.bytes, field_index);
-        Ok(read_frame_word(&entry.bytes, offset))
+        Ok(read_word_at(&entry.bytes, offset, field.layout.size))
     }
 
     #[cfg(test)]
@@ -3451,8 +3452,9 @@ impl Driver {
                                             descriptors.get(schema).unwrap_or_else(|| {
                                                 panic!("descriptor for schema `{schema}`")
                                             });
+                                        let field = field_descriptor(descriptor, bytes, field_index);
                                         let offset = field_offset(descriptor, bytes, field_index);
-                                        Some(read_frame_word(bytes, offset))
+                                        Some(read_word_at(bytes, offset, field.layout.size))
                                     }
                                     _ => None,
                                 })
@@ -3499,9 +3501,9 @@ impl Driver {
                 let descriptor = descriptors
                     .get(&entry.schema)
                     .unwrap_or_else(|| panic!("descriptor for schema `{}`", entry.schema));
-                let offset = field_offset(descriptor, &entry.bytes, field_index);
-                let value = read_frame_word(&entry.bytes, offset);
                 let field = field_descriptor(descriptor, &entry.bytes, field_index);
+                let offset = field_offset(descriptor, &entry.bytes, field_index);
+                let value = read_word_at(&entry.bytes, offset, field.layout.size);
                 let observed = canonical_word_hash_for_descriptor(&store, schemas, field, value);
                 let projection_context = ProjectionRecordContext {
                     arg_schemas: &exec_arg_schemas,
@@ -10399,7 +10401,7 @@ fn projection_observation_hash(
                 .ok_or_else(|| format!("descriptor for schema `{schema}`"))?;
             let field = field_descriptor(descriptor, &entry.bytes, *field_index);
             let offset = field_offset(descriptor, &entry.bytes, *field_index);
-            let value = read_frame_word(&entry.bytes, offset);
+            let value = read_word_at(&entry.bytes, offset, field.layout.size);
             Ok(canonical_word_hash_for_descriptor(
                 store, schemas, field, value,
             ))
