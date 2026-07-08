@@ -328,6 +328,8 @@ fn assert_object_magic(bytes: &[u8]) -> Result<(), String> {
 //   modeled strings while real cc/ar emit host object/archive/executable bytes;
 // - compare serving as a class, so tier variants remain semantic while payload
 //   counters can differ across substrate read-set granularity;
+// - drop ParkedOn events, because they are scheduler wake/parking plumbing and
+//   can differ between synchronous fake execution and async real-process waits;
 // - trim a trailing completion for runs whose output is later consumed as an
 //   explicit single-file mounted input: the fake backend has computed that file
 //   but does not log completion for file projection, while real-process must
@@ -359,9 +361,7 @@ fn normalize_exec_substrate_trace(trace: &[DriveEvent]) -> NormalizedTrace {
             DriveEvent::Spawned { fn_hash } => {
                 events.push(NormalizedEvent::Spawned { fn_hash: *fn_hash });
             }
-            DriveEvent::ParkedOn { fn_hash } => {
-                events.push(NormalizedEvent::ParkedOn { fn_hash: *fn_hash });
-            }
+            DriveEvent::ParkedOn { .. } => {}
             DriveEvent::Completed { fn_hash } => {
                 events.push(NormalizedEvent::Completed { fn_hash: *fn_hash });
             }
@@ -580,9 +580,6 @@ enum NormalizedEvent {
         verified: usize,
     },
     Spawned {
-        fn_hash: u64,
-    },
-    ParkedOn {
         fn_hash: u64,
     },
     Completed {

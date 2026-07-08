@@ -1350,6 +1350,15 @@ struct StartedFetchRequest {
     run: PendingFetchRun,
 }
 
+#[derive(Default)]
+struct PendingWork {
+    run_waiters: BTreeMap<u64, Vec<(usize, TreeProjectRequest)>>,
+    fetch_waiters: BTreeMap<u64, Vec<(usize, usize)>>,
+    pending_fetches: BTreeMap<u64, PendingFetchRun>,
+    in_flight_fetches: HashMap<String, u64>,
+    next_fetch_run_id: u64,
+}
+
 #[derive(Clone, Debug)]
 enum ExecMount {
     Concrete(crate::exec::Mount),
@@ -2857,11 +2866,7 @@ impl Driver {
         let mut executions: Vec<Option<Execution>> = Vec::new();
         let mut waiters: IdentityHashMap<CanonMemoKey, Vec<(usize, usize)>> =
             IdentityHashMap::default();
-        let mut run_waiters: BTreeMap<u64, Vec<(usize, TreeProjectRequest)>> = BTreeMap::new();
-        let mut fetch_waiters: BTreeMap<u64, Vec<(usize, usize)>> = BTreeMap::new();
-        let mut pending_fetches: BTreeMap<u64, PendingFetchRun> = BTreeMap::new();
-        let mut in_flight_fetches: HashMap<String, u64> = HashMap::new();
-        let mut next_fetch_run_id = 0_u64;
+        let mut pending_work = PendingWork::default();
         let mut in_flight = InFlightInvocations::default();
         let mut runnable: Vec<usize> = Vec::new();
 
@@ -2871,28 +2876,12 @@ impl Driver {
         runnable.push(root);
 
         loop {
-            self.harvest_pending_runs(
-                false,
-                &mut executions,
-                &mut runnable,
-                &mut run_waiters,
-                &mut fetch_waiters,
-                &mut pending_fetches,
-                &mut in_flight_fetches,
-            )?;
+            self.harvest_pending_runs(false, &mut executions, &mut runnable, &mut pending_work)?;
             let Some(ix) = runnable.pop() else {
-                if run_waiters.is_empty() && pending_fetches.is_empty() {
+                if pending_work.run_waiters.is_empty() && pending_work.pending_fetches.is_empty() {
                     break;
                 }
-                self.harvest_pending_runs(
-                    true,
-                    &mut executions,
-                    &mut runnable,
-                    &mut run_waiters,
-                    &mut fetch_waiters,
-                    &mut pending_fetches,
-                    &mut in_flight_fetches,
-                )?;
+                self.harvest_pending_runs(true, &mut executions, &mut runnable, &mut pending_work)?;
                 continue;
             };
             let mut exec = executions[ix].take().expect("runnable execution exists");
@@ -3005,20 +2994,25 @@ impl Driver {
                     }
                     for req in fetch_requests {
                         let pending = self.start_fetch_request(req)?;
-                        if let Some(&run_id) = in_flight_fetches.get(&pending.key) {
-                            fetch_waiters
+                        if let Some(&run_id) = pending_work.in_flight_fetches.get(&pending.key) {
+                            pending_work
+                                .fetch_waiters
                                 .entry(run_id)
                                 .or_default()
                                 .push((ix, pending.input_slot));
                         } else {
-                            let run_id = next_fetch_run_id;
-                            next_fetch_run_id = next_fetch_run_id.saturating_add(1);
-                            fetch_waiters
+                            let run_id = pending_work.next_fetch_run_id;
+                            pending_work.next_fetch_run_id =
+                                pending_work.next_fetch_run_id.saturating_add(1);
+                            pending_work
+                                .fetch_waiters
                                 .entry(run_id)
                                 .or_default()
                                 .push((ix, pending.input_slot));
-                            in_flight_fetches.insert(pending.key.clone(), run_id);
-                            pending_fetches.insert(run_id, pending.run);
+                            pending_work
+                                .in_flight_fetches
+                                .insert(pending.key.clone(), run_id);
+                            pending_work.pending_fetches.insert(run_id, pending.run);
                         }
                     }
                     for req in doc_parse_requests {
@@ -3061,7 +3055,8 @@ impl Driver {
                     }
                     for req in project_requests {
                         if let Some(run_id) = self.project_request_pending_run(req.tree)? {
-                            run_waiters
+                            pending_work
+                                .run_waiters
                                 .entry(run_id)
                                 .or_default()
                                 .push((ix, TreeProjectRequest::Tree(req)));
@@ -3082,7 +3077,8 @@ impl Driver {
                     }
                     for req in text_project_requests {
                         if let Some(run_id) = self.project_request_pending_run(req.tree)? {
-                            run_waiters
+                            pending_work
+                                .run_waiters
                                 .entry(run_id)
                                 .or_default()
                                 .push((ix, TreeProjectRequest::Text(req)));
@@ -3263,21 +3259,18 @@ impl Driver {
         block: bool,
         executions: &mut [Option<Execution>],
         runnable: &mut Vec<usize>,
-        run_waiters: &mut BTreeMap<u64, Vec<(usize, TreeProjectRequest)>>,
-        fetch_waiters: &mut BTreeMap<u64, Vec<(usize, usize)>>,
-        pending_fetches: &mut BTreeMap<u64, PendingFetchRun>,
-        in_flight_fetches: &mut HashMap<String, u64>,
+        pending_work: &mut PendingWork,
     ) -> Result<(), String> {
         let (ready_runs, ready_fetches) = loop {
             let mut ready_runs = Vec::new();
-            for &run_id in run_waiters.keys() {
+            for &run_id in pending_work.run_waiters.keys() {
                 if self.poll_run_completion(run_id)? {
                     ready_runs.push(run_id);
                 }
             }
 
             let mut ready_fetches = Vec::new();
-            for (&run_id, run) in pending_fetches.iter() {
+            for (&run_id, run) in pending_work.pending_fetches.iter() {
                 match run.completion.try_recv() {
                     Ok(result) => ready_fetches.push((run_id, result)),
                     Err(mpsc::TryRecvError::Empty) => {}
@@ -3297,7 +3290,7 @@ impl Driver {
 
         let mut woken = BTreeSet::new();
         for run_id in ready_runs {
-            let Some(waiters) = run_waiters.remove(&run_id) else {
+            let Some(waiters) = pending_work.run_waiters.remove(&run_id) else {
                 continue;
             };
             for (waiter_ix, request) in waiters {
@@ -3310,12 +3303,13 @@ impl Driver {
         }
 
         for (run_id, result) in ready_fetches {
-            let run = pending_fetches
+            let run = pending_work
+                .pending_fetches
                 .remove(&run_id)
                 .expect("ready fetch run exists");
-            in_flight_fetches.remove(&run.key);
+            pending_work.in_flight_fetches.remove(&run.key);
             let value = self.finish_fetch_run(run, result?)?;
-            if let Some(waiters) = fetch_waiters.remove(&run_id) {
+            if let Some(waiters) = pending_work.fetch_waiters.remove(&run_id) {
                 for (waiter_ix, input_slot) in waiters {
                     let exec = executions[waiter_ix]
                         .as_mut()
