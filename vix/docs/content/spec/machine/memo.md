@@ -7,12 +7,37 @@ Memoization: keys, hit economics, and the three-tier verified-reuse ladder
 preserved from the current driver (the part of the old machine that was
 right).
 
+> r[machine.memo.indexed-by-location]
+>
+> [DESIGN, round 10 — the rule round 5 promised and never wrote] **The memo is
+> INDEXED by location**, not by content. A location is the path of *names* from the
+> demand root: content-free, known at demand time, and unchanged when a file's
+> bytes change.
+>
+> A `DemandKey` (`machine.memo.demand-key`) is a digest over argument *content*
+> hashes. If it were the index, the two-step dance could not happen: the input
+> changed, so the key changed, so yesterday's entry — the very one whose read-set we
+> need — is filed under a name we no longer know. `three-planes.md` argues this by
+> name, and until now no rule reflected it.
+>
+> So: **the index is the location; `DemandKey` is a field of the entry.** An entry
+> carries `(recipe identity, read-set, result)`. Lookup nominates by location, then
+> validates: an exact `DemandKey` match is a tier-1 hit; otherwise the read-set is
+> checked against the world (tier-2), and a change that misses the read-set reuses
+> the result. This is why editing a file nobody read invalidates nothing, and it is
+> what `machine.placement.trees-cross-as-grants` depends on.
+>
+> Nomination is never validation: a bad location costs a recompute, never a stale
+> answer, so the location function is cost-model plane and freely revisable.
+
 > r[machine.memo.demand-key]
 >
-> [DESIGN] The memo is keyed by `DemandKey`: a fixed-size digest formed by a
+> [DESIGN] A `DemandKey` is a fixed-size digest formed by a
 > framed combine of the closure identity and argument identities (each argument
 > identity is the pair `(SchemaRef, ContentHash)`, per
-> `machine.identity.value-identity-pair`), computed once at demand entry. The
+> `machine.identity.value-identity-pair`), computed once at demand entry. It is the
+> **recipe identity** carried on a memo entry — NOT the memo's index
+> (`machine.memo.indexed-by-location`). The
 > heap-allocated tuple key and its per-lookup element hashing are banned. To
 > prevent a digest collision serving a wrong value, each memo entry also
 > carries the exact key preimage `(closure identity, arity,

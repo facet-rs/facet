@@ -77,8 +77,9 @@ Distinguish two boundaries that are easy to fuse and must not be:
 > moves two hundred.
 >
 > Corollary: the previous run's read-set is a **prefetch plan**, and changing a
-> file nobody read invalidates nothing — the memo is indexed by location, which is
-> content-free, and the entry it finds carries a read-set the change misses.
+> file nobody read invalidates nothing — the memo is indexed by location
+> (`machine.memo.indexed-by-location`), which is content-free, and the entry it
+> finds carries a read-set the change misses.
 
 > r[machine.placement.kill-is-laziness]
 >

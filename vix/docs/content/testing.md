@@ -119,8 +119,9 @@ fn ordering_is_not_what_you_think() -> Stream<Check> {
 }
 ```
 
-A stream's order is *availability* order. Nothing about the source position of a
-`yield` survives into the stream. This is the single most surprising thing in the
+A stream's order is *availability* order. Each check keeps its own identity — a
+generator's elements are keyed by where they were described — but **nothing about
+the source position of a `yield` determines when it arrives.** This is the single most surprising thing in the
 language for a reader coming from any other generator, and it is load-bearing: it
 is what lets the harness report failures the instant they are known, and it is why
 a stream is not a lazy list.

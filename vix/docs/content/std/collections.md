@@ -131,9 +131,11 @@ src.glob("*.c")                    // Stream<Path, Path>
 [3, 2, 1].stream()                 // Stream<Int, Int>, keys 0, 1, 2
 ```
 
-`Stream<T>` is sugar for `Stream<Int, T>`. A generator's keys are the ordinals of
-its `yield` sites — static, known before anything runs, and *not* the order the
-elements arrive in. That distinction is the whole point of a stream, and the
+`Stream<T>` is a stream whose keys you do not write. A generator's element is keyed
+by its **location** — where in the demand graph it was described — which is unique
+even when one `yield` site fires a thousand times inside a recursion, content-free,
+and known before anything runs. It is emphatically *not* the order elements arrive
+in. That distinction is the whole point of a stream, and the
 [testing chapter](/vix/testing) leans on it.
 
 **Coming from Rust/JS**: this is `enumerate()`, except you never call it, and it
