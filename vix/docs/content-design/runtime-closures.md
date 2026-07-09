@@ -34,6 +34,15 @@ probe output — not the tool's hash — enters exec identity.
 
 ## We are not Nix, and the difference is upstream of everything
 
+> **UNDER VERIFICATION.** The claim below that Nix "may not change the software" is
+> almost certainly **wrong** — nixpkgs patches liberally, `patchelf` and
+> `autoPatchelfHook` exist, derivations carry `patches = [...]`. Two agents are
+> checking why Nix actually requires a global store path (binary substitution?
+> closure discovery by scanning? relocation?), and this section will be rewritten to
+> whatever survives. Do not quote it. The *conclusion* — that we do not need a global
+> path, because unprivileged installs have no `/nix` and the mount root differs across
+> platforms — does not depend on the disputed premise.
+
 Nix packages *existing* software and plays by its rules. It may not change the
 software, so its only lever is the filesystem: `/nix/store/<hash>-name`, byte-identical
 on every machine on earth, so that a path baked into a binary resolves everywhere.
