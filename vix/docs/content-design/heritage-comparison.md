@@ -220,10 +220,15 @@ cexec [ar, "rc", @out/liblua.a, ..objs] |> cexec [ranlib, _]
 6. **Effect tags on functions** (`#fs`, and grammar-era `#capability` on
    `Fn` types) — two concrete prior surfaces for the still-open effect
    fork.
-7. **Exec observers** — the March exec model ships a closure to observe
-   the process (streams, progressive output); the ratchet's `exec!`
-   returns a plain record. Progressive trees replaced part of this;
-   whether an observer surface survives is undecided, not decided.
+7. **Exec observers** — **SETTLED, round 12: no observer surface survives.**
+   The March model shipped a closure to observe the process; `exec` now
+   returns `ExecOutcome { tree, stdout, stderr }` whose stream fields are
+   codata, and you observe them by **placing the surrounding block**
+   (`r[machine.primitive.exec-outcome]`,
+   `r[machine.primitive.exec-is-placement-agnostic]`). The observer closure
+   is the *lowering* of that placed block, not something anyone writes.
+   Nothing to salvage as syntax; the salvaged *finding* is that readiness is
+   a protocol fact, not a filesystem fact (`/vix-design/exec-observers`).
 8. **Multi-host surface** — executor classes, capability version queries.
    vixd territory now, but the zoo had SYNTAX for it.
 9. `partial` application; record-destructuring `let`; `Symbol` type —

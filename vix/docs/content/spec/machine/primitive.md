@@ -195,8 +195,10 @@ primitives reference by identity.
 > (`machine.error.failure-is-a-value`): the machine attaches subject, span and demand
 > chain; the payload carries the status and the collected stderr.
 >
-> Where a nonzero exit is a legitimate ANSWER — `grep` returning 1 for "no match" — the
-> **command grammar must declare it**. Grammars already type argv on the way in.
+> Where a nonzero exit is a legitimate ANSWER — `grep` returning 1 for "no match" — that
+> answer must come from somewhere, and the only place it can come from is the **command
+> grammar**, which already types argv on the way in. That is the requirement the schema
+> below must eventually satisfy; it is **not** a facility that exists today.
 >
 > **OPEN, and blocking: how an accepted exit code becomes a typed result.**
 > `ExecOutcome { tree, stdout, stderr }` carries no status, so with `grep`'s 0 and 1 both

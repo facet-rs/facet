@@ -251,9 +251,13 @@ ledger. Write no code that depends on yield position.
   ```vix
   struct ExecOutcome { tree: Tree, stdout: Stream<Int,String>, stderr: Stream<Int,String> }
   ```
-  **No exit status.** A nonzero exit is a `fail`; where a nonzero exit is a legitimate
-  answer (`grep` -> 1), the command grammar declares it. `out.status == 0` does not exist.
+  **No exit status.** A nonzero exit is a `fail`. `out.status == 0` does not exist.
   `stdout`/`stderr` are codata *fields*: consume lines while the process runs.
+  **A command grammar may currently declare only which statuses FAIL.** Turning an
+  *accepted* nonzero status (`grep` → 1 for "no match") into a typed result is **OPEN
+  and blocking**: `ExecOutcome` carries no status, so `Match` and `NoMatch` would be
+  indistinguishable. Do not port as if a grammar could declare an answer
+  (`r[machine.primitive.exit-status-is-not-a-value]`).
 - **`exec` and `place` are decoupled and neither mentions the other.** There is no
   `observer:` parameter. To process a stream remotely, **place the surrounding block**.
   (The March observer closure is the *lowering* of that block, not a surface construct.)
@@ -294,11 +298,21 @@ ledger. Write no code that depends on yield position.
   > identity is not knowable beforehand; it acquires one where it is computed and crosses
   > back (`r[machine.placement.results-cross-back]`).
 
-- **`Target::host()` is DEAD.** Three machines wore one word: *target* (semantic —
-  changes the value), *host* (cost-model), *executor* (cost-model). The host is
-  not a fact a program may read; it is an **input the demand root supplies**. The
-  CLI defaults `--target` to the host. The recipe receives a `Target` value.
-  An ambient read is an observation; an input is a pin.
+- **`Target::host()` is DEAD.** Three machines wore one word, and they are three
+  different planes (`r[machine.placement.capability-requirements-are-derived]`):
+  1. **target** — what the artifact is FOR. **Semantic**; it changes the value.
+  2. **the selected toolchain's host / execution ABI** — including Cargo's `HOST`.
+     A **pinned semantic property of the toolchain** (part of what `Rustc::acquire`
+     names; it enters exec identity via `r[machine.primitive.exec-probed-toolchain]`)
+     **and** a scheduler **admissibility** constraint. **Not cost-model.**
+  3. **physical executor** — which admissible machine actually ran it. Cost-model,
+     unobservable, absent from the receipt.
+
+  Neither (1) nor (2) is a fact a program may read from its surroundings: the target
+  is an **input the demand root supplies**, and the execution ABI comes from the
+  toolchain you named. The CLI defaults `--target` to the machine it runs on — that
+  defaulting lives **outside the program**. An ambient read is an observation; an
+  input is a pin.
 - **A tree crosses as an identity plus a mount grant.** Nothing is copied. Only
   the blobs actually read ever move; every read *and every miss* is recorded
   (`r[machine.receipt.witness-reads]`, absence-is-an-observation). Changing a file

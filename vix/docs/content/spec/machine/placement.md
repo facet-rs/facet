@@ -69,7 +69,9 @@ Distinguish two boundaries that are easy to fuse and must not be:
 >    this contract.
 > 2. **Host-specific locality.** Only **ambient** closures (Xcode, MSVC, the platform's
 >    system libraries) impose this: they exist solely where a daemon advertises their
->    fingerprint, and the node holding them is the only node that can run them.
+>    fingerprint, so they are runnable exactly on **the set of nodes advertising that
+>    fingerprint** — which may be empty, one, or many. Nothing about an ambient closure
+>    makes it unique to a single node; what constrains it is the advertisement.
 >
 > So a materialized closure admits nodes that **satisfy its execution contract**; an ambient
 > closure admits the nodes that **advertise its fingerprint** — a set, possibly of more than

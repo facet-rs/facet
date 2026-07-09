@@ -18,7 +18,7 @@ not expected to parse or run today. Correctness means preserving the meaning of
 - At-most-one-positional is painful in branch search: `try_candidate` at `vix/corpus-next/rodin.vix:1054` and its call at `:1050` carry `state`, `target`, `pkg`, `version`, and `rest`; this reads like a continuation record. PROPOSAL: introduce `CandidateAttempt`.
 - At-most-one-positional is also painful in the sparse bridge: `add_required_dep_clauses` at `vix/corpus-next/index.vix:274` still has five named fields. PROPOSAL: introduce `RequiredDepClause` beside `SelectedGuardClause`.
 - The absence of `Multiset` does not hurt the Rodin meaning. `features`, `learned`, `Region.packages`, and `Region.features` were uniqueness-maintained sets; `Set.insert` at `vix/corpus-next/rodin.vix:369`, `:686`, `:862`, and `:871` is clearer than sorted-array round trips.
-- Stdout still has no home at `vix/corpus-next/rodin.vix:497`: the port keeps `--stdout {p"cfg.stdout"}` exactly because the surface has no stdout tree/channel model. PROPOSAL: define an exec stdout projection or a typed captured-output field.
+- ~~Stdout has no home~~ **RESOLVED, round 12.** `exec` returns `ExecOutcome { tree, stdout: Stream<Int,String>, stderr }` (`r[machine.primitive.exec-outcome]`); `stdout` is a codata field, not a file. The proposal to "define an exec stdout projection or a typed captured-output field" is **answered by the returned struct**, not owed. **Still owed:** `vix/corpus-next/rodin.vix:497` keeps `--stdout {p"cfg.stdout"}` and must be re-ported onto `out.stdout` — a mechanical change, blocked on nothing.
 
 ## Gaps And Awkwardness
 

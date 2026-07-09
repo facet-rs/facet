@@ -24,15 +24,40 @@ title = "exec observers: the zoo feature trees don't replace"
 >    admissible only when the command grammar *promises* monotonic or close-final outputs —
 >    on the grammar's authority, never the filesystem's.
 
-Status: design note from conversation (2026-07-09). The March-era exec
-model shipped an **observer closure** with every exec; the current model
-(exec returns a plain outcome record; progressive trees announce subfile
-completion via vfsd close events) quietly dropped it. Amos's ruling-shaped
-observation: **trees don't replace observers**, for three reasons that are
-really one reason — *the tool's output streams carry semantics that the
-filesystem cannot see.*
+Status: design note from conversation (2026-07-09), **superseded in mechanism by
+round 12**. Read the banner above before the body.
+
+The **current** model is settled and is not what this note proposes:
+
+- `exec` returns `ExecOutcome { tree, stdout: Stream<Int,String>, stderr }`. Its
+  stdout and stderr are **codata fields**, consumed while the process runs
+  (`r[machine.primitive.exec-outcome]`).
+- **There is no observer surface** — no `observer:` parameter, no capability-level
+  default, no per-call override. `exec` and `place` are decoupled and neither
+  mentions the other (`r[machine.primitive.exec-is-placement-agnostic]`). To
+  consume a process's output next to the process, you **place the surrounding
+  block**; the observer closure is that block's **lowering**, not a construct
+  anyone writes.
+- Readiness authority is **the placed block reading a stream the tool controls**.
+  For a **protocol-less** tool the safe authority is **process exit**. A vfsd close
+  event is *not* sound on its own — a process may close a file, reopen it, and
+  mutate it — and becomes admissible only where the **command grammar promises**
+  monotonic or close-final outputs. On the grammar's authority; never the
+  filesystem's. Progressive trees are the *transport*, and were never the model.
+
+What survives, undiminished, is this note's **finding**: *the tool's output streams
+carry semantics the filesystem cannot see* — for three reasons that are really one.
+Everything below this line is **the round-11 argument as it was written**. Read it
+for the argument; do not read it for the API, and do not lift the two mechanism
+claims the banner corrects.
+
+---
 
 ## Why "file written" is not "file ready"
+
+> *[Historical — round 11. Two claims below are corrected in the banner: rustc's
+> readiness signal is not sourced to stdout, and close events are not a sound
+> fallback. The section's conclusion does not depend on either.]*
 
 A file appearing (or even closing) in the output tree is a filesystem
 fact. Readiness is a **protocol fact**: rustc announces artifact
@@ -69,7 +94,12 @@ fallback, not the model.
    trip through store/network for bytes whose only consumer is standing
    right there.
 
-## How it fits the current model (sketch)
+## How it fits the model *as of round 11* (sketch — SUPERSEDED)
+
+> *[Historical. This sketches the retired observer API. What it gets right — that
+> the observer is an ordinary vix closure, ships as a value, runs executor-side, and
+> journals its stream reads — is precisely why round 12 could keep it as the
+> **lowering** of a placed block while deleting it as a surface. Nobody writes this.]*
 
 - An observer is an ordinary vix closure — closures are values, and
   `requests-are-values` means it ships inside the exec request like
@@ -85,19 +115,22 @@ fallback, not the model.
 
 ## Open questions for the conversation
 
-1. Does the observer's stream consumption appear in the read-set as one
-   journaled stream observation, or per-message? (Granularity of replay
-   and of early cutoff on logs.)
-2. Is the observer surface part of `exec!` (an `observer:` field, as in
-   the zoo) or a capability-level default with per-call override (the
-   rustc capability ships its JSON observer; you rarely write one)?
-   Lean: capability-level default — users get rmeta pipelining without
-   writing observers, exactly like they get argv typing without writing
-   grammars.
+1. **Still open.** Does a placed block's stream consumption appear in the
+   read-set as one journaled stream observation, or per-message?
+   (Granularity of replay, and whether early cutoff can act on logs.)
+   Round 12 changed *who* consumes the stream, not this.
+2. ~~Is the observer surface part of `exec!`, or a capability-level default
+   with per-call override?~~ **ANSWERED, round 12: neither. There is no
+   observer surface at all.** `exec` returns codata fields; the reader of
+   those fields is ordinary vix code; running that code next to the process
+   is `place`. The question presupposed an API that does not exist.
 3. Colocated subaction demands: expressed as ordinary demands with a
    locality hint, or as observer-returned continuations the runner runs
-   in-place? Lean: ordinary demands + hint (keeps the semantic plane
-   clean; the hint is cost-model).
+   in-place? **The second horn is gone with the observer.** What remains is
+   whether a locality hint is spelled at all, or whether drawing a `place`
+   wider is the only way to say it. Lean: the hint is cost-model, and the
+   semantic plane stays clean either way.
 4. Ratchet impact: rung 128 (progressive trees) should be re-expressed as
-   observer-announced readiness once this lands; a new rung should cover
-   log-to-diagnostic transformation.
+   readiness announced by ~~an observer~~ **a placed block reading `out.stdout`**;
+   a new rung should cover log-to-diagnostic transformation. Progressive trees
+   remain the transport under it.

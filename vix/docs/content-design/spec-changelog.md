@@ -1186,8 +1186,11 @@ BLOCK**, not by handing a closure to `exec`.
 > cargo pipelines rmeta" is **unsourced** — the argument does not need it; do not repeat it.
 
 - **No exit status.** An exit code is a naked `Int` where a typed outcome belongs. Nonzero
-  is a `fail`; where nonzero is a legitimate answer (`grep` → 1) the **command grammar
-  declares it** (`r[machine.primitive.exit-status-is-not-a-value]`).
+  is a `fail`. Where nonzero is a legitimate answer (`grep` → 1), the answer could only
+  come from the **command grammar** — but **how an accepted status becomes a typed result
+  is OPEN and blocking**, because `ExecOutcome` carries no status and `Match`/`NoMatch`
+  would be indistinguishable. Today a grammar may declare only which statuses **fail**
+  (`r[machine.primitive.exit-status-is-not-a-value]`).
 - **A stream MAY be a record field** — retracting an overclaim. Its semantic content is the
   value it drains to (`streams-cross-island-edges`: a field is an edge).
 

@@ -2,9 +2,25 @@
 title = "Where a build runs"
 +++
 
-Status: PROPOSAL (round 9, from conversation). What placement may and may not
-touch. The `Target::host()` finding in §2 is a **live bug** in
-`vix/corpus-next/`.
+> **STATUS (round 12): ADOPTED, and AMENDED. The normative text is
+> `r[machine.placement.capability-requirements-are-derived]` in
+> `/vix/spec/machine/placement` — read that, not this, when the two differ.**
+>
+> Two things changed since this was written:
+>
+> 1. **§2's three-way split was itself a plane smear.** "Host — cost-model, if
+>    hermetic" is **wrong**. The selected toolchain's host / execution ABI (Cargo's
+>    `HOST` among them) is a **pinned semantic property of the toolchain** *and* a
+>    scheduler **admissibility** constraint. It is not cost-model. Only the
+>    **physical executor** is. Corrected in place below.
+> 2. **§2's corpus finding is RESOLVED.** `Target::host()` occurs **zero** times in
+>    `vix/corpus-next/*.vix`; the ports thread a supplied `Target` instead
+>    (`GAPS-rodin.md:50`, `GAPS-crate.md:29`). The line numbers this note once cited
+>    (`crate.vix:921`, `rodin.vix:516`) no longer point at what it claimed. Kept as
+>    the argument that motivated the removal, not as a bug report.
+
+Status: PROPOSAL (round 9, from conversation), adopted round 12 with the amendments
+above. What placement may and may not touch.
 
 Scheduling, policy, fleets and pricing are deliberately *not* here: the semantics
 are open, the plural is the product.
@@ -13,44 +29,69 @@ are open, the plural is the product.
 
 | source | says | may change the value? |
 |---|---|---|
-| the recipe (`.vix`) | what the value *is*; which capabilities, implicitly, via its commands | **yes — it is the only thing that can** |
-| the capability | what a tool is and how it is identified (`rustc -vV`, `cc` identity) | no |
-| the policy | constraints and preferences over where work runs | no |
+| the recipe (`.vix`) | what the value *is*; which capabilities, implicitly, via its commands | **yes** |
+| the capability **instance** | which tool, exactly (`rustc -vV`, `cc` identity, execution ABI) | **yes** — and it is the only other thing that may |
+| the policy | constraints and preferences over where work runs | **no** |
+
+Two sources, not one. The recipe names a capability; the capability *instance* that
+name resolves to is negotiated at acquisition, is pinned, and enters exec identity
+(`r[machine.primitive.exec-probed-toolchain]`). Swapping rustc 1.83 for 1.84 changes
+the artifact and must change the receipt. What may **never** change the value is the
+policy — and the physical executor it selects.
 
 A policy is not a recipe. It is a separate, committed, versioned artifact, and it
 lives outside the language.
 
-## 2. `Target::host()` is a plane smear, and it is in the corpus eight times
+## 2. `Target::host()` was a plane smear (RESOLVED in the corpus)
+
+It was written eight times. It is now written **nowhere**:
 
 ```vix
-crate.vix:921    target: Target::host(),
-crate.vix:588    let rustc = Rustc::acquire(unit.target);
-rodin.vix:516    let rustc = Rustc::acquire(Target::host());
+// round 9, as found:                        // round 12, as ported:
+crate.vix:921    target: Target::host(),     // gone — target is a parameter
+crate.vix:588    Rustc::acquire(unit.target) // crate.vix:630  Rustc::acquire(unit.toolchain)
+rodin.vix:516    Rustc::acquire(Target::host()) // rodin.vix:495 Rustc::acquire(target)
 ```
 
-Three different machines are wearing one word:
+**Three** different machines were wearing one word — and an earlier draft of this
+section mislabelled the second of them:
 
 - **target** — what the artifact is *for*. **Semantic.** It changes the value.
-- **host** — what the compiler binary *runs on*. Cost-model, if hermetic.
-- **executor** — which physical node. Cost-model.
+- **the selected toolchain's host / execution ABI** — what the compiler binary
+  *runs on*, including Cargo's `HOST`. **Semantic *and* an admissibility
+  constraint**, ~~cost-model, if hermetic~~: it is part of what `Rustc::acquire`
+  names, it enters exec identity via
+  `r[machine.primitive.exec-probed-toolchain]`, and it decides which nodes may run
+  the tool at all.
+- **executor** — which admissible physical node actually ran it. **Cost-model**,
+  unobservable, absent from the semantic receipt.
 
-`Target::host()` sets the *target* from the *executor*. Same recipe, a Mac and a
-Linux box, two artifacts, two content hashes: **content addressing dies.** It is
-the same disease as `machine.identity.canonical-memory` (ABI into identity) and
-`map-order-independence` (user code into identity), and it is the most expensive
-instance, because it reaches the artifact.
+`Target::host()` set the *target* from the *executor*, collapsing the first plane
+into the third. Same recipe, a Mac and a Linux box, two artifacts, two content
+hashes: **content addressing dies.** It is the same disease as
+`machine.identity.canonical-memory` (ABI into identity) and `map-order-independence`
+(user code into identity), and it is the most expensive instance, because it reaches
+the artifact.
 
-Cross-compilation makes it plain. A `rustc` on linux emitting darwin objects must
-produce the same value as a `rustc` on darwin emitting darwin objects. If it does
-not, that is rustc's reproducibility bug — measure it, don't paper over it by
-pinning the host.
+Note that `Rustc::acquire(unit.target)` was wrong for a *second* reason, and the
+port fixed it accordingly: it parameterized capability acquisition on the **target**,
+as though the target selected the binary. A toolchain is named by its own identity —
+`unit.toolchain` — whose execution ABI is a property of the thing named, not of what
+it emits.
 
-`Rustc::acquire(unit.target)` compounds it by parameterizing capability
-acquisition on the *target*, as though the target selected the binary.
+Cross-compilation makes it plain, and it makes the **two tiers** plain with it. A
+linux `rustc` emitting darwin objects and a darwin `rustc` emitting darwin objects
+are **two different toolchains** — two capability identities, therefore two *recipe*
+identities (tier 1). What must coincide is the **value** identity of what they emit
+(tier 2). If it does not, that is rustc's reproducibility bug — measure it, don't
+paper over it by pinning the executor.
 
-**The recipe never mentions the host.** Target is an ordinary argument. The
-executor is never named. Then "build for the local arch but run it remotely, to
-save battery" is trivially expressible, and nothing in the program knows.
+**The recipe never mentions the executor.** The target is an ordinary argument; the
+toolchain is named, and its execution ABI comes along as a property of the thing
+named. Nothing in the program can ask which machine it got. Then "build for the local
+arch but run it remotely, to save battery" is trivially expressible, and nothing in
+the program knows — while "build with *this* rustc" stays a thing the recipe can say,
+because that is a semantic choice and not a placement one.
 
 ## 3. A program cannot steer placement. An operator can.
 
