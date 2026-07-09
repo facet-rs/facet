@@ -70,21 +70,41 @@ in a different direction. If *we* bake an interpreter path into a binary we prod
 path must be absolute and must resolve on whatever machine later runs it. `$ORIGIN` does not
 save us either.
 
-Two answers, and we should be honest that they are answers rather than an escape:
+Two answers:
 
 - **Static linking**, where we control the build. A statically linked `rustc` has no
   `PT_INTERP` problem because it has no interpreter. This is why "rustc via a static
   rust-lang build" is the shape of a materialized toolchain.
-- **Relocation at materialization**, where we don't. We produce the binary and we already
-  analyze it (below), so we can rewrite `PT_INTERP` and `RPATH` when it is mounted on a
-  node. That rewrite changes the bytes, so **the relocated copy is not the value**: the
-  value is the canonical artifact, and the relocation is a materialization detail under the
-  as-if law. The receipt attests the value, not the copy.
+- **Relocation at install**, where we don't. We produce the binary and we already analyze it
+  (below), so we rewrite `PT_INTERP` and `RPATH` when it is materialized on a node.
 
-The cost of the second is real and worth stating: **an artifact you carry off the fleet is
-canonical, not runnable.** Nix's answer to that is "the store path exists on the target."
-Ours has to be "the closure travels with it, and materializing it relocates it." Whether
-that is acceptable is a product question, not a language one.
+### Relocation is invertible, and that is the whole trick
+
+Rewriting bytes changes the content hash, so a relocated binary is **not the value**. If
+that were the end of it, the cost would be real: an artifact carried off the fleet would be
+canonical and unrunnable, or runnable and unattested.
+
+It isn't the end of it. **Store the original blocks** — the bytes the rewrite overwrote,
+with their offsets. That is a handful of strings: a `RelocationDelta`, itself an ordinary
+content-addressed blob, keyed by (canonical identity, mount root).
+
+Three things follow, and the third is the one that matters.
+
+1. **A node never stores two copies.** Relocated bytes plus a tiny delta reconstruct the
+   canonical artifact exactly.
+2. **A node holding a relocated binary can still serve the canonical blob** to anyone who
+   asks for it by identity. It reverses the patch on the way out. Nothing about the fleet's
+   content-addressed store notices that the local copy was ever rewritten.
+3. **The as-if claim becomes checkable rather than asserted.** "The relocated copy is a
+   materialization of this value" is not a promise — reverse the delta, hash it, compare it
+   to the attested identity. A relocated binary stays inside the attestation, because the
+   delta *demonstrates* it descends from the attested bytes. Without that, you would hold a
+   signed claim about bytes nobody has.
+
+And this is a place where Nix structurally cannot follow. Its store path is derived from the
+derivation hash, so the path must be known *before the binary is built* — the output is
+self-referential and relocation-hostile by construction. We bake a canonical path at build
+time and relocate at install, because our identity never depended on where the bytes live.
 
 ## Nix is files-in, files-out, bash in the middle. We have types.
 
@@ -141,14 +161,20 @@ every shared object it opened **inside the VFS**.
 
 That is not everything. On Windows the linker reads, and creates dependencies on, system
 libraries that live outside the VFS entirely. Those reads cross no boundary we control, so
-no read-set of ours will name them. (The comparator here is **Bazel**, not Nix — Nix has no
+no read-set of ours will name them. (There is no comparison to draw with Nix here: it has no
 native Windows target and never fields this problem.)
 
-**And it may be solvable, by prior art we should read rather than reinvent.** Microsoft's
-BuildXL observes Windows system-DLL reads by **API hooking with Detours** — a non-VFS
-observation mechanism. If reads outside a filesystem boundary can be witnessed, the gap
-below narrows from "unobservable" to "observed by a second mechanism."; the invariant does
-not change, only how much of it the read-set alone can carry.
+**Prior art we should read rather than reinvent:** Microsoft's BuildXL observes Windows
+system-DLL reads by **API hooking with Detours** — a non-VFS observation mechanism.
+
+But hooking is **not foolproof**, and the failure mode is exactly the dangerous one. A
+process that issues syscalls directly, or statically links its own syscall stubs, sails past
+every hook. An undeclared read then goes unwitnessed, and a hermeticity hole stays silent.
+
+Which inverts the argument below on Windows specifically. Elsewhere, artifact analysis is a
+**check on** the read-set. On Windows, where the read-set is best-effort by construction,
+**artifact analysis is the primary evidence** and the read-set is the corroboration. Same
+invariant; the weight moves.
 
 The artifact analysis names them. So the two measurements check each other:
 
