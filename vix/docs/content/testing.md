@@ -21,8 +21,8 @@ There is also no test-specific syntax. A test is an ordinary function.
 #[test]
 fn point_fields_are_independent() -> Stream<Check> {
     let p = Point { x: 3, y: 4 };
-    yield expect_eq(p.x, 3);
-    yield expect_eq(Point { x: p.x, ..p }, p);
+    yield expect_eq p.x where { expected: 3 };
+    yield expect_eq Point { x: p.x, ..p } where { expected: p };
 }
 ```
 
@@ -44,12 +44,17 @@ fn molten_accumulator() -> Stream<Check> { … }
 
 ```vix
 expect(cond: Bool) -> Check
-expect_eq(a: T, b: T) -> Check          // any T: everything is comparable
-expect_ne(a: T, b: T) -> Check
+expect_eq(actual: T) where { expected: T } -> Check    // any T: everything is comparable
+expect_ne(actual: T) where { other: T } -> Check
 expect_some(o: Option<T>) -> Check
 expect_none(o: Option<T>) -> Check
-expect_snapshot(v: T, name: String) -> Check
+expect_snapshot(v: T) where { name: String } -> Check
 ```
+
+At most one positional argument, so the value under test is the subject and the
+thing you compare it against is *named*. That settles, permanently, which side of
+an equality check is which — a question every test framework in history has
+answered by convention and lost.
 
 A failing `expect_eq` renders both sides — structurally, for any type, because
 every value is serializable; you never write a `Debug` impl to earn diagnostics.
@@ -76,9 +81,9 @@ language:
 #[test]
 fn partial_dependency_skips_expensive() -> Stream<Check> {
     let p = Point { x: cheap(), y: expensive() };
-    yield expect_eq(p.x + 1, 42);
-    yield never_demanded(expensive());
-    yield demanded(cheap());
+    yield expect_eq (p.x + 1) where { expected: 42 };
+    yield never_demanded (expensive());
+    yield demanded (cheap());
 }
 ```
 
@@ -91,15 +96,16 @@ description against what evaluation actually did.
 demanded(expr)          — this value was demanded at least once
 never_demanded(expr)    — it was not, transitively, ever
 demanded_once(expr)     — exactly once (memoization checks)
-demanded_times(f, n)    — the function f was demanded exactly n times, over any arguments
+demanded_times(f) where { times: n }  — f was demanded exactly n times, over any arguments
 ```
 
 The first three are **value-level**: they pin *which* demand you mean.
-`demanded_once(costly(1))` says more than "`costly` ran once." The last is
+`demanded_once (costly 1)` says more than "`costly` ran once." The last is
 name-level, for when you mean any call at all — it takes a function value.
 
-The harness also speaks about the run as a whole: `never_read(path)`,
-`memo_hits_at_least(n)`, `ran_processes(n)`, `overlapped()`, `killed(stage)`.
+The harness also speaks about the run as a whole: `never_read path`,
+`memo_hits_at_least n`, `ran_processes n`, `overlapped()`, `killed stage`, and
+`finished_before consumer where { producer }`.
 
 ## Checks come in two kinds, and the order you yield them is not real
 
@@ -139,7 +145,7 @@ constructor does not take a `T`. It takes the *description* of a demand:
 
 ```vix
 fn never_demanded<T>(d: Demand<T>) -> Check
-fn demanded_times<A, R>(f: fn(A) -> R, n: Int) -> Check
+fn demanded_times<A, R>(f: fn(A) -> R) where { times: Int } -> Check
 ```
 
 `Demand<T>` is what an un-demanded expression already is. Writing `expensive()` in

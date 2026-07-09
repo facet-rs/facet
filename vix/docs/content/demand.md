@@ -12,9 +12,9 @@ program decides what, of everything described, is worth computing.
 ## Bindings describe wiring
 
 ```vix
-let index    = fetch_index(registry);
-let solution = solve(manifest, index);
-let report   = render_report(solution);
+let index    = fetch_index registry;
+let solution = solve manifest where { index };
+let report   = render_report solution;
 ```
 
 Nothing above executes anything. Three values are described: `report`

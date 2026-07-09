@@ -45,8 +45,8 @@ like it accumulates (building up state across a fold, inserting into a
 map) is describing a *sequence of values*, each fresh:
 
 ```vix
-fn put_domain(state: State, pkg: PkgId, domain: Domain) -> State {
-    State { domains: state.domains.insert(pkg, domain), ..state }
+fn put_domain(state: State) where { pkg: PkgId, domain: Domain } -> State {
+    State { domains: state.domains.insert pkg where { value: domain }, ..state }
 }
 ```
 

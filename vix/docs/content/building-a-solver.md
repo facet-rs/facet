@@ -24,8 +24,8 @@ what each depends on. The index is enormous and remote — and that's fine,
 because describing it costs nothing:
 
 ```vix
-fn index_row(registry: Registry, pkg: PkgName, version: Version) -> Row {
-    parse_row(fetch(registry.row_url(pkg, version)))
+fn index_row(registry: Registry) where { pkg: PkgName, version: Version } -> Row {
+    parse_row (fetch (registry.row_url pkg where { version }))
 }
 ```
 
@@ -52,17 +52,17 @@ appears:
 ```vix
 enum Step { Pass(State), Conflict(NoGood) }
 
-fn propagate(state: State, row: Row) -> Step {
+fn propagate(state: State) where { row: Row } -> Step {
     row.deps.values().fold(Step::Pass(state), |step, dep| {
         match step {
             Step::Conflict(ng) => Step::Conflict(ng),
             Step::Pass(s) => {
                 let narrowed = s.domains[dep.pkg].intersect(dep.req);
                 if narrowed.is_empty() {
-                    Step::Conflict(no_good_for(s, dep))
+                    Step::Conflict(no_good_for s where { dep })
                 } else {
                     Step::Pass(State {
-                        domains: s.domains.insert(dep.pkg, narrowed),
+                        domains: s.domains.insert dep.pkg where { value: narrowed },
                         ..s
                     })
                 }
@@ -87,17 +87,17 @@ It's the most delicate code in any CDCL engine.
 fn search(state: State) -> Outcome {
     match pick_undecided(state) {
         None => Outcome::Solved(state.selected),
-        Some(pkg) => try_candidates(state, pkg, candidates(state, pkg)),
+        Some(pkg) => try_candidates state where { pkg, cands: candidates state where { pkg } },
     }
 }
 
-fn try_candidates(state: State, pkg: PkgId, cands: [Version]) -> Outcome {
+fn try_candidates(state: State) where { pkg: PkgId, cands: [Version] } -> Outcome {
     match cands.split_last() {
-        None => Outcome::Exhausted(no_good_for_exhaustion(state, pkg)),
-        Some((v, rest)) => match attempt(state, pkg, v) {
+        None => Outcome::Exhausted(no_good_for_exhaustion state where { pkg }),
+        Some((v, rest)) => match attempt state where { pkg, version: v } {
             Outcome::Solved(sel) => Outcome::Solved(sel),
             Outcome::Exhausted(ng) =>
-                try_candidates(learn(state, ng), pkg, rest),
+                try_candidates (learn state where { ng }) where { pkg, cands: rest },
             //              ^^^^^^^^^^^^^^^^^ backtracking is THIS:
             //              we still have `state`. The failed branch's
             //              hundred domain-narrowings belong to a value
