@@ -45,6 +45,8 @@ url = ["alloc", "dep:url"]
 jiff02 = ["alloc", "dep:jiff"]
 # Provide Facet trait implementations for bytes::Bytes
 bytes = ["alloc", "dep:bytes"]
+# Provide Facet trait implementations for bstr::BString and bstr::BStr
+bstr = ["alloc", "dep:bstr"]
 # Provide Facet trait implementations for bytestring::ByteString
 bytestring = ["alloc", "dep:bytestring"]
 # Provide Facet trait implementations for compact_str::CompactString
@@ -92,6 +94,7 @@ autocfg = { workspace = true }
 [dependencies]
 const-fnv1a-hash = "1"
 bytes = { workspace = true, optional = true }
+bstr = { workspace = true, optional = true }
 bytestring = { workspace = true, optional = true }
 camino = { workspace = true, optional = true }
 compact_str = { workspace = true, optional = true }
@@ -124,3 +127,5 @@ parking_lot = "0.12"
 
 [lints]
 workspace = true
+
+

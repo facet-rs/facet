@@ -948,6 +948,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "bstr"
+version = "1.12.3"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "5cee35f73844aa3014bb606320a6c1f010249dbdf43342fe54b5a4f6a8ed4b79"
+dependencies = [
+ "memchr",
+ "serde_core",
+]
+
+[[package]]
 name = "btparse"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -2302,6 +2312,7 @@ name = "facet-core"
 version = "0.50.0-rc.5"
 dependencies = [
  "autocfg",
+ "bstr",
  "bytes",
  "bytestring",
  "camino",
@@ -2439,6 +2450,7 @@ name = "facet-json"
 version = "0.50.0-rc.5"
 dependencies = [
  "axum-core",
+ "bstr",
  "codspeed-divan-compat",
  "compact_str",
  "copypatch",

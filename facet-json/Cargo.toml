@@ -38,6 +38,7 @@ mime = { version = "0.3", optional = true }
 
 [dev-dependencies]
 compact_str = { workspace = true }
+bstr = { workspace = true }
 facet-json-classics = { path = "../facet-json-classics" }
 divan = { workspace = true }
 facet = { path = "../facet", features = [
@@ -45,6 +46,7 @@ facet = { path = "../facet", features = [
   "doc",
   "net",
   "compact_str",
+  "bstr",
   "smol_str",
   "iddqd",
   "tendril",
@@ -119,3 +121,4 @@ ignored = ["tracing"]
 
 [lints]
 workspace = true
+
