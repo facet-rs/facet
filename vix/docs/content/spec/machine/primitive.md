@@ -196,9 +196,16 @@ primitives reference by identity.
 > chain; the payload carries the status and the collected stderr.
 >
 > Where a nonzero exit is a legitimate ANSWER — `grep` returning 1 for "no match" — the
-> **command grammar declares it**. Grammars already type argv on the way in; they type the
-> exit status on the way out: which codes are outcomes, which are failures. An unrecognised
-> status fails. `$?` and its undocumented magic numbers do not exist.
+> **command grammar must declare it**. Grammars already type argv on the way in.
+>
+> **OPEN, and blocking: how an accepted exit code becomes a typed result.**
+> `ExecOutcome { tree, stdout, stderr }` carries no status, so with `grep`'s 0 and 1 both
+> accepted, `Match` and `NoMatch` are **indistinguishable** in the returned value. The
+> mapping from an accepted status to a typed result schema is NOT ruled, and this rule does
+> not invent one. Until Amos rules it, a command grammar may only declare which statuses
+> **fail**; it may not declare a status an "outcome", because there is nowhere for the
+> outcome to go. An unrecognised status fails. `$?` and its undocumented magic numbers do
+> not exist either way.
 
 > r[machine.primitive.fetch-returns-a-blob]
 >
@@ -257,8 +264,20 @@ primitives reference by identity.
 > observer as a *surface construct* and as a *special exec mechanism*. Any document
 > presenting `exec cmd where { observer: … }` is stale.
 >
-> Readiness follows: a file appearing in an output tree is a filesystem fact; readiness is
-> a **protocol fact** (rustc announces artifacts on stdout — how cargo pipelines rmeta). The
-> placed block reading `out.stdout` is the readiness authority; a subfile projection
-> resolving early is the consequence. A VFS close event remains the fallback authority for
-> protocol-less tools. (`/vix-design/exec-observers` — findings intact, mechanism superseded.)
+> Readiness follows: a file appearing in an output tree is a filesystem fact, and readiness
+> is a **protocol fact** — a tool that announces artifact availability on a stream it
+> controls can be read for that announcement, and a placed block reading `out.stdout` is
+> then the readiness authority. A subfile projection resolving early is the consequence.
+>
+> Two claims an earlier draft made and could not support:
+>
+> - It asserted that *rustc announces artifacts on stdout, which is how cargo pipelines
+>   rmeta.* Cargo/rustc pipelining uses a readiness signal, but identifying that signal with
+>   stdout is **unsourced**. Do not repeat it without a citation.
+> - It made a VFS **close event** the generic fallback for protocol-less tools. That is
+>   **unsound**: a process may close a file and reopen and mutate it. For a protocol-less
+>   tool the safe readiness authority is **process exit**, unless the command grammar
+>   promises monotonic or close-final outputs — in which case the close event is admissible
+>   *because the grammar promised it*, not because the filesystem said so.
+>
+> (`/vix-design/exec-observers` — findings intact, mechanism superseded.)

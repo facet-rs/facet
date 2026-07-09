@@ -71,20 +71,49 @@ Distinguish two boundaries that are easy to fuse and must not be:
 >    system libraries) impose this: they exist solely where a daemon advertises their
 >    fingerprint, and the node holding them is the only node that can run them.
 >
-> So a materialized closure constrains placement to nodes *of its platform*; an ambient
-> closure constrains it to *one advertised host*. The earlier claim — "a materialized
-> closure constrains placement not at all" — was false, and would have let the scheduler
-> dispatch a Linux `rustc` to a Mac.
+> So a materialized closure admits nodes that **satisfy its execution contract**; an ambient
+> closure admits the nodes that **advertise its fingerprint** — a set, possibly of more than
+> one. The earlier claim, "a materialized closure constrains placement not at all", was
+> false, and would have let the scheduler dispatch a Linux `rustc` to a Mac.
+>
+> "Satisfies the execution contract" is deliberately weaker than "is of that platform": a
+> node may satisfy `x86_64-linux` through emulation, a compatibility layer, or a container.
+> Admissibility is the node's claim to satisfy the contract, not an equality of labels.
 >
 > The set of closures reachable in a placed subgraph is syntactic (union over branches,
 > fixpoint over recursion), so both requirements are statically derivable — a conservative
-> over-approximation, costing perf and never correctness. Toolchain identity is
-> value-affecting and belongs in the semantic receipt; the machine that hosted it does not.
+> over-approximation, costing perf and never correctness.
 >
-> Note the asymmetry with the *target*: the platform a tool RUNS on is cost-model
-> (`no-in-program-steering`); the platform it BUILDS FOR is semantic. A cross-compiling
-> `x86_64-linux` rustc emitting `aarch64-darwin` objects satisfies an `x86_64-linux`
-> execution contract while producing a `aarch64-darwin` artifact.
+> **Three things are being distinguished here, and an earlier draft collapsed two of them.**
+>
+> 1. **The target** — what the artifact is FOR. Semantic. It changes the value.
+> 2. **The selected toolchain's host / execution ABI** — including Cargo's `HOST`. This is a
+>    **pinned semantic property of the toolchain** (it is part of what `Rust::acquire` names,
+>    and it enters exec identity via `machine.primitive.exec-probed-toolchain`) **and** a
+>    scheduler **admissibility constraint**. It is not cost-model.
+> 3. **The physical executor** — which machine, of the admissible set, actually ran it.
+>    Cost-model, unobservable, absent from the semantic receipt
+>    (`machine.placement.no-in-program-steering`).
+>
+> A cross-compiling `x86_64-linux` rustc emitting `aarch64-darwin` objects has an
+> `x86_64-linux` execution contract (2) and an `aarch64-darwin` target (1); which admissible
+> machine ran it (3) is nobody's business.
+
+> r[machine.placement.results-cross-back]
+>
+> [DESIGN, round 12] `machine.placement.identity-crosses` governs **dispatch**: a value
+> captured by, or imported into, a placed subgraph must have an identity known without
+> evaluating that subgraph, because the boundary must know what it is shipping and what it
+> weighs before it ships anything.
+>
+> It says nothing about **results**. A placed block's derived value — a `Tree`, a rendered
+> diagnostic, a solved graph — is *computed remotely*, so its identity is not and cannot be
+> known before the block is evaluated. It acquires an identity where it is computed, and
+> that identity crosses back.
+>
+> The two directions are not symmetric and must not be conflated. A placed block that
+> consumes `out.stdout` and returns a diagnostic does not violate `identity-crosses`: the
+> stream never crossed the boundary, and the diagnostic crossed back as a finished value.
 
 > r[machine.placement.trees-cross-as-grants]
 >
