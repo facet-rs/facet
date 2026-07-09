@@ -168,9 +168,41 @@ driver.
 > VOID — `<=>` is structural and not overridable
 > (`machine.identity.never-consults-order`), so ordering map rows by key order is
 > a function of content and is sound. What survives is Amos's objection to the
-> characterization, and the fact that the rule was never ratified. The mechanism
-> may well be right; it has not been agreed. Nothing may cite this rule as
-> settled until it is.
+> characterization, and the fact that the rule was never ratified.
+>
+> ROUND-10 PROPOSED REPLACEMENT (needs Amos): a map is **not** a set of pairs. It
+> is a keyed collection whose keys are UNIQUE, whose rows are kept in key order
+> (structural order on `K`), and whose encoding is framed with its `SchemaId` —
+> so `Map<K,V>` and `Set<(K,V)>` with equal contents cannot produce equal bytes.
+> Insertion-order-independence follows from row order being a function of the
+> keys. Nothing may cite this rule as settled until it is.
+
+> r[machine.identity.merkle-tree]
+>
+> [DESIGN, round 10] A workspace is a value, so it has an identity, so it must be
+> hashed. A `Tree` (`Map<Path, Blob>`) is therefore identified as a **Merkle map**:
+> change one file, rehash one path. This is not an optimization — it is what makes
+> a workspace a value at all, and it is the "OPEN Merkle-map design" that
+> `machine.identity.carried-hasher` is scoped around. The daemon watching local
+> disk maintains it incrementally.
+
+> r[machine.identity.streams-cross-island-edges]
+>
+> [SETTLED, round 10] Codata may cross an island edge. The edge's semantic content
+> is the VALUE the stream drains to; the incremental view is as-if. A stream
+> therefore has recipe identity and no value identity: its elements are ordinary
+> demands, memoized individually; the aggregate has no content hash until resolved
+> and may not be a record field.
+>
+> This is what lets a consumer of a process's output be a separate demand — so
+> changing an interpreter does not rerun the process — while still consuming
+> progressively. Replay is the semantics; live consumption is the fast path.
+>
+> ASYMMETRY TO JUSTIFY: molten values may NOT cross an island edge (pending
+> think-item, lean "never — merge islands"). Molten and codata are structurally
+> the same problem: a thing with no stable public identity crossing a boundary
+> where identity lives. If streams may cross and molten may not, the asymmetry
+> must be principled. Currently it is not written down.
 
 > r[machine.identity.schema-ref]
 >

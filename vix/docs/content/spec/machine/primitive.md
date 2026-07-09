@@ -121,9 +121,39 @@ primitives reference by identity.
 >
 > [DESIGN] Fetch is a memoized invocation with stable closure identity flowing
 > through the same demand/memo path as everything else — not a bespoke
-> journal-pinned side path. Its observation-pin semantics
-> (`machine.receipt.fetch-observation-pin`) ride the ordinary receipt
-> machinery.
+> journal-pinned side path.
+
+> r[machine.primitive.fetch-is-pinned]
+>
+> [SETTLED, round 10] **`fetch` is pinned, always.** Its checksum is a required
+> argument, so its value identity is known BEFORE evaluation; the URL is a
+> *provenance coordinate* — a hint about where bytes live — not the identity.
+> Demanding a fetch therefore resolves an identity (local store, peer, shared
+> store, and only then the origin) rather than performing a network read; on a
+> machine already holding the blob, nothing transfers. This is what makes a
+> fetched value verifiable by a stranger, and it is the precondition for
+> `machine.placement.identity-crosses`.
+>
+> A read whose result identity is unknown until it is performed is a DIFFERENT
+> PRIMITIVE — an **observation** — and is not `fetch` with an argument omitted.
+> One function may not be hermetic-or-discovering depending on the presence of a
+> parameter (Amos, round 10). The observation primitive's name and shape are
+> OPEN; until it lands, checksumless retrieval has no surface.
+>
+> Corollary: `machine.primitive.memo-policy`'s parenthetical "(memoizable by
+> observation pin: fetch)" is stale. `fetch` is `Pinned` because its identity is
+> GIVEN, not because its result is pinned after the fact.
+
+> r[machine.primitive.capabilities-by-identity]
+>
+> [SETTLED, round 10] Capabilities (daemon-advertised toolchains) are referenced
+> by IDENTITY, never by handle. `Rustc::acquire(spec)` opens no binary — nothing
+> in a vix program evaluates, so it cannot. It NAMES one. Acquisition therefore
+> happens outside a `place`, and must: the recipe pins one toolchain identity and
+> every executor materializes *that* one, or the same recipe yields different
+> artifacts on different machines. A capability is structurally a pinned blob —
+> an identity some machine may be able to materialize. If none can, the demand
+> fails before anything has run.
 
 > r[machine.primitive.typed-deserialization]
 >

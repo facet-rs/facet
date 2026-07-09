@@ -93,10 +93,22 @@ about what a build did; a vixen receipt is the observed read-set."
 
 > r[machine.receipt.fetch-observation-pin]
 >
-> [SETTLED] A fetch without a declared checksum is an observation: the machine
-> pins what it saw, and the pin becomes the receipt's authority. Recompute is
-> the audit, not the source of truth; divergence under re-fetch is a visible
-> diagnostic, never a silent change. (vix-spec V14–V16.)
+> [RENAMED, round 10 — this rule is about OBSERVATION, not about `fetch`.
+> `fetch` is pinned, always (`machine.primitive.fetch-is-pinned`); a retrieval
+> without a declared checksum is a DIFFERENT PRIMITIVE. One function may not be
+> hermetic-or-discovering depending on whether a parameter is present. The rule
+> id is retained struck so stale references fail loudly.]
+>
+> An **observation** is a read whose result identity is unknown until it is
+> performed: the machine pins what it saw, and the pin becomes the receipt's
+> authority. Recompute is the audit, not the source of truth; divergence under
+> re-observation is a visible diagnostic, never a silent change. (vix-spec V14–V16.)
+>
+> CONSEQUENCE, and it is why the two must not share a function: **an observation
+> made inside a `place` was made by someone else.** The executor's pin becomes
+> your receipt's authority and there is nothing to check it against. A pinned
+> fetch is trust-free on any machine, including one you do not administer; an
+> observation is not. See `machine.placement.identity-crosses`.
 
 > r[machine.receipt.reveal-is-journaled]
 >
