@@ -2220,12 +2220,12 @@ fn typed_sparse_row_errors_are_schema_values() -> Stream<Check> {
     let missing = try_json_decode<SparseIndexRow>("{\"name\":\"blake3\",\"deps\":[],\"features\":{},\"yanked\":false}");
     let wrong = try_json_decode<SparseIndexRow>("{\"name\":\"blake3\",\"vers\":\"0.0.0\",\"deps\":[],\"features\":[],\"yanked\":false}");
     yield match missing {
-        Ok(_) => assert_eq(false, true),
-        Err(e) => assert_eq(e.message.contains("missing field `vers`"), true),
+        Ok(_)  => expect(false),
+        Err(e) => expect(e.message.contains("missing field `vers`")),
     };
     yield match wrong {
-        Ok(_) => assert_eq(false, true),
-        Err(e) => assert_eq(e.message.contains("expected Map<String,Array<String>>"), true),
+        Ok(_)  => expect(false),
+        Err(e) => expect(e.message.contains("expected Map<String,Array<String>>")),
     };
 }
 
