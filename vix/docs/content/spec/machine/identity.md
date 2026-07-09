@@ -25,17 +25,21 @@ driver.
 
 > r[machine.identity.canonical-memory]
 >
-> [SETTLED] Store bytes are canonical zero-padded memory and a value's
-> `ContentHash` is `blake3(memory)`. There is no separate canonical encoding to
-> decode from: reads are typed views over the same bytes that were hashed.
-> Freeze = hash + intern, no re-encode. (Note: `ContentHash` is the byte
-> component of identity, not identity itself — see
-> `machine.identity.value-identity-pair`.)
+> [STRUCK — superseded by the content-hash ruling, changelog round 5 final
+> addendum.] The one content-hash definition is the schema-specialized framed
+> walked encoding (`machine.identity.framed-encoding`), computed once at
+> intern and carried on the store entry (entry-carried identity), read as a
+> load thereafter. Flat-memory hashing was rejected because the structural
+> hash of a value must never depend on the ABI: layout exists to be changed
+> for performance, and coupling identity to it was an implementation-plane
+> leak into the semantic plane. Zero-padding remains hygiene (and a canary),
+> not identity-load-bearing. This rule id is retained struck so stale
+> references fail loudly rather than silently meaning the old thing.
 
 > r[machine.identity.value-identity-pair]
 >
 > [SETTLED] Semantic value identity is the pair `(SchemaRef, ContentHash)`, not
-> `ContentHash` alone. `blake3(memory)` collides values with identical bytes
+> `ContentHash` alone. A bytes-only hash collides values with identical bytes
 > and different schemas (`Bool(false)` and `Int(0)`, newtypes over one word,
 > `None` singletons, layout-equal records with different field meaning). Every
 > consumer — memo keys, receipts, dedup, persistence claims — uses the pair. A
