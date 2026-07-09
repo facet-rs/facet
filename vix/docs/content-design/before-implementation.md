@@ -31,9 +31,13 @@ the first thing built, before any engine.
 
 Ranked by retrofit cost.
 
-1. **What does `exec` return?** Two redesigns, still unanswered. Three corpus sites route
-   stdout through a fake file (`--stdout {p"cfg.stdout"}`). Observers, progressive trees
-   and kill-when-satisfied all hang off this. **The loudest hole in the design.**
+1. ~~**What does `exec` return?**~~ **ANSWERED, round 12.**
+   `{ tree: Tree, stdout: Stream<Int,String>, stderr: Stream<Int,String> }`, no exit status
+   (`r[machine.primitive.exec-outcome]`, `r[machine.primitive.exit-status-is-not-a-value]`).
+   `exec` and `place` are decoupled; the observer closure is the *lowering* of a placed
+   block, not a surface construct. Progressive trees are partial dependency.
+   **Owed:** the three `--stdout {p"cfg.stdout"}` corpus sites now have a home and should
+   be re-ported; command grammars must declare which exit codes are answers.
 2. **Typing discipline.** Bidirectional inference (expected types flowing into `%{}`,
    `[]`, `None`, decode calls, closure params) or annotations at ambiguous sites? The ports
    assume the former, inconsistently. Changes what is *writable*; cannot be retrofitted.

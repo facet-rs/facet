@@ -145,3 +145,34 @@ the payload is all you supply. `m.get(k).unwrap()` as an error-raise — which t
 file, `cargo_manifest.vix` and `index.vix` each invented independently, in three
 different disguises — is now a thing you should never write. Queue item C3 is closed.
 See `/vix/errors`.
+
+
+## RESOLVED (round 12): `exec` has a return type, and stdout has a home
+
+`r[machine.primitive.exec-outcome]`:
+
+```vix
+struct ExecOutcome {
+    tree:   Tree,                 // recursive: files, dirs, symlinks, exec bits
+    stdout: Stream<Int, String>,  // codata, keyed by line number
+    stderr: Stream<Int, String>,
+}
+```
+
+- **`--stdout {p"build.stdout"}` (crate.vix:1214, :1306) is dead.** Read `out.stdout`.
+  The stream is codata: its semantic content is the value it drains to, so `ExecOutcome`
+  has an identity when the process ends while a reader consumes lines long before.
+- **There is no exit status field, and asking for one was the wrong request.** An exit code
+  is a naked `Int` where a typed outcome belongs. A nonzero exit is a **failure**
+  (`r[machine.primitive.exit-status-is-not-a-value]`); where a nonzero exit is a legitimate
+  answer — `grep` returning 1 — the **command grammar declares it**.
+- **`out.status == 0` checks are gone.** `exec cmd` succeeds or fails; `exec cmd?` gives
+  `Result<ExecOutcome, Failure>`.
+- **`Tree` is not `Map<Path, Blob>`** (`r[machine.identity.tree-model]`). It is a recursive
+  `Map<Name, TreeEntry>` over `File { content, size, executable } | Dir(Tree) |
+  Symlink { target }`. Any port that assumed a flat path→bytes map loses `mkdir -p`, every
+  symlink, and the executable bit.
+
+**Owed on this file:** re-port the two `--stdout` sites onto `out.stdout`; drop `.status`
+comparisons; and `build_script`'s command tag must become a projection of the producing
+exec's outcome, not a `String` (see `/vix-design/runtime-closures`).
