@@ -471,3 +471,31 @@ reconciliation pass:
   agree on semantics from the feel of real code; then unleash analysis
   bots on book+corpus hunting underspecification, wishy-washiness, and
   implementation hazards. "I want to be serious about this now."
+
+### Round 7 — ordering (Amos ruling)
+
+- **`<=>` subsumes the comparison family.** Saying a value supports "`==` and
+  `<=>`" was redundant; `==`, `<`, `<=`, `>`, `>=` all derive from `<=>`. A type
+  never defines them separately.
+- **`<=>` is user-overridable, and when overridden it IS the type's order** —
+  everywhere, for every operation that orders values. Answer (B). There is one
+  order per type: the default one derived from its fields, or the one the type
+  defines. The terms "canonical order" and "structural order" are struck as
+  separate concepts; ordered things are simply ordered.
+- **`<=>` must be a total order.** A comparison answering `Equal` for values
+  that are not equal is not a `<=>` — it is an ordinary function. The compiler
+  cannot prove totality; it is an obligation, like `sorted_by`'s.
+  - Consequence: `sorted_by`'s "ties are broken canonically" is struck. There
+    is no second order underneath to break ties with.
+  - Consequence: `rodin.vix:74`'s `namespace Version { fn <=> }` is not a valid
+    `<=>` — it answers `Equal` for versions differing in prerelease/build.
+- **`r[machine.identity.map-order-independence]` is NOT settled** (Amos: "it's
+  settled my ass; I never agreed to any of that"). Insertion-order-independence
+  stands. "A map is a set of pairs" is rejected. Sort-first-then-hash over key
+  order is a hole: it defines content identity in terms of user-overridable
+  `<=>`. New rule `r[machine.identity.never-consults-order]` states the
+  constraint (identity is a function of content alone); the mechanism is OPEN,
+  and no rule exists for `Multiset`/`Set` identity at all.
+- Custom operators beyond `<=>`: Amos is open to a **small fixed set** (versions
+  are load-bearing enough to earn one) but operator syntax is never
+  user-extensible — parsing must not be customizable.

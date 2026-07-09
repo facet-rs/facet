@@ -141,12 +141,28 @@ driver.
 > machine's own content hash of the proof structure; this rule is the
 > substrate obligation that makes proof-bearing facts affordable.)
 
+> r[machine.identity.never-consults-order]
+>
+> [SETTLED, round 7] `<=>` is user-overridable, and when overridden it *is* the
+> type's order for every value-ordering operation a program can perform. It
+> must be a total order. Therefore no content hash may be defined in terms of
+> `<=>`: a value's identity is a function of its content alone, and no user
+> code may move it. Any identity mechanism for an unordered collection (map,
+> multiset, set) must be order-free, or ordered by something that is itself a
+> function of content. The mechanism is OPEN; the constraint is not.
+
 > r[machine.identity.map-order-independence]
 >
-> [SETTLED] Map identity is insertion-order-independent (a map is a set of
-> pairs). The required baseline is sort-first-then-hash over the canonical
-> pair order; incremental/Merkle map identity is an OPEN future optimization
-> that must be earned by profile, not assumed.
+> [OPEN — never ratified; the "[SETTLED]" tag and the mechanism below were
+> asserted, not agreed (Amos, round 7).] Map identity is insertion-order-
+> independent: that much holds. But "a map is a set of pairs" is rejected as
+> a characterization, and the sort-first-then-hash mechanism is a hole: it
+> defines a map's content hash in terms of the *key order*, and `<=>` is now
+> user-overridable (`machine.identity.never-consults-order`). Identity would therefore
+> depend on user code — the same plane leak that struck `canonical-memory`,
+> wearing a different costume. A map's content hash must be a function of its
+> content alone. The replacement mechanism is undecided; nothing may rely on
+> this rule until it is.
 
 > r[machine.identity.schema-ref]
 >

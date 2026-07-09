@@ -44,11 +44,11 @@ vix value; it is never a container that fills up. It has no positions:
 there is no `heavy[0]`, because "which one is first" has no honest answer
 for a collection whose elements were produced in no particular order.
 
-When a multiset is *observed* in its entirety — printed, serialized,
-converted to an array — its elements appear in **canonical order**:
-increasing value order. This is always well-defined because every vix
-value is comparable (see `<=>` below); it makes every multiset operation
-deterministic without constraining how anything is computed.
+When a multiset is *observed* in its entirety — serialized, rendered to a
+string, converted to an array — its elements appear in **increasing value
+order**. This is always well-defined because every vix value is ordered
+(see `<=>` below); it makes every multiset operation deterministic without
+constraining how anything is computed.
 
 **Coming from anywhere**: this is the type your language calls a bag or
 multiset, except immutable and with a guaranteed deterministic observation
@@ -61,14 +61,23 @@ pipelines run with automatic parallelism and positions are the price.
 let sorted_names = names.sorted();      // no Ord bound, no comparator needed
 ```
 
-Every vix value supports `==` and `<=>` (three-way comparison), by
-construction — scalars, records, arrays, multisets, everything. You never
-implement an ordering trait; a total order over all values of a type
-always exists. `sorted()` and canonical order lean on this.
+Every vix value supports `<=>` (three-way comparison) by construction —
+scalars, records, arrays, multisets, everything. `<=>` subsumes the whole
+comparison family: `==`, `<`, `<=`, `>`, `>=` are derived from it, so a type
+never defines them separately.
 
-**Coming from Rust**: no `#[derive(Ord)]`, no `Ord` bounds — it's ambient.
+By default a value orders by its fields. A type may replace that by defining
+`<=>` in a `namespace` block, and then that *is* the type's order —
+everywhere, for every operation that orders values.
+
+`<=>` must be a **total order**. A comparison that answers `Equal` for values
+that are not equal is not a `<=>`; it is an ordinary function, and it belongs
+in one.
+
+**Coming from Rust**: no `#[derive(Ord)]`, no `Ord` bounds — the default is
+ambient, and `impl Ord` becomes `namespace T { fn <=> }`.
 **Coming from JS**: unlike `Array.prototype.sort`, there is no default
-stringly comparison — values compare structurally.
+stringly comparison — values compare by their fields.
 
 ## Closures have no side effects
 
@@ -115,7 +124,7 @@ into position-destroying operations and recover them later:
 ```vix
 let kept = xs.enumerate().values().filter(|(i, x)| wanted(x));
 let in_original_order = kept.sorted();
-// canonical order of (Int, _) sorts by the index first — original order back
+// value order of (Int, _) sorts by the index first — original order back
 ```
 
 ### `.fold(init: R, f: fn(R, T) -> R) -> R`
@@ -214,10 +223,11 @@ queue's pop.
 
 ### `.sorted() -> [T]`, `.sorted_by(cmp: fn(T, T) -> Ordering) -> [T]`
 
-The bridge back to positions: an array of the elements in canonical order
-(or in `cmp`'s order — `sorted_by` must be given a total order; ties are
-broken canonically, so the result is still deterministic). This is where
-you knowingly pay for rank: the array as a whole depends on every element.
+The bridge back to positions: an array of the elements in increasing value
+order, or in `cmp`'s order. `sorted_by` must be given a total order — there
+is no second order underneath to break ties with, so a `cmp` that answers
+`Equal` for distinct elements does not define a result. This is where you
+knowingly pay for rank: the array as a whole depends on every element.
 
 ```vix
 let by_weight = rows.values().sorted_by(|a, b| a.weight <=> b.weight);
