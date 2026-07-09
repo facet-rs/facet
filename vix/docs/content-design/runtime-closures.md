@@ -242,7 +242,9 @@ capability" and finally meaning something operational.
 materialized closure is blobs, so any node that can fetch can *have* it — but an
 `x86_64-linux` binary still only *runs* on `x86_64-linux`. **Materialization removes
 locality, not platform compatibility.** Both kinds of closure impose an execution-platform
-contract; only ambient closures additionally pin you to one advertised host. (An earlier
+contract; only ambient closures additionally pin you to the set of nodes advertising that
+fingerprint. (A node may satisfy `x86_64-linux` by emulation, so the test is "satisfies the
+execution contract", not "is of that platform". An earlier
 draft said a materialized closure "constrains placement not at all", which would have let
 the scheduler send a Linux `rustc` to a Mac.)
 

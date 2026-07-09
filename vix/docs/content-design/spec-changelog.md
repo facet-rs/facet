@@ -1178,8 +1178,12 @@ BLOCK**, not by handing a closure to `exec`.
 > of a placed block over exec's codata fields. **Retired: the observer as a *surface*
 > construct.** `exec cmd where { observer: … }` does not exist. `/vix-design/exec-observers`
 > keeps its findings (readiness is a protocol fact, not a filesystem fact) and loses its API.
-> Readiness authority = the placed block reading `out.stdout`; a VFS close event is the
-> fallback for protocol-less tools. A subfile projection resolving early is the CONSEQUENCE.
+> Readiness authority = the placed block reading a stream the tool controls. A subfile
+> projection resolving early is the CONSEQUENCE. For a **protocol-less** tool the safe
+> authority is **process exit**: a VFS close event is NOT sound (a process may close, reopen
+> and mutate). A close event is admissible only when the command grammar *promises*
+> monotonic/close-final outputs. And "rustc announces artifacts on stdout, which is how
+> cargo pipelines rmeta" is **unsourced** — the argument does not need it; do not repeat it.
 
 - **No exit status.** An exit code is a naked `Int` where a typed outcome belongs. Nonzero
   is a `fail`; where nonzero is a legitimate answer (`grep` → 1) the **command grammar
@@ -1193,7 +1197,7 @@ store models today. `r[machine.identity.tree-model]` mirrors `vx-services`'s
 `DirectoryEntryKind`:
 ```vix
 Tree      = Map<Name, TreeEntry>              // ONE path segment, recursive
-TreeEntry = File { content, size, executable } | Dir (Tree) | Symlink { target }
+TreeEntry = File { content: Blob, executable: Bool } | Dir (Tree) | Symlink { target }
 ```
 
 > **`TreeHash` is NOT Vixen's storage `NodeHash`** (`r[machine.identity.tree-hash-is-not-node-hash]`).
@@ -1218,19 +1222,36 @@ directories must round-trip (`mkdir -p out` before a compiler runs).
 resulting tree's digest**: two archives differing in compression or member order may unpack
 to one tree — one `TreeHash`, two `ContentHash`es.
 
-**Two hashes, two jobs** (`r[machine.primitive.fetch-integrity-vs-identity]`):
-- **`blake3` is the vix ContentHash** — the value's name, in the one identity space. A recipe
-  MAY bake it even when upstream publishes only a `sha256`.
-- **`sha256` is an upstream integrity/provenance check** on the bytes that arrive. It never
-  becomes an identity: a value must not be named in a hash family chosen by whoever hosted it.
-- Corollary: a fetch pinned only by an upstream digest has no vix identity until the bytes
-  arrive, so **it cannot cross a `place` boundary**. That is why baking the `blake3` pays.
+**One name, one optional provenance check** (`r[machine.primitive.fetch-integrity-vs-identity]`):
+- **`blake3` — the vix ContentHash — is REQUIRED.** It is the value's name in the one
+  identity space. Computing it for an upstream artifact is a **lock-time** act: fetch once,
+  hash, write it into the recipe. Every build thereafter knows the final `Blob` identity
+  before evaluating anything, so **every `fetch` crosses a `place` boundary by construction**.
+- **`sha256` is OPTIONAL transfer provenance** on the bytes that arrive. It never becomes an
+  identity: a value must not be named in a hash family chosen by whoever hosted it.
+- **There is no SHA-only fetch.** An operation whose result identity is unknown until the
+  bytes arrive is an *observation*, not a fetch. `fetch` may not become
+  hermetic-or-observational depending on whether an optional field is present — the exact
+  defect Amos rejected in round 10.
 
 **4. CORRECTION to `r[machine.placement.capability-requirements-are-derived]`.** The claim
 that a materialized closure "constrains placement not at all" was **false**. Materialization
 removes **locality**, not **platform compatibility**: a content-addressed `x86_64-linux`
 binary still executes only on `x86_64-linux`. Two independent axes — an **execution-platform
 contract** (both materialized and ambient closures impose it) and **host-specific locality**
-(ambient only). The old wording would have let the scheduler dispatch a Linux `rustc` to a
-Mac. Note the asymmetry with the *target*: the platform a tool RUNS on is cost-model; the
-platform it BUILDS FOR is semantic.
+(ambient only — and an advertised fingerprint admits the matching **set** of nodes, not one
+host). The old wording would have let the scheduler dispatch a Linux `rustc` to a Mac. Say
+"satisfies the execution contract", not "is of that platform": a node may satisfy
+`x86_64-linux` by emulation.
+
+**Three things, not two.** (1) The **target** — what the artifact is for. Semantic.
+(2) The **selected toolchain's host / execution ABI**, including Cargo's `HOST` — a pinned
+semantic property of the toolchain (it enters exec identity) AND a scheduler admissibility
+constraint. **Not cost-model.** (3) The **physical executor** — cost-model, unobservable,
+absent from the semantic receipt. An earlier draft collapsed (2) into (3).
+
+**Directionality** (`r[machine.placement.results-cross-back]`): `identity-crosses` governs
+**dispatch** — captured/imported values must have an identity known without evaluating the
+block. It says nothing about **results**: a placed block's derived value is computed remotely,
+acquires its identity there, and crosses back. A placed block consuming `out.stdout` and
+returning a diagnostic violates nothing.
