@@ -1,0 +1,1630 @@
+use vix::{Arg, Map, Os, Path, Target, Tree, Version};
+use caps::Rustc;
+
+struct CargoToml {
+    package: CargoPackage,
+    workspace: Option<CargoWorkspace>,
+    profile: Option<CargoProfiles>,
+}
+
+struct CargoWorkspace {
+    package: Option<CargoPackage>,
+}
+
+struct CargoPackage {
+    name: String,
+    version: Option<String>,
+    edition: Option<CargoEdition>,
+}
+
+enum CargoEdition {
+    Literal(String),
+    Workspace { workspace: Bool },
+}
+
+struct CargoLock {
+    package: [CargoLockPackage],
+}
+
+struct CargoLockPackage {
+    name: String,
+    version: String,
+    dependencies: Option<[String]>,
+}
+
+struct CargoProfiles {
+    dev: Option<CargoProfileSource>,
+    release: Option<CargoProfileSource>,
+}
+
+struct CargoProfileSource {
+    opt_level: Option<Int>,
+    debug: Option<Int>,
+    debug_assertions: Option<Bool>,
+    overflow_checks: Option<Bool>,
+    panic: Option<String>,
+    lto: Option<String>,
+    codegen_units: Option<Int>,
+    strip: Option<String>,
+    build_override: Option<CargoProfileSpec>,
+    package: Option<Map<String, CargoProfileSpec>>,
+}
+
+struct CargoProfileSpec {
+    opt_level: Option<Int>,
+    debuginfo: Option<Int>,
+    debug_assertions: Option<Bool>,
+    overflow_checks: Option<Bool>,
+    panic: Option<String>,
+    lto: Option<String>,
+    codegen_units: Option<Int>,
+    strip: Option<String>,
+}
+
+struct CargoProfileData {
+    dev: CargoProfileSpec,
+    release: CargoProfileSpec,
+    dev_build_override: CargoProfileSpec,
+    release_build_override: CargoProfileSpec,
+    dev_package: CargoProfileSpec,
+    release_package: CargoProfileSpec,
+}
+
+struct CargoResolvedProfile {
+    name: String,
+    opt_level: Int,
+    debuginfo: Int,
+    debug_assertions: Bool,
+    overflow_checks: Bool,
+    panic: String,
+    lto: String,
+    codegen_units: Option<Int>,
+    strip: String,
+}
+
+enum BuildMode {
+    Metadata,
+    Link,
+}
+
+enum CargoUnitKind {
+    Lib,
+    Bin,
+    ProcMacro,
+    BuildScript,
+    BuildDependency,
+}
+
+struct ResolvedUnit {
+    name: String,
+    kind: CargoUnitKind,
+    manifest: Path,
+    source: Path,
+    deps: [Int],
+    cfgs: [String],
+    metadata: Path,
+    link: Path,
+    metadata_file: String,
+    link_file: String,
+    profile: CargoResolvedProfile,
+}
+
+struct ResolvedGraph {
+    root: Int,
+    units: Map<Int, ResolvedUnit>,
+}
+
+struct UnitTarget {
+    kind: CargoUnitKind,
+    manifest: Path,
+    source: Path,
+    cfgs: [String],
+    metadata: Path,
+    link: Path,
+    metadata_file: String,
+    link_file: String,
+}
+
+struct UnitTargetTable {
+    root: Int,
+    targets: Map<Int, UnitTarget>,
+}
+
+struct UnitArtifactRef {
+    producer: Int,
+    extern_name: String,
+    subpath: Path,
+    compat_file: String,
+}
+
+struct RustExtern {
+    name: String,
+    tree: Tree,
+    subpath: Path,
+}
+
+struct RustUnit {
+    crate_name: String,
+    crate_type: CargoUnitKind,
+    edition_source: Tree,
+    manifest: Tree,
+    source: Path,
+    target: Target,
+    emit_metadata: Option<Path>,
+    emit_link: Option<Path>,
+    deps_tree: Option<Tree>,
+    externs: [RustExtern],
+    cfgs: [String],
+    env: [Arg],
+    profile: Option<CargoResolvedProfile>,
+}
+
+struct BuildScriptMetadata {
+    key: String,
+    value: String,
+}
+
+struct BuildScriptOutDirRef {
+    tree: Tree,
+    subpath: Path,
+}
+
+struct BuildScriptUnitEffects {
+    rustc_cfg: [String],
+    rustc_check_cfg: [String],
+    rustc_env: [String],
+    rustc_link_lib: [String],
+    rustc_link_search: [String],
+    rerun_if_changed: [String],
+    rerun_if_env_changed: [String],
+    warning: [String],
+    metadata: [BuildScriptMetadata],
+    out_dir: BuildScriptOutDirRef,
+}
+
+struct BuildScriptDirectives {
+    rustc_cfg: [String],
+    rustc_check_cfg: [String],
+    rustc_env: [String],
+    rustc_link_lib: [String],
+    rustc_link_search: [String],
+    rerun_if_changed: [String],
+    rerun_if_env_changed: [String],
+    warning: [String],
+    metadata: [BuildScriptMetadata],
+}
+
+fn manifest_toml(manifest: Tree) -> CargoToml {
+    toml_decode<CargoToml>(manifest / p"Cargo.toml")
+}
+
+fn package(manifest: Tree) -> CargoPackage {
+    manifest_toml(manifest).package
+}
+
+fn package_edition_from_source(source: Tree, manifest: Tree) -> String {
+    match package(manifest).edition {
+        Some(CargoEdition::Literal(edition)) => edition,
+        Some(CargoEdition::Workspace { workspace }) => match workspace {
+            true => manifest_toml(source).workspace.unwrap().package.unwrap().edition.unwrap().literal(),
+            false => "2015",
+        },
+        None => "2015",
+    }
+}
+
+namespace CargoEdition {
+    fn literal(self) -> String {
+        match self {
+            CargoEdition::Literal(edition) => edition,
+            CargoEdition::Workspace { workspace } => match workspace {
+                true => {
+                    let missing: Map<String, String> = %{};
+                    missing.get("workspace.package.edition").unwrap()
+                },
+                false => "2015",
+            },
+        }
+    }
+}
+
+fn lock_doc(graph: Tree) -> CargoLock {
+    toml_decode<CargoLock>(graph / p"Cargo.lock")
+}
+
+fn lock_package(lock: CargoLock, name: String) -> CargoLockPackage {
+    lock.package.values().find_min(|pkg| pkg.name == name).unwrap()
+}
+
+pub fn lock_fixture_deps(graph: Tree, name: String) -> String {
+    lock_package(lock_doc(graph), name).dependencies.unwrap().join(",")
+}
+
+fn crate_name(package_name: String) -> String {
+    match package_name.contains("-") {
+        true => crate_name(package_name.before("-") + "_" + package_name.after("-")),
+        false => package_name,
+    }
+}
+
+fn bool_text(value: Bool) -> String {
+    match value {
+        true => "true",
+        false => "false",
+    }
+}
+
+fn int_text(value: Int) -> String {
+    `${value}`
+}
+
+fn empty_profile_spec() -> CargoProfileSpec {
+    CargoProfileSpec {
+        opt_level: None,
+        debuginfo: None,
+        debug_assertions: None,
+        overflow_checks: None,
+        panic: None,
+        lto: None,
+        codegen_units: None,
+        strip: None,
+    }
+}
+
+fn profile_source_spec(source: CargoProfileSource) -> CargoProfileSpec {
+    CargoProfileSpec {
+        opt_level: source.opt_level,
+        debuginfo: source.debug,
+        debug_assertions: source.debug_assertions,
+        overflow_checks: source.overflow_checks,
+        panic: source.panic,
+        lto: source.lto,
+        codegen_units: source.codegen_units,
+        strip: source.strip,
+    }
+}
+
+fn profile_spec_from_root(source: Tree, name: String) -> CargoProfileSpec {
+    match manifest_toml(source).profile {
+        Some(profiles) => match name == "release" {
+            true => match profiles.release {
+                Some(profile) => profile_source_spec(profile),
+                None => empty_profile_spec(),
+            },
+            false => match profiles.dev {
+                Some(profile) => profile_source_spec(profile),
+                None => empty_profile_spec(),
+            },
+        },
+        None => empty_profile_spec(),
+    }
+}
+
+fn profile_build_override_spec_from_root(source: Tree, name: String) -> CargoProfileSpec {
+    match manifest_toml(source).profile {
+        Some(profiles) => match name == "release" {
+            true => match profiles.release {
+                Some(profile) => match profile.build_override {
+                    Some(spec) => spec,
+                    None => empty_profile_spec(),
+                },
+                None => empty_profile_spec(),
+            },
+            false => match profiles.dev {
+                Some(profile) => match profile.build_override {
+                    Some(spec) => spec,
+                    None => empty_profile_spec(),
+                },
+                None => empty_profile_spec(),
+            },
+        },
+        None => empty_profile_spec(),
+    }
+}
+
+fn profile_package_spec_from_root(source: Tree, name: String, package_name: String) -> CargoProfileSpec {
+    match manifest_toml(source).profile {
+        Some(profiles) => match name == "release" {
+            true => match profiles.release {
+                Some(profile) => match profile.package {
+                    Some(packages) => match packages.get(package_name) {
+                        Some(spec) => spec,
+                        None => empty_profile_spec(),
+                    },
+                    None => empty_profile_spec(),
+                },
+                None => empty_profile_spec(),
+            },
+            false => match profiles.dev {
+                Some(profile) => match profile.package {
+                    Some(packages) => match packages.get(package_name) {
+                        Some(spec) => spec,
+                        None => empty_profile_spec(),
+                    },
+                    None => empty_profile_spec(),
+                },
+                None => empty_profile_spec(),
+            },
+        },
+        None => empty_profile_spec(),
+    }
+}
+
+fn cargo_profiles_for(source: Tree, package_name: String) -> CargoProfileData {
+    CargoProfileData {
+        dev: profile_spec_from_root(source, "dev"),
+        release: profile_spec_from_root(source, "release"),
+        dev_build_override: profile_build_override_spec_from_root(source, "dev"),
+        release_build_override: profile_build_override_spec_from_root(source, "release"),
+        dev_package: profile_package_spec_from_root(source, "dev", package_name),
+        release_package: profile_package_spec_from_root(source, "release", package_name),
+    }
+}
+
+fn dev_profile_defaults() -> CargoResolvedProfile {
+    CargoResolvedProfile {
+        name: "dev",
+        opt_level: 0,
+        debuginfo: 2,
+        debug_assertions: true,
+        overflow_checks: true,
+        panic: "unwind",
+        lto: "false",
+        codegen_units: None,
+        strip: "none",
+    }
+}
+
+fn release_profile_defaults() -> CargoResolvedProfile {
+    CargoResolvedProfile {
+        name: "release",
+        opt_level: 3,
+        debuginfo: 0,
+        debug_assertions: false,
+        overflow_checks: false,
+        panic: "unwind",
+        lto: "false",
+        codegen_units: Some(16),
+        strip: "none",
+    }
+}
+
+fn profile_defaults(name: String) -> CargoResolvedProfile {
+    match name == "release" {
+        true => release_profile_defaults(),
+        false => dev_profile_defaults(),
+    }
+}
+
+fn host_profile_defaults() -> CargoProfileSpec {
+    CargoProfileSpec {
+        opt_level: None,
+        debuginfo: Some(0),
+        debug_assertions: None,
+        overflow_checks: None,
+        panic: None,
+        lto: None,
+        codegen_units: None,
+        strip: None,
+    }
+}
+
+fn opt_int(value: Option<Int>, fallback: Int) -> Int {
+    match value {
+        Some(v) => v,
+        None => fallback,
+    }
+}
+
+fn opt_bool(value: Option<Bool>, fallback: Bool) -> Bool {
+    match value {
+        Some(v) => v,
+        None => fallback,
+    }
+}
+
+fn opt_string(value: Option<String>, fallback: String) -> String {
+    match value {
+        Some(v) => v,
+        None => fallback,
+    }
+}
+
+fn opt_opt_int(value: Option<Int>, fallback: Option<Int>) -> Option<Int> {
+    match value {
+        Some(v) => Some(v),
+        None => fallback,
+    }
+}
+
+fn profile_apply(base: CargoResolvedProfile, spec: CargoProfileSpec) -> CargoResolvedProfile {
+    CargoResolvedProfile {
+        name: base.name,
+        opt_level: opt_int(spec.opt_level, base.opt_level),
+        debuginfo: opt_int(spec.debuginfo, base.debuginfo),
+        debug_assertions: opt_bool(spec.debug_assertions, base.debug_assertions),
+        overflow_checks: opt_bool(spec.overflow_checks, base.overflow_checks),
+        panic: opt_string(spec.panic, base.panic),
+        lto: opt_string(spec.lto, base.lto),
+        codegen_units: opt_opt_int(spec.codegen_units, base.codegen_units),
+        strip: opt_string(spec.strip, base.strip),
+    }
+}
+
+fn package_profile_spec(data: CargoProfileData, name: String) -> CargoProfileSpec {
+    match name == "release" {
+        true => data.release_package,
+        false => data.dev_package,
+    }
+}
+
+fn root_profile_spec(data: CargoProfileData, name: String) -> CargoProfileSpec {
+    match name == "release" {
+        true => data.release,
+        false => data.dev,
+    }
+}
+
+fn build_override_profile_spec(data: CargoProfileData, name: String) -> CargoProfileSpec {
+    match name == "release" {
+        true => data.release_build_override,
+        false => data.dev_build_override,
+    }
+}
+
+fn unit_uses_host_profile(kind: CargoUnitKind) -> Bool {
+    match kind {
+        CargoUnitKind::BuildScript => true,
+        CargoUnitKind::BuildDependency => true,
+        _ => false,
+    }
+}
+
+fn unit_uses_build_override(kind: CargoUnitKind) -> Bool {
+    match kind {
+        CargoUnitKind::ProcMacro => true,
+        _ => unit_uses_host_profile(kind),
+    }
+}
+
+fn resolved_profile(data: CargoProfileData, package_name: String, kind: CargoUnitKind, name: String) -> CargoResolvedProfile {
+    let base = profile_apply(profile_defaults(name), root_profile_spec(data, name));
+    let host_base = match unit_uses_host_profile(kind) {
+        true => profile_apply(base, host_profile_defaults()),
+        false => base,
+    };
+    let build_override = match unit_uses_build_override(kind) {
+        true => profile_apply(host_base, build_override_profile_spec(data, name)),
+        false => host_base,
+    };
+    profile_apply(build_override, package_profile_spec(data, name))
+}
+
+fn default_resolved_profile(kind: CargoUnitKind, package_name: String) -> CargoResolvedProfile {
+    resolved_profile(
+        CargoProfileData {
+            dev: empty_profile_spec(),
+            release: empty_profile_spec(),
+            dev_build_override: empty_profile_spec(),
+            release_build_override: empty_profile_spec(),
+            dev_package: empty_profile_spec(),
+            release_package: empty_profile_spec(),
+        },
+        package_name,
+        kind,
+        "dev",
+    )
+}
+
+pub fn resolved_profile_for(source: Tree, package_name: String, unit_kind: CargoUnitKind, name: String) -> CargoResolvedProfile {
+    resolved_profile(cargo_profiles_for(source, package_name), package_name, unit_kind, name)
+}
+
+fn rustc_profile_args(profile: Option<CargoResolvedProfile>) -> [Arg] {
+    match profile {
+        Some(p) => {
+            let fixed = [
+                Arg::Str("-C"),
+                Arg::Str("opt-level=" + int_text(p.opt_level)),
+                Arg::Str("-C"),
+                Arg::Str("debuginfo=" + int_text(p.debuginfo)),
+                Arg::Str("-C"),
+                Arg::Str("debug-assertions=" + bool_text(p.debug_assertions)),
+                Arg::Str("-C"),
+                Arg::Str("overflow-checks=" + bool_text(p.overflow_checks)),
+                Arg::Str("-C"),
+                Arg::Str("panic=" + p.panic),
+                Arg::Str("-C"),
+                Arg::Str("lto=" + p.lto),
+            ];
+            match p.codegen_units {
+                Some(units) => [..fixed, Arg::Str("-C"), Arg::Str("codegen-units=" + int_text(units))],
+                None => fixed,
+            }
+        },
+        None => [],
+    }
+}
+
+fn rustc_cfg_args(values: [String]) -> [Arg] {
+    values.fold([], |out, cfg| [..out, Arg::Str("--cfg"), Arg::Str(cfg)])
+}
+
+fn rustc_check_cfg_args(values: [String]) -> [Arg] {
+    values.fold([], |out, cfg| [..out, Arg::Str("--check-cfg"), Arg::Str(cfg)])
+}
+
+fn rustc_env_args(values: [String]) -> [Arg] {
+    values.fold([], |out, env| [..out, Arg::Str("--env"), Arg::Str(env)])
+}
+
+fn rustc_extern_args(externs: [RustExtern]) -> [Arg] {
+    externs.fold([], |out, dep| [
+        ..out,
+        Arg::Str("--extern"),
+        Arg::Str(dep.name + "="),
+        Arg::Interpolation { tree: dep.tree, subpath: dep.subpath },
+    ])
+}
+
+fn rustc_dependency_args(deps_tree: Option<Tree>) -> [Arg] {
+    match deps_tree {
+        Some(tree) => [Arg::Str("-L"), Arg::Str("dependency="), Arg::Interpolation { tree: tree, subpath: p"" }],
+        None => [],
+    }
+}
+
+fn rustc_crate_type(kind: CargoUnitKind) -> String {
+    match kind {
+        CargoUnitKind::ProcMacro => "proc-macro",
+        CargoUnitKind::BuildScript => "bin",
+        CargoUnitKind::BuildDependency => "lib",
+        CargoUnitKind::Bin => "bin",
+        CargoUnitKind::Lib => "lib",
+    }
+}
+
+fn compile_rust_unit(unit: RustUnit) -> Tree {
+    let rustc = Rustc::acquire(unit.target);
+    let edition = package_edition_from_source(unit.edition_source, unit.manifest);
+    let profile_args = rustc_profile_args(unit.profile);
+    let cfg_args = rustc_cfg_args(unit.cfgs);
+    let dep_args = rustc_dependency_args(unit.deps_tree);
+    let extern_args = rustc_extern_args(unit.externs);
+    let source_arg = Arg::Interpolation { tree: unit.manifest, subpath: unit.source };
+
+    match unit.emit_metadata {
+        Some(metadata) => match unit.emit_link {
+            Some(link) => rustc! {
+                --crate-name {unit.crate_name}
+                --edition {edition}
+                --crate-type {rustc_crate_type(unit.crate_type)}
+                {profile_args}
+                {cfg_args}
+                {unit.env}
+                --emit=metadata={metadata},link={link}
+                {dep_args}
+                {extern_args}
+                {source_arg}
+            },
+            None => rustc! {
+                --crate-name {unit.crate_name}
+                --edition {edition}
+                --crate-type {rustc_crate_type(unit.crate_type)}
+                {profile_args}
+                {cfg_args}
+                {unit.env}
+                --emit=metadata={metadata}
+                {dep_args}
+                {extern_args}
+                {source_arg}
+            },
+        },
+        None => match unit.emit_link {
+            Some(link) => rustc! {
+                --crate-name {unit.crate_name}
+                --edition {edition}
+                --crate-type {rustc_crate_type(unit.crate_type)}
+                {profile_args}
+                {cfg_args}
+                {unit.env}
+                --emit=link={link}
+                {dep_args}
+                {extern_args}
+                {source_arg}
+            },
+            None => rustc! {
+                --crate-name {unit.crate_name}
+                --edition {edition}
+                --crate-type {rustc_crate_type(unit.crate_type)}
+                {profile_args}
+                {cfg_args}
+                {unit.env}
+                {dep_args}
+                {extern_args}
+                {source_arg}
+            },
+        },
+    }
+}
+
+fn manifest_rust_unit(target: Target, manifest: Tree, kind: CargoUnitKind, source: Path, metadata: Option<Path>, link: Option<Path>) -> RustUnit {
+    RustUnit {
+        crate_name: crate_name(package(manifest).name),
+        crate_type: kind,
+        edition_source: manifest,
+        manifest: manifest,
+        source: source,
+        target: target,
+        emit_metadata: metadata,
+        emit_link: link,
+        deps_tree: None,
+        externs: [],
+        cfgs: [],
+        env: [],
+        profile: None,
+    }
+}
+
+pub fn crate_lib(target: Target, manifest: Tree) -> Tree {
+    compile_rust_unit(manifest_rust_unit(
+        target,
+        manifest,
+        CargoUnitKind::Lib,
+        p"src/lib.rs",
+        Some(p"libmini_vendored.rmeta"),
+        Some(p"libmini_vendored.rlib"),
+    ))
+}
+
+fn dep_artifact(target: Target, dep: Tree, mode: BuildMode) -> Tree {
+    let unit = manifest_rust_unit(
+        target,
+        dep,
+        CargoUnitKind::Lib,
+        p"src/lib.rs",
+        Some(p"libhelper.rmeta"),
+        Some(p"libhelper.rlib"),
+    );
+    let built = compile_rust_unit(unit);
+    match mode {
+        BuildMode::Metadata => built / p"libhelper.rmeta",
+        BuildMode::Link => built / p"libhelper.rlib",
+    }
+}
+
+fn app_bin(target: Target, manifest: Tree, dep: RustExtern, deps_tree: Tree, mode: BuildMode) -> Tree {
+    let emit_metadata = match mode {
+        BuildMode::Metadata => Some(p"mini_app.rmeta"),
+        BuildMode::Link => None,
+    };
+    let emit_link = match mode {
+        BuildMode::Metadata => None,
+        BuildMode::Link => Some(p"mini_app"),
+    };
+    compile_rust_unit(RustUnit {
+        deps_tree: Some(deps_tree),
+        externs: [dep],
+        ..manifest_rust_unit(target, manifest, CargoUnitKind::Bin, p"src/main.rs", emit_metadata, emit_link)
+    })
+}
+
+pub fn crate_bin_check(target: Target, graph: Tree) -> Tree {
+    let dep = graph / p"crates" / p"helper";
+    let root = graph / p"app";
+    let meta = dep_artifact(target, dep, BuildMode::Metadata);
+    app_bin(
+        target,
+        root,
+        RustExtern { name: "helper", tree: meta, subpath: p"libhelper.rmeta" },
+        meta,
+        BuildMode::Metadata,
+    ) / p"mini_app.rmeta"
+}
+
+pub fn crate_bin(target: Target, graph: Tree) -> Tree {
+    let dep = graph / p"crates" / p"helper";
+    let root = graph / p"app";
+    let rlib = dep_artifact(target, dep, BuildMode::Link);
+    app_bin(
+        target,
+        root,
+        RustExtern { name: "helper", tree: rlib, subpath: p"libhelper.rlib" },
+        rlib,
+        BuildMode::Link,
+    ) / p"mini_app"
+}
+
+fn lock_lib(target: Target, graph: Tree, lock: CargoLock, name: String, dir: Path, metadata: Path, link: Path, mode: BuildMode) -> Tree {
+    let package = lock_package(lock, name);
+    let manifest = graph / dir;
+    let built = compile_rust_unit(RustUnit {
+        crate_name: crate_name(package.name),
+        ..manifest_rust_unit(target, manifest, CargoUnitKind::Lib, p"src/lib.rs", Some(metadata), Some(link))
+    });
+    match mode {
+        BuildMode::Metadata => built / metadata,
+        BuildMode::Link => built / link,
+    }
+}
+
+fn lock_core(target: Target, graph: Tree, lock: CargoLock, mode: BuildMode) -> Tree {
+    lock_lib(target, graph, lock, "core_lib", p"crates" / p"core_lib", p"libcore_lib.rmeta", p"libcore_lib.rlib", mode)
+}
+
+fn lock_formatting(target: Target, graph: Tree, lock: CargoLock, mode: BuildMode) -> Tree {
+    lock_lib(target, graph, lock, "formatting_lib", p"crates" / p"formatting_lib", p"libformatting_lib.rmeta", p"libformatting_lib.rlib", mode)
+}
+
+fn lock_alpha(target: Target, graph: Tree, lock: CargoLock, core: Tree, mode: BuildMode) -> Tree {
+    let package = lock_package(lock, "alpha_lib");
+    let manifest = graph / p"crates" / p"alpha_lib";
+    let core_path = match mode {
+        BuildMode::Metadata => p"libcore_lib.rmeta",
+        BuildMode::Link => p"libcore_lib.rlib",
+    };
+    let built = compile_rust_unit(RustUnit {
+        crate_name: crate_name(package.name),
+        deps_tree: Some(core),
+        externs: [RustExtern { name: "core_lib", tree: core, subpath: core_path }],
+        ..manifest_rust_unit(target, manifest, CargoUnitKind::Lib, p"src/lib.rs", Some(p"libalpha_lib.rmeta"), Some(p"libalpha_lib.rlib"))
+    });
+    match mode {
+        BuildMode::Metadata => built / p"libalpha_lib.rmeta",
+        BuildMode::Link => built / p"libalpha_lib.rlib",
+    }
+}
+
+fn lock_bin(target: Target, graph: Tree, lock: CargoLock, alpha: Tree, formatting: Tree, core: Tree, mode: BuildMode) -> Tree {
+    let manifest = graph / p"app";
+    let emit_metadata = match mode {
+        BuildMode::Metadata => Some(p"mini_app.rmeta"),
+        BuildMode::Link => None,
+    };
+    let emit_link = match mode {
+        BuildMode::Metadata => None,
+        BuildMode::Link => Some(p"mini_app"),
+    };
+    let alpha_path = match mode {
+        BuildMode::Metadata => p"libalpha_lib.rmeta",
+        BuildMode::Link => p"libalpha_lib.rlib",
+    };
+    let formatting_path = match mode {
+        BuildMode::Metadata => p"libformatting_lib.rmeta",
+        BuildMode::Link => p"libformatting_lib.rlib",
+    };
+    compile_rust_unit(RustUnit {
+        crate_name: lock_package(lock, "mini_app").name,
+        deps_tree: Some([alpha, formatting, core].collect()),
+        externs: [
+            RustExtern { name: "alpha_lib", tree: alpha, subpath: alpha_path },
+            RustExtern { name: "formatting_lib", tree: formatting, subpath: formatting_path },
+        ],
+        ..manifest_rust_unit(target, manifest, CargoUnitKind::Bin, p"src/main.rs", emit_metadata, emit_link)
+    })
+}
+
+pub fn crate_lock_bin_check(target: Target, graph: Tree) -> Tree {
+    let lock = lock_doc(graph);
+    let core = lock_core(target, graph, lock, BuildMode::Metadata);
+    let alpha = lock_alpha(target, graph, lock, core, BuildMode::Metadata);
+    let formatting = lock_formatting(target, graph, lock, BuildMode::Metadata);
+    lock_bin(target, graph, lock, alpha, formatting, core, BuildMode::Metadata) / p"mini_app.rmeta"
+}
+
+pub fn crate_lock_bin(target: Target, graph: Tree) -> Tree {
+    let lock = lock_doc(graph);
+    let core = lock_core(target, graph, lock, BuildMode::Link);
+    let alpha = lock_alpha(target, graph, lock, core, BuildMode::Link);
+    let formatting = lock_formatting(target, graph, lock, BuildMode::Link);
+    lock_bin(target, graph, lock, alpha, formatting, core, BuildMode::Link) / p"mini_app"
+}
+
+pub fn crate_lock_root_version(graph: Tree) -> String {
+    lock_package(lock_doc(graph), "mini_app").version
+}
+
+fn resolved_unit(graph: ResolvedGraph, ix: Int) -> ResolvedUnit {
+    graph.units.get(ix).unwrap()
+}
+
+fn unit_target(targets: UnitTargetTable, pkg: Int) -> UnitTarget {
+    targets.targets.get(pkg).unwrap()
+}
+
+fn unit_artifact_path(unit: ResolvedUnit, mode: BuildMode) -> Path {
+    match unit.kind {
+        CargoUnitKind::ProcMacro => unit.link,
+        _ => match mode {
+            BuildMode::Metadata => unit.metadata,
+            BuildMode::Link => unit.link,
+        },
+    }
+}
+
+fn unit_artifact_file(unit: ResolvedUnit, mode: BuildMode) -> String {
+    match unit.kind {
+        CargoUnitKind::ProcMacro => unit.link_file,
+        _ => match mode {
+            BuildMode::Metadata => unit.metadata_file,
+            BuildMode::Link => unit.link_file,
+        },
+    }
+}
+
+fn resolved_dependency_artifacts(target: Target, source: Tree, graph: ResolvedGraph, deps: [Int], mode: BuildMode) -> [Tree] {
+    deps.fold([], |out, dep| {
+        let unit = resolved_unit(graph, dep);
+        let nested = resolved_dependency_artifacts(target, source, graph, unit.deps, mode);
+        let built = resolved_unit_built(target, source, graph, unit, mode);
+        [..out, ..nested, built]
+    })
+}
+
+fn resolved_dependency_tree(target: Target, source: Tree, graph: ResolvedGraph, unit: ResolvedUnit, mode: BuildMode) -> Option<Tree> {
+    match unit.deps.len() == 0 {
+        true => None,
+        false => Some(resolved_dependency_artifacts(target, source, graph, unit.deps, mode).collect()),
+    }
+}
+
+fn resolved_externs(target: Target, source: Tree, graph: ResolvedGraph, deps: [Int], mode: BuildMode) -> [RustExtern] {
+    deps.map(|dep| {
+        let dep_unit = resolved_unit(graph, dep);
+        let built = resolved_unit_built(target, source, graph, dep_unit, mode);
+        RustExtern {
+            name: dep_unit.name,
+            tree: built,
+            subpath: unit_artifact_path(dep_unit, mode),
+        }
+    })
+}
+
+fn resolved_unit_compile(target: Target, source: Tree, graph: ResolvedGraph, unit: ResolvedUnit, mode: BuildMode) -> Tree {
+    let manifest = source / unit.manifest;
+    let emit_metadata = match mode {
+        BuildMode::Metadata => Some(unit.metadata),
+        BuildMode::Link => match unit.kind {
+            CargoUnitKind::Lib => Some(unit.metadata),
+            CargoUnitKind::BuildDependency => Some(unit.metadata),
+            _ => None,
+        },
+    };
+    let emit_link = match mode {
+        BuildMode::Metadata => match unit.kind {
+            CargoUnitKind::Lib => Some(unit.link),
+            CargoUnitKind::BuildDependency => Some(unit.link),
+            _ => None,
+        },
+        BuildMode::Link => Some(unit.link),
+    };
+    compile_rust_unit(RustUnit {
+        crate_name: unit.name,
+        crate_type: unit.kind,
+        edition_source: manifest,
+        manifest: manifest,
+        source: unit.source,
+        target: target,
+        emit_metadata: emit_metadata,
+        emit_link: emit_link,
+        deps_tree: resolved_dependency_tree(target, source, graph, unit, mode),
+        externs: resolved_externs(target, source, graph, unit.deps, mode),
+        cfgs: unit.cfgs,
+        env: [],
+        profile: Some(unit.profile),
+    })
+}
+
+fn resolved_proc_macro(source: Tree, unit: ResolvedUnit) -> Tree {
+    let manifest = source / unit.manifest;
+    compile_rust_unit(RustUnit {
+        target: Target::host(),
+        crate_type: CargoUnitKind::ProcMacro,
+        edition_source: manifest,
+        emit_metadata: None,
+        emit_link: Some(unit.link),
+        manifest: manifest,
+        source: unit.source,
+        crate_name: unit.name,
+        deps_tree: None,
+        externs: [],
+        cfgs: unit.cfgs,
+        env: [],
+        profile: Some(unit.profile),
+    })
+}
+
+fn resolved_build_script_compile(source: Tree, unit: ResolvedUnit) -> Tree {
+    let manifest = source / unit.manifest;
+    compile_rust_unit(RustUnit {
+        target: Target::host(),
+        crate_type: CargoUnitKind::BuildScript,
+        edition_source: manifest,
+        emit_metadata: None,
+        emit_link: Some(unit.link),
+        manifest: manifest,
+        source: unit.source,
+        crate_name: unit.name,
+        deps_tree: None,
+        externs: [],
+        cfgs: unit.cfgs,
+        env: [],
+        profile: Some(unit.profile),
+    })
+}
+
+fn resolved_unit_built(target: Target, source: Tree, graph: ResolvedGraph, unit: ResolvedUnit, mode: BuildMode) -> Tree {
+    match unit.kind {
+        CargoUnitKind::ProcMacro => resolved_proc_macro(source, unit),
+        CargoUnitKind::BuildScript => resolved_build_script_compile(source, unit),
+        _ => resolved_unit_compile(target, source, graph, unit, mode),
+    }
+}
+
+fn resolved_unit_artifact(target: Target, source: Tree, graph: ResolvedGraph, ix: Int, mode: BuildMode) -> Tree {
+    let unit = resolved_unit(graph, ix);
+    resolved_unit_built(target, source, graph, unit, mode) / unit_artifact_path(unit, mode)
+}
+
+pub fn crate_resolved_bin_check(target: Target, source: Tree, graph: ResolvedGraph) -> Tree {
+    resolved_unit_artifact(target, source, graph, graph.root, BuildMode::Metadata)
+}
+
+pub fn crate_resolved_bin(target: Target, source: Tree, graph: ResolvedGraph) -> Tree {
+    resolved_unit_artifact(target, source, graph, graph.root, BuildMode::Link)
+}
+
+fn selected_contains(selected: Map<Int, Version>, pkg: Int) -> Bool {
+    match selected.get(pkg) {
+        Some(_) => true,
+        None => false,
+    }
+}
+
+fn guard_is_parent_in_graph(index: Index, guard_id: Int, clause_id: Int, parent: Int) -> Bool {
+    match index.guard_clause_ids.get(guard_id).unwrap() == clause_id
+        && index.guard_pkgs.get(guard_id).unwrap() == parent {
+        true => match index.guard_version_values.get(guard_id) {
+            Some(_) => false,
+            None => index.guard_kinds.get(guard_id).unwrap() == 0,
+        },
+        false => false,
+    }
+}
+
+fn clause_has_parent_guard(index: Index, parent: Int, clause_id: Int, guard_ids: [Int]) -> Bool {
+    guard_ids.values().any(|guard_id| guard_is_parent_in_graph(index, guard_id, clause_id, parent))
+}
+
+fn solution_dependency_clause(index: Index, result: SolveResult, parent: Int, clause_id: Int, target: String) -> Bool {
+    match gate_active_id(index, clause_id, target)
+        && selected_contains(result.selected, parent)
+        && clause_has_parent_guard(index, parent, clause_id, index.guard_ids)
+        && index.consequent_tags.get(clause_id).unwrap() == "in_graph" {
+        true => selected_contains(result.selected, index.consequent_pkgs.get(clause_id).unwrap()),
+        false => false,
+    }
+}
+
+fn solution_dep_ids(index: Index, result: SolveResult, parent: Int, target: String) -> [Int] {
+    index.clause_ids.fold([], |out, clause_id| match solution_dependency_clause(index, result, parent, clause_id, target) {
+        true => [..out, index.consequent_pkgs.get(clause_id).unwrap()],
+        false => out,
+    })
+}
+
+fn solution_unit(index: Index, result: SolveResult, targets: UnitTargetTable, source: Tree, target: String, pkg: Int) -> ResolvedUnit {
+    let target_shape = unit_target(targets, pkg);
+    let manifest = source / target_shape.manifest;
+    let package_name = package(manifest).name;
+    let name = match target_shape.kind {
+        CargoUnitKind::BuildScript => "build_script_build",
+        _ => crate_name(package_name),
+    };
+    ResolvedUnit {
+        name: name,
+        kind: target_shape.kind,
+        manifest: target_shape.manifest,
+        source: target_shape.source,
+        deps: solution_dep_ids(index, result, pkg, target),
+        cfgs: target_shape.cfgs,
+        metadata: target_shape.metadata,
+        link: target_shape.link,
+        metadata_file: target_shape.metadata_file,
+        link_file: target_shape.link_file,
+        profile: default_resolved_profile(target_shape.kind, name),
+    }
+}
+
+fn solution_artifact_ref(index: Index, result: SolveResult, targets: UnitTargetTable, source: Tree, target_name: String, pkg: Int, mode: BuildMode) -> UnitArtifactRef {
+    let unit = solution_unit(index, result, targets, source, target_name, pkg);
+    UnitArtifactRef {
+        producer: pkg,
+        extern_name: unit.name,
+        subpath: unit_artifact_path(unit, mode),
+        compat_file: unit_artifact_file(unit, mode),
+    }
+}
+
+fn solution_dependency_artifacts(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, deps: [Int], mode: BuildMode) -> [Tree] {
+    deps.fold([], |out, dep| {
+        let unit = solution_unit(index, result, targets, source, target_name, dep);
+        match unit.kind {
+            CargoUnitKind::BuildScript => out,
+            _ => {
+                let nested = solution_dependency_artifacts(target, source, index, result, targets, target_name, unit.deps, mode);
+                let built = solution_unit_built(target, source, index, result, targets, target_name, dep, mode);
+                [..out, ..nested, built]
+            },
+        }
+    })
+}
+
+fn solution_dependency_tree(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, unit: ResolvedUnit, mode: BuildMode) -> Option<Tree> {
+    let artifacts = solution_dependency_artifacts(target, source, index, result, targets, target_name, unit.deps, mode);
+    match artifacts.len() == 0 {
+        true => None,
+        false => Some(artifacts.collect()),
+    }
+}
+
+fn solution_externs(target: Target, index: Index, result: SolveResult, targets: UnitTargetTable, source: Tree, target_name: String, deps: [Int], mode: BuildMode) -> [RustExtern] {
+    deps.values().filter_map(|dep| {
+        let unit = solution_unit(index, result, targets, source, target_name, dep);
+        match unit.kind {
+            CargoUnitKind::BuildScript => None,
+            _ => {
+                let artifact = solution_artifact_ref(index, result, targets, source, target_name, dep, mode);
+                let built = solution_unit_built(target, source, index, result, targets, target_name, dep, mode);
+                Some(RustExtern { name: artifact.extern_name, tree: built, subpath: artifact.subpath })
+            },
+        }
+    }).sorted()
+}
+
+fn build_script_runs_for_deps(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, deps: [Int]) -> [Tree] {
+    deps.values().filter_map(|dep| {
+        let unit = solution_unit(index, result, targets, source, target_name, dep);
+        match unit.kind {
+            CargoUnitKind::BuildScript => Some(solution_unit_built(target, source, index, result, targets, target_name, dep, BuildMode::Link)),
+            _ => None,
+        }
+    }).sorted()
+}
+
+fn solution_build_script_cfg_args(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, deps: [Int]) -> [String] {
+    build_script_runs_for_deps(target, source, index, result, targets, target_name, deps)
+        .fold([], |out, run| [..out, ..build_script_rustc_cfgs(run)])
+}
+
+fn solution_compile_rust_unit(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, unit: ResolvedUnit, mode: BuildMode) -> Tree {
+    let manifest = source / unit.manifest;
+    let base_cfgs = [..unit.cfgs, ..solution_build_script_cfg_args(target, source, index, result, targets, target_name, unit.deps)];
+    let env = [Arg::Str("--env"), Arg::Str("CARGO_MANIFEST_DIR="), Arg::Interpolation { tree: manifest, subpath: p"" }];
+    let emit_metadata = match mode {
+        BuildMode::Metadata => Some(unit.metadata),
+        BuildMode::Link => match unit.kind {
+            CargoUnitKind::Lib => Some(unit.metadata),
+            CargoUnitKind::BuildDependency => Some(unit.metadata),
+            _ => None,
+        },
+    };
+    let emit_link = match mode {
+        BuildMode::Metadata => match unit.kind {
+            CargoUnitKind::Lib => Some(unit.link),
+            CargoUnitKind::BuildDependency => Some(unit.link),
+            _ => None,
+        },
+        BuildMode::Link => Some(unit.link),
+    };
+
+    compile_rust_unit(RustUnit {
+        crate_name: unit.name,
+        crate_type: unit.kind,
+        edition_source: source,
+        manifest: manifest,
+        source: unit.source,
+        target: target,
+        emit_metadata: emit_metadata,
+        emit_link: emit_link,
+        deps_tree: solution_dependency_tree(target, source, index, result, targets, target_name, unit, mode),
+        externs: solution_externs(target, index, result, targets, source, target_name, unit.deps, mode),
+        cfgs: base_cfgs,
+        env: env,
+        profile: Some(unit.profile),
+    })
+}
+
+fn target_arch_env(target_name: String) -> String {
+    target_name.before("-")
+}
+
+fn target_after_arch(target_name: String) -> String {
+    target_name.after("-")
+}
+
+fn target_vendor_env(target_name: String) -> String {
+    target_after_arch(target_name).before("-")
+}
+
+fn target_after_vendor(target_name: String) -> String {
+    target_after_arch(target_name).after("-")
+}
+
+fn target_os_env(target_name: String) -> String {
+    match target_name.contains("apple-darwin") {
+        true => "macos",
+        false => match target_name.contains("unknown-linux") {
+            true => "linux",
+            false => match target_name.contains("pc-windows") {
+                true => "windows",
+                false => target_after_vendor(target_name).before("-"),
+            },
+        },
+    }
+}
+
+fn target_env_env(target_name: String) -> String {
+    match target_after_vendor(target_name).contains("-") {
+        true => target_after_vendor(target_name).after("-"),
+        false => "",
+    }
+}
+
+fn target_endian_env(target_name: String) -> String {
+    "little"
+}
+
+fn build_script_env(source: Tree, target_name: String, unit: ResolvedUnit, opt_level: Int) -> [Arg] {
+    let manifest = source / unit.manifest;
+    let pkg = package(manifest);
+    let version = pkg.version.unwrap();
+    [
+        Arg::Str("--env"), Arg::Str("CARGO_MANIFEST_DIR="), Arg::Interpolation { tree: manifest, subpath: p"" },
+        Arg::Str("--env"), Arg::Str("CARGO_PKG_NAME=" + pkg.name),
+        Arg::Str("--env"), Arg::Str("CARGO_PKG_VERSION=" + version),
+        Arg::Str("--env"), Arg::Str("CARGO_PKG_VERSION_MAJOR=0"),
+        Arg::Str("--env"), Arg::Str("CARGO_PKG_VERSION_MINOR=1"),
+        Arg::Str("--env"), Arg::Str("CARGO_PKG_VERSION_PATCH=0"),
+        Arg::Str("--env"), Arg::Str("CARGO_PKG_VERSION_PRE="),
+        Arg::Str("--env"), Arg::Str("TARGET=" + target_name),
+        Arg::Str("--env"), Arg::Str("HOST=" + target_name),
+        Arg::Str("--env"), Arg::Str("RUSTC=rustc"),
+        Arg::Str("--env"), Arg::Str("OPT_LEVEL=" + int_text(opt_level)),
+        Arg::Str("--env"), Arg::Str("PROFILE=debug"),
+        Arg::Str("--env"), Arg::Str("CARGO_CFG_TARGET_ARCH=" + target_arch_env(target_name)),
+        Arg::Str("--env"), Arg::Str("CARGO_CFG_TARGET_VENDOR=" + target_vendor_env(target_name)),
+        Arg::Str("--env"), Arg::Str("CARGO_CFG_TARGET_OS=" + target_os_env(target_name)),
+        Arg::Str("--env"), Arg::Str("CARGO_CFG_TARGET_ENV=" + target_env_env(target_name)),
+        Arg::Str("--env"), Arg::Str("CARGO_CFG_TARGET_ENDIAN=" + target_endian_env(target_name)),
+    ]
+}
+
+fn solution_build_script_compile(source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, pkg: Int, unit: ResolvedUnit) -> Tree {
+    solution_compile_rust_unit(Target::host(), source, index, result, targets, target_name, unit, BuildMode::Link)
+}
+
+fn solution_build_script_run(source: Tree, target_name: String, unit: ResolvedUnit, binary: Tree) -> Tree {
+    let build_script = "build-script-runner";
+    let env = build_script_env(source, target_name, unit, 3);
+
+    build_script! {
+        --requires-toolchain=cc
+        --executable {binary / unit.link}
+        --stdout {p"build.stdout"}
+        --out-dir {p"out"}
+        --env OUT_DIR={p"out"}
+        {env}
+    }
+}
+
+fn solution_build_script(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, pkg: Int, unit: ResolvedUnit) -> Tree {
+    let binary = solution_build_script_compile(source, index, result, targets, target_name, pkg, unit);
+    solution_build_script_run(source, target_name, unit, binary)
+}
+
+fn solution_proc_macro(source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, unit: ResolvedUnit) -> Tree {
+    let deps = solution_dependency_tree(Target::host(), source, index, result, targets, target_name, unit, BuildMode::Link);
+    compile_rust_unit(RustUnit {
+        target: Target::host(),
+        crate_type: CargoUnitKind::ProcMacro,
+        edition_source: source,
+        emit_metadata: None,
+        emit_link: Some(unit.link),
+        manifest: source / unit.manifest,
+        source: unit.source,
+        crate_name: unit.name,
+        deps_tree: deps,
+        externs: solution_externs(Target::host(), index, result, targets, source, target_name, unit.deps, BuildMode::Link),
+        cfgs: unit.cfgs,
+        env: [Arg::Str("--env"), Arg::Str("CARGO_MANIFEST_DIR="), Arg::Interpolation { tree: source / unit.manifest, subpath: p"" }],
+        profile: Some(unit.profile),
+    })
+}
+
+fn solution_unit_built(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, pkg: Int, mode: BuildMode) -> Tree {
+    let unit = solution_unit(index, result, targets, source, target_name, pkg);
+    match unit.kind {
+        CargoUnitKind::BuildScript => solution_build_script(target, source, index, result, targets, target_name, pkg, unit),
+        CargoUnitKind::ProcMacro => solution_proc_macro(source, index, result, targets, target_name, unit),
+        _ => solution_compile_rust_unit(target, source, index, result, targets, target_name, unit, mode),
+    }
+}
+
+fn solution_unit_artifact(target: Target, source: Tree, index: Index, result: SolveResult, targets: UnitTargetTable, target_name: String, pkg: Int, mode: BuildMode) -> Tree {
+    let unit = solution_unit(index, result, targets, source, target_name, pkg);
+    solution_unit_built(target, source, index, result, targets, target_name, pkg, mode) / unit_artifact_path(unit, mode)
+}
+
+pub fn crate_solution_bin_check(target: Target, source: Tree, index: Index, problem: Problem, target_name: String, targets: UnitTargetTable) -> Tree {
+    let result = solve(index, problem, target_name);
+    solution_unit_artifact(target, source, index, result, targets, target_name, targets.root, BuildMode::Metadata)
+}
+
+pub fn crate_solution_bin(target: Target, source: Tree, index: Index, problem: Problem, target_name: String, targets: UnitTargetTable) -> Tree {
+    let result = solve(index, problem, target_name);
+    solution_unit_artifact(target, source, index, result, targets, target_name, targets.root, BuildMode::Link)
+}
+
+fn build_script_compile(manifest: Tree) -> Tree {
+    compile_rust_unit(RustUnit {
+        crate_name: "build_script_build",
+        crate_type: CargoUnitKind::BuildScript,
+        edition_source: manifest,
+        manifest: manifest,
+        source: p"build.rs",
+        target: Target::host(),
+        emit_metadata: None,
+        emit_link: Some(p"build_script"),
+        deps_tree: None,
+        externs: [],
+        cfgs: [],
+        env: [],
+        profile: None,
+    })
+}
+
+fn build_script_run(manifest: Tree, binary: Tree) -> Tree {
+    let build_script = "build-script-runner";
+    let unit = ResolvedUnit {
+        name: "build_script_build",
+        kind: CargoUnitKind::BuildScript,
+        manifest: p"",
+        source: p"build.rs",
+        deps: [],
+        cfgs: [],
+        metadata: p"",
+        link: p"build_script",
+        metadata_file: "",
+        link_file: "build_script",
+        profile: dev_profile_defaults(),
+    };
+    let env = build_script_env(manifest, "x86_64-unknown-linux-gnu", unit, 0);
+
+    build_script! {
+        --executable {binary / p"build_script"}
+        --stdout {p"build.stdout"}
+        --out-dir {p"out"}
+        --env OUT_DIR={p"out"}
+        {env}
+    }
+}
+
+fn empty_build_script_directives() -> BuildScriptDirectives {
+    BuildScriptDirectives {
+        rustc_cfg: [],
+        rustc_check_cfg: [],
+        rustc_env: [],
+        rustc_link_lib: [],
+        rustc_link_search: [],
+        rerun_if_changed: [],
+        rerun_if_env_changed: [],
+        warning: [],
+        metadata: [],
+    }
+}
+
+fn malformed_build_script_directive(line: String) -> String {
+    let missing: Map<String, String> = %{};
+    missing.get(line).unwrap()
+}
+
+fn cargo_directive_payload(line: String) -> String {
+    let double_colon = line.strip_prefix("cargo::");
+    match double_colon == line {
+        true => match line.strip_prefix("cargo:") {
+            single_colon => match single_colon == line {
+                true => malformed_build_script_directive(line),
+                false => single_colon,
+            },
+        },
+        false => double_colon,
+    }
+}
+
+fn checked_directive_payload(line: String) -> String {
+    let payload = cargo_directive_payload(line);
+    match payload.contains("=") {
+        true => payload,
+        false => malformed_build_script_directive(line),
+    }
+}
+
+fn is_cargo_directive_line(line: String) -> Bool {
+    match line.contains(":") {
+        true => line.before(":") == "cargo",
+        false => false,
+    }
+}
+
+fn metadata_directive(key: String, value: String) -> BuildScriptMetadata {
+    match key == "metadata" {
+        true => match value.contains("=") {
+            true => BuildScriptMetadata { key: value.before("="), value: value.after("=") },
+            false => BuildScriptMetadata { key: malformed_build_script_directive(value), value: value },
+        },
+        false => BuildScriptMetadata { key: key, value: value },
+    }
+}
+
+fn directive_field(key: String, value: String, directives: BuildScriptDirectives) -> BuildScriptDirectives {
+    match key == "rustc-cfg" {
+        true => BuildScriptDirectives { rustc_cfg: [..directives.rustc_cfg, value], ..directives },
+        false => match key == "rustc-check-cfg" {
+            true => BuildScriptDirectives { rustc_check_cfg: [..directives.rustc_check_cfg, value], ..directives },
+            false => match key == "rustc-env" {
+                true => BuildScriptDirectives { rustc_env: [..directives.rustc_env, value], ..directives },
+                false => match key == "rustc-link-lib" {
+                    true => BuildScriptDirectives { rustc_link_lib: [..directives.rustc_link_lib, value], ..directives },
+                    false => match key == "rustc-link-search" {
+                        true => BuildScriptDirectives { rustc_link_search: [..directives.rustc_link_search, value], ..directives },
+                        false => match key == "rerun-if-changed" {
+                            true => BuildScriptDirectives { rerun_if_changed: [..directives.rerun_if_changed, value], ..directives },
+                            false => match key == "rerun-if-env-changed" {
+                                true => BuildScriptDirectives { rerun_if_env_changed: [..directives.rerun_if_env_changed, value], ..directives },
+                                false => match key == "warning" {
+                                    true => BuildScriptDirectives { warning: [..directives.warning, value], ..directives },
+                                    false => BuildScriptDirectives { metadata: [..directives.metadata, metadata_directive(key, value)], ..directives },
+                                },
+                            },
+                        },
+                    },
+                },
+            },
+        },
+    }
+}
+
+fn build_script_directive_line(line: String, directives: BuildScriptDirectives) -> BuildScriptDirectives {
+    match line == "" {
+        true => directives,
+        false => match is_cargo_directive_line(line) {
+            true => {
+                let payload = checked_directive_payload(line);
+                directive_field(payload.before("="), payload.after("="), directives)
+            },
+            false => directives,
+        },
+    }
+}
+
+fn parse_build_script_directive_lines(stdout: String, directives: BuildScriptDirectives) -> BuildScriptDirectives {
+    match stdout.contains("\n") {
+        true => {
+            let head = stdout.before("\n");
+            let tail = stdout.after("\n");
+            parse_build_script_directive_lines(tail, build_script_directive_line(head, directives))
+        },
+        false => build_script_directive_line(stdout, directives),
+    }
+}
+
+fn build_script_directives_from_stdout(stdout: String) -> BuildScriptDirectives {
+    parse_build_script_directive_lines(stdout, empty_build_script_directives())
+}
+
+fn build_script_directives(run: Tree) -> BuildScriptDirectives {
+    build_script_directives_from_stdout(run.text(p"build.stdout"))
+}
+
+fn build_script_rustc_cfgs(run: Tree) -> [String] {
+    build_script_directives(run).rustc_cfg
+}
+
+fn build_script_out_dir(run: Tree) -> Tree {
+    run / p"out"
+}
+
+fn build_script_out_dir_ref(run: Tree) -> BuildScriptOutDirRef {
+    BuildScriptOutDirRef { tree: run, subpath: p"out" }
+}
+
+fn build_script_unit_effects(run: Tree, directives: BuildScriptDirectives) -> BuildScriptUnitEffects {
+    BuildScriptUnitEffects {
+        rustc_cfg: directives.rustc_cfg,
+        rustc_check_cfg: directives.rustc_check_cfg,
+        rustc_env: directives.rustc_env,
+        rustc_link_lib: directives.rustc_link_lib,
+        rustc_link_search: directives.rustc_link_search,
+        rerun_if_changed: directives.rerun_if_changed,
+        rerun_if_env_changed: directives.rerun_if_env_changed,
+        warning: directives.warning,
+        metadata: directives.metadata,
+        out_dir: build_script_out_dir_ref(run),
+    }
+}
+
+fn out_dir_env_arg(out_dir: BuildScriptOutDirRef) -> [Arg] {
+    [
+        Arg::Str("--env"),
+        Arg::Str("OUT_DIR="),
+        Arg::Interpolation { tree: out_dir.tree, subpath: out_dir.subpath },
+    ]
+}
+
+fn dep_metadata_env_name(links: String, metadata: BuildScriptMetadata) -> String {
+    "DEP_" + links + "_" + metadata.key
+}
+
+fn dep_metadata_env_value(links: String, metadata: BuildScriptMetadata) -> String {
+    dep_metadata_env_name(links, metadata) + "=" + metadata.value
+}
+
+fn dep_metadata_env_values(links: String, metadata: [BuildScriptMetadata]) -> [String] {
+    metadata.map(|entry| dep_metadata_env_value(links, entry))
+}
+
+fn build_script_lib(target: Target, manifest: Tree, effects: BuildScriptUnitEffects) -> Tree {
+    let cfg_args = rustc_cfg_args(effects.rustc_cfg);
+    let check_cfg_args = rustc_check_cfg_args(effects.rustc_check_cfg);
+    let env_args = [..rustc_env_args(effects.rustc_env), ..out_dir_env_arg(effects.out_dir)];
+
+    compile_rust_unit(RustUnit {
+        crate_name: crate_name(package(manifest).name),
+        crate_type: CargoUnitKind::Lib,
+        edition_source: manifest,
+        manifest: manifest,
+        source: p"src/lib.rs",
+        target: target,
+        emit_metadata: Some(p"libbuild_script_app.rmeta"),
+        emit_link: Some(p"libbuild_script_app.rlib"),
+        deps_tree: None,
+        externs: [],
+        cfgs: [],
+        env: [..cfg_args, ..check_cfg_args, ..env_args],
+        profile: None,
+    })
+}
+
+fn build_script_bin_link(target: Target, manifest: Tree, lib: Tree) -> Tree {
+    compile_rust_unit(RustUnit {
+        crate_name: "build_script_runner",
+        crate_type: CargoUnitKind::Bin,
+        edition_source: manifest,
+        manifest: manifest,
+        source: p"src/main.rs",
+        target: target,
+        emit_metadata: None,
+        emit_link: Some(p"build_script_runner"),
+        deps_tree: Some(lib),
+        externs: [RustExtern { name: "build_script_app", tree: lib, subpath: p"libbuild_script_app.rlib" }],
+        cfgs: [],
+        env: [],
+        profile: None,
+    })
+}
+
+pub fn crate_build_script_directive_cfg(graph: Tree) -> String {
+    let manifest = graph / p"app";
+    let binary = build_script_compile(manifest);
+    let run = build_script_run(manifest, binary);
+    build_script_directives(run).rustc_cfg.join(" ")
+}
+
+pub fn crate_build_script_directive_cfg_from_stdout(stdout: String) -> String {
+    build_script_directives_from_stdout(stdout).rustc_cfg.join(" ")
+}
+
+pub fn crate_build_script_directive_env_from_stdout(stdout: String) -> String {
+    build_script_directives_from_stdout(stdout).rustc_env.join(",")
+}
+
+pub fn crate_build_script_directive_links_from_stdout(stdout: String) -> String {
+    let directives = build_script_directives_from_stdout(stdout);
+    directives.rustc_link_lib.join(",") + "|" + directives.rustc_link_search.join(",")
+}
+
+pub fn crate_build_script_directive_rerun_from_stdout(stdout: String) -> String {
+    let directives = build_script_directives_from_stdout(stdout);
+    directives.rerun_if_changed.join(",") + "|" + directives.rerun_if_env_changed.join(",")
+}
+
+pub fn crate_build_script_dep_metadata_env_from_stdout(stdout: String, links: String) -> String {
+    dep_metadata_env_values(links, build_script_directives_from_stdout(stdout).metadata).join(",")
+}
+
+pub fn crate_build_script_out_dir(graph: Tree) -> Tree {
+    let manifest = graph / p"app";
+    let binary = build_script_compile(manifest);
+    let run = build_script_run(manifest, binary);
+    build_script_out_dir(run)
+}
+
+pub fn crate_build_script_bin(target: Target, graph: Tree) -> Tree {
+    let manifest = graph / p"app";
+    let binary = build_script_compile(manifest);
+    let run = build_script_run(manifest, binary);
+    let directives = build_script_directives(run);
+    let effects = build_script_unit_effects(run, directives);
+    let lib = build_script_lib(target, manifest, effects);
+    build_script_bin_link(target, manifest, lib) / p"build_script_runner"
+}
+
+fn proc_macro_dylib_ext(host: Target) -> String {
+    match host.os {
+        Os::Macos => "dylib",
+        Os::Windows => "dll",
+        _ => "so",
+    }
+}
+
+fn proc_macro_dylib_path(host: Target) -> Path {
+    p"libemit_answer_macro.so".with_ext(proc_macro_dylib_ext(host))
+}
+
+fn proc_macro_dylib(manifest: Tree) -> Tree {
+    let host = Target::host();
+    compile_rust_unit(RustUnit {
+        crate_name: crate_name(package(manifest).name),
+        crate_type: CargoUnitKind::ProcMacro,
+        edition_source: manifest,
+        manifest: manifest,
+        source: p"src/lib.rs",
+        target: host,
+        emit_metadata: None,
+        emit_link: Some(proc_macro_dylib_path(host)),
+        deps_tree: None,
+        externs: [],
+        cfgs: [],
+        env: [],
+        profile: None,
+    })
+}
+
+fn proc_macro_bin_link(target: Target, manifest: Tree, macro_dylib: Tree) -> Tree {
+    let dylib = proc_macro_dylib_path(Target::host());
+    compile_rust_unit(RustUnit {
+        crate_name: crate_name(package(manifest).name),
+        crate_type: CargoUnitKind::Bin,
+        edition_source: manifest,
+        manifest: manifest,
+        source: p"src/main.rs",
+        target: target,
+        emit_metadata: None,
+        emit_link: Some(p"macro_app"),
+        deps_tree: Some(macro_dylib),
+        externs: [RustExtern { name: "emit_answer_macro", tree: macro_dylib, subpath: dylib }],
+        cfgs: [],
+        env: [],
+        profile: None,
+    })
+}
+
+pub fn crate_proc_macro_bin(target: Target, graph: Tree) -> Tree {
+    let macro_crate = graph / p"crates" / p"emit_answer_macro";
+    let root = graph / p"app";
+    let macro_dylib = proc_macro_dylib(macro_crate);
+    proc_macro_bin_link(target, root, macro_dylib) / p"macro_app"
+}
+
+fn proc_macro_cross_target() -> Target {
+    let host = Target::host();
+    match host.os {
+        Os::Linux => Target { os: Os::Macos },
+        _ => Target { os: Os::Linux },
+    }
+}
+
+pub fn crate_proc_macro_cross_bin(graph: Tree) -> Tree {
+    crate_proc_macro_bin(proc_macro_cross_target(), graph)
+}
