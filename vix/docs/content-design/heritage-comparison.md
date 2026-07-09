@@ -161,3 +161,70 @@ are stable across restarts and that this round's agents, who never read
 the old texts, re-derived them faithfully from conversation alone. The deltas that
 matter are the four numbered imports above — especially V10, which is a
 correctness hole with a recorded incident, not a taste question.
+
+## The zoo epoch (March 2026) — the actually-old design
+
+Correction to everything above: there are THREE generations, not two.
+`~/vixenware/vixen-zoo/*.vx` (March: `lua.vx`, `lua-next.vx`, `build.vx`,
+`amos.vx`, + `lua-gaps.md`/`lua-next-notes.md`) is the genuinely old
+epoch; the July 1–4 round (vix-spec V1–V32, types sketch) was already a
+deliberate reset of it — V31 ("syntax spends the fewest innovation
+points") reads as the ruling that killed the zoo's surface. The book
+unknowingly landed on the July side of that massacre almost everywhere.
+
+What the zoo language looked like (lua-next.vx, its apex):
+
+```
+fn discover_tool(class: ExecutorClass, name: String) -> DiscoveredTool (
+  let which = discover_exec(class, ["which", name]);
+  let path = which.stdout.utf8!.trim!;
+  ...
+)
+let liblua = (all_lib_sources.map compile).merge!;
+cexec [ar, "rc", @out/liblua.a, ..objs] |> cexec [ranlib, _]
+```
+
+- **Unary no-parens application** (`f x`, `Tree.from_path ws`) with
+  dot-binds-tighter rules; **parens as block expressions** (fn bodies in
+  `( … )`).
+- **`!` as zero-arg invocation** (`blob.utf8!` — explicitly NOT forcing),
+  `.method!` adapters, `$` closure shorthand, `(x) => body` arrows.
+- **`|>` pipelines with `_` placeholder.**
+- **`@` path sigil** in four forms (`@out/liblua.a`, `@(out/{file}.o)`).
+- **Backtick template strings with `${}`** + the **`fail`** keyword.
+- **`%{ k => v }` map literals**, `[..a, ..b]` array spread,
+  `let {cc, ar, ranlib} = tools` record destructuring, `Symbol` literals
+  (`:cc`), `[]` generics, **`#fs`/`#host` effect tags on functions**.
+- **`namespace Type { … }` methods + import-scoped `extend Type`** — a
+  full user-method story with a coherence answer.
+- **`where { … }` / `with { … }` keyword-argument blocks**, `partial f(x)`
+  explicit partial application.
+- **Exec with observer closures** — `observer: (proc, vfs) => …` shipped
+  to the executor, `stabilize(witness/resolve)` as the pin primitive,
+  `executor_class("ssh:orb")` multi-host targeting, and capability
+  queries like `RustToolchain where (version >= 1.91)`.
+
+### Salvage list — zoo features with NO story in the book
+
+1. **Methods on user types** (`namespace`/`extend`). The book's methods
+   are all builtin (collections); a user defining `fn area(self: Shape)`
+   has no home. The zoo had the answer including extension coherence.
+2. **String interpolation** — zoo backticks + old grammar `${…}`; the
+   book concatenates with `+`. Almost certainly wanted back.
+3. **`fail` / user-raised failure** with interpolated messages — the
+   book's failure story covers machine failures (unwrap, div-zero) only.
+4. **Map/Tree literal syntax: three generations, three answers** — zoo
+   `%{ k => v }`, July sketch "no literal, `Map::from`, boring on
+   purpose", ratchet `{}`. Needs ONE ruling.
+5. **Array spread** `[..a, ..b]` — the book never says how arrays concat.
+6. **Effect tags on functions** (`#fs`, and grammar-era `#capability` on
+   `Fn` types) — two concrete prior surfaces for the still-open effect
+   fork.
+7. **Exec observers** — the March exec model ships a closure to observe
+   the process (streams, progressive output); the ratchet's `exec!`
+   returns a plain record. Progressive trees replaced part of this;
+   whether an observer surface survives is undecided, not decided.
+8. **Multi-host surface** — executor classes, capability version queries.
+   vixd territory now, but the zoo had SYNTAX for it.
+9. `partial` application; record-destructuring `let`; `Symbol` type —
+   smaller, each worth a deliberate yes/no rather than silence.
