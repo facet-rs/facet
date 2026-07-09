@@ -79,12 +79,32 @@ as though the target selected the binary. A toolchain is named by its own identi
 `unit.toolchain` — whose execution ABI is a property of the thing named, not of what
 it emits.
 
-Cross-compilation makes it plain, and it makes the **two tiers** plain with it. A
-linux `rustc` emitting darwin objects and a darwin `rustc` emitting darwin objects
-are **two different toolchains** — two capability identities, therefore two *recipe*
-identities (tier 1). What must coincide is the **value** identity of what they emit
-(tier 2). If it does not, that is rustc's reproducibility bug — measure it, don't
-paper over it by pinning the executor.
+Cross-compilation makes it plain — and it is worth being exact about what vix
+actually promises, because it is *weaker* than it first looks.
+
+A linux `rustc` emitting darwin objects and a darwin `rustc` emitting darwin objects
+are **two different toolchains**: two capability identities, therefore two *recipe*
+identities, therefore **two different demands**. Vix does not require them to emit
+the same value, and nothing is broken if they don't. Two demands, two answers, and
+content addressing files them separately without complaint.
+
+What vix requires is placement-invariance of **one** demand
+(`r[machine.placement.value-irrelevant]`):
+
+> The **same** demand, with the **same** pinned toolchain identity, evaluated on any
+> **admissible** executor, yields a bit-identical result.
+
+That is the invariant the scheduler leans on, and it is the whole reason placement
+needs no consensus. It says nothing whatever about two *different* toolchains.
+
+Cross-toolchain agreement is a different thing, and a good thing: it is
+**reproducibility evidence**, worth measuring and worth publishing. When the outputs
+do coincide, content identity deduplicates them for free, and the audit is stronger
+for it. When they don't, you have learned a fact about `rustc` — not found an
+inconsistency in vix. The error `Target::host()` committed was never "two toolchains
+disagreed"; it was letting the **executor** reach into a **single** demand's value.
+That is the thing that must never happen, and it is the only thing this section is
+about.
 
 **The recipe never mentions the executor.** The target is an ordinary argument; the
 toolchain is named, and its execution ABI comes along as a property of the thing
