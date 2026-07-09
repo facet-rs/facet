@@ -42,7 +42,7 @@ of the day fetches nothing at all.
 struct State {
     domains:  Map<PkgId, VersionSet>,   // versions still possible, per package
     selected: Map<PkgId, Version>,      // decisions made so far
-    learned:  Multiset<NoGood>,         // conflicts we've understood
+    learned:  Set<NoGood>,              // conflicts we've understood
 }
 ```
 
@@ -53,7 +53,7 @@ appears:
 enum Step { Pass(State), Conflict(NoGood) }
 
 fn propagate(state: State, row: Row) -> Step {
-    row.deps.values().fold_ascending(Step::Pass(state), |step, dep| {
+    row.deps.values().fold(Step::Pass(state), |step, dep| {
         match step {
             Step::Conflict(ng) => Step::Conflict(ng),
             Step::Pass(s) => {
