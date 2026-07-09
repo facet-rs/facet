@@ -791,3 +791,107 @@ first `exec cmd where { env: %{...} }`. Sweep: six rung files.
   since it derives `Facet`, "is this file valid UTF-8" is part of the tree's
   identity STRUCTURE — an implementation convenience leaking into the schema.
   Should be `Map<Path, Blob>` with `text(p)` as a decoding projection.
+
+### Round 10 — effects, capabilities, placement
+
+**RULED (Amos, explicit).**
+
+- **Streams cross island edges as codata.** The edge's semantic content is the
+  value the stream drains to; the incremental view is as-if. This is what lets a
+  process's interpreter be a *separate demand* — change the interpreter, don't
+  rerun `rustc` — while still consuming progressively. Replay is the semantics;
+  live consumption is the fast path.
+  - ASYMMETRY OWED: molten values may not cross an island edge (lean "never —
+    merge islands"). Molten and codata are structurally the same problem. If one
+    crosses and the other does not, that must be principled. It is not yet.
+- **Stop conflating islands with placement.** An island edge carries a *value*
+  between two computations in ONE evaluator. A `place` carries a *subgraph of
+  demands* to a DIFFERENT evaluator. `place` is a stronger boundary. Most of the
+  difficulty in squaring the two came from treating placement as an island edge.
+- **`exec` is a boring effect**, like `fetch`. Not an exception. Running a
+  compiler is not a side effect — it is an expensive way to compute a value on a
+  machine that has a compiler. Effects are already mandatory island cuts
+  (`_index.md:135`), so **an island contains at most one effect, hence at most one
+  capability requirement**: capability disjointness is a THEOREM, not a new rule.
+  The `objcopy`-before-transfer case is therefore not a partitioning question at
+  all — it is sticky placement, a scheduling decision.
+- **`fetch` is PINNED, always.** Its checksum is a required argument, so its value
+  identity is known before evaluation; the URL is a *provenance coordinate*. A
+  read whose result identity is unknown until performed is a DIFFERENT PRIMITIVE —
+  an **observation**. One function may not be hermetic-or-discovering depending on
+  whether a parameter is present (Amos). `r[machine.receipt.fetch-observation-pin]`
+  was misnamed: it describes observation, not fetch.
+- **Capabilities are referenced BY IDENTITY** (`primitive.md:9` already said so).
+  `Rustc::acquire(spec)` opens no binary — nothing in-program evaluates. It NAMES
+  one. Acquiring OUTSIDE a `place` is therefore required, not merely allowed: the
+  recipe pins one toolchain identity and every executor materializes *that* one.
+  Acquire inside, and each node picks whatever it has — reproducibility dies.
+  Demanding a capability no executor can satisfy fails at planning time.
+- **`Target::host()` is DEAD** (8 sites in crate.vix, 1 in rodin.vix). Three
+  machines wore one word: **target** (semantic — it changes the artifact), **host**
+  (cost-model), **executor** (cost-model). Setting the target from the executor
+  reads the machine into the value: same recipe, two artifacts, content addressing
+  dies. The host is not a fact a program may read; it is an **input the demand root
+  supplies**. `vx build --target` is defaulted to the host BY THE CLI, which is
+  outside the program.
+  > **An ambient read is an observation. An input is a pin.**
+- **`place` is a strong boundary**, and this is the restriction that makes a
+  distributed demand graph analyzable rather than terrifying:
+  > **A value may cross a `place` boundary only if its identity is known without
+  > evaluating it.**
+  A pinned blob (checksum in the source), a capability identity, a literal, an
+  input pinned at the demand root: all cross. `let x = expensive();` does not —
+  knowing what `x` *is* means computing it. Either compute it first, or draw the
+  `place` wider. Before dispatch you know exactly what crosses and what it weighs.
+- **Where does the fetch happen? On the executor.** Nothing outside the `place`
+  demands the bytes; the only demand for them is the `exec`, which runs there.
+  32 bytes of identity cross. Your machine never downloads the tarball it is
+  compiling. This is entirely the pin's doing: strip it and the identity does not
+  exist to cross with, so the observation must be performed — and **an observation
+  made inside a `place` was made by someone else.** Its pin becomes your receipt's
+  authority and there is nothing to check it against.
+  > **Placement is trust-free exactly when everything inside it is content-addressed.**
+- **A tree crosses as an identity plus a mount grant.** Nothing is copied. Blobs
+  materialize per-file on read, by content hash; every read AND every miss is
+  recorded (`witness-reads`; absence-is-an-observation). A workspace of 10,000
+  files whose compiler opens 200 moves 200. Edit the README: the tree's hash
+  changes, the recipe identity changes, and **nothing reruns** — because the memo
+  is indexed by LOCATION, which is content-free, and the entry carries a read-set
+  the README is not in. The unused half of a tree costs nothing at every level:
+  no transfer, no invalidation, no receipt entry, no attestation. This question is
+  *why the location plane exists*.
+- **Killing a process early is not a scheduler feature.** If you demanded a unit's
+  `.rmeta` and never its `.rlib`, the rest of that process's output is undemanded.
+  Stopping it is the laziness law arriving at a subprocess boundary, and the
+  demanded projection is bit-identical either way. The kill must be driven by the
+  demanded projection, not by a scheduler's judgement — otherwise a scheduling
+  artifact enters a value's identity.
+- **Command grammars are `name!{ … }`.** Backticks are string templates, not a
+  command form.
+
+**Consequences landed this round.**
+- Book: `std/collections.md` rewritten (one structure, four names; streams;
+  structural order + `Order<T>`; `Multiset` deleted). `testing.md` rewritten to
+  generators + phase-partitioned `Check`. New chapter `effects.md` (w32).
+  `building-a-solver.md` de-Multiset'd. Reading order fixed (effects w32,
+  testing w35 — both use `Stream`/`Map` from collections w30).
+- Spec: `machine.primitive.fetch-is-pinned`, `machine.primitive.capabilities-by-identity`,
+  new `spec/machine/placement.md` (`value-irrelevant`, `identity-crosses`,
+  `no-in-program-steering`, `capability-requirements-are-derived`,
+  `trees-cross-as-grants`, `kill-is-laziness`, `observation-inside-a-place`),
+  `machine.identity.merkle-tree`, `machine.identity.streams-cross-island-edges`.
+  `machine.receipt.fetch-observation-pin` renamed in place.
+- `vix/corpus-next/SURFACE.md` v2 is the porter's law.
+
+**STILL OPEN.**
+- Does the **AST** travel, or the **lowered island**? (Executor hosts `vixc` or
+  only `weavy`? Decides whether an executor can be a static binary on a machine you
+  do not administer — the sovereignty story.)
+- Does **codata cross a `place` boundary**, or only an island edge?
+- The **observation primitive**: name and shape. Until it lands, checksumless
+  retrieval has no surface.
+- **stdout has no home.** Three corpus sites route it through a fake file
+  (`--stdout {p"cfg.stdout"}`). The effect model must answer this.
+- **The failure surface** (`fail`): three ports weaponized `.get().unwrap()` on an
+  empty map for want of it. Queue item C3.
+- The molten-vs-codata edge asymmetry.
