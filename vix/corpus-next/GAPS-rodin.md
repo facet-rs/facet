@@ -1,52 +1,59 @@
 # Rodin Corpus-Next Port Gaps
 
 These ports are design artifacts against `vix/corpus-next/SURFACE.md`; they are
-not expected to parse or run today.
+not expected to parse or run today. Correctness means preserving the meaning of
+`rodin/rodin.vix` and `rodin/index.vix` while exposing where v2 helps or hurts.
 
 ## Measured Line Counts
 
-- `rodin/rodin.vix`: 1712 lines -> `vix/corpus-next/rodin.vix`: 1394 lines, -318.
-- `rodin/index.vix`: 497 lines -> `vix/corpus-next/index.vix`: 417 lines, -80.
-- Combined: 2209 lines -> 1811 lines, -398.
+- `rodin/rodin.vix`: 1712 lines -> `vix/corpus-next/rodin.vix`: 1377 lines, -335.
+- `rodin/index.vix`: 497 lines -> `vix/corpus-next/index.vix`: 437 lines, -60.
+- Combined: 2209 lines -> 1814 lines, -395.
+- Std support touched for the port: `vix/std/version.vix`: 104 lines.
+
+## Explicit Bets
+
+- `.values()` reads as punctuation in the seven remaining sites, not ceremony: all seven are at Set/Map-to-array boundaries for deterministic key-order folds, e.g. `vix/corpus-next/rodin.vix:844`, `:849`, `:861`, `:902`, `:920`, `:974`, `:1165`. PROPOSAL: keep `.values()`; the call is useful because it marks the one compaction.
+- `where { ... }` helps at small arities but buries control flow at scale. Count: 316 `where` sites across the two port files, with 11 signatures still wide enough that I would rather have records. PROPOSAL: records should be the style guide for 4+ named inputs, not just legal syntax.
+- At-most-one-positional is painful in branch search: `try_candidate` at `vix/corpus-next/rodin.vix:1054` and its call at `:1050` carry `state`, `target`, `pkg`, `version`, and `rest`; this reads like a continuation record. PROPOSAL: introduce `CandidateAttempt`.
+- At-most-one-positional is also painful in the sparse bridge: `add_required_dep_clauses` at `vix/corpus-next/index.vix:274` still has five named fields. PROPOSAL: introduce `RequiredDepClause` beside `SelectedGuardClause`.
+- The absence of `Multiset` does not hurt the Rodin meaning. `features`, `learned`, `Region.packages`, and `Region.features` were uniqueness-maintained sets; `Set.insert` at `vix/corpus-next/rodin.vix:369`, `:686`, `:862`, and `:871` is clearer than sorted-array round trips.
+- Stdout still has no home at `vix/corpus-next/rodin.vix:497`: the port keeps `--stdout {p"cfg.stdout"}` exactly because the surface has no stdout tree/channel model. PROPOSAL: define an exec stdout projection or a typed captured-output field.
 
 ## Gaps And Awkwardness
 
-- `vix/corpus-next/rodin.vix:155`: `State` still uses several bare `Int` ids across package, feature, guard, clause, and version namespaces. PROPOSAL: surface `PkgId`, `FeatureId`, `GuardId`, `ClauseId`, and `VersionId` newtypes before the next solver port.
-- `vix/corpus-next/rodin.vix:193`: `Index` remains a parallel-column table keyed by bare ids, so type safety relies on naming discipline. PROPOSAL: add source-level newtypes and typed `Map<Id, T>` aliases for table-shaped indexes.
-- `vix/corpus-next/rodin.vix:215`: `Problem.root_pkg` and `Problem.root_default_feature` are bare `Int` ids. PROPOSAL: surface newtypes for root package and feature ids instead of preserving the old integer wire shape.
-- `vix/corpus-next/rodin.vix:263`: empty multisets are expressed as `[].values()`. PROPOSAL: add a direct empty multiset literal with type ascription, or document `[].values()` as the canonical empty multiset form.
-- `vix/corpus-next/rodin.vix:386`: adding one feature to a multiset takes `[..state.features.sorted(), feature].values()`. PROPOSAL: add `Multiset::insert_one` or a true `Set<T>` with `.insert`.
-- `vix/corpus-next/rodin.vix:506`: rustc cfg output is a dynamic `Doc` linked list, so this remains recursive instead of combinator-shaped. PROPOSAL: make `rustc_cfg` return `[String]` or expose `Doc::as_array`.
-- `vix/corpus-next/rodin.vix:515`: `Rustc::acquire` plus the `rustc!` capability macro are not covered by `SURFACE.md`. PROPOSAL: add a capability/effect-expression chapter or keep this exact old shape as the blessed escape hatch for corpus ports.
-- `vix/corpus-next/rodin.vix:558`: cfg expressions are decoded by string tags in `Doc`. PROPOSAL: expose a typed `CfgExpr` enum parser so the target matcher can use normal enum matches.
-- `vix/corpus-next/rodin.vix:699`: region package insertion uses sorted multiset round-tripping to preserve uniqueness. PROPOSAL: add `Set<T>` for genuinely unique unordered collections.
-- `vix/corpus-next/rodin.vix:712`: `exact_version_set` has to simulate `find_map` with an `Option` accumulator. PROPOSAL: add `Array::find_map` or a clearly named `find_last_map` for order-sensitive arrays.
-- `vix/corpus-next/rodin.vix:814`: `gate_target_same` preserves the old "only both absent are equal" behavior because target expression equality semantics were not designed here. PROPOSAL: decide whether `Option<String>` equality should be used for gate effects.
-- `vix/corpus-next/rodin.vix:879`: installing a learned fact converts a multiset to sorted array and back just to append one fact. PROPOSAL: add `Multiset::union_one` or use `Set<LearnedNoGood>`.
-- `vix/corpus-next/rodin.vix:980`: learned no-good propagation uses `fold_ascending` with a `Step` accumulator to carry conflict short-circuit state. PROPOSAL: add `try_fold_ascending` for deterministic stop-on-conflict constraint passes.
-- `vix/corpus-next/rodin.vix:1053`: candidate search remains recursive with `split_last` because the solver must demand one branch at a time. PROPOSAL: add an order-sensitive `Array::try_find_rev`/`find_map_rev` for demand-selective search.
-- `vix/corpus-next/rodin.vix:1264`: selected version rendering repeats the `Option` accumulator search pattern. PROPOSAL: add `Array::find_map` and document whether it is field-order or reverse-order.
-- `vix/corpus-next/index.vix:85`: `fetch(url: ...)` is inherited from the old corpus but not specified by the ratified surface. PROPOSAL: document fetch as a capability-returning expression, or require typed std wrappers for index snapshots.
-- `vix/corpus-next/index.vix:94`: JSONL parsing stays recursive over `String.before/after` because no line-splitting collection API is banked. PROPOSAL: add `String::lines() -> [String]`.
-- `vix/corpus-next/index.vix:113`: sparse rows still use `json(line)` into `Doc` rather than typed `json_decode`. PROPOSAL: specify the decode form for dynamic crates.io rows or port this to `json_decode<SparseIndexRow>`.
-- `vix/corpus-next/index.vix:151`: preserving old `pop` order requires `rows.fold([], |reversed, row| [row, ..reversed])` before the bridge folds. PROPOSAL: add `Array::reversed()` or `fold_descending`.
-- `vix/corpus-next/index.vix:335`: root problem construction keeps bare package and feature ids. PROPOSAL: same newtype surface as the solver core.
-- `vix/corpus-next/index.vix:363`: `find_sparse_row` uses an empty-row sentinel because the public helpers return a row, not `Option<SparseIndexRow>`. PROPOSAL: make lookup helpers return `Option` or add `Array::find_rev`.
-- `vix/corpus-next/index.vix:382`: empty `Doc` values are still made with stringly `json("{}")` / `json("null")`. PROPOSAL: add `Doc::object_empty()` and `Doc::null`, or require typed decode defaults.
+- `vix/std/version.vix:19`: `PreIdent` structural order only works if enum variant order is SemVer precedence. PROPOSAL: add this exact declaration to the std contract and test it with SemVer examples.
+- `vix/std/version.vix:24`: `PreTag` makes `Release` structurally greater than `Prerelease`, matching SemVer, but build metadata still participates in value identity. PROPOSAL: document that precedence and value equality intentionally diverge.
+- `vix/std/version.vix:96`: `same_precedence` is necessary because build metadata is retained. PROPOSAL: expose it from std next to `parse_version`.
+- `vix/corpus-next/rodin.vix:494`: `Rustc::acquire(target)` now takes a demand-root supplied target, but `--target {target}` assumes the capability identity is also argv-renderable. PROPOSAL: define `Target.triple` or a render projection.
+- `vix/corpus-next/rodin.vix:554`: cfg `target = ...` compares a string doc field to `Target`. PROPOSAL: decide whether cfg evaluation receives `Target` or a distinct target triple string.
+- `vix/corpus-next/rodin.vix:508`: `rustc_cfg(...)` is preserved as an old parser/effect shape because v2 does not specify stdout parsing. PROPOSAL: type the rustc-cfg observation path.
+- `vix/corpus-next/index.vix:95`: `fetch(url: ...)` is inherited from the old corpus; `SURFACE.md` mentions fetch but not the final named-only expression spelling. PROPOSAL: ratify `fetch where { url, sha256 }`.
+- `vix/corpus-next/index.vix:59`: `SelectedGuardClause` is a win: it removes the adjacent `parent_version` / `consequent_tag` / `kind` string pile from the widest clause constructor.
+- `vix/corpus-next/index.vix:274`: `add_required_dep_clauses` remains too wide after the selected-guard record extraction. PROPOSAL: make `RequiredDepClause`.
+- `vix/corpus-next/rodin.vix:341`: `narrow_for_clause` is mechanically legal but not more readable than the old call. PROPOSAL: record `NarrowClause`.
+- `vix/corpus-next/rodin.vix:621`: `apply_clause_id` carries state, target, clause id, and changed flag; the changed accumulator obscures the subject. PROPOSAL: record `ClausePass`.
+- `vix/corpus-next/rodin.vix:1047`: `try_candidates` and `:1054` `try_candidate` want a continuation/search record. PROPOSAL: record `SearchBranch`.
+- `vix/corpus-next/rodin.vix:1208`, `:1231`, `:1250`: selected-name rendering functions carry packages, selected, and output accumulators. PROPOSAL: record `SelectedRender`.
+- `vix/corpus-next/rodin.vix:838`: Set containment becomes `set.map(...).values().fold(...)`. It is semantically clear but longer than `fold_ascending`. PROPOSAL: add `Set::all` / `Set::any` as key-order-independent reducers.
+- `vix/corpus-next/rodin.vix:894`: region unsatisfied counting uses a mapped contribution array plus sentinel folding. PROPOSAL: add `Map/Set::try_fold_values` or a conflict-aware reducer.
+- `vix/corpus-next/rodin.vix:913`: first unsatisfied package uses a sentinel instead of `find_min`. PROPOSAL: add `Set::find_first` explicitly defined by structural key order.
+- `vix/corpus-next/rodin.vix:972`: learned no-good propagation now spells the deterministic set order as `map(...).values().fold(...)`. PROPOSAL: if Set folding is allowed, specify it directly instead of forcing identity maps.
+- `vix/corpus-next/rodin.vix:1191`: public `solve` takes `Target`, preserving the v2 host ruling. PROPOSAL: demand roots should supply `Target` in examples so corpus entry points do not invent it.
+- `vix/corpus-next/index.vix:365`: sparse solve also takes `Target`; this preserves the new Rodin API but makes old string-target fixtures under-specified. PROPOSAL: add fixture-side target construction.
 
 ## Wins
 
-- Removed the `stored_*` one-entry-map laundering entirely; the port uses direct values at domain, state, gate, clause, hypothesis, and learned-fact boundaries.
-- Replaced boolean-match pyramids with `if`/`else`, `&&`, `||`, and `!`.
-- Replaced tuple trampoline helpers with tuple destructuring in `split_last` matches and closure parameters.
-- Replaced recursive array walkers with `map`, `fold`, `any`, `all`, `contains`, `split_last`, `sorted`, and `fold_ascending` where order semantics allowed it.
-- Replaced old typed empty maps with `%{}`.
-- Added `namespace Version { fn <=>(self, other) }` and changed version comparison call sites to operators.
-- Used `Multiset` for unordered learned facts, region packages, enabled features, and feature polarity sets; used `fold_ascending` for multiset folds.
-- Used backtick interpolation for constructed req strings, cfg fact keys, fetched sparse paths, and selected-version output lines.
+- Deleted `namespace Version { fn <=> }`; `Version` now gets precedence from its std declaration.
+- Replaced all Rodin `Multiset<T>` storage with `Set<T>`.
+- Replaced the three sorted-array uniqueness round trips with `Set.insert`.
+- Removed `Target::host()` and threaded a supplied `Target` through the resolver entry points.
+- Converted local free-function calls to the v2 subject plus `where { ... }` convention.
+- Introduced `SelectedGuardClause` for the worst sparse-index wide call.
+- Preserved the load-bearing comments and updated wording where the surface changed underneath them.
 
 ## Comment Adaptations
 
-- `vix/corpus-next/rodin.vix:5`: restored the original Rust-reference header but changed "State threaded through recursion" to "folds, selection, and demand-shaped recursion" because the recursive walkers were intentionally collapsed by combinators.
-- `vix/corpus-next/rodin.vix:14`: restored the inline surface-gap note but changed the old `Set` workaround from `Map<K, Bool>` to `Multiset` plus uniqueness checks, matching the ratified collection surface used in this port.
-- `vix/corpus-next/rodin.vix:1362`: restored the operator-overload smoke-test explanation and added "in its namespace" because the ratified method form is `namespace Rank { fn <=>(self, other) }`, not a freestanding function.
+- `vix/corpus-next/rodin.vix:14`: changed the old v1 `Multiset` workaround note to a closed `Set` note.
+- `vix/corpus-next/rodin.vix:1359`: changed the operator-overload smoke test to a structural-order smoke test because `<=>` is no longer overridable.
+- `vix/std/version.vix:3`: changed the std comment from “a type defines `fn <=>`” to “`<=>` is structural and not overridable.”

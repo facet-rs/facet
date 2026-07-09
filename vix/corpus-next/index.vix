@@ -5,7 +5,7 @@
 // module parses those snapshots into row records and bridges them to rodin's
 // resolver Index.
 
-use vix::{Doc, Map, Tree, VersionSet};
+use vix::{Doc, Map, Tree, VersionSet, Target};
 use rodin::{Index, Problem, solve_selected_versions_text};
 
 pub struct SparseDependency {
@@ -56,6 +56,15 @@ struct SparseBridgeState {
     next_guard: Int,
 }
 
+struct SelectedGuardClause {
+    parent_pkg: Int,
+    parent_version: String,
+    consequent_tag: String,
+    dep_pkg: Int,
+    req: VersionSet,
+    kind: String,
+}
+
 pub fn sparse_index_path(name: String) -> String {
     if name == "cc" {
         "2/cc"
@@ -82,32 +91,32 @@ pub fn sparse_index_path(name: String) -> String {
     }
 }
 
-pub fn fetch_sparse_index_snapshot(base_url: String, name: String) -> [SparseIndexRow] {
-    let snapshot: Tree = fetch(url: `${base_url}/${sparse_index_path(name)}`);
-    parse_sparse_jsonl(snapshot / p"index.jsonl")
+pub fn fetch_sparse_index_snapshot(base_url: String) where { name: String } -> [SparseIndexRow] {
+    let snapshot: Tree = fetch(url: `${base_url}/${sparse_index_path name}`);
+    parse_sparse_jsonl (snapshot / p"index.jsonl")
 }
 
 pub fn parse_sparse_jsonl(text: String) -> [SparseIndexRow] {
-    parse_sparse_jsonl_into(text, [])
+    parse_sparse_jsonl_into text where { out: [] }
 }
 
-fn parse_sparse_jsonl_into(text: String, out: [SparseIndexRow]) -> [SparseIndexRow] {
+fn parse_sparse_jsonl_into(text: String) where { out: [SparseIndexRow] } -> [SparseIndexRow] {
     if text == "" {
         out
     } else if text.contains("\n") {
-        parse_sparse_jsonl_line(text.before("\n"), text.after("\n"), out)
+        parse_sparse_jsonl_line (text.before("\n")) where { rest: text.after("\n"), out }
     } else {
-        out.push(parse_sparse_row(text))
+        out.push(parse_sparse_row text)
     }
 }
 
-fn parse_sparse_jsonl_line(line: String, rest: String, out: [SparseIndexRow]) -> [SparseIndexRow] {
+fn parse_sparse_jsonl_line(line: String) where { rest: String, out: [SparseIndexRow] } -> [SparseIndexRow] {
     let next = if line == "" {
         out
     } else {
-        out.push(parse_sparse_row(line))
+        out.push(parse_sparse_row line)
     };
-    parse_sparse_jsonl_into(rest, next)
+    parse_sparse_jsonl_into rest where { out: next }
 }
 
 fn parse_sparse_row(line: String) -> SparseIndexRow {
@@ -127,7 +136,7 @@ fn parse_sparse_dep(dep: Doc) -> SparseDependency {
     SparseDependency {
         name: dep.name,
         req: dep.req,
-        features: doc_strings(dep.features),
+        features: doc_strings dep.features,
         optional: dep.optional,
         default_features: dep.default_features,
         target: dep.target,
@@ -145,14 +154,14 @@ fn dep_package_name(dep: SparseDependency) -> String {
 }
 
 pub fn sparse_rows_to_rodin_index(rows: [SparseIndexRow]) -> Index {
-    index_from_bridge_state(sparse_bridge_state(rows))
+    index_from_bridge_state (sparse_bridge_state(rows))
 }
 
 fn sparse_bridge_state(rows: [SparseIndexRow]) -> SparseBridgeState {
     let registered = rows.fold([], |reversed, row| [row, ..reversed])
-        .fold(empty_bridge_state(), |state, row| register_package(state, sparse_row_name(row)));
+        .fold(empty_bridge_state(), |state, row| register_package state where { name: sparse_row_name row });
     rows.fold([], |reversed, row| [row, ..reversed])
-        .fold(registered, |state, row| bridge_row(state, row))
+        .fold(registered, |state, row| bridge_row state where { row })
 }
 
 fn empty_bridge_state() -> SparseBridgeState {
@@ -200,7 +209,7 @@ fn empty_bridge_state() -> SparseBridgeState {
     }
 }
 
-fn register_package(state: SparseBridgeState, name: String) -> SparseBridgeState {
+fn register_package(state: SparseBridgeState) where { name: String } -> SparseBridgeState {
     match state.package_ids.get(name) {
         Some(_) => state,
         None => SparseBridgeState {
@@ -213,11 +222,11 @@ fn register_package(state: SparseBridgeState, name: String) -> SparseBridgeState
     }
 }
 
-fn bridge_row(state: SparseBridgeState, row: SparseIndexRow) -> SparseBridgeState {
-    if row.yanked { state } else { bridge_live_row(state, row) }
+fn bridge_row(state: SparseBridgeState) where { row: SparseIndexRow } -> SparseBridgeState {
+    if row.yanked { state } else { bridge_live_row state where { row } }
 }
 
-fn bridge_live_row(state: SparseBridgeState, row: SparseIndexRow) -> SparseBridgeState {
+fn bridge_live_row(state: SparseBridgeState) where { row: SparseIndexRow } -> SparseBridgeState {
     let pkg = state.package_ids.get(row.name).unwrap();
     let version_id = state.next_version;
     SparseBridgeState {
@@ -229,59 +238,70 @@ fn bridge_live_row(state: SparseBridgeState, row: SparseIndexRow) -> SparseBridg
     }
 }
 
-fn bridge_row_deps(deps: [SparseDependency], state: SparseBridgeState, parent_pkg: Int, parent_version: String) -> SparseBridgeState {
+fn bridge_row_deps(deps: [SparseDependency]) where { state: SparseBridgeState, parent_pkg: Int, parent_version: String } -> SparseBridgeState {
     deps.fold([], |reversed, dep| [dep, ..reversed])
-        .fold(state, |next, dep| bridge_dep(next, parent_pkg, parent_version, dep))
+        .fold(state, |next, dep| bridge_dep next where { parent_pkg, parent_version, dep })
 }
 
-fn bridge_dep(state: SparseBridgeState, parent_pkg: Int, parent_version: String, dep: SparseDependency) -> SparseBridgeState {
+fn bridge_dep(state: SparseBridgeState) where { parent_pkg: Int, parent_version: String, dep: SparseDependency } -> SparseBridgeState {
     if dep.optional || dep.kind == "dev" {
         state
     } else {
-        bridge_required_dep(state, parent_pkg, parent_version, dep)
+        bridge_required_dep state where { parent_pkg, parent_version, dep }
     }
 }
 
-fn bridge_required_dep(state: SparseBridgeState, parent_pkg: Int, parent_version: String, dep: SparseDependency) -> SparseBridgeState {
-    let dep_name = dep_package_name(dep);
-    if package_known(state, dep_name) {
-        add_required_dep_clauses(state, parent_pkg, parent_version, package_id(state, dep_name), dep.req, dep.kind)
+fn bridge_required_dep(state: SparseBridgeState) where { parent_pkg: Int, parent_version: String, dep: SparseDependency } -> SparseBridgeState {
+    let dep_name = dep_package_name dep;
+    if package_known state where { name: dep_name } {
+        add_required_dep_clauses state where { parent_pkg, parent_version, dep_pkg: package_id state where { name: dep_name }, req: dep.req, kind: dep.kind }
     } else {
         state
     }
 }
 
-fn package_known(state: SparseBridgeState, name: String) -> Bool {
+fn package_known(state: SparseBridgeState) where { name: String } -> Bool {
     match state.package_ids.get(name) {
         Some(_) => true,
         None => false,
     }
 }
 
-fn package_id(state: SparseBridgeState, name: String) -> Int {
+fn package_id(state: SparseBridgeState) where { name: String } -> Int {
     state.package_ids.get(name).unwrap()
 }
 
-fn add_required_dep_clauses(state: SparseBridgeState, parent_pkg: Int, parent_version: String, dep_pkg: Int, req: String, kind: String) -> SparseBridgeState {
-    add_version_set_clause(
-        add_in_graph_clause(state, parent_pkg, parent_version, dep_pkg, kind),
-        parent_pkg,
-        parent_version,
-        dep_pkg,
-        req,
-        kind,
-    )
+fn add_required_dep_clauses(state: SparseBridgeState) where { parent_pkg: Int, parent_version: String, dep_pkg: Int, req: String, kind: String } -> SparseBridgeState {
+    add_version_set_clause (add_in_graph_clause state where { parent_pkg, parent_version, dep_pkg, kind }) where { parent_pkg, parent_version, dep_pkg, req, kind }
 }
 
-fn add_in_graph_clause(state: SparseBridgeState, parent_pkg: Int, parent_version: String, dep_pkg: Int, kind: String) -> SparseBridgeState {
-    add_selected_guard_clause(state, parent_pkg, parent_version, "in_graph", dep_pkg, VersionSet::from_req("*"), kind)
+fn add_in_graph_clause(state: SparseBridgeState) where { parent_pkg: Int, parent_version: String, dep_pkg: Int, kind: String } -> SparseBridgeState {
+    add_selected_guard_clause state where {
+        clause: SelectedGuardClause {
+            parent_pkg,
+            parent_version,
+            consequent_tag: "in_graph",
+            dep_pkg,
+            req: VersionSet::from_req("*"),
+            kind,
+        }
+    }
 }
 
-fn add_version_set_clause(state: SparseBridgeState, parent_pkg: Int, parent_version: String, dep_pkg: Int, req: String, kind: String) -> SparseBridgeState {
-    add_selected_guard_clause(state, parent_pkg, parent_version, "version_set", dep_pkg, VersionSet::from_req(req), kind)
+fn add_version_set_clause(state: SparseBridgeState) where { parent_pkg: Int, parent_version: String, dep_pkg: Int, req: String, kind: String } -> SparseBridgeState {
+    add_selected_guard_clause state where {
+        clause: SelectedGuardClause {
+            parent_pkg,
+            parent_version,
+            consequent_tag: "version_set",
+            dep_pkg,
+            req: VersionSet::from_req(req),
+            kind,
+        }
+    }
 }
 
-fn add_selected_guard_clause(state: SparseBridgeState, parent_pkg: Int, parent_version: String, consequent_tag: String, dep_pkg: Int, req: VersionSet, kind: String) -> SparseBridgeState {
+fn add_selected_guard_clause(state: SparseBridgeState) where { clause: SelectedGuardClause } -> SparseBridgeState {
     let clause_id = state.next_clause;
     let guard_id = state.next_guard;
     SparseBridgeState {
@@ -290,14 +310,14 @@ fn add_selected_guard_clause(state: SparseBridgeState, parent_pkg: Int, parent_v
         guard_clause_ids: state.guard_clause_ids.insert(guard_id, clause_id),
         guard_tags: state.guard_tags.insert(guard_id, "selected"),
         guard_kinds: state.guard_kinds.insert(guard_id, 0),
-        guard_pkgs: state.guard_pkgs.insert(guard_id, parent_pkg),
-        guard_version_values: state.guard_version_values.insert(guard_id, parent_version),
+        guard_pkgs: state.guard_pkgs.insert(guard_id, clause.parent_pkg),
+        guard_version_values: state.guard_version_values.insert(guard_id, clause.parent_version),
         guard_features: state.guard_features.insert(guard_id, 0),
-        consequent_tags: state.consequent_tags.insert(clause_id, consequent_tag),
-        consequent_pkgs: state.consequent_pkgs.insert(clause_id, dep_pkg),
-        consequent_version_sets: state.consequent_version_sets.insert(clause_id, req),
+        consequent_tags: state.consequent_tags.insert(clause_id, clause.consequent_tag),
+        consequent_pkgs: state.consequent_pkgs.insert(clause_id, clause.dep_pkg),
+        consequent_version_sets: state.consequent_version_sets.insert(clause_id, clause.req),
         consequent_features: state.consequent_features.insert(clause_id, 0),
-        gate_kinds: state.gate_kinds.insert(clause_id, kind),
+        gate_kinds: state.gate_kinds.insert(clause_id, clause.kind),
         next_clause: clause_id + 1,
         next_guard: guard_id + 1,
         ..state
@@ -328,11 +348,11 @@ fn index_from_bridge_state(state: SparseBridgeState) -> Index {
     }
 }
 
-fn problem_from_bridge_state(state: SparseBridgeState, root_name: String, req: String) -> Problem {
-    problem_from_root_pkg(state.package_ids.get(root_name).unwrap(), req)
+fn problem_from_bridge_state(state: SparseBridgeState) where { root_name: String, req: String } -> Problem {
+    problem_from_root_pkg (state.package_ids.get(root_name).unwrap()) where { req }
 }
 
-fn problem_from_root_pkg(root_pkg: Int, req: String) -> Problem {
+fn problem_from_root_pkg(root_pkg: Int) where { req: String } -> Problem {
     Problem {
         root_pkg: root_pkg,
         root_req: VersionSet::from_req(req),
@@ -342,30 +362,30 @@ fn problem_from_root_pkg(root_pkg: Int, req: String) -> Problem {
     }
 }
 
-pub fn sparse_solve_selected_versions_text(rows: [SparseIndexRow], root_name: String, req: String, target: String) -> String {
-    let state = sparse_bridge_state(rows);
+pub fn sparse_solve_selected_versions_text(rows: [SparseIndexRow]) where { root_name: String, req: String, target: Target } -> String {
+    let state = sparse_bridge_state rows;
     let root_pkg = state.package_ids.get(root_name).unwrap();
-    solve_selected_versions_text(index_from_bridge_state(state), problem_from_root_pkg(root_pkg, req), target)
+    solve_selected_versions_text (index_from_bridge_state state) where { problem: problem_from_root_pkg root_pkg where { req }, target }
 }
 
 pub fn sparse_row_count(rows: [SparseIndexRow]) -> Int {
     rows.len()
 }
 
-pub fn sparse_row_cksum(rows: [SparseIndexRow], name: String, vers: String) -> String {
-    find_sparse_row(rows, name, vers).cksum
+pub fn sparse_row_cksum(rows: [SparseIndexRow]) where { name: String, vers: String } -> String {
+    find_sparse_row rows where { name, vers }.cksum
 }
 
-pub fn sparse_dep_count(rows: [SparseIndexRow], name: String, vers: String) -> Int {
-    find_sparse_row(rows, name, vers).deps.len()
+pub fn sparse_dep_count(rows: [SparseIndexRow]) where { name: String, vers: String } -> Int {
+    find_sparse_row rows where { name, vers }.deps.len()
 }
 
-fn find_sparse_row(rows: [SparseIndexRow], name: String, vers: String) -> SparseIndexRow {
+fn find_sparse_row(rows: [SparseIndexRow]) where { name: String, vers: String } -> SparseIndexRow {
     rows.fold([], |reversed, row| [row, ..reversed])
         .fold(empty_sparse_row(), |found, row| {
             if found.name != "" || found.vers != "" {
                 found
-            } else if sparse_row_name(row) == name && sparse_row_vers(row) == vers {
+            } else if sparse_row_name row == name && sparse_row_vers row == vers {
                 row
             } else {
                 found
