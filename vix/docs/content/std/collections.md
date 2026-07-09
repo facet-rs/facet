@@ -7,10 +7,10 @@ weight = 1
 *Status: provisional — this page documents the language as designed; parts
 are not implemented yet.*
 
-Vix has one collection structure and four names for it. A **map** takes keys to
+Vix has one collection structure and several names for it. A **map** takes keys to
 values and keeps its rows in key order. An **array** is a map whose keys are
-positions. A **set** is a map whose values carry no information. A **tree** is a
-map from paths to bytes.
+positions. A **set** is a map whose values carry no information. A **tree** is a map
+from names to entries, and one kind of entry is another tree.
 
 Everything else in this chapter follows from that sentence.
 
@@ -39,16 +39,28 @@ An array is closer to a tuple whose elements share a type.
 let versions = %{ "taxon" => v1, "weavy" => v2 };   // Map<String, Version>
 let features = %["default", "std"];                 // Set<String>
 let members  = [a, b, c];                           // [T], keys 0,1,2
-let out      = exec cc`…`;                          // Tree = Map<Path, Blob>
+let out      = exec cc`…`;                          // ExecOutcome; out.tree is a Tree
 ```
 
 The `%` sigil means *the keys are explicit*. Bare brackets mean *the keys are
 positions*.
 
-`Set<T>` is `Map<T, ()>` and `Tree` is `Map<Path, Blob>` — real aliases, not
-analogies. `[T]` is the one that isn't, because an array's keys are `0..n-1` and
-**density is an invariant**, not a shape. That's also why an array's keys cost
-nothing to store: they *are* the field names.
+`Set<T>` is `Map<T, ()>` — a real alias, not an analogy. `[T]` is not, because an
+array's keys are `0..n-1` and **density is an invariant**, not a shape. That's also
+why an array's keys cost nothing to store: they *are* the field names.
+
+A **`Tree`** is a map too, but a recursive one, keyed by a single path *segment*:
+
+```vix
+Tree      = Map<Name, TreeEntry>
+TreeEntry = File { content: Blob, executable: Bool }
+          | Dir (Tree)
+          | Symlink { target: String }
+```
+
+`tree / p"src/lib.rs"` is a projection through two maps. A directory is a value, so an
+empty one exists; a symlink is a value, so it round-trips. `Tree = Map<Path, Blob>` is
+a lie that costs you `mkdir -p`, every symlink, and the executable bit.
 
 ## Every value is ordered, and nothing can change that
 

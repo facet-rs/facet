@@ -257,3 +257,67 @@ driver.
 > sealing (finer memo keys) is the safe direction. Rationale: the
 > content-addressed store is public-adjacent; plaintext-in-hash is a
 > dictionary-attack surface.
+
+> r[machine.identity.tree-model]
+>
+> [DESIGN, round 12] **A `Tree` is not `Map<Path, Blob>`.** That spelling was an
+> oversimplification: it cannot represent a directory (in particular an empty one), a
+> symlink, or an executable bit, all of which the store models today.
+>
+> The semantic model mirrors `vx-services`'s `DirectoryNode`/`DirectoryEntryKind`, minus
+> storage representation:
+>
+> ```
+> Tree      = Map<Name, TreeEntry>          // Name is ONE path segment, not a path
+> TreeEntry = File    { content: ContentHash, size: ByteLen, executable: Bool }
+>           | Dir     (Tree)                 // recursive; an empty Dir is representable
+>           | Symlink { target: String }
+> ```
+>
+> `Tree` is therefore still a map — maps all the way down — but keyed by **segment**, and
+> recursive. `tree / p"a/b"` is a projection through two maps.
+
+> r[machine.identity.tree-hash-is-not-node-hash]
+>
+> [DESIGN, round 12] **Vix's `TreeHash` and Vixen's storage `NodeHash` are different
+> identities over different preimages. They may not be conflated.**
+>
+> `DirectoryEntryKind` distinguishes `SmallFile { content_hash, size, executable }` from
+> `LargeFile { content_hash, blob_node, size, executable }`, and `DirectoryNode` carries
+> `total_size` documented as "for progress reporting only". The `SmallFile`/`LargeFile`
+> split, `blob_node`, chunk boundaries, and `total_size` are **storage representation**.
+>
+> > **Rechunking must not change a Tree's semantic identity.** A file that crosses
+> > `CDC_MAX_CHUNK` and becomes a `LargeFile` is the same file. A store that changes its
+> > chunker must not invalidate a single memo entry.
+>
+> Therefore the semantic tree encoding hashes: entry name, entry kind tag, and per kind —
+> `File`: (content hash, size, executable); `Dir`: the child TreeHash; `Symlink`: target.
+> It hashes neither `blob_node` nor the chunking discriminant nor `total_size`.
+>
+> This is the same disease that struck `machine.identity.canonical-memory` (ABI into
+> identity) and `ExecTree`'s UTF-8 split (a representation predicate into the schema): an
+> implementation convenience leaking into the semantic plane. Whether `TreeHash` and
+> `NodeHash` could ever share a canonical preimage is an OPEN question and must be
+> **proved**, not assumed.
+
+> r[machine.identity.tree-canonicalization]
+>
+> [OPEN, round 12 — Amos to rule. Do not decide these silently.]
+>
+> - **Entry order.** The store sorts `entries` by `name.as_bytes()` lexicographically.
+>   Vix's structural order on `String` is by Unicode scalar value. For well-formed UTF-8
+>   these coincide (UTF-8 preserves code-point order), so the two agree today — but only
+>   because names are constrained to valid UTF-8 (`Symlink`: "Target must be valid UTF-8
+>   (same restriction as name)"). State the constraint or state the divergence.
+> - **The executable bit is a `Bool`, not a mode.** No setuid, setgid, sticky, group/other
+>   split. Windows has no execute bit at all. Is `executable: Bool` the semantic model on
+>   every platform, and what does it mean on Windows — ignored, or an error to set?
+> - **Deliberately absent, and each is a decision, not an oversight**: mtime, uid/gid,
+>   xattrs, hardlinks, device/FIFO/socket nodes, resource forks, ACLs, case-sensitivity of
+>   names. Confirm each as a non-goal, or name the ones that must round-trip.
+> - **Symlink targets.** Absolute or relative? May a target escape the tree? A symlink is
+>   the one entry whose *content* is a path, so it interacts with
+>   `machine.placement.trees-cross-as-grants` and with relocation.
+> - **Empty directories** are representable in this model and are NOT in `Map<Path,Blob>`.
+>   Confirm they must round-trip (they must, for `mkdir -p out` before a compiler runs).

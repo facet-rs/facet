@@ -30,7 +30,7 @@ runs nothing.
 
 ```vix
 struct ExecOutcome {
-    tree:   Tree,                // Map<Path, Blob> — the files it produced
+    tree:   Tree,                // recursive: files, dirs, symlinks, exec bits
     stdout: Stream<Int, String>, // keyed by line number
     stderr: Stream<Int, String>,
 }
