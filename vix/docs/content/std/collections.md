@@ -7,11 +7,12 @@ weight = 1
 *Status: provisional — this page documents the language as designed; parts
 are not implemented yet.*
 
-Vix has two collection kinds. An **array** `[T]` is ordered: it remembers
-where each element sits. A **multiset** `Multiset<T>` is unordered: it
-remembers only what's in it. Every operation on either returns a new value
-— nothing in vix mutates, ever. There is no `push` that changes an array;
-there is only an array and, elsewhere, a bigger one.
+Vix has one collection structure and four names for it. A **map** takes keys to
+values and keeps its rows in key order. An **array** is a map whose keys are
+positions. A **set** is a map whose values carry no information. A **tree** is a
+map from paths to bytes.
+
+Everything else in this chapter follows from that sentence.
 
 ## Arrays are structs
 
@@ -23,80 +24,170 @@ let members = [p"crates/taxon/Cargo.toml",
 let second = members[1];
 ```
 
-An array literal is a struct whose fields happen to be named `0`, `1`, `2`.
-This is not a metaphor — it's the semantics. Each element is an independent
-value: demanding `members[1]` depends on that field and nothing else, and
-two fields of the same array can be computed in parallel, or one computed
-and the other never touched. There is no iteration order because there is
-no iteration: an array *is* its fields.
+An array literal is a struct whose fields happen to be named `0`, `1`, `2`. This
+is not a metaphor — it's the semantics, and it's why an array is a map. Each
+element is an independent value: demanding `members[1]` depends on that field and
+nothing else, and two fields of the same array can be computed in parallel, or one
+computed and the other never touched.
 
-**Coming from Rust/JS**: there is no growth, no capacity, no `push`/`pop`
-mutation family. An array is closer to a tuple whose elements share a type.
+**Coming from Rust/JS**: no growth, no capacity, no `push`/`pop` mutation family.
+An array is closer to a tuple whose elements share a type.
 
-## Multisets are unordered values
-
-```vix
-let heavy: Multiset<Row> = rows.values().filter(|r| r.weight > 100);
-```
-
-A multiset is a complete, immutable value — it is *born whole*, like every
-vix value; it is never a container that fills up. It has no positions:
-there is no `heavy[0]`, because "which one is first" has no honest answer
-for a collection whose elements were produced in no particular order.
-
-When a multiset is *observed* in its entirety — serialized, rendered to a
-string, converted to an array — its elements appear in **increasing value
-order**. This is always well-defined because every vix value is ordered
-(see `<=>` below); it makes every multiset operation deterministic without
-constraining how anything is computed.
-
-**Coming from anywhere**: this is the type your language calls a bag or
-multiset, except immutable and with a guaranteed deterministic observation
-order. It is what `map`/`filter` pipelines produce, because those
-pipelines run with automatic parallelism and positions are the price.
-
-## Every value is ordered
+## The four names
 
 ```vix
-let sorted_names = names.sorted();      // no Ord bound, no comparator needed
+let versions = %{ "taxon" => v1, "weavy" => v2 };   // Map<String, Version>
+let features = %["default", "std"];                 // Set<String>
+let members  = [a, b, c];                           // [T], keys 0,1,2
+let out      = exec cc!{ … };                       // Tree = Map<Path, Blob>
 ```
 
-Every vix value supports `<=>` (three-way comparison) by construction —
-scalars, records, arrays, multisets, everything. `<=>` subsumes the whole
-comparison family: `==`, `<`, `<=`, `>`, `>=` are derived from it, so a type
-never defines them separately.
+The `%` sigil means *the keys are explicit*. Bare brackets mean *the keys are
+positions*.
+
+`Set<T>` is `Map<T, ()>` and `Tree` is `Map<Path, Blob>` — real aliases, not
+analogies. `[T]` is the one that isn't, because an array's keys are `0..n-1` and
+**density is an invariant**, not a shape. That's also why an array's keys cost
+nothing to store: they *are* the field names.
+
+## Every value is ordered, and nothing can change that
+
+```vix
+let ranked = names.sorted();
+```
+
+Every vix value supports `<=>` (three-way comparison) by construction. `<=>`
+subsumes the whole comparison family — `==`, `<`, `<=`, `>`, `>=` derive from it,
+so a type never defines them separately.
 
 A value orders by its fields, in declaration order. This is the value's
-**structural order**, it is total, and **nothing can replace it** — there is no
-way to define `<=>` for a type. If a type's structural order is wrong, the type
-is wrong: reorder its fields, or declare a field whose own variant order carries
-the rule you meant.
+**structural order**, it is total, and **nothing can replace it**: there is no way
+to define `<=>` for a type.
 
-When you want to rank values some *other* way, you pass an order:
+> **If a type's structural order is wrong, the type is wrong.**
+
+Reorder its fields, or declare a field whose own variant order carries the rule
+you meant. A `Version` needs semver's rule — a prerelease sorts *below* its
+release — and no comparison function is required to say so:
 
 ```vix
-let ranked = rows.sorted(order: by_key(|r| r.weight));
+enum PreIdent { Numeric(Int), Alpha(String) }       // numeric ranks below alphanumeric
+enum PreTag   { Prerelease([PreIdent]), Release }   // prerelease ranks below release
+
+struct Version { major: Int, minor: Int, patch: Int, pre: PreTag, build: Option<String> }
+```
+
+Walk it: major, minor, patch, then `PreTag` by variant position, then the
+identifiers lexicographically, then `build`. That *is* semver precedence, clause
+for clause, and it is the declaration that says so.
+
+**Coming from Rust**: no `#[derive(Ord)]`, no `Ord` bounds, and no `impl Ord`.
+Intrinsic order is a property of the declaration.
+**Coming from JS**: no default stringly comparison — values compare by their fields.
+
+## When you want a different ranking, you pass an order
+
+```vix
+let by_weight = rows.sorted where { order: by_key(|r| r.weight) };
 ```
 
 An `Order<T>` is a value. `by_key(f)` ranks by the structural order of `f(x)`,
-breaking ties by the structural order of `x` — so it is a total order *by
-construction*, and consistent with `==` for free. A comparison that answers
+breaking ties by the structural order of `x` — so it is a **total order by
+construction**, and consistent with `==` for free. A comparison that answers
 `Equal` for values that are not equal cannot be written.
 
-**Coming from Rust**: no `#[derive(Ord)]`, no `Ord` bounds, and no `impl Ord` —
-intrinsic order is a property of the declaration. `sort_by_key` becomes an
-`Order<T>` you hand to the operation that ranks.
-**Coming from JS**: unlike `Array.prototype.sort`, there is no default
-stringly comparison — values compare by their fields.
+Intrinsic order comes from the declaration. Extrinsic ranking comes from an
+argument. There is nothing in between.
 
-## Closures have no side effects
+## Streams
 
-Every function you pass to a combinator is pure vix — there are no side
-effects for it to perform, so the question every other language must
-answer ("in what order does my callback run? how many times?") has no
-observable content here. The implementation may run your closure on
-sixteen threads, once per element, twice, or not at all for elements
-nobody demands. You cannot tell, and that's the point.
+Most things are streams. A stream is what you get when you ask the world for
+something — the files in a directory, the results of two hundred compiles running
+at once.
+
+**A stream is not ordered.** Its elements arrive as they become available, and
+arrival order is a scheduling artifact, not a property of any value. A stream has
+no content hash, so it cannot be a record field, cannot be memoized, cannot be
+hashed. Its *elements* are ordinary values and are memoized individually; the
+aggregate isn't a value until you resolve it.
+
+**Every element carries its key** — where it came from.
+
+```vix
+src.glob("*.c")                    // Stream<Path, Path>
+[3, 2, 1].stream()                 // Stream<Int, Int>, keys 0, 1, 2
+```
+
+**Coming from Rust/JS**: this is `enumerate()`, except you never call it, and it
+works for keys that aren't integers.
+
+### `map` and `filter` keep the key
+
+```vix
+let objects = src.glob("*.c").map(compile);           // Stream<Path, Tree>
+let small   = objects.filter(|o| o.size < 4096);      // Stream<Path, Tree>
+```
+
+`map` transforms the value and leaves the key alone. `filter` drops rows and
+**renumbers nothing** — survivor number two keeps key `2`. That is what lets every
+element stay independent: nothing has to know how many earlier elements survived.
+
+`flat_map` composes keys into a path, so one element becoming many keeps a
+deterministic address for each.
+
+### `collect` is where a value is born
+
+```vix
+let objects = src.glob("*.c").map(compile).collect();   // Map<Path, Tree>
+```
+
+The rows come out in key order. **That is where determinism is created**, and it
+is the only place it can be.
+
+`collect()` has exactly one return type. There is no polymorphic collect, no
+inference from the binding, no turbofish. It fails if two rows share a key — and
+since `map` and `filter` preserve keys and `flat_map` extends them, a duplicate
+key is always attributable to a `rekey` you wrote.
+
+Notice what `collect()` does *not* need: an argument telling it how to sort. A
+row's structural order compares the key first and never reaches the value. So
+**sorting object files by their contents — which would reshuffle your link line
+every time you edited a source file — is not something you must remember not to
+do. It is unreachable.**
+
+### `values` drops the keys
+
+```vix
+objects.values()      // [Tree] — the values, in key order
+```
+
+This is the only compaction in the language. It happens once, on a map that
+already exists, at a call you wrote.
+
+### The whole build
+
+```vix
+fn build(src: Tree) -> Tree {
+    let objects = src.glob("*.c").map(|c| compile src c).collect();
+    link objects.values()
+}
+```
+
+Two hundred processes fan out and finish in whatever order they finish. `collect`
+orders by source path. The link line is identical on every machine that builds
+this, and stays identical when you edit `parser.c`, because `parser.o` moved in
+content but not in key.
+
+Had `glob` returned an array, its positions would have come from `readdir`, and
+they would have flowed straight into the link command's argument order.
+
+> **Positions have exactly two provenances: you wrote them, or you sorted them.**
+> Never the filesystem's, never the scheduler's.
+
+An array is therefore either **authored** — you wrote the order and the order is
+data, like library link order or include search paths — or **collected**. Almost
+nothing else should be an array. Environment variables are a map. Directory
+listings are a stream. Command-line arguments are a typed command.
 
 ---
 
@@ -112,147 +203,92 @@ The number of elements. Free — it's the arity of the struct.
 
 ### `.map(f: fn(T) -> U) -> [U]`
 
-Field-wise application: the result's field `i` is `f(self[i])`. Each
-output element depends on exactly one input element — positions are
-preserved, partial dependency is preserved, and all elements can be
-computed in parallel because none of them is related to any other.
+Field-wise: the result's field `i` is `f(self[i])`. Each output element depends on
+exactly one input element, so positions are preserved and all elements can be
+computed in parallel.
 
 ```vix
 let manifests = members.map(parse);    // manifests[1] = parse(members[1])
 ```
 
-**Coming from Rust/Haskell/JS**: looks identical, and for pure functions
-it is. But there is no left-to-right execution promise, because there are
-no effects to sequence. JS readers: no index argument — use `enumerate`.
+**Coming from Rust/Haskell/JS**: looks identical, and for pure functions it is.
+There is no left-to-right execution promise, because there are no effects to
+sequence, and no index argument — stream it if you want the keys.
 
-### `.enumerate() -> [Indexed<T>]`
+### `.stream() -> Stream<Int, T>`
 
-Pairs each element with its position: field `i` becomes `(i, self[i])`.
-`Indexed<T>` is a plain alias for `(Int, T)`. Use it to carry positions
-into position-destroying operations and recover them later:
-
-```vix
-let kept = xs.enumerate().values().filter(|(i, x)| wanted(x));
-let in_original_order = kept.sorted();
-// value order of (Int, _) sorts by the index first — original order back
-```
+Give up random access and positions-as-data; get back-pressure and keys that
+survive filtering.
 
 ### `.fold(init: R, f: fn(R, T) -> R) -> R`
 
-Combines elements in field order: `f(f(f(init, self[0]), self[1]), ...)`.
-On an empty array, `init`. Deterministic; field order is real for arrays.
+Combines elements in field order. Deterministic; field order is real for arrays.
 
-```vix
-let total = rows.fold(0, |acc, r| acc + r.weight);
-```
+### `.any(p)`, `.all(p)`, `.contains(x)`
 
-### `.any(p) -> Bool`, `.all(p) -> Bool`, `.contains(x) -> Bool`
+Order-free by nature. They commit as soon as the answer cannot change.
 
-What they say. `contains` uses value equality. "Short-circuiting" is not a
-semantic notion here — the result is just the boolean; how little work
-produces it is the implementation's business.
+### `.sorted() -> [T]`, `.sorted where { order: Order<T> } -> [T]`
 
-### `.split_last() -> Option<(T, [T])>`
+An array of the elements in structural order, or in the order you pass. An
+`Order<T>` is total by construction, so you cannot hand `sorted` a comparison that
+fails to define a result.
 
-The last element and the array of everything before it, as fresh values;
-`None` on an empty array.
+## Map operations
 
-```vix
-match xs.split_last() {
-    Some((last, rest)) => ...,
-    None => ...,
-}
-```
+### `.get(k) -> Option<V>`, `.insert(k, v) -> Map<K,V>`, `.len()`
 
-**Coming from Rust**: this is `pop`, except nothing mutates — you get both
-the element and the remaining array back. There is no `pop` in vix; names
-that sound like mutation don't exist because the operations don't either.
+By value, like everything. `insert` denotes a new map.
 
-### `.values() -> Multiset<T>`
+### `.keys() -> [K]`, `.values() -> [V]`
 
-Forgets positions. Free and always sound — the elements were independent
-values all along.
+In key order. `values()` renumbers: it is the compaction.
 
----
+### `.stream() -> Stream<K, V>`
 
-## Multiset operations
+The rows, keys attached.
 
-### `.len()`, `.any(p)`, `.all(p)`, `.contains(x)`
+## Stream operations
 
-As on arrays. Order-free by nature.
+### `.map(f: V -> U) -> Stream<K, U>`
 
-### `.map(f: fn(T) -> U) -> Multiset<U>`
+Key untouched.
 
-Element-wise. The result is unordered like the input.
+### `.filter(p: V -> Bool) -> Stream<K, V>`
 
-### `.filter(p: fn(T) -> Bool) -> Multiset<T>`
+Nothing renumbers.
 
-Keeps the elements satisfying `p`.
+### `.flat_map(f: V -> Stream<J, U>) -> Stream<(K, J), U>`
 
-**Coming from Rust/JS**: your `filter` returns a compacted *sequence* —
-survivor #2 sits at index 1, which silently forces an order on the
-computation. Here survivors form a multiset; if you need positions, you
-carried them in with `enumerate` (see above), and the code says so.
+Keys compose into a path.
 
-### `.filter_map(f: fn(T) -> Option<U>) -> Multiset<U>`
+### `.collect() -> Map<K, V>`
 
-Filter and transform in one move: keeps the `Some` payloads.
+The only return type. Fails on duplicate keys.
 
-### `.flat_map(f: fn(T) -> Multiset<U>) -> Multiset<U>`
+### `.any(p)`, `.all(p)`, `.contains(x)`, `.count()`
 
-Applies `f` to each element and unions the results.
+`any` and `all` commit the moment an unarrived element could no longer change the
+answer. `count` waits, because it must.
 
-### `.fold_ascending(init: R, f: fn(R, T) -> R) -> R`
+### `Set<T>.map(f: T -> U) -> Map<T, U>`
 
-Combines elements in increasing value order — the name says the order,
-because a multiset has no other order to offer. Always deterministic, on
-any machine, at any parallelism. There is no bare `fold` on multisets:
-an order-sensitive combine over an unordered collection must say which
-order it means.
-
-**Coming from JS/Haskell**: `reduce`/`foldl` promise insertion order; a
-multiset *has* no insertion order. A commutative-associative `f` (sums,
-unions, maxima) behaves exactly as you'd expect and may be computed in
-any order internally. If you meant "in original array order," fold the
-array — arrays keep bare `fold`, in field order, because there the order
-IS the reader's intuition.
-
-### `.find_min(p) -> Option<T>`, `.find_max(p) -> Option<T>`
-
-The least (greatest) element satisfying `p`, or `None`.
-
-**Coming from Rust**: `Iterator::find` means "first by position" — a
-concept multisets don't have. The deterministic replacements name their
-selection rule. `find_min(|_| true)` is the minimum.
-
-### `.take_min() -> Option<(T, Multiset<T>)>`, `.take_max() -> Option<(T, Multiset<T>)>`
-
-The least (greatest) element and the multiset without one occurrence of
-it, as fresh values; `None` on empty. The by-value cousins of a priority
-queue's pop.
-
-### `.sorted() -> [T]`, `.sorted_by(cmp: fn(T, T) -> Ordering) -> [T]`
-
-The bridge back to positions: an array of the elements in structural order, or
-in the order you pass. An `Order<T>` is total by construction, so there is no
-way to hand `sorted_by` a comparison that fails to define a result. This is
-where you knowingly pay for rank: the array as a whole depends on every element.
-
-```vix
-let by_weight = rows.values().sorted_by(|a, b| a.weight <=> b.weight);
-```
+The map from each element to its image.
 
 ---
 
 ## What deliberately does not exist
 
-- **`pop`, `push`, `insert`, `remove` as mutations** — nothing mutates.
-  The by-value forms exist where they earn it (`split_last`, `take_min`).
-- **"First ready" selection** — an operation whose result depends on
-  completion order would make program output nondeterministic. The
-  implementation is free to *process* in arrival order whenever that's
-  invisible (commutative folds); it is never allowed to *show* you.
-- **Iterator objects** — there is no lazy iterator type to hold wrong.
-  Pipelines compose collections; fusing `filter(...).map(...)` into one
-  loop is the compiler's job, not a type you manage.
-- **An index-taking `map`** — use `enumerate`.
+- **`Multiset<T>`** — a collection that is unordered but keeps duplicates is an
+  array that has forgotten why. If you want counts, you want `Map<T, Int>`.
+- **`enumerate`, `Indexed<T>`** — the key was always there.
+- **`pop`, `push`, `insert`, `remove` as mutations** — nothing mutates. The
+  by-value forms exist where they earn it (`split_last`, `take_min`).
+- **"First ready" selection** — an operation whose result depends on completion
+  order would make program output nondeterministic. The implementation may
+  *process* in arrival order whenever that's invisible; it may never *show* you.
+- **Iterator objects** — a stream is not a lazy list. A lazy list has a
+  deterministic order; a stream does not.
+- **A polymorphic `collect`** — the return type of a call is never inferred from
+  the context it is assigned into.
+- **An index-taking `map`** — stream it.
