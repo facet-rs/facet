@@ -269,7 +269,7 @@ ledger. Write no code that depends on yield position.
   OPTIONAL transfer provenance and never becomes an identity. **There is no SHA-only
   fetch**: computing the canonical blake3 is a lock-time act, so every `fetch` knows its
   final `Blob` identity before evaluation and crosses a `place` boundary by construction.
-- **`fetch` is pinned.** `fetch(url) where { sha256 }` names a blob whose value
+- **`fetch` is pinned.** `fetch(url) where { blake3 }` names a blob whose value
   identity is known *before* evaluation; the URL is a **provenance coordinate**,
   a hint about where bytes live. Materialization is cost-model: local store, peer,
   fleet store, and only then the origin.
@@ -286,9 +286,13 @@ ledger. Write no code that depends on yield position.
   subgraph of demands to a **different** evaluator.
 
   > **A value may cross a `place` boundary only if its identity is known without
-  > evaluating it.** A pinned blob (the sha256 is in the source), a capability
+  > evaluating it.** A pinned blob (its `ContentHash` is in the source), a capability
   > identity, a literal, an observed input — all cross. `let x = expensive();`
   > does not: either compute it first, or draw `place` wider.
+  >
+  > This governs **dispatch**. A placed block's *result* is computed remotely, so its
+  > identity is not knowable beforehand; it acquires one where it is computed and crosses
+  > back (`r[machine.placement.results-cross-back]`).
 
 - **`Target::host()` is DEAD.** Three machines wore one word: *target* (semantic —
   changes the value), *host* (cost-model), *executor* (cost-model). The host is
