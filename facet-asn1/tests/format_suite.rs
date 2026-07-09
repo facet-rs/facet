@@ -378,6 +378,10 @@ impl FormatSuite for Asn1Slice {
         CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
     }
 
+    fn indexset() -> CaseSpec {
+        CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
+    }
+
     fn vec_nested() -> CaseSpec {
         CaseSpec::skip("ASN.1 is a binary format, requires binary input not JSON strings")
     }

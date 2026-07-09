@@ -346,6 +346,11 @@ pub trait FormatSuite {
     /// Case: `HashSet<T>`.
     fn hashset() -> CaseSpec;
 
+    // ── IndexSet tests ──
+
+    /// Case: `IndexSet<T>`.
+    fn indexset() -> CaseSpec;
+
     // ── Nested collection tests ──
 
     /// Case: nested `Vec<Vec<T>>`.
@@ -774,6 +779,8 @@ pub fn all_cases<S: FormatSuite + 'static>() -> Vec<SuiteCase> {
         SuiteCase::new::<S, CharWrapper>(&CASE_CHAR_SCALAR, S::char_scalar),
         // HashSet cases
         SuiteCase::new::<S, HashSetWrapper>(&CASE_HASHSET, S::hashset),
+        // IndexSet cases
+        SuiteCase::new::<S, IndexSetWrapper>(&CASE_INDEXSET, S::indexset),
         // Nested collection cases
         SuiteCase::new::<S, NestedVecWrapper>(&CASE_VEC_NESTED, S::vec_nested),
         // Third-party type cases
@@ -2251,6 +2258,18 @@ const CASE_HASHSET: CaseDescriptor<HashSetWrapper> = CaseDescriptor {
     },
 };
 
+const CASE_INDEXSET: CaseDescriptor<IndexSetWrapper> = CaseDescriptor {
+    id: "collection::indexset",
+    description: "IndexSet<String>",
+    expected: || {
+        let mut set = indexmap::IndexSet::new();
+        set.insert("alpha".into());
+        set.insert("beta".into());
+        set.insert("gamma".into());
+        IndexSetWrapper { items: set }
+    },
+};
+
 // ── Nested collection case descriptors ──
 
 const CASE_VEC_NESTED: CaseDescriptor<NestedVecWrapper> = CaseDescriptor {
@@ -3343,6 +3362,13 @@ pub struct HashSetWrapper {
     pub items: std::collections::HashSet<String>,
 }
 
+/// Fixture for IndexSet test.
+#[derive(Facet, Debug, Clone, PartialEq)]
+#[cfg_attr(feature = "msgpack", derive(serde::Serialize, serde::Deserialize))]
+pub struct IndexSetWrapper {
+    pub items: indexmap::IndexSet<String>,
+}
+
 // ── Nested collection test fixtures ──
 
 /// Fixture for nested Vec test.
@@ -4329,6 +4355,15 @@ pub mod msgpack {
         items.insert("beta".to_string());
         items.insert("gamma".to_string());
         serialize(&HashSetWrapper { items })
+    }
+
+    /// MsgPack bytes for IndexSetWrapper
+    pub fn indexset_bytes() -> Vec<u8> {
+        let mut items = indexmap::IndexSet::new();
+        items.insert("alpha".to_string());
+        items.insert("beta".to_string());
+        items.insert("gamma".to_string());
+        serialize(&IndexSetWrapper { items })
     }
 
     /// MsgPack bytes for EmptyTupleWrapper

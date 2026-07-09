@@ -390,6 +390,10 @@ impl FormatSuite for MsgPackSlice {
         CaseSpec::skip("HashSet element ordering is non-deterministic")
     }
 
+    fn indexset() -> CaseSpec {
+        CaseSpec::from_bytes_vec(msgpack::indexset_bytes())
+    }
+
     fn vec_nested() -> CaseSpec {
         CaseSpec::from_bytes_vec(msgpack::vec_nested_bytes())
             .without_roundtrip("Round-trip comparison has issues with nested vecs")
