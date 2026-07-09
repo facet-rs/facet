@@ -27,15 +27,30 @@ iteration order because there is no iteration: the array *is* its rows.
 
 ## You already have three more
 
-A **Tree** — the thing `exec` produces — is a map from path to content. Not
-approximately. This is `ExecTree`, in the code that runs today:
+A **Tree** — the thing `exec` produces — is a map. But **not** a flat map from path to
+bytes, and this note originally argued from the wrong evidence:
 
 ```rust
+// exec-protocol: what runs today. It is IMPOVERISHED, not authoritative.
 pub struct ExecTree {
-    pub entries: BTreeMap<ExecPath, ExecText>,
-    pub blobs:   BTreeMap<ExecPath, Vec<u8>>,
+    pub entries: BTreeMap<ExecPath, ExecText>,   // and the text/blob split is decided
+    pub blobs:   BTreeMap<ExecPath, Vec<u8>>,    // by whether the bytes are valid UTF-8
 }
 ```
+
+> **CORRECTED (round 12).** `ExecTree` models no directories, no symlinks, and no
+> executable bit. The store does (`vx-services`: `DirectoryEntryKind` is
+> `SmallFile | LargeFile | Dir | Symlink`, with `executable: bool`). So a `Tree` is a
+> **recursive** map keyed by one path *segment*:
+>
+> ```vix
+> Tree      = Map<Name, TreeEntry>
+> TreeEntry = File { content: Blob, executable: Bool } | Dir (Tree) | Symlink { target: String }
+> ```
+>
+> Still a map. Still maps all the way down — literally, now, since a `Dir` *is* one. What
+> is retracted is "map from path to content," which cannot hold an empty directory.
+> See `r[machine.identity.tree-model]`.
 
 A **Set** is a map whose values carry no information:
 
@@ -54,7 +69,7 @@ So there is one structure, and the only question is what the keys are:
 | you call it | keys are | written |
 |---|---|---|
 | array `[T]` | positions, dense from `0` | `[a, b, c]` |
-| `Tree` | paths | produced by `exec` |
+| `Tree` | one path segment (recursive) | `out.tree` from `exec` |
 | `Set<T>` | the values themselves | `%[a, b]` |
 | `Map<K, V>` | whatever you say | `%{k => v}` |
 
