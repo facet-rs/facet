@@ -168,3 +168,33 @@ primitives reference by identity.
 > [DESIGN] `Target` is a first-class vix value with schema and literal syntax;
 > OS/arch derive from taxon schemas. `(os_index: u64, arch_index: u64)` and
 > its kind are banned.
+
+> r[machine.primitive.exec-outcome]
+>
+> [DESIGN, round 12] `exec` returns a struct with three fields and **no exit status**:
+> `{ tree: Tree, stdout: Stream<Int, String>, stderr: Stream<Int, String> }`.
+>
+> `stdout`/`stderr` are **codata fields**. A stream may be a record field; the field's
+> semantic content is the value it drains to (`machine.identity.streams-cross-island-edges`
+> — a field is an edge), so `ExecOutcome` acquires an identity when the process finishes
+> while a consumer may read lines long before. Keys are LINE NUMBERS: a process writes its
+> output in order, and only the timing varies, so consuming stdout is deterministic even
+> though arrival is not.
+>
+> `tree` is an ordinary value whose PROJECTIONS resolve at different times. Demanding
+> `out.tree / p"early.txt"` does not demand the whole tree. Progressive exec trees are
+> therefore not a feature of `exec` — they are partial dependency arriving at a subprocess
+> boundary, exactly as `machine.placement.kill-is-laziness` is the laziness law arriving
+> there.
+
+> r[machine.primitive.exit-status-is-not-a-value]
+>
+> [DESIGN, round 12] An exit code is a naked `Int` where a typed outcome belongs, so the
+> language does not expose one. A nonzero exit is a **failure**
+> (`machine.error.failure-is-a-value`): the machine attaches subject, span and demand
+> chain; the payload carries the status and the collected stderr.
+>
+> Where a nonzero exit is a legitimate ANSWER — `grep` returning 1 for "no match" — the
+> **command grammar declares it**. Grammars already type argv on the way in; they type the
+> exit status on the way out: which codes are outcomes, which are failures. An unrecognised
+> status fails. `$?` and its undocumented magic numbers do not exist.

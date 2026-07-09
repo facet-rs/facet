@@ -188,8 +188,13 @@ stream. Command-line arguments are a typed command.
 **A stream is not ordered.** Its elements arrive as they become available, and
 arrival order is a scheduling artifact, not a property of any value. A stream has
 **recipe identity and no value identity**: its elements are ordinary demands
-(memoized individually); the aggregate has no content hash until resolved. It
-cannot be a record field.
+(memoized individually); the aggregate has no content hash until resolved. It cannot
+be a map key, and cannot be sorted or compared.
+
+**A stream CAN be a record field** (round 12 — `exec`'s output is one). The field's
+semantic content is the value the stream drains to, so the record's identity exists
+once the stream is done, while a reader may consume it long before. Same rule as
+`r[machine.identity.streams-cross-island-edges]`: a field is an edge.
 
 ```
 Stream<K, V>

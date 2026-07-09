@@ -118,11 +118,16 @@ the four lines below are why.
 **A stream is not ordered.** Its elements arrive as they become available, and
 arrival order is a scheduling artifact, not a property of any value.
 
-**A stream is not a value.** It has no content hash, so it cannot be a record
-field, a map key, or a thing you sort; it cannot be memoized and cannot be
-compared. When the last section said every value is ordered, it did not mean this.
-A stream's *elements* are ordinary values, memoized individually; the aggregate
-isn't a value until you `collect` it.
+**A stream is not a value.** It has no content hash of its own, so it cannot be a map
+key, and it cannot be sorted or compared. When the last section said every value is
+ordered, it did not mean this. A stream's *elements* are ordinary values, memoized
+individually; the aggregate isn't a value until you `collect` it.
+
+It *can* be a record field, and this is how a process hands you its output before it
+has finished. A stream-typed field's **semantic content is the value it drains to** —
+so the record has an identity, computed when the stream is done, while a reader may
+consume the stream long before that. The live view is an optimization; the drained
+value is the meaning.
 
 **Every element carries its key** — where it came from.
 

@@ -26,6 +26,59 @@ exception, it needs no special vocabulary, and nothing about the rest of the
 language bends around it. Demanding an `exec` runs a process. Not demanding it
 runs nothing.
 
+## What `exec` gives back
+
+```vix
+struct ExecOutcome {
+    tree:   Tree,                // Map<Path, Blob> — the files it produced
+    stdout: Stream<Int, String>, // keyed by line number
+    stderr: Stream<Int, String>,
+}
+```
+
+Three fields and **no exit status.**
+
+`stdout` and `stderr` are **codata**: you can read a line while the process is still
+running, which is what a diagnostic renderer and a readiness check both want. Keys are
+line numbers, not arrival order — a process writes its output in order, and only the
+*timing* varies. The field's semantic content is the value it drains to, so
+`ExecOutcome` has an identity as soon as the process is done, and a reader may consume
+it long before.
+
+`tree` is an ordinary value, and its **projections resolve at different times.**
+Demanding `out.tree / p"early.txt"` does not demand the whole tree; it resolves when
+that subfile is ready. That is not a special feature — it is partial dependency,
+arriving at a subprocess.
+
+## An exit code is a naked `Int` where a typed outcome belongs
+
+So there isn't one.
+
+A nonzero exit is not a number you inspect. It is a **failure**: `exec` fails, the
+machine attaches the subject, the span and the demand chain, and the payload carries
+what you'd want.
+
+```vix
+let out = exec cc`-c {src} -o {obj}`;   // a bad compile poisons whatever demanded it
+```
+
+And when a nonzero exit is a legitimate *answer*, the **command grammar says so**.
+`grep` returns 1 for "no match", which is not an error:
+
+```vix
+match exec grep`-q {pat} {file}`? {
+    Ok(_)  => Found,
+    Err(f) => NotFound,        // grep's grammar maps 1 to an outcome, not a failure
+}
+```
+
+Command grammars already type what goes *in*. They type the exit status on the way
+*out*: which codes are answers, which are failures. Anything the grammar does not
+recognise fails, carrying the status and the stderr it collected.
+
+**Coming from a shell**: `$?` is gone, and so is the habit of comparing it to a
+magic number nobody documented.
+
 A command is a **backtick tagged template**, tagged by a capability. Its arguments
 are typed rather than concatenated, and `{expr}` interpolates a *value* into an
 argv element. A path interpolated there is a dependency edge wearing an argv
