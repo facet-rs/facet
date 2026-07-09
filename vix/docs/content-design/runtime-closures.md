@@ -219,43 +219,89 @@ collapses `r[machine.placement.capability-requirements-are-derived]` into one se
 
 ## The seed — and the people who already solved it are allies
 
+*(Verified. `notes/bootstrap-verification.md`, every claim with a source URL.)*
+
 A binary embeds its recipe; the recipe names its toolchain; the toolchain is a package;
 that package was built by a toolchain. The chain bottoms out at a binary that has no
-recipe — a **seed**.
+recipe — a **seed**. Content addressing does not answer this. Every byte of the seed is
+content-addressed and equally unexplained.
 
-Content addressing does not answer this. Every byte of the seed is content-addressed and
-equally unexplained.
+It is also not ours to solve. The **Bootstrappable Builds** community has done it:
 
-But it is not our problem to solve from scratch, and framing it as a competition is a
-mistake. The **Bootstrappable Builds** community has spent years on exactly this: a tiny
-seed (`hex0`, small enough to audit by eye), a chain up through `hex1`/`hex2`/`M0`,
-`M2-Planet` and `Mes` to `tcc` and then `gcc`, and `live-bootstrap` assembling a full
-userland from it. **Guix** shipped a full-source bootstrap on that foundation; Nix
-carries `bootstrap-tools` as a binary seed with work under way to reduce it.
+- `hex0` → `hex1` → `hex2` → `M0` → `cc_x86` → **M2-Planet** → **GNU Mes** (`mescc`) →
+  `tcc` → and then a **GCC ladder** (2.95.3 → 4.7.4 → 10.x → …), with `catm` and
+  `mescc-tools` along the way.
+- **`hex0` is 181 bytes on x86 today** — small enough to audit by eye. (The widely quoted
+  *357 bytes* was x86-only and already nine months stale when Guix's own 2023 blog post
+  used it. Cite the current figure, per architecture, or none.)
+- Principals: **Jeremiah Orians** (stage0), **Jan "Janneke" Nieuwenhuizen** (GNU Mes, Guix's
+  bootstrap).
 
-*(Attribution and figures above are from memory and must be checked before they appear
-anywhere public. The direction is not in doubt; the numbers are.)*
+**Guix** shipped the full-source bootstrap in 2023, on an earlier and distinct "Reduced
+Binary Seed" milestone. LWN's headline said *"(almost)"* for a reason: a ~25 MiB statically
+linked Guile driver binary still ships.
 
-**We reuse their work.** The seed becomes a pinned `fetch` — a few hundred bytes,
-content-addressed, auditable by a human being — and the chain becomes an ordinary vix
-recipe.
+**And Nix moved.** nixpkgs PR #479322, merged **2026-01-28**: `x86_64-linux` and
+`i686-linux` stdenv now bootstrap from the minimal `hex0` seed, with `stdenv.bootstrapTools`
+**removed** on those platforms. `aarch64-linux` and Darwin still use the older binary seed.
+Guix is furthest along — *not exclusively*, and the gap is narrower than it was six months
+ago.
 
-And what we hand back is not nothing:
+> Twice in this document I described Nix from memory, and twice I was unfair to it. It
+> patches liberally, and it has largely eliminated its binary seed on the platforms that
+> matter most. Both errors ran the same direction. Verify before comparing.
 
-- **Their chain becomes reproducible by *observation*, not by convention.** Every step is
-  an exec with a witnessed read-set and a receipt. "This `gcc` descends from that seed"
-  stops being a claim about a build script and becomes a **receipt chain** anyone can
-  re-verify.
-- **`snark` is ours, and bootstrap work is drowning in parsing** — ELF, `ar`, `tar`, the
-  C subsets `M2-Planet` accepts. A declarative binary dialect is exactly the tool that
-  work wants, and we are already building it for our own artifact analysis.
-- **The transparency log and the attestation format** are precisely the artifacts a
-  full-source bootstrap wants to publish and nobody has a good home for.
+### What reuse costs, exactly
 
-So the recipe-embedded artifact's leaves become: source tarballs (pinned) and a seed
-(pinned, tiny, human-auditable). **No unexplained binary anywhere in the graph.** That is
-the strongest possible form of "you can rebuild a binary by virtue of having the binary",
-and it is reachable because someone else already did the hard part.
+`stage0`, `stage0-posix`, `bootstrap-seeds`, `M2-Planet` and `GNU Mes` are **GPLv3-or-later**,
+with **no CLA**. `live-bootstrap` is REUSE/SPDX-annotated per file across a dozen licenses,
+because it vendors dozens of upstream projects.
+
+Invoking them as an external toolchain — a pinned `fetch` that a vix recipe runs as a
+separate build step — is the relationship every package manager already has with the GPL'd
+compilers it shells out to, and creates no copyleft obligation on vix. **Vendoring or
+linking their code into a proprietary binary would.** That is a sentence for counsel, not
+for me.
+
+### What we hand back, and it is genuinely new
+
+**Nothing in this ecosystem records, at exec granularity, what a build step actually read.**
+`reproducible-builds.org` establishes reproducibility by *determinism plus independent
+rebuild-and-diff*; `guix challenge` compares binaries built by different parties, after the
+fact. Both are rebuild-and-compare. Neither witnesses a read.
+
+So "their chain becomes reproducible by observation" is not an incremental improvement on
+something half-built. It is a capability that does not exist:
+
+> Every step of the bootstrap becomes an exec with a **witnessed read-set** and a receipt.
+> "This `gcc` descends from that 181-byte seed" stops being a claim about a build script and
+> becomes a **receipt chain** a stranger can re-verify.
+
+And **`snark` is ours, and bootstrap work really does hand-roll its parsers** — confirmed in
+source, not inferred: `mescc-tools` writes ELF directly (`blood-elf.c`, `hex2_linker.c`,
+`elf_headers/`); `mescc-tools-extra` hand-rolls `untar`, `ungz`, `unbz2`, `unxz`, each its own
+small C program; `M2-Planet` hand-writes a C-subset reader (`cc_reader.c`, `cc_types.c`).
+(Not `ar` — no hand-rolled `ar` exists at this layer, and the earlier draft claiming one was
+guessing.) A declarative binary-format dialect is exactly what that work wants.
+
+### Prior art to name, so a Guix reader doesn't have to ask
+
+**Software Heritage × Guix** (2025): SWHIDs, an ISO/IEC standard, bidirectionally linked with
+Guix, so a pinned revision's dependency graph can fall back to the archive when upstream
+source vanishes — measured, ~8% of what Guix packaged five years ago is already unreachable
+from its original location. That is content-addressed **source archival**. It is not a
+transparency log of build attestations, and it does not witness reads. It is adjacent, real,
+and should be named.
+
+### And the honest ceiling
+
+Nobody has a zero-assumptions bootstrap end to end. Guix still ships a 25 MiB Guile driver.
+`live-bootstrap`'s own README says: *"there is no way to perform the bootstrap without
+external preparations! This is a currently unsolved problem."*
+
+So the recipe-embedded artifact's leaves would be: pinned source tarballs, a 181-byte
+human-auditable seed, **and whatever driver the chain still needs**. That is far short of
+"no unexplained binary anywhere in the graph," and it is further than anyone has got.
 
 Brothers in arms, not rivals.
 
