@@ -209,11 +209,16 @@ driver.
 
 > r[machine.identity.streams-cross-island-edges]
 >
-> [SETTLED, round 10] Codata may cross an island edge. The edge's semantic content
-> is the VALUE the stream drains to; the incremental view is as-if. A stream
-> therefore has recipe identity and no value identity: its elements are ordinary
-> demands, memoized individually; the aggregate has no content hash until resolved
-> and may not be a record field.
+> [SETTLED, round 10; corrected round 12] Codata may cross an island edge. The edge's
+> semantic content is the VALUE the stream drains to; the incremental view is as-if. A
+> stream therefore has recipe identity and no value identity of its own: its elements are
+> ordinary demands, memoized individually; the aggregate has no content hash until resolved.
+> A stream may not be a map key, and may not be sorted or compared.
+>
+> **A stream MAY be a record field.** A field is an edge, so the same rule applies: the
+> field's semantic content is the value the stream drains to, and the record acquires its
+> identity when the stream is done, while a reader consumes it long before.
+> `machine.primitive.exec-outcome` depends on this — `ExecOutcome.stdout` is codata.
 >
 > This is what lets a consumer of a process's output be a separate demand — so
 > changing an interpreter does not rerun the process — while still consuming
@@ -271,10 +276,15 @@ driver.
 >
 > ```
 > Tree      = Map<Name, TreeEntry>          // Name is ONE path segment, not a path
-> TreeEntry = File    { content: ContentHash, size: ByteLen, executable: Bool }
+> TreeEntry = File    { content: Blob, executable: Bool }
 >           | Dir     (Tree)                 // recursive; an empty Dir is representable
 >           | Symlink { target: String }
 > ```
+>
+> The language value holds a **`Blob`**, not a `ContentHash` and not a size. A `ContentHash`
+> is the Blob's *identity*; `size` is derived, and belongs to the store and the cost model.
+> Naming them in the entry would leak storage fields back into the semantics while claiming
+> to have removed them.
 >
 > `Tree` is therefore still a map — maps all the way down — but keyed by **segment**, and
 > recursive. `tree / p"a/b"` is a projection through two maps.
@@ -294,8 +304,11 @@ driver.
 > > chunker must not invalidate a single memo entry.
 >
 > Therefore the semantic tree encoding hashes: entry name, entry kind tag, and per kind —
-> `File`: (content hash, size, executable); `Dir`: the child TreeHash; `Symlink`: target.
-> It hashes neither `blob_node` nor the chunking discriminant nor `total_size`.
+> `File`: (**the Blob's value identity**, executable); `Dir`: the child TreeHash;
+> `Symlink`: target. The Blob's identity appears **once**, and carries its own size and
+> bytes. The encoding hashes neither `blob_node`, nor the chunking discriminant, nor
+> `total_size`, nor a separately-stated `size` — a size restated beside a content hash is a
+> storage field wearing a semantic coat.
 >
 > This is the same disease that struck `machine.identity.canonical-memory` (ABI into
 > identity) and `ExecTree`'s UTF-8 split (a representation predicate into the schema): an

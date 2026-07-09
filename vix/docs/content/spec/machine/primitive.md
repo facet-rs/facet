@@ -125,9 +125,10 @@ primitives reference by identity.
 
 > r[machine.primitive.fetch-is-pinned]
 >
-> [SETTLED, round 10] **`fetch` is pinned, always.** Its checksum is a required
-> argument, so its value identity is known BEFORE evaluation; the URL is a
-> *provenance coordinate* — a hint about where bytes live — not the identity.
+> [SETTLED, round 10; sharpened round 12] **`fetch` is pinned, always.** Its **vix
+> `ContentHash` (blake3) is a REQUIRED argument**, so its value identity is known BEFORE
+> evaluation; the URL is a *provenance coordinate* — a hint about where bytes live — not
+> the identity.
 > Demanding a fetch therefore resolves an identity (local store, peer, shared
 > store, and only then the origin) rather than performing a network read; on a
 > machine already holding the blob, nothing transfers. This is what makes a
@@ -212,24 +213,27 @@ primitives reference by identity.
 
 > r[machine.primitive.fetch-integrity-vs-identity]
 >
-> [DESIGN, round 12] A fetch carries up to two hashes, and they do different jobs.
+> [DESIGN, round 12] A fetch names its value with **one** hash and may additionally carry an
+> upstream digest as transfer provenance. The two are not alternatives.
 >
-> - **`blake3` is the vix ContentHash** — the value's name, in the one identity space
->   (`machine.identity.blake3`). Given it, the fetch resolves by identity: local store,
->   peer, shared store, and only then the origin.
-> - **`sha256` (or any upstream digest) is an integrity and provenance check** on the bytes
->   that actually arrive over the wire. It is what the CDN, registry or lockfile published.
->   **It never becomes the value's identity.** A value must not be named in a hash family
->   chosen by whoever happened to host it.
+> - **`blake3` — the vix `ContentHash` — is REQUIRED.** It is the value's name in the one
+>   identity space (`machine.identity.blake3`). Given it, the fetch resolves by identity:
+>   local store, peer, shared store, and only then the origin.
+> - **`sha256` (or any upstream digest) is OPTIONAL transfer provenance**: an integrity
+>   check on the bytes that actually arrive, and a record of what the CDN, registry or
+>   lockfile published. **It never becomes the value's identity.** A value must not be named
+>   in a hash family chosen by whoever happened to host it. Both are recorded in the receipt.
 >
-> A recipe MAY bake the canonical `blake3` even when upstream publishes only a `sha256`.
-> Both are then recorded in the receipt: the identity that named the value, and the
-> upstream claim that was verified against the transfer.
+> **There is no such thing as a SHA-only fetch.** An operation whose result identity is
+> unknown until the bytes arrive is not a `fetch` at all — it is an **observation**
+> (`machine.primitive.fetch-is-pinned`), and `fetch` may not become hermetic-or-observational
+> depending on whether an optional field is present. That was the exact defect Amos rejected.
 >
-> Corollary: a fetch pinned ONLY by an upstream digest does not have a vix identity until
-> the bytes arrive, so **it cannot cross a `place` boundary**
-> (`machine.placement.identity-crosses`). That is the operational difference between the
-> two hashes, and it is why the `blake3` is worth baking.
+> Computing the canonical blake3 for an upstream artifact is therefore a **lock/update-time**
+> act, not a build-time one: it happens when a dependency is added or bumped, its result is
+> written into the recipe or lockfile, and every subsequent build knows the final `Blob`
+> identity before it evaluates anything. Every `fetch` consequently satisfies
+> `machine.placement.identity-crosses` — by construction, not by care.
 
 > r[machine.primitive.exec-is-placement-agnostic]
 >
