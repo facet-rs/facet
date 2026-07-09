@@ -66,16 +66,26 @@ scalars, records, arrays, multisets, everything. `<=>` subsumes the whole
 comparison family: `==`, `<`, `<=`, `>`, `>=` are derived from it, so a type
 never defines them separately.
 
-By default a value orders by its fields. A type may replace that by defining
-`<=>` in a `namespace` block, and then that *is* the type's order —
-everywhere, for every operation that orders values.
+A value orders by its fields, in declaration order. This is the value's
+**structural order**, it is total, and **nothing can replace it** — there is no
+way to define `<=>` for a type. If a type's structural order is wrong, the type
+is wrong: reorder its fields, or declare a field whose own variant order carries
+the rule you meant.
 
-`<=>` must be a **total order**. A comparison that answers `Equal` for values
-that are not equal is not a `<=>`; it is an ordinary function, and it belongs
-in one.
+When you want to rank values some *other* way, you pass an order:
 
-**Coming from Rust**: no `#[derive(Ord)]`, no `Ord` bounds — the default is
-ambient, and `impl Ord` becomes `namespace T { fn <=> }`.
+```vix
+let ranked = rows.sorted(order: by_key(|r| r.weight));
+```
+
+An `Order<T>` is a value. `by_key(f)` ranks by the structural order of `f(x)`,
+breaking ties by the structural order of `x` — so it is a total order *by
+construction*, and consistent with `==` for free. A comparison that answers
+`Equal` for values that are not equal cannot be written.
+
+**Coming from Rust**: no `#[derive(Ord)]`, no `Ord` bounds, and no `impl Ord` —
+intrinsic order is a property of the declaration. `sort_by_key` becomes an
+`Order<T>` you hand to the operation that ranks.
 **Coming from JS**: unlike `Array.prototype.sort`, there is no default
 stringly comparison — values compare by their fields.
 
@@ -223,11 +233,10 @@ queue's pop.
 
 ### `.sorted() -> [T]`, `.sorted_by(cmp: fn(T, T) -> Ordering) -> [T]`
 
-The bridge back to positions: an array of the elements in increasing value
-order, or in `cmp`'s order. `sorted_by` must be given a total order — there
-is no second order underneath to break ties with, so a `cmp` that answers
-`Equal` for distinct elements does not define a result. This is where you
-knowingly pay for rank: the array as a whole depends on every element.
+The bridge back to positions: an array of the elements in structural order, or
+in the order you pass. An `Order<T>` is total by construction, so there is no
+way to hand `sorted_by` a comparison that fails to define a result. This is
+where you knowingly pay for rank: the array as a whole depends on every element.
 
 ```vix
 let by_weight = rows.values().sorted_by(|a, b| a.weight <=> b.weight);

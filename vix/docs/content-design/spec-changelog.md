@@ -477,11 +477,13 @@ reconciliation pass:
 - **`<=>` subsumes the comparison family.** Saying a value supports "`==` and
   `<=>`" was redundant; `==`, `<`, `<=`, `>`, `>=` all derive from `<=>`. A type
   never defines them separately.
-- **`<=>` is user-overridable, and when overridden it IS the type's order** —
-  everywhere, for every operation that orders values. Answer (B). There is one
-  order per type: the default one derived from its fields, or the one the type
-  defines. The terms "canonical order" and "structural order" are struck as
-  separate concepts; ordered things are simply ordered.
+- ~~**`<=>` is user-overridable, and when overridden it IS the type's order.**
+  Answer (B).~~ **STRUCK in round 9, superseded by orders-as-values.** `<=>` is
+  the STRUCTURAL comparison: derived from a type's fields in declaration order,
+  total, and NOT overridable. Anything else is an `Order<T>` you pass. The
+  ruling improved rather than reversed — see round 9. What survives verbatim:
+  the terms "canonical order" and "structural order" are not two concepts; a
+  value has one order, and ordered things are simply ordered.
 - **`<=>` must be a total order.** A comparison answering `Equal` for values
   that are not equal is not a `<=>` — it is an ordinary function. The compiler
   cannot prove totality; it is an obligation, like `sorted_by`'s.
@@ -638,3 +640,101 @@ stale and was relayed without reading the code (the exact failure the standing
 instruction forbids). NEXT.md is corrected in place. What survives, and is the
 real stage-6 item: `legacy_marker_schema_id` derives a SchemaId from the type's
 *rendered name string* rather than from its structure — identity by spelling.
+
+### Round 9 — orders are values; streams are the default; multisets die
+
+**RULED (Amos, explicit).**
+
+- **`<=>` is the structural comparison.** Derived from a type's fields in
+  declaration order. Total. NOT overridable — there is no `namespace T { fn <=> }`.
+  Supersedes round 7's answer (B), struck in place above.
+- **Anything else is an `Order<T>` you pass.** Orders are ordinary values.
+  `by_key(f)` ranks by the structural order of `f(x)`, ties broken by the
+  structural order of `x` — total BY CONSTRUCTION, and consistent with `==` for
+  free. The unprovable-totality obligation cannot be stated any more.
+  Consequence: `rodin.vix`'s `namespace Version { fn <=> }` is deleted, and
+  `Version` instead declares `pre: PreTag` where `enum PreTag { Prerelease(..),
+  Release }` — the variant order IS semver's rule. **If a type's structural
+  order is wrong, the type is wrong.**
+- **`#[key]` on structs: dropped** (Amos: "forget #[key] it was silly"). Intrinsic
+  order has no knob. The pattern, stated once: *intrinsic properties come from
+  declarations, extrinsic ones from arguments.* (Same shape as nominal-vs-
+  structural type identity, and as intrinsic order vs `Order<T>`.)
+- **Multisets die.** "A set that allows multiples because it isn't hashed is an
+  array. It's like making a not-hashed hashmap." Every stored `Multiset` in the
+  ported corpus (rodin: `features`, `learned`, `packages`) is a `Set` with a
+  hand-maintained uniqueness invariant — the porter says so at `rodin.vix:15`.
+  Zero genuine bags in 5,476 lines.
+- **Arrays are not the default reflex.** Most things are streams. An array is
+  either authored (order is data you wrote — library link order, include search
+  paths) or the result of `collect` (order is a rule you named). Positions have
+  exactly two provenances: **you wrote them, or you sorted them.** Never the
+  filesystem's, never the scheduler's.
+- **`glob` returns a stream, not an array.** `cargo_manifest.vix:292` returns
+  `[String]` straight out of `workspace.glob(...)` with no sort: the positions
+  come from `readdir`, flow into argv, and make the link non-reproducible. This
+  is the mundane instance of the whole arrival-order problem — it is in every
+  build anyone will write, and it has nothing to do with observers.
+- **A stream is NOT ordered.** Its order is arrival order — a scheduling
+  artifact, not a property. Two-plane restatement: a stream has RECIPE identity
+  and no VALUE identity. Its elements are ordinary demands (cached individually);
+  the aggregate has no content hash until resolved.
+- **Generators do not yield in yield order.** `yield a; yield b;` may deliver `b`
+  first — what comes out is availability order. Highest-ranked entry in the
+  innovation-points ledger: a construct whose entire mental model in every other
+  language is "resumes in order." `testing.md` is written as though yield order
+  were real. It also makes the phase-partition of `Check` (value checks demanded
+  during the run, trace checks after) NECESSARY, not tidy — there is no "last
+  yield" to put `never_demanded` in.
+
+**UNDER DISCUSSION (Amos: "still thinking about this") — not banked.**
+
+- **`Keyed<K, T>`**: stream elements carry their provenance. `[3,2,1]` streams as
+  `Keyed(0,3), Keyed(1,2), Keyed(2,1)`; keys flow through `map`/`filter`; compose
+  under `flat_map` into a path; `.unkey()` strips. Retires `enumerate`,
+  `Indexed<T>`, and — crucially — **filter's compaction problem**, which was the
+  entire argument for multisets existing (`collections.md:174`: "survivor #2 sits
+  at index 1, which silently forces an order"). Keep the key, nothing renumbers.
+  Recognised mid-conversation as the LOCATION PLANE surfacing into the type
+  system ("input-position keying for fan-out; locations flow through derivations
+  = provenance", `three-planes.md`).
+  - If `struct Keyed<K,T> { key: K, value: T }`, then structural order sorts by
+    key already, so `collect()` needs no `order:` parameter and sorting an
+    artifact by its content is unreachable. The earlier `collect(self) where {
+    order: Order<T> }  // no default` proposal is superseded by the declaration.
+  - OPEN: implicit `Keyed<K,T> -> T` coercion (recommendation: NO — key erasure
+    should be a confession, like `record { ..point }`); whether `collect()`
+    returns `[Keyed<K,T>]` or `[T]`.
+- **Amos's "taint"** = a value whose recipe is deterministic but whose content is
+  not, therefore un-memoizable ("the individual things are cached; the aggregate
+  is not, until you resolve it"). **NAMING COLLISION**: `taint` in the spec today
+  means *secrets* (`r[machine.primitive.sealed-boundary]`, seal/declassify;
+  `r[machine.identity.taint-in-identity]` is its propagation algebra). Opposite
+  consequence, too — a sealed value may be nondeterministic and the memo merely
+  MISSES; an arrival-ordered value makes the memo LIE. Do not land Amos's concept
+  under that word.
+  - Two axes, not one: **deterministic** (result independent of arrival order)
+    and **early** (may commit before drain). `min`/`count`/`collect` are
+    deterministic and never early; `head`/`take(n)` are early and never
+    deterministic. The both-boxes set is exactly the MONOTONE reads — `any`,
+    `all`, `contains` — where an unarrived element cannot change the answer.
+    Prior art: LVars' threshold reads (Kuper & Newton), CALM (Hellerstein);
+    already banked in-house as "monotone propagation = confluent = race-safe".
+  - **rmeta readiness is monotone** — once ready, always ready — so the observer's
+    "has a line matching P arrived?" is a threshold read: early AND deterministic.
+    That is *why* progressive trees are sound, not a special case.
+  - Discharges: **canonicalize** (collect/sort) or **journal** (record the order,
+    making it an input; replay reproduces). FLAG: there are two "journal"s in the
+    docs pointing opposite ways — `machine/_index.md:40` names *"fetch journals"*
+    as a COUNTER-EXAMPLE and `r[machine.cache.effects-are-memo-entries]` forbids
+    private effect tables, while `scheduler.md:122` journals capability
+    observations approvingly. Resolve before leaning on it.
+  - Still open: does `fold` on a stream exist (commutative-associative is
+    unprovable) or must you `collect()` first?
+
+**Also flagged.** `%` is infix modulo in six rungs AND the prefix of the map
+literal `%{}` (round 6). Juxtaposition (round 8) made `f %[a, b]` and
+`f %{k => v}` ambiguous — round 8 broke round 6 retroactively. Proposed: modulo
+becomes `.rem()` / `.rem_euclid()` (the `-7 % 3` sign convention was always an
+operator deciding silently), freeing `%` as a prefix collection sigil: `%{k=>v}`
+map, `%[a,b]` set. NOT RULED.

@@ -143,26 +143,34 @@ driver.
 
 > r[machine.identity.never-consults-order]
 >
-> [SETTLED, round 7] `<=>` is user-overridable, and when overridden it *is* the
-> type's order for every value-ordering operation a program can perform. It
-> must be a total order. Therefore no content hash may be defined in terms of
-> `<=>`: a value's identity is a function of its content alone, and no user
-> code may move it. Any identity mechanism for an unordered collection (map,
-> multiset, set) must be order-free, or ordered by something that is itself a
-> function of content. The mechanism is OPEN; the constraint is not.
+> [SETTLED, round 7 as amended in round 9] A value's identity is a function of
+> its content alone; no program value may move it. `<=>` is the STRUCTURAL
+> comparison — derived from a type's fields in declaration order, total, and not
+> overridable — so it is itself a function of content and a canonical encoding
+> may use it. What may never enter identity is an `Order<T>`: orders are ordinary
+> program values passed to ranking operations, and an encoding keyed on one would
+> make a value's identity depend on unrelated user code. (Round 7 first stated
+> this as "no content hash may be defined in terms of `<=>`", on the premise that
+> `<=>` was user-overridable. That premise was retracted; the law survives, the
+> reason changed.)
 
 > r[machine.identity.map-order-independence]
 >
-> [OPEN — never ratified; the "[SETTLED]" tag and the mechanism below were
-> asserted, not agreed (Amos, round 7).] Map identity is insertion-order-
-> independent: that much holds. But "a map is a set of pairs" is rejected as
-> a characterization, and the sort-first-then-hash mechanism is a hole: it
-> defines a map's content hash in terms of the *key order*, and `<=>` is now
-> user-overridable (`machine.identity.never-consults-order`). Identity would therefore
-> depend on user code — the same plane leak that struck `canonical-memory`,
-> wearing a different costume. A map's content hash must be a function of its
-> content alone. The replacement mechanism is undecided; nothing may rely on
-> this rule until it is.
+> [OPEN — never ratified; the "[SETTLED]" tag was asserted, not agreed (Amos,
+> round 7).] Map identity is insertion-order-independent: that much holds.
+> What is rejected is the characterization — **"a map is a set of pairs" is
+> wrong**: a map's keys are unique and a set of pairs' are not, so the sentence
+> licenses an encoding under which `Map<K,V>` and `Set<(K,V)>` with equal
+> contents could produce equal bytes.
+>
+> ROUND-9 CORRECTION: this rule was first struck on the grounds that
+> sort-first-then-hash keys identity on a user-overridable `<=>`. That ground is
+> VOID — `<=>` is structural and not overridable
+> (`machine.identity.never-consults-order`), so ordering map rows by key order is
+> a function of content and is sound. What survives is Amos's objection to the
+> characterization, and the fact that the rule was never ratified. The mechanism
+> may well be right; it has not been agreed. Nothing may cite this rule as
+> settled until it is.
 
 > r[machine.identity.schema-ref]
 >
