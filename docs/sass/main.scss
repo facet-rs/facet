@@ -506,6 +506,73 @@ a { color: var(--signal); }
   font-size: 0.84rem;
 }
 
+.doc-pagination {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 0.75rem;
+  margin-top: 3rem;
+}
+
+.doc-page-link {
+  min-height: 5rem;
+  display: grid;
+  align-content: center;
+  gap: 0.2rem;
+  padding: 0.85rem 1rem;
+  border: 1px solid var(--rule-strong);
+  background: var(--bg-raised);
+  color: var(--ink);
+  text-decoration: none;
+  border-radius: 6px;
+
+  span {
+    color: var(--ink-soft);
+    font-size: 0.76rem;
+    font-weight: 650;
+  }
+
+  strong {
+    color: var(--ink);
+    font-size: 0.98rem;
+    line-height: 1.25;
+    font-weight: 650;
+  }
+
+  &:hover {
+    border-color: color-mix(in srgb, var(--signal) 48%, var(--rule-strong));
+    background: var(--bg-subtle);
+
+    strong { color: var(--signal); }
+  }
+}
+
+.doc-page-link-prev {
+  &::before {
+    content: "←";
+    color: var(--ink-soft);
+    font-family: var(--font-mono);
+  }
+}
+
+.doc-page-link-next {
+  text-align: right;
+
+  &::before {
+    content: "→";
+    color: var(--ink-soft);
+    font-family: var(--font-mono);
+  }
+}
+
+.doc-edit-link {
+  color: inherit;
+  text-decoration: underline;
+  text-decoration-style: dotted;
+  text-underline-offset: 0.2em;
+
+  &:hover { color: var(--signal); }
+}
+
 /* ---------- prose ---------- */
 
 .doc-body {
@@ -894,19 +961,65 @@ hr {
 /* ---------- footer ---------- */
 
 .site-footer {
-  display: flex;
-  justify-content: center;
-  flex-wrap: wrap;
-  gap: 0.5rem 1.5rem;
-  padding: 2.75rem 1rem 3.5rem;
+  padding: 2.25rem 1rem 3.25rem;
   color: var(--ink-soft);
   font-size: 0.82rem;
   border-top: 1px solid var(--rule);
   margin-top: 2rem;
+}
+
+.site-footer-inner {
+  max-width: var(--shell-max);
+  margin: 0 auto;
+  display: grid;
+  gap: 1.5rem;
+}
+
+.footer-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.5rem;
 
   a {
     color: var(--ink-muted);
     text-decoration: none;
+    &:hover { color: var(--signal); }
+  }
+}
+
+.sitemap {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9rem, 1fr));
+  gap: 1.1rem 1.5rem;
+}
+
+.sitemap-source {
+  display: grid;
+  align-content: start;
+  gap: 0.45rem;
+  min-width: 0;
+}
+
+.sitemap-title {
+  color: var(--ink);
+  font-weight: 700;
+  text-decoration: none;
+
+  &:hover { color: var(--signal); }
+}
+
+.sitemap-links {
+  display: grid;
+  gap: 0.18rem;
+
+  a {
+    min-width: 0;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--ink-muted);
+    text-decoration: none;
+    white-space: nowrap;
+
     &:hover { color: var(--signal); }
   }
 }
@@ -961,6 +1074,7 @@ hr {
   .content-column { padding: 1.5rem 1rem 2.5rem; }
 
   .doc h1 { max-width: none; font-size: 2.4rem; }
+  .doc-pagination { grid-template-columns: 1fr; }
 }
 
 @media (max-width: 520px) {
