@@ -1,7 +1,7 @@
 // Rung 096 — feature resolution: optional deps activate through features.
 test features {
-    let reqs = {}.insert("libe", parse_req("^1.0"));
-    let features = {}.insert("libe", ["net"].values());
+    let reqs = %{}.insert("libe", parse_req("^1.0"));
+    let features = %{}.insert("libe", ["net"].values());
     match mini_solve_with_features(fixture_index(), reqs, features) {
         Some(sel) => expect_some(sel.get("libnet")),
         None => expect(false),

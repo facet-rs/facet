@@ -71,7 +71,7 @@ fn try_candidates(s: State, pkg: String, cands: [Version]) -> Outcome {
 
 test the_solver {
     let ws = fixture_workspace("kitchen-sink");
-    let init = State { domains: ws.requirements(), selected: {}, learned: [].values() };
+    let init = State { domains: ws.requirements(), selected: %{}, learned: [].values() };
     match search(init) {
         Outcome::Solved(sel) => {
             let expected = ws.expected_selection();

@@ -1,6 +1,6 @@
 // Rung 043 — map keys observe in canonical order (content order,
 // never hash order).
 test map_keys_canonical {
-    let m = {}.insert("pear", 1).insert("apple", 2).insert("quince", 3);
+    let m = %{}.insert("pear", 1).insert("apple", 2).insert("quince", 3);
     expect_eq(m.keys().sorted(), ["apple", "pear", "quince"]);
 }

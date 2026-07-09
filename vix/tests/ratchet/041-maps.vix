@@ -1,6 +1,6 @@
 // Rung 041 — Map<K, V>: insert returns a new map; lookup returns Option.
 test maps {
-    let m: Map<String, Int> = {};
+    let m: Map<String, Int> = %{};
     let m2 = m.insert("a", 1).insert("b", 2);
     expect_eq(m2.get("a"), Some(1));
     expect_none(m2.get("z"));

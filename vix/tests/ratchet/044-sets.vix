@@ -1,6 +1,6 @@
 // Rung 044 — Set<T>: membership without Map<T, Bool> workarounds.
 test sets {
-    let s: Set<Int> = {}.insert(3).insert(1).insert(3);
+    let s: Set<Int> = %{}.insert(3).insert(1).insert(3);
     expect_eq(s.len(), 2);
     expect(s.contains(3));
     expect(!s.contains(2));

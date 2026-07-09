@@ -428,3 +428,26 @@ reconciliation pass:
 - **Combinator surface to be DRAFTED as documentation** for website review,
   not enumerated in conversation. For-loops and the trajectory-class rule
   (B2): circle back later, explicitly.
+
+## Round 6 (2026-07-09 — the syntax session, Amos + Fable direct)
+
+- **RATIFIED, one word each**: unary minus; array spread `[..a, ..b]`;
+  string interpolation via backtick templates with `${}` (plain `""` stays
+  literal — distance-honest); map literals `%{ k => v }` (the ratchet's
+  casual `{}` is dead; swept). Rungs and book updated in the same breath.
+- **Methods: `namespace Type { }` + import-scoped `extend Type` accepted
+  as the direction** — it also gives `<=>` implementations a home and
+  answers coherence/orphans Rust-style without impl-block baggage.
+- **Test surface: converging** — a test is an ordinary `fn(t: Test) ->
+  Test` under `#[test]` (attributes owed anyway for decode annotations);
+  trace expectations are ordinary calls BECAUSE arguments are wires
+  (never_demanded(expr) holds the wire, never demands it). The expecting
+  mini-grammar and header directives are dead. OPEN: the accumulator
+  ergonomics (see rebind question).
+- **OPEN, scheduled**: block delimiters (Amos has a parens-blocks model —
+  cascades into whether `{}` could be data-only, which would reopen the
+  map-literal spelling); path syntax ergonomics (zoo's four `@` forms vs
+  `p""` + `/` — build languages construct paths constantly; missing from
+  the table until Amos flagged it); positional application & `partial`
+  (partial is wanted; hinges on the application-style comfort);
+  rebind/update sugar vs blessed chaining for by-value accumulators.

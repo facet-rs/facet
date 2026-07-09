@@ -12,7 +12,7 @@ fn apply_dep(s: State, pkg: String, req: VersionSet) -> Step {
 }
 
 test propagate_narrows {
-    let s = State { domains: {}.insert("libb", parse_req("^2.0")), selected: {} };
+    let s = State { domains: {}.insert("libb", parse_req("^2.0")), selected: %{} };
     match apply_dep(s, "libb", parse_req(">=2.1")) {
         Step::Pass(s2) => {
             expect(!s2.domains.get("libb").unwrap().contains(parse_version("2.0.0")));

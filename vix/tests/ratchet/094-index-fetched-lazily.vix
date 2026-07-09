@@ -1,7 +1,7 @@
 // Rung 094 — only visited packages' rows are fetched: the index is demanded,
 // not downloaded. (building-a-solver.md)
 test index_fetched_lazily {
-    let reqs = {}.insert("liba", parse_req("^1.0"));
+    let reqs = %{}.insert("liba", parse_req("^1.0"));
     expect_some(mini_solve(fixture_index(), reqs));
 } expecting {
     never_read "index/libz";

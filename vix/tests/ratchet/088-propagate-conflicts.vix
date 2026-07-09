@@ -9,7 +9,7 @@ fn apply_dep(s: State, pkg: String, req: VersionSet) -> Step {
 }
 
 test propagate_conflicts {
-    let s = State { domains: {}.insert("libb", parse_req("^1.0")), selected: {} };
+    let s = State { domains: {}.insert("libb", parse_req("^1.0")), selected: %{} };
     match apply_dep(s, "libb", parse_req("^2.0")) {
         Step::Conflict(pkg) => expect_eq(pkg, "libb"),
         Step::Pass(_) => expect(false),

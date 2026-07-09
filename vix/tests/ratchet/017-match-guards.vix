@@ -9,7 +9,7 @@ fn classify(n: Int) -> String {
 }
 
 test match_guards {
-    expect_eq(classify(0 - 3), "negative");
+    expect_eq(classify(-3), "negative");
     expect_eq(classify(0), "zero");
     expect_eq(classify(7), "small");
     expect_eq(classify(1000), "large");
