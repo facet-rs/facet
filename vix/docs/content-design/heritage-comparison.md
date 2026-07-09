@@ -22,7 +22,7 @@ sometimes verbatim:
   construction"* — the canonical-order doctrine, word for word, including
   **ordered-float semantics** (re-derived yesterday as ratchet rung 134).
 - **Values, not places.** No references, lifetimes, `mut`, `Box`;
-  `env.insert(k, v)` returns a new map — the Values chapter, six months
+  `env.insert(k, v)` returns a new map — the Values chapter, five days
   early.
 - **Purity; effects only in primitives; no async surface ever; demand IS
   the await** (V1, V3) — Description-not-action, older phrasing.
@@ -116,15 +116,34 @@ sometimes verbatim:
 
 ## Divergences needing adjudication
 
-- **Generic syntax: the old grammar uses square brackets** —
-  `type_arguments: seq("[", …)` (grammar.js:345), i.e. `Map[String, Int]`;
-  the book committed to `Multiset<T>` angle brackets without knowing it was
-  overriding a prior decision. V31 ("syntax spends the fewest innovation
-  points") cuts both ways: `<>` matches Rust, `[]` parses cleaner. One of
-  them is now wrong.
-- **`import("path")` function-style** in the old grammar vs the book's
-  bare `import geometry::{…}` statement (ratchet rung 106) — same
-  adjudication needed.
+- **RETRACTED after closer reading: generics brackets are NOT a fork.**
+  tree-sitter-vixen's `[]` type arguments are an older layer that the
+  types sketch (07-04) itself superseded — the sketch writes
+  `Pair<Int, String>`, `Map<String, String>`, bans `T?` sugar, and uses
+  `..base` spread. The sketch and the book agree on nearly the whole
+  surface. The stale-vs-current split inside the OLD corpus is:
+  grammar.js carries arrow closures `(x) => e`, pipes `|> _`, postfix `!`
+  (invocation) and `?` (fallible), `value with {…}` updates, `${…}`
+  interpolation, `is` pattern-tests, `#capability` tags on `Fn` types,
+  `[]` generics, `T?` — while the sketch has already moved to the
+  Rust-shaped surface the book uses.
+- **`import("path")` function-style** (grammar.js) vs the book's bare
+  `import geometry::{…}` (ratchet rung 106) — the sketch is silent;
+  adjudication still wanted, low stakes.
+- **`{}` as the empty-map literal is a book-side invention.** The sketch
+  ruled "no map literal syntax v0: `Map::from([(k, v), …])` — boring on
+  purpose"; ratchet rung 041 casually wrote `let m: Map<String, Int> = {};`.
+  One of these is now the language.
+- **Per-field struct defaults were already designed** (`opt: Int = 2` in
+  the sketch) — the "go further than Rust" companion decision has prior
+  art in-house; import the sketch's shape.
+- **Dropped grammar features worth a deliberate verdict rather than
+  silence**: `|>` pipelines with `_` placeholder, `${…}` string
+  interpolation (the book concatenates), `is` pattern-test expressions,
+  postfix `?` (this round PARKED ?-propagation; the old grammar had
+  already committed a surface for it), and `#capability` effect tags on
+  function types (the concrete surface for the still-open effect-system
+  fork; round-4 verdict was "mhhaaaybe").
 - **Old declaration-ordered total order** (variants by position, fields in
   declaration order — "reordering fields is a semantic change") vs the new
   corpus, which never pinned WHAT the structural order is. The old rule is
@@ -135,8 +154,10 @@ sometimes verbatim:
 The old spec reads like an engine constitution — numbered invariants, each
 with provenance and an enforcing harness, ruthless about the boundary
 (open semantics / proprietary trust). The new corpus reads like a
-language that expects to be learned. They are the same design at two ages;
-nearly everything the old one decided survived a clean-room re-derivation,
-which is the strongest evidence either could ask for. The deltas that
+language that expects to be learned. They are the same design DAYS apart (the
+old round's rulings are dated 2026-07-01..04; this round ran 07-06..09) —
+so the convergence is not independent validation but proof the convictions
+are stable across restarts and that this round's agents, who never read
+the old texts, re-derived them faithfully from conversation alone. The deltas that
 matter are the four numbered imports above — especially V10, which is a
 correctness hole with a recorded incident, not a taste question.
