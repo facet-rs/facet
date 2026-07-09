@@ -21,19 +21,20 @@ fn require_key(m: Map<String, Version>) where { key: String } -> Version {
 
 ## `fail` says what; the machine says where
 
-You supply a **payload** — any value, and it should be a typed one. Everything
-else is attached for you: the subject's identity, the source span, and the
-**demand chain**, the breadcrumb of demands that led here, read from the live
-demand map at the moment of failure.
+You supply a **payload** — any value, and it should be a typed one. The subject's
+identity and the source span are attached for you, because they are part of what the
+failure *is*. The **demand chain** — the breadcrumb of demands that led here — is
+reconstructed when someone looks (see below).
 
-You cannot forget to attach them, because you never attach them.
+You cannot forget any of it, because you never attach any of it.
 
 > A failure that cannot name its subject is a bug in the machine, not in your
 > program.
 
-This is why `fail "something went wrong"` is a weak thing to write and a fine
-thing to have written: the string is a poor payload, but the failure still knows
-which demand it belonged to, which source span raised it, and what asked for it.
+This is why `fail "something went wrong"` is a weak thing to write and a fine thing
+to have written: the string is a poor payload, but the failure still knows which
+demand it belonged to and which source span raised it, and whoever reads it will see
+what asked.
 
 **Coming from Rust**: `panic!` loses the chain and unwinds a stack you don't have.
 `Err(String)` loses the address. Here, neither is possible — the address is not
@@ -128,19 +129,21 @@ let maybe = parse_manifest text ?.ok();   // Option<Manifest>, deliberately
 propagation is the default — a failed demand poisons its dependents whether or not
 anyone writes a symbol — so the operator's job is the opposite one.
 
-## `Result` is for outcomes; failure is for absence
+## `Result` is for branching; `fail` is for not returning
 
 They are not the same tool and they never substitute.
 
 ```vix
-fn resolve(reqs: Reqs) -> Result<Solution, Unsat>   // both outcomes are answers
-fn require_key(m: Map<K,V>) where { key: K } -> V   // the other case has no answer
+fn resolve(reqs: Reqs) -> Result<Solution, Unsat>   // the caller branches on both
+fn require_key(m: Map<K,V>) where { key: K } -> V   // the caller branches on neither
 ```
 
 If a caller will *branch* on the alternative — an unsatisfiable solve is a real
-result, with a derivation you want to print — that alternative is a value, and it
-belongs in a `Result`. If there is nothing sensible to return, the demand has no
-answer, and `fail` says so.
+answer, with a derivation you want to print — that alternative is a value and it
+belongs in a `Result`. If every caller would immediately give up, don't make them
+say so: `fail`, and let the machine propagate it.
+
+Both produce values. The difference is who is expected to look.
 
 **`Option` is never an error channel.** `None` erases the failure's address by
 construction: that is how a solve once came to fail with the string
@@ -154,7 +157,7 @@ o.unwrap()   // match o { Some(v) => v, None => fail UnwrapOnNone { … } }
 
 It costs you a *diagnostic*, not a process: the span of the `unwrap` and the chain
 of demands beneath it. That is why `.unwrap()` is honest in vix in a way it isn't
-elsewhere — it names a demand that has no answer, at the place you assumed it would.
+elsewhere — it names the place where you assumed, and says what you assumed about.
 
 And `m.get(k).unwrap()` to force an error is a thing you should never write, because
 `fail MissingKey { key: k }` says what you meant and carries what you'd want.
