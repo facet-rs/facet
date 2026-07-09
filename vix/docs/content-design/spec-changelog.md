@@ -732,9 +732,11 @@ real stage-6 item: `legacy_marker_schema_id` derives a SchemaId from the type's
   - Still open: does `fold` on a stream exist (commutative-associative is
     unprovable) or must you `collect()` first?
 
-**Also flagged.** `%` is infix modulo in six rungs AND the prefix of the map
-literal `%{}` (round 6). Juxtaposition (round 8) made `f %[a, b]` and
-`f %{k => v}` ambiguous — round 8 broke round 6 retroactively. Proposed: modulo
-becomes `.rem()` / `.rem_euclid()` (the `-7 % 3` sign convention was always an
-operator deciding silently), freeing `%` as a prefix collection sigil: `%{k=>v}`
-map, `%[a,b]` set. NOT RULED.
+**RULED: `%` is not modulo.** There is no `%` operator in vix. Truncated and
+Euclidean remainder are `.rem()` / `.rem_euclid()` if needed — the `-7 % 3` sign
+convention was always an operator deciding silently, which the names-carry-
+semantics ruling forbids. `%` is a prefix collection sigil only: `%{k => v}` map,
+`%[a, b]` set. This was forced: `%` was infix modulo in six rungs, and
+juxtaposition (round 8) made `f %[a, b]` and `f %{k => v}` ambiguous against it —
+round 8 broke round 6 retroactively, and nobody would have noticed until the
+first `exec cmd where { env: %{...} }`. Sweep: six rung files.
