@@ -1,5 +1,9 @@
-// Sparse crates.io index ingestion for rodin, ported to the ratified
-// language-as-designed surface in vix/corpus-next/SURFACE.md.
+// Sparse crates.io index ingestion for rodin.
+//
+// Live sparse-index reads are effects over a moving read set. The demo path
+// pins captured JSONL snapshots and serves them through a fetch backend; this
+// module parses those snapshots into row records and bridges them to rodin's
+// resolver Index.
 
 use vix::{Doc, Map, Tree, VersionSet};
 use rodin::{Index, Problem, solve_selected_versions_text};

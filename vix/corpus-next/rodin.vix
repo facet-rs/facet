@@ -1,8 +1,40 @@
-// rodin.vix - the cargo-shaped version resolver, ported to the ratified
-// language-as-designed surface in vix/corpus-next/SURFACE.md.
+// rodin.vix — the cargo-shaped version resolver, in vix.
+//
+// A faithful port of the Rust reference `rodin-core` (in vixenware/vixen:
+// crates/rodin-core, crates/rodin-facts). It is not line-by-line: the Rust
+// kernel is imperative/`&mut`, this is persistent `State` threaded through
+// folds, selection, and demand-shaped recursion (the functional recasting in
+// docs/design/rodin-pure-kernel.md §6). cargo is the oracle; rodin-core is the
+// differential reference during the port.
+//
+// The algorithm is CSP-style domain narrowing over per-package `VersionSet`
+// intervals with region-based conflict learning and a fixpoint clause-
+// application loop — NOT literal 2-watched CDCL.
+//
+// VIX SURFACE GAPS this port surfaced (to add to the machine, in the order hit):
+//   1. no `Set` type (has Map/Array/Multiset) — genuinely unordered unique
+//      collections are modeled here with `Multiset` plus explicit uniqueness
+//      checks until Set is banked.
+//   2. [CLOSED] `Option` now has user-facing construction (`Some`/`None`) and
+//      matching, backed by the machine's existing content-addressed Option
+//      store entry (the one `map.get`/`.unwrap()` already use) — one Option
+//      representation, generic over any payload via the `Option<T>` schema.
+//   3. [CLOSED] `Version` host value now has `.major/.minor/.patch` accessors
+//      (VERSION_FIELD host op over version::parse_bytes).
+//
+// Version + parse_version come from vix std (vix/std/version.vix) — a plain vix
+// struct (records-at-offsets), parsed by vix over the string primitives. The
+// machine has no version-shaped op.
 
 use vix::{Version, parse_version, Ordering, VersionSet, Map, Tree, Target};
 use caps::Rustc;
+
+// ---------------------------------------------------------------------------
+// Package identity  (rodin-facts/src/interner.rs: PkgId, CompatClass, SourceIx)
+//
+// Identity is a composite, not a bare name: `serde@1` and `serde@2` cohabitate
+// (compat class), and crates.io / git / path are distinct provenances (source).
+// ---------------------------------------------------------------------------
 
 enum Source {
     CratesIo,
@@ -11,6 +43,8 @@ enum Source {
     Path(String),
 }
 
+// CompatClass::from_version — major!=0 => {major}; else minor!=0 => {0,minor};
+// else {0,0,patch}. The semver coexistence bucket.
 enum CompatClass {
     Major(Int),
     Minor(Int),
@@ -57,6 +91,13 @@ namespace Version {
     }
 }
 
+// ---------------------------------------------------------------------------
+// Clauses  (rodin-core/src/lib.rs: Guard, Consequent, CompiledClause)
+//
+// A compiled dependency edge. Antecedents (a lazy AND of guards) imply a
+// consequent. The gate is the resolver-v2 per-context consumption predicate.
+// ---------------------------------------------------------------------------
+
 enum Guard {
     InGraph(PackageId),
     Selected(PackageId, Version),
@@ -93,6 +134,13 @@ struct Clause {
     gate: Option<Gate>,
 }
 
+// ---------------------------------------------------------------------------
+// Search state  (lib.rs: State, Domain, Hypothesis)
+//
+// `State` is the search node — cloned-per-branch in Rust, here a persistent
+// value produced anew by each narrowing step (O(1) structural sharing).
+// ---------------------------------------------------------------------------
+
 struct Domain {
     active: Bool,
     allowed: VersionSet,
@@ -112,6 +160,14 @@ struct State {
     learned: Multiset<LearnedNoGood>,
 }
 
+// ---------------------------------------------------------------------------
+// Conflict learning  (lib.rs / rodin-facts/region.rs: Region, LearnedNoGood)
+//
+// A learned no-good is a Region (a conjunction of per-package VersionSet
+// bounds + feature polarities) that must not recur. Subsumption is subset
+// containment over Regions, not hash-equality.
+// ---------------------------------------------------------------------------
+
 struct Region {
     packages: Multiset<Int>,
     versions: Map<Int, VersionSet>,
@@ -122,6 +178,10 @@ struct LearnedNoGood {
     region: Region,
     active: Bool,
 }
+
+// ---------------------------------------------------------------------------
+// Problem + index  (lib.rs: RootReq, Problem, CompiledIndex)
+// ---------------------------------------------------------------------------
 
 struct RootReq {
     pkg: Int,
@@ -159,6 +219,10 @@ pub struct Problem {
     root_default_feature: Int,
     root_default_features: Bool,
 }
+
+// ---------------------------------------------------------------------------
+// Result
+// ---------------------------------------------------------------------------
 
 struct SolveResult {
     selected: Map<Int, Version>,
@@ -769,7 +833,8 @@ fn widen_versions_for_clause(index: Index, reference_clause: Int, parent_pkg: In
     })
 }
 
-// r[impl solver.learning.widen.sound]
+// r[impl solver.learning.widen.sound] — declared-structure evidence only;
+// read-set widening awaits read-set exposure (rodin/docs/90, Phase-2 gap).
 fn widen_region(index: Index, clause_id: Int, region: Region) -> Region {
     match selected_guard_for_clause(index, clause_id) {
         Some(guard_id) => widen_region_for_parent(index, clause_id, region, index.guard_pkgs.get(guard_id).unwrap()),
@@ -786,7 +851,7 @@ fn widen_region_for_parent(index: Index, clause_id: Int, region: Region, parent_
     }
 }
 
-// r[impl solver.learning.region]
+// r[impl solver.learning.region] — containment; region-level subtract not yet needed/implemented
 fn region_contains_region(outer: Region, inner: Region) -> Bool {
     outer.packages.fold_ascending(true, |ok, pkg| {
         ok && match inner.versions.get(pkg) {
@@ -1236,6 +1301,14 @@ pub fn root_version_count(index: Index, problem: Problem) -> Int {
     })
 }
 
+// ---------------------------------------------------------------------------
+// First verified slice: compat_of against rodin-core's from_version. Returns a
+// digit-encoding so the harness can check the class without decoding a record:
+//   >=1.0.0  -> major
+//   0.minor  -> 1000 + minor
+//   0.0.patch-> 2000 + patch
+// ---------------------------------------------------------------------------
+
 fn compat_code(v: Version) -> Int {
     match compat_of(v) {
         CompatClass::Major(m) => m,
@@ -1245,8 +1318,15 @@ fn compat_code(v: Version) -> Int {
 }
 
 pub fn main(seed: Int) -> Int {
+    // 2.3.4 -> major bucket 2 ; 0.5.1 -> 1005 ; 0.0.7 -> 2007
     compat_code(parse_version("2.3.4")) + compat_code(parse_version("0.5.1")) + compat_code(parse_version("0.0.7")) + seed - seed
 }
+
+// ---------------------------------------------------------------------------
+// Second verified slice: the Option surface, over the `Domain.selected:
+// Option<Version>` shape. Constructs Some/None and matches both arms — the
+// exact round-trip the resolver's per-package domain narrowing will lean on.
+// ---------------------------------------------------------------------------
 
 fn no_version() -> Option<Version> {
     None
@@ -1260,8 +1340,15 @@ fn selected_or(sel: Option<Version>, fallback: Int) -> Int {
 }
 
 pub fn option_probe(seed: Int) -> Int {
+    // Some(2.3.4) -> compat_code 2 ; None -> fallback 9000 -> 9002
     selected_or(Some(parse_version("2.3.4")), 0) + selected_or(no_version(), 9000) + seed - seed
 }
+
+// ---------------------------------------------------------------------------
+// String primitives: before/after a delimiter + parse_int. The building blocks
+// for a version parser written in vix (no host op re-parses a version). Here
+// "2.3.4" is decomposed component-by-component and re-encoded as 234.
+// ---------------------------------------------------------------------------
 
 pub fn string_probe(seed: Int) -> Int {
     let v = "2.3.4";
@@ -1272,6 +1359,8 @@ pub fn string_probe(seed: Int) -> Int {
     major * 100 + minor * 10 + patch + seed - seed
 }
 
+// Operator-overload smoke test: a user type owns its comparison via the
+// spaceship in its namespace; `>` (and `< <= >=`) derive from it.
 struct Rank {
     n: Int,
 }
@@ -1296,6 +1385,8 @@ pub fn rank_probe(seed: Int) -> Int {
     gt + lt + seed - seed
 }
 
+// The glibc-preflight path in miniature: strip a "GLIBC_" prefix, parse a
+// 2-component version, and compare — exactly what the preflight sample needs.
 pub fn version_probe(seed: Int) -> Int {
     let floor = parse_version("2.34.0");
     let shipped = parse_version("GLIBC_2.35".strip_prefix("GLIBC_"));
