@@ -451,3 +451,23 @@ reconciliation pass:
   the table until Amos flagged it); positional application & `partial`
   (partial is wanted; hinges on the application-style comfort);
   rebind/update sugar vs blessed chaining for by-value accumulators.
+
+### Round 6 addenda
+
+- **Generators have NO special signature syntax** (Amos: "concurrency is
+  magic — you only need magic syntax if you don't have magic concurrency").
+  A generator is an ordinary function whose return type is `Stream<T>`;
+  `yield` appears in the body; the type is the whole declaration.
+  `#[test] fn name() -> Stream<Check>` is the test shape. Streams are
+  codata, confirmed. `yields` keyword: dead on arrival.
+- **must_use ADOPTED** as a type marker (Check/Test-class types): a bound
+  value of a must-use type that is never used is a compile error — even
+  under generators you can construct a check and forget to yield it.
+- **`.=` rebind sugar: OPEN** ("I don't know") — parked in the ledger, not
+  banked, not dead.
+- **THE PORT CAMPAIGN (Amos directive, verbatim intent)**: before ANY
+  implementation, port the entire essential corpus — rodin, index,
+  cargo_manifest, crate — to the language as designed; look at all of it;
+  agree on semantics from the feel of real code; then unleash analysis
+  bots on book+corpus hunting underspecification, wishy-washiness, and
+  implementation hazards. "I want to be serious about this now."
