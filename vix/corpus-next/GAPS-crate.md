@@ -1,37 +1,113 @@
-# crate.vix port gaps
+# crate.vix v2 port gaps
 
 Source: `playgrounds/snark/src/bundled/vix/samples/crate.vix`
 Port: `vix/corpus-next/crate.vix`
 
+These are design artifacts against `vix/corpus-next/SURFACE.md`; they are not
+expected to parse or run today.
+
 ## Counts
 
-- Old: 2060 lines, 194 functions, 22 exported functions.
-- New: 1624 lines, 135 functions, 22 exported functions.
-- Delta: -436 lines, -59 functions; exported entrypoints preserved.
+- Original source: 2060 lines, 194 functions, 22 exported functions.
+- v1 corpus-next port: 1624 lines, 135 functions, 22 exported functions.
+- v2 port: 1953 lines, 137 functions, 22 exported functions.
+- Original -> v2 delta: -107 lines, -57 functions; exported entrypoints preserved.
+- v1 -> v2 delta: +329 lines, +2 functions. The increase is almost entirely
+  `where { ... }` call surface, target/toolchain separation, and explicit old
+  shapes for unbanked effects.
 
 ## Wins
 
-- `vix/corpus-next/crate.vix:146` introduces a shared typed `RustUnit` builder. The old no-deps/one-dep/two-deps/dynamic-deps matrix mostly dissolves into `externs`, `deps_tree`, `BuildMode`, and `CargoUnitKind`; it does not just move into renamed helper functions.
-- `vix/corpus-next/crate.vix:196` and `vix/corpus-next/crate.vix:231` replace `Doc` walking for manifests and locks with typed TOML decode records. The old `doc_string`, `doc_as_string`, `doc_as_bool`, and `doc_as_strings` helpers are gone.
-- `vix/corpus-next/crate.vix:40` types Cargo profile scalar fields as `Option<Int>` and `Option<Bool>` where the book gives primitive value types; stringly local int/bool conversion helpers are gone.
-- `vix/corpus-next/crate.vix:855`, `vix/corpus-next/crate.vix:995`, `vix/corpus-next/crate.vix:1009`, and `vix/corpus-next/crate.vix:1049` replace `pop()` recursion with ratified `fold`, `values().any`, `filter_map`, and array spread.
-- `vix/corpus-next/crate.vix:712`, `vix/corpus-next/crate.vix:725`, `vix/corpus-next/crate.vix:807`, `vix/corpus-next/crate.vix:815`, `vix/corpus-next/crate.vix:1607`, and nearby path sites use `p""` segments plus `/` joins instead of embedded slash strings.
+- `vix/corpus-next/crate.vix:150` keeps `RustUnit` as the central record model for
+  crate compilation. This remains the file's best "modeling with records" example:
+  `externs`, `deps_tree`, `BuildMode`, and `CargoUnitKind` still replace the old
+  194-function helper matrix.
+- `vix/corpus-next/crate.vix:146`, `:153`, `:634`, and `:647` separate toolchain
+  identity from artifact target: `Rustc::acquire(unit.toolchain)` names a
+  toolchain, while `--target {unit.target}` carries semantic target intent.
+- `vix/corpus-next/crate.vix:1034`, `:1057`, `:1426`, `:1470`, `:1549`, `:1889`,
+  and `:1949` remove every ambient `Target::host()` read. Proc macros, build
+  scripts, standalone build-script probes, and cross-target smoke tests now take
+  target from the demand root.
+- `vix/corpus-next/crate.vix:1268` and `:1289` preserve dependency provenance by
+  streaming authored dependency arrays before `collect().values()`, instead of
+  sorting artifacts by value.
+
+## Explicit bets
+
+- `.values()` reads as punctuation at `vix/corpus-next/crate.vix:1278` and
+  `vix/corpus-next/crate.vix:1295`: after a stream pipeline, `collect().values()`
+  clearly says "determinize by key, then compact." It would read as ceremony if
+  it appeared on ordinary authored arrays; this file now has only those two real
+  v2 compaction sites.
+- `where { ... }` helps for one or two named parameters, but buries wide build
+  context. This port has 87 `where` signatures; I would rather have named records
+  at 24 of them, especially `manifest_rust_unit`, `lock_lib`, `lock_bin`, all
+  `resolved_*` compile/artifact helpers, all `solution_*` compile/artifact helpers,
+  and `build_script_env`.
+- At-most-one-positional is painful at `vix/corpus-next/crate.vix:1310`:
+  `solution_compile_rust_unit target where { source, index, result, targets,
+  target_name, unit, mode }` wants a `SolutionBuildCtx` plus a small operation
+  record. It is also painful in record-spread calls such as
+  `vix/corpus-next/crate.vix:771`, where `..(manifest_rust_unit target where { ... })`
+  is faithful but visually heavy.
+- `exec` needs to return at least: a `Tree` of files, stdout text, stderr or
+  diagnostics streams, exit status, and structured readiness/protocol events for
+  build-script stdout and rustc diagnostics. This file consumes the `Tree` for
+  artifacts and `out/`, consumes stdout as text for Cargo directives, and needs
+  failure/status to distinguish bad directives from bad processes. PROPOSAL: keep
+  returning `Tree` for now; design a process effect result that exposes stdout,
+  stderr/diagnostics, status, and tree without routing stdout through a fake file.
+- Removing `Target::host()` forces target through three long chains:
+  `crate_solution_bin* -> solution_unit_artifact -> solution_unit_built ->
+  solution_{build_script,proc_macro} -> solution_compile_rust_unit`,
+  `crate_build_script_* -> build_script_compile -> compile_rust_unit`, and
+  `crate_proc_macro_cross_bin -> crate_proc_macro_bin -> proc_macro_*`.
+  Those chains want records: `ResolvedBuildCtx`, `SolutionBuildCtx`, and
+  `BuildScriptRunCtx`.
 
 ## Gaps and awkwardness
 
-- `vix/corpus-next/crate.vix:20`: typed TOML string-or-table enum decoding is used for `edition`, but the ratified surface does not spell out variant naming, field annotations, or how `"2021"` maps to `CargoEdition::Literal`. PROPOSAL: ratify decode attributes for string-or-table enums, including the string payload variant and table-field mapping.
-- `vix/corpus-next/crate.vix:45` and `vix/corpus-next/crate.vix:58`: `panic`, `lto`, and `strip` remain strings because the book gives primitive value types but not Cargo profile domain enums. PROPOSAL: add Cargo profile enums such as `PanicStrategy`, `LtoMode`, and `StripMode`, with render-to-rustc behavior.
-- `vix/corpus-next/crate.vix:220` and `vix/corpus-next/crate.vix:1327`: impossible/malformed cases use empty-map lookup as a panic device, because the designed surface has no honest typed error construction. PROPOSAL: ratify a typed `panic(message) -> Never` or `err(message) -> Result<Never>` expression, with receipts preserving the message.
-- `vix/corpus-next/crate.vix:570`: `-L dependency={tree}` is awkward as `Arg::Str("dependency=")` plus an empty-subpath interpolation. PROPOSAL: ratify argv fragments that can represent a flag prefix plus a typed tree/path payload.
-- `vix/corpus-next/crate.vix:596`: `compile_rust_unit` still has four `rustc!` arms for metadata/link emit combinations. The duplication moved here because path-valued emit fragments are not a banked `Arg` value. PROPOSAL: add a typed `RustcEmit`/`ArgPath` argv fragment, or make `rustc!` accept typed argv records.
-- `vix/corpus-next/crate.vix:867` and `vix/corpus-next/crate.vix:1067`: `[Tree].collect()` is kept from the old corpus shape to build dependency trees, but `SURFACE.md`/collections do not ratify `Tree` collection. PROPOSAL: ratify `Tree::collect([Tree])` or a named tree union function with dependency semantics.
-- `vix/corpus-next/crate.vix:1082` and `vix/corpus-next/crate.vix:1092`: `filter_map(...).sorted()` gives deterministic arrays after losing positions. That is probably fine for `--extern` and build-script cfg flags, but Cargo sometimes preserves input order in diagnostics. PROPOSAL: add an explicit `enumerate().values().filter_map(...).sorted()` pattern to examples when original order matters.
-- `vix/corpus-next/rodin.vix:133`, `vix/corpus-next/index.vix:28`, and `vix/corpus-next/cargo_manifest.vix:130`: the same clause/guard/consequent/gate table shape is declared three times across corpus files because there is no module/import story for a shared corpus type. PROPOSAL: ratify cross-file modules/imports so this table can be named once and extended by sparse/workspace-specific state.
-- `vix/corpus-next/crate.vix:1178`: build-script environment construction still hard-codes `CARGO_PKG_VERSION_MAJOR/MINOR/PATCH/PRE` as in the source. PROPOSAL: expose `Version` component accessors and parse package versions in the typed manifest model.
-- `vix/corpus-next/crate.vix:1211` and `vix/corpus-next/crate.vix:1304`: build-script execution keeps current `build_script!` shapes. The exec-observer design wants stdout observers for readiness and directive parsing, but the observer surface is not ratified. PROPOSAL: capability-level observer defaults for build-script and rustc JSON streams, with per-call override once surface lands.
-- `vix/corpus-next/crate.vix:1405`: stdout line parsing keeps the old recursive string walk because no `String::lines()`/split iterator is banked. PROPOSAL: ratify `String::lines() -> [String]` or a pure split combinator.
-- `vix/corpus-next/crate.vix:1557`: proc-macro dynamic-library naming still uses local target OS matching. PROPOSAL: add a Cargo/rustc helper for proc-macro dylib filenames per host target.
+- `vix/corpus-next/crate.vix:202`, `:277`, `:389`, `:403`, `:424`, and `:1599`:
+  zero-argument helper functions and calls remain in the old shape because v2
+  bans zero-arg `!` but does not specify zero-arg function invocation. PROPOSAL:
+  ratify constants for pure zero-input helpers, or a unit argument spelling.
+- `vix/corpus-next/crate.vix:235` and `:1616`: impossible/malformed cases still
+  use empty-map `.get(...).unwrap()` to raise an error. PROPOSAL: ratify queue item
+  C3 as a typed failure surface with a receipted message.
+- `vix/corpus-next/crate.vix:643`: `compile_rust_unit` still has four near-identical
+  `rustc!` arms because path-valued `--emit=` fragments are not values. PROPOSAL:
+  add typed argv fragments for `--emit` records, or let `rustc!` accept typed
+  argv records.
+- `vix/corpus-next/crate.vix:647`, `:660`, `:675`, and `:688`: `--target
+  {unit.target}` preserves target semantics, but the surface does not define
+  `Target -> rustc target triple` rendering. PROPOSAL: add a `Target::rustc_triple`
+  projection or a typed rustc target argument.
+- `vix/corpus-next/crate.vix:726`, `:881`, `:972`, and `:1255`: `tree_union` keeps
+  old array-to-tree union meaning because v2 only says `Tree = Map<Path, Blob>`.
+  PROPOSAL: ratify `Tree::union([Tree]) -> Tree` with duplicate-path semantics.
+- `vix/corpus-next/crate.vix:1268` and `:1289`: stream `filter_map` is used because
+  this file naturally filters build-script units while mapping to artifacts.
+  PROPOSAL: bank `Stream::filter_map` or document the `map Option` + `filter` +
+  unwrap pattern.
+- `vix/corpus-next/crate.vix:1450` and `:1592`: stdout still has no home; both
+  build-script exec calls keep `--stdout {p"build.stdout"}` loudly. PROPOSAL:
+  resolve stdout in the effect model before changing this shape.
+- `vix/corpus-next/crate.vix:1397`: `build_script_env` still sets `HOST=` from
+  `target_name`, preserving the old fixture meaning but not modeling host as a
+  separate cost-plane input. PROPOSAL: make Cargo build-script env construction a
+  typed std helper that receives explicit semantic target and host-policy inputs.
+- `vix/corpus-next/crate.vix:1885`: proc-macro dynamic library naming still derives
+  from the supplied target. PROPOSAL: expose Cargo/rustc proc-macro artifact naming
+  instead of local OS matching.
+- `vix/corpus-next/crate.vix:1823`, `:1856`, `:1865`, and `:1949`: adding
+  `target` to `crate_build_script_*` and `crate_proc_macro_cross_bin` changes
+  public probe signatures. PROPOSAL: demand roots should pass target explicitly;
+  fixture adapters can supply host-defaulted target outside the language.
 
-## Duplication verdict
+## Commentary adaptations
 
-The build lane's duplication mostly dissolves. The original combinatorial helper family is replaced by one `RustUnit` builder plus small adapters from the lock, resolved-graph, solution-graph, build-script, and proc-macro domains. The remaining duplication is concentrated in two places: the four emit arms in `compile_rust_unit` (`vix/corpus-next/crate.vix:596`) and Cargo-domain boilerplate the book does not yet model (`vix/corpus-next/crate.vix:1178`, `vix/corpus-next/crate.vix:1557`). Those are real language/library gaps, not just local refactor misses.
+- Added inline `GAP` comments at `vix/corpus-next/crate.vix:233`, `:1449`, `:1591`,
+  and `:1614` for the two failure sentinels and two stdout fake-file sites.
+- Adapted the target comments implicitly by deleting `Target::host()` rather than
+  describing a host read. The remaining `target` parameter is semantic recipe input.
