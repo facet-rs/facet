@@ -74,3 +74,44 @@ The value model: how values are typed, constructed, read, and discriminated.
 > adjudicated, the rewrite implements taint-as-identity (see
 > `machine.identity.taint-in-identity`) at whole-value granularity and blocks
 > any per-leaf work on this rule.
+
+> r[machine.value.structural-order]
+>
+> [DESIGN, round 10] `<=>` is the structural comparison: total, equality-consistent,
+> derived, not overridable (`machine.identity.never-consults-order`). Every claim
+> that "every value is ordered" rests on these base cases, which are hereby the
+> definition, not an implementation detail:
+>
+> - **Int**: numeric.
+> - **Bool**: `false < true`. **Unit**: one value.
+> - **Float**: IEEE `totalOrder`, NaN canonicalized to one bit pattern, so `<=>` is
+>   reflexive and equality-consistent. (Precedent: `TotalF64`, `vix/src/machine/value.rs:16`.)
+> - **String, Path**: by Unicode scalar value, locale-free.
+> - **Blob**: byte-lexicographic.
+> - **Struct**: field-wise, in DECLARATION order. Nominal types compare their name
+>   first (it is in the canonical encoding); a nominal and a structural type of the
+>   same shape are different types and never compare.
+> - **Enum**: by variant DECLARATION position, then payload. This is the mechanism a
+>   type uses to carry an ordering rule its fields cannot (`PreTag`, semver).
+> - **Array `[T]`**: lexicographic by index, shorter-is-lesser on a prefix.
+> - **Map<K,V>**: lexicographic over rows in key order. **Set<T>**: as `Map<T,()>`.
+> - **Option/Result**: as enums, by variant position.
+> - **Function**: by the stable identity of its definition (the canonical AST of
+>   everything it transitively references — `machine.identity` closure identity).
+>   **Closure**: definition identity, then its capture record structurally.
+> - **Tuple**: as a struct with fields `0, 1, …`.
+>
+> **`Stream<K,V>` is NOT a value and has no structural order.** It is codata: recipe
+> identity, no value identity, not a struct field, not a map key, not sortable
+> (`machine.identity.streams-cross-island-edges`). "Every value is ordered" excludes
+> it because it is not a value until collected.
+>
+> **Values are DAGs.** A runtime value cannot contain itself, so structural
+> comparison terminates (`machine.store.*`: values form a DAG by construction).
+>
+> **Cost obligation.** `<=>` MUST short-circuit on identity: two values whose
+> identities are equal are `Equal`, without a walk. Identities are carried in a slot
+> (`machine.identity.hash-at-construction`), so this is a load, not a hash. Without
+> it, `by_key(|x| x.big_tree)` is total and unusable. Deep comparison of two
+> *distinct* large aggregates remains the caller's cost, and is the reason `by_key`
+> extracts a key rather than sorting by the whole value.

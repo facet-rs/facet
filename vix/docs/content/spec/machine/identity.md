@@ -91,9 +91,16 @@ driver.
 > per intern crossing is banned (the measured O(N²): 86% of solver CPU in hash
 > recompression because the aggregate hash had no memory between crossings).
 > This rule is scoped to ordered aggregates: maps use sort-first-then-stream
-> (`machine.identity.map-order-independence`) because insertion order is not
-> semantic order, so a carried streaming hasher over insertion is unsound for
-> them until the OPEN Merkle-map design lands.
+> because insertion order is not semantic order, so a carried streaming hasher
+> over insertion is unsound for them until the Merkle-map design lands
+> (`machine.identity.merkle-tree`).
+>
+> CITATION FIX (round 10): this rule previously cited
+> `machine.identity.map-order-independence` as its authority for map row order.
+> That rule is OPEN, not settled — a settled rule may not rest on an unratified
+> one. The mechanism it names (rows in key order, keys unique) is sound
+> independently, because `<=>` is structural and not overridable
+> (`machine.identity.never-consults-order`); only the rule's *status* is unsettled.
 
 > r[machine.identity.hash-at-construction]
 >
