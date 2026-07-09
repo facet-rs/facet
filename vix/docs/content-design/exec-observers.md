@@ -2,6 +2,16 @@
 title = "exec observers: the zoo feature trees don't replace"
 +++
 
+> **STATUS (round 12): FINDINGS INTACT, MECHANISM SUPERSEDED.**
+> Everything this note argues about *readiness being a protocol fact* is still true and
+> now load-bearing. What is retired is the **observer as a surface construct**. `exec` and
+> `place` are decoupled (`r[machine.primitive.exec-is-placement-agnostic]`): `exec` returns
+> a struct with codata `stdout`/`stderr`, and you consume a process's output remotely by
+> **placing the surrounding block**. The observer closure was never a feature of `exec` —
+> it is the *lowering* of exactly that placed block, as
+> `vix-language-design.md` §"What ships to executors" already said. Read this note for the
+> argument; do not read it for the API. `exec cmd where { observer: … }` does not exist.
+
 Status: design note from conversation (2026-07-09). The March-era exec
 model shipped an **observer closure** with every exec; the current model
 (exec returns a plain outcome record; progressive trees announce subfile

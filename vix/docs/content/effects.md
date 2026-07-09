@@ -217,6 +217,42 @@ a program may not make one.
 `process.platform` and `cfg!(target_os)` evaluated in the recipe are all the same
 bug. They read the executor into the artifact.
 
+## `exec` knows nothing about placement
+
+These are two primitives and they do not mention each other.
+
+`exec` runs a process and hands back a struct. Two of its fields are codata. That is the
+whole of it: there is no observer parameter, no callback, no runner hook.
+
+`place` evaluates a block somewhere else. It does not know what is in the block.
+
+Put them together and the interesting thing happens by itself:
+
+```vix
+let diagnostics = place {
+    let out = exec rustc`--error-format=json {src}`;
+    out.stderr.filter(is_error).map(render).collect()      // runs next to the process
+};
+```
+
+The block consumes a stream. The block is placed. So the stream is consumed **where the
+process runs**, and only `diagnostics` — a value — crosses back. Nobody designed that;
+it is what "a `place` carries a subgraph of demands" and "`stdout` is a field" mean
+together.
+
+**Coming from the March design**: an *observer closure* used to be shipped with every
+exec — "the canonical AST of the closure, holding the process handle, able to return
+anything including streams." That closure was never a feature of `exec`. It was the
+**lowering** of exactly the block above. It still is. What changed is that you no longer
+write it: you write ordinary code, and placement decides where it runs.
+
+Readiness works the same way. A file appearing in an output tree is a filesystem fact;
+*readiness* is a protocol fact — `rustc` announces an artifact on stdout, which is
+literally how `cargo` pipelines rmeta. So the placed block reading `out.stdout` is the
+readiness authority, and `out.tree / p"foo.rmeta"` resolving early is the *consequence*.
+For tools with no protocol, a VFS close event is the fallback authority. The mechanism
+moved; the fact did not.
+
 ## `place` is a strong boundary
 
 Sometimes a demand should be evaluated somewhere else — because that machine has

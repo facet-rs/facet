@@ -230,3 +230,31 @@ primitives reference by identity.
 > the bytes arrive, so **it cannot cross a `place` boundary**
 > (`machine.placement.identity-crosses`). That is the operational difference between the
 > two hashes, and it is why the `blake3` is worth baking.
+
+> r[machine.primitive.exec-is-placement-agnostic]
+>
+> [SETTLED, round 12] **`exec` and `place` are decoupled and neither mentions the other.**
+>
+> `exec` is an execution primitive. It returns an ordinary struct
+> (`machine.primitive.exec-outcome`) whose `stdout`/`stderr` fields are codata. It has no
+> observer parameter, no callback, no runner hook.
+>
+> `place` evaluates a subgraph of demands on another evaluator
+> (`machine.placement.identity-crosses`). It does not inspect the subgraph.
+>
+> Stream processing happens remotely by **placing the surrounding block**, not by handing
+> a closure to `exec`. A placed block that consumes `out.stdout` consumes it next to the
+> process; only the resulting value crosses back.
+>
+> **The observer closure is NOT obsolete. It is the lowering.** `vix-language-design.md`
+> §"What ships to executors" already described it as "the canonical AST of the closure …
+> holding the process handle, able to return anything incl. streams" — which is precisely
+> the lowering of a placed block over an exec's codata fields. What is retired is the
+> observer as a *surface construct* and as a *special exec mechanism*. Any document
+> presenting `exec cmd where { observer: … }` is stale.
+>
+> Readiness follows: a file appearing in an output tree is a filesystem fact; readiness is
+> a **protocol fact** (rustc announces artifacts on stdout — how cargo pipelines rmeta). The
+> placed block reading `out.stdout` is the readiness authority; a subfile projection
+> resolving early is the consequence. A VFS close event remains the fallback authority for
+> protocol-less tools. (`/vix-design/exec-observers` — findings intact, mechanism superseded.)
