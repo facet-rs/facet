@@ -990,3 +990,67 @@ obtains one. Rung 070 exists to reject an undeclared capability — but under ta
 templates that rejection **falls out of scoping** (an undeclared capability is an
 unbound identifier), and the ratchet contradicts itself: rung 067 runs `echo`
 undeclared and is expected green. Logged in `vix/tests/ratchet/PORT-NOTES.md`.
+
+### Round 11 — failure, tuples, test capabilities (Amos)
+
+- **Tuples satisfy at-most-one-positional VACUOUSLY**, and that is both the danger
+  and the answer. `f (a, b)` passes ONE argument: a struct whose fields are named by
+  position (the same sentence that makes an array a map). So the rule stands and
+  tuples are its honest escape hatch: right when the arguments *together form a
+  value* (a pair, a span, a coordinate); **wrong when they have ROLES**, because a
+  tuple has no room to name them and the swap bug returns. `expect_eq (actual,
+  expected)` is therefore still wrong; the answer is a name or a receiver.
+
+- **`fail` — archaeology confirms Amos's memory.** `tree-sitter-vixen/grammar.js:729`
+  has `fail_expression: seq("fail", $.expression)`; `:691` has a postfix `?`
+  (`_immediate_question` — must touch its operand); `vixen/docs/design/vix-spec.md:165`
+  V28 is "advertise ⇒ watch ⇒ poison".
+  - **`fail <payload>` makes a demand have no answer.** A failure is NOT a value; it
+    is the absence of one. You supply a typed payload. The machine attaches the
+    subject's identity, the source span, and the **demand chain** — read from the
+    live demand map at failure time. You cannot forget them because you never attach
+    them (`r[machine.error.carries-context]`, SETTLED).
+  - Amos: "fail as a string is kinda weak. A struct is not much better. We want the
+    full demand at least." Exactly — and that is already the settled rule.
+  - **Poison is per-demand, not global.** 200 compiles, one fails: the other 199 keep
+    their values, receipts and memo entries; only the link is poisoned.
+    `--keep-going` reports all, for the same reason a test reports every failing
+    check rather than the first.
+
+- **CORRECTION to Amos's recollection: `?` cannot yield `Option`.**
+  `r[machine.error.option-not-channel]` [SETTLED]: *"`Option` is not an error
+  channel. Fallible operations return `Result`; absence-as-failure erases the
+  failure's address by construction."* That erasure IS the governing incident — a
+  solve failing with `"unwrap on None"`, no location, no subject, no demand chain.
+  A `?` that turns a rich `Failure` into `None` throws away exactly what the failure
+  carried, at the moment someone decided to look.
+  > **`expr?` yields `Result<T, Failure>`.** `expr?.ok()` if you truly don't care why,
+  > and it says so in the source.
+  - `?` is *catching* here, not propagating. It has to be: propagation is the
+    default (a failed demand poisons its dependents whether or not anyone writes a
+    symbol), so the operator's job is the opposite of Rust's.
+  - `Result<T,E>` is for outcomes a caller branches on (an UNSAT solve with its
+    derivation is an *answer*). `fail` is for absence.
+  - `o.unwrap()` IS `match o { Some(v) => v, None => fail UnwrapOnNone {…} }`
+    (`r[machine.error.option-unwrap-span]`). `m.get(k).unwrap()` as an error-raise —
+    which three ports independently invented — becomes `fail MissingKey { key }`.
+  - **Queue item C3 is CLOSED.** New chapter: `/vix/errors` (w22).
+
+- **A test's parameters are what the harness supplies** (Amos). A test that runs a
+  process needs a capability; a program may not go looking for one. So it declares:
+  ```vix
+  #[test] fn exec_echo(sh: Sh) -> Stream<Check> { let out = exec sh`echo "hi"`; … }
+  ```
+  The harness IS the demand root, so this is `r[machine.placement.no-in-program-steering]`
+  exactly — the same act as `vx build --target` defaulting to the host. An ambient
+  read is an observation; an input is a pin. The harness may also **forge** a
+  capability (a fake `Sh` returning fixtures), which is how you test exec hermetically.
+  - **Rung 070 dissolves.** `exec cc`…`` cannot resolve `cc` unless `cc: Cc` is a
+    parameter, so an undeclared capability is an **unbound identifier**. The bespoke
+    "undeclared capability" check was a workaround for a language that couldn't say it.
+    The ratchet's self-contradiction (rung 067 runs `echo` undeclared and is expected
+    green) resolves the same way: 067 declares `sh: Sh`.
+
+**Owed:** sweep the twelve `exec! { … }` rungs onto `#[test] fn f(sh: Sh)` + tagged
+templates; delete or re-diagnose rung 070; port `.get().unwrap()` error-raises in
+`crate.vix` to `fail`.
