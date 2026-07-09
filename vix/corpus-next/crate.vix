@@ -1368,30 +1368,24 @@ fn metadata_directive(key: String, value: String) -> BuildScriptMetadata {
 }
 
 fn directive_field(key: String, value: String, directives: BuildScriptDirectives) -> BuildScriptDirectives {
-    match key == "rustc-cfg" {
-        true => BuildScriptDirectives { rustc_cfg: [..directives.rustc_cfg, value], ..directives },
-        false => match key == "rustc-check-cfg" {
-            true => BuildScriptDirectives { rustc_check_cfg: [..directives.rustc_check_cfg, value], ..directives },
-            false => match key == "rustc-env" {
-                true => BuildScriptDirectives { rustc_env: [..directives.rustc_env, value], ..directives },
-                false => match key == "rustc-link-lib" {
-                    true => BuildScriptDirectives { rustc_link_lib: [..directives.rustc_link_lib, value], ..directives },
-                    false => match key == "rustc-link-search" {
-                        true => BuildScriptDirectives { rustc_link_search: [..directives.rustc_link_search, value], ..directives },
-                        false => match key == "rerun-if-changed" {
-                            true => BuildScriptDirectives { rerun_if_changed: [..directives.rerun_if_changed, value], ..directives },
-                            false => match key == "rerun-if-env-changed" {
-                                true => BuildScriptDirectives { rerun_if_env_changed: [..directives.rerun_if_env_changed, value], ..directives },
-                                false => match key == "warning" {
-                                    true => BuildScriptDirectives { warning: [..directives.warning, value], ..directives },
-                                    false => BuildScriptDirectives { metadata: [..directives.metadata, metadata_directive(key, value)], ..directives },
-                                },
-                            },
-                        },
-                    },
-                },
-            },
-        },
+    if key == "rustc-cfg" {
+        BuildScriptDirectives { rustc_cfg: [..directives.rustc_cfg, value], ..directives }
+    } else if key == "rustc-check-cfg" {
+        BuildScriptDirectives { rustc_check_cfg: [..directives.rustc_check_cfg, value], ..directives }
+    } else if key == "rustc-env" {
+        BuildScriptDirectives { rustc_env: [..directives.rustc_env, value], ..directives }
+    } else if key == "rustc-link-lib" {
+        BuildScriptDirectives { rustc_link_lib: [..directives.rustc_link_lib, value], ..directives }
+    } else if key == "rustc-link-search" {
+        BuildScriptDirectives { rustc_link_search: [..directives.rustc_link_search, value], ..directives }
+    } else if key == "rerun-if-changed" {
+        BuildScriptDirectives { rerun_if_changed: [..directives.rerun_if_changed, value], ..directives }
+    } else if key == "rerun-if-env-changed" {
+        BuildScriptDirectives { rerun_if_env_changed: [..directives.rerun_if_env_changed, value], ..directives }
+    } else if key == "warning" {
+        BuildScriptDirectives { warning: [..directives.warning, value], ..directives }
+    } else {
+        BuildScriptDirectives { metadata: [..directives.metadata, metadata_directive(key, value)], ..directives }
     }
 }
 
