@@ -1,6 +1,11 @@
-// Rung 068 — a failing process is a receipted result, not an exception.
+// Rung 068 — a failing process is a FAILURE VALUE, not an exception.
+// The demand answers `Failed(f)`; `?` catches it with its address intact; and
+// the failure is memoized with its read-set like any other value.
 #[test]
-fn exec_failure_is_result(sh: Sh) -> Stream<Check> {
-    let out = exec sh`-c "exit 1"`;
-    yield expect_ne(out.status, 0);
+fn exec_failure_is_a_value(sh: Sh) -> Stream<Check> {
+    yield match exec sh`-c "exit 1"`? {
+        Ok(_)  => expect(false),
+        Err(_) => expect(true),
+    };
+    yield ran_processes(1);
 }

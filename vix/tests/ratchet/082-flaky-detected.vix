@@ -6,5 +6,5 @@
 #[test]
 fn flaky_detected(sh: Sh) -> Stream<Check> {
     let out = exec sh`-c "date +%N"`;
-    yield expect_eq(out.status, 0);
+    yield expect_eq(out.stdout.collect().len(), 1);
 }

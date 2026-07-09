@@ -4,5 +4,5 @@
 fn exec_consumes_tree(wc: Wc) -> Stream<Check> {
     let tree = fixture_tree("small-crate");
     let out = exec wc`-l {tree / p"Cargo.toml"}`;
-    yield expect_eq(out.status, 0);
+    yield expect_eq(out.stdout.collect().len(), 1);
 }

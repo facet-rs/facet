@@ -264,9 +264,11 @@ ledger. Write no code that depends on yield position.
   ```
   `Map<Path, Blob>` loses `mkdir -p`, every symlink, and the executable bit. Do not use it.
 - **`fetch` returns a `Blob`, never a `Tree`.** `extract blob -> Tree` is a separate demand,
-  and **an archive's digest is not its tree's digest**. `blake3:` is vix's ContentHash and
-  names the value; `sha256:` is an upstream integrity check on the transfer and never
-  becomes an identity.
+  and **an archive's digest is not its tree's digest**.
+  **`blake3:` is REQUIRED** — vix's `ContentHash`, the name of the value. `sha256:` is
+  OPTIONAL transfer provenance and never becomes an identity. **There is no SHA-only
+  fetch**: computing the canonical blake3 is a lock-time act, so every `fetch` knows its
+  final `Blob` identity before evaluation and crosses a `place` boundary by construction.
 - **`fetch` is pinned.** `fetch(url) where { sha256 }` names a blob whose value
   identity is known *before* evaluation; the URL is a **provenance coordinate**,
   a hint about where bytes live. Materialization is cost-model: local store, peer,
@@ -348,7 +350,8 @@ When in doubt: old shape + a GAPS entry with a proposed form marked **PROPOSAL**
 | `workspace.glob(p)` → `[String]` | → `Stream<Path, Path>` |
 | `Target::host()` | a `target` parameter, supplied by the demand root |
 | `Rustc::acquire(Target::host())` | `Rustc::acquire(target)` |
-| `--stdout {p"cfg.stdout"}` | log it — stdout has no home yet |
+| `--stdout {p"cfg.stdout"}` | `out.stdout` — a codata field on `ExecOutcome` |
+| `out.status == 0` | nothing: a nonzero exit is a `fail`; `exec cmd?` -> `Result` |
 | `rustc! { … }` | `` rustc`…` `` — tagged by the capability value |
 | `` `interp ${x}` `` | `"interp ${x}"` |
 | `"literal"` | `'literal'` |
@@ -368,4 +371,4 @@ Special attention, because these are the bets:
 - Does `where { … }` help or bury? Count the sites where you'd rather have a record.
 - Is at-most-one-positional ever painful? Name the function and the call.
 - Where does the absence of `Multiset` hurt, if anywhere?
-- Where does stdout still have no home?
+- Does reading `out.stdout` as codata read naturally, or does every site drain it first?

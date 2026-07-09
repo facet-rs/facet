@@ -1,5 +1,5 @@
 //! reject: unbound identifier `cc`
-//! at: 7
+//! at: 8
 
 // Rung 070 — using a tool you did not declare is not a special error: it is
 // an unbound identifier. A command's tag is a capability VALUE, and a test's
@@ -8,5 +8,5 @@
 #[test]
 fn undeclared_capability() -> Stream<Check> {
     let out = exec cc`-o hello hello.c`;
-    yield expect_eq(out.status, 0);
+    yield expect_eq(out.stdout.collect().len(), 0);
 }

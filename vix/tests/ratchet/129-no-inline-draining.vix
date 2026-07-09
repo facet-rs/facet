@@ -10,6 +10,6 @@ fn no_inline_draining(sh: Sh) -> Stream<Check> {
     let slow = exec sh`-c "sleep 0.5; echo x"`;
     let sum = pure_work();
     yield expect_eq(sum, 4999950000);
-    yield expect_eq(slow.status, 0);
+    yield expect_eq(slow.stdout.collect().values(), ["x"]);
     yield overlapped();
 }

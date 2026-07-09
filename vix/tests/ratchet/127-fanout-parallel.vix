@@ -4,5 +4,5 @@
 #[test { budget_wall: 1s, budget_rss: 256MB }]
 fn fanout_parallel(sh: Sh) -> Stream<Check> {
     let outs = [1, 2, 3, 4].map(|n| exec sh`-c "sleep 0.25; echo {n}"`);
-    yield expect(outs.all(|o| o.status == 0));
+    yield expect(outs.all(|o| o.stdout.collect().len() == 1));
 }
