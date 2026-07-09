@@ -138,21 +138,68 @@ failure**, not a silent success on the machine where `/usr/lib` happened to be v
 That is the honest division. We do not infer the dynamic aspect; we *arrange* it,
 because we are the ones patching the software.
 
+## Where patch sets live (Amos): the package manager. As vix packages.
+
+Not a mechanism. A **package**.
+
+Which means applying a patch set is not a build-system feature at all — it is
+**resolution**. The overlay system already designed for the registry is the patch
+mechanism: *"an internal overlay so it can patch any package, at will, invisibly to
+build logic — first-class, not `[patch]`-section folklore,"* and *"the overlay is a
+resolver concern: rodin resolves against the composed view."* Receipts already name
+the overlay that supplied each package, so patch provenance costs nothing extra.
+
+And the package brief already wrote the other half without connecting it here: *"the
+full resolved input graph by content hash + fetch coordinates, toolchain included —
+the whole pancake stack is just more content-addressed inputs. rustc, linker, sysroot:
+hashes in the graph."*
+
+So:
+
+> **A materialized toolchain is a resolved package graph.** Its identity is that
+> graph's identity. `Rust::acquire spec` is a version requirement, resolved by rodin,
+> exactly like any dependency. A patched GCC is `upstream@hash` + `patchset@version`,
+> composed by an overlay, resolved.
+
+Two consequences, and both are simplifications.
+
+**There is no capability system for materialized toolchains.** They are packages. Only
+*ambient* toolchains — Xcode, MSVC, the platform's system libraries — need capabilities
+at all, which is `r[machine.capability.two-classes]` saying "rustc-class is not deeply a
+capability" and finally meaning something operational.
+
+**Placement is unconstrained except by ambient closures.** A materialized closure is
+blobs; any node that can fetch can run it. An ambient one runs only where the
+fingerprint is advertised. That is the whole of the placement constraint, and it
+collapses `r[machine.placement.capability-requirements-are-derived]` into one sentence.
+
+## The seed, and the one place Nix is ahead
+
+A binary embeds its recipe; the recipe names its toolchain; the toolchain is a package;
+that package was built by a toolchain. The chain bottoms out at a binary that has no
+recipe — a **seed**.
+
+Nix calls this `bootstrap-tools`: a blob of prebuilt binaries you must simply trust. An
+entire community (stage0, hex0, live-bootstrap) exists to shrink that blob toward
+something a human can audit, and they have done real work there.
+
+If we are going to say *"shut up the nix fanboys forever"*, that is the question they
+will ask, and the answer must not be "we hadn't thought about it." We should know
+exactly what our seed is, how large it is, and what it costs to reduce it. **This is
+not a language question, and it is not solved by content addressing** — every byte of
+the seed is content-addressed and equally unexplained.
+
 ## Open
 
-1. **Per-exec prefixes bought two things**: cheap isolation, and per-exec
+1. **The seed.** What is it, how big, and what is the reduction plan? (Above.)
+2. **Per-exec prefixes bought two things**: cheap isolation, and per-exec
    `tracked_observations`. If loader paths are arranged by us rather than global, what
-   exactly is the mount layout, and does attribution come from the sandbox's ACL rather
-   than the namespace? (Guess: yes — the daemon knows which prefixes it granted this
-   exec. Confirm against the `vx-vfsd` contract, don't assume.)
-2. **Ambient closures may be the only thing that makes an exec unplaceable.** A
-   materialized closure is blobs; it places anywhere. An ambient one runs only where the
-   fingerprint is advertised. If that is the whole story,
-   `r[machine.placement.capability-requirements-are-derived]` collapses into
-   *placement is unconstrained except by ambient closures.*
+   is the mount layout, and does attribution come from the sandbox's ACL rather than the
+   namespace? (Guess: yes — the daemon knows which prefixes it granted this exec.
+   Confirm against the `vx-vfsd` contract; do not assume.)
 3. **What does a forged capability mean for a test?** (Round 11: the harness supplies
    them.) A forged closure is a materialized closure over fixture blobs — so a forged
    capability may be nothing more special than a `Tree` and its facts.
-4. **Patch-set provenance.** If we patch GCC, the patch is an input, the patched source
-   has an identity, and the toolchain's identity descends from it. Where do patch sets
-   live, and are they ordinary content-addressed inputs? (They should be. Say so.)
+4. **Does `Rust::acquire` survive?** If a materialized toolchain is a package, depending
+   on it is depending on a package. `acquire` may be a word for something that no longer
+   exists.

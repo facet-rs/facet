@@ -59,13 +59,20 @@ Distinguish two boundaries that are easy to fuse and must not be:
 
 > r[machine.placement.capability-requirements-are-derived]
 >
-> [DESIGN] A command *is* a capability requirement. The set of commands reachable
-> in a placed subgraph is syntactic (union over branches, fixpoint over
-> recursion), so its capability CLASS is statically derivable — a conservative
-> over-approximation, which costs perf and never correctness. The capability
-> INSTANCE (which `rustc`) is fixed by `machine.primitive.capabilities-by-identity`
-> and is value-affecting, so toolchain identity belongs in the semantic receipt
-> while the machine that hosted it does not.
+> [DESIGN, amended round 11] **Placement is unconstrained except by ambient closures.**
+>
+> A command is a tool projected out of a closure, and a closure is discharged in one of
+> two ways (`machine.capability.two-classes`). A **materialized** closure is a resolved
+> package graph — content-addressed blobs — so any node that can fetch can run it, and
+> it constrains placement not at all. An **ambient** closure (Xcode, MSVC, the platform's
+> system libraries) exists only where a daemon advertises its fingerprint, and that is
+> the ONLY thing that can make an exec unplaceable.
+>
+> The set of ambient closures reachable in a placed subgraph is syntactic (union over
+> branches, fixpoint over recursion), so the requirement is statically derivable — a
+> conservative over-approximation, costing perf and never correctness. Toolchain
+> identity is value-affecting and belongs in the semantic receipt; the machine that
+> hosted it does not.
 
 > r[machine.placement.trees-cross-as-grants]
 >

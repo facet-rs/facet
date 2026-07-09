@@ -1112,3 +1112,36 @@ templates; delete or re-diagnose rung 070; port `.get().unwrap()` error-raises i
 attribution once loader paths are ours; whether ambient closures are the ONLY thing
 that makes an exec unplaceable; what a forged capability is for a test; and where
 patch sets live (they should be ordinary content-addressed inputs — say so).
+
+### Round 11 — patch sets (Amos): "Patchsets live in the package manager. As vix packages."
+
+Not a mechanism. A **package**. Applying one is therefore **resolution**, not a
+build-system feature: the Gentoo-inspired overlay system already designed for the
+registry *is* the patch mechanism ("an internal overlay so it can patch any package, at
+will, invisibly to build logic"), and rodin already resolves against the composed view.
+Receipts already name the overlay that supplied each package, so patch provenance is
+free. The package brief already wrote the other half: *"the whole pancake stack is just
+more content-addressed inputs. rustc, linker, sysroot: hashes in the graph."*
+
+> **A materialized toolchain is a resolved package graph.** A patched GCC is
+> `upstream@hash` + `patchset@version`, composed by an overlay, resolved by rodin.
+
+Two collapses:
+
+- **There is no capability system for materialized toolchains.** They are packages.
+  Only AMBIENT toolchains need capabilities — which is what
+  `r[machine.capability.two-classes]` has been saying, now meaning something operational.
+  OPEN: does `Rust::acquire` survive at all? Depending on a package is depending on a
+  package.
+- **Placement is unconstrained except by ambient closures.** Materialized closures are
+  blobs; any node that can fetch can run them. `r[machine.placement.capability-requirements-are-derived]`
+  amended to say exactly this, and it is now one sentence instead of a taxonomy.
+
+**And the hole this opens, which we should not pretend away: THE SEED.** A binary embeds
+its recipe; the recipe names its toolchain; the toolchain is a package built by a
+toolchain. The chain bottoms out at a binary with **no recipe**. Nix calls it
+`bootstrap-tools` and an entire community (stage0, hex0, live-bootstrap) has done real
+work shrinking it toward something auditable. If we intend to "shut up the nix fanboys
+forever," that is the question they will ask, and content addressing does not answer it:
+every byte of the seed is content-addressed and equally unexplained. We should know what
+our seed is, how large, and what reduction costs.
