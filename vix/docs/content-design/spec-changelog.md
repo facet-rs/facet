@@ -601,3 +601,40 @@ keyword should change now that `record` names the other kind; path syntax;
 (NEXT.md epoch-closing flags). A content hash that moves when rustc moves is a
 verification bug, not a cache-miss bug, and `r[machine.identity.hasher-contract]`
 already forbids it. Must die in stage-6.
+
+### Round 8 addenda (Amos)
+
+- **Extra fields on a record→nominal spread are an ERROR.** RULED. Silently
+  dropping a field is the bug spread is otherwise perfect for hiding.
+- **Braces stay blocks; parens-as-blocks is DEAD.** The only argument for it was
+  that `{ }` was overloaded (blocks / records / grouping). Grouping is parens —
+  it is just an expression. Records are keyword- or type-prefixed. So braces are
+  free, and the parens-block model dies of its own success.
+  - CORRECTION to round 8: bare `{ ... }` does NOT "stay free for `Set`". It is
+    a block. `Set` needs its own marker when it gets a chapter (queue item A2).
+- **ONE keyword: `struct`.** `record` as a keyword is dropped; it survives as the
+  concept noun, as in Rust. Don't spend a keyword to say "unnamed" — the absence
+  of the name already says it, and the name's presence is exactly what *causes*
+  the nominal/structural split in the canonical encoding.
+  - `struct Point { x: Int }` — declaration, nominal, name is hashed.
+  - `Point { x: 1 }` — nominal literal, type-prefixed.
+  - `struct { x: 1 }` — anonymous literal, structural, no name to hash.
+  - Still disambiguates juxtaposition: `f struct { a: 1 }` vs `f { let x = 1; x }`.
+- **`partial` is DEAD, and now for a reason rather than by deferral.** `f x y`
+  parses as `(f x) y`, which is an ordinary higher-order return, not currying —
+  at-most-one-positional leaves no slot to curry into. The zoo's `partial` meant
+  "pre-bind arguments without restating the call surface"; since named arguments
+  ARE a record, pre-binding them is record construction (`let opts = ExecOpts {..}`
+  then `where { ..opts }`), and pre-binding the positional is a closure. Both
+  covered, no keyword.
+- **SchemaId rehash cost: zero.** No deployed users of the current identity bytes
+  (Amos). The byte-discriminant kind tag rides stage-6 freely.
+
+**Correction, on the record.** Round 8 relayed a NEXT.md flag claiming
+`legacy_marker_schema_id` uses std `DefaultHasher` and reaches content hashes.
+That is FALSE — `vix/src/module.rs:1071` uses blake3, domain-separated and
+length-prefixed; there is no `DefaultHasher` in `vix/src` at all. The flag was
+stale and was relayed without reading the code (the exact failure the standing
+instruction forbids). NEXT.md is corrected in place. What survives, and is the
+real stage-6 item: `legacy_marker_schema_id` derives a SchemaId from the type's
+*rendered name string* rather than from its structure — identity by spelling.

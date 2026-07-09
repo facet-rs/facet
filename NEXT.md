@@ -96,9 +96,13 @@ All three contradictions = rodin learning's fact shape vs the adjudicated design
   payloads write to_le_bytes — correct on all supported (LE) platforms, byte-swaps on BE. Normalize
   schema-word serialization to LE end-to-end BEFORE shared-cache ships. Natural home: stage-2
   container payload rewrite.
-- legacy_marker_schema_id uses std DefaultHasher (not stable across Rust versions) and reaches
-  content hashes; replace with version-stable derivation before identity freeze. Also: it covers
-  generic/wrapper frame names that aren't concrete taxon schemas — NOT the final canonical encoding.
+- legacy_marker_schema_id: the DefaultHasher half of this flag is STALE — module.rs:1071 already
+  uses blake3, domain-separated ("vix-legacy-schema-marker") and length-prefixed; no DefaultHasher
+  remains anywhere in vix/src (2026-07-09, read the code). What SURVIVES: it derives a SchemaId
+  from the type's RENDERED NAME STRING, not from structure — so `Map<String, Int>` is identified by
+  how it was spelled. That is the "SchemaId-bytes-not-name-strings" flag below, and it is the real
+  stage-6 item. It covers generic/wrapper frame names that aren't concrete taxon schemas — NOT the
+  final canonical encoding.
 - Stage-2 containers charter items: retire Sealed-as-empty-list-placeholder (live builtin overloaded
   as don't-care — footgun if anything ever dispatches on empty-list element schema); real typed
   element refs end the empty-list cross-type collapse.
