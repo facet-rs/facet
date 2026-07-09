@@ -57,7 +57,7 @@ fn propagate(state: State) where { row: Row } -> Step {
         match step {
             Step::Conflict(ng) => Step::Conflict(ng),
             Step::Pass(s) => {
-                let narrowed = s.domains[dep.pkg].intersect(dep.req);
+                let narrowed = s.domains.get(dep.pkg).unwrap().intersect(dep.req);
                 if narrowed.is_empty() {
                     Step::Conflict(no_good_for s where { dep })
                 } else {

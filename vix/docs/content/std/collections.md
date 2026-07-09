@@ -107,9 +107,13 @@ argument. There is nothing in between.
 
 ## Streams
 
-Most things are streams. A stream is what you get when you ask the world for
-something — the files in a directory, the results of two hundred compiles running
-at once.
+A stream is what the world hands you: the files in a directory, the lines a process
+printed, the results of two hundred compiles running at once. You never write one
+down — you receive it, transform it, and `collect` it into a value.
+
+Arrays outnumber streams in any real program, because most values are small and
+authored. What matters is that **nothing from outside arrives as an array**, and
+the four lines below are why.
 
 **A stream is not ordered.** Its elements arrive as they become available, and
 arrival order is a scheduling artifact, not a property of any value.
@@ -126,6 +130,11 @@ isn't a value until you `collect` it.
 src.glob("*.c")                    // Stream<Path, Path>
 [3, 2, 1].stream()                 // Stream<Int, Int>, keys 0, 1, 2
 ```
+
+`Stream<T>` is sugar for `Stream<Int, T>`. A generator's keys are the ordinals of
+its `yield` sites — static, known before anything runs, and *not* the order the
+elements arrive in. That distinction is the whole point of a stream, and the
+[testing chapter](/vix/testing) leans on it.
 
 **Coming from Rust/JS**: this is `enumerate()`, except you never call it, and it
 works for keys that aren't integers.
@@ -245,9 +254,19 @@ fails to define a result.
 
 ## Map operations
 
-### `.get(k) -> Option<V>`, `.insert(k, v) -> Map<K,V>`, `.len()`
+### `.get(k) -> Option<V>`, `.insert(k) where { value: V } -> Map<K,V>`, `.len()`
 
-By value, like everything. `insert` denotes a new map.
+By value, like everything. `insert` denotes a new map. There is no `m[k]`: a map
+lookup can fail, and the type says so.
+
+### `.unwrap()` on an `Option<T>` or a `Result<T, E>`
+
+Takes the value, or **fails the demand** — a typed failure carrying the unwrap's
+source span and the chain of demands that led there, never a bare string. It is not
+a panic and it does not unwind: the demand simply has no value, and everything that
+asked for it learns why.
+
+**Coming from Rust**: `.unwrap()` here costs you a *diagnostic*, not a process.
 
 ### `.keys() -> [K]`, `.values() -> [V]`
 

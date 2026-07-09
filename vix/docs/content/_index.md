@@ -70,9 +70,7 @@ Everything in vix is by value. Semantically, every operation yields a fresh
 value; nothing is shared, nothing is mutated, nothing aliases. This is not a
 purity aesthetic — it is the load-bearing wall: values can be scheduled
 across any number of threads and shipped between executors and machines
-because there is nothing about them to coordinate. (This doctrine predates
-the current design — it was already the rule in the old vixen language,
-before vix was called vix.)
+because there is nothing about them to coordinate.
 
 The implementation honors one law — **the as-if law**: anything is permitted
 that cannot be observed at the semantic plane. Value semantics make this law
@@ -108,8 +106,8 @@ having, and "everything is memoized" is worse — you cannot memoize `a + b`,
 and it would be senseless to: the memo entry costs more than the addition,
 the identity hash costs more than the addition, the receipt costs more than
 the addition. A naive demand-driven evaluator drowns in its own
-bookkeeping. This is not hypothetical: we built one and measured the
-drowning at four orders of magnitude.
+bookkeeping. The drowning is measurable, and it is four orders of
+magnitude.
 
 The compiler's central job — the thing `vixc` *is* — is therefore a
 partition. Between the AST and the lowered code sits the island graph:

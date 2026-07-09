@@ -32,9 +32,9 @@ does that Nix structurally cannot: Nix has step 1 only — whole-input hash
 or nothing. Step 2 requires *observed read-sets*, and observation is the
 machine's founding move.
 
-But there is a question hiding inside step 2, and it stayed hidden until
-we tried to formalize the dance: **when the input changed, how did we find
-yesterday's entry at all?** The memo key contains the input's content
+But there is a question hiding inside step 2, and it stays hidden until the
+dance is formalized: **when the input changed, how is yesterday's entry found
+at all?** The memo key contains the input's content
 hash. The content changed. The key changed. By content alone, yesterday's
 run is unfindable — the very entry whose read-set we need is filed under a
 name we no longer know. Candidate nomination was hand-waved everywhere
