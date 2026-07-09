@@ -40,6 +40,31 @@ Runner directives are attribute fields, not magic comments:
 fn molten_accumulator() -> Stream<Check> { … }
 ```
 
+## A test's parameters are what the harness supplies
+
+A test that runs a process needs a capability, and a program may not go looking for
+one — nothing in a program observes the world. So it **declares** what it needs, and
+the harness, which stands outside the program, supplies it:
+
+```vix
+#[test]
+fn exec_echo(sh: Sh) -> Stream<Check> {
+    let out = exec sh`echo "hello ratchet"`;
+    yield expect_eq out.stdout.trim() where { expected: "hello ratchet" };
+}
+```
+
+This is the same act as `vx build --target` defaulting to the host: the demand root
+supplies an input. An ambient read is an observation; an input is a pin.
+
+It also means the harness may **forge** a capability — hand the test a fake `Sh`
+whose outputs are fixtures — which is how you test an exec without a toolchain.
+
+And using a tool you did not declare is not a special error. It is an **unbound
+identifier**: `exec cc`…`` cannot resolve `cc` unless `cc: Cc` is a parameter. The
+language has nothing to say about undeclared capabilities because it cannot express
+one.
+
 ## Checks are values
 
 ```vix

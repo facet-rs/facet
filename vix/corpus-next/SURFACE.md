@@ -218,6 +218,23 @@ ledger. Write no code that depends on yield position.
 
 ## 8. Effects, capabilities, placement
 
+- **`fail <payload>`** makes a demand have no answer. You supply a typed payload;
+  the machine attaches the subject, the source span, and the demand chain. Failure
+  poisons exactly what demanded it — 199 of 200 compiles keep their values.
+- **`expr?`** (postfix, no space) is the ONLY way to observe a failure from inside a
+  program: `T` -> `Result<T, Failure>`. It does NOT yield `Option` —
+  `r[machine.error.option-not-channel]` says absence-as-failure erases the failure's
+  address, and that erasure IS the governing incident. `expr?.ok()` if you mean it.
+- **`Result<T,E>`** is for outcomes a caller branches on. `fail` is for absence.
+  `o.unwrap()` is `match o { Some(v) => v, None => fail UnwrapOnNone {…} }`.
+- **Tuples satisfy at-most-one-positional vacuously.** `f (a, b)` passes ONE
+  argument: a struct whose fields are named by position. Right when the arguments
+  together form a value (a pair, a span). Wrong when they have ROLES — a tuple has
+  no room to name them, and the swap bug returns.
+- **A test declares the capabilities it needs as parameters**; the harness, which is
+  the demand root, supplies (or forges) them:
+  `#[test] fn exec_echo(sh: Sh) -> Stream<Check>`. An undeclared capability is an
+  unbound identifier, not a special error.
 - **Commands are backtick tagged templates**, tagged by a capability VALUE:
   ```vix
   let rustc = Rustc::acquire spec;
@@ -280,8 +297,7 @@ ledger. Write no code that depends on yield position.
 ## 10. NOT banked — do not use; keep old shapes and LOG
 
 `.=` rebind sugar. `with` blocks. Pipes `|>`. Zero-arg `!`. Effect tags `#fs`.
-`fail` keyword (the failure surface is queue item C3 — three ports weaponized
-`.get().unwrap()` for want of it; log it, don't invent it). `is` operator.
+`is` operator.
 `#[key]` (dropped). `Keyed<K,V>` as a user-visible type (dropped — the key is a
 stream parameter). A `Set` literal other than `%[…]`. Anything else the book
 doesn't say.
