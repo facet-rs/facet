@@ -59,8 +59,8 @@ TreeEntry = File { content: Blob, executable: Bool }
 ```
 
 `tree / p"src/lib.rs"` is a projection through two maps. A directory is a value, so an
-empty one exists; a symlink is a value, so it round-trips. `Tree = Map<Path, Blob>` is
-a lie that costs you `mkdir -p`, every symlink, and the executable bit.
+empty one exists; a symlink is a value, so it round-trips. A flat map from paths to bytes
+would be a lie that costs you `mkdir -p`, every symlink, and the executable bit.
 
 ## Every value is ordered, and nothing can change that
 

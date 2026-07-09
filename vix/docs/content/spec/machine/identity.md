@@ -199,7 +199,9 @@ driver.
 > r[machine.identity.merkle-tree]
 >
 > [DESIGN, round 10] A workspace is a value, so it has an identity, so it must be
-> hashed. A `Tree` (`Map<Path, Blob>`) is therefore identified as a **Merkle map**:
+> hashed. A `Tree` (recursive, `machine.identity.tree-model`) is therefore identified as a
+> **Merkle map** over its semantic encoding — not over the store's chunking
+> (`machine.identity.tree-hash-is-not-node-hash`):
 > change one file, rehash one path. This is not an optimization — it is what makes
 > a workspace a value at all, and it is the "OPEN Merkle-map design" that
 > `machine.identity.carried-hasher` is scoped around. The daemon watching local

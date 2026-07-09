@@ -254,7 +254,9 @@ the default and arrays are not the reflex; `glob` returns a stream; a stream is
 not ordered.
 
 **PROPOSED, and the point of this page**: that `collect()` returns a map, that
-`[T]` *is* `Map<Int, T>` with dense keys, that `Tree` *is* `Map<Path, Blob>`,
+`[T]` *is* `Map<Int, T>` with dense keys, that `Tree` *is* a map (**corrected round 12**:
+a *recursive* `Map<Name, TreeEntry>`, not a flat `Map<Path, Blob>` — the flat spelling
+cannot hold a directory, a symlink, or an executable bit),
 that `Set<T>` *is* `Map<T, ()>`, and that `values()` is the one compaction.
 
 **OPEN**: whether `Keyed<K,V>` is a user-visible type or only the shape of a

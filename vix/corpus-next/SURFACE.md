@@ -163,7 +163,7 @@ ordinary function.
 |---|---|---|---|
 | `[T]` | positions, dense from `0` | `[a, b, c]` | a real type (density is an invariant) |
 | `Set<T>` | the elements | `%[a, b]` | alias for `Map<T, ()>` |
-| `Tree` | paths | produced by `exec` | alias for `Map<Path, Blob>` |
+| `Tree` | one path SEGMENT | `out.tree` from `exec` | recursive `Map<Name, TreeEntry>` — NOT `Map<Path,Blob>` |
 | `Map<K,V>` | whatever you say | `%{k => v}` | itself |
 
 `%` means *the keys are explicit*. Bare brackets mean *the keys are positions*.
@@ -247,7 +247,26 @@ ledger. Write no code that depends on yield position.
   ```
   This is why a macro (`rustc!{ … }`) is wrong: a macro cannot refer to the
   capability you just bound. `name!{ … }` in the v1 corpus is the OLD shape.
-- **`exec` is a boring effect**, like `fetch`. It is not an exception.
+- **`exec` is a boring effect**, like `fetch`. It is not an exception. It returns
+  ```vix
+  struct ExecOutcome { tree: Tree, stdout: Stream<Int,String>, stderr: Stream<Int,String> }
+  ```
+  **No exit status.** A nonzero exit is a `fail`; where a nonzero exit is a legitimate
+  answer (`grep` -> 1), the command grammar declares it. `out.status == 0` does not exist.
+  `stdout`/`stderr` are codata *fields*: consume lines while the process runs.
+- **`exec` and `place` are decoupled and neither mentions the other.** There is no
+  `observer:` parameter. To process a stream remotely, **place the surrounding block**.
+  (The March observer closure is the *lowering* of that block, not a surface construct.)
+- **A `Tree` is recursive**, mirroring the store's real entry model:
+  ```vix
+  Tree      = Map<Name, TreeEntry>              // Name is ONE segment
+  TreeEntry = File { content: Blob, executable: Bool } | Dir (Tree) | Symlink { target: String }
+  ```
+  `Map<Path, Blob>` loses `mkdir -p`, every symlink, and the executable bit. Do not use it.
+- **`fetch` returns a `Blob`, never a `Tree`.** `extract blob -> Tree` is a separate demand,
+  and **an archive's digest is not its tree's digest**. `blake3:` is vix's ContentHash and
+  names the value; `sha256:` is an upstream integrity check on the transfer and never
+  becomes an identity.
 - **`fetch` is pinned.** `fetch(url) where { sha256 }` names a blob whose value
   identity is known *before* evaluation; the URL is a **provenance coordinate**,
   a hint about where bytes live. Materialization is cost-model: local store, peer,
