@@ -1116,13 +1116,9 @@ fn arg_level_from_fields_with_prefix(
         if matches!(value, ValueSchema::Struct { .. }) {
             return Err(SchemaError::new(
                 field_ctx.clone(),
-                "struct fields in args must use #[facet(flatten)]",
+                "struct fields in args are not valid unless one of these applies:\n- add #[facet(flatten)] to the CLI field\n- add #[facet(transparent)] to the type definition if it is a newtype over a scalar",
             )
-            .with_primary_label("this field is a struct type")
-            .with_label(
-                field_ctx.clone(),
-                "add #[facet(flatten)] to include its fields at this level",
-            ));
+            .with_primary_label("this field has a struct-shaped Facet schema"));
         }
 
         #[allow(clippy::nonminimal_bool)]
