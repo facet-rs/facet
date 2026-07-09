@@ -2,126 +2,157 @@
 title = "Commands, closures, and the thing Nix is actually good at"
 +++
 
-Status: OPEN PROBLEM (round 11, from conversation). Amos: *"We don't get to gloat
-at Nix without solving their bread and butter."* This note states the problem, the
-part we have already solved better, and the one concrete blocker.
+Status: DESIGN (round 11, from conversation). Amos: *"We don't get to gloat at Nix
+without solving their bread and butter."* This note states what a command is, why we
+do not need Nix's central mechanism, and what we owe instead.
 
 ## What a command is
 
-Not a tag that resolves to an executable. **Executables are seldom self-contained**
-— `cc` is `cc1`, a specs file, a libc, a linker, and a pile of headers — so naming
-one binary is a lie about what will run.
+Not a tag that resolves to an executable. **Executables are seldom self-contained** —
+`cc` is `cc1`, a specs file, a libc, a linker, and a pile of headers — so naming one
+binary is a lie about what will run.
 
-> A **command** is a **tool projected out of a closure**, plus a typed argv. Where
-> the closure came from is immaterial. What it must do is guarantee hermeticity.
+> A **command** is a **tool projected out of a closure**, plus a typed argv. Where the
+> closure came from is immaterial. What it must do is guarantee hermeticity.
 
 Two discharges, and they are `r[machine.capability.two-classes]` restated as a duty
 rather than a taxonomy:
 
-1. **Materialized** — a complete CAS description of every runtime dependency.
-   Portable to a machine that has never seen it. (`rustc` via a static rust-lang
-   build. This is why `two-classes` says rustc-class is "not deeply a capability at
+1. **Materialized** — a complete, content-addressed description of every runtime
+   dependency. Portable to a machine that has never seen it. (`rustc`, statically
+   built. This is why `two-classes` says rustc-class is "not deeply a capability at
    all": it is an *input*.)
-2. **Ambient** — it is on the local filesystem, and the daemon guarantees it does
-   not shift underneath us: **advertise ⇒ watch ⇒ poison** (`vix-spec` V28,
-   `r[machine.capability.poison-honored]`). For toolchains that are legally or
-   technically un-materializable: Xcode, MSVC.
+2. **Ambient** — it is on the local filesystem, and the daemon guarantees it does not
+   shift underneath you: **advertise ⇒ watch ⇒ poison**. Xcode, MSVC, the platform's
+   system libraries — things that cannot legally or technically be the first kind.
 
-A projection carries its closure. `c.cc` is not "the `cc` binary"; it is `cc`
-*within* `c`, and `c.cc` and `c.ar` cannot be paired across two `c`s. That is what
+A projection carries its closure. `rust.rustc` is not "the `rustc` binary"; it is
+`rustc` *within* `rust`. `c.cc` and a different toolchain's `c.ar` cannot be paired,
+because you cannot write it down. That is what
 `r[machine.primitive.exec-probed-toolchain]` means when it says the **toolchain's**
 probe output — not the tool's hash — enters exec identity.
 
-## The executable you just built
+## We are not Nix, and the difference is upstream of everything
 
-`crate.vix` tags a command with `build_script`, a **`String`**. That is wrong, and
-the shape it wants is the one already used for inputs:
+Nix packages *existing* software and plays by its rules. It may not change the
+software, so its only lever is the filesystem: `/nix/store/<hash>-name`, byte-identical
+on every machine on earth, so that a path baked into a binary resolves everywhere.
+That global immutable path is not an aesthetic. It is Nix's entire mechanism, and it
+is the price of not touching the source.
+
+**We maintain patch sets.** Software is patched to build correctly, and the patch set
+for GCC and Clang will not be empty. If a program `dlopen`s, it does so **from a path
+we arranged.**
+
+Which means the global path is not available to us and we do not need it:
+
+- **Unprivileged installations.** There is no `/nix` to create.
+- **The mount root differs** on Windows, Linux and macOS. Linux does not care about
+  this. We have to.
+
+So: **there is no stable global path.** An earlier draft of this note demanded one.
+That was Nix's answer to Nix's constraint, imported without its premise. We produce
+the binary, so we arrange its loader paths — and arranging them is not a hack, it is
+the product.
+
+## Nix is files-in, files-out, bash in the middle. We have types.
+
+We know a compiler emits an object file. We know a linker emits an executable. We
+know every input we handed over. And we are already in the business of parsing things
+and making sense of them.
+
+So the closure of a produced executable is not scanned out of its bytes by looking for
+a magic prefix. It is **analyzed**:
 
 ```
-Arg::Interpolation { tree, subpath }     // an input: a dependency edge wearing an argv costume
+ArtifactFacts {
+    format:  Elf | MachO | Pe,
+    needed:  [SoName],       // DT_NEEDED / LC_LOAD_DYLIB / import table
+    rpath:   [Path],         // RUNPATH, @rpath, ...
+    interp:  Option<Path>,
+    exports: [Symbol],
+    ...
+}
 ```
 
-If an interpolated path in an argv is a dependency edge, then **the executable
-position is the same edge, pointed at the program**. A produced executable is a
-`Tree` subpath married to a command grammar. Strong types for inputs; strong types
-for outputs.
+A typed value. It has a content hash. It enters the command's identity, and therefore
+the exec identity of anything that runs it.
 
-What that does not give us is the built binary's **runtime closure**. That is the
-open problem.
+This is not speculative: `vix/src/reloc_selection.rs` already parses Mach-O with the
+`object` crate — sections, symbols, relocation walks — to derive test selection from
+link inputs. Binary-snark, the Kaitai-shaped declarative dialect, is the same job said
+better.
 
-## What Nix does, and why
+## Turning a produced executable into a command
 
-Given an output, what must exist at runtime for it to work?
+> **A produced executable's command is a projection of the EXEC OUTCOME, not of the
+> tree.**
 
-Nix answers by **scanning the output's bytes for store paths**, because it cannot
-observe what the process did. It is an over-approximation of a quantity it has no
-way to measure. It works because `/nix/store/<hash>-name` is byte-identical on every
-machine on earth — so a path baked into a binary resolves everywhere.
+`tree / p"build_script"` is a `Blob`. It is bytes, and bytes cannot promise anything.
+The facts were gathered at the end, by the thing that produced it, so the command must
+come from there:
 
-That global, content-addressed path is not an aesthetic. It is the entire mechanism.
+```vix
+let built = exec rust.rustc`--crate-type bin {src}`;
+let cmd   = built.artifact p"build_script";   // carries ArtifactFacts + the closure
+exec cmd`--out-dir {out}`;
+```
 
-## What we can do instead — measure it
+Which answers the open question this note used to end on: **the closure obligation is a
+type.** A `Command` is not constructible from a bare path. `crate.vix` tagging a
+command with a `String` does not typecheck — not because we disapprove, but because a
+`String` never knew what it depended on.
 
-We observe reads (`r[machine.receipt.witness-reads]`: bytes are obtainable only
-through an accessor that records the read; absence is recorded too). So:
+## The read-set is necessary and not sufficient — and the gap is the invariant
 
-- **The link step's read-set** contains every shared object the linker opened. That
-  is the static closure, *observed* rather than inferred.
-- **The first run's read-set** contains every file the binary actually opened.
+We observe reads (`r[machine.receipt.witness-reads]`), so the linker's read-set names
+every shared object it opened **inside the VFS**.
 
-So the closure is discovered the way everything else here is: over-approximate at
-first (mount the producing exec's closure), run, observe, narrow, pin. The two-step
-dance, applied to a binary instead of to a build. And an undeclared read is a **loud
-failure**, where Nix's failure mode is "works on my machine, because `/usr/lib`
-happened to be visible."
+That is not everything. On Windows the linker reads, and creates dependencies on,
+system libraries that live outside the VFS entirely. Those reads cross no boundary we
+control, so no read-set will ever name them.
 
-**Honest residual.** A `dlopen` of a path assembled at runtime is in no read-set
-until it happens, and in no byte scan either — Nix catches it only when the path is a
-baked-in literal. Neither system catches `dlopen(prefix + name)`. Our first run
-discovers it and fails loudly, which is better than silence and is not the same as
-solving it.
+The artifact analysis names them. So the two measurements check each other:
 
-## THE BLOCKER: produced executables are not relocatable under the current mount design
+> **Every dynamic dependency of a produced artifact must be either (a) in the
+> producing exec's read-set — materialized, ours, identity known — or (b) covered by
+> an advertised ambient capability. Anything else is a hermeticity hole, and it is
+> detected at production time.**
 
-A binary carries an RPATH, an interpreter path, and often a data path **baked into
-its bytes**. Those strings must resolve on every machine that runs it.
+Nix detects that hole at *runtime*, on someone else's machine, as a missing shared
+object. We detect it the moment the linker finishes, because we know what we gave it
+and we can read what it produced.
 
-Today, `vx-vfsd` mounts inputs under **per-exec** prefixes —
-`/Volumes/Vixen/vfs/vx/<prefix_id>/…`, `prefix_id` minted per execution. A binary
-linked under that prefix has a path baked into it that is meaningless on the next
-run, let alone the next machine.
+That is the whole of the gloat, and it is narrow enough to be true.
 
-> **The VFS must present a stable, CONTENT-ADDRESSED namespace.** A blob's path is a
-> function of its identity, identical everywhere. Isolation comes from the
-> **sandbox** — which prefixes a process may read — never from the **namespace** —
-> which paths exist.
+## What analysis does not solve, and where it belongs instead
 
-Half of this is already the design ("isolation enforced by the sandbox"). The other
-half is not: the *naming* is per-exec, and it must not be.
+The **static** aspect is covered by the above. The **dynamic** aspect — plugins, a
+`dlopen` of a path assembled at runtime — is not, and no byte scan solves it either.
 
-Do that, and the runtime closure becomes: the set of content-addressed paths a
-process is permitted to read, discovered by observation, recorded in the receipt, and
-mounted by identity on the next machine. Nix's guarantee, derived from measurement
-instead of from scanning.
+It does not belong to analysis. It belongs to **the build files we provide per
+platform**: the recipe declares where plugins live, the closure includes that
+directory, and a `dlopen` outside it is an undeclared read — which is a **loud
+failure**, not a silent success on the machine where `/usr/lib` happened to be visible.
 
-## Open questions
+That is the honest division. We do not infer the dynamic aspect; we *arrange* it,
+because we are the ones patching the software.
 
-1. **Is the closure obligation a type or a check?** Can a `Command` be *constructed*
-   without a discharged closure, or is `Command` unconstructible until one of the two
-   discharges is supplied? (The first is a lint. The second is the language doing the
-   work — and it is the same instrument as "you may always drop a name; you must
-   always earn one.")
-2. **Per-exec prefixes bought two things**: cheap isolation and per-exec
-   `tracked_observations`. If the namespace becomes global and content-addressed, how
-   are observations attributed to an exec? (Probably: the sandbox's ACL *is* the
-   attribution. Confirm against the `vx-vfsd` contract.)
-3. **Ambient closures are not portable by construction.** An `exec` whose closure is
-   ambient can only be placed on a machine advertising that fingerprint. That is a
-   capability requirement in the sense of `r[machine.placement.capability-requirements-are-derived]`
-   — and it is the *only* thing that makes an exec unplaceable. Materialized closures
-   place anywhere. Is that the whole of the placement constraint?
-4. **`dlopen` of a computed path.** Accept (loud failure on first run), or require a
-   declaration for tools known to do it?
-5. What does a **fake capability** mean for a test (round 11: the harness forges
-   one)? A forged closure is a materialized closure over fixture blobs — so a forged
-   capability may be nothing more special than a `Tree`.
+## Open
+
+1. **Per-exec prefixes bought two things**: cheap isolation, and per-exec
+   `tracked_observations`. If loader paths are arranged by us rather than global, what
+   exactly is the mount layout, and does attribution come from the sandbox's ACL rather
+   than the namespace? (Guess: yes — the daemon knows which prefixes it granted this
+   exec. Confirm against the `vx-vfsd` contract, don't assume.)
+2. **Ambient closures may be the only thing that makes an exec unplaceable.** A
+   materialized closure is blobs; it places anywhere. An ambient one runs only where the
+   fingerprint is advertised. If that is the whole story,
+   `r[machine.placement.capability-requirements-are-derived]` collapses into
+   *placement is unconstrained except by ambient closures.*
+3. **What does a forged capability mean for a test?** (Round 11: the harness supplies
+   them.) A forged closure is a materialized closure over fixture blobs — so a forged
+   capability may be nothing more special than a `Tree` and its facts.
+4. **Patch-set provenance.** If we patch GCC, the patch is an input, the patched source
+   has an identity, and the toolchain's identity descends from it. Where do patch sets
+   live, and are they ordinary content-addressed inputs? (They should be. Say so.)

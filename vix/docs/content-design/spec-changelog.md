@@ -1054,3 +1054,61 @@ undeclared and is expected green. Logged in `vix/tests/ratchet/PORT-NOTES.md`.
 **Owed:** sweep the twelve `exec! { … }` rungs onto `#[test] fn f(sh: Sh)` + tagged
 templates; delete or re-diagnose rung 070; port `.get().unwrap()` error-raises in
 `crate.vix` to `fail`.
+
+### Round 11 addendum — commands, closures, and why we are not Nix
+
+- **A command is a tool projected out of a CLOSURE**, plus a typed argv. Not a tag
+  naming an executable: **executables are seldom self-contained** (`cc` is `cc1` + a
+  specs file + a libc + a linker + headers). A projection carries its closure, so
+  `c.cc` and another toolchain's `c.ar` cannot be paired — you cannot write it down.
+  This is `r[machine.primitive.exec-probed-toolchain]`'s "the TOOLCHAIN's probe output
+  enters exec identity", made structural.
+- **The closure obligation has exactly two discharges** (`r[machine.capability.two-classes]`
+  restated as a duty): **materialized** (complete CAS description of every runtime
+  dependency; portable to a machine that has never seen it) or **ambient** (on the
+  local filesystem, and the daemon guarantees it does not shift: advertise ⇒ watch ⇒
+  poison).
+- **CORRECTION: there is no stable global path, and we do not need one.** An earlier
+  draft demanded a Nix-style `/nix/store/<hash>` namespace so RPATHs would resolve
+  everywhere. That is Nix's answer to Nix's constraint, imported without its premise.
+  Amos: Nix packages EXISTING software and may not change it, so the immutable global
+  path is its only lever. **We maintain patch sets.** If a program `dlopen`s, it does
+  so from a path *we arranged*. And a global path is unavailable anyway: unprivileged
+  installations have no `/nix` to create, and the mount root differs on Windows, Linux
+  and macOS — Linux does not care about this; we have to.
+- **Nix is files-in, files-out, bash in the middle. We have types and parsers.** We
+  know a compiler emits an object file and a linker emits an executable. So a produced
+  executable's closure is **analyzed**, not scanned for a magic prefix:
+  `ArtifactFacts { format, needed, rpath, interp, exports }` — a typed value with a
+  content hash that enters the command's identity. Not speculative:
+  `vix/src/reloc_selection.rs` already parses Mach-O with `object` (sections, symbols,
+  relocation walks) for test selection. Binary-snark is the same job, said better.
+- **THE CLOSURE OBLIGATION IS A TYPE.** A produced executable's command is a projection
+  of the **exec outcome**, never of the tree:
+  ```vix
+  let built = exec rust.rustc`--crate-type bin {src}`;
+  exec (built.artifact p"build_script")`--out-dir {out}`;
+  ```
+  `tree / p"build_script"` is a `Blob` — bytes, which cannot promise anything. The
+  facts were gathered at the end, by the thing that produced it. `crate.vix` tagging a
+  command with a `String` does not typecheck, not because we disapprove but because a
+  `String` never knew what it depended on.
+- **The read-set is necessary and NOT sufficient**, and the gap is the invariant. On
+  Windows the linker creates dependencies on system libraries outside the VFS; no
+  read-set will ever name them. The artifact analysis does.
+  > Every dynamic dependency of a produced artifact must be either **(a)** in the
+  > producing exec's read-set (materialized, ours, identity known) or **(b)** covered
+  > by an advertised ambient capability. Anything else is a hermeticity hole, and it is
+  > **detected at production time.**
+  Nix detects that hole at *runtime*, on someone else's machine, as a missing shared
+  object. That is the whole of the gloat, and it is narrow enough to be true.
+- **The dynamic aspect is arranged, not inferred.** Plugins and `dlopen` of a
+  runtime-assembled path defeat analysis and byte-scanning alike. They belong in the
+  per-platform build files we provide: the recipe declares where plugins live, the
+  closure includes that directory, and a `dlopen` outside it is an undeclared read —
+  a loud failure, not a silent success.
+
+**Full note:** `/vix-design/runtime-closures`. Open there: mount layout and read
+attribution once loader paths are ours; whether ambient closures are the ONLY thing
+that makes an exec unplaceable; what a forged capability is for a test; and where
+patch sets live (they should be ordinary content-addressed inputs — say so).
