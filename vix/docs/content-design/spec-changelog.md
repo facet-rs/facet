@@ -924,3 +924,69 @@ first `exec cmd where { env: %{...} }`. Sweep: six rung files.
 - OPEN: does `p"…"` interpolate (following `"`), and does `p'…'` exist?
 - OWED: a mechanical sweep of `vix/corpus-next/*.vix` (`rustc! {`, `build_script! {`)
   and `vix/tests/ratchet/*.vix` (`exec! {`) onto the tagged-template form.
+
+### Round 10 — the critic pass (three seats, and what they cost)
+
+Three critics read the book, the spec, `SURFACE.md`, the design memos, and the four
+re-ported programs. All three found real defects. The pattern below matters more
+than any single fix.
+
+**THE PATTERN: a conclusion outliving its reason.** Named twice during the session,
+found three more times by the critics, and committed once *inside the fix for it*:
+
+1. `machine.identity.tier-not-in-hash` [SETTLED] asserted that a `Pending<T>` and
+   its realized value "share declared identity" — directly contradicting
+   `machine.identity.pending-identity`, eight lines below, which says they do not.
+   The round-5 reconciliation identified this exact clause as the two planes smeared
+   together and ordered it deleted. The sweep hit two of three sites. STRUCK now.
+2. `machine.identity.zero-padding` [SETTLED] still concluded "flat-byte hashing is
+   valid unconditionally" — the conclusion of `canonical-memory`, which is STRUCK,
+   and which `framed-encoding` [SETTLED] bans. Zero padding is hygiene. It licenses
+   no hashing. CORRECTED. The book's FOUNDATION chapter was teaching the struck
+   definition verbatim (`_index.md`: value identity as `(schema, blake3(memory))`).
+   CORRECTED.
+3. And the one that stings: an earlier round-10 commit "fixed" `carried-hasher`
+   resting on the OPEN `map-order-independence` by **removing the citation and
+   keeping the conclusion it had been citing it for**. Deleting a citation while
+   retaining what it justified is the same defect wearing a bandage. CORRECTED —
+   `carried-hasher` is now scoped to ordered aggregates and says nothing about maps.
+
+**THE MEMO HAD TWO INDEXES.** `machine.memo.demand-key` keys the memo by a digest
+over argument CONTENT hashes. `three-planes.md` argues, by name, that content-keying
+is the bug — "the content changed, the key changed, yesterday's entry is filed under
+a name we no longer know." Round 5 promised a location rule and never wrote it, so
+`placement.md`'s headline claim ("changing a file nobody read invalidates nothing")
+had nothing behind it. NEW: `r[machine.memo.indexed-by-location]`. The index is the
+location; `DemandKey` demotes to a **field of the entry**.
+
+**THE TOTALITY PROOF RESTED ON NOTHING.** `by_key(f)` is "total by construction,
+ties broken by the structural order of `x`" — true only if `x` has one, which the
+spec never defined for maps, sets, floats, closures, blobs, or recursive values.
+NEW: `r[machine.value.structural-order]`, with every base case. It forced two facts:
+**a stream is not a value** (so "every value is ordered" never included it), and
+`<=>` **must short-circuit on identity**, or `by_key(|x| x.big_tree)` is total and
+unusable.
+
+**`Check`'s phase partition had no type.** The harness must tell `expect_eq` from
+`never_demanded` and no signature said how. `Check` is a two-variant enum; trace
+checks take `Demand<T>` — which is what an undemanded expression already is.
+
+**THE CALLING CONVENTION WAS TAUGHT NOWHERE.** Zero grep hits for "named argument",
+"juxtaposition", "positional argument" across eight chapters — while five of eight
+wrote code that would not parse, including the capstone. NEW chapter `calling.md`
+(w7); `values.md`, `demand.md`, `testing.md`, `building-a-solver.md` swept onto it.
+
+**Smaller, all real.** `m[k]` on a map appeared in the capstone and exists nowhere
+else (book or 6,000 ported lines) — deleted. `.unwrap()` appears 135 times in the
+corpus and had no page — documented, as a typed demand failure. "Most things are
+streams" is refuted 16:1 by the corpus — the claim is now scoped to *nothing from
+outside arrives as an array*. Three voice violations stripped. And a fix committed
+during this session (generator streams keyed by yield-site ordinal) **collided under
+recursion** and contradicted `testing.md` in the same breath — re-keyed by location.
+
+**Exposed by the backtick sweep, unfixable without a ruling:** twelve rungs run
+processes with no capability (`exec! { echo … }`), and nothing says how a `#[test]`
+obtains one. Rung 070 exists to reject an undeclared capability — but under tagged
+templates that rejection **falls out of scoping** (an undeclared capability is an
+unbound identifier), and the ratchet contradicts itself: rung 067 runs `echo`
+undeclared and is expected green. Logged in `vix/tests/ratchet/PORT-NOTES.md`.
