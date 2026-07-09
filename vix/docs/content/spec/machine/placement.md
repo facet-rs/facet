@@ -59,20 +59,32 @@ Distinguish two boundaries that are easy to fuse and must not be:
 
 > r[machine.placement.capability-requirements-are-derived]
 >
-> [DESIGN, amended round 11] **Placement is unconstrained except by ambient closures.**
+> [DESIGN, amended round 12] Placement is constrained along **two independent axes**, and
+> an earlier draft of this rule collapsed them.
 >
-> A command is a tool projected out of a closure, and a closure is discharged in one of
-> two ways (`machine.capability.two-classes`). A **materialized** closure is a resolved
-> package graph — content-addressed blobs — so any node that can fetch can run it, and
-> it constrains placement not at all. An **ambient** closure (Xcode, MSVC, the platform's
-> system libraries) exists only where a daemon advertises its fingerprint, and that is
-> the ONLY thing that can make an exec unplaceable.
+> 1. **Execution-platform contract.** A tool is built for an ABI, an OS and an
+>    architecture. A content-addressed `x86_64-linux` binary is *materialized* everywhere
+>    and *executable* only on a node that can run `x86_64-linux`. **Materialization removes
+>    locality, not platform compatibility.** Both materialized and ambient closures impose
+>    this contract.
+> 2. **Host-specific locality.** Only **ambient** closures (Xcode, MSVC, the platform's
+>    system libraries) impose this: they exist solely where a daemon advertises their
+>    fingerprint, and the node holding them is the only node that can run them.
 >
-> The set of ambient closures reachable in a placed subgraph is syntactic (union over
-> branches, fixpoint over recursion), so the requirement is statically derivable — a
-> conservative over-approximation, costing perf and never correctness. Toolchain
-> identity is value-affecting and belongs in the semantic receipt; the machine that
-> hosted it does not.
+> So a materialized closure constrains placement to nodes *of its platform*; an ambient
+> closure constrains it to *one advertised host*. The earlier claim — "a materialized
+> closure constrains placement not at all" — was false, and would have let the scheduler
+> dispatch a Linux `rustc` to a Mac.
+>
+> The set of closures reachable in a placed subgraph is syntactic (union over branches,
+> fixpoint over recursion), so both requirements are statically derivable — a conservative
+> over-approximation, costing perf and never correctness. Toolchain identity is
+> value-affecting and belongs in the semantic receipt; the machine that hosted it does not.
+>
+> Note the asymmetry with the *target*: the platform a tool RUNS on is cost-model
+> (`no-in-program-steering`); the platform it BUILDS FOR is semantic. A cross-compiling
+> `x86_64-linux` rustc emitting `aarch64-darwin` objects satisfies an `x86_64-linux`
+> execution contract while producing a `aarch64-darwin` artifact.
 
 > r[machine.placement.trees-cross-as-grants]
 >

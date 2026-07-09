@@ -238,10 +238,13 @@ Two consequences, and both are simplifications.
 at all, which is `r[machine.capability.two-classes]` saying "rustc-class is not deeply a
 capability" and finally meaning something operational.
 
-**Placement is unconstrained except by ambient closures.** A materialized closure is
-blobs; any node that can fetch can run it. An ambient one runs only where the
-fingerprint is advertised. That is the whole of the placement constraint, and it
-collapses `r[machine.placement.capability-requirements-are-derived]` into one sentence.
+**Placement is constrained along two axes, and only one of them is about ambience.** A
+materialized closure is blobs, so any node that can fetch can *have* it — but an
+`x86_64-linux` binary still only *runs* on `x86_64-linux`. **Materialization removes
+locality, not platform compatibility.** Both kinds of closure impose an execution-platform
+contract; only ambient closures additionally pin you to one advertised host. (An earlier
+draft said a materialized closure "constrains placement not at all", which would have let
+the scheduler send a Linux `rustc` to a Mac.)
 
 ## The seed — and the people who already solved it are allies
 
