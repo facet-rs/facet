@@ -60,6 +60,12 @@ Every vix value supports `<=>` (three-way comparison) by construction. `<=>`
 subsumes the whole comparison family — `==`, `<`, `<=`, `>`, `>=` derive from it,
 so a type never defines them separately.
 
+Integers compare numerically, strings by scalar value, blobs bytewise, floats by
+IEEE total order with a canonical NaN, structs field-wise in declaration order,
+enums by variant position then payload, arrays and maps lexicographically. A
+comparison of two values with equal identity answers `Equal` without looking at
+them.
+
 A value orders by its fields, in declaration order. This is the value's
 **structural order**, it is total, and **nothing can replace it**: there is no way
 to define `<=>` for a type.
@@ -106,10 +112,13 @@ something — the files in a directory, the results of two hundred compiles runn
 at once.
 
 **A stream is not ordered.** Its elements arrive as they become available, and
-arrival order is a scheduling artifact, not a property of any value. A stream has
-no content hash, so it cannot be a record field, cannot be memoized, cannot be
-hashed. Its *elements* are ordinary values and are memoized individually; the
-aggregate isn't a value until you resolve it.
+arrival order is a scheduling artifact, not a property of any value.
+
+**A stream is not a value.** It has no content hash, so it cannot be a record
+field, a map key, or a thing you sort; it cannot be memoized and cannot be
+compared. When the last section said every value is ordered, it did not mean this.
+A stream's *elements* are ordinary values, memoized individually; the aggregate
+isn't a value until you `collect` it.
 
 **Every element carries its key** — where it came from.
 

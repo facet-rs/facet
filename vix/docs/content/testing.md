@@ -120,16 +120,32 @@ is what lets the harness report failures the instant they are known, and it is w
 a stream is not a lazy list.
 
 It also means a claim about the *whole run* cannot be evaluated where you wrote
-it. So `Check` is two things:
+it. So `Check` is two things, and it says so:
 
-- a **value check** — `expect_eq`, `expect_some` — demanded during the run.
-- a **trace check** — `never_demanded`, `overlapped`, `memo_hits_at_least` — a
-  claim about the completed run, demanded after it.
+```vix
+enum Check {
+    Value(ValueCheck),     // expect_eq, expect_some — demanded during the run
+    Trace(TraceCheck),     // never_demanded, overlapped — a claim about the finished run
+}
+```
 
-The harness drains the stream (which constructs every `Check` and demands
-nothing), demands the value checks, and only then demands the trace checks against
-the finished trace. **You never order them; the type does.** Yield them wherever
+The harness drains the stream — which constructs every `Check` and demands nothing
+— then demands the `Value` checks, and only then the `Trace` checks against the
+completed trace. **You never order them; the variant does.** Yield them wherever
 they read best.
+
+And that is what makes `never_demanded(expensive())` typecheck. A trace-check
+constructor does not take a `T`. It takes the *description* of a demand:
+
+```vix
+fn never_demanded<T>(d: Demand<T>) -> Check
+fn demanded_times<A, R>(f: fn(A) -> R, n: Int) -> Check
+```
+
+`Demand<T>` is what an un-demanded expression already is. Writing `expensive()` in
+argument position produces one; nothing else in the language needs to know, because
+nothing else can force it. `expect_eq(expensive(), 1)` takes `T`, so demanding that
+check forces both sides — which is exactly the difference between the two kinds.
 
 **Coming from Rust/Python/JS**: your generator resumes where it left off and
 yields in program order. This one does not. If you write code that depends on
