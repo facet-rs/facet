@@ -55,3 +55,11 @@ where the defense is observable — a ratchet rung. Innovation points may
 then be spent deliberately, latest possible, where the misbehavior is
 worst: the fold-order trap is currently the strongest candidate for
 spending one.
+- **Two `fold(sentinel, …)` searches, silently different order semantics**
+  (reader-seat find, index.vix port: two near-identical search folds 16
+  lines apart, one pre-reversing its input to preserve last-match
+  semantics, no visual marker). The idiom itself is the trap: order
+  intent is invisible in a bare fold. Defense candidates: `find_last` /
+  `find_map_rev` as named combinators (already demand-proven in the GAPS
+  files) so order intent lives in the name; the ledger rule is that a
+  bare fold doing a directional search is a smell once those names exist.
