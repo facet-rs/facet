@@ -1,4 +1,4 @@
-use vix::{Tree, Path, Version, VersionSet, Map};
+use vix::{Tree, Path, Version, VersionSet, Map, Set};
 
 struct CargoPackage {
     name: String,
@@ -183,6 +183,87 @@ struct SparseIndexDep {
     features: [String],
 }
 
+struct TakeStringsState {
+    values: [String],
+    remaining: Int,
+}
+
+struct TakeVersionsState {
+    values: [Version],
+    remaining: Int,
+}
+
+struct WorkspaceSelectedGuardClause {
+    state: WorkspaceIndexState,
+    parent_pkg: Int,
+    parent_version: String,
+    consequent_tag: String,
+    dep_pkg: Int,
+    req: VersionSet,
+    req_text: String,
+    kind: String,
+}
+
+struct WorkspaceSelectedFeatureClause {
+    state: WorkspaceIndexState,
+    parent_pkg: Int,
+    parent_version: String,
+    feature_pkg: Int,
+    feature: Int,
+    kind: String,
+}
+
+struct WorkspaceFeatureExpansionClause {
+    state: WorkspaceIndexState,
+    pkg: Int,
+    version: String,
+    guard_feature: Int,
+    feature_pkg: Int,
+    feature: Int,
+    kind: String,
+}
+
+struct WorkspaceRequiredDepClauses {
+    state: WorkspaceIndexState,
+    parent_pkg: Int,
+    parent_version: String,
+    dep_pkg: Int,
+    req: String,
+    kind: String,
+}
+
+struct SolutionUnitRow {
+    out: String,
+    package: String,
+    version: String,
+    target: CargoTargetShape,
+    profile: CargoUnitProfile,
+    features: String,
+    deps: String,
+}
+
+struct SolutionBinUnitsText {
+    package: String,
+    version: String,
+    bins: [CargoBinToml],
+    profile: CargoUnitProfile,
+    features: String,
+    deps: String,
+    out: String,
+}
+
+struct SolutionMemberUnitsText {
+    workspace: Tree,
+    workspace_root: Path,
+    package: String,
+    version: String,
+    manifest: Tree,
+    profile: CargoUnitProfile,
+    features: String,
+    deps: String,
+    out: String,
+}
+
 fn manifest_toml(manifest: Tree) -> CargoManifestToml {
     toml_decode((manifest / p"Cargo.toml").text())
 }
@@ -291,7 +372,10 @@ fn workspace_member_glob_pattern(member: String) -> String {
 
 fn workspace_members_from_entry(workspace: Tree, member: String) -> [String] {
     if member.contains("*") {
-        workspace.glob(workspace_member_glob_pattern(member)).map(member_from_manifest_path)
+        workspace.glob (workspace_member_glob_pattern(member))
+            .map member_from_manifest_path
+            .collect()
+            .values()
     } else {
         [member]
     }
@@ -447,13 +531,19 @@ fn feature_id(state: WorkspaceIndexState, pkg: Int, feature: String) -> Int {
     feature_id_opt(state, pkg, feature).unwrap()
 }
 
-fn register_feature(state: WorkspaceIndexState, pkg: Int, feature: String) -> WorkspaceIndexState {
+fn register_feature(state: WorkspaceIndexState) where { pkg: Int, feature: String, target: Option<String> = None } -> WorkspaceIndexState {
     let key = feature_key(state, pkg, feature);
     match state.feature_keys.get(key) {
-        Some(_) => state,
+        Some(_) => match target {
+            Some(expr) => WorkspaceIndexState {
+                feature_targets: state.feature_targets.insert(key, expr),
+                ..state
+            },
+            None => state,
+        },
         None => {
             let id = state.next_feature;
-            WorkspaceIndexState {
+            let state = WorkspaceIndexState {
                 feature_ids: [..state.feature_ids, id],
                 feature_keys: state.feature_keys.insert(key, id),
                 feature_pkgs: state.feature_pkgs.insert(id, pkg),
@@ -461,13 +551,20 @@ fn register_feature(state: WorkspaceIndexState, pkg: Int, feature: String) -> Wo
                 feature_enables: state.feature_enables.insert(id, ""),
                 next_feature: id + 1,
                 ..state
+            };
+            match target {
+                Some(expr) => WorkspaceIndexState {
+                    feature_targets: state.feature_targets.insert(key, expr),
+                    ..state
+                },
+                None => state,
             }
         },
     }
 }
 
 fn register_feature_names(pkg: Int, features: [String], state: WorkspaceIndexState) -> WorkspaceIndexState {
-    features.fold(state, |state, feature| register_feature(state, pkg, feature))
+    features.fold(state, |state, feature| register_feature state where { pkg, feature })
 }
 
 fn register_feature_enables(state: WorkspaceIndexState, pkg: Int, feature: String, enables: [String]) -> WorkspaceIndexState {
@@ -475,16 +572,6 @@ fn register_feature_enables(state: WorkspaceIndexState, pkg: Int, feature: Strin
     WorkspaceIndexState {
         feature_enables: state.feature_enables.insert(id, enables.join("\n")),
         ..state
-    }
-}
-
-fn register_feature_target(state: WorkspaceIndexState, pkg: Int, feature: String, target: Option<String>) -> WorkspaceIndexState {
-    match target {
-        Some(expr) => WorkspaceIndexState {
-            feature_targets: state.feature_targets.insert(feature_key(state, pkg, feature), expr),
-            ..state
-        },
-        None => state,
     }
 }
 
@@ -508,7 +595,8 @@ fn register_sparse_features(pkg: Int, row: SparseIndexRow, state: WorkspaceIndex
     let state = register_feature_names(pkg, row.features.keys(), state);
     let state = row.deps.fold(state, |state, dep| {
         if dep.optional {
-            register_feature(state, pkg, sparse_dep_package_name(dep))
+            let feature = sparse_dep_package_name(dep);
+            register_feature state where { pkg, feature }
         } else {
             state
         }
@@ -518,7 +606,9 @@ fn register_sparse_features(pkg: Int, row: SparseIndexRow, state: WorkspaceIndex
     });
     row.deps.fold(state, |state, dep| {
         if dep.optional {
-            register_feature_target(state, pkg, sparse_dep_package_name(dep), sparse_dep_target(dep))
+            let feature = sparse_dep_package_name(dep);
+            let target = sparse_dep_target(dep);
+            register_feature state where { pkg, feature, target }
         } else {
             state
         }
@@ -532,110 +622,103 @@ fn workspace_gate_targets_insert(gate_targets: Map<Int, String>, clause_id: Int,
     }
 }
 
-fn workspace_add_selected_guard_clause_target(state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, consequent_tag: String, dep_pkg: Int, req: VersionSet, req_text: String, kind: String, target: Option<String>) -> WorkspaceIndexState {
-    let clause_id = state.next_clause;
-    let guard_id = state.next_guard;
+fn workspace_add_selected_guard_clause(clause: WorkspaceSelectedGuardClause) where { target: Option<String> = None } -> WorkspaceIndexState {
+    let clause_id = clause.state.next_clause;
+    let guard_id = clause.state.next_guard;
     WorkspaceIndexState {
-        clause_ids: [..state.clause_ids, clause_id],
-        guard_ids: [..state.guard_ids, guard_id],
-        guard_clause_ids: state.guard_clause_ids.insert(guard_id, clause_id),
-        guard_tags: state.guard_tags.insert(guard_id, "selected"),
-        guard_kinds: state.guard_kinds.insert(guard_id, 0),
-        guard_pkgs: state.guard_pkgs.insert(guard_id, parent_pkg),
-        guard_version_values: state.guard_version_values.insert(guard_id, parent_version),
-        guard_features: state.guard_features.insert(guard_id, 0),
-        consequent_tags: state.consequent_tags.insert(clause_id, consequent_tag),
-        consequent_pkgs: state.consequent_pkgs.insert(clause_id, dep_pkg),
-        consequent_version_sets: state.consequent_version_sets.insert(clause_id, req),
-        consequent_req_texts: state.consequent_req_texts.insert(clause_id, req_text),
-        consequent_features: state.consequent_features.insert(clause_id, 0),
-        gate_kinds: state.gate_kinds.insert(clause_id, kind),
-        gate_targets: workspace_gate_targets_insert(state.gate_targets, clause_id, target),
+        clause_ids: [..clause.state.clause_ids, clause_id],
+        guard_ids: [..clause.state.guard_ids, guard_id],
+        guard_clause_ids: clause.state.guard_clause_ids.insert(guard_id, clause_id),
+        guard_tags: clause.state.guard_tags.insert(guard_id, "selected"),
+        guard_kinds: clause.state.guard_kinds.insert(guard_id, 0),
+        guard_pkgs: clause.state.guard_pkgs.insert(guard_id, clause.parent_pkg),
+        guard_version_values: clause.state.guard_version_values.insert(guard_id, clause.parent_version),
+        guard_features: clause.state.guard_features.insert(guard_id, 0),
+        consequent_tags: clause.state.consequent_tags.insert(clause_id, clause.consequent_tag),
+        consequent_pkgs: clause.state.consequent_pkgs.insert(clause_id, clause.dep_pkg),
+        consequent_version_sets: clause.state.consequent_version_sets.insert(clause_id, clause.req),
+        consequent_req_texts: clause.state.consequent_req_texts.insert(clause_id, clause.req_text),
+        consequent_features: clause.state.consequent_features.insert(clause_id, 0),
+        gate_kinds: clause.state.gate_kinds.insert(clause_id, clause.kind),
+        gate_targets: workspace_gate_targets_insert(clause.state.gate_targets, clause_id, target),
         next_clause: clause_id + 1,
         next_guard: guard_id + 1,
-        ..state
+        ..clause.state
     }
 }
 
-fn workspace_add_selected_guard_clause(state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, consequent_tag: String, dep_pkg: Int, req: VersionSet, req_text: String, kind: String) -> WorkspaceIndexState {
-    workspace_add_selected_guard_clause_target(state, parent_pkg, parent_version, consequent_tag, dep_pkg, req, req_text, kind, None)
-}
-
-fn workspace_add_selected_feature_clause_target(state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, feature_pkg: Int, feature: Int, kind: String, target: Option<String>) -> WorkspaceIndexState {
-    let clause_id = state.next_clause;
-    let guard_id = state.next_guard;
+fn workspace_add_selected_feature_clause(clause: WorkspaceSelectedFeatureClause) where { target: Option<String> = None } -> WorkspaceIndexState {
+    let clause_id = clause.state.next_clause;
+    let guard_id = clause.state.next_guard;
     WorkspaceIndexState {
-        clause_ids: [..state.clause_ids, clause_id],
-        guard_ids: [..state.guard_ids, guard_id],
-        guard_clause_ids: state.guard_clause_ids.insert(guard_id, clause_id),
-        guard_tags: state.guard_tags.insert(guard_id, "selected"),
-        guard_kinds: state.guard_kinds.insert(guard_id, 0),
-        guard_pkgs: state.guard_pkgs.insert(guard_id, parent_pkg),
-        guard_version_values: state.guard_version_values.insert(guard_id, parent_version),
-        guard_features: state.guard_features.insert(guard_id, 0),
-        consequent_tags: state.consequent_tags.insert(clause_id, "feature"),
-        consequent_pkgs: state.consequent_pkgs.insert(clause_id, feature_pkg),
-        consequent_version_sets: state.consequent_version_sets.insert(clause_id, VersionSet::from_req("*")),
-        consequent_req_texts: state.consequent_req_texts.insert(clause_id, "*"),
-        consequent_features: state.consequent_features.insert(clause_id, feature),
-        gate_kinds: state.gate_kinds.insert(clause_id, kind),
-        gate_targets: workspace_gate_targets_insert(state.gate_targets, clause_id, target),
+        clause_ids: [..clause.state.clause_ids, clause_id],
+        guard_ids: [..clause.state.guard_ids, guard_id],
+        guard_clause_ids: clause.state.guard_clause_ids.insert(guard_id, clause_id),
+        guard_tags: clause.state.guard_tags.insert(guard_id, "selected"),
+        guard_kinds: clause.state.guard_kinds.insert(guard_id, 0),
+        guard_pkgs: clause.state.guard_pkgs.insert(guard_id, clause.parent_pkg),
+        guard_version_values: clause.state.guard_version_values.insert(guard_id, clause.parent_version),
+        guard_features: clause.state.guard_features.insert(guard_id, 0),
+        consequent_tags: clause.state.consequent_tags.insert(clause_id, "feature"),
+        consequent_pkgs: clause.state.consequent_pkgs.insert(clause_id, clause.feature_pkg),
+        consequent_version_sets: clause.state.consequent_version_sets.insert(clause_id, VersionSet::from_req("*")),
+        consequent_req_texts: clause.state.consequent_req_texts.insert(clause_id, "*"),
+        consequent_features: clause.state.consequent_features.insert(clause_id, clause.feature),
+        gate_kinds: clause.state.gate_kinds.insert(clause_id, clause.kind),
+        gate_targets: workspace_gate_targets_insert(clause.state.gate_targets, clause_id, target),
         next_clause: clause_id + 1,
         next_guard: guard_id + 1,
-        ..state
+        ..clause.state
     }
 }
 
-fn workspace_add_selected_feature_clause(state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, feature_pkg: Int, feature: Int, kind: String) -> WorkspaceIndexState {
-    workspace_add_selected_feature_clause_target(state, parent_pkg, parent_version, feature_pkg, feature, kind, None)
-}
-
-fn workspace_add_feature_expansion_clause_target(state: WorkspaceIndexState, pkg: Int, version: String, guard_feature: Int, feature_pkg: Int, feature: Int, kind: String, target: Option<String>) -> WorkspaceIndexState {
-    let clause_id = state.next_clause;
-    let selected_guard = state.next_guard;
+fn workspace_add_feature_expansion_clause(clause: WorkspaceFeatureExpansionClause) where { target: Option<String> = None } -> WorkspaceIndexState {
+    let clause_id = clause.state.next_clause;
+    let selected_guard = clause.state.next_guard;
     let feature_guard = selected_guard + 1;
     WorkspaceIndexState {
-        clause_ids: [..state.clause_ids, clause_id],
-        guard_ids: [..state.guard_ids, selected_guard, feature_guard],
-        guard_clause_ids: state.guard_clause_ids.insert(selected_guard, clause_id).insert(feature_guard, clause_id),
-        guard_tags: state.guard_tags.insert(selected_guard, "selected").insert(feature_guard, "feature"),
-        guard_kinds: state.guard_kinds.insert(selected_guard, 0).insert(feature_guard, 2),
-        guard_pkgs: state.guard_pkgs.insert(selected_guard, pkg).insert(feature_guard, pkg),
-        guard_version_values: state.guard_version_values.insert(selected_guard, version),
-        guard_features: state.guard_features.insert(selected_guard, 0).insert(feature_guard, guard_feature),
-        consequent_tags: state.consequent_tags.insert(clause_id, "feature"),
-        consequent_pkgs: state.consequent_pkgs.insert(clause_id, feature_pkg),
-        consequent_version_sets: state.consequent_version_sets.insert(clause_id, VersionSet::from_req("*")),
-        consequent_req_texts: state.consequent_req_texts.insert(clause_id, "*"),
-        consequent_features: state.consequent_features.insert(clause_id, feature),
-        gate_kinds: state.gate_kinds.insert(clause_id, kind),
-        gate_targets: workspace_gate_targets_insert(state.gate_targets, clause_id, target),
+        clause_ids: [..clause.state.clause_ids, clause_id],
+        guard_ids: [..clause.state.guard_ids, selected_guard, feature_guard],
+        guard_clause_ids: clause.state.guard_clause_ids.insert(selected_guard, clause_id).insert(feature_guard, clause_id),
+        guard_tags: clause.state.guard_tags.insert(selected_guard, "selected").insert(feature_guard, "feature"),
+        guard_kinds: clause.state.guard_kinds.insert(selected_guard, 0).insert(feature_guard, 2),
+        guard_pkgs: clause.state.guard_pkgs.insert(selected_guard, clause.pkg).insert(feature_guard, clause.pkg),
+        guard_version_values: clause.state.guard_version_values.insert(selected_guard, clause.version),
+        guard_features: clause.state.guard_features.insert(selected_guard, 0).insert(feature_guard, clause.guard_feature),
+        consequent_tags: clause.state.consequent_tags.insert(clause_id, "feature"),
+        consequent_pkgs: clause.state.consequent_pkgs.insert(clause_id, clause.feature_pkg),
+        consequent_version_sets: clause.state.consequent_version_sets.insert(clause_id, VersionSet::from_req("*")),
+        consequent_req_texts: clause.state.consequent_req_texts.insert(clause_id, "*"),
+        consequent_features: clause.state.consequent_features.insert(clause_id, clause.feature),
+        gate_kinds: clause.state.gate_kinds.insert(clause_id, clause.kind),
+        gate_targets: workspace_gate_targets_insert(clause.state.gate_targets, clause_id, target),
         next_clause: clause_id + 1,
         next_guard: feature_guard + 1,
-        ..state
+        ..clause.state
     }
 }
 
-fn workspace_add_feature_expansion_clause(state: WorkspaceIndexState, pkg: Int, version: String, guard_feature: Int, feature_pkg: Int, feature: Int) -> WorkspaceIndexState {
-    workspace_add_feature_expansion_clause_target(state, pkg, version, guard_feature, feature_pkg, feature, "normal", None)
-}
-
-fn add_workspace_required_dep_clauses_target(state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, dep_pkg: Int, req: String, kind: String, target: Option<String>) -> WorkspaceIndexState {
-    workspace_add_selected_guard_clause_target(
-        workspace_add_selected_guard_clause_target(state, parent_pkg, parent_version, "in_graph", dep_pkg, VersionSet::from_req("*"), "*", kind, target),
-        parent_pkg,
-        parent_version,
-        "version_set",
-        dep_pkg,
-        VersionSet::from_req(req),
-        req,
-        kind,
-        target,
-    )
-}
-
-fn add_workspace_required_dep_clauses(state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, dep_pkg: Int, req: String, kind: String) -> WorkspaceIndexState {
-    add_workspace_required_dep_clauses_target(state, parent_pkg, parent_version, dep_pkg, req, kind, None)
+fn add_workspace_required_dep_clauses(args: WorkspaceRequiredDepClauses) where { target: Option<String> = None } -> WorkspaceIndexState {
+    let in_graph = workspace_add_selected_guard_clause WorkspaceSelectedGuardClause {
+        state: args.state,
+        parent_pkg: args.parent_pkg,
+        parent_version: args.parent_version,
+        consequent_tag: "in_graph",
+        dep_pkg: args.dep_pkg,
+        req: VersionSet::from_req("*"),
+        req_text: "*",
+        kind: args.kind,
+    } where { target };
+    workspace_add_selected_guard_clause WorkspaceSelectedGuardClause {
+        state: in_graph,
+        parent_pkg: args.parent_pkg,
+        parent_version: args.parent_version,
+        consequent_tag: "version_set",
+        dep_pkg: args.dep_pkg,
+        req: VersionSet::from_req(args.req),
+        req_text: args.req,
+        kind: args.kind,
+    } where { target }
 }
 
 fn workspace_member_package_name(state: WorkspaceIndexState, member: String) -> String {
@@ -652,18 +735,35 @@ fn workspace_member_pkg_ids(state: WorkspaceIndexState, members: [String]) -> [I
 
 fn add_workspace_root_member_clause(state: WorkspaceIndexState, member_pkg: Int) -> WorkspaceIndexState {
     let member_req = "=" + workspace_state_version_text(state, member_pkg);
-    let state = workspace_add_selected_guard_clause(
-        workspace_add_selected_guard_clause(state, 0, "0.0.0", "in_graph", member_pkg, VersionSet::from_req("*"), "*", "normal"),
-        0,
-        "0.0.0",
-        "version_set",
-        member_pkg,
-        VersionSet::from_req(member_req),
-        member_req,
-        "normal",
-    );
+    let state = workspace_add_selected_guard_clause WorkspaceSelectedGuardClause {
+        state,
+        parent_pkg: 0,
+        parent_version: "0.0.0",
+        consequent_tag: "in_graph",
+        dep_pkg: member_pkg,
+        req: VersionSet::from_req("*"),
+        req_text: "*",
+        kind: "normal",
+    };
+    let state = workspace_add_selected_guard_clause WorkspaceSelectedGuardClause {
+        state,
+        parent_pkg: 0,
+        parent_version: "0.0.0",
+        consequent_tag: "version_set",
+        dep_pkg: member_pkg,
+        req: VersionSet::from_req(member_req),
+        req_text: member_req,
+        kind: "normal",
+    };
     match feature_id_opt(state, member_pkg, "default") {
-        Some(default_feature) => workspace_add_selected_feature_clause(state, 0, "0.0.0", member_pkg, default_feature, "normal"),
+        Some(default_feature) => workspace_add_selected_feature_clause WorkspaceSelectedFeatureClause {
+            state,
+            parent_pkg: 0,
+            parent_version: "0.0.0",
+            feature_pkg: member_pkg,
+            feature: default_feature,
+            kind: "normal",
+        },
         None => state,
     }
 }
@@ -804,12 +904,16 @@ fn dependency_default_features(spec: CargoDependencySpec, workspace: Tree, name:
     }
 }
 
+fn string_set_from_array(values: [String]) -> Set<String> {
+    values.fold(%[], |set, value| set.insert(value))
+}
+
 fn append_string_unique(values: [String], value: String) -> [String] {
-    if values.contains(value) { values } else { [..values, value] }
+    string_set_from_array(values).insert(value).values()
 }
 
 fn append_strings_unique(values: [String], extra: [String]) -> [String] {
-    extra.fold(values, |values, value| append_string_unique(values, value))
+    extra.fold(string_set_from_array(values), |set, value| set.insert(value)).values()
 }
 
 fn dependency_features_inherited(spec: CargoDependencySpec, workspace: Tree, name: String, workspace_dep: Bool) -> [String] {
@@ -841,7 +945,8 @@ fn register_manifest_optional_dep_features(manifest: Tree, pkg: Int, names: [Str
     names.fold(state, |state, name| {
         let spec = dependency_spec(manifest, name, kind);
         if dependency_optional(spec) {
-            register_feature(state, pkg, dependency_package_name(spec, name))
+            let feature = dependency_package_name(spec, name);
+            register_feature state where { pkg, feature }
         } else {
             state
         }
@@ -878,7 +983,15 @@ fn add_local_feature_enable(pkg: Int, version: String, guard_feature: Int, enabl
         state
     } else {
         match feature_id_opt(state, pkg, local) {
-            Some(feature) => workspace_add_feature_expansion_clause(state, pkg, version, guard_feature, pkg, feature),
+            Some(feature) => workspace_add_feature_expansion_clause WorkspaceFeatureExpansionClause {
+                state,
+                pkg,
+                version,
+                guard_feature,
+                feature_pkg: pkg,
+                feature,
+                kind: "normal",
+            },
             None => state,
         }
     }
@@ -920,7 +1033,15 @@ fn add_sparse_dep_clause(parent_pkg: Int, parent_version: String, dep: SparseInd
     if sparse_dep_consumed(dep) {
         match state.package_ids.get(sparse_dep_package_name(dep)) {
             Some(dep_pkg) => {
-                let state = add_workspace_required_dep_clauses_target(state, parent_pkg, parent_version, dep_pkg, dep.req, dep.kind, sparse_dep_target(dep));
+                let target = sparse_dep_target(dep);
+                let state = add_workspace_required_dep_clauses WorkspaceRequiredDepClauses {
+                    state,
+                    parent_pkg,
+                    parent_version,
+                    dep_pkg,
+                    req: dep.req,
+                    kind: dep.kind,
+                } where { target };
                 add_dependency_requested_feature_clauses(state, parent_pkg, parent_version, dep_pkg, sparse_dep_requested_features(dep), dep.kind, sparse_dep_target(dep))
             },
             None => state,
@@ -951,7 +1072,18 @@ fn add_sparse_feature_enable(row: SparseIndexRow, pkg: Int, version: String, gua
         state
     } else {
         match feature_id_opt(state, pkg, local) {
-            Some(feature) => workspace_add_feature_expansion_clause_target(state, pkg, version, guard_feature, pkg, feature, "normal", sparse_feature_target(row, local)),
+            Some(feature) => {
+                let target = sparse_feature_target(row, local);
+                workspace_add_feature_expansion_clause WorkspaceFeatureExpansionClause {
+                    state,
+                    pkg,
+                    version,
+                    guard_feature,
+                    feature_pkg: pkg,
+                    feature,
+                    kind: "normal",
+                } where { target }
+            },
             None => state,
         }
     }
@@ -985,7 +1117,14 @@ fn add_dependency_requested_feature_clauses(state: WorkspaceIndexState, parent_p
         state
     };
     features.fold(state, |state, feature_name| match feature_id_opt(state, dep_pkg, feature_name) {
-        Some(feature) => workspace_add_selected_feature_clause_target(state, parent_pkg, parent_version, dep_pkg, feature, kind, target),
+        Some(feature) => workspace_add_selected_feature_clause WorkspaceSelectedFeatureClause {
+            state,
+            parent_pkg,
+            parent_version,
+            feature_pkg: dep_pkg,
+            feature,
+            kind,
+        } where { target },
         None => state,
     })
 }
@@ -999,7 +1138,14 @@ fn register_workspace_dep_name(workspace: Tree, manifest: Tree, state: Workspace
             if dependency_optional(spec) {
                 state
             } else {
-                let state = add_workspace_required_dep_clauses(state, parent_pkg, parent_version, dep_pkg, dependency_req_or_any(dependency_version_req(spec, workspace, dep_name, workspace_dep)), kind);
+                let state = add_workspace_required_dep_clauses WorkspaceRequiredDepClauses {
+                    state,
+                    parent_pkg,
+                    parent_version,
+                    dep_pkg,
+                    req: dependency_req_or_any(dependency_version_req(spec, workspace, dep_name, workspace_dep)),
+                    kind,
+                };
                 add_dependency_requested_feature_clauses(state, parent_pkg, parent_version, dep_pkg, dependency_requested_features(spec, workspace, dep_name, workspace_dep), kind, None)
             }
         },
@@ -1023,11 +1169,13 @@ fn register_workspace_direct_deps(workspace: Tree, workspace_root: Path, members
 }
 
 fn take_strings(values: [String], limit: Int) -> [String] {
-    values.enumerate()
-        .values()
-        .filter(|(index, _)| index < limit)
-        .sorted()
-        .map(|(_, value)| value)
+    values.fold(TakeStringsState { values: [], remaining: limit }, |state, value| {
+        if state.remaining > 0 {
+            TakeStringsState { values: [..state.values, value], remaining: state.remaining - 1 }
+        } else {
+            state
+        }
+    }).values
 }
 
 fn workspace_member_only_index_state_for_members(workspace: Tree, workspace_root: Path, members: [String]) -> WorkspaceIndexState {
@@ -1200,11 +1348,13 @@ fn workspace_candidate_text_take(index: Index, pkg: Int, candidates: [Version], 
 }
 
 fn take_versions(values: [Version], limit: Int) -> [Version] {
-    values.enumerate()
-        .values()
-        .filter(|(index, _)| index < limit)
-        .sorted()
-        .map(|(_, value)| value)
+    values.fold(TakeVersionsState { values: [], remaining: limit }, |state, value| {
+        if state.remaining > 0 {
+            TakeVersionsState { values: [..state.values, value], remaining: state.remaining - 1 }
+        } else {
+            state
+        }
+    }).values
 }
 
 fn workspace_member_direct_sparse_dep_candidate_text_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int, dep_name: String) -> String {
@@ -1662,40 +1812,64 @@ fn registry_profile() -> CargoUnitProfile {
     CargoUnitProfile { incremental: "false", ..workspace_profile() }
 }
 
-fn append_solution_unit_row(out: String, package: String, version: String, target: CargoTargetShape, profile: CargoUnitProfile, features: String, deps: String) -> String {
-    let row = package + "\t"
-        + version + "\t"
-        + target.name + "\t"
-        + target.kind + "\t"
-        + target.crate_type + "\t"
-        + target.source + "\t"
+fn append_solution_unit_row(row: SolutionUnitRow) -> String {
+    let text = row.package + "\t"
+        + row.version + "\t"
+        + row.target.name + "\t"
+        + row.target.kind + "\t"
+        + row.target.crate_type + "\t"
+        + row.target.source + "\t"
         + "build\t\t"
-        + features + "\t"
-        + profile.name + "\t"
-        + profile.opt_level + "\t"
-        + profile.lto + "\t"
-        + profile.codegen_backend + "\t"
-        + profile.codegen_units + "\t"
-        + profile.debuginfo + "\t"
-        + profile.split_debuginfo + "\t"
-        + profile.debug_assertions + "\t"
-        + profile.overflow_checks + "\t"
-        + profile.rpath + "\t"
-        + profile.incremental + "\t"
-        + profile.panic + "\t"
-        + profile.strip + "\t"
-        + deps;
-    if out == "" { row } else { out + "\n" + row }
+        + row.features + "\t"
+        + row.profile.name + "\t"
+        + row.profile.opt_level + "\t"
+        + row.profile.lto + "\t"
+        + row.profile.codegen_backend + "\t"
+        + row.profile.codegen_units + "\t"
+        + row.profile.debuginfo + "\t"
+        + row.profile.split_debuginfo + "\t"
+        + row.profile.debug_assertions + "\t"
+        + row.profile.overflow_checks + "\t"
+        + row.profile.rpath + "\t"
+        + row.profile.incremental + "\t"
+        + row.profile.panic + "\t"
+        + row.profile.strip + "\t"
+        + row.deps;
+    if row.out == "" { text } else { row.out + "\n" + text }
 }
 
-fn solution_bin_units_text(package: String, version: String, bins: [CargoBinToml], profile: CargoUnitProfile, features: String, deps: String, out: String) -> String {
-    bins.fold(out, |out, bin| append_solution_unit_row(out, package, version, bin_doc_target_shape(package, bin), profile, features, deps))
+fn solution_bin_units_text(args: SolutionBinUnitsText) -> String {
+    args.bins.fold(args.out, |out, bin| append_solution_unit_row SolutionUnitRow {
+        out,
+        package: args.package,
+        version: args.version,
+        target: bin_doc_target_shape(args.package, bin),
+        profile: args.profile,
+        features: args.features,
+        deps: args.deps,
+    })
 }
 
-fn solution_member_units_text(workspace: Tree, workspace_root: Path, package: String, version: String, manifest: Tree, profile: CargoUnitProfile, features: String, deps: String, out: String) -> String {
-    match manifest_toml(manifest).bin {
-        Some(bins) => solution_bin_units_text(package, version, bins, profile, features, deps, out),
-        None => append_solution_unit_row(out, package, version, manifest_lib_target(manifest), profile, features, deps),
+fn solution_member_units_text(args: SolutionMemberUnitsText) -> String {
+    match manifest_toml(args.manifest).bin {
+        Some(bins) => solution_bin_units_text SolutionBinUnitsText {
+            package: args.package,
+            version: args.version,
+            bins,
+            profile: args.profile,
+            features: args.features,
+            deps: args.deps,
+            out: args.out,
+        },
+        None => append_solution_unit_row SolutionUnitRow {
+            out: args.out,
+            package: args.package,
+            version: args.version,
+            target: manifest_lib_target(args.manifest),
+            profile: args.profile,
+            features: args.features,
+            deps: args.deps,
+        },
     }
 }
 
@@ -1707,9 +1881,32 @@ fn solution_units_text_for_selected_package(workspace: Tree, workspace_root: Pat
         solution_unit_features_text(state, result, pkg, target)
     };
     if member_path == "" {
-        append_solution_unit_row(out, state.names.get(pkg).unwrap(), version, registry_lib_target_shape(state.names.get(pkg).unwrap()), registry_profile(), features, solution_dep_names_text(state, index, result, pkg, target))
+        let package = state.names.get(pkg).unwrap();
+        let deps = solution_dep_names_text(state, index, result, pkg, target);
+        append_solution_unit_row SolutionUnitRow {
+            out,
+            package,
+            version,
+            target: registry_lib_target_shape(package),
+            profile: registry_profile(),
+            features,
+            deps,
+        }
     } else {
-        solution_member_units_text(workspace, workspace_root, state.names.get(pkg).unwrap(), version, member_manifest(workspace, workspace_root, member_path), workspace_profile(), features, solution_dep_names_text(state, index, result, pkg, target), out)
+        let package = state.names.get(pkg).unwrap();
+        let manifest = member_manifest(workspace, workspace_root, member_path);
+        let deps = solution_dep_names_text(state, index, result, pkg, target);
+        solution_member_units_text SolutionMemberUnitsText {
+            workspace,
+            workspace_root,
+            package,
+            version,
+            manifest,
+            profile: workspace_profile(),
+            features,
+            deps,
+            out,
+        }
     }
 }
 
