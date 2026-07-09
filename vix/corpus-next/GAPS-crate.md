@@ -51,13 +51,16 @@ expected to parse or run today.
   record. It is also painful in record-spread calls such as
   `vix/corpus-next/crate.vix:771`, where `..(manifest_rust_unit target where { ... })`
   is faithful but visually heavy.
-- `exec` needs to return at least: a `Tree` of files, stdout text, stderr or
-  diagnostics streams, exit status, and structured readiness/protocol events for
-  build-script stdout and rustc diagnostics. This file consumes the `Tree` for
-  artifacts and `out/`, consumes stdout as text for Cargo directives, and needs
-  failure/status to distinguish bad directives from bad processes. PROPOSAL: keep
-  returning `Tree` for now; design a process effect result that exposes stdout,
-  stderr/diagnostics, status, and tree without routing stdout through a fake file.
+- **RULED (round 12).** `exec` returns
+  `ExecOutcome { tree: Tree, stdout: Stream<Int,String>, stderr: Stream<Int,String> }`
+  (`r[machine.primitive.exec-outcome]`). `stdout`/`stderr` are codata fields — read them
+  while the process runs. **There is no exit status**, and asking for one was the wrong
+  request: an exit code is a naked `Int` where a typed outcome belongs. A nonzero exit is a
+  `fail` (`r[machine.primitive.exit-status-is-not-a-value]`), so "bad directives" (a parse
+  failure over `out.stdout`) and "bad processes" (a failed `exec`) are already distinct —
+  they are different demands, and each carries its own span and demand chain.
+  **STILL OPEN, and it blocks the `grep`-shaped case only**: how an *accepted* nonzero exit
+  becomes a typed result. `ExecOutcome` has nowhere to put it. This file does not need it.
 - Removing `Target::host()` forces target through three long chains:
   `crate_solution_bin* -> solution_unit_artifact -> solution_unit_built ->
   solution_{build_script,proc_macro} -> solution_compile_rust_unit`,
@@ -83,20 +86,29 @@ expected to parse or run today.
   {unit.target}` preserves target semantics, but the surface does not define
   `Target -> rustc target triple` rendering. PROPOSAL: add a `Target::rustc_triple`
   projection or a typed rustc target argument.
-- `vix/corpus-next/crate.vix:726`, `:881`, `:972`, and `:1255`: `tree_union` keeps
-  old array-to-tree union meaning because v2 only says `Tree = Map<Path, Blob>`.
-  PROPOSAL: ratify `Tree::union([Tree]) -> Tree` with duplicate-path semantics.
+- `vix/corpus-next/crate.vix:726`, `:881`, `:972`, and `:1255`: `tree_union` keeps the old
+  array-to-tree union meaning. **`Tree` is NOT `Map<Path, Blob>`**
+  (`r[machine.identity.tree-model]`): it is a recursive `Map<Name, TreeEntry>` over
+  `File { content: Blob, executable: Bool } | Dir(Tree) | Symlink { target }`.
+  PROPOSAL (still open): ratify `Tree::union([Tree]) -> Tree`, and state its semantics for
+  a **name collision across entry kinds** — file-over-dir, dir-over-symlink, and two files
+  with different `executable` bits. A flat-map union has nothing to say about any of those.
 - `vix/corpus-next/crate.vix:1268` and `:1289`: stream `filter_map` is used because
   this file naturally filters build-script units while mapping to artifacts.
   PROPOSAL: bank `Stream::filter_map` or document the `map Option` + `filter` +
   unwrap pattern.
-- `vix/corpus-next/crate.vix:1450` and `:1592`: stdout still has no home; both
-  build-script exec calls keep `--stdout {p"build.stdout"}` loudly. PROPOSAL:
-  resolve stdout in the effect model before changing this shape.
-- `vix/corpus-next/crate.vix:1397`: `build_script_env` still sets `HOST=` from
-  `target_name`, preserving the old fixture meaning but not modeling host as a
-  separate cost-plane input. PROPOSAL: make Cargo build-script env construction a
-  typed std helper that receives explicit semantic target and host-policy inputs.
+- **RESOLVED (round 12), re-port owed.** `crate.vix:1442` and `:1583` still carry
+  `--stdout {p"build.stdout"}` (and `rodin.vix:497` carries `--stdout {p"cfg.stdout"}`).
+  stdout **has a home**: `out.stdout`, a codata field. Delete the fake output file and the
+  `// GAP:` comments at `crate.vix:1441` and `:1582`.
+- `vix/corpus-next/crate.vix:1397`: `build_script_env` sets `HOST=` from `target_name`.
+  **HOST is not cost-plane.** Cargo's `HOST` is the *selected toolchain's execution ABI* — a
+  pinned semantic property of the toolchain, which enters exec identity
+  (`r[machine.primitive.exec-probed-toolchain]`) and constrains scheduler admissibility
+  (`r[machine.placement.capability-requirements-are-derived]`). What is cost-plane is the
+  **physical executor**, which no recipe may name. PROPOSAL: `build_script_env` takes the
+  semantic `target` and the acquired toolchain, and reads `HOST` off the toolchain — never
+  off the machine, and never off `target_name`.
 - `vix/corpus-next/crate.vix:1885`: proc-macro dynamic library naming still derives
   from the supplied target. PROPOSAL: expose Cargo/rustc proc-macro artifact naming
   instead of local OS matching.
@@ -147,32 +159,3 @@ different disguises — is now a thing you should never write. Queue item C3 is 
 See `/vix/errors`.
 
 
-## RESOLVED (round 12): `exec` has a return type, and stdout has a home
-
-`r[machine.primitive.exec-outcome]`:
-
-```vix
-struct ExecOutcome {
-    tree:   Tree,                 // recursive: files, dirs, symlinks, exec bits
-    stdout: Stream<Int, String>,  // codata, keyed by line number
-    stderr: Stream<Int, String>,
-}
-```
-
-- **`--stdout {p"build.stdout"}` (crate.vix:1214, :1306) is dead.** Read `out.stdout`.
-  The stream is codata: its semantic content is the value it drains to, so `ExecOutcome`
-  has an identity when the process ends while a reader consumes lines long before.
-- **There is no exit status field, and asking for one was the wrong request.** An exit code
-  is a naked `Int` where a typed outcome belongs. A nonzero exit is a **failure**
-  (`r[machine.primitive.exit-status-is-not-a-value]`); where a nonzero exit is a legitimate
-  answer — `grep` returning 1 — the **command grammar declares it**.
-- **`out.status == 0` checks are gone.** `exec cmd` succeeds or fails; `exec cmd?` gives
-  `Result<ExecOutcome, Failure>`.
-- **`Tree` is not `Map<Path, Blob>`** (`r[machine.identity.tree-model]`). It is a recursive
-  `Map<Name, TreeEntry>` over `File { content, size, executable } | Dir(Tree) |
-  Symlink { target }`. Any port that assumed a flat path→bytes map loses `mkdir -p`, every
-  symlink, and the executable bit.
-
-**Owed on this file:** re-port the two `--stdout` sites onto `out.stdout`; drop `.status`
-comparisons; and `build_script`'s command tag must become a projection of the producing
-exec's outcome, not a `String` (see `/vix-design/runtime-closures`).
