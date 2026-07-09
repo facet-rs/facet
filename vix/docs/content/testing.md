@@ -21,8 +21,8 @@ There is also no test-specific syntax. A test is an ordinary function.
 #[test]
 fn point_fields_are_independent() -> Stream<Check> {
     let p = Point { x: 3, y: 4 };
-    yield expect_eq p.x where { expected: 3 };
-    yield expect_eq Point { x: p.x, ..p } where { expected: p };
+    yield expect_eq(p.x, 3);
+    yield expect_eq(Point { x: p.x, ..p }, p);
 }
 ```
 
@@ -50,7 +50,7 @@ the harness, which stands outside the program, supplies it:
 #[test]
 fn exec_echo(sh: Sh) -> Stream<Check> {
     let out = exec sh`echo "hello ratchet"`;
-    yield expect_eq out.stdout.trim() where { expected: "hello ratchet" };
+    yield expect_eq(out.stdout.trim(), "hello ratchet");
 }
 ```
 
@@ -69,17 +69,16 @@ one.
 
 ```vix
 expect(cond: Bool) -> Check
-expect_eq(actual: T) where { expected: T } -> Check    // any T: everything is comparable
-expect_ne(actual: T) where { other: T } -> Check
+expect_eq(pair: (T, T)) -> Check         // any T: everything is comparable
+expect_ne(pair: (T, T)) -> Check
 expect_some(o: Option<T>) -> Check
 expect_none(o: Option<T>) -> Check
 expect_snapshot(v: T) where { name: String } -> Check
 ```
 
-At most one positional argument, so the value under test is the subject and the
-thing you compare it against is *named*. That settles, permanently, which side of
-an equality check is which — a question every test framework in history has
-answered by convention and lost.
+`expect_eq(a, b)` passes **one** argument — the tuple `(a, b)` — so at-most-one
+holds without ceremony. The two sides of an equality are the same kind of thing, and
+a tuple is what "the same kind of thing, in order" means.
 
 A failing `expect_eq` renders both sides — structurally, for any type, because
 every value is serializable; you never write a `Debug` impl to earn diagnostics.
@@ -106,7 +105,7 @@ language:
 #[test]
 fn partial_dependency_skips_expensive() -> Stream<Check> {
     let p = Point { x: cheap(), y: expensive() };
-    yield expect_eq (p.x + 1) where { expected: 42 };
+    yield expect_eq(p.x + 1, 42);
     yield never_demanded (expensive());
     yield demanded (cheap());
 }

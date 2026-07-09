@@ -41,3 +41,49 @@ the string `"unwrap on None"` and no location, no subject, no demand chain.
 > (comparator index out of bounds, post-force pending) — is a typed error or a
 > panic. It is never folded into a legitimate-miss or `Ok(false)` path.
 > (Twin of `machine.obs.loud-fallbacks`.)
+
+> r[machine.error.failure-is-a-value]
+>
+> [DESIGN, round 11] A failure **is a value**. It has a schema and a content hash
+> like anything else (`machine.identity.value-identity-pair`), so it can be stored,
+> memoized, put in a record, and returned. "The demand has no answer" is rhetoric;
+> the demand's answer is a `Failure`.
+>
+> A demand's memo entry therefore stores an **outcome**, not a result:
+> `Outcome<T> = Ok(T) | Failed(Failure)`. `fail e` has type `!` and typechecks
+> anywhere.
+>
+> **Propagation is a rule of the machine, not a property of the value.** Demanding a
+> value whose outcome is `Failed(f)` makes your outcome `Failed(f)` too, unless you
+> catch it with `?`. Poison is per-demand: of two hundred sibling compiles, one
+> failing poisons only what demanded it.
+
+> r[machine.error.chain-not-in-identity]
+>
+> [SETTLED, round 11 — forced by `failure-is-a-value`] The **demand chain is not part
+> of a failure's content identity.** A failure's identity is intrinsic:
+> `(payload, subject identity, source span)`. The chain is *context* — it names who
+> asked — and it differs per caller.
+>
+> Were the chain in the identity, the same failing computation demanded from two
+> places would be two different values, and the memo would never hit. The chain is
+> instead **reconstructed at the moment of observation**, by reading the live demand
+> map (round-5 verdict: "error demand-chain = read of live demand map at failure
+> time; no retention"). `machine.error.carries-context` is satisfied at the point of
+> report, not at the point of construction.
+
+> r[machine.error.failures-are-cached-and-cut-off]
+>
+> [DESIGN, round 11] Because a failure is a value and an outcome is memoized, a
+> failing demand is an ordinary memo entry — with its read-set.
+>
+> Consequences, and the second one is a product property nobody else has:
+>
+> 1. A build that failed yesterday fails **instantly** today, with the identical
+>    diagnostic, without rerunning the compiler.
+> 2. **Early cutoff applies to failures.** A failed compile depended on exactly the
+>    files its read-set names. Change anything outside that set — the README, an
+>    unrelated crate — and the failure is still valid, proven, and reported without
+>    recomputation. Change something inside it, and only then does the compiler run.
+>
+> A failure is not a special case of the memo. It is the memo, working.

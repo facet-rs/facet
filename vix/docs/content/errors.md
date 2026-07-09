@@ -6,8 +6,9 @@ weight = 22
 *Status: provisional — this page documents the language as designed; parts are
 not implemented yet.*
 
-A failure is not a value. It is the **absence** of one: a demand that has no
-answer, and can say why.
+A failure **is a value**. It has a schema and a content hash like everything else,
+so it can be stored, memoized, put in a record, and returned. What makes it a
+failure is not what it is — it's what the machine does when you demand it.
 
 ```vix
 fn require_key(m: Map<String, Version>) where { key: String } -> Version {
@@ -38,6 +39,20 @@ which demand it belonged to, which source span raised it, and what asked for it.
 `Err(String)` loses the address. Here, neither is possible — the address is not
 yours to omit.
 
+## A demand's answer is an outcome
+
+```vix
+Outcome<T> = Ok(T) | Failed(Failure)
+```
+
+That is what a memo entry holds. `fail e` has the type of nothing at all, so it
+typechecks wherever you write it, and the demand it's inside answers `Failed(f)`.
+
+**Propagation is a rule of the machine, not a property of the value.** Demanding
+something whose outcome is `Failed(f)` makes your outcome `Failed(f)` too — you
+wrote no symbol, and there is nothing to forget. That is why `?` is the operator
+that *stops* propagation rather than the one that performs it.
+
 ## Failure poisons what demanded it, and nothing else
 
 Nothing in vix evaluates until something demands it, so a failure spreads exactly
@@ -55,6 +70,35 @@ for the failed one are poisoned.
 So `vx build` reports one failure. `vx build --keep-going` reports all the
 failures the graph contains, because each is an independent demand — the same
 reason a test reports every check that fails rather than the first.
+
+## Failures are cached, and cut off early
+
+Because a failure is a value and an outcome is memoized, a failing demand is an
+ordinary memo entry — **with its read-set.**
+
+A build that failed yesterday fails *instantly* today, with the identical
+diagnostic, without running the compiler again.
+
+And early cutoff applies to failures. That failed compile depended on exactly the
+files its read-set names. Edit your README, or an unrelated crate, and the failure
+is still valid — proven by the read-set, reported without recomputation. Touch
+something the compiler actually read, and only then does it run.
+
+A failure is not a special case of the memo. It is the memo, working.
+
+## The chain is not in the value
+
+A failure carries its payload, its subject, and its source span. Those are
+intrinsic: they are what the failure *is*, and they go into its identity.
+
+The **demand chain** does not. It names who asked, and two callers of the same
+failing computation ask differently. Were the chain part of the identity, the same
+failure reached from two places would be two different values and the memo would
+never hit — the second caller would recompile a failure that was already known.
+
+So the chain is reconstructed when you look, by reading the live demand map. The
+failure is content; the chain is context; you always see both, and only one is
+hashed.
 
 ## `?` is the only way to see a failure from inside
 
@@ -98,8 +142,8 @@ result, with a derivation you want to print — that alternative is a value, and
 belongs in a `Result`. If there is nothing sensible to return, the demand has no
 answer, and `fail` says so.
 
-**`Option` is never an error channel.** Absence-as-failure erases the failure's
-address by construction: that is how a solve once came to fail with the string
+**`Option` is never an error channel.** `None` erases the failure's address by
+construction: that is how a solve once came to fail with the string
 `"unwrap on None"` and no location, no subject, and no demand chain.
 
 ## `unwrap` is a `fail`
