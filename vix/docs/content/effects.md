@@ -61,24 +61,34 @@ somewhere, and what they saw becomes the receipt's authority. They are not a
 
 > **An ambient read is an observation. An input is a pin.**
 
-## Capabilities are named, not opened
+## A command is a tool projected out of a closure
 
 ```vix
-let rustc = Rustc::acquire spec;
-let out   = exec rustc`--edition 2024 {src / p"lib.rs"}`;
+let rust = Rust::acquire spec;
+let out  = exec rust.rustc`--edition 2024 {src / p"lib.rs"}`;
 ```
 
-A **capability** is a toolchain, advertised by a machine, referenced by
-**identity** — `rustc -vV`, and the hash behind it. `Rustc::acquire spec` does not
-open a binary; nothing in a vix program evaluates, so it cannot. It *names* one.
+Executables are seldom self-contained. `cc` is `cc1`, a specs file, a libc, a
+linker, and a pile of headers — so naming one binary is a lie about what will run.
 
-That capability is the **tag** on the command. A command is not a free-floating
-string that happens to name a program; it is an argv addressed to a toolchain you
-have already pinned.
+A command therefore names a **tool projected out of a closure**, and the projection
+carries the closure with it. `rust.rustc` is not "the `rustc` binary"; it is `rustc`
+*within* `rust`. You cannot pair `c.cc` with a different toolchain's `c.ar`, because
+you cannot write it down.
 
-Which means a capability behaves exactly like a pinned blob: an identity that some
-machine may be able to materialize. If no machine can, demanding it fails, and it
-fails before anything has run.
+A closure guarantees hermeticity in exactly one of two ways:
+
+- **Materialized** — a complete, content-addressed description of every runtime
+  dependency. Portable to a machine that has never seen it. `rustc` is this: an
+  ordinary input, hashed like any other.
+- **Ambient** — it lives on the local filesystem, and the daemon guarantees it does
+  not shift underneath you: it advertises the toolchain, watches it, and **poisons**
+  everything downstream the moment it changes. Xcode and MSVC are this, because they
+  cannot legally be the first thing.
+
+Neither `Rust::acquire spec` nor a materialized closure opens a binary. Nothing in a
+vix program evaluates, so they cannot. They *name* one. If no machine can satisfy an
+ambient closure, the demand fails before anything has run.
 
 ## Reads are witnessed, and so are misses
 
