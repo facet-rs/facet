@@ -198,3 +198,35 @@ primitives reference by identity.
 > **command grammar declares it**. Grammars already type argv on the way in; they type the
 > exit status on the way out: which codes are outcomes, which are failures. An unrecognised
 > status fails. `$?` and its undocumented magic numbers do not exist.
+
+> r[machine.primitive.fetch-returns-a-blob]
+>
+> [DESIGN, round 12] **`fetch` returns a `Blob`, never a `Tree`.** An archive is a file.
+> Unpacking is a separate demand (`extract`), whose result is a `Tree` whose identity is
+> the canonical tree encoding (`machine.identity.tree-model`).
+>
+> **An archive-byte digest is not the resulting tree's digest.** Two archives differing in
+> compression, member order or timestamps may unpack to one tree: one `TreeHash`, two
+> `ContentHash`es. Conflating them would make the tree's identity depend on how somebody
+> chose to `tar`.
+
+> r[machine.primitive.fetch-integrity-vs-identity]
+>
+> [DESIGN, round 12] A fetch carries up to two hashes, and they do different jobs.
+>
+> - **`blake3` is the vix ContentHash** — the value's name, in the one identity space
+>   (`machine.identity.blake3`). Given it, the fetch resolves by identity: local store,
+>   peer, shared store, and only then the origin.
+> - **`sha256` (or any upstream digest) is an integrity and provenance check** on the bytes
+>   that actually arrive over the wire. It is what the CDN, registry or lockfile published.
+>   **It never becomes the value's identity.** A value must not be named in a hash family
+>   chosen by whoever happened to host it.
+>
+> A recipe MAY bake the canonical `blake3` even when upstream publishes only a `sha256`.
+> Both are then recorded in the receipt: the identity that named the value, and the
+> upstream claim that was verified against the transfer.
+>
+> Corollary: a fetch pinned ONLY by an upstream digest does not have a vix identity until
+> the bytes arrive, so **it cannot cross a `place` boundary**
+> (`machine.placement.identity-crosses`). That is the operational difference between the
+> two hashes, and it is why the `blake3` is worth baking.

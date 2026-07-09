@@ -91,17 +91,53 @@ years, `"…"` interpolates and `'…'` does not. Vix keeps all three.
 ## `fetch` names bytes it has never seen
 
 ```vix
-let tarball = fetch "https://static.crates.io/…" where { sha256: "9f3c…" };
+let tarball = fetch "https://static.crates.io/…" where {
+    blake3: "b1a4…",     // vix's identity for these bytes
+    sha256: "9f3c…",     // what upstream publishes; an integrity check, not an identity
+};
 ```
 
-A `fetch` is **pinned**. Its value identity is known *before* anything is
-evaluated, because the checksum is right there in the source. The URL is not the
-identity; it is a **provenance coordinate**, a hint about where the bytes might
-live.
+**`fetch` returns a `Blob`.** Bytes. Not a tree — an archive is a file, and unpacking it
+is a separate demand.
 
-So `fetch` does not necessarily fetch. Demanding `tarball` resolves an identity:
-the local store, a peer, a shared store, and only then the network. On a machine
-that saw this blob an hour ago, nothing is transferred and nothing is downloaded.
+A `fetch` is **pinned**: its value identity is known *before* anything is evaluated,
+because it is written in the source. The URL is not the identity; it is a **provenance
+coordinate**, a hint about where the bytes might live.
+
+### Two hashes, two jobs
+
+A `blake3` is vix's **content identity**: the name of the value, in the same identity
+space as every other value, resolvable from the local store, a peer, a shared store,
+and only then the network.
+
+A `sha256` is an **upstream integrity and provenance check**: it is what the CDN, the
+registry, or the `Cargo.lock` published, and it is checked against the bytes that arrive
+over the wire. It never becomes the value's identity, because vix's identity space is
+blake3 (`r[machine.identity.blake3]`), and because a value should not be named in a hash
+family chosen by whoever happened to host it.
+
+A recipe may bake the `blake3` even when upstream only publishes a `sha256`. Then the
+fetch resolves without touching the network on any machine that has the blob, and the
+`sha256` is verified only on the transfers that actually happen. Give only a `sha256`
+and the bytes must arrive before their vix identity is known — which is a **fetch that
+cannot cross a `place` boundary** (`machine.placement.identity-crosses`).
+
+### An archive's digest is not its tree's digest
+
+```vix
+let tarball = fetch url where { blake3: "b1a4…" };   // Blob
+let src     = extract tarball;                        // Tree — a different value
+```
+
+`extract` is an ordinary demand. Its result is a `Tree`, and a `Tree`'s identity is
+computed from the tree's canonical encoding — names, entry kinds, file contents,
+directories, symlinks, executable bits (`r[machine.identity.tree-model]`). **Nothing
+about the tarball's bytes appears in it.** Two archives with different compression, or
+different member order, that unpack to the same tree, have one tree identity and two
+blob identities. That is not a coincidence to exploit; it is the point.
+
+So `fetch` does not necessarily fetch. Demanding `tarball` resolves an identity. On a
+machine that saw this blob an hour ago, nothing is transferred and nothing is downloaded.
 
 Everything good about that follows from the pin, and the pin is what makes the
 value **verifiable by a stranger**. A machine you do not administer can hand you
