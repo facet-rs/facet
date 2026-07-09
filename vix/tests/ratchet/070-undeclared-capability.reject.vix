@@ -2,7 +2,8 @@
 //! at: 6
 
 // Rung 070 — using a tool without declaring its capability is loud. (effects)
-test undeclared_capability {
+#[test]
+fn undeclared_capability() -> Stream<Check> {
     let out = exec! { cc -o hello hello.c };
-    expect_eq(out.status, 0);
+    yield expect_eq(out.status, 0);
 }

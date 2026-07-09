@@ -1,8 +1,8 @@
-//! budget: 1s wall, 256MB rss
 
 // Rung 127 — effect fan-out through a combinator parallelizes: four
 // quarter-second sleeps inside one budget-second.
-test fanout_parallel {
+#[test { budget_wall: 1s, budget_rss: 256MB }]
+fn fanout_parallel() -> Stream<Check> {
     let outs = [1, 2, 3, 4].map(|n| exec! { sh -c "sleep 0.25; echo {n}" });
-    expect(outs.all(|o| o.status == 0));
+    yield expect(outs.all(|o| o.status == 0));
 }

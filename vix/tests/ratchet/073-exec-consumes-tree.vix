@@ -1,7 +1,8 @@
 // Rung 073 — an exec's argv references another step's output subfile:
 // a graph edge wearing an argv costume. (effects)
-test exec_consumes_tree {
+#[test]
+fn exec_consumes_tree() -> Stream<Check> {
     let tree = fixture_tree("small-crate");
     let out = exec! { wc -l {tree / "Cargo.toml"} };
-    expect_eq(out.status, 0);
+    yield expect_eq(out.status, 0);
 }

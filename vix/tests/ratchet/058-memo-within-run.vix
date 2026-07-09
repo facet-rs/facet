@@ -1,11 +1,11 @@
 // Rung 058 — one demand key, one computation: sharing within a run.
 fn costly(n: Int) -> Int { n * 1000 }
 
-test memo_within_run {
+#[test]
+fn memo_within_run() -> Stream<Check> {
     let a = costly(7);
     let b = costly(7);
-    expect_eq(a, b);
-    expect_eq(a + b, 14000);
-} expecting {
-    demanded_once costly;
+    yield expect_eq(a, b);
+    yield expect_eq(a + b, 14000);
+    yield demanded_once(costly());
 }

@@ -1,11 +1,13 @@
 // Rung 089 — solve a two-package world with no conflicts.
-test mini_solve_trivial {
-    let solution = mini_solve(fixture_index(), %{}.insert("liba", parse_req("^1.0")));
-    match solution {
+#[test]
+fn mini_solve_trivial() -> Stream<Check> {
+    let reqs = %{"liba" => parse_req("^1.0")};
+    let solution = mini_solve(fixture_index()) where { requirements: reqs };
+    yield match solution {
         Some(sel) => {
-            expect_eq(sel.get("liba"), Some(parse_version("1.3.0")));
-            expect_some(sel.get("libb"));
+            yield expect_eq(sel.get("liba"), Some(parse_version("1.3.0")));
+            yield expect_some(sel.get("libb"));
         },
         None => expect(false),
-    }
+    };
 }

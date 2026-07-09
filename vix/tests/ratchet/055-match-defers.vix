@@ -3,12 +3,12 @@ enum Mode { Quick, Full }
 fn cheap_summary() -> String { "ok" }
 fn full_audit() -> String { "everything" }
 
-test match_defers {
+#[test]
+fn match_defers() -> Stream<Check> {
     let report = match Mode::Quick {
         Mode::Quick => cheap_summary(),
         Mode::Full => full_audit(),
     };
-    expect_eq(report, "ok");
-} expecting {
-    never_demanded full_audit;
+    yield expect_eq(report, "ok");
+    yield never_demanded(full_audit());
 }

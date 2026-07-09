@@ -7,8 +7,9 @@ fn describe(pair: (Int, Int)) -> String {
     }
 }
 
-test match_destructuring {
-    expect_eq(describe((0, 0)), "origin");
-    expect_eq(describe((3, 3)), "diagonal");
-    expect_eq(describe((1, 2)), "elsewhere");
+#[test]
+fn match_destructuring() -> Stream<Check> {
+    yield expect_eq(describe((0, 0)), "origin");
+    yield expect_eq(describe((3, 3)), "diagonal");
+    yield expect_eq(describe((1, 2)), "elsewhere");
 }

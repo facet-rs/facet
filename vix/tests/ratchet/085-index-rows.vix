@@ -2,9 +2,10 @@
 struct IndexRow { name: String, vers: String, deps: [RowDep], yanked: Bool }
 struct RowDep { name: String, req: String, optional: Bool }
 
-test index_rows {
+#[test]
+fn index_rows() -> Stream<Check> {
     let rows = fixture_index().rows("libb");
-    expect_eq(rows.len(), 3);
-    let newest = rows.values().sorted_by(|a, b| parse_version(a.vers) <=> parse_version(b.vers));
-    expect_eq(newest[2].vers, "2.0.0");
+    yield expect_eq(rows.len(), 3);
+    let newest = rows.values().sorted where { order: by_key(|row| parse_version(row.vers)) };
+    yield expect_eq(newest[2].vers, "2.0.0");
 }

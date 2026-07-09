@@ -2,8 +2,9 @@
 //! at: 6
 
 // Rung 047 — no free String→Path cast: paths trace to a grant. (paths doctrine)
-test no_string_to_path {
+#[test]
+fn no_string_to_path() -> Stream<Check> {
     let s = "/etc/passwd";
     let p: Path = s;
-    expect(true);
+    yield expect(true);
 }

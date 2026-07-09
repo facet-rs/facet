@@ -4,15 +4,16 @@ enum DepSpec {
     Detailed { version: Option<String>, optional: Bool },
 }
 
-test decode_enum_forms {
+#[test]
+fn decode_enum_forms() -> Stream<Check> {
     let simple: DepSpec = json_decode("\"^1.2\"");
-    expect_eq(simple, DepSpec::Req("^1.2"));
+    yield expect_eq(simple, DepSpec::Req("^1.2"));
     let detailed: DepSpec = json_decode("{\"version\":\"^2.0\",\"optional\":true}");
-    match detailed {
+    yield match detailed {
         DepSpec::Detailed { version, optional } => {
-            expect_eq(version, Some("^2.0"));
-            expect(optional);
+            yield expect_eq(version, Some("^2.0"));
+            yield expect(optional);
         },
         DepSpec::Req(_) => expect(false),
-    }
+    };
 }

@@ -4,8 +4,9 @@
 // module boundaries (the thing the old corpus couldn't do).
 import geometry::{Point, magnitude_sq};
 
-test import_std {
+#[test]
+fn import_std() -> Stream<Check> {
     let points = [Point { x: 1, y: 0 }, Point { x: 3, y: 4 }, Point { x: 0, y: 2 }];
-    let sizes = points.map(magnitude_sq).values().sorted();
-    expect_eq(sizes, [1, 4, 25]);
+    let sizes = points.map(magnitude_sq).sorted();
+    yield expect_eq(sizes, [1, 4, 25]);
 }

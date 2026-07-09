@@ -1,7 +1,8 @@
 // Rung 015 — ||, &&, ! as ordinary boolean operators.
-test boolean_operators {
-    expect(true || false);
-    expect(!(false && true));
-    expect_eq(!true, false);
-    expect((1 < 2) || (2 < 1));
+#[test]
+fn boolean_operators() -> Stream<Check> {
+    yield expect(true || false);
+    yield expect(!(false && true));
+    yield expect_eq(!true, false);
+    yield expect((1 < 2) || (2 < 1));
 }

@@ -3,4 +3,7 @@
 
 // Rung 117 — unknown enum variant.
 enum Light { Red, Green }
-test t { expect_eq(Light::Blue, Light::Red); }
+#[test]
+fn t() -> Stream<Check> {
+    yield expect_eq(Light::Blue, Light::Red);
+}

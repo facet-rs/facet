@@ -1,5 +1,6 @@
 // Rung 068 — a failing process is a receipted result, not an exception.
-test exec_failure_is_result {
+#[test]
+fn exec_failure_is_result() -> Stream<Check> {
     let out = exec! { false };
-    expect_ne(out.status, 0);
+    yield expect_ne(out.status, 0);
 }

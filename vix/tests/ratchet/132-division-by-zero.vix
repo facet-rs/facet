@@ -3,10 +3,9 @@
 // failure; the test passes when the failure is right.
 fn risky(n: Int) -> Int { 100 / n }
 
-test division_by_zero {
-    expect_eq(risky(4), 25);
+#[test]
+fn division_by_zero() -> Stream<Check> {
+    yield expect_eq(risky(4), 25);
     let boom = risky(0);
-    expect_eq(boom, 0);
-} expecting {
-    failed_with "division by zero";
+    yield failed_with(boom, "division by zero");
 }

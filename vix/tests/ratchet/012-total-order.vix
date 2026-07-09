@@ -1,7 +1,8 @@
 // Rung 012 — ordering is total and structural across composite values.
 struct V { major: Int, minor: Int }
 
-test total_order {
-    expect(V { major: 1, minor: 9 } < V { major: 2, minor: 0 });
-    expect_eq(V { major: 1, minor: 2 } <=> V { major: 1, minor: 2 }, Ordering::Equal);
+#[test]
+fn total_order() -> Stream<Check> {
+    yield expect(V { major: 1, minor: 9 } < V { major: 2, minor: 0 });
+    yield expect_eq(V { major: 1, minor: 2 } <=> V { major: 1, minor: 2 }, Ordering::Equal);
 }

@@ -1,8 +1,9 @@
 // Rung 029 — fold over an array runs in field order.
-test array_fold {
+#[test]
+fn array_fold() -> Stream<Check> {
     let xs = [1, 2, 3, 4];
-    expect_eq(xs.fold(0, |acc, n| acc + n), 10);
-    expect_eq(xs.fold("", |acc, n| acc + "|"), "||||");
+    yield expect_eq(xs.fold(0, |acc, n| acc + n), 10);
+    yield expect_eq(xs.fold("", |acc, n| acc + "|"), "||||");
     let order_sensitive = ["a", "b", "c"].fold("", |acc, s| acc + s);
-    expect_eq(order_sensitive, "abc");
+    yield expect_eq(order_sensitive, "abc");
 }

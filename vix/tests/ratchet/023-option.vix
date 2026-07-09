@@ -1,14 +1,17 @@
 // Rung 023 — Option construction and matching.
-fn checked_div(a: Int, b: Int) -> Option<Int> {
+fn checked_div(a: Int) where { b: Int } -> Option<Int> {
     if b == 0 { None } else { Some(a / b) }
 }
 
-test option {
-    expect_some(checked_div(10, 2));
-    expect_none(checked_div(1, 0));
-    let doubled = match checked_div(10, 2) {
+#[test]
+fn option() -> Stream<Check> {
+    let quotient = checked_div(10) where { b: 2 };
+    let zero_div = checked_div(1) where { b: 0 };
+    yield expect_some(quotient);
+    yield expect_none(zero_div);
+    let doubled = match quotient {
         Some(n) => n * 2,
         None => 0,
     };
-    expect_eq(doubled, 10);
+    yield expect_eq(doubled, 10);
 }

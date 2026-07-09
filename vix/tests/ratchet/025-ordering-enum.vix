@@ -1,5 +1,5 @@
 // Rung 025 — Ordering is an ordinary enum: match on comparison results.
-fn describe(a: Int, b: Int) -> String {
+fn describe(a: Int) where { b: Int } -> String {
     match a <=> b {
         Ordering::Less => "ascending",
         Ordering::Equal => "same",
@@ -7,7 +7,10 @@ fn describe(a: Int, b: Int) -> String {
     }
 }
 
-test ordering_enum {
-    expect_eq(describe(1, 2), "ascending");
-    expect_eq(describe(5, 5), "same");
+#[test]
+fn ordering_enum() -> Stream<Check> {
+    let ascending = describe(1) where { b: 2 };
+    let same = describe(5) where { b: 5 };
+    yield expect_eq(ascending, "ascending");
+    yield expect_eq(same, "same");
 }

@@ -1,8 +1,9 @@
 // Rung 052 — functions as arguments and results.
 fn twice(f: fn(Int) -> Int) -> fn(Int) -> Int { |n| f(f(n)) }
 
-test higher_order {
+#[test]
+fn higher_order() -> Stream<Check> {
     let add2 = twice(|n| n + 1);
-    expect_eq(add2(40), 42);
-    expect_eq([1, 2].map(twice(|n| n * 10)), [100, 200]);
+    yield expect_eq(add2(40), 42);
+    yield expect_eq([1, 2].map(twice(|n| n * 10)), [100, 200]);
 }

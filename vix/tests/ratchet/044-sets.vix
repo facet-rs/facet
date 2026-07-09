@@ -1,8 +1,9 @@
 // Rung 044 — Set<T>: membership without Map<T, Bool> workarounds.
-test sets {
-    let s: Set<Int> = %{}.insert(3).insert(1).insert(3);
-    expect_eq(s.len(), 2);
-    expect(s.contains(3));
-    expect(!s.contains(2));
-    expect_eq(s.values().sorted(), [1, 3]);
+#[test]
+fn sets() -> Stream<Check> {
+    let s: Set<Int> = %[3, 1, 3];
+    yield expect_eq(s.len(), 2);
+    yield expect(s.contains(3));
+    yield expect(!s.contains(2));
+    yield expect_eq(s.keys().sorted(), [1, 3]);
 }

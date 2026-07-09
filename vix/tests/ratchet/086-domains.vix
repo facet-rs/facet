@@ -5,9 +5,10 @@ fn init_state(reqs: Map<String, VersionSet>) -> State {
     State { domains: reqs, selected: %{} }
 }
 
-test domains {
-    let reqs = %{}.insert("liba", parse_req("^1.0")).insert("libb", parse_req("^2.0"));
+#[test]
+fn domains() -> Stream<Check> {
+    let reqs = %{"liba" => parse_req("^1.0"), "libb" => parse_req("^2.0")};
     let s = init_state(reqs);
-    expect_eq(s.domains.len(), 2);
-    expect(s.domains.get("liba").unwrap().contains(parse_version("1.3.0")));
+    yield expect_eq(s.domains.len(), 2);
+    yield expect(s.domains.get("liba").unwrap().contains(parse_version("1.3.0")));
 }

@@ -1,7 +1,8 @@
 // Rung 135 — string canonical order is by Unicode scalar values:
 // deterministic, locale-free, not byte-shuffled by encoding accidents.
-test string_order_codepoints {
-    expect("Z" < "a");                       // 0x5A < 0x61
-    expect("a" < "é");                       // 0x61 < 0xE9
-    expect_eq(["é", "a", "Z"].values().sorted(), ["Z", "a", "é"]);
+#[test]
+fn string_order_codepoints() -> Stream<Check> {
+    yield expect("Z" < "a");                       // 0x5A < 0x61
+    yield expect("a" < "é");                       // 0x61 < 0xE9
+    yield expect_eq(["é", "a", "Z"].sorted(), ["Z", "a", "é"]);
 }

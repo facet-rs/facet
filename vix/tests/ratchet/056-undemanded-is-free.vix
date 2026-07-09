@@ -2,10 +2,10 @@
 fn cheap() -> Int { 1 }
 fn landmine() -> Int { 1 / 0 }
 
-test undemanded_is_free {
+#[test]
+fn undemanded_is_free() -> Stream<Check> {
     let useful = cheap();
     let unused = landmine();
-    expect_eq(useful, 1);
-} expecting {
-    never_demanded landmine;
+    yield expect_eq(useful, 1);
+    yield never_demanded(landmine());
 }

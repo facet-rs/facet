@@ -2,10 +2,11 @@
 struct Point { x: Int, y: Int }
 struct Line { a: Point, b: Point }
 
-test structural_equality {
+#[test]
+fn structural_equality() -> Stream<Check> {
     let l1 = Line { a: Point { x: 0, y: 0 }, b: Point { x: 1, y: 1 } };
     let l2 = Line { a: Point { x: 0, y: 0 }, b: Point { x: 1, y: 1 } };
-    expect_eq(l1, l2);
-    expect(l1 == l2);
-    expect(!(l1 == Line { a: l1.b, b: l1.a }));
+    yield expect_eq(l1, l2);
+    yield expect(l1 == l2);
+    yield expect(!(l1 == Line { a: l1.b, b: l1.a }));
 }

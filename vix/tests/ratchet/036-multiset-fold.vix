@@ -1,8 +1,9 @@
-// Rung 036 — multiset fold runs in canonical order: deterministic,
+// Rung 036 — canonical fold sorts stream values before folding: deterministic,
 // and NOT source order. (collections.md, the entry with teeth)
-test multiset_fold {
-    let ms = ["c", "a", "b"].values();
-    expect_eq(ms.fold_ascending("", |acc, s| acc + s), "abc");
-    let sum = [3, 1, 2].values().fold_ascending(0, |acc, n| acc + n);
-    expect_eq(sum, 6);
+#[test]
+fn multiset_fold() -> Stream<Check> {
+    let ms = ["c", "a", "b"].stream();
+    yield expect_eq(ms.collect().values().sorted().fold("", |acc, s| acc + s), "abc");
+    let sum = [3, 1, 2].stream().collect().values().sorted().fold(0, |acc, n| acc + n);
+    yield expect_eq(sum, 6);
 }

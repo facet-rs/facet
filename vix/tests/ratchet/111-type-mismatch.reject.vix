@@ -3,4 +3,7 @@
 
 // Rung 111 — type mismatch names both types and points at the argument.
 fn double(n: Int) -> Int { n * 2 }
-test t { expect_eq(double("two"), 4); }
+#[test]
+fn t() -> Stream<Check> {
+    yield expect_eq(double("two"), 4);
+}

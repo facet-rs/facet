@@ -1,9 +1,8 @@
 // Rung 133 — Int is 64-bit and overflow is a typed failure, not a wrap.
-test overflow_checked {
+#[test]
+fn overflow_checked() -> Stream<Check> {
     let big = 9223372036854775807;      // i64::MAX
-    expect_eq(big - 1 + 1, big);
+    yield expect_eq(big - 1 + 1, big);
     let boom = big + 1;
-    expect_eq(boom, 0);
-} expecting {
-    failed_with "overflow";
+    yield failed_with(boom, "overflow");
 }

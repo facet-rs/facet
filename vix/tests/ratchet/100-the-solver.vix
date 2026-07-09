@@ -1,4 +1,3 @@
-//! budget: 30s wall, 2GB rss
 
 // Rung 100 — the last rung: the miniature solver from the book's final
 // chapter, whole, on one page. Domains, propagation, selection,
@@ -8,15 +7,16 @@
 struct State {
     domains: Map<String, VersionSet>,
     selected: Map<String, Version>,
-    learned: Multiset<NoGood>,
+    learned: Set<NoGood>,
 }
 struct NoGood { pkg: String, region: VersionSet }
 enum Step { Pass(State), Conflict(NoGood) }
 enum Outcome { Solved(Map<String, Version>), Exhausted(NoGood) }
 
-fn propagate(s: State, pkg: String, version: Version) -> Step {
-    fixture_index().row(pkg, version).deps.values().fold_ascending(
-        Step::Pass(State { selected: s.selected.insert(pkg, version), ..s }),
+fn propagate(s: State) where { pkg: String, version: Version } -> Step {
+    let row = fixture_index().row(pkg) where { version };
+    row.deps.values().fold(
+        Step::Pass(State { selected: s.selected.insert(pkg) where { value: version }, ..s }),
         |step, dep| match step {
             Step::Conflict(ng) => Step::Conflict(ng),
             Step::Pass(st) => {
@@ -28,14 +28,14 @@ fn propagate(s: State, pkg: String, version: Version) -> Step {
                 if narrowed.is_empty() {
                     Step::Conflict(NoGood { pkg: dep.name, region: dom })
                 } else {
-                    Step::Pass(State { domains: st.domains.insert(dep.name, narrowed), ..st })
+                    Step::Pass(State { domains: st.domains.insert(dep.name) where { value: narrowed }, ..st })
                 }
             },
         },
     )
 }
 
-fn candidates(s: State, pkg: String) -> [Version] {
+fn candidates(s: State) where { pkg: String } -> [Version] {
     fixture_index().versions(pkg).values()
         .filter(|v| s.domains.get(pkg).unwrap().contains(v))
         .filter(|v| !s.learned.any(|ng| ng.pkg == pkg && ng.region.contains(v)))
@@ -50,33 +50,40 @@ fn pick_undecided(s: State) -> Option<String> {
 fn search(s: State) -> Outcome {
     match pick_undecided(s) {
         None => Outcome::Solved(s.selected),
-        Some(pkg) => try_candidates(s, pkg, candidates(s, pkg)),
+        Some(pkg) => {
+            let cands = candidates(s) where { pkg };
+            try_candidates(s) where { pkg, cands }
+        },
     }
 }
 
-fn try_candidates(s: State, pkg: String, cands: [Version]) -> Outcome {
+fn try_candidates(s: State) where { pkg: String, cands: [Version] } -> Outcome {
     match cands.split_last() {
         None => Outcome::Exhausted(NoGood { pkg: pkg, region: s.domains.get(pkg).unwrap() }),
-        Some((v, rest)) => match propagate(s, pkg, v) {
-            Step::Conflict(ng) =>
-                try_candidates(State { learned: s.learned.insert(ng), ..s }, pkg, rest),
-            Step::Pass(s2) => match search(s2) {
-                Outcome::Solved(sel) => Outcome::Solved(sel),
-                Outcome::Exhausted(ng) =>
-                    try_candidates(State { learned: s.learned.insert(ng), ..s }, pkg, rest),
-            },
+        Some((v, rest)) => {
+            let step = propagate(s) where { pkg, version: v };
+            match step {
+                Step::Conflict(ng) =>
+                    try_candidates(State { learned: s.learned.insert(ng), ..s }) where { pkg, cands: rest },
+                Step::Pass(s2) => match search(s2) {
+                    Outcome::Solved(sel) => Outcome::Solved(sel),
+                    Outcome::Exhausted(ng) =>
+                        try_candidates(State { learned: s.learned.insert(ng), ..s }) where { pkg, cands: rest },
+                },
+            }
         },
     }
 }
 
-test the_solver {
+#[test { budget_wall: 30s, budget_rss: 2GB }]
+fn the_solver() -> Stream<Check> {
     let ws = fixture_workspace("kitchen-sink");
-    let init = State { domains: ws.requirements(), selected: %{}, learned: [].values() };
-    match search(init) {
+    let init = State { domains: ws.requirements(), selected: %{}, learned: %[] };
+    yield match search(init) {
         Outcome::Solved(sel) => {
             let expected = ws.expected_selection();
-            expect(expected.keys().all(|pkg| sel.get(pkg) == expected.get(pkg)));
+            yield expect(expected.keys().all(|pkg| sel.get(pkg) == expected.get(pkg)));
         },
         Outcome::Exhausted(_) => expect(false),
-    }
+    };
 }

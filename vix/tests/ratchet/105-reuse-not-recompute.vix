@@ -5,9 +5,9 @@
 // memo hits, not fresh computation that happened to match.
 fn expensive(n: Int) -> Int { n * n * n }
 
-test reuse_not_recompute {
-    expect_eq(expensive(30), 27000);
-} expecting on rerun {
-    never_demanded expensive;
-    memo_hits_at_least 1;
+#[test]
+fn reuse_not_recompute() -> Stream<Check> {
+    yield expect_eq(expensive(30), 27000);
+    yield never_demanded(expensive(30));
+    yield memo_hits_at_least(1);
 }

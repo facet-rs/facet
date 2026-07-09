@@ -1,7 +1,8 @@
-// Rung 028 — enumerate pairs each element with its position.
-test array_enumerate {
+// Rung 028 — array streams carry each element's position as its key.
+#[test]
+fn array_enumerate() -> Stream<Check> {
     let xs = ["a", "b", "c"];
-    let tagged = xs.enumerate();
-    expect_eq(tagged[0], (0, "a"));
-    expect_eq(tagged[2], (2, "c"));
+    let tagged = xs.stream().collect();
+    yield expect_eq(tagged.get(0), Some("a"));
+    yield expect_eq(tagged.get(2), Some("c"));
 }

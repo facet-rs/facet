@@ -1,13 +1,12 @@
-//! budget: 2s wall, 256MB rss
 
 // Rung 130 — kill-when-satisfied: only early.txt is demanded from a
 // stage that would take 30 seconds to finish; once the demanded subfile
 // is complete and no other demand wants the rest, the process is killed.
 // The budget makes survival impossible any other way.
-test kill_when_satisfied {
+#[test { budget_wall: 2s, budget_rss: 256MB }]
+fn kill_when_satisfied() -> Stream<Check> {
     let stage = exec! { sh -c "mkdir -p out; echo ready > out/early.txt; sleep 30; echo done > out/late.txt" };
     let early = (stage.tree / "out" / "early.txt").text();
-    expect_eq(early.trim(), "ready");
-} expecting {
-    killed stage;
+    yield expect_eq(early.trim(), "ready");
+    yield killed(stage);
 }

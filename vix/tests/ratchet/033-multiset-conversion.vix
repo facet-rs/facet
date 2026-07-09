@@ -1,8 +1,9 @@
-// Rung 033 — values(): arrays forget positions into a Multiset.
-test multiset_conversion {
+// Rung 033 — stream(): arrays expose positions as stream keys.
+#[test]
+fn multiset_conversion() -> Stream<Check> {
     let xs = [3, 1, 2];
-    let ms = xs.values();
-    expect_eq(ms.len(), 3);
-    expect(ms.contains(1));
-    expect(ms.contains(3));
+    let ms = xs.stream().collect();
+    yield expect_eq(ms.len(), 3);
+    yield expect_eq(ms.get(0), Some(3));
+    yield expect_eq(ms.get(2), Some(2));
 }

@@ -1,8 +1,10 @@
 // Rung 004 — function declaration and application.
 fn double(n: Int) -> Int { n * 2 }
-fn add(a: Int, b: Int) -> Int { a + b }
+fn add(a: Int) where { b: Int } -> Int { a + b }
 
-test functions {
-    expect_eq(double(21), 42);
-    expect_eq(add(double(3), 4), 10);
+#[test]
+fn functions() -> Stream<Check> {
+    yield expect_eq(double(21), 42);
+    let sum = add(double(3)) where { b: 4 };
+    yield expect_eq(sum, 10);
 }

@@ -1,4 +1,3 @@
-//! rerun with: readme-changed
 
 // Rung 081 — the two-step dance: the tree changed, but the sixty files
 // you read didn't. Reuse without re-running. (three-planes.md)
@@ -6,9 +5,9 @@ fn build_step(tree: Tree) -> String {
     (tree / "src" / "main.c").text()
 }
 
-test projection_reuse {
+#[test { rerun_with: "readme-changed" }]
+fn projection_reuse() -> Stream<Check> {
     let src = build_step(fixture_tree("readme-changed"));
-    expect(src.contains("int main"));
-} expecting on rerun {
-    never_demanded build_step;
+    yield expect(src.contains("int main"));
+    yield never_demanded(build_step(fixture_tree("readme-changed")));
 }

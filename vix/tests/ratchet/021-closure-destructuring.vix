@@ -1,5 +1,9 @@
 // Rung 021 — destructuring in closure parameters.
-test closure_destructuring {
-    let apply = |(a, b), f: fn(Int, Int) -> Int| f(a, b);
-    expect_eq(apply((3, 4), |x, y| x + y), 7);
+#[test]
+fn closure_destructuring() -> Stream<Check> {
+    let apply = |args: ((Int, Int), fn((Int, Int)) -> Int)| {
+        let ((a, b), f) = args;
+        f((a, b))
+    };
+    yield expect_eq(apply(((3, 4), |(x, y)| x + y)), 7);
 }

@@ -1,12 +1,11 @@
-//! rerun with: source-v2
 
 // Rung 104 — the wrapper refactor: a helper is extracted above the call
 // path. Full location paths miss; SUFFIX nomination still finds last
 // run's entries and verification accepts them. (three-planes.md)
 fn leaf(n: Int) -> Int { n * 7 }
 
-test wrapper_refactor_warm {
-    expect_eq(leaf(6), 42);
-} expecting on rerun {
-    never_demanded leaf;
+#[test { rerun_with: "source-v2" }]
+fn wrapper_refactor_warm() -> Stream<Check> {
+    yield expect_eq(leaf(6), 42);
+    yield never_demanded(leaf(6));
 }

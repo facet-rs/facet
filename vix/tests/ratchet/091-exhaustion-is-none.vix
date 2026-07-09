@@ -1,5 +1,7 @@
 // Rung 091 — an unsatisfiable world yields None, not a crash, not a hang.
-test exhaustion_is_none {
-    let impossible = %{}.insert("liba", parse_req("^1.0")).insert("libb", parse_req("^9.0"));
-    expect_none(mini_solve(fixture_index(), impossible));
+#[test]
+fn exhaustion_is_none() -> Stream<Check> {
+    let impossible = %{"liba" => parse_req("^1.0"), "libb" => parse_req("^9.0")};
+    let solution = mini_solve(fixture_index()) where { requirements: impossible };
+    yield expect_none(solution);
 }

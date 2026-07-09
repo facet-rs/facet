@@ -1,9 +1,10 @@
 // Rung 005 — tuple construction and positional field access.
 fn swap(pair: (Int, String)) -> (String, Int) { (pair.1, pair.0) }
 
-test tuples {
+#[test]
+fn tuples() -> Stream<Check> {
     let p = (1, "one");
-    expect_eq(p.0, 1);
-    expect_eq(p.1, "one");
-    expect_eq(swap(p), ("one", 1));
+    yield expect_eq(p.0, 1);
+    yield expect_eq(p.1, "one");
+    yield expect_eq(swap(p), ("one", 1));
 }

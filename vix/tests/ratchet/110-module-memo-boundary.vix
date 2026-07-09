@@ -5,8 +5,8 @@
 // across runs through an import boundary.
 import geometry::{Point, magnitude_sq};
 
-test module_memo_boundary {
-    expect_eq(magnitude_sq(Point { x: 6, y: 8 }), 100);
-} expecting on rerun {
-    never_demanded magnitude_sq;
+#[test]
+fn module_memo_boundary() -> Stream<Check> {
+    yield expect_eq(magnitude_sq(Point { x: 6, y: 8 }), 100);
+    yield never_demanded(magnitude_sq(Point { x: 6, y: 8 }));
 }

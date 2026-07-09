@@ -2,5 +2,8 @@
 //! at: 5
 
 // Rung 113 — and the missing-argument case names the parameter.
-fn two(a: Int, b: Int) -> Int { a + b }
-test t { expect_eq(two(1), 1); }
+fn two(a: Int) where { b: Int } -> Int { a + b }
+#[test]
+fn t() -> Stream<Check> {
+    yield expect_eq(two(1), 1);
+}

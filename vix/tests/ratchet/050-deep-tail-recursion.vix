@@ -1,4 +1,3 @@
-//! budget: 5s wall, 256MB rss
 
 // Rung 050 — a 10-million-iteration tail loop under a wall budget.
 // The budget is generous for a fused interior (native ops, no machinery
@@ -6,13 +5,14 @@
 // scheduler, memo, or identity machinery once per iteration: at 10µs of
 // bookkeeping per step, this rung takes 100 seconds. The gap is
 // architectural, not constant-factor.
-fn count_up(n: Int, limit: Int, acc: Int) -> Int {
-    if n == limit { acc } else { count_up(n + 1, limit, acc + n) }
+fn count_up(n: Int) where { limit: Int, acc: Int } -> Int {
+    if n == limit { acc } else { count_up(n + 1) where { limit, acc: acc + n } }
 }
 
-test deep_tail_recursion {
-    expect_eq(count_up(0, 10000000, 0), 49999995000000);
-} expecting {
-    scheduler_requests_at_most 10;
-    memo_entries_at_most 10;
+#[test { budget_wall: 5s, budget_rss: 256MB }]
+fn deep_tail_recursion() -> Stream<Check> {
+    let sum = count_up(0) where { limit: 10000000, acc: 0 };
+    yield expect_eq(sum, 49999995000000);
+    yield scheduler_requests_at_most(10);
+    yield memo_entries_at_most(10);
 }

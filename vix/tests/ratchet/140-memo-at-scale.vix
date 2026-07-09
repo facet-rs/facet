@@ -1,15 +1,14 @@
-//! budget: 5s wall, 1GB rss
 
 // Rung 140 — the memo under load: 100k distinct demands, then 100k hits.
 // Hits are allocation-free lookups; the second wave costs table reads,
 // not recomputation.
 fn f(n: Int) -> Int { n * 17 }
 
-test memo_at_scale {
-    let first = range(0, 100000).map(f);
-    let second = range(0, 100000).map(f);
-    expect_eq(first, second);
-} expecting {
-    demanded_times f 100000;
-    memo_hits_at_least 100000;
+#[test { budget_wall: 5s, budget_rss: 1GB }]
+fn memo_at_scale() -> Stream<Check> {
+    let first = (range where { from: 0, to: 100000 }).map(f);
+    let second = (range where { from: 0, to: 100000 }).map(f);
+    yield expect_eq(first, second);
+    yield demanded_times(f, 100000);
+    yield memo_hits_at_least(100000);
 }

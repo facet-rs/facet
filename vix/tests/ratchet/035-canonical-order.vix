@@ -1,7 +1,8 @@
-// Rung 035 — sorted(): multisets observe in canonical (increasing) order.
-test canonical_order {
-    let ms = [30, 10, 20].values();
-    expect_eq(ms.sorted(), [10, 20, 30]);
-    let words = ["pear", "apple", "quince"].values();
-    expect_eq(words.sorted(), ["apple", "pear", "quince"]);
+// Rung 035 — explicit sorting observes values in canonical order.
+#[test]
+fn canonical_order() -> Stream<Check> {
+    let ms = [30, 10, 20].stream();
+    yield expect_eq(ms.collect().values().sorted(), [10, 20, 30]);
+    let words = ["pear", "apple", "quince"].stream();
+    yield expect_eq(words.collect().values().sorted(), ["apple", "pear", "quince"]);
 }

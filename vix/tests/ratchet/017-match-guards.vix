@@ -8,9 +8,10 @@ fn classify(n: Int) -> String {
     }
 }
 
-test match_guards {
-    expect_eq(classify(-3), "negative");
-    expect_eq(classify(0), "zero");
-    expect_eq(classify(7), "small");
-    expect_eq(classify(1000), "large");
+#[test]
+fn match_guards() -> Stream<Check> {
+    yield expect_eq(classify(-3), "negative");
+    yield expect_eq(classify(0), "zero");
+    yield expect_eq(classify(7), "small");
+    yield expect_eq(classify(1000), "large");
 }

@@ -1,9 +1,10 @@
 // Rung 027 — field-wise map: output field i = f(input field i).
-test array_map {
+#[test]
+fn array_map() -> Stream<Check> {
     let xs = [1, 2, 3];
     let ys = xs.map(|n| n * 10);
-    expect_eq(ys[0], 10);
-    expect_eq(ys[1], 20);
-    expect_eq(ys[2], 30);
-    expect_eq(ys.len(), 3);
+    yield expect_eq(ys[0], 10);
+    yield expect_eq(ys[1], 20);
+    yield expect_eq(ys[2], 30);
+    yield expect_eq(ys.len(), 3);
 }

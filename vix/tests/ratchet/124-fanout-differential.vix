@@ -1,17 +1,17 @@
-//! differential: VIX_FORCE_MAP_FANOUT
 
 // Rung 124 — fused vs fanned execution of the same combinators produces
 // identical values: execution shape is the partition's business and
 // must be invisible. (collections.md, iteration doctrine)
 fn classify(n: Int) -> String {
-    if n % 15 == 0 { "fizzbuzz" }
-    else if n % 3 == 0 { "fizz" }
-    else if n % 5 == 0 { "buzz" }
+    if n.rem(15) == 0 { "fizzbuzz" }
+    else if n.rem(3) == 0 { "fizz" }
+    else if n.rem(5) == 0 { "buzz" }
     else { n.to_string() }
 }
 
-test fanout_differential {
-    let words = range(1, 1000).map(classify);
-    expect_eq(words[14], "fizzbuzz");
-    expect_snapshot(words.values().filter(|w| w == "fizz").len(), "fizz-count");
+#[test { differential: "VIX_FORCE_MAP_FANOUT" }]
+fn fanout_differential() -> Stream<Check> {
+    let words = (range where { from: 1, to: 1000 }).map(classify);
+    yield expect_eq(words[14], "fizzbuzz");
+    yield expect_snapshot(words.stream().filter(|w| w == "fizz").collect().values().len(), "fizz-count");
 }

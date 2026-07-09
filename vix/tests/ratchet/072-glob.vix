@@ -1,7 +1,8 @@
-// Rung 072 — glob over a materialized tree yields paths, canonically ordered.
-test glob {
+// Rung 072 — glob over a materialized tree yields a stream of paths.
+#[test]
+fn glob() -> Stream<Check> {
     let tree = fixture_tree("small-crate");
-    let sources = tree.glob("src/*.rs");
-    expect_eq(sources.len(), 2);
-    expect_eq(sources.sorted()[0].to_string(), "src/lib.rs");
+    let sources = tree.glob("src/*.rs").collect().values().sorted();
+    yield expect_eq(sources.len(), 2);
+    yield expect_eq(sources[0].to_string(), "src/lib.rs");
 }

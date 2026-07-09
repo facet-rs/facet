@@ -4,8 +4,8 @@
 // nothing (the harness runs `rerun` tests twice against one store).
 fn costly(n: Int) -> Int { n * n }
 
-test cross_run_reuse {
-    expect_eq(costly(111), 12321);
-} expecting on rerun {
-    never_demanded costly;
+#[test]
+fn cross_run_reuse() -> Stream<Check> {
+    yield expect_eq(costly(111), 12321);
+    yield never_demanded(costly(111));
 }

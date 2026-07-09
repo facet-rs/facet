@@ -12,7 +12,8 @@ fn parse_flag(s: String) -> Outcome<Bool> {
     }
 }
 
-test user_result {
-    expect_eq(parse_flag("true"), Outcome::Ok(true));
-    expect_eq(parse_flag("nope"), Outcome::Err("not a flag"));
+#[test]
+fn user_result() -> Stream<Check> {
+    yield expect_eq(parse_flag("true"), Outcome::Ok(true));
+    yield expect_eq(parse_flag("nope"), Outcome::Err("not a flag"));
 }

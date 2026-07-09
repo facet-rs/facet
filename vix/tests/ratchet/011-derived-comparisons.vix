@@ -1,6 +1,7 @@
 // Rung 011 — < <= > >= derive from <=>, everywhere.
-test derived_comparisons {
-    expect(1 < 2);
-    expect("apple" <= "banana");
-    expect((1, "b") > (1, "a"));
+#[test]
+fn derived_comparisons() -> Stream<Check> {
+    yield expect(1 < 2);
+    yield expect("apple" <= "banana");
+    yield expect((1, "b") > (1, "a"));
 }

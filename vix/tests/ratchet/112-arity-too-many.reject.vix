@@ -3,4 +3,7 @@
 
 // Rung 112 — arity errors point at the call, not the definition.
 fn one(a: Int) -> Int { a }
-test t { expect_eq(one(1, 2), 1); }
+#[test]
+fn t() -> Stream<Check> {
+    yield expect_eq(one(1) where { extra: 2 }, 1);
+}

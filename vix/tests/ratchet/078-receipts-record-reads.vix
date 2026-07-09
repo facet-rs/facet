@@ -6,9 +6,9 @@ fn manifest_name(tree: Tree) -> String {
 struct Package { name: String, version: String }
 struct Manifest { package: Package }
 
-test receipts_record_reads {
-    expect_eq(manifest_name(fixture_tree("small-crate")), "small-crate");
-} expecting {
-    read "small-crate/Cargo.toml";
-    never_read "small-crate/src/lib.rs";
+#[test]
+fn receipts_record_reads() -> Stream<Check> {
+    yield expect_eq(manifest_name(fixture_tree("small-crate")), "small-crate");
+    yield read(p"small-crate/Cargo.toml");
+    yield never_read(p"small-crate/src/lib.rs");
 }

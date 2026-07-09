@@ -16,10 +16,10 @@ finds it impossible stops and reports; it does not reinterpret.**
 `vx test` does not merely report pass/fail. For EVERY test, from the
 first rung, the runner must produce:
 
-- a **demand trace** (the sequence of demand/memo/effect events) — the
-  `expecting` clauses of later rungs are assertions over this data, and
-  the data must exist and be well-formed even where no rung asserts on
-  it yet. No trace, no score — a runner that cannot say what was
+- a **demand trace** (the sequence of demand/memo/effect events) —
+  yielded trace-check calls in later rungs are assertions over this data,
+  and the data must exist and be well-formed even where no rung asserts
+  on it yet. No trace, no score — a runner that cannot say what was
   demanded is not running vix.
 - **standing counters**: memo hits/misses, allocations on the memo hit
   path (must be zero — `vix.memo.allocation-free-hits`), host calls per
@@ -82,9 +82,9 @@ carry `//! budget: <wall>, <rss>` headers (the runner kills over-budget
 runs; a killed rung is red) and counter expectations:
 
 ```
-scheduler_requests_at_most N   — machinery contacts during the test
-memo_entries_at_most N         — no per-iteration memoization
-store_interns_at_most N        — publish-once: molten until the end
+yield scheduler_requests_at_most(N);   — machinery contacts during the test
+yield memo_entries_at_most(N);         — no per-iteration memoization
+yield store_interns_at_most(N);        — publish-once: molten until the end
 ```
 
 The budgets are honest because the gaps are asymptotic, never

@@ -9,7 +9,8 @@ fn go(s: Signal) -> Bool {
     }
 }
 
-test match_expressions {
-    expect(go(Signal::Green));
-    expect(!go(Signal::Red));
+#[test]
+fn match_expressions() -> Stream<Check> {
+    yield expect(go(Signal::Green));
+    yield expect(!go(Signal::Red));
 }

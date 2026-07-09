@@ -11,7 +11,8 @@ fn area(s: Shape) -> Int {
     }
 }
 
-test enums {
-    expect_eq(area(Shape::Circle(2)), 12);
-    expect_eq(area(Shape::Rect { w: 3, h: 5 }), 15);
+#[test]
+fn enums() -> Stream<Check> {
+    yield expect_eq(area(Shape::Circle(2)), 12);
+    yield expect_eq(area(Shape::Rect { w: 3, h: 5 }), 15);
 }

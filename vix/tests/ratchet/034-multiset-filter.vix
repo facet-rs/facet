@@ -1,8 +1,9 @@
-// Rung 034 — filter returns a Multiset: positions die honestly.
-test multiset_filter {
-    let heavy = [12, 3, 40, 7].values().filter(|n| n > 10);
-    expect_eq(heavy.len(), 2);
-    expect(heavy.contains(12));
-    expect(heavy.contains(40));
-    expect(!heavy.contains(3));
+// Rung 034 — stream filter preserves keys instead of renumbering positions.
+#[test]
+fn multiset_filter() -> Stream<Check> {
+    let heavy = [12, 3, 40, 7].stream().filter(|n| n > 10).collect();
+    yield expect_eq(heavy.len(), 2);
+    yield expect_eq(heavy.get(0), Some(12));
+    yield expect_eq(heavy.get(2), Some(40));
+    yield expect_none(heavy.get(1));
 }

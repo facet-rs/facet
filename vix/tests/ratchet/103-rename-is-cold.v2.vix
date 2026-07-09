@@ -2,6 +2,7 @@
 fn compute_thrice(n: Int) -> Int { n * 3 }
 fn render(n: Int) -> String { "v" + n.to_string() }
 
-test rename_is_cold {
-    expect_eq(render(compute_thrice(4)), "v12");
+#[test]
+fn rename_is_cold() -> Stream<Check> {
+    yield expect_eq(render(compute_thrice(4)), "v12");
 }

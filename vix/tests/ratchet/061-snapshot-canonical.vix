@@ -1,5 +1,6 @@
-// Rung 061 — snapshotting a multiset shows canonical order: stable forever.
-test snapshot_canonical {
-    let ms = ["gamma", "alpha", "beta"].values();
-    expect_snapshot(ms, "greek-letters");
+// Rung 061 — snapshotting sorted stream values is stable forever.
+#[test]
+fn snapshot_canonical() -> Stream<Check> {
+    let ms = ["gamma", "alpha", "beta"].stream().collect().values().sorted();
+    yield expect_snapshot(ms, "greek-letters");
 }

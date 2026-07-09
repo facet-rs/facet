@@ -1,14 +1,15 @@
-// Rung 040 — sorted_by: caller's order, canonical tiebreak, deterministic.
+// Rung 040 — sorted with an Order value: caller's order, deterministic.
 struct Row { name: String, weight: Int }
 
-test sorted_by {
+#[test]
+fn sorted_with_order() -> Stream<Check> {
     let rows = [
         Row { name: "b", weight: 2 },
         Row { name: "a", weight: 2 },
         Row { name: "c", weight: 1 },
-    ].values();
-    let by_weight = rows.sorted_by(|x, y| x.weight <=> y.weight);
-    expect_eq(by_weight[0].name, "c");
-    expect_eq(by_weight[1].name, "a");
-    expect_eq(by_weight[2].name, "b");
+    ].stream();
+    let by_weight = rows.collect().values().sorted where { order: by_key(|x| x.weight) };
+    yield expect_eq(by_weight[0].name, "c");
+    yield expect_eq(by_weight[1].name, "a");
+    yield expect_eq(by_weight[2].name, "b");
 }

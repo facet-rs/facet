@@ -7,6 +7,7 @@ import geometry::Point;
 
 struct Point { x: Int }
 
-test name_collision {
-    expect(true);
+#[test]
+fn name_collision() -> Stream<Check> {
+    yield expect(true);
 }

@@ -1,14 +1,13 @@
 // Rung 136 — unwrapping None is a typed failure carrying the unwrap's
 // source span; the message is not a bare string sentinel.
 fn first_even(xs: [Int]) -> Int {
-    xs.values().find_min(|n| n % 2 == 0).unwrap()
+    xs.stream().find_min(|n| n.rem(2) == 0).unwrap()
 }
 
-test unwrap_none_span {
-    expect_eq(first_even([2, 3]), 2);
+#[test]
+fn unwrap_none_span() -> Stream<Check> {
+    yield expect_eq(first_even([2, 3]), 2);
     let boom = first_even([1, 3]);
-    expect_eq(boom, 0);
-} expecting {
-    failed_with "unwrap on None";
-    failure_span_in first_even;
+    yield failed_with(boom, "unwrap on None");
+    yield failure_span_in(boom, first_even);
 }

@@ -22,10 +22,11 @@ the vix book (`/vix`) exists. That is the definition of done.
    traces + counters + receipts from rung 001, chaos-run agreement, and
    spec-coverage gates at band boundaries. Behavior alone does not
    advance the ratchet.
-6. Test-system semantics (declarations, `expect_*`, the `expecting`
-   trace clauses, `//! rerun` two-phase runs, snapshots) are specified in
-   the book's [Testing](/vix/testing) chapter. The harness is itself part
-   of what the ladder demands into existence.
+6. Test-system semantics (`#[test] fn name() -> Stream<Check>`, yielded
+   `expect_*` checks, yielded trace-check calls, rerun attributes/headers,
+   snapshots) are specified in the book's [Testing](/vix/testing)
+   chapter. The harness is itself part of what the ladder demands into
+   existence.
 
 ## Fixtures the suite ships
 
@@ -39,8 +40,8 @@ the vix book (`/vix`) exists. That is the definition of done.
   files for fetch/extract rungs.
 - `fixture_workspace("kitchen-sink")` — 12 packages, diamonds, features,
   and a recorded `expected_selection()` from the reference resolver.
-- Rungs marked `//! rerun` execute twice against one store; variants
-  `rerun with: <fixture-mutation>` apply the named mutation between runs.
+- Rungs marked for rerun execute twice against one store; variants
+  `rerun_with: "<fixture-mutation>"` apply the named mutation between runs.
 
 ## The rungs
 
@@ -57,7 +58,7 @@ the vix book (`/vix`) exists. That is the definition of done.
 | 023–025 | option, user enums, Ordering | `Option`, generic enums, `Ordering` is ordinary |
 | 026–031 | arrays | literal/index/len, field-wise map, enumerate, fold, predicates, split_last |
 | 032 | pop (reject) | mutation-shaped names don't exist |
-| 033–040 | multiset | values(), filter, canonical order, canonical fold, filter_map/flat_map, find/take min/max, Indexed roundtrip, sorted_by |
+| 033–040 | streams, maps, order values | array streams, key-preserving filter, explicit value sorting, canonical fold after sort, filter_map/flat_map gaps, find/take min/max gaps, key roundtrip, `sorted where { order }` |
 | 041–044 | maps & sets | by-value insert/get, overwrite, canonical keys, `Set<T>` |
 | 045–047 | strings & paths | concat/split/parse, `p""` join-only, string→path (reject) |
 | 048–052 | functions | closures capture, recursion, 100k tail loop, fold at scale, higher-order |
@@ -83,11 +84,12 @@ the vix book (`/vix`) exists. That is the definition of done.
 Rungs 1–100 define existence; these define quality. Same rules, same
 foundation contract; the score past 100 counts consecutively as before.
 New harness surface introduced here: `NNN-*.v2.vix` second-phase sources
-for `rerun with: source-v2` (code-edit rungs), `//! differential: FLAG`
+for `rerun_with: "source-v2"` (code-edit rungs), `differential: "FLAG"`
 (run twice, plain vs forced mode, results must be identical),
-`failed_with` / `failure_span_in` (asserting typed demand failures),
-`overlapped` / `finished_before` / `killed` (parallelism and
-kill-when-satisfied), `memo_hits_at_least` / `demanded_times`.
+`failed_with` / `failure_span_in` yielded checks (asserting typed demand
+failures), `overlapped` / `finished_before` / `killed` yielded checks
+(parallelism and kill-when-satisfied), `memo_hits_at_least` /
+`demanded_times`.
 
 | # | band | certifies |
 |---|---|---|

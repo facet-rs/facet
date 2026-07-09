@@ -1,14 +1,15 @@
 // Rung 038 — find_min/find_max and take_min/take_max: deterministic selection.
-test find_take_min_max {
-    let ms = [5, 3, 9, 3].values();
-    expect_eq(ms.find_min(|n| n > 3), Some(5));
-    expect_eq(ms.find_max(|_| true), Some(9));
-    match ms.take_min() {
+#[test]
+fn find_take_min_max() -> Stream<Check> {
+    let ms = [5, 3, 9, 3].stream();
+    yield expect_eq(ms.find_min(|n| n > 3), Some(5));
+    yield expect_eq(ms.find_max(|_| true), Some(9));
+    yield match ms.take_min() {
         Some((least, rest)) => {
-            expect_eq(least, 3);
-            expect_eq(rest.len(), 3);
-            expect(rest.contains(3));
+            yield expect_eq(least, 3);
+            yield expect_eq(rest.len(), 3);
+            yield expect(rest.contains(3));
         },
         None => expect(false),
-    }
+    };
 }

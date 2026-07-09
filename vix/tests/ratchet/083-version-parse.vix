@@ -1,9 +1,10 @@
 // Rung 083 — capstone begins: semver versions parse and order correctly.
-test version_parse {
+#[test]
+fn version_parse() -> Stream<Check> {
     let v = parse_version("1.52.3");
-    expect_eq(v.major, 1);
-    expect_eq(v.minor, 52);
-    expect_eq(v.patch, 3);
-    expect(parse_version("1.9.0") < parse_version("1.52.3"));
-    expect(parse_version("2.0.0") > parse_version("1.99.99"));
+    yield expect_eq(v.major, 1);
+    yield expect_eq(v.minor, 52);
+    yield expect_eq(v.patch, 3);
+    yield expect(parse_version("1.9.0") < parse_version("1.52.3"));
+    yield expect(parse_version("2.0.0") > parse_version("1.99.99"));
 }
