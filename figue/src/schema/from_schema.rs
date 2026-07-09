@@ -358,10 +358,25 @@ fn leaf_schema_from_shape(
     }
 }
 
+fn value_schema_from_field(
+    field: &Field,
+    ctx: &SchemaErrorContext,
+) -> Result<ValueSchema, SchemaError> {
+    if let Some(proxy) = field.proxy {
+        return value_schema_from_shape(proxy.shape, ctx);
+    }
+
+    value_schema_from_shape(field.shape(), ctx)
+}
+
 fn value_schema_from_shape(
     shape: &'static Shape,
     ctx: &SchemaErrorContext,
 ) -> Result<ValueSchema, SchemaError> {
+    if let Some(proxy) = shape.proxy {
+        return value_schema_from_shape(proxy.shape, ctx);
+    }
+
     match shape.def {
         Def::Option(opt) => Ok(ValueSchema::Option {
             value: Box::new(value_schema_from_shape(opt.t, ctx)?),
@@ -1109,14 +1124,14 @@ fn arg_level_from_fields_with_prefix(
             ArgKind::Named { short, counted }
         };
 
-        let value = value_schema_from_shape(field.shape(), &field_ctx)?;
+        let value = value_schema_from_field(field, &field_ctx)?;
 
         // Struct types in args must be flattened - CLI can't represent nested structs
         // without dotted path syntax (which is only for args::config fields)
         if matches!(value, ValueSchema::Struct { .. }) {
             return Err(SchemaError::new(
                 field_ctx.clone(),
-                "struct fields in args are not valid unless one of these applies:\n- add #[facet(flatten)] to the CLI field\n- add #[facet(transparent)] to the type definition if it is a newtype over a scalar",
+                "struct fields in args are not valid unless one of these applies:\n- add #[facet(flatten)] to the CLI field to expose nested argument fields\n- add #[facet(proxy = T)] to the CLI field or type definition, where T is a supported single-value CLI type: bool, string/char, integer, float, or a unit-variant enum",
             )
             .with_primary_label("this field has a struct-shaped Facet schema"));
         }
