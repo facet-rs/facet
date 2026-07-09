@@ -11,6 +11,18 @@ title = "exec observers: the zoo feature trees don't replace"
 > it is the *lowering* of exactly that placed block, as
 > `vix-language-design.md` §"What ships to executors" already said. Read this note for the
 > argument; do not read it for the API. `exec cmd where { observer: … }` does not exist.
+>
+> **Two claims in the body are CORRECTED in round 12 and must not be repeated:**
+>
+> 1. *"rustc announces artifact availability as JSON messages on stdout — that is literally
+>    how cargo does rmeta pipelining."* Cargo/rustc pipelining uses a readiness signal, but
+>    identifying that signal with **stdout** is **unsourced**. The argument — readiness is a
+>    protocol fact, not a filesystem fact — stands without it. Do not cite the mechanism.
+> 2. *"vfsd close events remain a fallback readiness source for protocol-less tools."*
+>    **A close event is not sound**: a process may close a file, reopen it, and mutate it.
+>    For a protocol-less tool the safe authority is **process exit**. A close event becomes
+>    admissible only when the command grammar *promises* monotonic or close-final outputs —
+>    on the grammar's authority, never the filesystem's.
 
 Status: design note from conversation (2026-07-09). The March-era exec
 model shipped an **observer closure** with every exec; the current model
