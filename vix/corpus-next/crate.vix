@@ -1601,9 +1601,7 @@ fn empty_build_script_directives() -> BuildScriptDirectives {
 }
 
 fn malformed_build_script_directive(line: String) -> String {
-    // GAP: no v2 failure surface yet; keep the old empty-map panic shape.
-    let missing: Map<String, String> = %{};
-    missing.get(line).unwrap()
+    fail MalformedBuildScriptDirective { line }
 }
 
 fn cargo_directive_payload(line: String) -> String {
