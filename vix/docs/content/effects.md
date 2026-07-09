@@ -62,19 +62,16 @@ what you'd want.
 let out = exec cc`-c {src} -o {obj}`;   // a bad compile poisons whatever demanded it
 ```
 
-And when a nonzero exit is a legitimate *answer*, the **command grammar says so**.
-`grep` returns 1 for "no match", which is not an error:
+Anything the grammar does not recognise fails, carrying the status and the stderr it
+collected. `exec cmd?` gives you `Result<ExecOutcome, Failure>` when you want to handle it.
 
-```vix
-match exec grep`-q {pat} {file}`? {
-    Ok(_)  => Found,
-    Err(f) => NotFound,        // grep's grammar maps 1 to an outcome, not a failure
-}
-```
-
-Command grammars already type what goes *in*. They type the exit status on the way
-*out*: which codes are answers, which are failures. Anything the grammar does not
-recognise fails, carrying the status and the stderr it collected.
+> **Unruled, and it blocks a real case.** Some tools use a nonzero exit as an *answer*:
+> `grep` returns 1 for "no match". A command grammar must be able to declare that. But
+> `ExecOutcome` carries no status, so with 0 and 1 both accepted there is nowhere for
+> "which one happened" to live — `Match` and `NoMatch` would be indistinguishable in the
+> value. **How an accepted exit code becomes a typed result is not decided**, and this
+> chapter will not invent a command-specific encoding for it. Until it is ruled, a grammar
+> may declare which statuses *fail*, and nothing more.
 
 **Coming from a shell**: `$?` is gone, and so is the habit of comparing it to a
 magic number nobody documented.
@@ -92,8 +89,8 @@ years, `"…"` interpolates and `'…'` does not. Vix keeps all three.
 
 ```vix
 let tarball = fetch "https://static.crates.io/…" where {
-    blake3: "b1a4…",     // vix's identity for these bytes
-    sha256: "9f3c…",     // what upstream publishes; an integrity check, not an identity
+    blake3: "b1a4…",     // REQUIRED — vix's ContentHash: the name of these bytes
+    sha256: "9f3c…",     // optional — what upstream published; checked on transfer
 };
 ```
 
@@ -104,23 +101,27 @@ A `fetch` is **pinned**: its value identity is known *before* anything is evalua
 because it is written in the source. The URL is not the identity; it is a **provenance
 coordinate**, a hint about where the bytes might live.
 
-### Two hashes, two jobs
+### One name, one receipt
 
-A `blake3` is vix's **content identity**: the name of the value, in the same identity
-space as every other value, resolvable from the local store, a peer, a shared store,
-and only then the network.
+The **`blake3` is required**. It is vix's content identity: the name of the value, in the
+same identity space as every other value, resolvable from the local store, a peer, a
+shared store, and only then the network.
 
-A `sha256` is an **upstream integrity and provenance check**: it is what the CDN, the
-registry, or the `Cargo.lock` published, and it is checked against the bytes that arrive
-over the wire. It never becomes the value's identity, because vix's identity space is
-blake3 (`r[machine.identity.blake3]`), and because a value should not be named in a hash
-family chosen by whoever happened to host it.
+The **`sha256` is optional transfer provenance**: what the CDN, the registry, or the
+`Cargo.lock` published, checked against the bytes that actually arrive over the wire. It
+never becomes the value's identity, because vix's identity space is blake3
+(`r[machine.identity.blake3]`), and because a value should not be named in a hash family
+chosen by whoever happened to host it. Both go in the receipt.
 
-A recipe may bake the `blake3` even when upstream only publishes a `sha256`. Then the
-fetch resolves without touching the network on any machine that has the blob, and the
-`sha256` is verified only on the transfers that actually happen. Give only a `sha256`
-and the bytes must arrive before their vix identity is known — which is a **fetch that
-cannot cross a `place` boundary** (`machine.placement.identity-crosses`).
+**There is no fetch without a `blake3`.** An operation whose result identity is unknown
+until the bytes arrive is not a fetch — it is an *observation*, and `fetch` does not become
+a different kind of thing depending on whether an optional field is present.
+
+Computing the canonical blake3 for an upstream artifact is a **lock-time** act, not a
+build-time one. When a dependency is added or bumped, the bytes are fetched once, their
+blake3 is computed, and it is written into the recipe. Every build thereafter knows the
+final `Blob` identity before evaluating anything — which is why every `fetch` satisfies
+`machine.placement.identity-crosses` by construction rather than by care.
 
 ### An archive's digest is not its tree's digest
 
@@ -240,18 +241,28 @@ process runs**, and only `diagnostics` — a value — crosses back. Nobody desi
 it is what "a `place` carries a subgraph of demands" and "`stdout` is a field" mean
 together.
 
+And note which way the identity rule points. *"A value may cross only if its identity is
+known without evaluating it"* governs **dispatch** — what you capture and ship. It says
+nothing about **results**: `diagnostics` is computed over there, so its identity is not
+knowable before the block runs, and it acquires one where it is computed. The stream never
+crossed the boundary; the finished value crossed back.
+
 **Coming from the March design**: an *observer closure* used to be shipped with every
 exec — "the canonical AST of the closure, holding the process handle, able to return
 anything including streams." That closure was never a feature of `exec`. It was the
 **lowering** of exactly the block above. It still is. What changed is that you no longer
 write it: you write ordinary code, and placement decides where it runs.
 
-Readiness works the same way. A file appearing in an output tree is a filesystem fact;
-*readiness* is a protocol fact — `rustc` announces an artifact on stdout, which is
-literally how `cargo` pipelines rmeta. So the placed block reading `out.stdout` is the
-readiness authority, and `out.tree / p"foo.rmeta"` resolving early is the *consequence*.
-For tools with no protocol, a VFS close event is the fallback authority. The mechanism
-moved; the fact did not.
+Readiness works the same way. A file appearing in an output tree is a **filesystem** fact;
+readiness is a **protocol** fact. A tool that announces artifact availability on a stream
+it controls can be read for that announcement, and then the placed block reading
+`out.stdout` is the readiness authority — `out.tree / p"foo.rmeta"` resolving early is the
+*consequence*.
+
+For a tool with no such protocol, the safe authority is **process exit**. A file closing is
+not readiness: a process may close a file and reopen it and write more. A command grammar
+may promise that its outputs are monotonic or close-final, and *then* a close event is
+admissible — because the grammar promised it, not because the filesystem said so.
 
 ## `place` is a strong boundary
 
@@ -269,7 +280,7 @@ stronger boundary, and it is restricted:
 > **A value may cross a `place` boundary only if its identity is known without
 > evaluating it.**
 
-A pinned blob crosses: its sha256 is in the source. A capability crosses: it is an
+A pinned blob crosses: its `ContentHash` is in the source. A capability crosses: it is an
 identity. A literal is its own identity. An observed input crosses, because the
 demand root already pinned it. But `let x = expensive();` does **not** cross —
 knowing what `x` *is* means computing it. Either compute it first, or draw the
@@ -282,7 +293,7 @@ that it needs something the boundary never accounted for.
 ### So where does the fetch happen?
 
 ```vix
-let f   = fetch url where { sha256: "…" };
+let f   = fetch url where { blake3: "b1a4…" };
 let out = place (exec rustc`-c {f} -o out`);
 ```
 
