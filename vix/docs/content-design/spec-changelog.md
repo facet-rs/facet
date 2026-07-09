@@ -740,3 +740,54 @@ semantics ruling forbids. `%` is a prefix collection sigil only: `%{k => v}` map
 juxtaposition (round 8) made `f %[a, b]` and `f %{k => v}` ambiguous against it —
 round 8 broke round 6 retroactively, and nobody would have noticed until the
 first `exec cmd where { env: %{...} }`. Sweep: six rung files.
+
+### Round 9 addenda — the map model, ratified with two corrections
+
+- **RULED: `collect()` has exactly one return type, `Map<K,V>`.** No polymorphic
+  return, no `FromIterator`, no turbofish. Rust's `.collect()` is cursed because
+  inference picks the type; ours may not. Consequence: `Tree` must be an ACTUAL
+  ALIAS over `Map<Path, Blob>` (not a newtype), or the exec case doesn't line up.
+- **`[T]` cannot be an alias.** Its keys are `0..n-1` and density is an INVARIANT,
+  not a shape; we have no refinement typing. So `[T]` is a real type, reached only
+  through `.values()`. Three of the four are aliases (`Set<T>` = `Map<T,()>`,
+  `Tree` = `Map<Path,Blob>`, `Map<K,V>` itself); the array is the odd one out
+  because **an array's keys are not stored — they are the field names.** That is
+  what makes it dense by construction, and why it is rare.
+- **CORRECTION (Amos): progressive exec trees are NOT a `Stream<Path,Blob>` that
+  collects into a `Tree`.** The VFS is not write-only: a file can be written,
+  truncated, reopened, rewritten. So the event stream has DUPLICATE KEYS, and
+  `collect()` — which fails on duplicates — is the wrong operation. The tree is a
+  FOLD (last write wins per path), not a collect. This re-proves the
+  exec-observers note from the other direction: readiness is protocol, not
+  filesystem, because the filesystem event stream cannot say a file is finished.
+- **`Keyed<K,V>` is deleted as a type.** The key is a parameter of the STREAM, not
+  a wrapper on the element — otherwise `map(compile)` hands the closure a row to
+  rebuild, which is `enumerate` with extra steps. `flat_map` is the tell: composing
+  keys into a path is only statable if `K` is a stream parameter.
+  ```
+  Stream<K, V>
+      map(f: V -> U)                 -> Stream<K, U>          key untouched
+      filter(p: V -> Bool)           -> Stream<K, V>          nothing renumbers
+      flat_map(f: V -> Stream<J, U>) -> Stream<(K, J), U>     keys compose
+      collect()                      -> Map<K, V>
+  Map<K,V>.stream()                  -> Stream<K, V>
+  Map<K,V>.values()                  -> [V]                   the one compaction
+  ```
+- **`collect()` can only fail if you rekeyed.** `map` preserves keys, `filter`
+  preserves keys, `flat_map` extends them — so a duplicate key is always
+  attributable to exactly one `rekey` call. Free error attribution.
+- **The unification is CONCEPTUAL, not identity-level.** Names are hashed into
+  SchemaId (round 8), so `[a,b]` and `%{0=>a, 1=>b}` must not share a content
+  hash. Four names, one structure, one implementation. A `Tree` can never
+  accidentally equal a `Map`.
+- **OPEN**: a set's stream wants `Stream<T,T>` (key and value both the element) so
+  that `set.map(f)` means "the map from each element to its image" — which is
+  exactly the gcc build. But `Set<T> = Map<T,()>` says `Stream<T,()>`. Lean:
+  `Stream<T,T>`, stored once by the as-if law.
+- **`ExecTree` is wrong today** (`exec-protocol/src/lib.rs:284`): two `BTreeMap`s
+  over one key space (`entries: <Path,Text>`, `blobs: <Path,Vec<u8>>`), and
+  `insert_bytes` chooses between them by whether the bytes are valid UTF-8. A path
+  can be in both; `bytes()` prefers `entries`, so the blob becomes a ghost. And
+  since it derives `Facet`, "is this file valid UTF-8" is part of the tree's
+  identity STRUCTURE — an implementation convenience leaking into the schema.
+  Should be `Map<Path, Blob>` with `text(p)` as a decoding projection.
