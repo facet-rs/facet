@@ -214,6 +214,8 @@ ledger. Write no code that depends on yield position.
 
 ## 8. Effects, capabilities, placement
 
+- **Command grammars are `name!{ … }`** — `rustc!{ … }`, `cc!{ … }`, `build_script!{ … }`.
+  Backticks are string-interpolation templates and are NOT a command form.
 - **`exec` is a boring effect**, like `fetch`. It is not an exception.
 - **`fetch` is pinned.** `fetch(url) where { sha256 }` names a blob whose value
   identity is known *before* evaluation; the URL is a **provenance coordinate**,

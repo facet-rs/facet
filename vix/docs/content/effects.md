@@ -1,6 +1,6 @@
 +++
 title = "Effects, and where they run"
-weight = 25
+weight = 32
 +++
 
 *Status: provisional — this page documents the language as designed; parts are
@@ -61,7 +61,7 @@ somewhere, and what they saw becomes the receipt's authority. They are not a
 
 ```vix
 let rustc = Rustc::acquire spec;
-let out   = exec rustc`--edition 2024 {src / p"lib.rs"}`;
+let out   = exec rustc!{ --edition 2024 {src / p"lib.rs"} };
 ```
 
 A **capability** is a toolchain, advertised by a machine, referenced by
@@ -116,7 +116,7 @@ Sometimes a demand should be evaluated somewhere else — because that machine h
 the capability, or the bytes, or simply because there are more of them.
 
 ```vix
-let out = place (exec rustc`-c {src} -o out`);
+let out = place (exec rustc!{ -c {src} -o out });
 ```
 
 An island edge carries a *value* between two computations in one evaluator. A
@@ -140,7 +140,7 @@ that it needs something the boundary never accounted for.
 
 ```vix
 let f   = fetch url where { sha256: "…" };
-let out = place (exec rustc`-c {f} -o out`);
+let out = place (exec rustc!{ -c {f} -o out });
 ```
 
 **On the executor.** Nothing outside the `place` demands `f`'s bytes — the only
