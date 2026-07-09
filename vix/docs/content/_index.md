@@ -175,9 +175,10 @@ confusion came from smearing them:
 - **Recipe identity** (tier 1): what would be computed — the operation's
   identity combined with its *inputs'* identities. Exec's plan+capability
   hash is this, for effects.
-- **Value identity** (tier 2): what came out — `(schema, blake3(memory))`
-  of the result, plus, for effects, the observed read-set that vouches for
-  it.
+- **Value identity** (tier 2): what came out — the schema together with a
+  `blake3` of the value's *framed, walked encoding*, plus, for effects, the
+  observed read-set that vouches for it. Never a hash of raw memory: layout
+  exists to be changed for speed, and identity must not move when it does.
 
 The memo is the map from recipe identity to value identity. Downstream
 demands key on the *value* identities of their inputs wherever possible —

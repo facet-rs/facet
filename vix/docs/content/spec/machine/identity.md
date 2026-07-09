@@ -63,9 +63,16 @@ driver.
 > enum payload bytes are zeroed; variant switch is atomic with payload
 > zeroing. A release-profile canary verifies the invariant continuously (the
 > padding law is enforced, not asserted). Facet-discovered values canonicalize
-> at the bridge. Consequence: flat-byte hashing is valid unconditionally for
-> canonical layouts; padding-range proofs (`is_padding_range`) demote to
-> canary/verification machinery, not hash-path logic.
+> at the bridge. `is_padding_range` proofs demote to canary/verification machinery.
+>
+> ROUND-10 CORRECTION: this rule used to conclude "flat-byte hashing is valid
+> unconditionally for canonical layouts." That is the conclusion of
+> `machine.identity.canonical-memory`, which is **STRUCK** — and which
+> `machine.identity.framed-encoding` [SETTLED] replaces outright. Zero padding is
+> **hygiene**, not identity: it is a canary, and it makes flat-byte *comparison*
+> meaningful for debugging. It licenses no hashing. A conclusion outlived its
+> reason; this is the third instance found in this spec, and the pattern is now the
+> thing to hunt.
 
 > r[machine.identity.le-encoding]
 >
@@ -90,17 +97,15 @@ driver.
 > incremental hash state across mutation; recomputing their hash from scratch
 > per intern crossing is banned (the measured O(N²): 86% of solver CPU in hash
 > recompression because the aggregate hash had no memory between crossings).
-> This rule is scoped to ordered aggregates: maps use sort-first-then-stream
-> because insertion order is not semantic order, so a carried streaming hasher
-> over insertion is unsound for them until the Merkle-map design lands
-> (`machine.identity.merkle-tree`).
+> **This rule is scoped to ordered aggregates and says nothing about maps.**
 >
-> CITATION FIX (round 10): this rule previously cited
-> `machine.identity.map-order-independence` as its authority for map row order.
-> That rule is OPEN, not settled — a settled rule may not rest on an unratified
-> one. The mechanism it names (rows in key order, keys unique) is sound
-> independently, because `<=>` is structural and not overridable
-> (`machine.identity.never-consults-order`); only the rule's *status* is unsettled.
+> ROUND-10, SECOND CORRECTION: an earlier pass removed this rule's citation of the
+> OPEN `machine.identity.map-order-independence` and *kept the conclusion it had
+> been citing it for* ("maps use sort-first-then-stream"). Deleting a citation while
+> retaining what it justified is the same defect wearing a bandage — it is precisely
+> the failure this spec has now made three times. A settled rule may neither rest on
+> an unratified one nor quietly assert its content. Whether a carried hasher is
+> sound for maps is **undecided**, and lives with `map-order-independence`.
 
 > r[machine.identity.hash-at-construction]
 >
@@ -123,10 +128,17 @@ driver.
 > r[machine.identity.tier-not-in-hash]
 >
 > [SETTLED] `HandleTier` (pending/realized scheduling state) never enters hash
-> bytes. A `Pending<T>` and its eventual realized value share declared
-> identity, computed as if resolved — this is what lets a waiter recognize the
-> value it awaited without re-deriving identity. (Preserved from the current
-> driver, comments at the three hash sites.)
+> bytes. That is the whole rule.
+>
+> ROUND-10 CORRECTION: this rule used to continue "a `Pending<T>` and its eventual
+> realized value share declared identity … this is what lets a waiter recognize the
+> value it awaited." That clause **directly contradicted**
+> `machine.identity.pending-identity` eight lines below, which says they do NOT
+> share a content hash and that recognition is served by the memo. The round-5
+> reconciliation identified this clause as the two planes smeared together and
+> ordered it deleted; the sweep hit `pending-identity` and `store.dedup` and missed
+> this one. A pending invocation is identified by its **recipe** (`DemandKey`); the
+> realized value by its **content**. They are different planes and different bytes.
 
 > r[machine.identity.pending-identity]
 >
