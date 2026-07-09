@@ -2119,21 +2119,21 @@ fn workspace_members_and_package_identity_come_from_real_manifest_copies() -> St
     let taxon = fixture_tree("cargo_manifest_real/phon/rust/taxon");
     let facet_core = fixture_tree("cargo_manifest_real/facet-core");
     let facet = fixture_tree("cargo_manifest_real/facet");
-    yield assert_eq(workspace_members_text(workspace), "phon/rust/taxon\nfacet-core\nfacet");
-    yield assert_eq(package_of(taxon, workspace, "phon/rust/taxon"), CargoPackage { name: "zztaxon", version: "0.1.0", edition: "2024", manifest: "phon/rust/taxon" });
-    yield assert_eq(package_of(facet_core, workspace, "facet-core").name, "zzfacet-core");
-    yield assert_eq(package_of(facet, workspace, "facet").name, "zzfacet");
+    yield expect_eq(workspace_members_text(workspace), "phon/rust/taxon\nfacet-core\nfacet");
+    yield expect_eq(package_of(taxon, workspace, "phon/rust/taxon"), CargoPackage { name: "zztaxon", version: "0.1.0", edition: "2024", manifest: "phon/rust/taxon" });
+    yield expect_eq(package_of(facet_core, workspace, "facet-core").name, "zzfacet-core");
+    yield expect_eq(package_of(facet, workspace, "facet").name, "zzfacet");
 }
 
 #[test]
 fn member_manifest_paths_are_derived_from_granted_root() -> Stream<Check> {
-    yield assert_eq(member_manifest_path(p"/workspace", "facet-core"), "/workspace/facet-core/Cargo.toml");
+    yield expect_eq(member_manifest_path(p"/workspace", "facet-core"), "/workspace/facet-core/Cargo.toml");
 }
 
 #[test]
 fn workspace_member_globs_expand_from_root_manifest() -> Stream<Check> {
     let workspace = fixture_tree("cargo_manifest_glob_workspace");
-    yield assert_eq(workspace_members_text(workspace), "crates/a\ncrates/b\nplain");
+    yield expect_eq(workspace_members_text(workspace), "crates/a\ncrates/b\nplain");
 }
 
 #[test]
@@ -2146,19 +2146,19 @@ fn dependency_declarations_extract_workspace_and_detailed_forms() -> Stream<Chec
     let bytes = detailed_dependency_of(facet_core, workspace, "bytes", "normal");
     let tempfile = detailed_dependency_of(facet, workspace, "tempfile", "dev");
     let const_hash = version_dependency_of(facet_core, "const-fnv1a-hash", "normal");
-    yield assert_eq(dependency_names_text(facet_core, "normal").contains("zztaxon"), true);
-    yield assert_eq(blake3.version_req, "^1");
-    yield assert_eq(blake3.default_features, false);
-    yield assert_eq(bytes.optional, true);
-    yield assert_eq(tempfile.kind, "dev");
-    yield assert_eq(const_hash.version_req, "1");
+    yield expect_eq(dependency_names_text(facet_core, "normal").contains("zztaxon"), true);
+    yield expect_eq(blake3.version_req, "^1");
+    yield expect_eq(blake3.default_features, false);
+    yield expect_eq(bytes.optional, true);
+    yield expect_eq(tempfile.kind, "dev");
+    yield expect_eq(const_hash.version_req, "1");
 }
 
 #[test]
 fn workspace_dependency_features_preserve_hyphenated_inherited_names() -> Stream<Check> {
     let workspace = fixture_tree("cargo_manifest_workspace_dependency_features_workspace");
     let manifest = fixture_tree("cargo_manifest_workspace_dependency_features_member");
-    yield assert_eq(detailed_dependency_of(manifest, workspace, "tokio", "normal").features, ["io-util", "rt", "rt-multi-thread", "net", "macros"]);
+    yield expect_eq(detailed_dependency_of(manifest, workspace, "tokio", "normal").features, ["io-util", "rt", "rt-multi-thread", "net", "macros"]);
 }
 
 #[test]
@@ -2166,18 +2166,18 @@ fn target_dependency_declarations_carry_parsed_cfg_data() -> Stream<Check> {
     let workspace = fixture_tree("cargo_manifest_real");
     let manifest = fixture_tree("cargo_manifest_target_cfg_demo");
     let libc = detailed_target_dependency_of(manifest, workspace, "cfg(all(unix, target_arch = \"x86_64\"))", "libc", "normal");
-    yield assert_eq(libc.name, "libc");
-    yield assert_eq(libc.version_req, "0.2");
-    yield assert_eq(libc.target, "cfg(all(unix, target_arch = \"x86_64\"))");
+    yield expect_eq(libc.name, "libc");
+    yield expect_eq(libc.version_req, "0.2");
+    yield expect_eq(libc.target, "cfg(all(unix, target_arch = \"x86_64\"))");
 }
 
 #[test]
 fn package_workspace_fields_are_inherited_generically() -> Stream<Check> {
     let workspace = fixture_tree("cargo_manifest_real");
     let facet_core = fixture_tree("cargo_manifest_real/facet-core");
-    yield assert_eq(package_rust_version(facet_core, workspace), "1.92");
-    yield assert_eq(package_license(facet_core, workspace), "MIT OR Apache-2.0");
-    yield assert_eq(package_repository(facet_core, workspace), "https://github.com/facet-rs/facet");
+    yield expect_eq(package_rust_version(facet_core, workspace), "1.92");
+    yield expect_eq(package_license(facet_core, workspace), "MIT OR Apache-2.0");
+    yield expect_eq(package_repository(facet_core, workspace), "https://github.com/facet-rs/facet");
 }
 
 #[test]
@@ -2185,34 +2185,34 @@ fn target_shapes_match_cargo_metadata_for_real_members() -> Stream<Check> {
     let taxon = fixture_tree("cargo_manifest_real/phon/rust/taxon");
     let facet_core = fixture_tree("cargo_manifest_real/facet-core");
     let facet = fixture_tree("cargo_manifest_real/facet");
-    yield assert_eq(lib_target_shape(taxon).name, "zztaxon");
-    yield assert_eq(lib_target_shape(facet_core).name, "zzfacet_core");
-    yield assert_eq(build_script_target_shape(facet_core).kind, "build-script");
-    yield assert_eq(lib_target_shape(facet).name, "zzfacet");
-    yield assert_eq(build_script_target_shape(facet).source, "build.rs");
+    yield expect_eq(lib_target_shape(taxon).name, "zztaxon");
+    yield expect_eq(lib_target_shape(facet_core).name, "zzfacet_core");
+    yield expect_eq(build_script_target_shape(facet_core).kind, "build-script");
+    yield expect_eq(lib_target_shape(facet).name, "zzfacet");
+    yield expect_eq(build_script_target_shape(facet).source, "build.rs");
 }
 
 #[test]
 fn rodin_problem_shape_is_available_for_the_manifest_adapter() -> Stream<Check> {
     let problem = problem_of_member(7, 13);
-    yield assert_eq(problem.root_pkg, 7);
-    yield assert_eq(problem.root_req, VersionSet::from_req("*"));
-    yield assert_eq(problem.root_default_feature, 13);
-    yield assert_eq(problem.root_default_features, true);
+    yield expect_eq(problem.root_pkg, 7);
+    yield expect_eq(problem.root_req, VersionSet::from_req("*"));
+    yield expect_eq(problem.root_default_feature, 13);
+    yield expect_eq(problem.root_default_features, true);
 }
 
 #[test]
 fn sparse_feature_closure_preserves_hyphenated_seed_feature() -> Stream<Check> {
     let row_json = "{\"name\":\"tokio\",\"vers\":\"1.52.3\",\"deps\":[],\"features\":{\"rt-multi-thread\":[\"rt\"],\"rt\":[]},\"yanked\":false}";
-    yield assert_eq(sparse_row_rt_multi_thread_feature_debug(row_json, "x86_64-apple-darwin"), "rt-multi-thread,rt");
+    yield expect_eq(sparse_row_rt_multi_thread_feature_debug(row_json, "x86_64-apple-darwin"), "rt-multi-thread,rt");
 }
 
 #[test]
 fn sparse_feature_closure_preserves_ring8_tokio_seed_features() -> Stream<Check> {
     let row_json = "{\"name\":\"tokio\",\"vers\":\"1.52.3\",\"deps\":[{\"name\":\"windows-sys\",\"package\":\"windows-sys\",\"req\":\"0.48\",\"kind\":\"normal\",\"target\":\"cfg(windows)\",\"optional\":true,\"default_features\":true,\"features\":[]}],\"features\":{\"io-util\":[],\"rt\":[],\"rt-multi-thread\":[\"rt\"],\"macros\":[],\"net\":[],\"default\":[\"windows-sys\"]},\"yanked\":false}";
     let features = sparse_row_tokio_ring8_feature_debug(row_json, "x86_64-apple-darwin");
-    yield assert_eq(features.contains("rt-multi-thread"), true);
-    yield assert_eq(features.contains("windows-sys"), false);
+    yield expect_eq(features.contains("rt-multi-thread"), true);
+    yield expect_eq(features.contains("windows-sys"), false);
 }
 
 #[test]
@@ -2232,7 +2232,7 @@ fn typed_sparse_row_errors_are_schema_values() -> Stream<Check> {
 #[test]
 fn direct_resolved_unit_adapter_gap_is_pinned() -> Stream<Check> {
     let gap = resolved_unit_adaptation_gap();
-    yield assert_eq(gap.contains("Ring-scale solution unit rows"), true);
-    yield assert_eq(gap.contains("composed workspace+sparse solve"), true);
-    yield assert_eq(gap.contains("feature-name UnitTargetTable emission"), true);
+    yield expect_eq(gap.contains("Ring-scale solution unit rows"), true);
+    yield expect_eq(gap.contains("composed workspace+sparse solve"), true);
+    yield expect_eq(gap.contains("feature-name UnitTargetTable emission"), true);
 }
