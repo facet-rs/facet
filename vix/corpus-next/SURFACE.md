@@ -23,7 +23,7 @@ juxtaposition: a value followed by a value calls the first with the second.
 else is named. (Lineage: Swift, Smalltalk.)
 
 ```vix
-exec cc!{ -c input.c -o input.o } where { mounts: m }
+exec cc`-c input.c -o input.o` where { mounts: m }
 range where { from: 0, to: n }
 rows.sorted where { order: by_key(|r| r.weight) }
 ```
@@ -86,8 +86,12 @@ that `{ }` was overloaded, and it no longer is.) `;` terminates `let` bindings; 
 block's value is its final expression; **expression statements do not exist**.
 
 - Unary minus. Array spread `[..a, ..b]`. Record spread `..base`.
-- String interpolation: backtick templates with `${expr}`. Plain `""` is always
-  literal. `+` concatenation stays legal.
+- **Strings, bash lineage**: `"…"` **interpolates** with `${expr}`; `'…'` is
+  **always literal**; `+` concatenation stays legal.
+- **Backticks are COMMANDS**, not strings: a tagged template whose tag is a
+  capability value. `rustc`-c {src} -o {out}`` — interpolation inside a command is
+  `{expr}` (an argv element, typed; a path interpolated there is a dependency edge
+  wearing an argv costume). See §8.
 - **Suffix literals**: `5s` is a `Duration`, `1GB` a `ByteSize`. The suffix set is
   **closed and language-defined**; users never add suffixes.
 - Paths: `p""` literals, `/` joins, String only as a joined segment.
@@ -214,8 +218,13 @@ ledger. Write no code that depends on yield position.
 
 ## 8. Effects, capabilities, placement
 
-- **Command grammars are `name!{ … }`** — `rustc!{ … }`, `cc!{ … }`, `build_script!{ … }`.
-  Backticks are string-interpolation templates and are NOT a command form.
+- **Commands are backtick tagged templates**, tagged by a capability VALUE:
+  ```vix
+  let rustc = Rustc::acquire spec;
+  let out   = exec rustc`-c {src} -o out`;
+  ```
+  This is why a macro (`rustc!{ … }`) is wrong: a macro cannot refer to the
+  capability you just bound. `name!{ … }` in the v1 corpus is the OLD shape.
 - **`exec` is a boring effect**, like `fetch`. It is not an exception.
 - **`fetch` is pinned.** `fetch(url) where { sha256 }` names a blob whose value
   identity is known *before* evaluation; the URL is a **provenance coordinate**,
@@ -300,6 +309,9 @@ When in doubt: old shape + a GAPS entry with a proposed form marked **PROPOSAL**
 | `Target::host()` | a `target` parameter, supplied by the demand root |
 | `Rustc::acquire(Target::host())` | `Rustc::acquire(target)` |
 | `--stdout {p"cfg.stdout"}` | log it — stdout has no home yet |
+| `rustc! { … }` | `` rustc`…` `` — tagged by the capability value |
+| `` `interp ${x}` `` | `"interp ${x}"` |
+| `"literal"` | `'literal'` |
 | anonymous record | `struct { x: 1 }` |
 
 ## 12. The GAPS file (the real deliverable)

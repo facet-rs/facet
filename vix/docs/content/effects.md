@@ -18,7 +18,7 @@ and find.
 ## `exec` is boring
 
 ```vix
-let objects = src.glob("*.c").map(|c| exec cc!{ -c {src / c} -o {c.with_ext("o")} }).collect();
+let objects = src.glob("*.c").map(|c| exec cc`-c {src / c} -o {c.with_ext('o')}`).collect();
 ```
 
 `exec` is a primitive, alongside `fetch` and format parsing. It is not an
@@ -26,10 +26,14 @@ exception, it needs no special vocabulary, and nothing about the rest of the
 language bends around it. Demanding an `exec` runs a process. Not demanding it
 runs nothing.
 
-The argument is a **command**, produced by a command grammar (`cc!{ … }`), so its
-arguments are typed rather than concatenated. A path interpolated into an argument
-is a dependency edge wearing an argv costume: constructing the command forces
-nothing, and when the result is demanded, the interpolation walk creates the edges.
+A command is a **backtick tagged template**, tagged by a capability. Its arguments
+are typed rather than concatenated, and `{expr}` interpolates a *value* into an
+argv element. A path interpolated there is a dependency edge wearing an argv
+costume: constructing the command forces nothing, and when the result is demanded,
+the interpolation walk creates the edges.
+
+**Coming from a shell**: backticks have meant command substitution for fifty
+years, `"…"` interpolates and `'…'` does not. Vix keeps all three.
 
 ## `fetch` names bytes it has never seen
 
@@ -61,12 +65,16 @@ somewhere, and what they saw becomes the receipt's authority. They are not a
 
 ```vix
 let rustc = Rustc::acquire spec;
-let out   = exec rustc!{ --edition 2024 {src / p"lib.rs"} };
+let out   = exec rustc`--edition 2024 {src / p"lib.rs"}`;
 ```
 
 A **capability** is a toolchain, advertised by a machine, referenced by
 **identity** — `rustc -vV`, and the hash behind it. `Rustc::acquire spec` does not
 open a binary; nothing in a vix program evaluates, so it cannot. It *names* one.
+
+That capability is the **tag** on the command. A command is not a free-floating
+string that happens to name a program; it is an argv addressed to a toolchain you
+have already pinned.
 
 Which means a capability behaves exactly like a pinned blob: an identity that some
 machine may be able to materialize. If no machine can, demanding it fails, and it
@@ -116,7 +124,7 @@ Sometimes a demand should be evaluated somewhere else — because that machine h
 the capability, or the bytes, or simply because there are more of them.
 
 ```vix
-let out = place (exec rustc!{ -c {src} -o out });
+let out = place (exec rustc`-c {src} -o out`);
 ```
 
 An island edge carries a *value* between two computations in one evaluator. A
@@ -140,7 +148,7 @@ that it needs something the boundary never accounted for.
 
 ```vix
 let f   = fetch url where { sha256: "…" };
-let out = place (exec rustc!{ -c {f} -o out });
+let out = place (exec rustc`-c {f} -o out`);
 ```
 
 **On the executor.** Nothing outside the `place` demands `f`'s bytes — the only

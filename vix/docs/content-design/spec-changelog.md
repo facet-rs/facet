@@ -895,3 +895,32 @@ first `exec cmd where { env: %{...} }`. Sweep: six rung files.
 - **The failure surface** (`fail`): three ports weaponized `.get().unwrap()` on an
   empty map for want of it. Queue item C3.
 - The molten-vs-codata edge asymmetry.
+
+### Round 10 addendum — strings and commands (Amos: his original design, restored)
+
+- **Backticks are COMMANDS**, a tagged template whose tag is a **capability value**:
+  `` exec rustc`-c {src} -o out` ``. Interpolation inside a command is `{expr}`, and
+  an interpolated value is an argv *element*, typed.
+- **Strings follow bash**: `"…"` interpolates with `${expr}`; `'…'` is always
+  literal.
+- This SUPERSEDES round 6's interpolation ruling (backtick templates, `""` literal).
+  Round 6's reason was the uncanny principle — a Rust reader's pasted string must
+  never change meaning. That trap is now **accepted, not dissolved**:
+
+  > **LEDGER (innovation points).** `"${HOME}"` pasted from Rust changes meaning.
+  > Defended by: rarity (`${` in a Rust literal is vanishingly uncommon), by bash
+  > familiarity (this is the single most-read string convention on earth), and by
+  > the `'…'` escape hatch. Accepted deliberately. Observable at a diagnostics rung.
+
+- **`name!{ … }` was wrong, and wrong structurally**, not just aesthetically: a
+  macro cannot refer to the capability you just bound.
+  ```vix
+  let rustc = Rustc::acquire spec;   // a VALUE: a pinned toolchain identity
+  exec rustc`-c {src} -o out`        // the value is the tag
+  ```
+  A command is not a free-floating string that happens to name a program. It is an
+  argv addressed to a toolchain you already pinned. `exec cc!{ … }` in the v1
+  corpus is the old shape.
+- OPEN: does `p"…"` interpolate (following `"`), and does `p'…'` exist?
+- OWED: a mechanical sweep of `vix/corpus-next/*.vix` (`rustc! {`, `build_script! {`)
+  and `vix/tests/ratchet/*.vix` (`exec! {`) onto the tagged-template form.
