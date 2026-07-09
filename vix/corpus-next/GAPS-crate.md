@@ -111,3 +111,23 @@ expected to parse or run today.
   and `:1614` for the two failure sentinels and two stdout fake-file sites.
 - Adapted the target comments implicitly by deleting `Target::host()` rather than
   describing a host read. The remaining `target` parameter is semantic recipe input.
+
+## GAP (round-10 backtick sweep): `build_script` is a String, not a capability
+
+`crate.vix:1443` and `:1573` bind `let build_script = "build-script-runner";` — a
+**String** — and the old `build_script! { … }` macro shadowed it. Under the ruled
+form, `exec build_script`…`` tags the command with that String.
+
+A command's tag must be a **capability value** (an identity some machine can
+materialize), not a name. So either:
+
+1. `BuildScript::acquire(…)` exists and yields a capability, or
+2. the build-script runner is not a capability at all but an ordinary executable
+   produced by a previous `exec` — in which case the tag is a `Tree` subpath, and
+   the surface must say a command may be tagged by an artifact as well as by a
+   capability.
+
+(2) is the interesting one: a build script *is* a binary you just compiled. It has
+an identity, but nobody advertised it. **PROPOSAL: a command may be tagged by any
+value with an identity that resolves to an executable — a capability (advertised) or
+an artifact (produced).** That would also cover `objcopy`-on-your-own-output.

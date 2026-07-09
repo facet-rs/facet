@@ -641,7 +641,7 @@ fn compile_rust_unit(unit: RustUnit) -> Tree {
 
     match unit.emit_metadata {
         Some(metadata) => match unit.emit_link {
-            Some(link) => rustc! {
+            Some(link) => exec rustc`
                 --crate-name {unit.crate_name}
                 --edition {edition}
                 --target {unit.target}
@@ -652,9 +652,8 @@ fn compile_rust_unit(unit: RustUnit) -> Tree {
                 --emit=metadata={metadata},link={link}
                 {dep_args}
                 {extern_args}
-                {source_arg}
-            },
-            None => rustc! {
+                {source_arg}`,
+            None => exec rustc`
                 --crate-name {unit.crate_name}
                 --edition {edition}
                 --target {unit.target}
@@ -665,11 +664,10 @@ fn compile_rust_unit(unit: RustUnit) -> Tree {
                 --emit=metadata={metadata}
                 {dep_args}
                 {extern_args}
-                {source_arg}
-            },
+                {source_arg}`,
         },
         None => match unit.emit_link {
-            Some(link) => rustc! {
+            Some(link) => exec rustc`
                 --crate-name {unit.crate_name}
                 --edition {edition}
                 --target {unit.target}
@@ -680,9 +678,8 @@ fn compile_rust_unit(unit: RustUnit) -> Tree {
                 --emit=link={link}
                 {dep_args}
                 {extern_args}
-                {source_arg}
-            },
-            None => rustc! {
+                {source_arg}`,
+            None => exec rustc`
                 --crate-name {unit.crate_name}
                 --edition {edition}
                 --target {unit.target}
@@ -692,8 +689,7 @@ fn compile_rust_unit(unit: RustUnit) -> Tree {
                 {unit.env}
                 {dep_args}
                 {extern_args}
-                {source_arg}
-            },
+                {source_arg}`,
         },
     }
 }
@@ -1443,15 +1439,14 @@ fn solution_build_script_run(source: Tree) where {
     let build_script = "build-script-runner";
     let env = build_script_env source where { target_name, unit, opt_level: 3 };
 
-    build_script! {
+    exec build_script`
         --requires-toolchain=cc
         --executable {binary / unit.link}
         // GAP: stdout has no v2 effect home yet; keep the fake output file.
         --stdout {p"build.stdout"}
         --out-dir {p"out"}
         --env OUT_DIR={p"out"}
-        {env}
-    }
+        {env}`
 }
 
 fn solution_build_script(target: Target) where {
@@ -1586,14 +1581,13 @@ fn build_script_run(manifest: Tree) where {
     };
     let env = build_script_env manifest where { target_name: "x86_64-unknown-linux-gnu", unit, opt_level: 0 };
 
-    build_script! {
+    exec build_script`
         --executable {binary / p"build_script"}
         // GAP: stdout has no v2 effect home yet; keep the fake output file.
         --stdout {p"build.stdout"}
         --out-dir {p"out"}
         --env OUT_DIR={p"out"}
-        {env}
-    }
+        {env}`
 }
 
 fn empty_build_script_directives() -> BuildScriptDirectives {

@@ -46,3 +46,54 @@ vix/tests/ratchet/096-features.vix:6 - `mini_solve_with_features` uses inferred 
 vix/tests/ratchet/097-features-off.vix:5 - `mini_solve_with_features` uses inferred named arguments `requirements` and `features`. PROPOSAL: ratify fixture solver helper signatures.
 vix/tests/ratchet/139-deep-nesting-identity.vix:9 - `Chain::Link(i, acc)` remains a two-payload enum constructor; SURFACE.md shows one-payload variants but does not rule multi-payload spelling. PROPOSAL: require record payloads for multi-field variants or ratify tuple variants with more than one field.
 vix/tests/ratchet/118-payload-mismatch.reject.vix:7 - Reject pattern `Shape::Circle(r, extra)` intentionally keeps a two-payload pattern to preserve the payload-mismatch assertion. PROPOSAL: update this rung if multi-payload enum patterns are removed.
+
+## GAP (opened by the round-10 backtick ruling): tests cannot name a capability
+
+Amos ruled that a command is a **backtick tagged template whose tag is a capability
+VALUE**: `` exec rustc`-c {src} -o out` ``. A macro (`rustc!{ … }`) is structurally
+wrong — it cannot refer to the capability you just bound.
+
+Twelve rungs run processes with **no capability at all**:
+
+```
+067-exec-echo, 068-exec-failure-is-result, 069-exec-memoized,
+073-exec-consumes-tree, 074-exec-env, 082-flaky-detected,
+126-effects-overlap, 127-fanout-parallel, 128-progressive-tree,
+129-no-inline-draining, 130-kill-when-satisfied,
+070-undeclared-capability.reject
+```
+
+They all say `exec! { echo … }`. That form is dead, and there is **no legal
+replacement**, because nothing in the surface says how a `#[test]` obtains a
+capability: `Rustc::acquire(target)` needs a `target`, and a test has no target
+parameter. Per SURFACE §10, we kept the old shape and logged it rather than invent
+`Sh::acquire`. **These twelve rungs are the only files in the repo still on the
+dead spelling.**
+
+### The finding underneath, which is better news
+
+**Rung 070 becomes redundant, and that is the design working.**
+
+`070-undeclared-capability.reject.vix` exists to reject `exec! { cc -o hello hello.c }`
+— using a tool without declaring its capability. Under the tagged form you *cannot
+write* that: `exec cc`…`` requires `cc` to be a bound capability value, so an
+undeclared capability is an **unbound identifier**, caught by name resolution.
+The rejection stops being a bespoke check and falls out of scoping.
+
+And the ratchet currently contradicts itself: rung 067 runs `echo` undeclared and is
+expected GREEN, while rung 070 runs `cc` undeclared and must REJECT. Only one of
+those can be right.
+
+### PROPOSALS (Amos adjudicates)
+
+1. Every command is tagged. A test that execs must acquire a capability first. Then
+   067–069 acquire something (`Sh`? `Coreutils`? name unruled) and **070 is deleted**,
+   because its rejection is now a name-resolution error covered by the general
+   unbound-identifier rung.
+2. Or: 070 keeps its `//! reject:` header but its expected diagnostic changes from
+   "undeclared capability" to "unbound identifier `cc`". Cheaper; loses the specific
+   diagnostic.
+3. Where does a test get a `Target`? A `#[test]` has no parameters. Either the
+   harness supplies one (an ambient read — forbidden), or `#[test { target: … }]`
+   names it (an input — a pin). The second is consistent with
+   `r[machine.placement.no-in-program-steering]`.

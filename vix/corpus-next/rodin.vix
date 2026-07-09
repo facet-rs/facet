@@ -493,11 +493,10 @@ fn cfg_facts_insert_lines(lines: Doc) where { facts: Map<String, Bool> } -> Map<
 
 fn rustc_cfg_stdout(target: Target) -> Tree {
     let rustc = Rustc::acquire(target);
-    rustc! {
+    exec rustc`
         --stdout {p"cfg.stdout"}
         --print cfg
-        --target {target}
-    }
+        --target {target}`
 }
 
 fn rustc_cfg_facts_from_lines(lines: Doc) -> Map<String, Bool> {
