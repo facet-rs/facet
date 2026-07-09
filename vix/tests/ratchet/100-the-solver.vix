@@ -15,7 +15,7 @@ enum Step { Pass(State), Conflict(NoGood) }
 enum Outcome { Solved(Map<String, Version>), Exhausted(NoGood) }
 
 fn propagate(s: State, pkg: String, version: Version) -> Step {
-    fixture_index().row(pkg, version).deps.values().fold(
+    fixture_index().row(pkg, version).deps.values().fold_ascending(
         Step::Pass(State { selected: s.selected.insert(pkg, version), ..s }),
         |step, dep| match step {
             Step::Conflict(ng) => Step::Conflict(ng),

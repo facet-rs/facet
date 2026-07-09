@@ -53,7 +53,7 @@ appears:
 enum Step { Pass(State), Conflict(NoGood) }
 
 fn propagate(state: State, row: Row) -> Step {
-    row.deps.values().fold(Step::Pass(state), |step, dep| {
+    row.deps.values().fold_ascending(Step::Pass(state), |step, dep| {
         match step {
             Step::Conflict(ng) => Step::Conflict(ng),
             Step::Pass(s) => {

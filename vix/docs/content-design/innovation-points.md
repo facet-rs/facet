@@ -29,12 +29,10 @@ current design already defends them:
   Rust-shaped misuse loudly.)
 - **`pop` doesn't exist; `split_last` returns both pieces** — DEFENDED by
   absence + a reject rung.
-- **Multiset `fold` runs in canonical order, not source order** —
-  UNDEFENDED except by documentation. A Rust/JS reader will write an
-  order-sensitive fold and get a *deterministic but surprising* result —
-  the worst kind, since it never fails loudly. Candidate defenses: a
-  distinct name (`fold_canonical`), or the multiset type being visibly
-  not-an-array at the call site.
+- **Multiset fold order** — RULED (and the ruling predated this note:
+  names carry semantics; the book initially ignored it). Defended by
+  distance: multisets have `fold_ascending`, no bare `fold`; arrays keep
+  bare `fold` in field order where the look matches the behavior.
 - **Arguments are wires, not eager computations** — mostly benign
   (pure code can't observe it) but becomes visible the day someone
   reasons about cost by Rust intuition.

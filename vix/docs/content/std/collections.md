@@ -183,18 +183,20 @@ Filter and transform in one move: keeps the `Some` payloads.
 
 Applies `f` to each element and unions the results.
 
-### `.fold(init: R, f: fn(R, T) -> R) -> R`
+### `.fold_ascending(init: R, f: fn(R, T) -> R) -> R`
 
-Combines elements in **canonical order** — increasing value order. Always
-deterministic, on any machine, at any parallelism.
+Combines elements in increasing value order — the name says the order,
+because a multiset has no other order to offer. Always deterministic, on
+any machine, at any parallelism. There is no bare `fold` on multisets:
+an order-sensitive combine over an unordered collection must say which
+order it means.
 
-**Coming from JS/Haskell**: this is the entry with teeth. `reduce`/`foldl`
-promise insertion order; a multiset *has* no insertion order, so the fold
-runs in the one order that is a property of the values themselves. A
-commutative-associative `f` (sums, unions, maxima) behaves exactly as
-you'd expect and can be computed in any order internally. An
-order-sensitive `f` is deterministic too — but the order is canonical, not
-chronological. If you meant "in original array order," fold the array.
+**Coming from JS/Haskell**: `reduce`/`foldl` promise insertion order; a
+multiset *has* no insertion order. A commutative-associative `f` (sums,
+unions, maxima) behaves exactly as you'd expect and may be computed in
+any order internally. If you meant "in original array order," fold the
+array — arrays keep bare `fold`, in field order, because there the order
+IS the reader's intuition.
 
 ### `.find_min(p) -> Option<T>`, `.find_max(p) -> Option<T>`
 

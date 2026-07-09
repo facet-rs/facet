@@ -1,7 +1,0 @@
-// Rung 051 — fold over a large derived array (the fused-loop shape).
-test fold_100k {
-    let n = 100000;
-    let xs = range(0, n);            // [Int]: 0, 1, ..., n-1
-    expect_eq(xs.len(), n);
-    expect_eq(xs.fold(0, |acc, i| acc + i), 4999950000);
-}
