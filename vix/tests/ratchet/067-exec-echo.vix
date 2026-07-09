@@ -1,7 +1,7 @@
 // Rung 067 — exec: run a process, its output is a value. (effects)
 #[test]
-fn exec_echo() -> Stream<Check> {
-    let out = exec! { echo "hello ratchet" };
+fn exec_echo(echo: Echo) -> Stream<Check> {
+    let out = exec echo`"hello ratchet"`;
     yield expect_eq(out.status, 0);
     yield expect_eq(out.stdout.trim(), "hello ratchet");
 }

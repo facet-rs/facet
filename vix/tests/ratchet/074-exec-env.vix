@@ -1,6 +1,6 @@
 // Rung 074 — environment variables are declared values, not ambient leaks.
 #[test]
-fn exec_env() -> Stream<Check> {
-    let out = exec! { env GREETING = "hi" ; sh -c "echo $GREETING" };
+fn exec_env(sh: Sh) -> Stream<Check> {
+    let out = exec sh`-c "echo $GREETING"` where { env: %{ "GREETING" => "hi" } };
     yield expect_eq(out.stdout.trim(), "hi");
 }

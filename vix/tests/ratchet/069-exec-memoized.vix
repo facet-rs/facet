@@ -1,8 +1,8 @@
 // Rung 069 — the same exec demanded twice runs once.
 #[test]
-fn exec_memoized() -> Stream<Check> {
-    let a = exec! { echo "once" };
-    let b = exec! { echo "once" };
+fn exec_memoized(echo: Echo) -> Stream<Check> {
+    let a = exec echo`"once"`;
+    let b = exec echo`"once"`;
     yield expect_eq(a.stdout, b.stdout);
     yield ran_processes(1);
 }

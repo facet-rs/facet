@@ -6,8 +6,8 @@
 fn pure_work() -> Int { (range where { from: 0, to: 100000 }).fold(0, |a, i| a + i) }
 
 #[test { budget_wall: 1s, budget_rss: 256MB }]
-fn no_inline_draining() -> Stream<Check> {
-    let slow = exec! { sh -c "sleep 0.5; echo x" };
+fn no_inline_draining(sh: Sh) -> Stream<Check> {
+    let slow = exec sh`-c "sleep 0.5; echo x"`;
     let sum = pure_work();
     yield expect_eq(sum, 4999950000);
     yield expect_eq(slow.status, 0);

@@ -97,3 +97,48 @@ those can be right.
    harness supplies one (an ambient read — forbidden), or `#[test { target: … }]`
    names it (an input — a pin). The second is consistent with
    `r[machine.placement.no-in-program-steering]`.
+
+## RESOLVED (round 11, Amos): tests declare capabilities; rung 070 dissolves
+
+Amos: *"declared arguments of functions sporting the test attribute have the harness
+forge those capabilities for testing purposes."* That is not a hack — it is
+`r[machine.placement.no-in-program-steering]`: nothing in a program observes the
+world; ambient facts arrive as **inputs supplied at the demand root**, and the
+harness *is* the demand root.
+
+All twelve rungs are swept:
+
+```vix
+#[test]
+fn exec_echo(echo: Echo) -> Stream<Check> {
+    let out = exec echo`"hello ratchet"`;
+    …
+}
+```
+
+**Rung 070 no longer needs to exist as a special check.** `exec cc`…`` cannot resolve
+`cc` unless `cc: Cc` is a parameter, so an undeclared capability is an **unbound
+identifier**. The rung is retained with that diagnostic; deleting it is a one-line
+change if you'd rather the general name-resolution rung cover it.
+
+Rung 074 improved on the way through: `env GREETING = "hi"` was a *command*
+pretending to be a declaration. It is now a named argument —
+`exec sh`-c "echo $GREETING"` where { env: %{ "GREETING" => "hi" } }` — which is
+what "environment variables are declared values, not ambient leaks" was always
+trying to say.
+
+## STILL OPEN (needs a ruling)
+
+1. **Capability granularity.** Is a capability a *tool* (`Echo`, `Wc`, `Cc`) or a
+   *toolchain* that yields tools (the zoo's `Map[Symbol, DiscoveredTool]` with
+   `:cc`, `:ar`, `:ranlib`)? The rungs above assume per-tool. `crate.vix` tags a
+   command with `build_script`, a **String** — which suggests a third answer: a
+   command may be tagged by any value with an identity that resolves to an
+   executable, capability (advertised) or artifact (produced).
+
+2. **`expect_eq`'s shape.** `testing.md` now says
+   `expect_eq(actual) where { expected }`; the 139 rungs still say
+   `expect_eq(a, b)`. Under at-most-one-positional, `expect_eq (a, b)` is legal —
+   it passes ONE argument, a tuple — but a tuple has no room for the roles, so the
+   swap bug returns. The book and the ratchet disagree until this is ruled. **Not
+   swept: 400+ call sites should not move on an unruled decision.**

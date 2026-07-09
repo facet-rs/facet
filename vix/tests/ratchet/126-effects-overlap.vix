@@ -3,9 +3,9 @@
 // overlapped. Each sleeps 400ms; the budget is under their sum. A serial
 // executor cannot pass this rung. (scheduler: spawn-and-park)
 #[test { budget_wall: 1s, budget_rss: 256MB }]
-fn effects_overlap() -> Stream<Check> {
-    let a = exec! { sh -c "sleep 0.4; echo a" };
-    let b = exec! { sh -c "sleep 0.4; echo b" };
+fn effects_overlap(sh: Sh) -> Stream<Check> {
+    let a = exec sh`-c "sleep 0.4; echo a"`;
+    let b = exec sh`-c "sleep 0.4; echo b"`;
     yield expect_eq(a.stdout.trim() + b.stdout.trim(), "ab");
     yield overlapped();
 }

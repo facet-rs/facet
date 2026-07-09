@@ -229,11 +229,7 @@ namespace CargoEdition {
         match self {
             CargoEdition::Literal(edition) => edition,
             CargoEdition::Workspace { workspace } => match workspace {
-                true => {
-                    // GAP: no v2 failure surface yet; keep the old empty-map panic shape.
-                    let missing: Map<String, String> = %{};
-                    missing.get("workspace.package.edition").unwrap()
-                },
+                true => fail MissingWorkspaceField { field: "workspace.package.edition" },
                 false => "2015",
             },
         }

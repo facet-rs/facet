@@ -1,9 +1,12 @@
-//! reject: undeclared capability
-//! at: 6
+//! reject: unbound identifier `cc`
+//! at: 7
 
-// Rung 070 — using a tool without declaring its capability is loud. (effects)
+// Rung 070 — using a tool you did not declare is not a special error: it is
+// an unbound identifier. A command's tag is a capability VALUE, and a test's
+// capabilities are parameters the harness supplies. There is no way to name
+// `cc` here, so there is nothing to reject specially. (effects)
 #[test]
 fn undeclared_capability() -> Stream<Check> {
-    let out = exec! { cc -o hello hello.c };
+    let out = exec cc`-o hello hello.c`;
     yield expect_eq(out.status, 0);
 }
