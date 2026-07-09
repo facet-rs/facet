@@ -34,35 +34,57 @@ probe output — not the tool's hash — enters exec identity.
 
 ## We are not Nix, and the difference is upstream of everything
 
-> **UNDER VERIFICATION.** The claim below that Nix "may not change the software" is
-> almost certainly **wrong** — nixpkgs patches liberally, `patchelf` and
-> `autoPatchelfHook` exist, derivations carry `patches = [...]`. Two agents are
-> checking why Nix actually requires a global store path (binary substitution?
-> closure discovery by scanning? relocation?), and this section will be rewritten to
-> whatever survives. Do not quote it. The *conclusion* — that we do not need a global
-> path, because unprivileged installs have no `/nix` and the mount root differs across
-> platforms — does not depend on the disputed premise.
+*(Verified. `notes/nix-verification.md`. An earlier draft claimed Nix "may not change the
+software." That is false and the correction is more useful than the claim was.)*
 
-Nix packages *existing* software and plays by its rules. It may not change the
-software, so its only lever is the filesystem: `/nix/store/<hash>-name`, byte-identical
-on every machine on earth, so that a path baked into a binary resolves everywhere.
-That global immutable path is not an aesthetic. It is Nix's entire mechanism, and it
-is the price of not touching the source.
+**nixpkgs patches constantly.** `patches = [...]` in `patchPhase`, shebang rewriting, and
+— for ELF outputs — `patchelf` rewriting `RPATH` and the dynamic interpreter in
+`fixupPhase`. Patching is a standard build phase, not an exception. So "Nix can't touch
+the source" is not why it needs `/nix/store`.
 
-**We maintain patch sets.** Software is patched to build correctly, and the patch set
-for GCC and Clang will not be empty. If a program `dlopen`s, it does so **from a path
-we arranged.**
+It needs `/nix/store` for a narrower and more mundane reason. The store path is a hash of
+the derivation's inputs, and that path gets **baked into the output's bytes** — via
+`RPATH`, via `PT_INTERP`, via shebangs. Two things follow:
 
-Which means the global path is not available to us and we do not need it:
+1. **Binary substitution.** If the same derivation hashes to the same path everywhere, a
+   substituter (`cache.nixos.org`) can hand you a prebuilt output instead of rebuilding it.
+   That is the entire cache story.
+2. **The path must be absolute.** The Linux kernel does not honour `$ORIGIN` in `PT_INTERP`
+   or in a shebang line. There is no portable way to make the *loader path itself* relative.
 
-- **Unprivileged installations.** There is no `/nix` to create.
-- **The mount root differs** on Windows, Linux and macOS. Linux does not care about
-  this. We have to.
+Neither is the price of not touching the source. They are the price of choosing global,
+content-hashed, substitutable paths as the caching mechanism.
 
-So: **there is no stable global path.** An earlier draft of this note demanded one.
-That was Nix's answer to Nix's constraint, imported without its premise. We produce
-the binary, so we arrange its loader paths — and arranging them is not a hack, it is
-the product.
+(And it is byte-identical *per platform and architecture*, not "on every machine on earth.")
+
+### What we inherit anyway, and what we don't
+
+We do **not** inherit the caching mechanism: a materialized closure travels as
+content-addressed blobs, keyed by identity, not as a path that must resolve identically on
+every machine that ever runs it. So the two constraints Nix accepted — no `/nix` to create
+without privilege, a mount root that differs across Windows, Linux and macOS — are
+constraints we never adopted, because we never adopted their cause.
+
+We **do** inherit the kernel constraint, and pretending otherwise would be the same error
+in a different direction. If *we* bake an interpreter path into a binary we produced, that
+path must be absolute and must resolve on whatever machine later runs it. `$ORIGIN` does not
+save us either.
+
+Two answers, and we should be honest that they are answers rather than an escape:
+
+- **Static linking**, where we control the build. A statically linked `rustc` has no
+  `PT_INTERP` problem because it has no interpreter. This is why "rustc via a static
+  rust-lang build" is the shape of a materialized toolchain.
+- **Relocation at materialization**, where we don't. We produce the binary and we already
+  analyze it (below), so we can rewrite `PT_INTERP` and `RPATH` when it is mounted on a
+  node. That rewrite changes the bytes, so **the relocated copy is not the value**: the
+  value is the canonical artifact, and the relocation is a materialization detail under the
+  as-if law. The receipt attests the value, not the copy.
+
+The cost of the second is real and worth stating: **an artifact you carry off the fleet is
+canonical, not runnable.** Nix's answer to that is "the store path exists on the target."
+Ours has to be "the closure travels with it, and materializing it relocates it." Whether
+that is acceptable is a product question, not a language one.
 
 ## Nix is files-in, files-out, bash in the middle. We have types.
 
@@ -117,9 +139,16 @@ command with a `String` does not typecheck — not because we disapprove, but be
 We observe reads (`r[machine.receipt.witness-reads]`), so the linker's read-set names
 every shared object it opened **inside the VFS**.
 
-That is not everything. On Windows the linker reads, and creates dependencies on,
-system libraries that live outside the VFS entirely. Those reads cross no boundary we
-control, so no read-set will ever name them.
+That is not everything. On Windows the linker reads, and creates dependencies on, system
+libraries that live outside the VFS entirely. Those reads cross no boundary we control, so
+no read-set of ours will name them. (The comparator here is **Bazel**, not Nix — Nix has no
+native Windows target and never fields this problem.)
+
+**And it may be solvable, by prior art we should read rather than reinvent.** Microsoft's
+BuildXL observes Windows system-DLL reads by **API hooking with Detours** — a non-VFS
+observation mechanism. If reads outside a filesystem boundary can be witnessed, the gap
+below narrows from "unobservable" to "observed by a second mechanism."; the invariant does
+not change, only how much of it the read-set alone can carry.
 
 The artifact analysis names them. So the two measurements check each other:
 
@@ -128,9 +157,15 @@ The artifact analysis names them. So the two measurements check each other:
 > an advertised ambient capability. Anything else is a hermeticity hole, and it is
 > detected at production time.**
 
-Nix detects that hole at *runtime*, on someone else's machine, as a missing shared
-object. We detect it the moment the linker finishes, because we know what we gave it
-and we can read what it produced.
+Nix detects that hole at *runtime*, on someone else's machine, as a missing shared object:
+its sandbox **restricts visibility** rather than recording reads, and its reference detection
+is a scan of the output for the hash parts of input store paths — an after-the-fact scan
+cannot notice a dependency whose path was never embedded.
+
+One carve-out, so a maintainer cannot land it on us: `autoPatchelfHook` **does** fail at
+build time when a `DT_NEEDED` entry cannot be matched. It is scoped to packaging prebuilt
+binaries, not to ordinary source builds — but it is a genuine build-time check and we should
+say so before someone else does.
 
 That is the whole of the gloat, and it is narrow enough to be true.
 
@@ -232,6 +267,8 @@ Brothers in arms, not rivals.
    is the mount layout, and does attribution come from the sandbox's ACL rather than the
    namespace? (Guess: yes — the daemon knows which prefixes it granted this exec.
    Confirm against the `vx-vfsd` contract; do not assume.)
+   **Read `BuildXL`'s Detours-based observation first.** It witnesses reads that never touch
+   a VFS, which is exactly the Windows system-library case, and it is shipped prior art.
 3. **What does a forged capability mean for a test?** (Round 11: the harness supplies
    them.) A forged closure is a materialized closure over fixture blobs — so a forged
    capability may be nothing more special than a `Tree` and its facts.
