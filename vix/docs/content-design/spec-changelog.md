@@ -1137,11 +1137,25 @@ Two collapses:
   blobs; any node that can fetch can run them. `r[machine.placement.capability-requirements-are-derived]`
   amended to say exactly this, and it is now one sentence instead of a taxonomy.
 
-**And the hole this opens, which we should not pretend away: THE SEED.** A binary embeds
-its recipe; the recipe names its toolchain; the toolchain is a package built by a
-toolchain. The chain bottoms out at a binary with **no recipe**. Nix calls it
-`bootstrap-tools` and an entire community (stage0, hex0, live-bootstrap) has done real
-work shrinking it toward something auditable. If we intend to "shut up the nix fanboys
-forever," that is the question they will ask, and content addressing does not answer it:
-every byte of the seed is content-addressed and equally unexplained. We should know what
-our seed is, how large, and what reduction costs.
+**And the hole this opens: THE SEED.** A binary embeds its recipe; the recipe names its
+toolchain; the toolchain is a package built by a toolchain. The chain bottoms out at a
+binary with **no recipe**. Content addressing does not answer this — every byte of the
+seed is content-addressed and equally unexplained.
+
+**Amos: this is not a place we are behind; it is a place to join forces.** The
+Bootstrappable Builds community already solved it (`hex0` → `M2-Planet`/`Mes` → `tcc` →
+`gcc`; Guix shipped a full-source bootstrap on it; `live-bootstrap` assembles a userland).
+We reuse their work: the seed is a pinned `fetch`, small enough to audit by eye, and the
+chain is an ordinary vix recipe.
+
+What we hand back is not nothing. Their chain becomes reproducible by **observation**
+rather than by convention — every step an exec with a witnessed read-set, so "this gcc
+descends from that seed" is a **receipt chain**, not a claim about a build script. `snark`
+is ours and bootstrap work drowns in parsing (ELF, ar, tar, M2-Planet's C subset). And the
+transparency log is exactly the home a full-source bootstrap's attestations lack.
+
+Then the recipe-embedded artifact's leaves are: source tarballs (pinned) and a tiny,
+human-auditable seed (pinned). **No unexplained binary anywhere in the graph** — the
+strongest form of "rebuild a binary by virtue of having the binary", reachable because
+someone else already did the hard part. Brothers in arms, not rivals.
+(Attribution/figures from memory; verify before they go anywhere public.)

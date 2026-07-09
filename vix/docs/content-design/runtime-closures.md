@@ -173,21 +173,47 @@ blobs; any node that can fetch can run it. An ambient one runs only where the
 fingerprint is advertised. That is the whole of the placement constraint, and it
 collapses `r[machine.placement.capability-requirements-are-derived]` into one sentence.
 
-## The seed, and the one place Nix is ahead
+## The seed — and the people who already solved it are allies
 
 A binary embeds its recipe; the recipe names its toolchain; the toolchain is a package;
 that package was built by a toolchain. The chain bottoms out at a binary that has no
 recipe — a **seed**.
 
-Nix calls this `bootstrap-tools`: a blob of prebuilt binaries you must simply trust. An
-entire community (stage0, hex0, live-bootstrap) exists to shrink that blob toward
-something a human can audit, and they have done real work there.
+Content addressing does not answer this. Every byte of the seed is content-addressed and
+equally unexplained.
 
-If we are going to say *"shut up the nix fanboys forever"*, that is the question they
-will ask, and the answer must not be "we hadn't thought about it." We should know
-exactly what our seed is, how large it is, and what it costs to reduce it. **This is
-not a language question, and it is not solved by content addressing** — every byte of
-the seed is content-addressed and equally unexplained.
+But it is not our problem to solve from scratch, and framing it as a competition is a
+mistake. The **Bootstrappable Builds** community has spent years on exactly this: a tiny
+seed (`hex0`, small enough to audit by eye), a chain up through `hex1`/`hex2`/`M0`,
+`M2-Planet` and `Mes` to `tcc` and then `gcc`, and `live-bootstrap` assembling a full
+userland from it. **Guix** shipped a full-source bootstrap on that foundation; Nix
+carries `bootstrap-tools` as a binary seed with work under way to reduce it.
+
+*(Attribution and figures above are from memory and must be checked before they appear
+anywhere public. The direction is not in doubt; the numbers are.)*
+
+**We reuse their work.** The seed becomes a pinned `fetch` — a few hundred bytes,
+content-addressed, auditable by a human being — and the chain becomes an ordinary vix
+recipe.
+
+And what we hand back is not nothing:
+
+- **Their chain becomes reproducible by *observation*, not by convention.** Every step is
+  an exec with a witnessed read-set and a receipt. "This `gcc` descends from that seed"
+  stops being a claim about a build script and becomes a **receipt chain** anyone can
+  re-verify.
+- **`snark` is ours, and bootstrap work is drowning in parsing** — ELF, `ar`, `tar`, the
+  C subsets `M2-Planet` accepts. A declarative binary dialect is exactly the tool that
+  work wants, and we are already building it for our own artifact analysis.
+- **The transparency log and the attestation format** are precisely the artifacts a
+  full-source bootstrap wants to publish and nobody has a good home for.
+
+So the recipe-embedded artifact's leaves become: source tarballs (pinned) and a seed
+(pinned, tiny, human-auditable). **No unexplained binary anywhere in the graph.** That is
+the strongest possible form of "you can rebuild a binary by virtue of having the binary",
+and it is reachable because someone else already did the hard part.
+
+Brothers in arms, not rivals.
 
 ## Open
 
