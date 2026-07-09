@@ -3,6 +3,8 @@
 Seat: implementer's attack. Assumption: I am about to implement the checker,
 lowering, and runtime from the requested book pages, machine spec pages,
 `SURFACE.md`, round-5/round-6 rulings, and the four corpus-next ports.
+This is semantics-only: no style feedback, no readability nits, and no
+proposals that merely make the ports prettier.
 
 Classification key:
 
