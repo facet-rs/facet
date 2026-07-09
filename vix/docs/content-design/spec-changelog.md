@@ -499,3 +499,105 @@ reconciliation pass:
 - Custom operators beyond `<=>`: Amos is open to a **small fixed set** (versions
   are load-bearing enough to earn one) but operator syntax is never
   user-extensible — parsing must not be customizable.
+
+### Round 8 — calling convention, records, type identity (Amos rulings)
+
+**Vocabulary struck.** "Wire" is rejected for an undemanded value: it collides
+with `vix-wire` (the executor over the real vox wire) and, worse, it reinvents
+the noun that `promise` was banned for. There is no object. There are values;
+values are not computed until something demands them. The book already says it
+without a noun (`_index.md:40`: "it denotes a value that depends on `getx()`'s
+value"). `dependency` survives as a *relation* ("depends on"), never as a noun
+for a value.
+
+**Calling convention.**
+- Parentheses are grouping. They are never call syntax.
+- Application is juxtaposition: a value followed by a value calls the first
+  with the second. `f (x)` is `f x`.
+- **At most one positional argument** — the subject, the thing acted on.
+  Everything else is named. (Lineage: Swift, Smalltalk. The zoo's `.vx` files
+  are inconsistent trials, not a prior design; do not read them as one.)
+- `f x y` still parses (left-assoc) and type-errors unless `f x` is callable.
+  At-most-one removes the ambiguity, not the grammar. Precedence, tightest
+  first: `.field`/`.method` > juxtaposition > unary minus > binary ops >
+  `where { }` (postfix on the application).
+- **Unary minus + juxtaposition: defend by rejection.** `abs -1` would parse as
+  subtraction. A juxtaposed argument must be an *atom* (identifier, literal,
+  string, path, bracketed group); `-1` is not, so `abs (-1)` is required and the
+  compiler says so with a fix-it. Whitespace-sensitive lexing (Swift's rule) was
+  considered and rejected: invisible in a diff.
+
+**Named arguments are a record.**
+- `where` in a signature declares the named-argument record type; `where { }` at
+  the call site constructs it. `where` sits LEFT of `->`, because it names
+  inputs and inputs belong left of the arrow. (Rust's `where` is a different
+  word that happens to be spelled the same.)
+- Inline `where { mounts: [Mount] = [], ... }` declares a **structural**
+  (anonymous) record type: this function's one-off option set.
+  `where ExecOpts` names a **nominal** one: a value, storable, decodable, and
+  *spreadable* across a family of functions. Not two styles — one-off vs family.
+- `name: value` everywhere. Never `name = value`. Therefore attributes take
+  records: `#[test { budget_wall: 5s, budget_rss: 1GB }]`.
+- **Suffix literals**: `5s` is a `Duration`, `1GB` a `ByteSize`. The suffix set
+  is CLOSED and language-defined; users never add suffixes (same line as
+  operators: no user-extensible parsing). This kills the `//! budget: "5s"`
+  naked-String-where-a-newtype-belongs (V6 disease).
+- **Punning**: bare names inside braces (`where { mounts, observer }`,
+  `Guard { parent, dep, req }`). NOT `:foo` — that spelling is reserved: the zoo
+  used `:cc`/`:ar`/`:ranlib`/`:orb` symbols and `Map[Symbol, DiscoveredTool]`,
+  and symbols are on the salvage list. 115 stutter sites in the ported corpus
+  are waiting on this; it is owed independently of `where`.
+- Defaults alone dissolve the corpus's five `X` / `X_target` twin pairs.
+
+**Two kinds of type.** Not `struct` vs `record` as spellings — nominal vs
+structural *identity*, and taxon already implements the answer:
+`taxon/src/identity.rs:242` (`r[impl schema-identity.canonical-encoding]`)
+writes the type NAME into the canonical encoding.
+- **Nominal**: identity is name + shape. `Point{x,y}` != `Vec2{x,y}`. This is
+  what makes NEWTYPES work — without it `struct Meters(Int)` and
+  `struct Seconds(Int)` hash identically and a newtype protects nothing.
+- **Structural**: `record { ... }` — identity is shape alone, no name to hash.
+  Two identical anonymous records in different modules are the same type.
+  `Point { x: 1, y: 2 }` and `record { x: 1, y: 2 }` have different SchemaIds,
+  hence different content hashes: never equal, never a memo collision.
+- The `record` keyword also disambiguates juxtaposition: once `f x` is a call,
+  `f { ... }` must be decidable. `f record { a: 1 }` is unambiguous, `where { }`
+  is marked by `where`, and bare `{ ... }` stays free for `Set` (no chapter yet
+  — free now, expensive later).
+- SPEC NAMING BUG: "canonical *structural* encoding" reads as structural typing
+  and means "an encoding obtained by walking the structure" — which embeds names
+  and yields NOMINAL identity. Say so in the rule, in one sentence.
+
+**Spread.** You may always drop a name; you must always earn one.
+- `record { ..point }` — name erasure. A projection: total, always legal.
+- `Vec2 { ..point }` where `point: Point` — REJECTED. Fix-it:
+  `Vec2 { ..record { ..point } }`. Laundering by destructure-and-rebuild was
+  always possible; the rule buys that conversion is never SILENT. The rejection
+  is the teaching — this wants a `.reject.vix` rung.
+- `Vec2 { ..r }` where `r` is a record — legal if `r` supplies exactly the
+  fields `Vec2` needs (with the literal's explicit fields filling the rest).
+  Extra fields in `r` are an ERROR: silently dropping data is the bug spread is
+  otherwise perfect for hiding. [Amos: rule the extra-fields clause.]
+- `Point { ..point, x: 3 }` — same-type spread, as Rust.
+
+**The 257th symbol.** Suffix sorting appends `$` because `$` cannot occur in the
+text; the extra slot is not the point, the disjointness is. Today the kind tag
+is a length-prefixed *string* drawn from the same alphabet as type names
+(`write_str(out, "struct")`, `sink.rs:36`) — injective by the walker's
+POSITIONAL discipline, not by construction. Emit the kind as a byte discriminant
+from a closed set (struct / enum / record / primitive) that no name can produce.
+Then injectivity is structural, and the anonymous-record tag needs no empty-name
+hack. COST: rehashes every SchemaId. Ride the pending **stage-6 identity
+freeze** (NEXT.md:94) rather than minting an epoch — and note `.vix-cas` now
+exists on disk (real_process.rs:322), so post-freeze breaks are not free.
+
+**Still open / not ruled:** blocks-as-parens (implied by parens-being-grouping,
+never ruled); the extra-fields clause above; whether the `struct` declaration
+keyword should change now that `record` names the other kind; path syntax;
+`partial` (its natural home is `f x y`, which now parses).
+
+**Unrelated landmine, flagged not fixed:** `legacy_marker_schema_id` uses std
+`DefaultHasher` (unstable across Rust versions) and REACHES CONTENT HASHES
+(NEXT.md epoch-closing flags). A content hash that moves when rustc moves is a
+verification bug, not a cache-miss bug, and `r[machine.identity.hasher-contract]`
+already forbids it. Must die in stage-6.
