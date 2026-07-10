@@ -14,6 +14,7 @@ const RUNG_006: &str = include_str!("ratchet/006-records.vix");
 const RUNG_007: &str = include_str!("ratchet/007-enums.vix");
 const RUNG_008: &str = include_str!("ratchet/008-spread.vix");
 const RUNG_009: &str = include_str!("ratchet/009-structural-equality.vix");
+const RUNG_010: &str = include_str!("ratchet/010-spaceship.vix");
 
 /// The first rung is an architectural certificate, not just a boolean test.
 ///
@@ -624,6 +625,19 @@ fn rung_009_ambient_structural_equality_runs_through_vir_and_weavy() {
     }
 
     let report = run_source(RUNG_009).expect("rung 009 compiles and runs");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    assert_eq!(report.plain.counters.pure_host_calls, 0);
+    assert_eq!(report.chaos.counters.pure_host_calls, 0);
+    assert_eq!(report.plain.receipt_count, 0);
+    assert_eq!(report.chaos.receipt_count, 0);
+}
+
+#[test]
+fn rung_010_spaceship_returns_ambient_ordering_through_vir_and_weavy() {
+    let report = run_source(RUNG_010).expect("rung 010 compiles and runs");
     assert!(report.passed());
     assert!(report.agrees());
     assert_eq!(report.plain.checks.len(), 3);
