@@ -113,6 +113,8 @@ impl Machine {
         modules: BTreeMap<String, String>,
         lane: Lane,
     ) -> Result<Machine, String> {
+        let mut modules = modules;
+        inject_legacy_std_module(&mut modules);
         let lower_options = LowerOptions::from_env();
         let c = compile_module_set(root, &modules, RefSource::Fresh, lower_options)?;
 
@@ -166,6 +168,8 @@ impl Machine {
         root: &str,
         modules: BTreeMap<String, String>,
     ) -> Result<ReloadDiff, String> {
+        let mut modules = modules;
+        inject_legacy_std_module(&mut modules);
         let before = self.fn_hashes();
         let c = compile_module_set(
             root,
@@ -761,6 +765,31 @@ fn assert_literal_handles(driver: &mut Driver, schema: &str, handles: &HashMap<S
             "{schema} handle assignment is deterministic"
         );
     }
+}
+
+fn inject_legacy_std_module(modules: &mut BTreeMap<String, String>) {
+    if modules.contains_key("vix") || !references_legacy_std(modules) {
+        return;
+    }
+    modules.insert(
+        "vix".to_string(),
+        include_str!("../../std/version-legacy.vix").to_string(),
+    );
+}
+
+fn references_legacy_std(modules: &BTreeMap<String, String>) -> bool {
+    const NAMES: &[&str] = &["Version", "parse_version", "version_lte", "Ordering"];
+    modules
+        .values()
+        .any(|source| NAMES.iter().any(|name| contains_word(source, name)))
+}
+
+fn contains_word(haystack: &str, word: &str) -> bool {
+    let is_boundary = |ch: Option<char>| ch.is_none_or(|c| !c.is_alphanumeric() && c != '_');
+    haystack.match_indices(word).any(|(start, _)| {
+        is_boundary(haystack[..start].chars().next_back())
+            && is_boundary(haystack[start + word.len()..].chars().next())
+    })
 }
 
 fn module_set_hash(root: &str, modules: &BTreeMap<String, String>) -> Vec<u8> {
