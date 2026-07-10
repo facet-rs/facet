@@ -24,6 +24,10 @@ pub struct SchemaRef(pub u32);
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct CallContractId(pub u32);
 
+/// Program-local index into [`ProgramContract::value_shapes`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ValueShapeRef(pub u32);
+
 /// Program-local index into a [`FrameContract`]'s regions.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct RegionId(pub u32);
@@ -112,6 +116,24 @@ impl RegionShape {
 pub struct FrameRegion {
     pub offset: u32,
     pub shape: RegionShape,
+    pub value_shape: Option<ValueShapeRef>,
+}
+
+impl FrameRegion {
+    #[must_use]
+    pub fn new(offset: u32, shape: RegionShape) -> Self {
+        Self {
+            offset,
+            shape,
+            value_shape: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_value_shape(mut self, value_shape: ValueShapeRef) -> Self {
+        self.value_shape = Some(value_shape);
+        self
+    }
 }
 
 /// The sidecar declaration for one function frame.
@@ -137,6 +159,63 @@ pub struct CallContract {
     pub result: FrameRegion,
 }
 
+/// One field use in a structural value shape.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValueFieldUse {
+    pub offset: u32,
+    pub shape: RegionShape,
+    pub value_shape: Option<ValueShapeRef>,
+}
+
+impl ValueFieldUse {
+    #[must_use]
+    pub fn new(offset: u32, shape: RegionShape) -> Self {
+        Self {
+            offset,
+            shape,
+            value_shape: None,
+        }
+    }
+
+    #[must_use]
+    pub fn with_value_shape(mut self, value_shape: ValueShapeRef) -> Self {
+        self.value_shape = Some(value_shape);
+        self
+    }
+}
+
+/// Discriminant location for a compact enum value shape.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValueSelector {
+    pub offset: u32,
+    pub shape: RegionShape,
+}
+
+/// One selector-correlated interpretation of a compact enum payload.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValueVariant {
+    pub fields: Vec<ValueFieldUse>,
+}
+
+/// Structural interpretation of a flattened value shape.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ValueShapeKind {
+    Product {
+        fields: Vec<ValueFieldUse>,
+    },
+    Enum {
+        selector: ValueSelector,
+        variants: Vec<ValueVariant>,
+    },
+}
+
+/// A program-local proof identity for a complete structural value shape.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValueShapeContract {
+    pub shape: RegionShape,
+    pub kind: ValueShapeKind,
+}
+
 /// Dynamic payload representation for a program-local schema.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PayloadKind {
@@ -149,6 +228,7 @@ pub enum PayloadKind {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SchemaContract {
     pub inline: RegionShape,
+    pub value_shape: Option<ValueShapeRef>,
     pub payload: PayloadKind,
 }
 
@@ -158,6 +238,7 @@ pub struct ProgramContract {
     pub functions: Vec<FunctionContract>,
     pub calls: Vec<CallContract>,
     pub schemas: Vec<SchemaContract>,
+    pub value_shapes: Vec<ValueShapeContract>,
 }
 
 /// Drive-time table sizes proven necessary by the verifier.
@@ -362,6 +443,17 @@ pub enum ShapeOwner {
     },
     CallResult(CallContractId),
     SchemaInline(SchemaRef),
+    ValueShape(ValueShapeRef),
+    ValueShapeSelector(ValueShapeRef),
+    ValueShapeProductField {
+        value_shape: ValueShapeRef,
+        field: usize,
+    },
+    ValueShapeVariantField {
+        value_shape: ValueShapeRef,
+        variant: usize,
+        field: usize,
+    },
 }
 
 /// Exact contract site containing an invalid program-local reference.
@@ -370,6 +462,34 @@ pub enum ReferenceSite {
     Word { owner: ShapeOwner, word: usize },
     DenseArrayElement { schema: SchemaRef },
     ArrayElementWitness,
+}
+
+/// Exact contract site containing an invalid structural value-shape reference.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ValueShapeReferenceSite {
+    FrameRegion(RegionId),
+    CallEntry {
+        contract: CallContractId,
+        index: usize,
+    },
+    CallResult(CallContractId),
+    SchemaInline(SchemaRef),
+    ProductField {
+        value_shape: ValueShapeRef,
+        field: usize,
+    },
+    VariantField {
+        value_shape: ValueShapeRef,
+        variant: usize,
+        field: usize,
+    },
+}
+
+/// Whether a structural field belongs to a product or one enum variant.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ValueFieldSite {
+    Product { field: usize },
+    Variant { variant: usize, field: usize },
 }
 
 /// Whether a bad frame-region index was used as an entry or result.
@@ -385,6 +505,7 @@ pub enum ProgramTable {
     Functions,
     CallContracts,
     Schemas,
+    ValueShapes,
     FrameRegions,
 }
 
@@ -461,6 +582,72 @@ pub enum ProgramDefect {
         contract: CallContractId,
         contract_count: usize,
     },
+    ValueShapeReferenceOutOfRange {
+        site: ValueShapeReferenceSite,
+        value_shape: ValueShapeRef,
+        value_shape_count: usize,
+    },
+    StructuralShapeMismatch {
+        site: ValueShapeReferenceSite,
+        value_shape: ValueShapeRef,
+        expected: RegionShape,
+        actual: RegionShape,
+    },
+    ValueShapeSelectorOffsetNotWordAligned {
+        value_shape: ValueShapeRef,
+        offset: u32,
+    },
+    ValueShapeSelectorInvalidShape {
+        value_shape: ValueShapeRef,
+        shape: RegionShape,
+    },
+    ValueShapeSelectorKinds {
+        value_shape: ValueShapeRef,
+        selector: RegionShape,
+        parent: RegionShape,
+    },
+    ValueShapeSelectorOutOfBounds {
+        value_shape: ValueShapeRef,
+        offset: u32,
+        size: usize,
+        shape_size: usize,
+    },
+    ValueShapeFieldOffsetNotWordAligned {
+        value_shape: ValueShapeRef,
+        site: ValueFieldSite,
+        offset: u32,
+    },
+    ValueShapeFieldEndOverflow {
+        value_shape: ValueShapeRef,
+        site: ValueFieldSite,
+        offset: u32,
+        size: usize,
+    },
+    ValueShapeFieldOutOfBounds {
+        value_shape: ValueShapeRef,
+        site: ValueFieldSite,
+        end: usize,
+        shape_size: usize,
+    },
+    ValueShapeFieldKinds {
+        value_shape: ValueShapeRef,
+        site: ValueFieldSite,
+        field: RegionShape,
+        parent: RegionShape,
+    },
+    ValueShapeFieldOverlap {
+        value_shape: ValueShapeRef,
+        first: ValueFieldSite,
+        second: ValueFieldSite,
+    },
+    ValueShapeFieldOverlapsSelector {
+        value_shape: ValueShapeRef,
+        variant: usize,
+        field: usize,
+    },
+    ValueShapeCycle {
+        value_shape: ValueShapeRef,
+    },
     FunctionCallContractOutOfRange {
         contract: CallContractId,
         contract_count: usize,
@@ -480,6 +667,16 @@ pub enum ProgramDefect {
     IncompatibleWordKinds {
         source: AllowedKinds,
         destination: AllowedKinds,
+    },
+    StructuralTransferMismatch {
+        source: Option<ValueShapeRef>,
+        destination: Option<ValueShapeRef>,
+    },
+    StructuralPartialCopy {
+        source: Option<ValueShapeRef>,
+        destination: Option<ValueShapeRef>,
+        source_size: usize,
+        destination_size: usize,
     },
     CallArgumentCount {
         expected: usize,
@@ -653,6 +850,11 @@ impl Verifier<'_> {
         self.validate_table_len(ProgramTable::Functions, self.program.fns.len(), None)?;
         self.validate_table_len(ProgramTable::CallContracts, self.contract.calls.len(), None)?;
         self.validate_table_len(ProgramTable::Schemas, self.contract.schemas.len(), None)?;
+        self.validate_table_len(
+            ProgramTable::ValueShapes,
+            self.contract.value_shapes.len(),
+            None,
+        )?;
         if self.program.fns.len() != self.contract.functions.len() {
             return Err(self.global(ProgramDefect::FunctionContractCount {
                 functions: self.program.fns.len(),
@@ -660,6 +862,7 @@ impl Verifier<'_> {
             }));
         }
 
+        self.validate_value_shape_contracts()?;
         let calls = self.validate_call_contracts()?;
         self.validate_schema_contracts()?;
         let frames = self.validate_function_contracts()?;
@@ -699,6 +902,278 @@ impl Verifier<'_> {
         Ok(validated)
     }
 
+    fn validate_value_shape_contracts(&self) -> Result<(), ProgramError> {
+        for (shape_index, contract) in self.contract.value_shapes.iter().enumerate() {
+            let value_shape = ValueShapeRef(shape_index as u32);
+            let owner = ShapeOwner::ValueShape(value_shape);
+            let shape_size = self.validate_shape(&contract.shape, owner, None)?;
+            match &contract.kind {
+                ValueShapeKind::Product { fields } => {
+                    self.validate_value_fields(value_shape, shape_size, fields, None)?;
+                }
+                ValueShapeKind::Enum { selector, variants } => {
+                    let selector =
+                        self.validate_value_selector(value_shape, shape_size, selector)?;
+                    for (variant_index, variant) in variants.iter().enumerate() {
+                        self.validate_value_fields(
+                            value_shape,
+                            shape_size,
+                            &variant.fields,
+                            Some((variant_index, selector)),
+                        )?;
+                    }
+                }
+            }
+        }
+        self.validate_value_shape_cycles()
+    }
+
+    fn validate_value_selector(
+        &self,
+        value_shape: ValueShapeRef,
+        shape_size: usize,
+        selector: &ValueSelector,
+    ) -> Result<RegionBounds, ProgramError> {
+        if !selector.offset.is_multiple_of(WORD_SIZE_U32) {
+            return Err(
+                self.global(ProgramDefect::ValueShapeSelectorOffsetNotWordAligned {
+                    value_shape,
+                    offset: selector.offset,
+                }),
+            );
+        }
+        if selector.shape.words.len() != 1 || !selector.shape.words[0].is_exactly(WordKind::Scalar)
+        {
+            return Err(self.global(ProgramDefect::ValueShapeSelectorInvalidShape {
+                value_shape,
+                shape: selector.shape.clone(),
+            }));
+        }
+        self.validate_shape(
+            &selector.shape,
+            ShapeOwner::ValueShapeSelector(value_shape),
+            None,
+        )?;
+        let start = usize::try_from(selector.offset).map_err(|_| {
+            self.global(ProgramDefect::ValueShapeSelectorOutOfBounds {
+                value_shape,
+                offset: selector.offset,
+                size: WORD_SIZE,
+                shape_size,
+            })
+        })?;
+        let end = start.checked_add(WORD_SIZE).ok_or_else(|| {
+            self.global(ProgramDefect::ValueShapeSelectorOutOfBounds {
+                value_shape,
+                offset: selector.offset,
+                size: WORD_SIZE,
+                shape_size,
+            })
+        })?;
+        if end > shape_size {
+            return Err(self.global(ProgramDefect::ValueShapeSelectorOutOfBounds {
+                value_shape,
+                offset: selector.offset,
+                size: WORD_SIZE,
+                shape_size,
+            }));
+        }
+        let parent = self.shape_slice(
+            &self.contract.value_shapes[value_shape.0 as usize].shape,
+            start,
+            end,
+        );
+        if parent != selector.shape {
+            return Err(self.global(ProgramDefect::ValueShapeSelectorKinds {
+                value_shape,
+                selector: selector.shape.clone(),
+                parent,
+            }));
+        }
+        Ok(RegionBounds { start, end })
+    }
+
+    fn validate_value_fields(
+        &self,
+        value_shape: ValueShapeRef,
+        shape_size: usize,
+        fields: &[ValueFieldUse],
+        variant: Option<(usize, RegionBounds)>,
+    ) -> Result<(), ProgramError> {
+        let mut ranges: Vec<RegionBounds> = Vec::with_capacity(fields.len());
+        for (field_index, field) in fields.iter().enumerate() {
+            let site = match variant {
+                Some((variant, _)) => ValueFieldSite::Variant {
+                    variant,
+                    field: field_index,
+                },
+                None => ValueFieldSite::Product { field: field_index },
+            };
+            let owner = match site {
+                ValueFieldSite::Product { field } => {
+                    ShapeOwner::ValueShapeProductField { value_shape, field }
+                }
+                ValueFieldSite::Variant { variant, field } => ShapeOwner::ValueShapeVariantField {
+                    value_shape,
+                    variant,
+                    field,
+                },
+            };
+            let nested_site = match site {
+                ValueFieldSite::Product { field } => {
+                    ValueShapeReferenceSite::ProductField { value_shape, field }
+                }
+                ValueFieldSite::Variant { variant, field } => {
+                    ValueShapeReferenceSite::VariantField {
+                        value_shape,
+                        variant,
+                        field,
+                    }
+                }
+            };
+            if !field.offset.is_multiple_of(WORD_SIZE_U32) {
+                return Err(
+                    self.global(ProgramDefect::ValueShapeFieldOffsetNotWordAligned {
+                        value_shape,
+                        site,
+                        offset: field.offset,
+                    }),
+                );
+            }
+            let size = self.validate_shape(&field.shape, owner, None)?;
+            let start = usize::try_from(field.offset).map_err(|_| {
+                self.global(ProgramDefect::ValueShapeFieldEndOverflow {
+                    value_shape,
+                    site,
+                    offset: field.offset,
+                    size,
+                })
+            })?;
+            let end = start.checked_add(size).ok_or_else(|| {
+                self.global(ProgramDefect::ValueShapeFieldEndOverflow {
+                    value_shape,
+                    site,
+                    offset: field.offset,
+                    size,
+                })
+            })?;
+            if end > shape_size {
+                return Err(self.global(ProgramDefect::ValueShapeFieldOutOfBounds {
+                    value_shape,
+                    site,
+                    end,
+                    shape_size,
+                }));
+            }
+            let parent = self.shape_slice(
+                &self.contract.value_shapes[value_shape.0 as usize].shape,
+                start,
+                end,
+            );
+            if !shapes_assignable(&field.shape, &parent) {
+                return Err(self.global(ProgramDefect::ValueShapeFieldKinds {
+                    value_shape,
+                    site,
+                    field: field.shape.clone(),
+                    parent,
+                }));
+            }
+            if let Some(nested) = field.value_shape {
+                self.validate_value_shape_ref(nested_site, nested, &field.shape, None)?;
+            }
+            let bounds = RegionBounds { start, end };
+            if let Some((variant_index, selector)) = variant {
+                if selector.start < bounds.end && bounds.start < selector.end {
+                    return Err(self.global(ProgramDefect::ValueShapeFieldOverlapsSelector {
+                        value_shape,
+                        variant: variant_index,
+                        field: field_index,
+                    }));
+                }
+            }
+            for (prior_index, prior) in ranges.iter().copied().enumerate() {
+                if prior.start < bounds.end && bounds.start < prior.end {
+                    let first = match variant {
+                        Some((variant, _)) => ValueFieldSite::Variant {
+                            variant,
+                            field: prior_index,
+                        },
+                        None => ValueFieldSite::Product { field: prior_index },
+                    };
+                    return Err(self.global(ProgramDefect::ValueShapeFieldOverlap {
+                        value_shape,
+                        first,
+                        second: site,
+                    }));
+                }
+            }
+            ranges.push(bounds);
+        }
+        Ok(())
+    }
+
+    fn validate_value_shape_cycles(&self) -> Result<(), ProgramError> {
+        let mut state = vec![0u8; self.contract.value_shapes.len()];
+        for index in 0..self.contract.value_shapes.len() {
+            self.visit_value_shape(ValueShapeRef(index as u32), &mut state)?;
+        }
+        Ok(())
+    }
+
+    fn visit_value_shape(
+        &self,
+        value_shape: ValueShapeRef,
+        state: &mut [u8],
+    ) -> Result<(), ProgramError> {
+        let index = value_shape.0 as usize;
+        match state[index] {
+            1 => {
+                return Err(self.global(ProgramDefect::ValueShapeCycle { value_shape }));
+            }
+            2 => return Ok(()),
+            _ => {}
+        }
+        state[index] = 1;
+        for nested in self.value_shape_nested_refs(&self.contract.value_shapes[index].kind) {
+            let Some(nested_index) = usize::try_from(nested.0)
+                .ok()
+                .filter(|nested_index| *nested_index < self.contract.value_shapes.len())
+            else {
+                continue;
+            };
+            self.visit_value_shape(ValueShapeRef(nested_index as u32), state)?;
+        }
+        state[index] = 2;
+        Ok(())
+    }
+
+    fn value_shape_nested_refs(&self, kind: &ValueShapeKind) -> Vec<ValueShapeRef> {
+        let mut refs = Vec::new();
+        match kind {
+            ValueShapeKind::Product { fields } => {
+                refs.extend(fields.iter().filter_map(|field| field.value_shape));
+            }
+            ValueShapeKind::Enum {
+                selector: _,
+                variants,
+            } => {
+                refs.extend(
+                    variants
+                        .iter()
+                        .flat_map(|variant| &variant.fields)
+                        .filter_map(|field| field.value_shape),
+                );
+            }
+        }
+        refs
+    }
+
+    fn shape_slice(&self, shape: &RegionShape, start: usize, end: usize) -> RegionShape {
+        let first = start / WORD_SIZE;
+        let last = end / WORD_SIZE;
+        RegionShape::new(shape.words[first..last].to_vec())
+    }
+
     fn validate_call_region(
         &self,
         region: &FrameRegion,
@@ -725,13 +1200,88 @@ impl Verifier<'_> {
                 size,
             })
         })?;
+        if let Some(value_shape) = region.value_shape {
+            let site = self.value_shape_site_for_owner(owner);
+            self.validate_value_shape_ref(site, value_shape, &region.shape, None)?;
+        }
         Ok(RegionBounds { start, end })
+    }
+
+    fn value_shape_site_for_owner(&self, owner: ShapeOwner) -> ValueShapeReferenceSite {
+        match owner {
+            ShapeOwner::FrameRegion(region) => ValueShapeReferenceSite::FrameRegion(region),
+            ShapeOwner::CallEntry { contract, index } => {
+                ValueShapeReferenceSite::CallEntry { contract, index }
+            }
+            ShapeOwner::CallResult(contract) => ValueShapeReferenceSite::CallResult(contract),
+            ShapeOwner::SchemaInline(schema) => ValueShapeReferenceSite::SchemaInline(schema),
+            ShapeOwner::ValueShapeProductField { value_shape, field } => {
+                ValueShapeReferenceSite::ProductField { value_shape, field }
+            }
+            ShapeOwner::ValueShapeVariantField {
+                value_shape,
+                variant,
+                field,
+            } => ValueShapeReferenceSite::VariantField {
+                value_shape,
+                variant,
+                field,
+            },
+            ShapeOwner::ValueShape(_) | ShapeOwner::ValueShapeSelector(_) => {
+                unreachable!("only regions and fields carry structural refs")
+            }
+        }
+    }
+
+    fn validate_value_shape_ref(
+        &self,
+        site: ValueShapeReferenceSite,
+        value_shape: ValueShapeRef,
+        actual: &RegionShape,
+        function: Option<FnId>,
+    ) -> Result<(), ProgramError> {
+        let Some(index) = usize::try_from(value_shape.0)
+            .ok()
+            .filter(|index| *index < self.contract.value_shapes.len())
+        else {
+            return Err(ProgramError {
+                function,
+                pc: None,
+                defect: ProgramDefect::ValueShapeReferenceOutOfRange {
+                    site,
+                    value_shape,
+                    value_shape_count: self.contract.value_shapes.len(),
+                },
+            });
+        };
+        let expected = &self.contract.value_shapes[index].shape;
+        if expected != actual {
+            return Err(ProgramError {
+                function,
+                pc: None,
+                defect: ProgramDefect::StructuralShapeMismatch {
+                    site,
+                    value_shape,
+                    expected: expected.clone(),
+                    actual: actual.clone(),
+                },
+            });
+        }
+        Ok(())
     }
 
     fn validate_schema_contracts(&self) -> Result<(), ProgramError> {
         for (schema_index, schema) in self.contract.schemas.iter().enumerate() {
             let schema_ref = SchemaRef(schema_index as u32);
             self.validate_shape(&schema.inline, ShapeOwner::SchemaInline(schema_ref), None)?;
+            if let Some(value_shape) = schema.value_shape {
+                self.validate_value_shape_ref(
+                    ValueShapeReferenceSite::SchemaInline(schema_ref),
+                    value_shape,
+                    &schema.inline,
+                    None,
+                )?;
+            }
             if matches!(
                 schema.payload,
                 PayloadKind::OpaqueBytes { .. } | PayloadKind::DenseArray { .. }
@@ -891,6 +1441,14 @@ impl Verifier<'_> {
                     ShapeOwner::FrameRegion(region_id),
                     Some(function_id),
                 )?;
+                if let Some(value_shape) = region.value_shape {
+                    self.validate_value_shape_ref(
+                        ValueShapeReferenceSite::FrameRegion(region_id),
+                        value_shape,
+                        &region.shape,
+                        Some(function_id),
+                    )?;
+                }
                 let start = usize::try_from(region.offset).map_err(|_| {
                     self.function(
                         function_id,
@@ -1083,9 +1641,16 @@ impl Verifier<'_> {
                 self.require_scalar_read(function_id, pc, frame, *b, AccessRole::RightOperand)?;
             }
             Op::CopyI64 { dst, src } => {
-                let destination =
-                    self.word_kinds(function_id, pc, frame, *dst, AccessRole::Destination)?;
-                let source = self.word_kinds(function_id, pc, frame, *src, AccessRole::Source)?;
+                let (destination_index, destination_word) =
+                    self.word_region_index(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                let (source_index, source_word) =
+                    self.word_region_index(function_id, pc, frame, *src, AccessRole::Source)?;
+                let destination_region =
+                    &self.contract.functions[function_index].frame.regions[destination_index];
+                let source_region =
+                    &self.contract.functions[function_index].frame.regions[source_index];
+                let destination = &destination_region.shape.words[destination_word];
+                let source = &source_region.shape.words[source_word];
                 if !source.is_subset_of(destination) {
                     return Err(self.op(
                         function_id,
@@ -1095,6 +1660,32 @@ impl Verifier<'_> {
                             destination: destination.clone(),
                         },
                     ));
+                }
+                if source_region.value_shape.is_some() || destination_region.value_shape.is_some() {
+                    if source_region.value_shape != destination_region.value_shape {
+                        return Err(self.op(
+                            function_id,
+                            pc,
+                            ProgramDefect::StructuralTransferMismatch {
+                                source: source_region.value_shape,
+                                destination: destination_region.value_shape,
+                            },
+                        ));
+                    }
+                    let source_size = frame.regions[source_index].len();
+                    let destination_size = frame.regions[destination_index].len();
+                    if source_size != WORD_SIZE || destination_size != WORD_SIZE {
+                        return Err(self.op(
+                            function_id,
+                            pc,
+                            ProgramDefect::StructuralPartialCopy {
+                                source: source_region.value_shape,
+                                destination: destination_region.value_shape,
+                                source_size,
+                                destination_size,
+                            },
+                        ));
+                    }
                 }
             }
             Op::Jump { target } => self.validate_jump(function_id, pc, *target)?,
@@ -1504,6 +2095,7 @@ impl Verifier<'_> {
                 AccessRole::ArgumentSource { index },
             )?;
             let source = &self.contract.functions[function.0 as usize].frame.regions[source_index];
+            self.validate_structural_transfer(function, pc, source, destination)?;
             if !shapes_assignable(&source.shape, &destination.shape) {
                 return Err(self.op(
                     function,
@@ -1525,6 +2117,7 @@ impl Verifier<'_> {
             AccessRole::CallResult,
         )?;
         let destination = &self.contract.functions[function.0 as usize].frame.regions[result_index];
+        self.validate_structural_transfer(function, pc, target.result.0, destination)?;
         if !shapes_assignable(&target.result.0.shape, &destination.shape) {
             return Err(self.op(
                 function,
@@ -1532,6 +2125,36 @@ impl Verifier<'_> {
                 ProgramDefect::CallResultKinds {
                     source: target.result.0.shape.clone(),
                     destination: destination.shape.clone(),
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_structural_transfer(
+        &self,
+        function: FnId,
+        pc: usize,
+        source: &FrameRegion,
+        destination: &FrameRegion,
+    ) -> Result<(), ProgramError> {
+        self.validate_structural_refs(function, pc, source.value_shape, destination.value_shape)
+    }
+
+    fn validate_structural_refs(
+        &self,
+        function: FnId,
+        pc: usize,
+        source: Option<ValueShapeRef>,
+        destination: Option<ValueShapeRef>,
+    ) -> Result<(), ProgramError> {
+        if (source.is_some() || destination.is_some()) && source != destination {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::StructuralTransferMismatch {
+                    source,
+                    destination,
                 },
             ));
         }
@@ -1781,8 +2404,25 @@ impl Verifier<'_> {
             access.width,
             access.role,
         )?;
-        let actual = &self.contract.functions[function.0 as usize].frame.regions[region].shape;
-        let expected = &self.contract.schemas[access.element.0 as usize].inline;
+        let actual_region = &self.contract.functions[function.0 as usize].frame.regions[region];
+        let expected_schema = &self.contract.schemas[access.element.0 as usize];
+        let actual = &actual_region.shape;
+        let expected = &expected_schema.inline;
+        if access.source {
+            self.validate_structural_refs(
+                function,
+                pc,
+                actual_region.value_shape,
+                expected_schema.value_shape,
+            )?;
+        } else {
+            self.validate_structural_refs(
+                function,
+                pc,
+                expected_schema.value_shape,
+                actual_region.value_shape,
+            )?;
+        }
         let valid = if access.source {
             shapes_assignable(actual, expected)
         } else {
@@ -1817,6 +2457,22 @@ impl Verifier<'_> {
         offset: u32,
         role: AccessRole,
     ) -> Result<&AllowedKinds, ProgramError> {
+        let (region_index, word) = self.word_region_index(function, pc, frame, offset, role)?;
+        Ok(
+            &self.contract.functions[function.0 as usize].frame.regions[region_index]
+                .shape
+                .words[word],
+        )
+    }
+
+    fn word_region_index(
+        &self,
+        function: FnId,
+        pc: usize,
+        frame: &ValidatedFrame,
+        offset: u32,
+        role: AccessRole,
+    ) -> Result<(usize, usize), ProgramError> {
         if !offset.is_multiple_of(WORD_SIZE_U32) {
             return Err(self.access(
                 function,
@@ -1863,10 +2519,7 @@ impl Verifier<'_> {
         for (region_index, bounds) in frame.regions.iter().copied().enumerate() {
             if bounds.start <= start && end <= bounds.end {
                 let word = (start - bounds.start) / WORD_SIZE;
-                return Ok(&self.contract.functions[function.0 as usize].frame.regions
-                    [region_index]
-                    .shape
-                    .words[word]);
+                return Ok((region_index, word));
             }
         }
         Err(self.access(function, pc, role, AccessDefect::UndeclaredWord { offset }))
@@ -2123,7 +2776,7 @@ mod tests {
     }
 
     fn region(offset: u32, shape: RegionShape) -> FrameRegion {
-        FrameRegion { offset, shape }
+        FrameRegion::new(offset, shape)
     }
 
     fn word_region(offset: u32, kind: WordKind) -> FrameRegion {
@@ -2239,6 +2892,7 @@ mod tests {
                 functions: vec![function_contract(3, regions, &[0, 1], 2, None)],
                 calls: vec![],
                 schemas: vec![],
+                value_shapes: vec![],
             },
         )
     }
@@ -2284,6 +2938,7 @@ mod tests {
                 ],
                 calls: vec![],
                 schemas: vec![],
+                value_shapes: vec![],
             },
         )
     }
@@ -2371,6 +3026,7 @@ mod tests {
                 ],
                 calls: vec![scalar_call_contract()],
                 schemas: vec![],
+                value_shapes: vec![],
             },
         )
     }
@@ -2406,8 +3062,10 @@ mod tests {
                 calls: vec![],
                 schemas: vec![SchemaContract {
                     inline: RegionShape::word(WordKind::Handle(schema)),
+                    value_shape: None,
                     payload: PayloadKind::OpaqueBytes { byte_comparable },
                 }],
+                value_shapes: vec![],
             },
         )
     }
@@ -2438,21 +3096,25 @@ mod tests {
                 schemas: vec![
                     SchemaContract {
                         inline: RegionShape::default(),
+                        value_shape: None,
                         payload: PayloadKind::Inline,
                     },
                     SchemaContract {
                         inline: RegionShape::word(WordKind::Handle(SchemaRef(1))),
+                        value_shape: None,
                         payload: PayloadKind::OpaqueBytes {
                             byte_comparable: true,
                         },
                     },
                     SchemaContract {
                         inline: RegionShape::word(WordKind::Handle(SchemaRef(2))),
+                        value_shape: None,
                         payload: PayloadKind::DenseArray {
                             element: SchemaRef(0),
                         },
                     },
                 ],
+                value_shapes: vec![],
             },
         )
     }
@@ -2471,6 +3133,7 @@ mod tests {
                 functions: vec![function_contract(words, regions, &[], result, None)],
                 calls: vec![],
                 schemas: vec![],
+                value_shapes: vec![],
             },
         )
     }
@@ -2657,8 +3320,10 @@ mod tests {
             calls: vec![],
             schemas: vec![SchemaContract {
                 inline: RegionShape::default(),
+                value_shape: None,
                 payload: PayloadKind::Inline,
             }],
+            value_shapes: vec![],
         };
         let jump = single_function(
             1,
@@ -2884,6 +3549,7 @@ mod tests {
                 )],
                 calls: vec![call_zero.clone()],
                 schemas: vec![],
+                value_shapes: vec![],
             },
         );
         let mismatched = (
@@ -2903,6 +3569,7 @@ mod tests {
                     result: word_region(8, WordKind::Scalar),
                 }],
                 schemas: vec![],
+                value_shapes: vec![],
             },
         );
         let duplicate_calls = (
@@ -2911,6 +3578,7 @@ mod tests {
                 functions: vec![],
                 calls: vec![call_zero.clone(), call_zero],
                 schemas: vec![],
+                value_shapes: vec![],
             },
         );
         let constant_contract = (
@@ -2951,6 +3619,7 @@ mod tests {
                     },
                 ],
                 schemas: vec![],
+                value_shapes: vec![],
             },
         );
 
@@ -3015,6 +3684,7 @@ mod tests {
         let schemas = || {
             vec![SchemaContract {
                 inline: RegionShape::default(),
+                value_shape: None,
                 payload: PayloadKind::Inline,
             }]
         };
@@ -3047,6 +3717,7 @@ mod tests {
                 )],
                 calls: vec![],
                 schemas: schemas(),
+                value_shapes: vec![],
             },
         );
         let (compare_program, mut compare_contract) = compare_program(true);
@@ -3286,19 +3957,23 @@ mod tests {
                 schemas: vec![
                     SchemaContract {
                         inline: element,
+                        value_shape: None,
                         payload: PayloadKind::Inline,
                     },
                     SchemaContract {
                         inline: RegionShape::word(WordKind::Handle(array)),
+                        value_shape: None,
                         payload: PayloadKind::DenseArray {
                             element: SchemaRef(0),
                         },
                     },
                     SchemaContract {
                         inline: RegionShape::word(WordKind::Scalar),
+                        value_shape: None,
                         payload: PayloadKind::Inline,
                     },
                 ],
+                value_shapes: vec![],
             },
         )
     }
