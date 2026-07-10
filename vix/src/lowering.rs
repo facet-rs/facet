@@ -2018,17 +2018,16 @@ fn lower_node(
                 bytes: value.as_bytes().to_vec(),
                 span: node.span,
             };
-            if let Some(previous) = constants.insert(constant, pending) {
-                if previous.root_slot != root_slot
+            if let Some(previous) = constants.insert(constant, pending)
+                && (previous.root_slot != root_slot
                     || previous.owner_slot != dst_slot
                     || previous.store_schema != SchemaId::named("vix.String.v1")
-                    || previous.bytes != value.as_bytes()
-                {
-                    return Err(lowering_diagnostic(
-                        node.span,
-                        "constant NodeRef was lowered with conflicting metadata",
-                    ));
-                }
+                    || previous.bytes != value.as_bytes())
+            {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "constant NodeRef was lowered with conflicting metadata",
+                ));
             }
             (Vec::new(), ValueRepresentation::RealizedHandle)
         }
