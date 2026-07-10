@@ -20,6 +20,7 @@ const RUNG_010: &str = include_str!("ratchet/010-spaceship.vix");
 const RUNG_011: &str = include_str!("ratchet/011-derived-comparisons.vix");
 const RUNG_012: &str = include_str!("ratchet/012-total-order.vix");
 const RUNG_013: &str = include_str!("ratchet/013-expression-statement.reject.vix");
+const RUNG_014: &str = include_str!("ratchet/014-if-else.vix");
 
 /// The first rung is an architectural certificate, not just a boolean test.
 ///
@@ -916,6 +917,19 @@ fn rung_013_expression_statement_is_rejected_with_declared_message_and_line() {
         source_line(RUNG_013, diagnostic.primary.start),
         expected_line
     );
+}
+
+#[test]
+fn rung_014_if_else_is_an_expression_through_vir_and_weavy() {
+    let report = run_source(RUNG_014).expect("rung 014 compiles and runs");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    assert_eq!(report.plain.counters.pure_host_calls, 0);
+    assert_eq!(report.chaos.counters.pure_host_calls, 0);
+    assert_eq!(report.plain.receipt_count, 0);
+    assert_eq!(report.chaos.receipt_count, 0);
 }
 
 fn reject_header(source: &str) -> (&str, usize) {
