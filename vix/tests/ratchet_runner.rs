@@ -31,6 +31,7 @@ const RUNG_021: &str = include_str!("ratchet/021-closure-destructuring.vix");
 const RUNG_022: &str = include_str!("ratchet/022-record-patterns.vix");
 const RUNG_023: &str = include_str!("ratchet/023-option.vix");
 const RUNG_024: &str = include_str!("ratchet/024-user-result.vix");
+const RUNG_025: &str = include_str!("ratchet/025-ordering-enum.vix");
 
 /// The first rung is an architectural certificate, not just a boolean test.
 ///
@@ -897,6 +898,7 @@ fn rung_012_record_order_is_total_structural_and_declaration_ordered() {
     assert_eq!(report.chaos.receipt_count, 0);
 }
 
+// r[verify lang.diagnostics.typed]
 #[test]
 fn rung_013_expression_statement_is_rejected_with_declared_message_and_line() {
     let (expected_message, expected_line) = reject_header(RUNG_013);
@@ -1153,6 +1155,7 @@ fn rung_017_match_guards_select_the_first_matching_arm() {
     assert_eq!(report.chaos.receipt_count, 0);
 }
 
+// r[verify lang.diagnostics.typed]
 // r[verify lang.diagnostics.non-exhaustive-match]
 #[test]
 fn rung_018_non_exhaustive_match_is_rejected_with_declared_message_and_line() {
@@ -1599,6 +1602,87 @@ fn local_application(flag: Bool) -> Bool {
     }
 
     let report = run_source(RUNG_024).expect("rung 024 compiles and runs");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    assert_eq!(report.plain.counters.pure_host_calls, 0);
+    assert_eq!(report.chaos.counters.pure_host_calls, 0);
+    assert_eq!(report.plain.receipt_count, 0);
+    assert_eq!(report.chaos.receipt_count, 0);
+}
+
+// r[verify lang.value.ordering-is-enum]
+#[test]
+fn rung_025_ordering_is_an_ordinary_matchable_enum() {
+    let ordering = VirType::ordering();
+    let VirType::Enum(ordering_enum) = &ordering else {
+        panic!("Ordering is represented as an enum");
+    };
+    assert_eq!(
+        ordering_enum
+            .variants
+            .iter()
+            .map(|variant| variant.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Less", "Equal", "Greater"]
+    );
+
+    let module = Compiler::new()
+        .compile(RUNG_025)
+        .expect("rung 025 compiles");
+    let describe = module
+        .functions
+        .iter()
+        .find(|function| function.name == "describe")
+        .expect("rung 025 contains describe");
+    assert_eq!(describe.return_type, VirType::String);
+    assert!(
+        describe
+            .nodes
+            .iter()
+            .any(|node| node.ty == ordering && matches!(node.op, VirOp::Compare))
+    );
+    let variants = describe
+        .nodes
+        .iter()
+        .find_map(|node| match &node.op {
+            VirOp::Match { arms } => Some(arms.iter().map(|arm| arm.variant).collect::<Vec<_>>()),
+            _ => None,
+        })
+        .expect("Ordering match lowers through the ordinary enum Match op");
+    assert_eq!(variants, [0, 1, 2]);
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    assert_eq!(partitioned.islands.len(), 2);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 025 lowers to Weavy");
+        assert!(lowered.program.fns.iter().any(|function| {
+            function
+                .code
+                .iter()
+                .any(|op| matches!(op, WeavyOp::LtI64 { .. }))
+                && function
+                    .code
+                    .iter()
+                    .any(|op| matches!(op, WeavyOp::GtI64 { .. }))
+                && function
+                    .code
+                    .iter()
+                    .any(|op| matches!(op, WeavyOp::EqI64 { .. }))
+        }));
+        assert!(lowered.program.fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+    }
+
+    let report = run_source(RUNG_025).expect("rung 025 compiles and runs");
     assert!(report.passed());
     assert!(report.agrees());
     assert_eq!(report.plain.checks.len(), 2);

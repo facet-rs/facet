@@ -107,6 +107,7 @@ pub const OPTION_SOME_VARIANT: u32 = 0;
 pub const OPTION_NONE_VARIANT: u32 = 1;
 
 impl EnumType {
+    /// r[impl lang.value.ordering-is-enum]
     #[must_use]
     pub fn ordering() -> Self {
         Self {

@@ -171,6 +171,13 @@ Adding a method never changes canonical identity or order.
 
 ## Structural order and identity-visible order
 
+> r[lang.value.ordering-is-enum]
+>
+> `<=>` returns the ordinary enum `Ordering`, whose variants are `Less`,
+> `Equal`, and `Greater` in that declaration order. `Ordering` uses the same
+> value representation, pattern checking, and match lowering as every other
+> enum; comparison does not introduce a hidden control channel.
+
 > r[lang.value.structural-order]
 >
 > Every completed value has a total, equality-consistent structural order.
