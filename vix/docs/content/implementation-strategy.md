@@ -87,8 +87,12 @@ For each next red rung:
 4. Keep the work observable. A lowerer falloff must produce a typed diagnostic;
    a scheduling or identity decision must be visible in the trace and counters;
    an effect must produce the receipt evidence required by the runtime spec.
-5. Run the focused rung, then the consecutive prefix. At band boundaries, run
-   the foundation's chaos, performance, and Dodeca coverage gates.
+5. Run the focused rung, then the consecutive prefix with `cargo nextest run
+   --release` by default. Treat the first release artifact build separately
+   from warm test execution; debug-mode timings are not performance evidence.
+   Use the debug profile only when a debugger or debug-only instrumentation
+   requires it. At band boundaries, run the foundation's chaos, performance,
+   and Dodeca coverage gates.
 6. Run the relevant production-path integration tests and Clippy with warnings
    denied. Public runtime or Weavy vocabulary changes also require their
    consumers to compile; a crate-local green result is not sufficient evidence.
