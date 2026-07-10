@@ -1210,8 +1210,6 @@ impl Task {
                 } => {
                     let array = read_i64_at(&self.arena, base + array as usize);
                     let index = read_i64_at(&self.arena, base + index as usize);
-                    let (ok, value) =
-                        load_array_word(value_memories, array, index, elem_schema_ref);
                     let (ok, value) = load_array_word(
                         value_memories,
                         &self.molten,
@@ -1603,52 +1601,11 @@ fn parse_array_payload<'a>(
 
 fn load_array_word(
     value_memories: ValueMemories<'_>,
+    molten: &MoltenArena,
     array: i64,
     index: i64,
     elem_schema_ref: i64,
 ) -> (bool, i64) {
-    let (handle, memories) = if array < 0 {
-        let Some(handle) = (-1i64).checked_sub(array) else {
-            return (false, 0);
-        };
-        let Ok(handle) = usize::try_from(handle) else {
-            return (false, 0);
-        };
-        (handle, value_memories.molten)
-    } else {
-        let Ok(handle) = usize::try_from(array) else {
-            return (false, 0);
-        };
-        (handle, value_memories.store)
-    };
-    let Some(memory) = memories.get(handle).copied() else {
-        return (false, 0);
-    };
-    if memory.ptr.is_null() || memory.len < 24 || index < 0 {
-        return (false, 0);
-    }
-    let bytes = unsafe { core::slice::from_raw_parts(memory.ptr, memory.len) };
-    if read_i64_at(bytes, 0) != 0 || read_i64_at(bytes, 8) != elem_schema_ref {
-        return (false, 0);
-    }
-    let Ok(count) = usize::try_from(read_i64_at(bytes, 16)) else {
-        return (false, 0);
-    };
-    let Some(expected) = count.checked_mul(8).and_then(|n| 24usize.checked_add(n)) else {
-        return (false, 0);
-    };
-    if bytes.len() != expected {
-        return (false, 0);
-    }
-    let index = usize::try_from(index).expect("nonnegative index checked");
-    if index >= count {
-        return (false, 0);
-    }
-    (true, read_i64_at(bytes, 24 + index * 8))
-}
-
-fn compare_value_bytes(value_memories: ValueMemories<'_>, a: i64, b: i64) -> i64 {
-    let mut value = 0i64;
     let mut value = [0u8; 8];
     let status = load_array_region(
         value_memories.into(),
@@ -1781,9 +1738,6 @@ fn compare_value_bytes(
     if a == b {
         return 1;
     }
-    let a = value_bytes(value_memories, a)
-        .expect("CompareValueBytes left operand must be a resident value handle");
-    let b = value_bytes(value_memories, b)
     let memories = MemoryView::from(value_memories);
     let a = handle_bytes(memories, molten, a)
         .expect("CompareValueBytes left operand must be a resident value handle");
@@ -1794,20 +1748,6 @@ fn compare_value_bytes(
         core::cmp::Ordering::Equal => 1,
         core::cmp::Ordering::Greater => 2,
     }
-}
-
-fn value_bytes(value_memories: ValueMemories<'_>, handle: i64) -> Option<&[u8]> {
-    let (handle, memories) = if handle < 0 {
-        let handle = (-1i64).checked_sub(handle)?;
-        (usize::try_from(handle).ok()?, value_memories.molten)
-    } else {
-        (usize::try_from(handle).ok()?, value_memories.store)
-    };
-    let memory = memories.get(handle).copied()?;
-    if memory.ptr.is_null() {
-        return None;
-    }
-    Some(unsafe { core::slice::from_raw_parts(memory.ptr, memory.len) })
 }
 
 #[cfg(test)]
