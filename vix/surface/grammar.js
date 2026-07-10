@@ -109,7 +109,7 @@ module.exports = grammar({
     let_statement: ($) =>
       seq(
         "let",
-        field("name", $.identifier),
+        field("pattern", $._pattern),
         optional(seq(":", field("type", $._type))),
         "=",
         field("value", $._expr),
@@ -234,7 +234,13 @@ module.exports = grammar({
         field("body", $._expr),
       ),
     _pattern: ($) =>
-      choice($.variant_pattern, $.binding_pattern, $.number_pattern, $.wildcard_pattern),
+      choice(
+        $.variant_pattern,
+        $.binding_pattern,
+        $.number_pattern,
+        $.wildcard_pattern,
+        $.tuple_pattern,
+      ),
     binding_pattern: ($) => field("binding", $.identifier),
     number_pattern: ($) => field("value", $.number),
     wildcard_pattern: () => "_",

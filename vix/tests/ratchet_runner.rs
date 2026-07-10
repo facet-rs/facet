@@ -1174,6 +1174,28 @@ fn rung_018_non_exhaustive_match_is_rejected_with_declared_message_and_line() {
 
 #[test]
 fn rung_019_tuple_let_destructures_one_value_through_vir_and_weavy() {
+    let module = Compiler::new()
+        .compile(RUNG_019)
+        .expect("rung 019 compiles");
+    let function = module
+        .functions
+        .iter()
+        .find(|function| function.name == "let_destructuring")
+        .expect("rung 019 contains let_destructuring");
+    let projections = function
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.op, VirOp::Project { .. }))
+        .collect::<Vec<_>>();
+    assert_eq!(projections.len(), 2);
+    assert!(matches!(projections[0].op, VirOp::Project { index: 0 }));
+    assert!(matches!(projections[1].op, VirOp::Project { index: 1 }));
+    assert_eq!(projections[0].inputs, projections[1].inputs);
+    assert!(matches!(
+        function.nodes[projections[0].inputs[0].0 as usize].op,
+        VirOp::Call(_)
+    ));
+
     let report = run_source(RUNG_019).expect("rung 019 compiles and runs");
     assert!(report.passed());
     assert!(report.agrees());

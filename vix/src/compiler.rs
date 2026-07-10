@@ -677,23 +677,63 @@ fn lower_let_statement(
     context: &ModuleContext<'_>,
     statement: &ast::LetStmt,
 ) -> Result<(), Diagnostics> {
-    if bindings.contains_key(&statement.name.value) {
-        return Err(Diagnostics::one(Diagnostic {
-            code: DiagnosticCode::DuplicateBinding,
-            primary: statement.name.span,
-            labels: Vec::new(),
-            payload: DiagnosticPayload::Name {
-                name: statement.name.value.clone(),
-            },
-        }));
-    }
     let value = lower_value(nodes, bindings, context, &statement.value)?;
     if let Some(annotation) = &statement.ty {
         let expected = lower_declared_type(annotation, context.types)?;
         require_type(&value, &expected, type_span(annotation))?;
     }
-    bindings.insert(statement.name.value.clone(), value);
-    Ok(())
+    bind_irrefutable_let_pattern(nodes, bindings, &statement.pattern, &value)
+}
+
+fn bind_irrefutable_let_pattern(
+    nodes: &mut Vec<Node>,
+    bindings: &mut BTreeMap<String, LoweredValue>,
+    pattern: &ast::Pattern,
+    value: &LoweredValue,
+) -> Result<(), Diagnostics> {
+    match pattern {
+        ast::Pattern::Binding(pattern) => bind_name(bindings, value, &pattern.binding),
+        ast::Pattern::Tuple(pattern) => {
+            let Type::Tuple(elements) = &value.ty else {
+                return Err(type_mismatch(pattern.span, "tuple", value.ty.name()));
+            };
+            if pattern.bindings.len() != elements.len() {
+                return Err(type_mismatch(
+                    pattern.span,
+                    format!("tuple pattern with {} elements", elements.len()),
+                    format!("tuple pattern with {} elements", pattern.bindings.len()),
+                ));
+            }
+            let elements = elements.clone();
+            for (index, (binding, ty)) in pattern.bindings.iter().zip(elements).enumerate() {
+                let index = u32::try_from(index).map_err(|_| {
+                    type_mismatch(pattern.span, "tuple field index", index.to_string())
+                })?;
+                let projected = LoweredValue {
+                    node: push_node(
+                        nodes,
+                        binding.span,
+                        ty.clone(),
+                        EffectFacts::PURE,
+                        vec![value.node],
+                        Op::Project { index },
+                    ),
+                    ty,
+                };
+                bind_name(bindings, &projected, binding)?;
+            }
+            Ok(())
+        }
+        ast::Pattern::Wildcard(_) => Ok(()),
+        ast::Pattern::Variant(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
+            pattern.span,
+            "refutable let pattern",
+        ))),
+        ast::Pattern::Number(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
+            pattern.span,
+            "refutable let pattern",
+        ))),
+    }
 }
 
 fn expression_statement_diagnostic(span: Span) -> Diagnostics {
@@ -1544,7 +1584,7 @@ fn lower_ordered_pattern(
 ) -> Result<Option<LoweredValue>, Diagnostics> {
     match pattern {
         ast::Pattern::Binding(pattern) => {
-            bind_ordered_match_name(bindings, scrutinee, &pattern.binding)?;
+            bind_name(bindings, scrutinee, &pattern.binding)?;
             Ok(None)
         }
         ast::Pattern::Number(pattern) => {
@@ -1567,12 +1607,16 @@ fn lower_ordered_pattern(
             pattern.span,
             "guarded enum pattern",
         ))),
+        ast::Pattern::Tuple(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
+            pattern.span,
+            "tuple match pattern",
+        ))),
     }
 }
 
-fn bind_ordered_match_name(
+fn bind_name(
     bindings: &mut BTreeMap<String, LoweredValue>,
-    scrutinee: &LoweredValue,
+    value: &LoweredValue,
     binding: &Spanned<String>,
 ) -> Result<(), Diagnostics> {
     if bindings.contains_key(&binding.value) {
@@ -1585,7 +1629,7 @@ fn bind_ordered_match_name(
             },
         }));
     }
-    bindings.insert(binding.value.clone(), scrutinee.clone());
+    bindings.insert(binding.value.clone(), value.clone());
     Ok(())
 }
 
