@@ -12,6 +12,7 @@ const RUNG_004: &str = include_str!("ratchet/004-functions.vix");
 const RUNG_005: &str = include_str!("ratchet/005-tuples.vix");
 const RUNG_006: &str = include_str!("ratchet/006-records.vix");
 const RUNG_007: &str = include_str!("ratchet/007-enums.vix");
+const RUNG_008: &str = include_str!("ratchet/008-spread.vix");
 
 /// The first rung is an architectural certificate, not just a boolean test.
 ///
@@ -506,6 +507,60 @@ fn rung_007_enums_payloads_and_match_run_through_vir_and_weavy() {
         selected_arm_marks[island_index] += 1;
     }
     assert!(selected_arm_marks.into_iter().all(|marks| marks > 0));
+}
+
+#[test]
+fn rung_008_record_spread_builds_a_fresh_value_through_vir_and_weavy() {
+    let module = Compiler::new()
+        .compile(RUNG_008)
+        .expect("rung 008 compiles");
+    let spread = module
+        .functions
+        .iter()
+        .find(|function| function.name == "spread")
+        .expect("rung 008 contains spread");
+    let records = spread
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.op, VirOp::Record))
+        .collect::<Vec<_>>();
+    assert_eq!(records.len(), 2, "base and update are distinct VIR values");
+    let [base, moved] = records.as_slice() else {
+        unreachable!("record count checked above")
+    };
+    assert_eq!(moved.inputs.len(), 2);
+    let inherited_y = spread
+        .nodes
+        .iter()
+        .find(|node| node.id == moved.inputs[1])
+        .expect("the moved record's inherited y input exists");
+    assert!(matches!(inherited_y.op, VirOp::Project { index: 1 }));
+    assert_eq!(inherited_y.inputs, [base.id]);
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    assert_eq!(partitioned.islands.len(), 3);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 008 lowers to Weavy");
+        assert!(lowered.program.fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+    }
+
+    let report = run_source(RUNG_008).expect("rung 008 compiles and runs");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    assert_eq!(report.plain.counters.pure_host_calls, 0);
+    assert_eq!(report.chaos.counters.pure_host_calls, 0);
+    assert_eq!(report.plain.receipt_count, 0);
+    assert_eq!(report.chaos.receipt_count, 0);
 }
 
 fn assert_contiguous_sequences(events: &[vix::runtime::Event]) {
