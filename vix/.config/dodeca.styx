@@ -16,8 +16,9 @@ source {
         }
         {
             name weavy
-            include ("../weavy/build/**/*.rs" "../weavy/src/**/*.rs")
-            test_include ("../weavy/tests/**/*.rs")
+            root ../weavy
+            include ("build/**/*.rs" "src/**/*.rs")
+            test_include ("tests/**/*.rs")
         }
     )
 }
