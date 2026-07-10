@@ -873,6 +873,15 @@ struct ValidatedFrame {
     result: usize,
 }
 
+#[derive(Clone, Copy)]
+struct StructuralFieldContext {
+    function: FnId,
+    pc: usize,
+    function_index: usize,
+    value_shape: ValueShapeRef,
+    variant: Option<u32>,
+}
+
 struct ValidatedCall {
     entries: Vec<RegionBounds>,
     result: RegionBounds,
@@ -1797,11 +1806,13 @@ impl Verifier<'_> {
                 let (value_shape, declared) =
                     self.product_region(function_id, pc, function_index, *dst)?;
                 self.validate_structural_fields(
-                    function_id,
-                    pc,
-                    function_index,
-                    value_shape,
-                    None,
+                    StructuralFieldContext {
+                        function: function_id,
+                        pc,
+                        function_index,
+                        value_shape,
+                        variant: None,
+                    },
                     declared,
                     fields,
                 )?;
@@ -1815,12 +1826,14 @@ impl Verifier<'_> {
                     self.product_region(function_id, pc, function_index, *product)?;
                 let declared =
                     self.structural_field(function_id, pc, value_shape, None, fields, *field)?;
-                self.validate_structural_destination(
-                    function_id,
-                    pc,
-                    function_index,
-                    value_shape,
-                    None,
+                self.validate_structural_source(
+                    StructuralFieldContext {
+                        function: function_id,
+                        pc,
+                        function_index,
+                        value_shape,
+                        variant: None,
+                    },
                     *field,
                     *dst,
                     declared,
@@ -1852,11 +1865,13 @@ impl Verifier<'_> {
                 let declared =
                     self.enum_variant(function_id, pc, value_shape, variants, *variant)?;
                 self.validate_structural_fields(
-                    function_id,
-                    pc,
-                    function_index,
-                    value_shape,
-                    Some(*variant),
+                    StructuralFieldContext {
+                        function: function_id,
+                        pc,
+                        function_index,
+                        value_shape,
+                        variant: Some(*variant),
+                    },
                     &declared.fields,
                     fields,
                 )?;
@@ -1889,12 +1904,14 @@ impl Verifier<'_> {
                     &variant_contract.fields,
                     *field,
                 )?;
-                self.validate_structural_destination(
-                    function_id,
-                    pc,
-                    function_index,
-                    value_shape,
-                    Some(*variant),
+                self.validate_structural_source(
+                    StructuralFieldContext {
+                        function: function_id,
+                        pc,
+                        function_index,
+                        value_shape,
+                        variant: Some(*variant),
+                    },
                     *field,
                     *dst,
                     declared,
@@ -2456,21 +2473,17 @@ impl Verifier<'_> {
 
     fn validate_structural_fields(
         &self,
-        function: FnId,
-        pc: usize,
-        function_index: usize,
-        value_shape: ValueShapeRef,
-        variant: Option<u32>,
+        context: StructuralFieldContext,
         declared: &[ValueFieldUse],
         sources: &[StructuralFieldSource],
     ) -> Result<(), ProgramError> {
         if declared.len() != sources.len() {
             return Err(self.op(
-                function,
-                pc,
+                context.function,
+                context.pc,
                 ProgramDefect::StructuralFieldCount {
-                    value_shape,
-                    variant,
+                    value_shape: context.value_shape,
+                    variant: context.variant,
                     expected: declared.len(),
                     actual: sources.len(),
                 },
@@ -2478,49 +2491,44 @@ impl Verifier<'_> {
         }
         let mut seen = vec![false; declared.len()];
         for source in sources {
-            let field =
-                self.structural_field(function, pc, value_shape, variant, declared, source.field)?;
+            let field = self.structural_field(
+                context.function,
+                context.pc,
+                context.value_shape,
+                context.variant,
+                declared,
+                source.field,
+            )?;
             if core::mem::replace(&mut seen[source.field as usize], true) {
                 return Err(self.op(
-                    function,
-                    pc,
+                    context.function,
+                    context.pc,
                     ProgramDefect::DuplicateStructuralField {
-                        value_shape,
-                        variant,
+                        value_shape: context.value_shape,
+                        variant: context.variant,
                         field: source.field,
                     },
                 ));
             }
-            self.validate_structural_source(
-                function,
-                pc,
-                function_index,
-                value_shape,
-                variant,
-                source.field,
-                source.source,
-                field,
-            )?;
+            self.validate_structural_source(context, source.field, source.source, field)?;
         }
         Ok(())
     }
 
     fn validate_structural_source(
         &self,
-        function: FnId,
-        pc: usize,
-        function_index: usize,
-        value_shape: ValueShapeRef,
-        variant: Option<u32>,
+        context: StructuralFieldContext,
         field_index: u32,
         source: RegionId,
         field: &ValueFieldUse,
     ) -> Result<(), ProgramError> {
-        let regions = &self.contract.functions[function_index].frame.regions;
+        let regions = &self.contract.functions[context.function_index]
+            .frame
+            .regions;
         let Some(actual) = regions.get(source.0 as usize) else {
             return Err(self.op(
-                function,
-                pc,
+                context.function,
+                context.pc,
                 ProgramDefect::StructuralRegionOutOfRange {
                     region: source,
                     region_count: regions.len(),
@@ -2529,11 +2537,11 @@ impl Verifier<'_> {
         };
         if actual.shape != field.shape || actual.value_shape != field.value_shape {
             return Err(self.op(
-                function,
-                pc,
+                context.function,
+                context.pc,
                 ProgramDefect::StructuralFieldSourceMismatch {
-                    value_shape,
-                    variant,
+                    value_shape: context.value_shape,
+                    variant: context.variant,
                     field: field_index,
                     source,
                     expected_shape: field.shape.clone(),
@@ -2544,29 +2552,6 @@ impl Verifier<'_> {
             ));
         }
         Ok(())
-    }
-
-    fn validate_structural_destination(
-        &self,
-        function: FnId,
-        pc: usize,
-        function_index: usize,
-        value_shape: ValueShapeRef,
-        variant: Option<u32>,
-        field_index: u32,
-        destination: RegionId,
-        field: &ValueFieldUse,
-    ) -> Result<(), ProgramError> {
-        self.validate_structural_source(
-            function,
-            pc,
-            function_index,
-            value_shape,
-            variant,
-            field_index,
-            destination,
-            field,
-        )
     }
 
     fn scalar_region(
