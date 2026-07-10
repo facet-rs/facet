@@ -55,19 +55,25 @@ artifacts and never second-guesses the substrate.
 > particular, the architecture-neutral `Program` includes a compact frame
 > contract/manifest: declared regions with offset, width, alignment, and
 > machine kind/schema witness sufficient to verify every op's reads and writes,
-> entry bindings, argument copies, indirect-call function ids, and return
+> entry bindings, argument copies, indirect-call slots/contracts, and return
 > regions. This is not full Vix type reflection and not runtime tagging in the
 > fast lane; it is proof material cached with the lowering artifact. Frame
 > layout byte bounds alone are insufficient.
 >
 > Verification proves all static safety obligations before any lane executes:
-> function, call, and jump targets; function fallthrough; immediate and opcode
-> shape; frame offset, width, and alignment using checked arithmetic; argument
-> and return copies against the frame contract; declared inline regions; host
-> and await indices; indirect-call function ids; and vocabulary/ABI support for
-> the selected platform. Malformed input is a typed `MachineError` reported the
-> same way for every lane, never a panic, undefined behavior, silent truncation,
-> or Vix `Failure`.
+> statically named function, call, and jump targets; function fallthrough;
+> immediate and opcode shape; frame offset, width, and alignment using checked
+> arithmetic; argument and return copies against the frame contract; declared
+> inline regions; host and await requirements; and vocabulary/ABI support for
+> the selected platform. For an indirect callee, verification proves the slot's
+> machine kind and call contract, not the runtime function id's range. The
+> dynamic function id/range is checked through the typed access/execution
+> membrane and faults identically in every lane.
+>
+> Host and await table lengths supplied at drive time are checked against the
+> verified program requirements before native code can enter. Malformed input is
+> a typed `MachineError` reported the same way for every lane, never a panic,
+> undefined behavior, silent truncation, or Vix `Failure`.
 >
 > Fast native stencils may omit only checks already discharged by
 > `VerifiedProgram`. The safe interpreter remains the behavioral oracle. The
@@ -87,8 +93,8 @@ artifacts and never second-guesses the substrate.
 >
 > `VerifiedProgram` proves static program shape; it does not prove dynamic
 > aggregate contents or handle provenance. Fast native stencils therefore keep
-> using the access membrane for dynamic aggregate and value checks even when
-> their frame/op checks were statically discharged.
+> using the access membrane for dynamic aggregate, value, and indirect function
+> checks even when their frame/op checks were statically discharged.
 >
 > Weavy owns an opt-in checked execution mode with independent shadow metadata:
 > redzones, poison, generation tags, dynamic kind/schema shadows, and whatever

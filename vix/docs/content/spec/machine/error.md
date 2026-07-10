@@ -49,18 +49,26 @@ the string `"unwrap on None"` and no location, no subject, no demand chain.
 > r[machine.error.structural-impossibility]
 >
 > [SETTLED] A structural impossibility — a state the types claim cannot happen
-> (comparator index out of bounds, post-force pending) — is a typed error or a
-> panic. It is never folded into a legitimate-miss or `Ok(false)` path.
-> (Twin of `machine.obs.loud-fallbacks`.)
+> (comparator index out of bounds, post-force pending, malformed verified input)
+> — is a typed `MachineError` or execution fault with attribution. It is never
+> folded into a legitimate-miss or `Ok(false)` path. A debug assertion may
+> accompany an already-typed error path, but panic is not an externally visible
+> or production execution outcome. (Twin of `machine.obs.loud-fallbacks`.)
 
 > r[machine.error.index-out-of-bounds]
 >
 > [SETTLED] A dense-array read outside `0..len` is a typed `IndexOutOfBounds`
 > demand failure carrying the demanded index, the array's length, and the
 > indexing source site (`machine.error.failure-source-site-identity`). The
-> machine's checked array-read vocabulary reports absence through a `present`
-> witness so the lowering can raise it; a lowering that folds the miss into a
-> zero element, a wrapped index, or an `Option` has erased the failure's
+> machine's checked array-read vocabulary reports access through a closed typed
+> status that distinguishes success, out-of-range, invalid handle, malformed
+> payload, width mismatch, schema mismatch, arithmetic overflow, and allocation
+> failure. Only the out-of-range status becomes the language
+> `IndexOutOfBounds` failure; malformed, invalid, schema/width, overflow,
+> allocation, and impossible machine conditions remain typed `MachineError`s or
+> execution faults with attribution. A lowering or substrate path that folds the
+> miss into a zero element, a wrapped index, an `Option`, a single `present`
+> witness, or any other default/absence collapse has erased the failure's
 > address. Unlike `machine.error.structural-impossibility`, an out-of-bounds
 > index is a legitimate program outcome, not an invariant break.
 >
