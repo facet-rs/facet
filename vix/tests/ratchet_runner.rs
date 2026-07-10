@@ -454,21 +454,21 @@ fn direct_string_call() -> Stream<Check> {
         let callee = &lowered.contract.functions[1];
         assert_eq!(lowered.constants.len(), 2, "one publication per NodeRef");
         let root_function = lowered.constants[0].root.function;
-        for constant in &lowered.constants {
+        for (root_entry, constant) in lowered.constants.iter().enumerate() {
             assert_eq!(constant.root.function, root_function);
             assert_eq!(constant.root.schema, weavy::SchemaRef(0));
             assert_eq!(constant.owner.schema, weavy::SchemaRef(0));
             assert_eq!(constant.root.schema, constant.owner.schema);
             if constant.owner.function == root_function {
                 assert_eq!(constant.owner.function, constant.node.function);
-                assert_eq!(constant.root.entry, 0);
-                assert_eq!(constant.owner.entry, 0);
+                assert_eq!(constant.root.entry, root_entry);
+                assert_eq!(constant.owner.entry, root_entry);
                 assert_eq!(constant.root.slot.byte_offset(), 0);
                 assert_eq!(constant.owner.slot.byte_offset(), 0);
             } else {
                 assert_eq!(constant.owner.function, constant.node.function);
                 assert_ne!(constant.owner.function, root_function);
-                assert_eq!(constant.root.entry, 1);
+                assert_eq!(constant.root.entry, root_entry);
                 assert_eq!(constant.owner.entry, 1);
                 assert_eq!(constant.root.slot.byte_offset(), 24);
                 assert_eq!(constant.owner.slot.byte_offset(), 8);
