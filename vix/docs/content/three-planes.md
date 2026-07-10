@@ -242,12 +242,16 @@ How this sits against prior art:
   constraint-entailment caching, a different domain), and the
   reversed-path trie as nomination index.
 
-## What this chapter deliberately leaves open
+## Initial nomination policy
 
-1. **Path compression policy** — how much of a location to keep before
-   collapsing to waypoints (demand root, effect boundaries, closure
-   names), and how suffix-match weighting ranks candidates. Cost-model
-   territory; safe to iterate.
-2. **Trajectory-class edges** — the exact rule for when a demand is
-   trajectory-born, and whether depth-disambiguation is ever worth
-   offering as a nomination hint.
+V0 keeps the full content-free location path and nominates only an exact path.
+It performs no path compression, suffix nomination, trajectory classification,
+or depth hinting. The memo stores the path beside its digest and compares it
+after lookup; a location-hash collision is therefore a cold miss, never a reuse
+proof.
+
+Compression, suffix ranking, and trajectory hints remain admissible cost-model
+experiments only after exact nomination has counters at corpus scale. They get a
+cost-model epoch and can change which prior entry is tried first, but they never
+enter recipe or value identity and never validate reuse. This is a default and
+an authority boundary, not an unresolved semantic choice.

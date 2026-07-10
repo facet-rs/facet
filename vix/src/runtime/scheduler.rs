@@ -7,7 +7,7 @@ use crate::lowering::LoweringArtifact;
 use crate::support::Span;
 use crate::vir::{IslandId, NodeId};
 
-use super::identity::{DemandKey, DemandPreimage, LocationId, SchemaId, ValueId};
+use super::identity::{DemandKey, DemandPreimage, Location, LocationId, SchemaId, ValueId};
 use super::model::{
     DemandRecord, DemandState, MemoVerdict, Receipt, TaskId, TaskRecord, TaskState,
 };
@@ -16,7 +16,7 @@ use super::store::{Handle, Store, StoreEntry};
 
 #[derive(Clone, Debug)]
 struct MemoEntry {
-    location: LocationId,
+    location: Location,
     key: DemandKey,
     preimage: DemandPreimage,
     result: Handle,
@@ -71,7 +71,7 @@ impl<S: EventSink> Runtime<S> {
     pub fn evaluate(
         &mut self,
         island: IslandId,
-        location: LocationId,
+        location: &Location,
         lowered: &LoweringArtifact,
         chaos: ChaosPolicy,
     ) -> Result<Evaluation, Diagnostics> {
@@ -79,8 +79,8 @@ impl<S: EventSink> Runtime<S> {
             key: lowered.demand_key,
         });
 
-        if let Some(entry) = self.memo.get(&location)
-            && entry.location == location
+        if let Some(entry) = self.memo.get(&location.id)
+            && entry.location == *location
             && entry.key == lowered.demand_key
             && entry.preimage == lowered.demand_preimage
         {
@@ -97,7 +97,7 @@ impl<S: EventSink> Runtime<S> {
                 .is_some_and(|bytes| bytes == [1]);
             self.counters.memo_hits_exact += 1;
             self.emit(EventKind::Memo {
-                location,
+                location: location.id,
                 verdict: MemoVerdict::Exact,
                 verified: 0,
             });
@@ -111,7 +111,7 @@ impl<S: EventSink> Runtime<S> {
 
         self.counters.memo_misses += 1;
         self.emit(EventKind::Memo {
-            location,
+            location: location.id,
             verdict: MemoVerdict::Miss,
             verified: 0,
         });
@@ -186,9 +186,9 @@ impl<S: EventSink> Runtime<S> {
             });
 
             self.memo.insert(
-                location,
+                location.id,
                 MemoEntry {
-                    location,
+                    location: location.clone(),
                     key: lowered.demand_key,
                     preimage: lowered.demand_preimage.clone(),
                     result: interned.handle,

@@ -4,8 +4,8 @@ use crate::compiler::Compiler;
 use crate::diagnostic::Diagnostics;
 use crate::lowering::{LoweringCache, LoweringCacheCounters};
 use crate::runtime::{
-    ChaosPolicy, Counters, DemandState, Evaluation, Event, EventLog, LocationId, Runtime,
-    TaskState, ValueId,
+    ChaosPolicy, Counters, DemandState, Evaluation, Event, EventLog, Location, Runtime, TaskState,
+    ValueId,
 };
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -86,10 +86,10 @@ fn run_lane(
         let partitioned = module.partition_test(test);
         for island in &partitioned.islands {
             let lowered = cache.get_or_lower(island)?;
-            let location = LocationId::for_test_island(&partitioned.name, island.id.0);
+            let location = Location::for_test_island(&partitioned.name, island.id.0);
             let evaluation: Evaluation = runtime.evaluate(
                 island.id,
-                location,
+                &location,
                 lowered,
                 ChaosPolicy {
                     kill_first_running_task: kill_available,

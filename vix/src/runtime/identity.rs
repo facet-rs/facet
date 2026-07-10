@@ -65,13 +65,30 @@ impl DemandKey {
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct LocationId(pub Digest);
 
-impl LocationId {
+/// Full content-free path used to nominate prior memo entries. The digest is
+/// only an index; `segments` remain the collision check and inspection value.
+///
+/// r[impl machine.memo.indexed-by-location]
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct Location {
+    pub id: LocationId,
+    pub segments: Vec<String>,
+}
+
+impl Location {
     #[must_use]
     pub fn for_test_island(test_name: &str, island: u32) -> Self {
-        Self(hash_framed(
-            b"vix.location.v1",
-            &[test_name.as_bytes(), &island.to_le_bytes()],
-        ))
+        let segments = vec![
+            "test".to_owned(),
+            test_name.to_owned(),
+            "check".to_owned(),
+            island.to_string(),
+        ];
+        let fields = segments.iter().map(String::as_bytes).collect::<Vec<_>>();
+        Self {
+            id: LocationId(hash_framed(b"vix.location.v1", &fields)),
+            segments,
+        }
     }
 }
 
