@@ -218,6 +218,10 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                 task_stencils::LOAD_ARRAY_WORD,
                 Continuations::Fallthrough(task_stencils::LOAD_ARRAY_WORD_CONT),
             ),
+            Op::LoadArrayLen { .. } => (
+                task_stencils::LOAD_ARRAY_LEN,
+                Continuations::Fallthrough(task_stencils::LOAD_ARRAY_LEN_CONT),
+            ),
             Op::CompareValueBytes { .. } => (
                 task_stencils::COMPARE_VALUE_BYTES,
                 Continuations::Fallthrough(task_stencils::COMPARE_VALUE_BYTES_CONT),
@@ -332,6 +336,7 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
             Op::JumpIfZero { .. } => 3,
             Op::LoadIndexedI64 { .. } | Op::StoreIndexedI64 { .. } => 4,
             Op::LoadArrayWord { .. } => 5,
+            Op::LoadArrayLen { .. } => 4,
             Op::CompareValueBytes { .. } => 3,
             Op::Await { .. } => 3,
             Op::Call { .. } | Op::CallIndirect { .. } => 1,
@@ -411,6 +416,21 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                     u64::from(*present),
                     u64::from(*array),
                     u64::from(*index),
+                    *elem_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::LoadArrayLen {
+                dst,
+                present,
+                array,
+                elem_schema_ref,
+            } => {
+                for v in [
+                    u64::from(*dst),
+                    u64::from(*present),
+                    u64::from(*array),
                     *elem_schema_ref as u64,
                 ] {
                     layout.push_prog_word(root.prog_index, v);
@@ -1327,6 +1347,146 @@ mod tests {
         );
         assert_eq!(task.result, interp.result);
         assert_eq!(task.trace, interp.trace);
+    }
+
+    /// An array-words payload: [tag=0, elem_schema_ref, count, words..].
+    fn array_words_payload(elem_schema_ref: i64, elements: &[i64]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0i64.to_le_bytes());
+        bytes.extend_from_slice(&elem_schema_ref.to_le_bytes());
+        bytes.extend_from_slice(&(elements.len() as i64).to_le_bytes());
+        for element in elements {
+            bytes.extend_from_slice(&element.to_le_bytes());
+        }
+        bytes
+    }
+
+    #[test]
+    fn store_backed_array_reads_match_the_interpreter() {
+        const SCHEMA: i64 = 0x5eed_1234_abcd_0001u64 as i64;
+        // frame: [0]=array handle, [1]=index, [2]=elem, [3]=present,
+        //        [4]=len, [5]=len present, [6]=oob elem, [7]=oob present,
+        //        [8]=wrong-schema len, [9]=wrong-schema present
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(10),
+                code: vec![
+                    Op::ConstI64 { dst: 0, value: 0 },
+                    Op::ConstI64 { dst: 8, value: 2 },
+                    Op::LoadArrayWord {
+                        dst: 16,
+                        present: 24,
+                        array: 0,
+                        index: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::LoadArrayLen {
+                        dst: 32,
+                        present: 40,
+                        array: 0,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    // Out of range: both destinations are zeroed.
+                    Op::ConstI64 { dst: 8, value: 9 },
+                    Op::LoadArrayWord {
+                        dst: 48,
+                        present: 56,
+                        array: 0,
+                        index: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    // A payload tagged with another element schema does not answer.
+                    Op::LoadArrayLen {
+                        dst: 64,
+                        present: 72,
+                        array: 0,
+                        elem_schema_ref: SCHEMA ^ 1,
+                    },
+                    Op::Ret { src: 16, size: 64 },
+                ],
+            }],
+        };
+        let payload = array_words_payload(SCHEMA, &[10, 20, 30]);
+        let store = [ValueMemory::from_slice(&payload)];
+        let memories = ValueMemories {
+            store: &store,
+            molten: &[],
+        };
+
+        let mut interp = Task::spawn(&program, FnId(0));
+        assert_eq!(
+            interp.run_hosted_with_value_memories(&program, &mut [], &[], &mut [], memories),
+            TaskStep::Done
+        );
+        let words = interp
+            .result
+            .chunks_exact(8)
+            .map(|word| i64::from_le_bytes(word.try_into().expect("one result word")))
+            .collect::<Vec<_>>();
+        assert_eq!(words, [30, 1, 3, 1, 0, 0, 0, 0]);
+
+        let Some(jit) = JitProgram::compile(&program) else {
+            assert!(
+                !available(),
+                "task JIT refused store-backed array reads on a native target"
+            );
+            return;
+        };
+        let mut task = JitTask::spawn(&jit, FnId(0));
+        assert_eq!(
+            task.run_hosted_with_value_memories(&jit, &mut [], &[], &mut [], memories),
+            TaskStep::Done
+        );
+        assert_eq!(task.result, interp.result);
+        assert_eq!(task.trace, interp.trace);
+    }
+
+    #[test]
+    fn molten_array_length_matches_the_interpreter() {
+        const SCHEMA: i64 = 7;
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(3),
+                code: vec![
+                    // Molten handles are the negative half of the handle space.
+                    Op::ConstI64 { dst: 0, value: -1 },
+                    Op::LoadArrayLen {
+                        dst: 8,
+                        present: 16,
+                        array: 0,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::Ret { src: 8, size: 16 },
+                ],
+            }],
+        };
+        let payload = array_words_payload(SCHEMA, &[4, 5]);
+        let molten = [ValueMemory::from_slice(&payload)];
+        let memories = ValueMemories {
+            store: &[],
+            molten: &molten,
+        };
+
+        let mut interp = Task::spawn(&program, FnId(0));
+        assert_eq!(
+            interp.run_hosted_with_value_memories(&program, &mut [], &[], &mut [], memories),
+            TaskStep::Done
+        );
+        assert_eq!(interp.result_i64(), 2);
+
+        let Some(jit) = JitProgram::compile(&program) else {
+            assert!(
+                !available(),
+                "task JIT refused molten array length on a native target"
+            );
+            return;
+        };
+        let mut task = JitTask::spawn(&jit, FnId(0));
+        assert_eq!(
+            task.run_hosted_with_value_memories(&jit, &mut [], &[], &mut [], memories),
+            TaskStep::Done
+        );
+        assert_eq!(task.result, interp.result);
     }
 
     #[test]

@@ -10,13 +10,23 @@ use weavy::task::{
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics};
 use crate::runtime::{
-    DemandKey, DemandPreimage, FrameRegion, FrameSlot, FrameWords, RecipeId, SchemaId,
+    DemandKey, DemandPreimage, FramedPreimage, FrameRegion, FrameSlot, FrameWords, RecipeId,
+    SchemaId,
 };
 use crate::support::Span;
 use crate::vir::{
     EnumType, Function, FunctionId, Island, Node, NodeId, NodeRef, ORDERING_EQUAL_VARIANT,
     ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, Type, VariantPayload,
 };
+
+/// Island outcome status words. Word 0 of a fault-ABI return region.
+pub const OUTCOME_OK: i64 = 0;
+pub const OUTCOME_INDEX_OUT_OF_RANGE: i64 = 1;
+pub const OUTCOME_MALFORMED_ARRAY: i64 = 2;
+
+/// Words reserved at the head of a fault-ABI return region: status, and the
+/// two failure details (`index`, `length`).
+const OUTCOME_HEADER_WORDS: usize = 3;
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct SourceMapEntry {
@@ -46,12 +56,19 @@ impl LoweringAttribution {
     }
 }
 
+/// A value the island admits into the store before entering the task, bound to
+/// one entry-frame slot.
+///
+/// The two byte runs are deliberately distinct: `identity_preimage` is the
+/// framed, ABI-independent content that identity is computed from, while
+/// `memory` is the machine-plane payload task code reads through.
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct ValueConstant {
     pub node: NodeRef,
     pub slot: FrameSlot,
     pub schema: SchemaId,
-    pub bytes: Vec<u8>,
+    pub identity_preimage: Vec<u8>,
+    pub memory: Vec<u8>,
 }
 
 /// Cached executable bytes for one VIR recipe. Per-compilation source spans
@@ -62,6 +79,9 @@ pub struct LoweringArtifact {
     pub demand_preimage: DemandPreimage,
     pub program: WeavyProgram,
     pub constants: Vec<ValueConstant>,
+    /// Whether every function in this island returns a fault-ABI outcome
+    /// region rather than a bare value. Set when the island can fail.
+    pub fault_abi: bool,
 }
 
 impl LoweringArtifact {
@@ -71,11 +91,12 @@ impl LoweringArtifact {
         for constant in &self.constants {
             let _ = writeln!(
                 out,
-                "constant n{} frame[{}] schema={} bytes={}",
+                "constant n{} frame[{}] schema={} preimage={} memory={}",
                 constant.node.node.0,
                 constant.slot.byte_offset(),
                 constant.schema.0.hex(),
-                constant.bytes.len()
+                constant.identity_preimage.len(),
+                constant.memory.len()
             );
         }
         for (function_index, function) in self.program.fns.iter().enumerate() {
@@ -203,7 +224,9 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
             )
         })
         .collect::<BTreeMap<_, _>>();
-    let constant_closures = constant_closures(island);
+    let constant_bodies = constant_bodies(island)?;
+    let constant_closures = constant_closures(island, &constant_bodies);
+    let fault_abi = island_can_fault(island);
     let mut layouts = BTreeMap::new();
     layouts.insert(
         island.function,
@@ -213,10 +236,15 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
             constant_closures.get(&island.function).ok_or_else(|| {
                 lowering_diagnostic(output.span, "island function has no constant closure")
             })?,
+            fault_abi.then_some(&output.ty),
             output.span,
         )?,
     );
     for function in &island.callees {
+        let function_output = function.output.ok_or_else(|| {
+            lowering_diagnostic(function.span, "called VIR function has no return node")
+        })?;
+        let _ = function_output;
         layouts.insert(
             function.id,
             FunctionLayout::build(
@@ -225,6 +253,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
                 constant_closures.get(&function.id).ok_or_else(|| {
                     lowering_diagnostic(function.span, "called function has no constant closure")
                 })?,
+                fault_abi.then_some(&function.return_type),
                 function.span,
             )?,
         );
@@ -235,6 +264,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
         functions: &functions,
         trace_ids: &trace_ids,
         layouts: &layouts,
+        constant_bodies: &constant_bodies,
     };
 
     let mut constants = Vec::new();
@@ -271,10 +301,155 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
         demand_preimage,
         program,
         constants,
+        fault_abi,
     })
 }
 
-fn constant_closures(island: &Island) -> BTreeMap<FunctionId, BTreeSet<NodeRef>> {
+/// An island carries the fault ABI exactly when one of its functions can fail.
+/// Today the only fallible operations are the store-backed array reads.
+fn island_can_fault(island: &Island) -> bool {
+    let fallible = |nodes: &[Node]| {
+        nodes
+            .iter()
+            .any(|node| matches!(node.op, Op::ArrayIndex | Op::ArrayLen))
+    };
+    fallible(&island.nodes)
+        || island
+            .callees
+            .iter()
+            .any(|function| fallible(&function.nodes))
+}
+
+/// The framed content and machine payload of one admitted constant.
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct ConstantBody {
+    schema: SchemaId,
+    identity_preimage: Vec<u8>,
+    memory: Vec<u8>,
+}
+
+/// Materialize every literal value the island admits before entry: strings and
+/// dense array literals. Identity is built from a framed walk over the value's
+/// positions; the machine payload is built separately.
+///
+/// r[impl machine.identity.framed-encoding]
+fn constant_bodies(island: &Island) -> Result<BTreeMap<NodeRef, ConstantBody>, Diagnostics> {
+    let mut bodies = BTreeMap::new();
+    let mut collect = |function: FunctionId, nodes: &[Node]| -> Result<(), Diagnostics> {
+        let by_id = nodes
+            .iter()
+            .map(|node| (node.id, node))
+            .collect::<BTreeMap<_, _>>();
+        for node in nodes {
+            let body = match &node.op {
+                Op::String(value) => ConstantBody {
+                    schema: SchemaId::named("vix.String.v1"),
+                    identity_preimage: value.as_bytes().to_vec(),
+                    memory: value.as_bytes().to_vec(),
+                },
+                Op::Array => array_constant_body(node, &by_id)?,
+                _ => continue,
+            };
+            bodies.insert(
+                NodeRef {
+                    function,
+                    node: node.id,
+                },
+                body,
+            );
+        }
+        Ok(())
+    };
+    collect(island.function, &island.nodes)?;
+    for function in &island.callees {
+        collect(function.id, &function.nodes)?;
+    }
+    Ok(bodies)
+}
+
+/// The schema tag a store-backed array payload carries for its elements. Only
+/// word-shaped elements have one: a payload of handles would make a container's
+/// identity depend on process-local integers, which
+/// `machine.identity.handle-by-referent` forbids.
+fn array_element_schema(element: &Type, span: Span) -> Result<SchemaId, Diagnostics> {
+    match element {
+        Type::Int | Type::Bool => Ok(SchemaId::named(&element.name())),
+        _ => Err(lowering_diagnostic(
+            span,
+            &format!(
+                "a store-backed array of {} needs the molten construction service",
+                element.name()
+            ),
+        )),
+    }
+}
+
+fn array_constant_body(
+    node: &Node,
+    by_id: &BTreeMap<NodeId, &Node>,
+) -> Result<ConstantBody, Diagnostics> {
+    let element = node.ty.array_element().ok_or_else(|| {
+        lowering_diagnostic(node.span, "array construction has a non-array VIR type")
+    })?;
+    let element_schema = array_element_schema(element, node.span)?;
+
+    let mut elements = Vec::with_capacity(node.inputs.len());
+    for &input in &node.inputs {
+        let input = by_id.get(&input).copied().ok_or_else(|| {
+            lowering_diagnostic(node.span, "array element is not a node of this function")
+        })?;
+        if &input.ty != element {
+            return Err(lowering_diagnostic(
+                input.span,
+                "array element has the wrong VIR type",
+            ));
+        }
+        let word = match &input.op {
+            Op::Int(value) => *value,
+            Op::Bool(value) => i64::from(*value),
+            _ => {
+                return Err(lowering_diagnostic(
+                    input.span,
+                    concat!(
+                        "array construction from computed elements needs the molten ",
+                        "construction service (machine.store.construction-services)"
+                    ),
+                ));
+            }
+        };
+        elements.push(word);
+    }
+
+    let schema = SchemaId::named(&node.ty.name());
+    let count = u64::try_from(elements.len())
+        .map_err(|_| lowering_diagnostic(node.span, "array length overflow"))?;
+
+    let mut preimage = FramedPreimage::start(b"vix.array.v1", schema, count);
+    preimage.seq_len(count);
+    for (index, &word) in elements.iter().enumerate() {
+        preimage.field(index as u64, element_schema);
+        preimage.word(word);
+    }
+
+    let mut memory = Vec::with_capacity(24 + elements.len() * 8);
+    memory.extend_from_slice(&0i64.to_le_bytes());
+    memory.extend_from_slice(&element_schema.ref_word().to_le_bytes());
+    memory.extend_from_slice(&(count as i64).to_le_bytes());
+    for word in &elements {
+        memory.extend_from_slice(&word.to_le_bytes());
+    }
+
+    Ok(ConstantBody {
+        schema,
+        identity_preimage: preimage.finish(),
+        memory,
+    })
+}
+
+fn constant_closures(
+    island: &Island,
+    bodies: &BTreeMap<NodeRef, ConstantBody>,
+) -> BTreeMap<FunctionId, BTreeSet<NodeRef>> {
     let mut closures = BTreeMap::new();
     let mut calls = BTreeMap::new();
     let mut register = |function: FunctionId, nodes: &[Node]| {
@@ -282,11 +457,11 @@ fn constant_closures(island: &Island) -> BTreeMap<FunctionId, BTreeSet<NodeRef>>
             function,
             nodes
                 .iter()
-                .filter(|node| matches!(node.op, Op::String(_)))
                 .map(|node| NodeRef {
                     function,
                     node: node.id,
                 })
+                .filter(|constant| bodies.contains_key(constant))
                 .collect::<BTreeSet<_>>(),
         );
         calls.insert(
@@ -334,6 +509,7 @@ struct LoweringContext<'a> {
     functions: &'a BTreeMap<FunctionId, &'a Function>,
     trace_ids: &'a BTreeMap<NodeRef, u32>,
     layouts: &'a BTreeMap<FunctionId, FunctionLayout>,
+    constant_bodies: &'a BTreeMap<NodeRef, ConstantBody>,
 }
 
 struct FunctionLayout {
@@ -341,6 +517,7 @@ struct FunctionLayout {
     constant_slots: BTreeMap<NodeRef, FrameSlot>,
     scratch: Option<FrameSlot>,
     control_scratch: Option<ControlScratch>,
+    fault: Option<FaultLayout>,
     frame_size: usize,
 }
 
@@ -350,11 +527,60 @@ struct ControlScratch {
     condition: FrameSlot,
 }
 
+/// The frame regions a fault-ABI function needs: the outcome region it returns,
+/// one probe word per checked store read, and one landing region per call site
+/// so a callee's outcome can be inspected before its value is consumed.
+#[derive(Clone, Debug)]
+struct FaultLayout {
+    outcome: FrameRegion,
+    present: FrameSlot,
+    length: FrameSlot,
+    call_outcomes: BTreeMap<NodeId, FrameRegion>,
+}
+
+impl FaultLayout {
+    fn status(&self, span: Span) -> Result<FrameSlot, Diagnostics> {
+        self.outcome
+            .word(0)
+            .ok_or_else(|| lowering_diagnostic(span, "outcome status lies outside its frame"))
+    }
+
+    fn detail(&self, index: usize, span: Span) -> Result<FrameSlot, Diagnostics> {
+        self.outcome
+            .word(1 + index)
+            .ok_or_else(|| lowering_diagnostic(span, "outcome detail lies outside its frame"))
+    }
+
+    fn value(&self, words: FrameWords, span: Span) -> Result<FrameRegion, Diagnostics> {
+        self.outcome
+            .subregion(OUTCOME_HEADER_WORDS, words)
+            .ok_or_else(|| lowering_diagnostic(span, "outcome value lies outside its frame"))
+    }
+
+    fn call_outcome(&self, node: NodeId, span: Span) -> Result<FrameRegion, Diagnostics> {
+        self.call_outcomes
+            .get(&node)
+            .copied()
+            .ok_or_else(|| lowering_diagnostic(span, "call site has no outcome landing region"))
+    }
+}
+
+/// Header words of a call site's landing region, mirroring the callee's
+/// outcome region.
+fn outcome_region_words(value_words: FrameWords, span: Span) -> Result<FrameWords, Diagnostics> {
+    value_words
+        .as_usize()
+        .checked_add(OUTCOME_HEADER_WORDS)
+        .and_then(FrameWords::from_usize)
+        .ok_or_else(|| lowering_diagnostic(span, "outcome region width overflow"))
+}
+
 impl FunctionLayout {
     fn build(
         function: FunctionId,
         nodes: &[Node],
         constants: &BTreeSet<NodeRef>,
+        fault_return: Option<&Type>,
         span: Span,
     ) -> Result<Self, Diagnostics> {
         let mut regions = BTreeMap::new();
@@ -424,17 +650,17 @@ impl FunctionLayout {
                     .ok_or_else(|| {
                         lowering_diagnostic(span, "closure names a missing local constant")
                     })?;
-                if !matches!(node.op, Op::String(_)) {
+                if !matches!(node.op, Op::String(_) | Op::Array) {
                     return Err(lowering_diagnostic(
                         node.span,
-                        "closure constant is not a String node",
+                        "closure constant is not an admitted literal node",
                     ));
                 }
                 regions
                     .get(&constant.node)
                     .copied()
                     .ok_or_else(|| {
-                        lowering_diagnostic(node.span, "String constant has no frame region")
+                        lowering_diagnostic(node.span, "admitted constant has no frame region")
                     })?
                     .start()
             } else {
@@ -447,6 +673,51 @@ impl FunctionLayout {
             };
             constant_slots.insert(constant, slot);
         }
+
+        let fault = match fault_return {
+            None => None,
+            Some(return_type) => {
+                let word = |next_word: &mut usize| -> Result<FrameSlot, Diagnostics> {
+                    let slot = FrameSlot::for_word(*next_word)
+                        .ok_or_else(|| lowering_diagnostic(span, "fault offset overflow"))?;
+                    *next_word = next_word
+                        .checked_add(1)
+                        .ok_or_else(|| lowering_diagnostic(span, "function frame size overflow"))?;
+                    Ok(slot)
+                };
+                let present = word(&mut next_word)?;
+                let length = word(&mut next_word)?;
+
+                let outcome_words = outcome_region_words(type_words(return_type, span)?, span)?;
+                let outcome = FrameRegion::for_words(next_word, outcome_words)
+                    .ok_or_else(|| lowering_diagnostic(span, "outcome region overflow"))?;
+                next_word = next_word
+                    .checked_add(outcome_words.as_usize())
+                    .ok_or_else(|| lowering_diagnostic(span, "function frame size overflow"))?;
+
+                let mut call_outcomes = BTreeMap::new();
+                for node in nodes
+                    .iter()
+                    .filter(|node| matches!(node.op, Op::Call(_) | Op::CallValue))
+                {
+                    let words = outcome_region_words(type_words(&node.ty, node.span)?, node.span)?;
+                    let region = FrameRegion::for_words(next_word, words).ok_or_else(|| {
+                        lowering_diagnostic(node.span, "call outcome region overflow")
+                    })?;
+                    next_word = next_word.checked_add(words.as_usize()).ok_or_else(|| {
+                        lowering_diagnostic(node.span, "function frame size overflow")
+                    })?;
+                    call_outcomes.insert(node.id, region);
+                }
+                Some(FaultLayout {
+                    outcome,
+                    present,
+                    length,
+                    call_outcomes,
+                })
+            }
+        };
+
         let frame_size = FrameSlot::frame_size(next_word)
             .ok_or_else(|| lowering_diagnostic(span, "function frame size overflow"))?;
         Ok(Self {
@@ -454,6 +725,7 @@ impl FunctionLayout {
             constant_slots,
             scratch,
             control_scratch,
+            fault,
             frame_size,
         })
     }
@@ -586,6 +858,7 @@ fn lower_vir_function(
     let node_ids = nodes.iter().map(|node| node.id).collect::<Vec<_>>();
     let mut values = BTreeMap::new();
     let mut code = CodeBuilder::with_capacity(nodes.len().saturating_mul(2) + 1);
+    let exit = code.label();
     {
         let sequence = SequenceContext {
             nodes: &nodes_by_id,
@@ -595,6 +868,7 @@ fn lower_vir_function(
         let mut outputs = SequenceOutputs {
             constants,
             code: &mut code,
+            exit,
         };
         lower_node_sequence(&node_ids, &mut values, &sequence, &mut outputs, None)?;
     }
@@ -604,9 +878,24 @@ fn lower_vir_function(
         .ok_or_else(|| {
             lowering_diagnostic(output_node.span, "function output has no frame region")
         })?;
+    let return_region = match &layout.fault {
+        None => output_region,
+        Some(fault) => {
+            // Success epilogue: publish an OK status beside the value, then
+            // share the single Ret with every fault landing.
+            let value = fault.value(output_region.words(), output_node.span)?;
+            code.push(WeavyOp::ConstI64 {
+                dst: fault.status(output_node.span)?.byte_offset(),
+                value: OUTCOME_OK,
+            });
+            code.extend(copy_region(output_node, output_region, value)?);
+            code.bind(exit, output_node.span)?;
+            fault.outcome
+        }
+    };
     code.push(WeavyOp::Ret {
-        src: output_region.start().byte_offset(),
-        size: output_region
+        src: return_region.start().byte_offset(),
+        size: return_region
             .byte_size()
             .ok_or_else(|| lowering_diagnostic(output_node.span, "return size overflow"))?,
     });
@@ -629,6 +918,9 @@ struct SequenceContext<'nodes, 'function, 'lowering> {
 struct SequenceOutputs<'constants, 'code> {
     constants: &'constants mut Vec<ValueConstant>,
     code: &'code mut CodeBuilder,
+    /// The function's shared return landing. Faulting sites jump here after
+    /// writing their outcome header.
+    exit: CodeLabel,
 }
 
 fn lower_node_sequence(
@@ -693,6 +985,11 @@ fn lower_node_sequence(
             .ok_or_else(|| lowering_diagnostic(node.span, "VIR node has no trace attribution"))?;
         outputs.code.push(WeavyOp::Trace { id: trace_id });
         let representation = match &node.op {
+            Op::ArrayIndex => lower_array_index_node(node, dst, values, sequence, outputs)?,
+            Op::ArrayLen => lower_array_len_node(node, dst, values, sequence, outputs)?,
+            Op::Call(_) | Op::CallValue if sequence.function.layout.fault.is_some() => {
+                lower_faulting_call_node(node, dst, values, sequence, outputs)?
+            }
             Op::Match { .. } => lower_match_node(node, dst, values, sequence, outputs)?,
             Op::If { .. } => lower_if_node(node, dst, values, sequence, outputs, active_variant)?,
             Op::OrderedMatch { .. } => {
@@ -723,6 +1020,211 @@ fn lower_node_sequence(
         );
     }
     Ok(())
+}
+
+/// Read one array position through the checked store vocabulary.
+///
+/// The `present` flag is the machine's answer, not a folded constant: an
+/// out-of-range read publishes an `IndexOutOfRange` outcome carrying the
+/// demanded index and the array's own length, and abandons the island.
+///
+/// r[impl lang.collection.array-index]
+fn lower_array_index_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    let (array, index) = binary_values(node, values)?;
+    let element = array_read_element(node, &array)?;
+    if node.ty != element {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array index result is not the element type",
+        ));
+    }
+    require_value(node, &index, &Type::Int, ValueRepresentation::Word)?;
+    let representation = representation_for_type(&element, node.span)?;
+    if representation != ValueRepresentation::Word || dst.words() != FrameWords::ONE {
+        return Err(lowering_diagnostic(
+            node.span,
+            "store-backed array elements occupy one frame word",
+        ));
+    }
+    let element_schema_ref = array_element_schema(&element, node.span)?.ref_word();
+    let fault = fault_layout(node, sequence)?;
+
+    outputs.code.push(WeavyOp::LoadArrayWord {
+        dst: dst.start().byte_offset(),
+        present: fault.present.byte_offset(),
+        array: array.region.start().byte_offset(),
+        index: index.region.start().byte_offset(),
+        elem_schema_ref: element_schema_ref,
+    });
+    let out_of_range = outputs.code.label();
+    let in_range = outputs.code.label();
+    outputs.code.jump_if_zero(fault.present, out_of_range);
+    outputs.code.jump(in_range);
+
+    outputs.code.bind(out_of_range, node.span)?;
+    outputs.code.push(WeavyOp::LoadArrayLen {
+        dst: fault.length.byte_offset(),
+        present: fault.present.byte_offset(),
+        array: array.region.start().byte_offset(),
+        elem_schema_ref: element_schema_ref,
+    });
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: fault.status(node.span)?.byte_offset(),
+        value: OUTCOME_INDEX_OUT_OF_RANGE,
+    });
+    outputs.code.push(WeavyOp::CopyI64 {
+        dst: fault.detail(0, node.span)?.byte_offset(),
+        src: index.region.start().byte_offset(),
+    });
+    outputs.code.push(WeavyOp::CopyI64 {
+        dst: fault.detail(1, node.span)?.byte_offset(),
+        src: fault.length.byte_offset(),
+    });
+    outputs.code.jump(outputs.exit);
+
+    outputs.code.bind(in_range, node.span)?;
+    Ok(ValueRepresentation::Word)
+}
+
+/// The element count carried by the array value itself. A payload whose header
+/// does not answer is a machine invariant break, not a user error.
+fn lower_array_len_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_node_type(node, Type::Int)?;
+    require_input_count(node, 1)?;
+    let array = input_value(node, values, 0)?;
+    let element = array_read_element(node, &array)?;
+    let element_schema_ref = array_element_schema(&element, node.span)?.ref_word();
+    if dst.words() != FrameWords::ONE {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array length does not occupy one frame word",
+        ));
+    }
+    let fault = fault_layout(node, sequence)?;
+
+    outputs.code.push(WeavyOp::LoadArrayLen {
+        dst: dst.start().byte_offset(),
+        present: fault.present.byte_offset(),
+        array: array.region.start().byte_offset(),
+        elem_schema_ref: element_schema_ref,
+    });
+    let malformed = outputs.code.label();
+    let well_formed = outputs.code.label();
+    outputs.code.jump_if_zero(fault.present, malformed);
+    outputs.code.jump(well_formed);
+
+    outputs.code.bind(malformed, node.span)?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: fault.status(node.span)?.byte_offset(),
+        value: OUTCOME_MALFORMED_ARRAY,
+    });
+    for detail in 0..2 {
+        outputs.code.push(WeavyOp::ConstI64 {
+            dst: fault.detail(detail, node.span)?.byte_offset(),
+            value: 0,
+        });
+    }
+    outputs.code.jump(outputs.exit);
+
+    outputs.code.bind(well_formed, node.span)?;
+    Ok(ValueRepresentation::Word)
+}
+
+/// Under the fault ABI a callee returns an outcome region. The caller inspects
+/// the status before it consumes the value, and propagates a fault unchanged.
+fn lower_faulting_call_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    let fault = fault_layout(node, sequence)?;
+    let landing = fault.call_outcome(node.id, node.span)?;
+    let call = match &node.op {
+        Op::Call(callee) => lower_call_node(
+            node,
+            dst,
+            landing.start(),
+            values,
+            *callee,
+            sequence.function.layout,
+            sequence.lowering,
+        )?,
+        Op::CallValue => lower_call_value_node(node, landing.start(), values)?,
+        _ => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "non-call node reached faulting call lowering",
+            ));
+        }
+    };
+    outputs.code.push(call);
+
+    let status = landing
+        .word(0)
+        .ok_or_else(|| lowering_diagnostic(node.span, "call outcome status lies outside its frame"))?;
+    let returned = outputs.code.label();
+    outputs.code.jump_if_zero(status, returned);
+    for word in 0..OUTCOME_HEADER_WORDS {
+        let src = landing.word(word).ok_or_else(|| {
+            lowering_diagnostic(node.span, "call outcome header lies outside its frame")
+        })?;
+        let dst = fault.outcome.word(word).ok_or_else(|| {
+            lowering_diagnostic(node.span, "outcome header lies outside its frame")
+        })?;
+        outputs.code.push(WeavyOp::CopyI64 {
+            dst: dst.byte_offset(),
+            src: src.byte_offset(),
+        });
+    }
+    outputs.code.jump(outputs.exit);
+
+    outputs.code.bind(returned, node.span)?;
+    let value = landing
+        .subregion(OUTCOME_HEADER_WORDS, dst.words())
+        .ok_or_else(|| lowering_diagnostic(node.span, "call outcome value lies outside its frame"))?;
+    outputs.code.extend(copy_region(node, value, dst)?);
+    representation_for_type(&node.ty, node.span)
+}
+
+fn array_read_element(node: &Node, array: &LoweredSlot) -> Result<Type, Diagnostics> {
+    let element = array
+        .ty
+        .array_element()
+        .ok_or_else(|| lowering_diagnostic(node.span, "checked array read on a non-array value"))?
+        .clone();
+    require_value(
+        node,
+        array,
+        &array.ty.clone(),
+        ValueRepresentation::RealizedHandle,
+    )?;
+    Ok(element)
+}
+
+fn fault_layout<'a>(
+    node: &Node,
+    sequence: &'a SequenceContext<'_, '_, '_>,
+) -> Result<&'a FaultLayout, Diagnostics> {
+    sequence
+        .function
+        .layout
+        .fault
+        .as_ref()
+        .ok_or_else(|| lowering_diagnostic(node.span, "fallible node in a non-faulting island"))
 }
 
 fn lower_ordered_match_node(
@@ -1148,6 +1650,12 @@ fn collect_compare_leaves(
                 "payload enum comparison needs variant-directed lowering",
             ));
         }
+        Type::Array(_) => {
+            return Err(lowering_diagnostic(
+                span,
+                "array comparison needs element-directed lowering",
+            ));
+        }
         Type::Check | Type::StreamCheck => {
             return Err(lowering_diagnostic(
                 span,
@@ -1245,7 +1753,7 @@ fn lower_node(
                 ValueRepresentation::Word,
             )
         }
-        Op::String(value) => {
+        Op::String(_) => {
             require_input_count(node, 0)?;
             require_node_type(node, Type::String)?;
             let constant = NodeRef {
@@ -1262,11 +1770,15 @@ fn lower_node(
                 .layouts
                 .get(&context.root_function)
                 .ok_or_else(|| lowering_diagnostic(node.span, "missing island root layout"))?;
+            let body = context.constant_bodies.get(&constant).ok_or_else(|| {
+                lowering_diagnostic(node.span, "String literal has no admitted constant body")
+            })?;
             constants.push(ValueConstant {
                 node: constant,
                 slot: root_layout.constant_slot(constant, node.span)?,
-                schema: SchemaId::named("vix.String.v1"),
-                bytes: value.as_bytes().to_vec(),
+                schema: body.schema,
+                identity_preimage: body.identity_preimage.clone(),
+                memory: body.memory.clone(),
             });
             (Vec::new(), ValueRepresentation::RealizedHandle)
         }
@@ -1288,7 +1800,15 @@ fn lower_node(
             (Vec::new(), representation_for_type(&node.ty, node.span)?)
         }
         Op::Call(callee) => {
-            let op = lower_call_node(node, dst_region, values, *callee, function.layout, context)?;
+            let op = lower_call_node(
+                node,
+                dst_region,
+                dst_slot,
+                values,
+                *callee,
+                function.layout,
+                context,
+            )?;
             (vec![op], representation_for_type(&node.ty, node.span)?)
         }
         Op::Closure(callee) => {
@@ -1353,7 +1873,7 @@ fn lower_node(
             )
         }
         Op::CallValue => {
-            let op = lower_call_value_node(node, dst_region, values)?;
+            let op = lower_call_value_node(node, dst_slot, values)?;
             (vec![op], representation_for_type(&node.ty, node.span)?)
         }
         Op::Add | Op::Sub | Op::Mul | Op::Div => {
@@ -1506,6 +2026,39 @@ fn lower_node(
                 ValueRepresentation::Word,
             )
         }
+        Op::Array => {
+            let constant = NodeRef {
+                function: function.id,
+                node: node.id,
+            };
+            if function.layout.constant_slot(constant, node.span)? != dst_slot {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "array literal does not occupy its local closure slot",
+                ));
+            }
+            let body = context.constant_bodies.get(&constant).ok_or_else(|| {
+                lowering_diagnostic(node.span, "array literal has no admitted constant body")
+            })?;
+            let root_layout = context
+                .layouts
+                .get(&context.root_function)
+                .ok_or_else(|| lowering_diagnostic(node.span, "missing island root layout"))?;
+            constants.push(ValueConstant {
+                node: constant,
+                slot: root_layout.constant_slot(constant, node.span)?,
+                schema: body.schema,
+                identity_preimage: body.identity_preimage.clone(),
+                memory: body.memory.clone(),
+            });
+            (Vec::new(), ValueRepresentation::RealizedHandle)
+        }
+        Op::ArrayIndex | Op::ArrayLen => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "checked array read reached scalar node lowering",
+            ));
+        }
         Op::Yield => {
             return Err(lowering_diagnostic(
                 node.span,
@@ -1522,6 +2075,7 @@ fn lower_node(
 fn lower_call_node(
     node: &Node,
     dst: FrameRegion,
+    ret: FrameSlot,
     values: &BTreeMap<NodeId, LoweredSlot>,
     callee: FunctionId,
     caller_layout: &FunctionLayout,
@@ -1601,13 +2155,13 @@ fn lower_call_node(
     Ok(WeavyOp::Call {
         callee: WeavyFnId(callee),
         args,
-        ret: dst.start().byte_offset(),
+        ret: ret.byte_offset(),
     })
 }
 
 fn lower_call_value_node(
     node: &Node,
-    dst: FrameRegion,
+    ret: FrameSlot,
     values: &BTreeMap<NodeId, LoweredSlot>,
 ) -> Result<WeavyOp, Diagnostics> {
     require_input_count(node, 2)?;
@@ -1647,7 +2201,7 @@ fn lower_call_value_node(
                 .byte_size()
                 .ok_or_else(|| lowering_diagnostic(node.span, "argument size overflow"))?,
         }],
-        ret: dst.start().byte_offset(),
+        ret: ret.byte_offset(),
     })
 }
 
@@ -2081,7 +2635,7 @@ fn type_words(ty: &Type, span: Span) -> Result<FrameWords, Diagnostics> {
 fn representation_for_type(ty: &Type, span: Span) -> Result<ValueRepresentation, Diagnostics> {
     match ty {
         Type::Bool | Type::Int | Type::Check => Ok(ValueRepresentation::Word),
-        Type::String => Ok(ValueRepresentation::RealizedHandle),
+        Type::String | Type::Array(_) => Ok(ValueRepresentation::RealizedHandle),
         Type::Function { .. } | Type::Tuple(_) | Type::Record(_) | Type::Enum(_) => {
             Ok(ValueRepresentation::InlineComposite)
         }

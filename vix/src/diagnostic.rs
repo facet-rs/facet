@@ -25,6 +25,7 @@ pub enum DiagnosticCode {
     VariantPayloadMismatch,
     NonExhaustiveMatch,
     ExpressionStatement,
+    IndexOutOfRange,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -68,6 +69,11 @@ pub enum DiagnosticPayload {
         missing: Vec<String>,
     },
     ExpressionStatement,
+    /// The demanded index and the length of the array it addressed.
+    IndexOutOfRange {
+        index: i64,
+        length: i64,
+    },
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -118,6 +124,9 @@ impl Diagnostic {
             },
             DiagnosticPayload::Match { .. } => "non-exhaustive match".to_owned(),
             DiagnosticPayload::ExpressionStatement => "expression statement".to_owned(),
+            DiagnosticPayload::IndexOutOfRange { index, length } => {
+                format!("index {index} is outside an array of length {length}")
+            }
         }
     }
 }

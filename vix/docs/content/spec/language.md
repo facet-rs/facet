@@ -209,6 +209,23 @@ artifact collection defined below.
 %[a, b, c]
 ```
 
+> r[lang.collection.array-positions-are-data]
+>
+> An array's positions are its fields, and its length is a property of each
+> value rather than of its type. `[T]` names arrays of every length; there is no
+> `[T; N]`. Two arrays with equal elements in equal positions are the same
+> value, whatever built them.
+
+> r[lang.collection.array-index]
+>
+> `a[i]` on `a: [T]` has type `T`. The index is an `Int` addressing positions
+> `0..a.len()`. An index outside that range is a typed demand failure at the
+> index expression, carrying both the demanded index and the array's length. It
+> is never a defaulted element, never a wrapped or saturated index, and never an
+> `Option<T>` — an array read that succeeds has produced a `T`, so no caller
+> unwraps one. Bounds are checked against the array value, never inferred from
+> its type.
+
 > r[lang.collection.map-canonical]
 >
 > Map construction order does not affect value identity. Rows are sorted by

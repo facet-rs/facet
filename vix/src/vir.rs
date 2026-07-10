@@ -193,6 +193,11 @@ pub enum Type {
     Tuple(Vec<Type>),
     Record(RecordType),
     Enum(EnumType),
+    /// A dense array whose positions are fields. Length is a property of each
+    /// value, never of the type.
+    ///
+    /// r[impl lang.collection.array-positions-are-data]
+    Array(Box<Type>),
 }
 
 impl Type {
@@ -204,6 +209,19 @@ impl Type {
     #[must_use]
     pub fn option(inner: Type) -> Self {
         Self::Enum(EnumType::option(inner))
+    }
+
+    #[must_use]
+    pub fn array(element: Type) -> Self {
+        Self::Array(Box::new(element))
+    }
+
+    #[must_use]
+    pub fn array_element(&self) -> Option<&Type> {
+        match self {
+            Self::Array(element) => Some(element),
+            _ => None,
+        }
     }
 
     #[must_use]
@@ -236,6 +254,7 @@ impl Type {
             }
             Self::Record(record) => record.name.clone(),
             Self::Enum(enumeration) => enumeration.name.clone(),
+            Self::Array(element) => format!("[{}]", element.name()),
         }
     }
 
@@ -244,7 +263,7 @@ impl Type {
     #[must_use]
     pub fn word_width(&self) -> Option<usize> {
         match self {
-            Self::Bool | Self::Int | Self::Check | Self::String => Some(1),
+            Self::Bool | Self::Int | Self::Check | Self::String | Self::Array(_) => Some(1),
             Self::Function { .. } => Some(2),
             Self::StreamCheck => None,
             Self::Tuple(elements) => elements.iter().try_fold(0usize, |width, element| {
@@ -267,6 +286,7 @@ impl Type {
     pub fn equality_is_structural(&self) -> bool {
         match self {
             Self::Bool | Self::Int | Self::String => true,
+            Self::Array(element) => element.equality_is_structural(),
             Self::Function { .. } => false,
             Self::Tuple(elements) => elements.iter().all(Self::equality_is_structural),
             Self::Record(record) => record
@@ -286,6 +306,7 @@ impl Type {
     pub fn structural_order_is_defined(&self) -> bool {
         match self {
             Self::Bool | Self::Int | Self::String => true,
+            Self::Array(element) => element.structural_order_is_defined(),
             Self::Function { .. } => false,
             Self::Tuple(elements) => elements.iter().all(Self::structural_order_is_defined),
             Self::Record(record) => record
@@ -384,6 +405,15 @@ pub enum Op {
     IsVariant {
         variant: u32,
     },
+    /// Build a dense array from its positions, in authored order.
+    Array,
+    /// Read one position of a dense array. Out of range is a demand failure,
+    /// never a defaulted element.
+    ///
+    /// r[impl lang.collection.array-index]
+    ArrayIndex,
+    /// The element count carried by a dense array value.
+    ArrayLen,
 }
 
 /// One SSA-like operation. Dependencies are explicit node ids; no Rust
@@ -867,6 +897,9 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             op.push(24);
             op.extend_from_slice(&variant.to_le_bytes());
         }
+        Op::Array => op.push(25),
+        Op::ArrayIndex => op.push(26),
+        Op::ArrayLen => op.push(27),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());
@@ -917,6 +950,11 @@ fn canonical_type(ty: &Type) -> Vec<u8> {
                 frame(&mut encoded, &canonical_type(&field.ty));
                 frame(&mut bytes, &encoded);
             }
+            bytes
+        }
+        Type::Array(element) => {
+            let mut bytes = b"array".to_vec();
+            frame(&mut bytes, &canonical_type(element));
             bytes
         }
         Type::Enum(enumeration) => {

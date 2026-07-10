@@ -291,6 +291,21 @@ impl<'a> TypeResolver<'a> {
                 }
             }
             ast::Expr::Field(expression) => self.resolve_expr_types(&expression.receiver)?,
+            ast::Expr::MethodCall(expression) => {
+                self.resolve_expr_types(&expression.receiver)?;
+                for argument in &expression.args.args {
+                    self.resolve_expr_types(argument)?;
+                }
+            }
+            ast::Expr::Index(expression) => {
+                self.resolve_expr_types(&expression.receiver)?;
+                self.resolve_expr_types(&expression.index)?;
+            }
+            ast::Expr::Array(expression) => {
+                for element in &expression.elems {
+                    self.resolve_expr_types(element)?;
+                }
+            }
             ast::Expr::Variant(expression) => {
                 if let Some(payload) = &expression.tuple_payload {
                     for argument in &payload.args {
@@ -598,6 +613,9 @@ impl<'a> TypeResolver<'a> {
                 parameter: Box::new(self.resolve_type_with(&function.parameter, substitutions)?),
                 result: Box::new(self.resolve_type_with(&function.result, substitutions)?),
             }),
+            ast::Type::Array(array) => Ok(Type::array(
+                self.resolve_type_with(&array.element, substitutions)?,
+            )),
             ast::Type::Tuple(tuple) => tuple
                 .elems
                 .iter()
@@ -996,6 +1014,7 @@ fn lower_declared_type(
                 .cloned()
                 .ok_or_else(|| unknown_name(generic.span, name))
         }
+        ast::Type::Array(array) => Ok(Type::array(lower_declared_type(&array.element, types)?)),
         ast::Type::Function(function) => Ok(Type::Function {
             parameter: Box::new(lower_declared_type(&function.parameter, types)?),
             result: Box::new(lower_declared_type(&function.result, types)?),
@@ -1492,10 +1511,128 @@ fn lower_value_expected(
                 ty,
             })
         }
+        ast::Expr::Array(array) => lower_array(nodes, bindings, context, array, expected),
+        ast::Expr::Index(index) => lower_array_index(nodes, bindings, context, index),
+        ast::Expr::MethodCall(call) => lower_method_call(nodes, bindings, context, call),
         ast::Expr::Paren(paren) => {
             lower_value_expected(nodes, bindings, context, &paren.inner, expected)
         }
         ast::Expr::Unary(unary) => lower_unary_value(nodes, bindings, context, unary),
+    }
+}
+
+/// An array literal builds one dense value; its positions are its fields.
+///
+/// r[impl lang.collection.array-positions-are-data]
+fn lower_array(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    array: &ast::ArrayExpr,
+    expected: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    let expected_element = match expected {
+        Some(Type::Array(element)) => Some(element.as_ref()),
+        Some(expected) => return Err(type_mismatch(array.span, expected.name(), "array")),
+        None => None,
+    };
+    let values = array
+        .elems
+        .iter()
+        .map(|element| lower_value_expected(nodes, bindings, context, element, expected_element))
+        .collect::<Result<Vec<_>, _>>()?;
+    let element = match (values.first(), expected_element) {
+        (Some(first), _) => first.ty.clone(),
+        (None, Some(expected)) => expected.clone(),
+        (None, None) => {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                array.span,
+                "an empty array literal needs an expected element type",
+            )));
+        }
+    };
+    for (value, expression) in values.iter().zip(&array.elems) {
+        require_type(value, &element, expr_span(expression))?;
+    }
+    let ty = Type::array(element);
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            array.span,
+            ty.clone(),
+            EffectFacts::PURE,
+            values.iter().map(|value| value.node).collect(),
+            Op::Array,
+        ),
+        ty,
+    })
+}
+
+/// `a[i]` has the element type. An out-of-range index is a demand failure, so
+/// the node is fallible; it is never an `Option` and never a defaulted element.
+///
+/// r[impl lang.collection.array-index]
+fn lower_array_index(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    index: &ast::IndexExpr,
+) -> Result<LoweredValue, Diagnostics> {
+    let receiver = lower_value(nodes, bindings, context, &index.receiver)?;
+    let Some(element) = receiver.ty.array_element() else {
+        return Err(type_mismatch(
+            expr_span(&index.receiver),
+            "array",
+            receiver.ty.name(),
+        ));
+    };
+    let element = element.clone();
+    let position = lower_value(nodes, bindings, context, &index.index)?;
+    require_type(&position, &Type::Int, expr_span(&index.index))?;
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            index.span,
+            element.clone(),
+            EffectFacts {
+                fallible: true,
+                ..EffectFacts::PURE
+            },
+            vec![receiver.node, position.node],
+            Op::ArrayIndex,
+        ),
+        ty: element,
+    })
+}
+
+fn lower_method_call(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::MethodCall,
+) -> Result<LoweredValue, Diagnostics> {
+    let receiver = lower_value(nodes, bindings, context, &call.receiver)?;
+    match (call.name.value.as_str(), &receiver.ty) {
+        ("len", Type::Array(_)) => {
+            if !call.args.args.is_empty() {
+                return Err(invalid_arity(call.span, 0, call.args.args.len()));
+            }
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    Type::Int,
+                    EffectFacts::PURE,
+                    vec![receiver.node],
+                    Op::ArrayLen,
+                ),
+                ty: Type::Int,
+            })
+        }
+        (name, receiver_type) => Err(Diagnostics::one(Diagnostic::unsupported(
+            call.name.span,
+            format!("{} has no method `{name}`", receiver_type.name()),
+        ))),
     }
 }
 
@@ -3446,6 +3583,9 @@ fn expr_span(expression: &ast::Expr) -> Span {
         ast::Expr::Unary(value) => value.span,
         ast::Expr::Call(value) => value.span,
         ast::Expr::Field(value) => value.span,
+        ast::Expr::MethodCall(value) => value.span,
+        ast::Expr::Index(value) => value.span,
+        ast::Expr::Array(value) => value.span,
         ast::Expr::Variant(value) => value.span,
         ast::Expr::Record(value) => value.span,
         ast::Expr::Tuple(value) => value.span,
@@ -3461,6 +3601,7 @@ fn type_span(ty: &ast::Type) -> Span {
     match ty {
         ast::Type::Function(value) => value.span,
         ast::Type::Generic(value) => value.span,
+        ast::Type::Array(value) => value.span,
         ast::Type::Tuple(value) => value.span,
         ast::Type::Path(value) => value.span,
     }

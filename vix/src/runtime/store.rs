@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use weavy::task::{Task, ValueMemories, ValueMemory};
 
 use super::abi::FrameSlot;
-use super::identity::{Digest, SchemaId, ValueId, hash_framed};
+use super::identity::{Digest, SchemaId, ValueBody, ValueId, hash_framed};
 
 /// Store-owned handle. It is valid for one runtime snapshot and is never
 /// reused for a different entry during that lifetime. Resident bytes may be
@@ -67,26 +67,28 @@ pub struct Store {
 }
 
 impl Store {
-    /// Construct identity once, carry it on the entry, and deduplicate by the
-    /// schema/tier/content triple.
+    /// Construct identity once from the value's framed preimage, carry it on
+    /// the entry, and deduplicate by the schema/tier/content triple. Resident
+    /// bytes are the machine-plane payload and never reach the hasher.
     ///
     /// r[impl machine.identity.value-identity-pair]
     /// r[impl machine.identity.hash-at-construction]
     /// r[impl machine.store.dedup]
-    pub fn intern_realized(&mut self, schema: SchemaId, bytes: &[u8]) -> Interned {
-        let content = hash_framed(b"vix.value.v1", &[&schema.0.0, bytes]);
+    pub fn intern_realized(&mut self, schema: SchemaId, body: ValueBody<'_>) -> Interned {
+        let content = hash_framed(b"vix.value.v1", &[&schema.0.0, body.identity_preimage]);
         let identity = ValueId { schema, content };
         let key = StoreKey {
             schema,
             tier: HandleTier::Realized,
             content,
         };
+        let bytes_hashed = body.identity_preimage.len() as u64;
         if let Some(&handle) = self.by_identity.get(&key) {
             return Interned {
                 handle,
                 identity,
                 deduped: true,
-                bytes_hashed: bytes.len() as u64,
+                bytes_hashed,
             };
         }
         let handle = Handle(self.entries.len() as u32);
@@ -94,14 +96,14 @@ impl Store {
             handle,
             identity,
             tier: HandleTier::Realized,
-            residence: Residence::Resident(bytes.to_vec()),
+            residence: Residence::Resident(body.memory.to_vec()),
         });
         self.by_identity.insert(key, handle);
         Interned {
             handle,
             identity,
             deduped: false,
-            bytes_hashed: bytes.len() as u64,
+            bytes_hashed,
         }
     }
 

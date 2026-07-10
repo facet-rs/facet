@@ -3,12 +3,17 @@ use std::collections::BTreeMap;
 use weavy::task::{FnId, Task, TaskEvent as WeavyTaskEvent, TaskStep};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics};
-use crate::lowering::{LoweringArtifact, LoweringAttribution};
+use crate::lowering::{
+    LoweringArtifact, LoweringAttribution, OUTCOME_INDEX_OUT_OF_RANGE, OUTCOME_MALFORMED_ARRAY,
+    OUTCOME_OK,
+};
 use crate::support::Span;
 use crate::vir::IslandId;
 
 use super::FrameSlot;
-use super::identity::{DemandKey, DemandPreimage, Location, LocationId, SchemaId, ValueId};
+use super::identity::{
+    DemandKey, DemandPreimage, Location, LocationId, SchemaId, ValueBody, ValueId,
+};
 use super::model::{
     DemandRecord, DemandState, MemoVerdict, Receipt, TaskId, TaskRecord, TaskState,
 };
@@ -187,10 +192,18 @@ impl<S: EventSink> Runtime<S> {
             for event in &task.trace {
                 self.emit_weavy(task_id, *event, attribution)?;
             }
-            let passed = task.result_i64() != 0;
-            let interned = self
-                .store
-                .intern_realized(SchemaId::named("vix.Check.v1"), &[u8::from(passed)]);
+            let passed = match self.island_outcome(&task, lowered, attribution) {
+                Ok(passed) => passed,
+                Err(failure) => {
+                    self.transition_task(task_id, TaskState::Completed)?;
+                    self.transition_demand(lowered.demand_key, DemandState::Failed)?;
+                    return Err(failure);
+                }
+            };
+            let interned = self.store.intern_realized(
+                SchemaId::named("vix.Check.v1"),
+                ValueBody::flat(&[u8::from(passed)]),
+            );
             self.observe_interned(interned);
 
             self.memo.insert(
@@ -221,12 +234,55 @@ impl<S: EventSink> Runtime<S> {
         }
     }
 
+    /// Read the island's return region. A fault-ABI island returns a status
+    /// word beside its value; a nonzero status is a typed demand failure
+    /// attributed to the source construct that raised it.
+    ///
+    /// r[impl lang.collection.array-index]
+    fn island_outcome(
+        &self,
+        task: &Task,
+        lowered: &LoweringArtifact,
+        attribution: &LoweringAttribution,
+    ) -> Result<bool, Diagnostics> {
+        if !lowered.fault_abi {
+            return Ok(task.result_i64() != 0);
+        }
+        let word = |index: usize| -> Result<i64, Diagnostics> {
+            let start = index * 8;
+            task.result
+                .get(start..start + 8)
+                .and_then(|bytes| <[u8; 8]>::try_from(bytes).ok())
+                .map(i64::from_le_bytes)
+                .ok_or_else(|| runtime_invariant("island outcome region is truncated"))
+        };
+        match word(0)? {
+            OUTCOME_OK => Ok(word(3)? != 0),
+            OUTCOME_INDEX_OUT_OF_RANGE => Err(Diagnostics::one(Diagnostic {
+                code: DiagnosticCode::IndexOutOfRange,
+                primary: fault_span(task, attribution),
+                labels: Vec::new(),
+                payload: DiagnosticPayload::IndexOutOfRange {
+                    index: word(1)?,
+                    length: word(2)?,
+                },
+            })),
+            OUTCOME_MALFORMED_ARRAY => Err(runtime_invariant(
+                "store-backed array payload does not answer its own length",
+            )),
+            _ => Err(runtime_invariant("island published an unknown outcome status")),
+        }
+    }
+
     fn materialize_constants(&mut self, lowered: &LoweringArtifact) -> Vec<(FrameSlot, Handle)> {
         lowered
             .constants
             .iter()
             .map(|constant| {
-                let interned = self.store.intern_realized(constant.schema, &constant.bytes);
+                let interned = self.store.intern_realized(
+                    constant.schema,
+                    ValueBody::new(&constant.identity_preimage, &constant.memory),
+                );
                 self.observe_interned(interned);
                 (constant.slot, interned.handle)
             })
@@ -365,6 +421,19 @@ impl<S: EventSink> Runtime<S> {
     pub fn into_sink(self) -> S {
         self.sink
     }
+}
+
+/// A faulting island abandons execution at the raising node, so the last trace
+/// mark it emitted is that node. Attribution turns it back into a source span.
+fn fault_span(task: &Task, attribution: &LoweringAttribution) -> Span {
+    task.trace
+        .iter()
+        .rev()
+        .find_map(|event| match event {
+            WeavyTaskEvent::Mark(id) => attribution.source_for_trace(*id),
+            _ => None,
+        })
+        .map_or(Span { start: 0, end: 0 }, |entry| entry.span)
 }
 
 fn runtime_invariant(detail: &str) -> Diagnostics {

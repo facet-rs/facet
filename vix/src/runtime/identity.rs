@@ -16,6 +16,95 @@ impl SchemaId {
     pub fn named(name: &str) -> Self {
         Self(hash_framed(b"vix.schema.v1", &[name.as_bytes()]))
     }
+
+    /// Machine-plane schema tag carried by store payload headers. It is an
+    /// ABI witness, never an identity contribution.
+    #[must_use]
+    pub fn ref_word(self) -> i64 {
+        i64::from_le_bytes(self.0.0[..8].try_into().expect("digest is 32 bytes"))
+    }
+}
+
+/// Prefix-free identity preimage builder.
+///
+/// Every variable-length or role-bearing component is length-prefixed, so the
+/// hashed byte stream is unambiguous. Callers never append raw user bytes: the
+/// only way in is through these role-tagged writers. Frame layout, padding, and
+/// process-local handle integers are structurally unable to reach the stream.
+///
+/// r[impl machine.identity.framed-encoding]
+/// r[impl machine.identity.le-encoding]
+#[derive(Debug)]
+pub struct FramedPreimage {
+    bytes: Vec<u8>,
+}
+
+impl FramedPreimage {
+    /// Open a preimage for `arity` role-tagged components of one schema.
+    #[must_use]
+    pub fn start(domain: &[u8], schema: SchemaId, arity: u64) -> Self {
+        let mut bytes = Vec::new();
+        frame(&mut bytes, domain);
+        frame(&mut bytes, &schema.0.0);
+        frame(&mut bytes, &arity.to_le_bytes());
+        Self { bytes }
+    }
+
+    /// Declare the element count of an ordered sequence.
+    pub fn seq_len(&mut self, len: u64) {
+        frame(&mut self.bytes, b"seq-len");
+        frame(&mut self.bytes, &len.to_le_bytes());
+    }
+
+    /// Declare the position and schema of the next component.
+    pub fn field(&mut self, index: u64, schema: SchemaId) {
+        frame(&mut self.bytes, b"field");
+        frame(&mut self.bytes, &index.to_le_bytes());
+        frame(&mut self.bytes, &schema.0.0);
+    }
+
+    /// Append one little-endian machine word.
+    pub fn word(&mut self, value: i64) {
+        frame(&mut self.bytes, b"word");
+        frame(&mut self.bytes, &value.to_le_bytes());
+    }
+
+    #[must_use]
+    pub fn finish(self) -> Vec<u8> {
+        self.bytes
+    }
+}
+
+/// The two planes of one realized value: what it hashes as, and what task code
+/// reads it as.
+///
+/// `machine.identity.framed-encoding` forbids the structural hash from
+/// depending on the ABI. Scalars and strings are their own framed content, so
+/// [`ValueBody::flat`] states that identity; aggregates whose store payload is
+/// a machine layout must state the two separately.
+#[derive(Clone, Copy, Debug)]
+pub struct ValueBody<'a> {
+    pub identity_preimage: &'a [u8],
+    pub memory: &'a [u8],
+}
+
+impl<'a> ValueBody<'a> {
+    /// A value whose store bytes are already its framed content.
+    #[must_use]
+    pub fn flat(bytes: &'a [u8]) -> Self {
+        Self {
+            identity_preimage: bytes,
+            memory: bytes,
+        }
+    }
+
+    #[must_use]
+    pub fn new(identity_preimage: &'a [u8], memory: &'a [u8]) -> Self {
+        Self {
+            identity_preimage,
+            memory,
+        }
+    }
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -90,6 +179,11 @@ impl Location {
             segments,
         }
     }
+}
+
+fn frame(out: &mut Vec<u8>, bytes: &[u8]) {
+    out.extend_from_slice(&(bytes.len() as u64).to_le_bytes());
+    out.extend_from_slice(bytes);
 }
 
 pub(crate) fn hash_framed(domain: &[u8], fields: &[&[u8]]) -> Digest {

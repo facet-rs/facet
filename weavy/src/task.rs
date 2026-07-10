@@ -198,6 +198,20 @@ pub enum Op {
         index: u32,
         elem_schema_ref: i64,
     },
+    /// Element count of a store-backed `Array<T>` word payload.
+    ///
+    /// The twin of [`Op::LoadArrayWord`] over the same payload header:
+    /// `frame[array]` is a handle whose value-memory entry must be an
+    /// array-words payload with matching `elem_schema_ref`. A well-formed
+    /// payload writes its count to `dst` and `1` to `present`; a malformed
+    /// or absent one writes zeroes to both. Length is a property of the
+    /// value, never of the frame layout.
+    LoadArrayLen {
+        dst: u32,
+        present: u32,
+        array: u32,
+        elem_schema_ref: i64,
+    },
     /// Lexicographically compare two resident value-memory byte runs.
     ///
     /// `frame[a]` and `frame[b]` are value handles. The result is the closed
@@ -577,6 +591,18 @@ impl Task {
                     write_i64_at(&mut self.arena, base + present as usize, i64::from(ok));
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
+                Op::LoadArrayLen {
+                    dst,
+                    present,
+                    array,
+                    elem_schema_ref,
+                } => {
+                    let array = read_i64_at(&self.arena, base + array as usize);
+                    let (ok, value) = load_array_len(value_memories, array, elem_schema_ref);
+                    write_i64_at(&mut self.arena, base + dst as usize, value);
+                    write_i64_at(&mut self.arena, base + present as usize, i64::from(ok));
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
                 Op::CompareValueBytes { dst, a, b } => {
                     let a = read_i64_at(&self.arena, base + a as usize);
                     let b = read_i64_at(&self.arena, base + b as usize);
@@ -794,50 +820,61 @@ fn write_i64_at(arena: &mut [u8], at: usize, value: i64) {
     arena[at..at + 8].copy_from_slice(&value.to_le_bytes());
 }
 
+/// Validate an array-words payload header and return its body and element count.
+fn array_words<'a>(
+    value_memories: ValueMemories<'a>,
+    array: i64,
+    elem_schema_ref: i64,
+) -> Option<(&'a [u8], usize)> {
+    let (handle, memories) = if array < 0 {
+        let handle = usize::try_from((-1i64).checked_sub(array)?).ok()?;
+        (handle, value_memories.molten)
+    } else {
+        (usize::try_from(array).ok()?, value_memories.store)
+    };
+    let memory = memories.get(handle).copied()?;
+    if memory.ptr.is_null() || memory.len < 24 {
+        return None;
+    }
+    let bytes = unsafe { core::slice::from_raw_parts(memory.ptr, memory.len) };
+    if read_i64_at(bytes, 0) != 0 || read_i64_at(bytes, 8) != elem_schema_ref {
+        return None;
+    }
+    let count = usize::try_from(read_i64_at(bytes, 16)).ok()?;
+    let expected = count.checked_mul(8).and_then(|n| 24usize.checked_add(n))?;
+    if bytes.len() != expected {
+        return None;
+    }
+    Some((bytes, count))
+}
+
 fn load_array_word(
     value_memories: ValueMemories<'_>,
     array: i64,
     index: i64,
     elem_schema_ref: i64,
 ) -> (bool, i64) {
-    let (handle, memories) = if array < 0 {
-        let Some(handle) = (-1i64).checked_sub(array) else {
-            return (false, 0);
-        };
-        let Ok(handle) = usize::try_from(handle) else {
-            return (false, 0);
-        };
-        (handle, value_memories.molten)
-    } else {
-        let Ok(handle) = usize::try_from(array) else {
-            return (false, 0);
-        };
-        (handle, value_memories.store)
-    };
-    let Some(memory) = memories.get(handle).copied() else {
+    let Some((bytes, count)) = array_words(value_memories, array, elem_schema_ref) else {
         return (false, 0);
     };
-    if memory.ptr.is_null() || memory.len < 24 || index < 0 {
-        return (false, 0);
-    }
-    let bytes = unsafe { core::slice::from_raw_parts(memory.ptr, memory.len) };
-    if read_i64_at(bytes, 0) != 0 || read_i64_at(bytes, 8) != elem_schema_ref {
-        return (false, 0);
-    }
-    let Ok(count) = usize::try_from(read_i64_at(bytes, 16)) else {
+    let Ok(index) = usize::try_from(index) else {
         return (false, 0);
     };
-    let Some(expected) = count.checked_mul(8).and_then(|n| 24usize.checked_add(n)) else {
-        return (false, 0);
-    };
-    if bytes.len() != expected {
-        return (false, 0);
-    }
-    let index = usize::try_from(index).expect("nonnegative index checked");
     if index >= count {
         return (false, 0);
     }
     (true, read_i64_at(bytes, 24 + index * 8))
+}
+
+fn load_array_len(
+    value_memories: ValueMemories<'_>,
+    array: i64,
+    elem_schema_ref: i64,
+) -> (bool, i64) {
+    match array_words(value_memories, array, elem_schema_ref) {
+        Some((_, count)) => (true, count as i64),
+        None => (false, 0),
+    }
 }
 
 fn compare_value_bytes(value_memories: ValueMemories<'_>, a: i64, b: i64) -> i64 {
