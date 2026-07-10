@@ -28,7 +28,7 @@ impl FrameSlot {
         words.checked_mul(Self::WORD_BYTES)
     }
 
-    pub(crate) const fn byte_offset(self) -> u32 {
+    pub const fn byte_offset(self) -> u32 {
         self.0
     }
 }
