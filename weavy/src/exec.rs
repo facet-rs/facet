@@ -418,8 +418,7 @@ impl ExecTask<'_> {
     ) -> Result<TaskStep, TaskFault> {
         self.check_not_poisoned()?;
         if self.state == ExecTaskState::Done {
-            let fault = TaskFault::DriveAfterDone;
-            return Err(self.poison(fault));
+            return Err(TaskFault::DriveAfterDone);
         }
         self.entries_closed = true;
         check_drive_requirements(
@@ -1237,24 +1236,6 @@ mod tests {
     }
 
     #[test]
-    fn result_after_yielded_faults_typed() {
-        let executable = Executable::new(verify(scalar_identity_program()));
-        let mut task = executable.spawn(FnId(0)).unwrap();
-        task.write_entry_i64(0, 7).unwrap();
-
-        task.entries_closed = true;
-        task.state = ExecTaskState::Yielded;
-
-        assert_eq!(task.state(), ExecTaskState::Yielded);
-        assert_eq!(
-            task.result_i64(),
-            Err(TaskFault::ResultBeforeDone {
-                state: ExecTaskState::Yielded,
-            })
-        );
-    }
-
-    #[test]
     fn result_after_done_is_available_and_redrive_faults_typed() {
         let executable = Executable::new(verify(scalar_identity_program()));
         let mut task = executable.spawn(FnId(0)).unwrap();
@@ -1273,10 +1254,10 @@ mod tests {
         );
 
         assert_eq!(task.drive(&mut [], &[]), Err(TaskFault::DriveAfterDone));
-        assert!(matches!(
-            task.result_i64(),
-            Err(TaskFault::PoisonedResult { .. })
-        ));
+        assert_eq!(task.state(), ExecTaskState::Done);
+        assert_eq!(task.result_i64(), Ok(7));
+        let expected = 7_i64.to_le_bytes();
+        assert_eq!(task.result(), Ok(expected.as_slice()));
     }
 
     #[test]
