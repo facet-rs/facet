@@ -26,6 +26,8 @@ ast({
   match_expr: { as: "Match" },
   closure_expr: { as: "Closure" },
   variant_pattern: { as: "Variant" },
+  some_pattern: { as: "Some" },
+  none_pattern: { as: "None" },
   binding_pattern: { as: "Binding" },
   number_pattern: { as: "Number" },
   wildcard_pattern: { as: "Wildcard" },

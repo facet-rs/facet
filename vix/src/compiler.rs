@@ -8,9 +8,9 @@ use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
 use crate::vir::{
     ControlRegion, EffectFacts, EnumType, EnumVariant, Function, FunctionId,
-    MatchArm as VirMatchArm, Module, Node, NodeId, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT,
-    Op, OrderedMatchArm, Parameter, ParameterId, ParameterKind, RecordField, RecordType, Test,
-    Type, VariantPayload,
+    MatchArm as VirMatchArm, Module, Node, NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
+    ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm, Parameter, ParameterId,
+    ParameterKind, RecordField, RecordType, Test, Type, VariantPayload,
 };
 
 pub struct Compiler {
@@ -285,6 +285,12 @@ impl<'a> TypeResolver<'a> {
             ast::Type::Path(path) if path_is(path, "String") => Ok(Type::String),
             ast::Type::Path(path) if path_is(path, "Check") => Ok(Type::Check),
             ast::Type::Generic(_) if is_stream_check_type(ty) => Ok(Type::StreamCheck),
+            ast::Type::Generic(generic) if path_is(&generic.base, "Option") => {
+                if generic.args.len() != 1 {
+                    return Err(invalid_arity(generic.span, 1, generic.args.len()));
+                }
+                Ok(Type::option(self.resolve_type(&generic.args[0])?))
+            }
             ast::Type::Path(path) => {
                 let name = path_name(path);
                 if let Some(ty) = self.resolved.get(&name) {
@@ -640,6 +646,12 @@ fn lower_declared_type(
         ast::Type::Path(path) if path_is(path, "String") => Ok(Type::String),
         ast::Type::Path(path) if path_is(path, "Check") => Ok(Type::Check),
         ast::Type::Generic(_) if is_stream_check_type(ty) => Ok(Type::StreamCheck),
+        ast::Type::Generic(generic) if path_is(&generic.base, "Option") => {
+            if generic.args.len() != 1 {
+                return Err(invalid_arity(generic.span, 1, generic.args.len()));
+            }
+            Ok(Type::option(lower_declared_type(&generic.args[0], types)?))
+        }
         ast::Type::Path(path) => types
             .get(&path_name(path))
             .cloned()
@@ -734,7 +746,13 @@ fn lower_function(
         }
         (None, true) => None,
         (Some(tail), false) => {
-            let value = lower_value(&mut nodes, &bindings, context, tail)?;
+            let value = lower_value_expected(
+                &mut nodes,
+                &bindings,
+                context,
+                tail,
+                Some(&signature.return_type),
+            )?;
             require_type(&value, &signature.return_type, expr_span(tail))?;
             Some(value.node)
         }
@@ -764,10 +782,20 @@ fn lower_let_statement(
     context: &ModuleContext<'_>,
     statement: &ast::LetStmt,
 ) -> Result<(), Diagnostics> {
-    let value = lower_value(nodes, bindings, context, &statement.value)?;
-    if let Some(annotation) = &statement.ty {
-        let expected = lower_declared_type(annotation, context.types)?;
-        require_type(&value, &expected, type_span(annotation))?;
+    let expected = statement
+        .ty
+        .as_ref()
+        .map(|annotation| lower_declared_type(annotation, context.types))
+        .transpose()?;
+    let value = lower_value_expected(
+        nodes,
+        bindings,
+        context,
+        &statement.value,
+        expected.as_ref(),
+    )?;
+    if let (Some(annotation), Some(expected)) = (&statement.ty, &expected) {
+        require_type(&value, expected, type_span(annotation))?;
     }
     bind_irrefutable_pattern(nodes, bindings, &statement.pattern, &value)
 }
@@ -839,6 +867,14 @@ fn bind_irrefutable_pattern(
             Ok(())
         }
         ast::Pattern::Wildcard(_) => Ok(()),
+        ast::Pattern::Some(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
+            pattern.span,
+            "refutable pattern",
+        ))),
+        ast::Pattern::None(span) => Err(Diagnostics::one(Diagnostic::unsupported(
+            *span,
+            "refutable pattern",
+        ))),
         ast::Pattern::Variant(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
             pattern.span,
             "refutable pattern",
@@ -907,6 +943,31 @@ fn lower_check(
                 },
             )
         }
+        "expect_some" | "expect_none" => {
+            check_arity(call, 1)?;
+            let option = lower_value(nodes, bindings, context, &call.args.args[0])?;
+            if option.ty.option_inner().is_none() {
+                return Err(type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    "Option<_>",
+                    option.ty.name(),
+                ));
+            }
+            push_node(
+                nodes,
+                call.span,
+                Type::Bool,
+                EffectFacts::PURE,
+                vec![option.node],
+                Op::IsVariant {
+                    variant: if call.callee.value == "expect_some" {
+                        OPTION_SOME_VARIANT
+                    } else {
+                        OPTION_NONE_VARIANT
+                    },
+                },
+            )
+        }
         _ => {
             return Err(Diagnostics::one(Diagnostic {
                 code: DiagnosticCode::UnknownName,
@@ -952,7 +1013,7 @@ fn lower_value_expected(
 ) -> Result<LoweredValue, Diagnostics> {
     match expression {
         ast::Expr::Closure(closure) => lower_closure(nodes, bindings, context, closure, expected),
-        ast::Expr::If(expression) => lower_if(nodes, bindings, context, expression),
+        ast::Expr::If(expression) => lower_if(nodes, bindings, context, expression, expected),
         ast::Expr::Bool(value) => Ok(lower_bool_constant(nodes, value.span, value.value)),
         ast::Expr::Number(value) => lower_integer_literal(nodes, value.span, &value.value),
         ast::Expr::Str(value) => Ok(LoweredValue {
@@ -966,8 +1027,14 @@ fn lower_value_expected(
             ),
             ty: Type::String,
         }),
+        ast::Expr::Identifier(identifier) if identifier.value == "None" => {
+            lower_none(nodes, identifier.span, expected)
+        }
         ast::Expr::Identifier(identifier) => {
             lookup_binding(bindings, &identifier.value, identifier.span)
+        }
+        ast::Expr::Call(call) if call.callee.value == "Some" => {
+            lower_some(nodes, bindings, context, call, expected)
         }
         ast::Expr::Call(call) => lower_call(nodes, bindings, context, call),
         ast::Expr::Binary(binary) => lower_binary(nodes, bindings, context, binary),
@@ -1091,6 +1158,83 @@ fn lower_value_expected(
     }
 }
 
+fn lower_none(
+    nodes: &mut Vec<Node>,
+    span: Span,
+    expected: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    let expected = expected.ok_or_else(|| {
+        Diagnostics::one(Diagnostic::unsupported(
+            span,
+            "None without an expected Option type",
+        ))
+    })?;
+    if expected.option_inner().is_none() {
+        return Err(type_mismatch(span, "Option<_>", expected.name()));
+    }
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            span,
+            expected.clone(),
+            EffectFacts::PURE,
+            Vec::new(),
+            Op::Variant {
+                variant: OPTION_NONE_VARIANT,
+            },
+        ),
+        ty: expected.clone(),
+    })
+}
+
+fn lower_some(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::Call,
+    expected: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    if call.named_args.is_some() {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "named arguments on Some",
+        )));
+    }
+    check_arity(call, 1)?;
+    let expected_inner = match expected {
+        Some(expected) => Some(
+            expected
+                .option_inner()
+                .ok_or_else(|| type_mismatch(call.span, "Option<_>", expected.name()))?,
+        ),
+        None => None,
+    };
+    let payload =
+        lower_value_expected(nodes, bindings, context, &call.args.args[0], expected_inner)?;
+    if let Some(expected_inner) = expected_inner {
+        require_type(&payload, expected_inner, expr_span(&call.args.args[0]))?;
+    }
+    let ty = Type::option(payload.ty.clone());
+    if let Some(expected) = expected
+        && &ty != expected
+    {
+        return Err(type_mismatch(call.span, expected.name(), ty.name()));
+    }
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            call.span,
+            ty.clone(),
+            EffectFacts::PURE,
+            vec![payload.node],
+            Op::Variant {
+                variant: OPTION_SOME_VARIANT,
+            },
+        ),
+        ty,
+    })
+}
+
 fn lower_closure(
     nodes: &mut Vec<Node>,
     _outer_bindings: &BTreeMap<String, LoweredValue>,
@@ -1155,9 +1299,13 @@ fn lower_closure(
 
         let expected_result = expected_signature.map(|(_, result)| result);
         let output = match &closure.body {
-            ast::ClosureBody::Block(block) => {
-                lower_value_block(&mut closure_nodes, &closure_bindings, context, block)?
-            }
+            ast::ClosureBody::Block(block) => lower_value_block(
+                &mut closure_nodes,
+                &closure_bindings,
+                context,
+                block,
+                expected_result,
+            )?,
             ast::ClosureBody::Expr(expression) => lower_value_expected(
                 &mut closure_nodes,
                 &closure_bindings,
@@ -1215,18 +1363,25 @@ fn lower_if(
     bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     expression: &ast::IfExpr,
+    expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
     let condition = lower_value(nodes, bindings, context, &expression.condition)?;
     require_type(&condition, &Type::Bool, expr_span(&expression.condition))?;
 
     let consequent_start = nodes.len();
-    let consequent_value = lower_value_block(nodes, bindings, context, &expression.consequent)?;
+    let consequent_value =
+        lower_value_block(nodes, bindings, context, &expression.consequent, expected)?;
     let consequent = control_region(nodes, consequent_start, consequent_value.node);
 
     let alternative_start = nodes.len();
+    let alternative_expected = expected.or(Some(&consequent_value.ty));
     let alternative_value = match &expression.alternative {
-        ast::IfBranch::Block(block) => lower_value_block(nodes, bindings, context, block)?,
-        ast::IfBranch::If(expression) => lower_if(nodes, bindings, context, expression)?,
+        ast::IfBranch::Block(block) => {
+            lower_value_block(nodes, bindings, context, block, alternative_expected)?
+        }
+        ast::IfBranch::If(expression) => {
+            lower_if(nodes, bindings, context, expression, alternative_expected)?
+        }
     };
     require_type(
         &alternative_value,
@@ -1257,6 +1412,7 @@ fn lower_value_block(
     bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     block: &ast::Block,
+    expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
     let mut bindings = bindings.clone();
     for statement in &block.stmts {
@@ -1281,7 +1437,7 @@ fn lower_value_block(
             "value block without a tail value",
         ))
     })?;
-    lower_value(nodes, &bindings, context, tail)
+    lower_value_expected(nodes, &bindings, context, tail, expected)
 }
 
 fn if_branch_span(branch: &ast::IfBranch) -> Span {
@@ -1917,6 +2073,14 @@ fn lower_ordered_pattern(
             }))
         }
         ast::Pattern::Wildcard(_) => Ok(None),
+        ast::Pattern::Some(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
+            pattern.span,
+            "guarded option pattern",
+        ))),
+        ast::Pattern::None(span) => Err(Diagnostics::one(Diagnostic::unsupported(
+            *span,
+            "guarded option pattern",
+        ))),
         ast::Pattern::Variant(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
             pattern.span,
             "guarded enum pattern",
@@ -2005,6 +2169,8 @@ fn append_pattern_condition(
 
 fn pattern_span(pattern: &ast::Pattern) -> Span {
     match pattern {
+        ast::Pattern::Some(pattern) => pattern.span,
+        ast::Pattern::None(span) => *span,
         ast::Pattern::Record(pattern) => pattern.span,
         ast::Pattern::Variant(pattern) => pattern.span,
         ast::Pattern::Binding(pattern) => pattern.span,
@@ -2180,12 +2346,16 @@ fn find_variant<'a>(
 
 #[derive(Clone, Copy)]
 enum EnumPattern<'a> {
+    Some(&'a ast::SomePattern),
+    None(Span),
     Variant(&'a ast::VariantPattern),
     Record(&'a ast::RecordPattern),
 }
 
 fn enum_pattern(pattern: &ast::Pattern) -> Option<EnumPattern<'_>> {
     match pattern {
+        ast::Pattern::Some(pattern) => Some(EnumPattern::Some(pattern)),
+        ast::Pattern::None(span) => Some(EnumPattern::None(*span)),
         ast::Pattern::Variant(pattern) => Some(EnumPattern::Variant(pattern)),
         ast::Pattern::Record(pattern) => Some(EnumPattern::Record(pattern)),
         _ => None,
@@ -2194,6 +2364,8 @@ fn enum_pattern(pattern: &ast::Pattern) -> Option<EnumPattern<'_>> {
 
 fn enum_pattern_span(pattern: EnumPattern<'_>) -> Span {
     match pattern {
+        EnumPattern::Some(pattern) => pattern.span,
+        EnumPattern::None(span) => span,
         EnumPattern::Variant(pattern) => pattern.span,
         EnumPattern::Record(pattern) => pattern.span,
     }
@@ -2204,6 +2376,30 @@ fn find_enum_pattern_variant<'a>(
     pattern: EnumPattern<'_>,
 ) -> Result<(usize, &'a EnumVariant, Span), Diagnostics> {
     match pattern {
+        EnumPattern::Some(pattern) => {
+            if enumeration.option_inner().is_none() {
+                return Err(type_mismatch(
+                    pattern.span,
+                    "Option<_>",
+                    enumeration.name.clone(),
+                ));
+            }
+            Ok((
+                OPTION_SOME_VARIANT as usize,
+                &enumeration.variants[OPTION_SOME_VARIANT as usize],
+                pattern.span,
+            ))
+        }
+        EnumPattern::None(span) => {
+            if enumeration.option_inner().is_none() {
+                return Err(type_mismatch(span, "Option<_>", enumeration.name.clone()));
+            }
+            Ok((
+                OPTION_NONE_VARIANT as usize,
+                &enumeration.variants[OPTION_NONE_VARIANT as usize],
+                span,
+            ))
+        }
         EnumPattern::Variant(pattern) => {
             let (index, variant) = find_variant(enumeration, &pattern.path)?;
             Ok((index, variant, pattern.path.variant.span))
@@ -2256,6 +2452,18 @@ fn bind_enum_pattern(
     pattern: EnumPattern<'_>,
 ) -> Result<(), Diagnostics> {
     match (pattern, &variant.payload) {
+        (EnumPattern::Some(pattern), VariantPayload::Tuple(types)) if types.len() == 1 => {
+            let projected = project_variant_field(
+                nodes,
+                scrutinee,
+                variant_index,
+                0,
+                &types[0],
+                pattern_span(&pattern.payload),
+            )?;
+            bind_irrefutable_pattern(nodes, bindings, &pattern.payload, &projected)
+        }
+        (EnumPattern::None(_), VariantPayload::Unit) => Ok(()),
         (EnumPattern::Variant(pattern), VariantPayload::Unit)
             if pattern.tuple_payload.is_none() =>
         {
@@ -2561,6 +2769,11 @@ fn lower_binary(
             require_type(&left, &Type::Int, expr_span(&binary.left))?;
             require_type(&right, &Type::Int, expr_span(&binary.right))?;
             (Type::Int, Op::Mul)
+        }
+        "/" => {
+            require_type(&left, &Type::Int, expr_span(&binary.left))?;
+            require_type(&right, &Type::Int, expr_span(&binary.right))?;
+            (Type::Int, Op::Div)
         }
         "==" => {
             require_same_type(&left, &right, binary.span)?;

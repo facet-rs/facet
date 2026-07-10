@@ -255,6 +255,8 @@ module.exports = grammar({
       ),
     _pattern: ($) =>
       choice(
+        $.some_pattern,
+        $.none_pattern,
         $.record_pattern,
         $.variant_pattern,
         $.binding_pattern,
@@ -262,6 +264,8 @@ module.exports = grammar({
         $.wildcard_pattern,
         $.tuple_pattern,
       ),
+    some_pattern: ($) => seq("Some", "(", field("payload", $._pattern), ")"),
+    none_pattern: () => "None",
     binding_pattern: ($) => field("binding", $.identifier),
     number_pattern: ($) => field("value", $.number),
     wildcard_pattern: () => "_",

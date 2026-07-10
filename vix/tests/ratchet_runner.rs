@@ -1408,8 +1408,93 @@ fn rung_022_nested_record_patterns_project_named_fields() {
     assert_eq!(report.chaos.receipt_count, 0);
 }
 
+// r[verify machine.value.option-no-store-alloc]
 #[test]
 fn rung_023_option_construction_matching_and_checks() {
+    let module = Compiler::new()
+        .compile(RUNG_023)
+        .expect("rung 023 compiles");
+    let checked_div = module
+        .functions
+        .iter()
+        .find(|function| function.name == "checked_div")
+        .expect("rung 023 contains checked_div");
+    let VirType::Enum(option) = &checked_div.return_type else {
+        panic!("checked_div returns Option<Int>")
+    };
+    assert_eq!(option.name, "Option<Int>");
+    assert_eq!(
+        option
+            .variants
+            .iter()
+            .map(|variant| variant.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Some", "None"]
+    );
+    assert_eq!(checked_div.return_type.option_inner(), Some(&VirType::Int));
+    assert_eq!(checked_div.return_type.word_width(), Some(2));
+    assert_eq!(
+        checked_div
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.op, VirOp::Div))
+            .count(),
+        1
+    );
+    assert_eq!(
+        checked_div
+            .nodes
+            .iter()
+            .filter_map(|node| match node.op {
+                VirOp::Variant { variant } => Some(variant),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        [1, 0],
+        "None and Some are ordinary Option variants"
+    );
+    let test = module
+        .functions
+        .iter()
+        .find(|function| function.name == "option")
+        .expect("rung 023 contains option test");
+    assert_eq!(
+        test.nodes
+            .iter()
+            .filter(|node| matches!(node.op, VirOp::IsVariant { .. }))
+            .count(),
+        2
+    );
+    assert!(
+        test.nodes
+            .iter()
+            .any(|node| matches!(&node.op, VirOp::Match { arms } if arms.len() == 2))
+    );
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    assert_eq!(partitioned.islands.len(), 3);
+    let mut lowering_cache = LoweringCache::default();
+    let mut division_ops = 0usize;
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 023 lowers to Weavy");
+        division_ops += lowered
+            .program
+            .fns
+            .iter()
+            .flat_map(|function| &function.code)
+            .filter(|op| matches!(op, WeavyOp::DivI64 { .. }))
+            .count();
+        assert!(lowered.program.fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+    }
+    assert!(division_ops > 0);
+
     let report = run_source(RUNG_023).expect("rung 023 compiles and runs");
     assert!(report.passed());
     assert!(report.agrees());

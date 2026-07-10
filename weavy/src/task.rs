@@ -121,6 +121,8 @@ pub enum Op {
     SubI64 { dst: u32, a: u32, b: u32 },
     /// `frame[dst] = frame[a] * frame[b]` (i64, wrapping).
     MulI64 { dst: u32, a: u32, b: u32 },
+    /// Total wrapping division: zero maps to zero and `MIN / -1` maps to `MIN`.
+    DivI64 { dst: u32, a: u32, b: u32 },
     /// `frame[dst] = frame[src]` (one 64-bit word).
     CopyI64 { dst: u32, src: u32 },
     /// `frame[dst] = (frame[a] == frame[b]) as i64`.
@@ -413,6 +415,13 @@ impl Task {
                     let va = read_i64_at(&self.arena, base + a as usize);
                     let vb = read_i64_at(&self.arena, base + b as usize);
                     write_i64_at(&mut self.arena, base + dst as usize, va.wrapping_mul(vb));
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::DivI64 { dst, a, b } => {
+                    let va = read_i64_at(&self.arena, base + a as usize);
+                    let vb = read_i64_at(&self.arena, base + b as usize);
+                    let value = if vb == 0 { 0 } else { va.wrapping_div(vb) };
+                    write_i64_at(&mut self.arena, base + dst as usize, value);
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
                 Op::SubI64 { dst, a, b } => {

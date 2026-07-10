@@ -292,6 +292,27 @@ pub unsafe extern "C" fn weavy_task_sub(cx: *mut Ctx) {
     cont!(cx);
 }
 
+/// Total wrapping division — immediates: [dst, a, b].
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_div(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let a = *c.prog.add(1);
+    let b = *c.prog.add(2);
+    c.prog = c.prog.add(3);
+    let a = read_i64(c.frame, a);
+    let b = read_i64(c.frame, b);
+    let value = if b == 0 {
+        0
+    } else if a == i64::MIN && b == -1 {
+        i64::MIN
+    } else {
+        a / b
+    };
+    write_i64(c.frame, dst, value);
+    cont!(cx);
+}
+
 /// `frame[dst] = frame[src]` — immediates: [dst, src].
 #[no_mangle]
 pub unsafe extern "C" fn weavy_task_copy(cx: *mut Ctx) {

@@ -103,6 +103,8 @@ pub struct EnumType {
 pub const ORDERING_LESS_VARIANT: u32 = 0;
 pub const ORDERING_EQUAL_VARIANT: u32 = 1;
 pub const ORDERING_GREATER_VARIANT: u32 = 2;
+pub const OPTION_SOME_VARIANT: u32 = 0;
+pub const OPTION_NONE_VARIANT: u32 = 1;
 
 impl EnumType {
     #[must_use]
@@ -117,6 +119,42 @@ impl EnumType {
                 })
                 .collect(),
         }
+    }
+
+    /// r[impl machine.value.option-no-store-alloc]
+    #[must_use]
+    pub fn option(inner: Type) -> Self {
+        Self {
+            name: format!("Option<{}>", inner.name()),
+            variants: vec![
+                EnumVariant {
+                    name: "Some".to_owned(),
+                    payload: VariantPayload::Tuple(vec![inner]),
+                },
+                EnumVariant {
+                    name: "None".to_owned(),
+                    payload: VariantPayload::Unit,
+                },
+            ],
+        }
+    }
+
+    #[must_use]
+    pub fn option_inner(&self) -> Option<&Type> {
+        let [some, none] = self.variants.as_slice() else {
+            return None;
+        };
+        let VariantPayload::Tuple(payload) = &some.payload else {
+            return None;
+        };
+        let [inner] = payload.as_slice() else {
+            return None;
+        };
+        (some.name == "Some"
+            && none.name == "None"
+            && matches!(none.payload, VariantPayload::Unit)
+            && self.name == format!("Option<{}>", inner.name()))
+        .then_some(inner)
     }
 }
 
@@ -160,6 +198,19 @@ impl Type {
     #[must_use]
     pub fn ordering() -> Self {
         Self::Enum(EnumType::ordering())
+    }
+
+    #[must_use]
+    pub fn option(inner: Type) -> Self {
+        Self::Enum(EnumType::option(inner))
+    }
+
+    #[must_use]
+    pub fn option_inner(&self) -> Option<&Type> {
+        let Self::Enum(enumeration) = self else {
+            return None;
+        };
+        enumeration.option_inner()
     }
 
     #[must_use]
@@ -327,6 +378,10 @@ pub enum Op {
     OrderedMatch {
         arms: Vec<OrderedMatchArm>,
         fallback: ControlRegion,
+    },
+    Div,
+    IsVariant {
+        variant: u32,
     },
 }
 
@@ -806,6 +861,11 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             );
         }
         Op::CallValue => op.push(22),
+        Op::Div => op.push(23),
+        Op::IsVariant { variant } => {
+            op.push(24);
+            op.extend_from_slice(&variant.to_le_bytes());
+        }
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());

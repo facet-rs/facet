@@ -1356,7 +1356,7 @@ fn lower_node(
             let op = lower_call_value_node(node, dst_region, values)?;
             (vec![op], representation_for_type(&node.ty, node.span)?)
         }
-        Op::Add | Op::Sub | Op::Mul => {
+        Op::Add | Op::Sub | Op::Mul | Op::Div => {
             require_node_type(node, Type::Int)?;
             let (a, b) = binary_values(node, values)?;
             require_value(node, &a, &Type::Int, ValueRepresentation::Word)?;
@@ -1377,6 +1377,11 @@ fn lower_node(
                     a: a.region.start().byte_offset(),
                     b: b.region.start().byte_offset(),
                 },
+                Op::Div => WeavyOp::DivI64 {
+                    dst,
+                    a: a.region.start().byte_offset(),
+                    b: b.region.start().byte_offset(),
+                },
                 _ => unreachable!("matched arithmetic VIR op"),
             };
             (vec![op], ValueRepresentation::Word)
@@ -1393,6 +1398,46 @@ fn lower_node(
                 ));
             }
             lower_variant_project_node(node, dst_region, values, *variant, *field)?
+        }
+        Op::IsVariant { variant } => {
+            require_node_type(node, Type::Bool)?;
+            require_input_count(node, 1)?;
+            let value = input_value(node, values, 0)?;
+            let Type::Enum(enumeration) = &value.ty else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "variant predicate input is not an enum",
+                ));
+            };
+            if usize::try_from(*variant)
+                .ok()
+                .is_none_or(|variant| variant >= enumeration.variants.len())
+            {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "variant predicate index is out of range",
+                ));
+            }
+            require_value(
+                node,
+                &value,
+                &value.ty,
+                ValueRepresentation::InlineComposite,
+            )?;
+            (
+                vec![
+                    WeavyOp::ConstI64 {
+                        dst,
+                        value: i64::from(*variant),
+                    },
+                    WeavyOp::EqI64 {
+                        dst,
+                        a: value.region.start().byte_offset(),
+                        b: dst,
+                    },
+                ],
+                ValueRepresentation::Word,
+            )
         }
         Op::Match { .. } => {
             return Err(lowering_diagnostic(

@@ -163,6 +163,10 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                 task_stencils::SUB,
                 Continuations::Fallthrough(task_stencils::SUB_CONT),
             ),
+            Op::DivI64 { .. } => (
+                task_stencils::DIV,
+                Continuations::Fallthrough(task_stencils::DIV_CONT),
+            ),
             Op::CopyI64 { .. } => (
                 task_stencils::COPY,
                 Continuations::Fallthrough(task_stencils::COPY_CONT),
@@ -315,6 +319,7 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
             Op::AddI64 { .. }
             | Op::MulI64 { .. }
             | Op::SubI64 { .. }
+            | Op::DivI64 { .. }
             | Op::EqI64 { .. }
             | Op::NeI64 { .. }
             | Op::LtI64 { .. }
@@ -350,6 +355,7 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
             Op::AddI64 { dst, a, b }
             | Op::MulI64 { dst, a, b }
             | Op::SubI64 { dst, a, b }
+            | Op::DivI64 { dst, a, b }
             | Op::EqI64 { dst, a, b }
             | Op::NeI64 { dst, a, b }
             | Op::LtI64 { dst, a, b }
@@ -1062,6 +1068,58 @@ mod tests {
                 },
             ],
         };
+        differential(&program, FnId(0), &[(&[], &[])]);
+    }
+
+    #[test]
+    fn total_wrapping_i64_division_matches_the_interpreter() {
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(12),
+                code: vec![
+                    Op::ConstI64 { dst: 0, value: 10 },
+                    Op::ConstI64 { dst: 8, value: 2 },
+                    Op::ConstI64 { dst: 16, value: 10 },
+                    Op::ConstI64 { dst: 24, value: 0 },
+                    Op::ConstI64 {
+                        dst: 32,
+                        value: i64::MIN,
+                    },
+                    Op::ConstI64 { dst: 40, value: -1 },
+                    Op::ConstI64 { dst: 48, value: -9 },
+                    Op::ConstI64 { dst: 56, value: 2 },
+                    Op::DivI64 {
+                        dst: 64,
+                        a: 0,
+                        b: 8,
+                    },
+                    Op::DivI64 {
+                        dst: 72,
+                        a: 16,
+                        b: 24,
+                    },
+                    Op::DivI64 {
+                        dst: 80,
+                        a: 32,
+                        b: 40,
+                    },
+                    Op::DivI64 {
+                        dst: 88,
+                        a: 48,
+                        b: 56,
+                    },
+                    Op::Ret { src: 64, size: 32 },
+                ],
+            }],
+        };
+        let mut interp = Task::spawn(&program, FnId(0));
+        assert_eq!(interp.run(&program, &mut [], &[]), TaskStep::Done);
+        let values = interp
+            .result
+            .chunks_exact(8)
+            .map(|word| i64::from_le_bytes(word.try_into().expect("one result word")))
+            .collect::<Vec<_>>();
+        assert_eq!(values, [5, 0, i64::MIN, -4]);
         differential(&program, FnId(0), &[(&[], &[])]);
     }
 

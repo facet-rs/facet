@@ -10398,6 +10398,7 @@ fn op_name(op: &Op) -> &'static str {
         Op::AddI64 { .. } => "AddI64",
         Op::SubI64 { .. } => "SubI64",
         Op::MulI64 { .. } => "MulI64",
+        Op::DivI64 { .. } => "DivI64",
         Op::CopyI64 { .. } => "CopyI64",
         Op::EqI64 { .. } => "EqI64",
         Op::NeI64 { .. } => "NeI64",
