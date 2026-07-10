@@ -136,6 +136,9 @@ module.exports = grammar({
         $.binary,
         $.unary,
         $.call,
+        $.method_call,
+        $.index_expr,
+        $.array_expr,
         $.field_access,
         $.variant_expr,
         $.record_expr,
@@ -201,6 +204,22 @@ module.exports = grammar({
         PREC.postfix,
         seq(field("receiver", $._expr), ".", field("name", choice($.identifier, $.tuple_index))),
       ),
+    method_call: ($) =>
+      prec(
+        PREC.postfix,
+        seq(
+          field("receiver", $._expr),
+          ".",
+          field("name", $.identifier),
+          field("args", $.arg_list),
+        ),
+      ),
+    index_expr: ($) =>
+      prec(
+        PREC.postfix,
+        seq(field("receiver", $._expr), "[", field("index", $._expr), "]"),
+      ),
+    array_expr: ($) => seq("[", sepBy(",", field("elem", $._expr)), "]"),
     arg_list: ($) => seq("(", sepBy(",", field("arg", $._expr)), ")"),
     where_args: ($) => seq("where", "{", sepBy(",", field("field", $.named_value)), "}"),
     variant_path: ($) =>

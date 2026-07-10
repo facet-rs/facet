@@ -1112,6 +1112,12 @@ fn collect_compare_leaves(
                 b: b.start(),
             });
         }
+        Type::Array(_) => {
+            return Err(lowering_diagnostic(
+                span,
+                "array comparison lowering is not implemented",
+            ));
+        }
         Type::Function { .. } => {
             return Err(lowering_diagnostic(
                 span,
@@ -1389,6 +1395,24 @@ fn lower_node(
         Op::Tuple => lower_aggregate_node(node, dst_region, values, AggregateKind::Tuple)?,
         Op::Record => lower_aggregate_node(node, dst_region, values, AggregateKind::Record)?,
         Op::Project { index } => lower_project_node(node, dst_region, values, *index)?,
+        Op::Array => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "array literal lowering is not implemented",
+            ));
+        }
+        Op::ArrayIndex => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "array indexing lowering is not implemented",
+            ));
+        }
+        Op::ArrayLen => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "array length lowering is not implemented",
+            ));
+        }
         Op::Variant { variant } => lower_variant_node(node, dst_region, values, *variant)?,
         Op::VariantProject { variant, field } => {
             if active_variant != Some(*variant) {
@@ -2085,6 +2109,10 @@ fn representation_for_type(ty: &Type, span: Span) -> Result<ValueRepresentation,
         Type::Function { .. } | Type::Tuple(_) | Type::Record(_) | Type::Enum(_) => {
             Ok(ValueRepresentation::InlineComposite)
         }
+        Type::Array(_) => Err(lowering_diagnostic(
+            span,
+            "array values require array lowering",
+        )),
         Type::StreamCheck => Err(lowering_diagnostic(
             span,
             "Stream<Check> has no island-interior word representation",

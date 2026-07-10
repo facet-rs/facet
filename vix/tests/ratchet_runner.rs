@@ -1695,21 +1695,101 @@ fn rung_025_ordering_is_an_ordinary_matchable_enum() {
 }
 
 #[test]
-fn rung_026_is_red_at_the_first_array_literal() {
-    let diagnostics = Compiler::new()
-        .compile(RUNG_026)
-        .expect_err("rung 026 is the next red production-path rung");
+fn rung_026_reaches_vir_and_is_red_at_array_lowering() {
+    let diagnostics = run_source(RUNG_026)
+        .expect_err("rung 026 is deliberately red at production array lowering");
     assert_eq!(diagnostics.entries.len(), 1);
     let diagnostic = &diagnostics.entries[0];
-    assert_eq!(diagnostic.code, DiagnosticCode::ParseRejected);
-    assert_eq!(diagnostic.primary.start, 0);
-    assert_eq!(diagnostic.primary.end, 247);
+    assert_eq!(diagnostic.code, DiagnosticCode::LoweringUnsupported);
+    assert_eq!(
+        &RUNG_026[diagnostic.primary.start as usize..diagnostic.primary.end as usize],
+        "[10, 20, 30]"
+    );
+    assert_eq!(
+        diagnostic.payload,
+        vix::diagnostic::DiagnosticPayload::Unsupported {
+            construct: "array literal lowering is not implemented".to_owned(),
+        }
+    );
+}
+
+#[test]
+fn array_vir_is_general_before_lowering_is_implemented() {
+    const SOURCE: &str = r#"
+fn double(x: Int) -> Int {
+    x * 2
+}
+
+#[test]
+fn computed_array_and_dynamic_index() -> Stream<Check> {
+    let n = 5;
+    let xs = [double(n), n + 1, double(4)];
+    let index = n - 4;
+    yield expect_eq(xs[index], 6);
+    yield expect_eq(xs.len(), 3);
+}
+"#;
+
+    let module = Compiler::new()
+        .compile(SOURCE)
+        .expect("array source checks and lowers to VIR");
+    let function = module
+        .functions
+        .iter()
+        .find(|function| function.name == "computed_array_and_dynamic_index")
+        .expect("test function exists");
+    let array = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::Array))
+        .expect("array literal becomes an Array VIR node");
+    assert_eq!(array.ty, VirType::array(VirType::Int));
+    assert_eq!(array.inputs.len(), 3);
+    assert!(
+        array
+            .inputs
+            .iter()
+            .any(|input| matches!(function.nodes[input.0 as usize].op, VirOp::Call(_)))
+    );
+    assert!(
+        array
+            .inputs
+            .iter()
+            .any(|input| matches!(function.nodes[input.0 as usize].op, VirOp::Add))
+    );
+
+    let index = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::ArrayIndex))
+        .expect("dynamic indexing becomes an ArrayIndex VIR node");
+    assert_eq!(index.ty, VirType::Int);
+    assert!(index.effect.fallible);
     assert!(matches!(
-        &diagnostic.payload,
-        vix::diagnostic::DiagnosticPayload::Parse { detail }
-            if detail.contains("byte_position: 133")
-                && detail.contains("expected: [\"(\", \"|\", \"if\"")
+        function.nodes[index.inputs[1].0 as usize].op,
+        VirOp::Sub
     ));
+    assert!(
+        function
+            .nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::ArrayLen) && node.ty == VirType::Int)
+    );
+
+    let diagnostics = Compiler::new()
+        .compile("#[test] fn empty() -> Stream<Check> { let xs = []; yield expect(true); }")
+        .expect_err("empty arrays remain untyped without a source type context");
+    assert_eq!(diagnostics.entries.len(), 1);
+    assert_eq!(
+        diagnostics.entries[0].code,
+        DiagnosticCode::UnsupportedExpression
+    );
+    assert_eq!(
+        diagnostics.entries[0].payload,
+        vix::diagnostic::DiagnosticPayload::Unsupported {
+            construct: "an empty array literal needs an expected element type".to_owned(),
+        }
+    );
 }
 
 fn reject_header(source: &str) -> (&str, usize) {

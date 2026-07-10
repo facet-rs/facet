@@ -290,6 +290,21 @@ impl<'a> TypeResolver<'a> {
                     self.resolve_named_value_types(&named.fields)?;
                 }
             }
+            ast::Expr::MethodCall(expression) => {
+                self.resolve_expr_types(&expression.receiver)?;
+                for argument in &expression.args.args {
+                    self.resolve_expr_types(argument)?;
+                }
+            }
+            ast::Expr::Index(expression) => {
+                self.resolve_expr_types(&expression.receiver)?;
+                self.resolve_expr_types(&expression.index)?;
+            }
+            ast::Expr::Array(expression) => {
+                for element in &expression.elems {
+                    self.resolve_expr_types(element)?;
+                }
+            }
             ast::Expr::Field(expression) => self.resolve_expr_types(&expression.receiver)?,
             ast::Expr::Variant(expression) => {
                 if let Some(payload) = &expression.tuple_payload {
@@ -1336,6 +1351,56 @@ struct LoweredValue {
     ty: Type,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PreludeReceiverType {
+    Array,
+}
+
+impl PreludeReceiverType {
+    fn from_vir_type(ty: &Type) -> Option<Self> {
+        match ty {
+            Type::Array(_) => Some(Self::Array),
+            _ => None,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum PreludeMethod {
+    ArrayLen,
+}
+
+#[derive(Clone, Copy)]
+struct PreludeMethodEntry {
+    receiver: PreludeReceiverType,
+    name: &'static str,
+    arity: usize,
+    method: PreludeMethod,
+}
+
+struct PreludeMethodRegistry {
+    entries: &'static [PreludeMethodEntry],
+}
+
+impl PreludeMethodRegistry {
+    const STANDARD: Self = Self {
+        entries: &[PreludeMethodEntry {
+            receiver: PreludeReceiverType::Array,
+            name: "len",
+            arity: 0,
+            method: PreludeMethod::ArrayLen,
+        }],
+    };
+
+    fn resolve(&self, receiver: &Type, name: &str) -> Option<PreludeMethodEntry> {
+        let receiver = PreludeReceiverType::from_vir_type(receiver)?;
+        self.entries
+            .iter()
+            .copied()
+            .find(|entry| entry.receiver == receiver && entry.name == name)
+    }
+}
+
 fn lower_value(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
@@ -1492,10 +1557,122 @@ fn lower_value_expected(
                 ty,
             })
         }
+        ast::Expr::Array(array) => lower_array(nodes, bindings, context, array, expected),
+        ast::Expr::Index(index) => lower_array_index(nodes, bindings, context, index),
+        ast::Expr::MethodCall(call) => lower_method_call(nodes, bindings, context, call),
         ast::Expr::Paren(paren) => {
             lower_value_expected(nodes, bindings, context, &paren.inner, expected)
         }
         ast::Expr::Unary(unary) => lower_unary_value(nodes, bindings, context, unary),
+    }
+}
+
+fn lower_array(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    array: &ast::ArrayExpr,
+    expected: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    let expected_element = match expected {
+        Some(Type::Array(element)) => Some(element.as_ref()),
+        Some(expected) => return Err(type_mismatch(array.span, expected.name(), "array")),
+        None => None,
+    };
+    let values = array
+        .elems
+        .iter()
+        .map(|element| lower_value_expected(nodes, bindings, context, element, expected_element))
+        .collect::<Result<Vec<_>, _>>()?;
+    let element = match (values.first(), expected_element) {
+        (Some(first), _) => first.ty.clone(),
+        (None, Some(expected)) => expected.clone(),
+        (None, None) => {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                array.span,
+                "an empty array literal needs an expected element type",
+            )));
+        }
+    };
+    for (value, expression) in values.iter().zip(&array.elems) {
+        require_type(value, &element, expr_span(expression))?;
+    }
+    let ty = Type::array(element);
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            array.span,
+            ty.clone(),
+            EffectFacts::PURE,
+            values.iter().map(|value| value.node).collect(),
+            Op::Array,
+        ),
+        ty,
+    })
+}
+
+fn lower_array_index(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    index: &ast::IndexExpr,
+) -> Result<LoweredValue, Diagnostics> {
+    let receiver = lower_value(nodes, bindings, context, &index.receiver)?;
+    let Some(element) = receiver.ty.array_element() else {
+        return Err(type_mismatch(
+            expr_span(&index.receiver),
+            "array",
+            receiver.ty.name(),
+        ));
+    };
+    let element = element.clone();
+    let position = lower_value(nodes, bindings, context, &index.index)?;
+    require_type(&position, &Type::Int, expr_span(&index.index))?;
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            index.span,
+            element.clone(),
+            EffectFacts {
+                fallible: true,
+                ..EffectFacts::PURE
+            },
+            vec![receiver.node, position.node],
+            Op::ArrayIndex,
+        ),
+        ty: element,
+    })
+}
+
+fn lower_method_call(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::MethodCall,
+) -> Result<LoweredValue, Diagnostics> {
+    let receiver = lower_value(nodes, bindings, context, &call.receiver)?;
+    let Some(entry) = PreludeMethodRegistry::STANDARD.resolve(&receiver.ty, &call.name.value)
+    else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.name.span,
+            format!("{} has no registered prelude method", receiver.ty.name()),
+        )));
+    };
+    if call.args.args.len() != entry.arity {
+        return Err(invalid_arity(call.span, entry.arity, call.args.args.len()));
+    }
+    match entry.method {
+        PreludeMethod::ArrayLen => Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                Type::Int,
+                EffectFacts::PURE,
+                vec![receiver.node],
+                Op::ArrayLen,
+            ),
+            ty: Type::Int,
+        }),
     }
 }
 
@@ -3445,7 +3622,10 @@ fn expr_span(expression: &ast::Expr) -> Span {
         ast::Expr::Binary(value) => value.span,
         ast::Expr::Unary(value) => value.span,
         ast::Expr::Call(value) => value.span,
+        ast::Expr::MethodCall(value) => value.span,
         ast::Expr::Field(value) => value.span,
+        ast::Expr::Index(value) => value.span,
+        ast::Expr::Array(value) => value.span,
         ast::Expr::Variant(value) => value.span,
         ast::Expr::Record(value) => value.span,
         ast::Expr::Tuple(value) => value.span,
