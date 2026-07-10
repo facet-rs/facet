@@ -31,9 +31,9 @@ You cannot forget any of it, because you never attach any of it.
 > the failure's payload carries the stable details the diagnostic needs.
 
 This is why `fail "something went wrong"` is a weak thing to write and a fine thing
-to have written: the string is a poor payload, but the failure still knows which
-demand it belonged to and which stable source site raised it, and whoever reads
-it will see the current span and what asked.
+to have written: the string is a poor payload, but the failure still carries the
+stable source site that raised it, and whoever reads it will see the current span
+and the current demand that observed it.
 
 **Coming from Rust**: `panic!` loses the chain and unwinds a stack you don't have.
 `Err(String)` loses the address. Here, neither is possible — the address is not
