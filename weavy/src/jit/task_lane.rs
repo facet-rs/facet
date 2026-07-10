@@ -33,34 +33,35 @@ struct Ctx {
     resume: *mut u64,
     await_index: *mut u64,
     exit: *mut i64,
-    store_value_memories: *const crate::task::ValueMemory,
+    store_value_memories: *const crate::task::RawValueMemory,
     store_value_memory_count: usize,
     molten_value_memories: *const crate::task::ValueMemory,
     molten_value_memory_count: usize,
     lent_molten_value_memories: *const crate::task::ValueMemory,
+    lent_molten_value_memories: *const crate::task::RawValueMemory,
     lent_molten_value_memory_count: usize,
     molten: *mut core::ffi::c_void,
-    molten_alloc: unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64) -> i64,
     molten_bytes: unsafe extern "C" fn(*mut core::ffi::c_void, i64, *mut usize) -> *mut u8,
     array_new: unsafe extern "C" fn(*mut core::ffi::c_void, i64, usize, i64, *mut i64) -> i64,
     array_store:
-        unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *const u8, usize, i64) -> i64,
+        unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, usize, *const u8, usize, i64) -> i64,
     array_load: unsafe extern "C" fn(
-        *const crate::task::ValueMemory,
+        *const crate::task::RawValueMemory,
         usize,
-        *const crate::task::ValueMemory,
+        *const crate::task::RawValueMemory,
         usize,
         *mut core::ffi::c_void,
         i64,
         i64,
+        usize,
         *mut u8,
         usize,
         i64,
     ) -> i64,
     array_len: unsafe extern "C" fn(
-        *const crate::task::ValueMemory,
+        *const crate::task::RawValueMemory,
         usize,
-        *const crate::task::ValueMemory,
+        *const crate::task::RawValueMemory,
         usize,
         *mut core::ffi::c_void,
         i64,
@@ -378,7 +379,7 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
             Op::JumpIfZero { .. } => 3,
             Op::LoadIndexedI64 { .. } | Op::StoreIndexedI64 { .. } => 4,
             Op::ArrayNew { .. } => 5,
-            Op::ArrayStoreWord { .. } | Op::LoadArray { .. } | Op::ArrayStore { .. } => 6,
+            Op::ArrayStoreWord { .. } | Op::LoadArray { .. } | Op::ArrayStore { .. } => 7,
             Op::LoadArrayWord { .. } => 5,
             Op::CompareValueBytes { .. } => 3,
             Op::Await { .. } => 3,
@@ -493,6 +494,7 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                     u64::from(*array),
                     u64::from(*index),
                     u64::from(*src),
+                    0,
                     8,
                     *elem_schema_ref as u64,
                 ] {
@@ -504,6 +506,7 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                 array,
                 index,
                 src,
+                elem_offset,
                 elem_width,
                 elem_schema_ref,
             } => {
@@ -512,6 +515,7 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                     u64::from(*array),
                     u64::from(*index),
                     u64::from(*src),
+                    u64::from(*elem_offset),
                     u64::from(*elem_width),
                     *elem_schema_ref as u64,
                 ] {
@@ -523,6 +527,7 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                 status,
                 array,
                 index,
+                elem_offset,
                 elem_width,
                 elem_schema_ref,
             } => {
@@ -531,6 +536,7 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                     u64::from(*status),
                     u64::from(*array),
                     u64::from(*index),
+                    u64::from(*elem_offset),
                     u64::from(*elem_width),
                     *elem_schema_ref as u64,
                 ] {
@@ -737,6 +743,16 @@ impl JitTask {
             self.parked_on = None;
             self.trace.push(TaskEvent::Resumed);
         }
+        let store_value_memories: Vec<_> = value_memories
+            .store
+            .iter()
+            .map(|memory| memory.raw())
+            .collect();
+        let lent_molten_value_memories: Vec<_> = value_memories
+            .molten
+            .iter()
+            .map(|memory| memory.raw())
+            .collect();
         loop {
             let frame = self
                 .frames
@@ -764,8 +780,11 @@ impl JitTask {
                 molten_value_memory_count: value_memories.molten.len(),
                 lent_molten_value_memories: value_memories.molten.as_ptr(),
                 lent_molten_value_memory_count: value_memories.molten.len(),
+                store_value_memories: store_value_memories.as_ptr(),
+                store_value_memory_count: store_value_memories.len(),
+                lent_molten_value_memories: lent_molten_value_memories.as_ptr(),
+                lent_molten_value_memory_count: lent_molten_value_memories.len(),
                 molten: (&raw mut self.molten).cast::<core::ffi::c_void>(),
-                molten_alloc: crate::task::molten_alloc_abi,
                 molten_bytes: crate::task::molten_bytes_abi,
                 array_new: crate::task::array_new_abi,
                 array_store: crate::task::array_store_abi,
@@ -923,7 +942,9 @@ impl Advance for JitRunning<'_> {
 mod tests {
     use super::*;
     use crate::mem::Layout;
-    use crate::task::{ArrayOpStatus, Fn as TaskFn, Task, ValueMemories, ValueMemory};
+    use crate::task::{
+        ARRAY_POISON_HANDLE, ArrayOpStatus, Fn as TaskFn, Task, ValueMemories, ValueMemory,
+    };
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn jit_tasks_await_real_futures() {
@@ -1579,7 +1600,7 @@ mod tests {
 
         assert_eq!(
             run_array_program_with_memories(&program, memories),
-            vec![ArrayOpStatus::Ok as i64, -1, 0, 99, 1, 0, 1,]
+            vec![ArrayOpStatus::Ok as i64, -1, 0, 99, 1, 0, 0,]
         );
     }
 
@@ -1627,8 +1648,103 @@ mod tests {
                 2,
                 ArrayOpStatus::Ok as i64,
                 0,
-                0,
+                ARRAY_POISON_HANDLE,
                 ArrayOpStatus::Overflow as i64,
+            ]
+        );
+    }
+
+    #[test]
+    fn failed_array_allocations_leave_poison_in_both_lanes() {
+        const SCHEMA: i64 = 0x7778;
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(6),
+                code: vec![
+                    Op::ConstI64 { dst: 0, value: -1 },
+                    Op::ArrayNew {
+                        dst: 8,
+                        status: 16,
+                        count_slot: 0,
+                        elem_width: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::ConstI64 {
+                        dst: 40,
+                        value: isize::MAX as i64,
+                    },
+                    Op::ArrayNew {
+                        dst: 24,
+                        status: 32,
+                        count_slot: 40,
+                        elem_width: 1,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::Ret { src: 8, size: 32 },
+                ],
+            }],
+        };
+
+        assert_eq!(
+            run_array_program_with_memories(&program, ValueMemories::empty()),
+            vec![
+                ARRAY_POISON_HANDLE,
+                ArrayOpStatus::Overflow as i64,
+                ARRAY_POISON_HANDLE,
+                ArrayOpStatus::Overflow as i64,
+            ]
+        );
+    }
+
+    #[test]
+    fn schema_mismatch_and_local_out_of_range_stores_report_status() {
+        const SCHEMA: i64 = 0x4444;
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(7),
+                code: vec![
+                    Op::ConstI64 { dst: 0, value: 1 },
+                    Op::ArrayNew {
+                        dst: 8,
+                        status: 16,
+                        count_slot: 0,
+                        elem_width: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::ConstI64 { dst: 24, value: 0 },
+                    Op::ConstI64 { dst: 32, value: 77 },
+                    Op::ArrayStore {
+                        status: 40,
+                        array: 8,
+                        index: 24,
+                        src: 32,
+                        elem_offset: 0,
+                        elem_width: 8,
+                        elem_schema_ref: SCHEMA ^ 1,
+                    },
+                    Op::ConstI64 { dst: 24, value: 1 },
+                    Op::ArrayStore {
+                        status: 48,
+                        array: 8,
+                        index: 24,
+                        src: 32,
+                        elem_offset: 0,
+                        elem_width: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::Ret { src: 16, size: 40 },
+                ],
+            }],
+        };
+
+        assert_eq!(
+            run_array_program_with_memories(&program, ValueMemories::empty()),
+            vec![
+                ArrayOpStatus::Ok as i64,
+                1,
+                77,
+                ArrayOpStatus::SchemaMismatch as i64,
+                ArrayOpStatus::OutOfRange as i64,
             ]
         );
     }
@@ -1656,6 +1772,7 @@ mod tests {
                         array: 8,
                         index: 24,
                         src: 32,
+                        elem_offset: 0,
                         elem_width: 16,
                         elem_schema_ref: SCHEMA,
                     },
@@ -1667,6 +1784,7 @@ mod tests {
                         array: 8,
                         index: 24,
                         src: 32,
+                        elem_offset: 0,
                         elem_width: 16,
                         elem_schema_ref: SCHEMA,
                     },
@@ -1675,6 +1793,7 @@ mod tests {
                         status: 80,
                         array: 8,
                         index: 24,
+                        elem_offset: 0,
                         elem_width: 16,
                         elem_schema_ref: SCHEMA,
                     },
@@ -1697,6 +1816,98 @@ mod tests {
     }
 
     #[test]
+    fn task_local_reads_require_complete_region_initialization() {
+        const SCHEMA: i64 = 0x2223;
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(13),
+                code: vec![
+                    Op::ConstI64 { dst: 0, value: 1 },
+                    Op::ArrayNew {
+                        dst: 8,
+                        status: 16,
+                        count_slot: 0,
+                        elem_width: 16,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::ConstI64 { dst: 24, value: 0 },
+                    Op::LoadArray {
+                        dst: 48,
+                        status: 64,
+                        array: 8,
+                        index: 24,
+                        elem_offset: 0,
+                        elem_width: 16,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::ConstI64 {
+                        dst: 32,
+                        value: 0x1111,
+                    },
+                    Op::ArrayStore {
+                        status: 72,
+                        array: 8,
+                        index: 24,
+                        src: 32,
+                        elem_offset: 0,
+                        elem_width: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::LoadArray {
+                        dst: 48,
+                        status: 80,
+                        array: 8,
+                        index: 24,
+                        elem_offset: 0,
+                        elem_width: 16,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::ConstI64 {
+                        dst: 40,
+                        value: 0x2222,
+                    },
+                    Op::ArrayStore {
+                        status: 88,
+                        array: 8,
+                        index: 24,
+                        src: 40,
+                        elem_offset: 8,
+                        elem_width: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::LoadArray {
+                        dst: 48,
+                        status: 96,
+                        array: 8,
+                        index: 24,
+                        elem_offset: 0,
+                        elem_width: 16,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::Ret { src: 16, size: 88 },
+                ],
+            }],
+        };
+
+        assert_eq!(
+            run_array_program_with_memories(&program, ValueMemories::empty()),
+            vec![
+                ArrayOpStatus::Ok as i64,
+                0,
+                0x1111,
+                0x2222,
+                0x1111,
+                0x2222,
+                ArrayOpStatus::Uninitialized as i64,
+                ArrayOpStatus::Ok as i64,
+                ArrayOpStatus::Uninitialized as i64,
+                ArrayOpStatus::Ok as i64,
+                ArrayOpStatus::Ok as i64,
+            ]
+        );
+    }
+
+    #[test]
     fn malformed_invalid_width_mismatch_and_out_of_range_status_are_distinct() {
         const SCHEMA: i64 = 0x3333;
         let program = Program {
@@ -1710,6 +1921,7 @@ mod tests {
                         status: 96,
                         array: 0,
                         index: 8,
+                        elem_offset: 0,
                         elem_width: 16,
                         elem_schema_ref: SCHEMA,
                     },
@@ -1720,6 +1932,7 @@ mod tests {
                         status: 120,
                         array: 48,
                         index: 8,
+                        elem_offset: 0,
                         elem_width: 16,
                         elem_schema_ref: SCHEMA,
                     },
@@ -1729,6 +1942,7 @@ mod tests {
                         status: 144,
                         array: 0,
                         index: 56,
+                        elem_offset: 0,
                         elem_width: 16,
                         elem_schema_ref: SCHEMA,
                     },
@@ -1736,7 +1950,8 @@ mod tests {
                         dst: 152,
                         status: 168,
                         array: 184,
-                        index: 8,
+                        index: 0,
+                        elem_offset: 12,
                         elem_width: 8,
                         elem_schema_ref: SCHEMA,
                     },
@@ -1745,6 +1960,7 @@ mod tests {
                         array: 0,
                         index: 8,
                         src: 80,
+                        elem_offset: 0,
                         elem_width: 16,
                         elem_schema_ref: SCHEMA,
                     },
@@ -1877,6 +2093,45 @@ mod tests {
         );
         assert_eq!(task.result, interp.result);
         assert_eq!(task.trace, interp.trace);
+    }
+
+    #[test]
+    fn load_array_word_decodes_canonical_little_endian_payloads() {
+        const SCHEMA: i64 = 0x5eed_4321_abcd_0001u64 as i64;
+        let element = [0x08, 0x07, 0x06, 0x05, 0x04, 0x03, 0x02, 0x01];
+        let mut payload = Vec::new();
+        payload.extend_from_slice(&0i64.to_le_bytes());
+        payload.extend_from_slice(&SCHEMA.to_le_bytes());
+        payload.extend_from_slice(&1i64.to_le_bytes());
+        payload.extend_from_slice(&element);
+        let expected = i64::from_le_bytes(element);
+        let store = [ValueMemory::from_slice(&payload)];
+        let memories = ValueMemories {
+            store: &store,
+            molten: &[],
+        };
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(4),
+                code: vec![
+                    Op::ConstI64 { dst: 0, value: 0 },
+                    Op::ConstI64 { dst: 8, value: 0 },
+                    Op::LoadArrayWord {
+                        dst: 16,
+                        present: 24,
+                        array: 0,
+                        index: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::Ret { src: 16, size: 16 },
+                ],
+            }],
+        };
+
+        assert_eq!(
+            run_array_program_with_memories(&program, memories),
+            vec![expected, 1]
+        );
     }
 
     /// Interior construction: build a molten array, fill it, read it back. No

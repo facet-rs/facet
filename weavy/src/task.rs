@@ -31,6 +31,7 @@
 //! IR-instrumentation form arrives with the trace-vocabulary slice.
 
 use core::future::Future;
+use core::marker::PhantomData;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 
@@ -39,38 +40,93 @@ use crate::mem::Layout;
 /// One immutable value payload made visible to task code for native reads.
 #[repr(C)]
 #[derive(Clone, Copy, Debug)]
-pub struct ValueMemory {
-    pub ptr: *const u8,
-    pub len: usize,
+pub(crate) struct RawValueMemory {
+    ptr: *const u8,
+    len: usize,
 }
 
-impl ValueMemory {
+/// One immutable value payload made visible to task code for native reads.
+#[derive(Clone, Copy, Debug)]
+pub struct ValueMemory<'a> {
+    raw: RawValueMemory,
+    _borrow: PhantomData<&'a [u8]>,
+}
+
+impl<'a> ValueMemory<'a> {
     #[must_use]
-    pub fn from_slice(bytes: &[u8]) -> Self {
+    pub fn from_slice(bytes: &'a [u8]) -> Self {
         Self {
-            ptr: bytes.as_ptr(),
-            len: bytes.len(),
+            raw: RawValueMemory {
+                ptr: bytes.as_ptr(),
+                len: bytes.len(),
+            },
+            _borrow: PhantomData,
+        }
+    }
+
+    /// Build a borrowed value-memory descriptor from raw parts.
+    ///
+    /// # Safety
+    /// `ptr` must be non-null and readable for `len` bytes for the entire
+    /// lifetime `'a`, unless `len == 0`. The pointed-to bytes must not be
+    /// mutated for the duration of `'a`.
+    #[must_use]
+    pub unsafe fn from_raw_parts(ptr: *const u8, len: usize) -> Self {
+        Self {
+            raw: RawValueMemory { ptr, len },
+            _borrow: PhantomData,
         }
     }
 
     #[must_use]
     pub fn empty() -> Self {
         Self {
-            ptr: core::ptr::null(),
-            len: 0,
+            raw: RawValueMemory {
+                ptr: core::ptr::null(),
+                len: 0,
+            },
+            _borrow: PhantomData,
         }
+    }
+
+    fn as_slice(&self) -> Result<&'a [u8], ArrayOpStatus> {
+        if self.raw.len == 0 {
+            return Ok(&[]);
+        }
+        if self.raw.ptr.is_null() {
+            return Err(ArrayOpStatus::InvalidHandle);
+        }
+        Ok(unsafe { core::slice::from_raw_parts(self.raw.ptr, self.raw.len) })
+    }
+
+    #[cfg(feature = "jit")]
+    pub(crate) fn raw(&self) -> RawValueMemory {
+        self.raw
+    }
+}
+
+impl RawValueMemory {
+    #[cfg(feature = "jit")]
+    fn as_slice(&self) -> Result<&[u8], ArrayOpStatus> {
+        if self.len == 0 {
+            return Ok(&[]);
+        }
+        if self.ptr.is_null() {
+            return Err(ArrayOpStatus::InvalidHandle);
+        }
+        Ok(unsafe { core::slice::from_raw_parts(self.ptr, self.len) })
     }
 }
 
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ValueMemories<'a> {
-    pub store: &'a [ValueMemory],
+    pub store: &'a [ValueMemory<'a>],
     /// Molten payloads lent by an external owner, read-only for the task.
     ///
     /// The task's own [`MoltenArena`] and externally lent molten table occupy
     /// disjoint handle namespaces. A task-local allocation can never shadow a
     /// lent payload.
-    pub molten: &'a [ValueMemory],
+    pub molten: &'a [ValueMemory<'a>],
 }
 
 impl ValueMemories<'_> {
@@ -79,6 +135,60 @@ impl ValueMemories<'_> {
         Self {
             store: &[],
             molten: &[],
+        }
+    }
+}
+
+#[cfg(feature = "jit")]
+#[derive(Clone, Copy)]
+struct RawValueMemories<'a> {
+    store: &'a [RawValueMemory],
+    molten: &'a [RawValueMemory],
+}
+
+#[derive(Clone, Copy)]
+enum MemoryView<'a> {
+    Borrowed(ValueMemories<'a>),
+    #[cfg(feature = "jit")]
+    Raw(RawValueMemories<'a>),
+}
+
+impl<'a> From<ValueMemories<'a>> for MemoryView<'a> {
+    fn from(value: ValueMemories<'a>) -> Self {
+        Self::Borrowed(value)
+    }
+}
+
+impl<'a> MemoryView<'a> {
+    fn store(self, index: usize) -> Result<&'a [u8], ArrayOpStatus> {
+        match self {
+            MemoryView::Borrowed(memories) => memories
+                .store
+                .get(index)
+                .ok_or(ArrayOpStatus::InvalidHandle)?
+                .as_slice(),
+            #[cfg(feature = "jit")]
+            MemoryView::Raw(memories) => memories
+                .store
+                .get(index)
+                .ok_or(ArrayOpStatus::InvalidHandle)?
+                .as_slice(),
+        }
+    }
+
+    fn molten(self, index: usize) -> Result<&'a [u8], ArrayOpStatus> {
+        match self {
+            MemoryView::Borrowed(memories) => memories
+                .molten
+                .get(index)
+                .ok_or(ArrayOpStatus::InvalidHandle)?
+                .as_slice(),
+            #[cfg(feature = "jit")]
+            MemoryView::Raw(memories) => memories
+                .molten
+                .get(index)
+                .ok_or(ArrayOpStatus::InvalidHandle)?
+                .as_slice(),
         }
     }
 }
@@ -104,6 +214,8 @@ pub enum ArrayOpStatus {
     Overflow = 7,
     /// The allocator reported exhaustion for an otherwise valid request.
     AllocationFailed = 8,
+    /// The requested task-local molten array bytes have not all been written.
+    Uninitialized = 9,
 }
 
 /// A task-private molten arena: mutable, in-flight, not interned.
@@ -120,7 +232,13 @@ pub enum ArrayOpStatus {
 /// handles remain store handles.
 #[derive(Clone, Debug, Default)]
 pub struct MoltenArena {
-    buffers: Vec<Vec<u8>>,
+    buffers: Vec<MoltenBuffer>,
+}
+
+#[derive(Clone, Debug)]
+struct MoltenBuffer {
+    bytes: Vec<u8>,
+    initialized: Vec<bool>,
 }
 
 impl MoltenArena {
@@ -143,9 +261,10 @@ impl MoltenArena {
         let total = ARRAY_ELEMENTS_HEADER_SIZE
             .checked_add(data_len)
             .ok_or(ArrayOpStatus::Overflow)?;
-        if self.buffers.len() >= TASK_MOLTEN_CAPACITY {
+        if total > isize::MAX as usize {
             return Err(ArrayOpStatus::Overflow);
         }
+        let handle = task_molten_handle(self.buffers.len()).ok_or(ArrayOpStatus::Overflow)?;
 
         self.buffers
             .try_reserve_exact(1)
@@ -159,9 +278,13 @@ impl MoltenArena {
         bytes.extend_from_slice(&count_i64(count)?.to_le_bytes());
         bytes.extend_from_slice(&count_i64(elem_width)?.to_le_bytes());
         bytes.resize(total, 0);
+        let mut initialized = Vec::new();
+        initialized
+            .try_reserve_exact(data_len)
+            .map_err(|_| ArrayOpStatus::AllocationFailed)?;
+        initialized.resize(data_len, false);
 
-        let handle = task_molten_handle(self.buffers.len()).ok_or(ArrayOpStatus::Overflow)?;
-        self.buffers.push(bytes);
+        self.buffers.push(MoltenBuffer { bytes, initialized });
         Ok(handle)
     }
 
@@ -169,12 +292,17 @@ impl MoltenArena {
     pub fn bytes(&self, handle: i64) -> Option<&[u8]> {
         self.buffers
             .get(task_molten_index(handle)?)
-            .map(Vec::as_slice)
+            .map(|buffer| buffer.bytes.as_slice())
     }
 
-    fn bytes_mut(&mut self, handle: i64) -> Option<&mut [u8]> {
+    fn buffer_mut(&mut self, handle: i64) -> Option<&mut MoltenBuffer> {
         let index = task_molten_index(handle)?;
-        self.buffers.get_mut(index).map(Vec::as_mut_slice)
+        self.buffers.get_mut(index)
+    }
+
+    fn buffer(&self, handle: i64) -> Option<&MoltenBuffer> {
+        let index = task_molten_index(handle)?;
+        self.buffers.get(index)
     }
 
     /// Number of live molten allocations. Observability only.
@@ -197,8 +325,9 @@ enum HandleKind {
 }
 
 const TASK_MOLTEN_BASE: i64 = i64::MIN;
+pub const ARRAY_POISON_HANDLE: i64 = TASK_MOLTEN_BASE;
+const TASK_MOLTEN_FIRST: i64 = TASK_MOLTEN_BASE + 1;
 const LENT_MOLTEN_MIN: i64 = i64::MIN / 2;
-const TASK_MOLTEN_CAPACITY: usize = (LENT_MOLTEN_MIN - TASK_MOLTEN_BASE) as usize;
 
 const ARRAY_WORDS_TAG: i64 = 0;
 const ARRAY_ELEMENTS_TAG: i64 = 1;
@@ -206,15 +335,17 @@ const ARRAY_WORDS_HEADER_SIZE: usize = 24;
 const ARRAY_ELEMENTS_HEADER_SIZE: usize = 32;
 
 fn task_molten_handle(index: usize) -> Option<i64> {
-    if index >= TASK_MOLTEN_CAPACITY {
+    let index = i64::try_from(index).ok()?;
+    let handle = TASK_MOLTEN_FIRST.checked_add(index)?;
+    if handle >= LENT_MOLTEN_MIN {
         return None;
     }
-    Some(TASK_MOLTEN_BASE + index as i64)
+    Some(handle)
 }
 
 fn task_molten_index(handle: i64) -> Option<usize> {
-    if (TASK_MOLTEN_BASE..LENT_MOLTEN_MIN).contains(&handle) {
-        usize::try_from(handle.checked_sub(TASK_MOLTEN_BASE)?).ok()
+    if (TASK_MOLTEN_FIRST..LENT_MOLTEN_MIN).contains(&handle) {
+        usize::try_from(handle.checked_sub(TASK_MOLTEN_FIRST)?).ok()
     } else {
         None
     }
@@ -239,36 +370,14 @@ fn count_i64(value: usize) -> Result<i64, ArrayOpStatus> {
     i64::try_from(value).map_err(|_| ArrayOpStatus::Overflow)
 }
 
-/// The molten ABI the JIT stencils call through. Both lanes reach the arena by
-/// these functions, so interpreter and JIT share one arena semantics.
-///
 /// # Safety
-/// `arena` must point to a live [`MoltenArena`].
-pub unsafe extern "C" fn molten_alloc_abi(
-    arena: *mut core::ffi::c_void,
-    count: i64,
-    elem_schema_ref: i64,
-) -> i64 {
-    let mut handle = 0i64;
-    let status = unsafe {
-        array_new_abi(
-            arena,
-            count,
-            8,
-            elem_schema_ref,
-            (&raw mut handle).cast::<i64>(),
-        )
-    };
-    if status == ArrayOpStatus::Ok as i64 {
-        handle
-    } else {
-        0
-    }
-}
-
-/// # Safety
-/// `arena` must point to a live [`MoltenArena`]; `out_len` must be writable.
-pub unsafe extern "C" fn molten_bytes_abi(
+/// `arena` must point to a live [`MoltenArena`] for the duration of the call,
+/// and no other mutable or shared reference may concurrently access that arena.
+/// `out_len` must be non-null and writable for one `usize`. The returned pointer
+/// is valid only until the next mutation of the arena and must not be written
+/// through except by Weavy's own checked array ABI helpers.
+#[cfg(feature = "jit")]
+pub(crate) unsafe extern "C" fn molten_bytes_abi(
     arena: *mut core::ffi::c_void,
     handle: i64,
     out_len: *mut usize,
@@ -277,10 +386,10 @@ pub unsafe extern "C" fn molten_bytes_abi(
         return core::ptr::null_mut();
     }
     let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
-    match arena.bytes_mut(handle) {
-        Some(bytes) => {
-            unsafe { *out_len = bytes.len() };
-            bytes.as_mut_ptr()
+    match arena.buffer_mut(handle) {
+        Some(buffer) => {
+            unsafe { *out_len = buffer.bytes.len() };
+            buffer.bytes.as_mut_ptr()
         }
         None => {
             unsafe { *out_len = 0 };
@@ -290,15 +399,24 @@ pub unsafe extern "C" fn molten_bytes_abi(
 }
 
 /// # Safety
-/// `arena` must point to a live [`MoltenArena`]; `out_handle` must be writable.
-pub unsafe extern "C" fn array_new_abi(
+/// `arena` must point to a live [`MoltenArena`] for the duration of the call,
+/// and no other mutable or shared reference may concurrently access that arena.
+/// `out_handle` must be non-null and writable for one `i64`; it must not alias
+/// memory inside `arena`. This function writes [`ARRAY_POISON_HANDLE`] before it
+/// attempts allocation, then overwrites it only after a successful allocation.
+#[cfg(feature = "jit")]
+pub(crate) unsafe extern "C" fn array_new_abi(
     arena: *mut core::ffi::c_void,
     count: i64,
     elem_width: usize,
     elem_schema_ref: i64,
     out_handle: *mut i64,
 ) -> i64 {
-    if arena.is_null() || out_handle.is_null() {
+    if out_handle.is_null() {
+        return ArrayOpStatus::InvalidHandle as i64;
+    }
+    unsafe { *out_handle = ARRAY_POISON_HANDLE };
+    if arena.is_null() {
         return ArrayOpStatus::InvalidHandle as i64;
     }
     let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
@@ -307,20 +425,23 @@ pub unsafe extern "C" fn array_new_abi(
             unsafe { *out_handle = handle };
             ArrayOpStatus::Ok as i64
         }
-        Err(status) => {
-            unsafe { *out_handle = 0 };
-            status as i64
-        }
+        Err(status) => status as i64,
     }
 }
 
 /// # Safety
-/// `arena` must point to a live [`MoltenArena`]. `src` must be readable for
-/// `elem_width` bytes when `elem_width > 0`.
-pub unsafe extern "C" fn array_store_abi(
+/// `arena` must point to a live [`MoltenArena`] for the duration of the call,
+/// and no other mutable or shared reference may concurrently access that arena.
+/// `src` must be non-null and readable for `elem_width` bytes when
+/// `elem_width > 0`; it must not alias the target molten allocation. Pointer
+/// precondition failures return [`ArrayOpStatus::InvalidHandle`] and do not
+/// dereference `src`.
+#[cfg(feature = "jit")]
+pub(crate) unsafe extern "C" fn array_store_abi(
     arena: *mut core::ffi::c_void,
     array: i64,
     index: i64,
+    elem_offset: usize,
     src: *const u8,
     elem_width: usize,
     elem_schema_ref: i64,
@@ -334,21 +455,40 @@ pub unsafe extern "C" fn array_store_abi(
     } else {
         unsafe { core::slice::from_raw_parts(src, elem_width) }
     };
-    store_array_region(arena, array, index, src, elem_width, elem_schema_ref) as i64
+    store_array_region(
+        arena,
+        ArrayRegion {
+            array,
+            index,
+            elem_offset,
+            elem_width,
+            elem_schema_ref,
+        },
+        src,
+    ) as i64
 }
 
 /// # Safety
-/// The value-memory pointers/counts must describe live tables. `arena` must
-/// point to a live [`MoltenArena`]. `dst` must be writable for `elem_width`
-/// bytes when `elem_width > 0`.
-pub unsafe extern "C" fn array_load_abi(
-    store_value_memories: *const ValueMemory,
+/// `store_value_memories` and `lent_molten_value_memories` must each be null
+/// only when their count is zero; otherwise they must point to arrays of
+/// [`RawValueMemory`] entries valid for the duration of the call. Every raw
+/// value-memory entry selected by `array` must point to bytes that remain
+/// readable for the duration of the call. `arena` must point to a live
+/// [`MoltenArena`] and must not be mutably aliased. `dst` must be non-null and
+/// writable for `elem_width` bytes when `elem_width > 0`, and must not overlap
+/// the source payload. Pointer precondition failures return
+/// [`ArrayOpStatus::InvalidHandle`] without promising destination zeroing;
+/// semantic failures after those preconditions zero the destination region.
+#[cfg(feature = "jit")]
+pub(crate) unsafe extern "C" fn array_load_abi(
+    store_value_memories: *const RawValueMemory,
     store_value_memory_count: usize,
-    lent_molten_value_memories: *const ValueMemory,
+    lent_molten_value_memories: *const RawValueMemory,
     lent_molten_value_memory_count: usize,
     arena: *mut core::ffi::c_void,
     array: i64,
     index: i64,
+    elem_offset: usize,
     dst: *mut u8,
     elem_width: usize,
     elem_schema_ref: i64,
@@ -372,7 +512,7 @@ pub unsafe extern "C" fn array_load_abi(
             core::slice::from_raw_parts(lent_molten_value_memories, lent_molten_value_memory_count)
         }
     };
-    let memories = ValueMemories { store, molten };
+    let memories = MemoryView::Raw(RawValueMemories { store, molten });
     let arena = unsafe { &*arena.cast::<MoltenArena>() };
     let dst = if elem_width == 0 {
         &mut []
@@ -382,21 +522,30 @@ pub unsafe extern "C" fn array_load_abi(
     load_array_region(
         memories,
         arena,
-        array,
-        index,
+        ArrayRegion {
+            array,
+            index,
+            elem_offset,
+            elem_width,
+            elem_schema_ref,
+        },
         dst,
-        elem_width,
-        elem_schema_ref,
     ) as i64
 }
 
 /// # Safety
-/// The value-memory pointers/counts must describe live tables. `arena` must
-/// point to a live [`MoltenArena`]. `out_count` must be writable.
-pub unsafe extern "C" fn array_len_abi(
-    store_value_memories: *const ValueMemory,
+/// `store_value_memories` and `lent_molten_value_memories` must each be null
+/// only when their count is zero; otherwise they must point to arrays of
+/// [`RawValueMemory`] entries valid for the duration of the call. Every raw
+/// value-memory entry selected by `array` must point to bytes that remain
+/// readable for the duration of the call. `arena` must point to a live
+/// [`MoltenArena`] and must not be mutably aliased. `out_count` must be
+/// non-null, writable for one `i64`, and must not alias `arena`.
+#[cfg(feature = "jit")]
+pub(crate) unsafe extern "C" fn array_len_abi(
+    store_value_memories: *const RawValueMemory,
     store_value_memory_count: usize,
-    lent_molten_value_memories: *const ValueMemory,
+    lent_molten_value_memories: *const RawValueMemory,
     lent_molten_value_memory_count: usize,
     arena: *mut core::ffi::c_void,
     array: i64,
@@ -422,7 +571,7 @@ pub unsafe extern "C" fn array_len_abi(
             core::slice::from_raw_parts(lent_molten_value_memories, lent_molten_value_memory_count)
         }
     };
-    let memories = ValueMemories { store, molten };
+    let memories = MemoryView::Raw(RawValueMemories { store, molten });
     let arena = unsafe { &*arena.cast::<MoltenArena>() };
     let (status, count) = load_array_len(memories, arena, array, elem_schema_ref);
     unsafe { *out_count = count };
@@ -562,7 +711,7 @@ pub enum Op {
     /// `frame[count_slot]` supplies the runtime element count; `elem_width` and
     /// `elem_schema_ref` are static witnesses for later checked region
     /// load/store operations. `frame[status]` receives [`ArrayOpStatus`]. On
-    /// failure `frame[dst]` is zeroed.
+    /// failure `frame[dst]` receives [`ARRAY_POISON_HANDLE`].
     ArrayNew {
         dst: u32,
         status: u32,
@@ -592,6 +741,7 @@ pub enum Op {
         array: u32,
         index: u32,
         src: u32,
+        elem_offset: u32,
         elem_width: u32,
         elem_schema_ref: i64,
     },
@@ -606,6 +756,7 @@ pub enum Op {
         status: u32,
         array: u32,
         index: u32,
+        elem_offset: u32,
         elem_width: u32,
         elem_schema_ref: i64,
     },
@@ -995,7 +1146,8 @@ impl Task {
                     elem_schema_ref,
                 } => {
                     let count = read_i64_at(&self.arena, base + count_slot as usize);
-                    let mut handle = 0i64;
+                    let mut handle = ARRAY_POISON_HANDLE;
+                    write_i64_at(&mut self.arena, base + dst as usize, handle);
                     let op_status = self
                         .molten
                         .alloc_array(count, elem_width as usize, elem_schema_ref)
@@ -1019,11 +1171,14 @@ impl Task {
                     let index = read_i64_at(&self.arena, base + index as usize);
                     let status_value = store_array_region(
                         &mut self.molten,
-                        array,
-                        index,
+                        ArrayRegion {
+                            array,
+                            index,
+                            elem_offset: 0,
+                            elem_width: 8,
+                            elem_schema_ref,
+                        },
                         &self.arena[base + src as usize..],
-                        8,
-                        elem_schema_ref,
                     );
                     write_i64_at(&mut self.arena, base + status as usize, status_value as i64);
                     self.frames.last_mut().expect("frame").pc += 1;
@@ -1033,6 +1188,7 @@ impl Task {
                     array,
                     index,
                     src,
+                    elem_offset,
                     elem_width,
                     elem_schema_ref,
                 } => {
@@ -1040,11 +1196,14 @@ impl Task {
                     let index = read_i64_at(&self.arena, base + index as usize);
                     let status_value = store_array_region(
                         &mut self.molten,
-                        array,
-                        index,
+                        ArrayRegion {
+                            array,
+                            index,
+                            elem_offset: elem_offset as usize,
+                            elem_width: elem_width as usize,
+                            elem_schema_ref,
+                        },
                         &self.arena[base + src as usize..],
-                        elem_width as usize,
-                        elem_schema_ref,
                     );
                     write_i64_at(&mut self.arena, base + status as usize, status_value as i64);
                     self.frames.last_mut().expect("frame").pc += 1;
@@ -1076,6 +1235,7 @@ impl Task {
                     status,
                     array,
                     index,
+                    elem_offset,
                     elem_width,
                     elem_schema_ref,
                 } => {
@@ -1085,13 +1245,16 @@ impl Task {
                     let status_value = {
                         let dst = &mut self.arena[dst_at..];
                         load_array_region(
-                            value_memories,
+                            value_memories.into(),
                             &self.molten,
-                            array,
-                            index,
+                            ArrayRegion {
+                                array,
+                                index,
+                                elem_offset: elem_offset as usize,
+                                elem_width: elem_width as usize,
+                                elem_schema_ref,
+                            },
                             dst,
-                            elem_width as usize,
-                            elem_schema_ref,
                         )
                     };
                     write_i64_at(&mut self.arena, base + status as usize, status_value as i64);
@@ -1105,7 +1268,7 @@ impl Task {
                 } => {
                     let array = read_i64_at(&self.arena, base + array as usize);
                     let (status_value, value) =
-                        load_array_len(value_memories, &self.molten, array, elem_schema_ref);
+                        load_array_len(value_memories.into(), &self.molten, array, elem_schema_ref);
                     write_i64_at(&mut self.arena, base + dst as usize, value);
                     write_i64_at(&mut self.arena, base + status as usize, status_value as i64);
                     self.frames.last_mut().expect("frame").pc += 1;
@@ -1331,29 +1494,44 @@ fn write_i64_at(arena: &mut [u8], at: usize, value: i64) {
 /// task-local and externally lent namespaces are disjoint. Nonnegative handles
 /// index the lent store table.
 fn handle_bytes<'a>(
-    value_memories: ValueMemories<'a>,
+    value_memories: MemoryView<'a>,
     molten: &'a MoltenArena,
     handle: i64,
 ) -> Result<&'a [u8], ArrayOpStatus> {
-    let memory = match classify_handle(handle).ok_or(ArrayOpStatus::InvalidHandle)? {
-        HandleKind::TaskMolten(_) => {
-            return molten.bytes(handle).ok_or(ArrayOpStatus::InvalidHandle);
-        }
-        HandleKind::LentMolten(index) => value_memories
-            .molten
-            .get(index)
-            .copied()
-            .ok_or(ArrayOpStatus::InvalidHandle)?,
-        HandleKind::Store(index) => value_memories
-            .store
-            .get(index)
-            .copied()
-            .ok_or(ArrayOpStatus::InvalidHandle)?,
-    };
-    if memory.ptr.is_null() {
-        return Err(ArrayOpStatus::InvalidHandle);
+    match classify_handle(handle).ok_or(ArrayOpStatus::InvalidHandle)? {
+        HandleKind::TaskMolten(_) => molten.bytes(handle).ok_or(ArrayOpStatus::InvalidHandle),
+        HandleKind::LentMolten(index) => value_memories.molten(index),
+        HandleKind::Store(index) => value_memories.store(index),
     }
-    Ok(unsafe { core::slice::from_raw_parts(memory.ptr, memory.len) })
+}
+
+struct ResidentPayload<'a> {
+    bytes: &'a [u8],
+    initialized: Option<&'a [bool]>,
+}
+
+fn handle_payload<'a>(
+    value_memories: MemoryView<'a>,
+    molten: &'a MoltenArena,
+    handle: i64,
+) -> Result<ResidentPayload<'a>, ArrayOpStatus> {
+    match classify_handle(handle).ok_or(ArrayOpStatus::InvalidHandle)? {
+        HandleKind::TaskMolten(_) => {
+            let buffer = molten.buffer(handle).ok_or(ArrayOpStatus::InvalidHandle)?;
+            Ok(ResidentPayload {
+                bytes: &buffer.bytes,
+                initialized: Some(&buffer.initialized),
+            })
+        }
+        HandleKind::LentMolten(index) => Ok(ResidentPayload {
+            bytes: value_memories.molten(index)?,
+            initialized: None,
+        }),
+        HandleKind::Store(index) => Ok(ResidentPayload {
+            bytes: value_memories.store(index)?,
+            initialized: None,
+        }),
+    }
 }
 
 struct ArrayPayload<'a> {
@@ -1361,6 +1539,15 @@ struct ArrayPayload<'a> {
     count: usize,
     elem_width: usize,
     body_offset: usize,
+}
+
+#[derive(Clone, Copy)]
+struct ArrayRegion {
+    array: i64,
+    index: i64,
+    elem_offset: usize,
+    elem_width: usize,
+    elem_schema_ref: i64,
 }
 
 fn parse_array_payload<'a>(
@@ -1379,6 +1566,9 @@ fn parse_array_payload<'a>(
     let count =
         usize::try_from(read_i64_at(bytes, 16)).map_err(|_| ArrayOpStatus::MalformedPayload)?;
     let (elem_width, body_offset) = match tag {
+        // Live compatibility path: existing store-backed `LoadArrayWord`
+        // callers and `weavy/examples/array_get_bench.rs` still provide the
+        // original one-word payload format.
         ARRAY_WORDS_TAG => (8usize, ARRAY_WORDS_HEADER_SIZE),
         ARRAY_ELEMENTS_TAG => {
             if bytes.len() < ARRAY_ELEMENTS_HEADER_SIZE {
@@ -1461,20 +1651,24 @@ fn load_array_word(
 
 fn compare_value_bytes(value_memories: ValueMemories<'_>, a: i64, b: i64) -> i64 {
     let mut value = 0i64;
+    let mut value = [0u8; 8];
     let status = load_array_region(
-        value_memories,
+        value_memories.into(),
         molten,
-        array,
-        index,
-        bytemuck_i64_mut(&mut value),
-        8,
-        elem_schema_ref,
+        ArrayRegion {
+            array,
+            index,
+            elem_offset: 0,
+            elem_width: 8,
+            elem_schema_ref,
+        },
+        &mut value,
     );
-    (status == ArrayOpStatus::Ok, value)
+    (status == ArrayOpStatus::Ok, i64::from_le_bytes(value))
 }
 
 fn load_array_len(
-    value_memories: ValueMemories<'_>,
+    value_memories: MemoryView<'_>,
     molten: &MoltenArena,
     array: i64,
     elem_schema_ref: i64,
@@ -1491,78 +1685,104 @@ fn load_array_len(
 }
 
 fn load_array_region(
-    value_memories: ValueMemories<'_>,
+    value_memories: MemoryView<'_>,
     molten: &MoltenArena,
-    array: i64,
-    index: i64,
+    region: ArrayRegion,
     dst: &mut [u8],
-    elem_width: usize,
-    elem_schema_ref: i64,
 ) -> ArrayOpStatus {
-    if elem_width == 0 {
+    if region.elem_width == 0 {
         return ArrayOpStatus::WidthMismatch;
     }
-    let copy_len = elem_width.min(dst.len());
+    let copy_len = region.elem_width.min(dst.len());
     dst[..copy_len].fill(0);
-    let bytes = match handle_bytes(value_memories, molten, array) {
-        Ok(bytes) => bytes,
+    let resident = match handle_payload(value_memories, molten, region.array) {
+        Ok(resident) => resident,
         Err(status) => return status,
     };
-    let payload = match parse_array_payload(bytes, elem_schema_ref, Some(elem_width)) {
+    let payload = match parse_array_payload(resident.bytes, region.elem_schema_ref, None) {
         Ok(payload) => payload,
         Err(status) => return status,
     };
-    let Ok(index) = usize::try_from(index) else {
-        return ArrayOpStatus::OutOfRange;
-    };
-    if index >= payload.count {
-        return ArrayOpStatus::OutOfRange;
-    }
-    if dst.len() < elem_width {
+    if dst.len() < region.elem_width {
         return ArrayOpStatus::Overflow;
     }
-    let offset = payload.body_offset + index * payload.elem_width;
-    dst[..elem_width].copy_from_slice(&payload.bytes[offset..offset + elem_width]);
+    let offset = match payload_region_offset(
+        &payload,
+        region.index,
+        region.elem_offset,
+        region.elem_width,
+    ) {
+        Ok(offset) => offset,
+        Err(status) => return status,
+    };
+    let body_offset = offset - payload.body_offset;
+    if let Some(initialized) = resident.initialized
+        && !initialized[body_offset..body_offset + region.elem_width]
+            .iter()
+            .all(|&init| init)
+    {
+        return ArrayOpStatus::Uninitialized;
+    }
+    dst[..region.elem_width].copy_from_slice(&payload.bytes[offset..offset + region.elem_width]);
     ArrayOpStatus::Ok
 }
 
-fn store_array_region(
-    molten: &mut MoltenArena,
-    array: i64,
-    index: i64,
-    src: &[u8],
-    elem_width: usize,
-    elem_schema_ref: i64,
-) -> ArrayOpStatus {
-    if elem_width == 0 {
+fn store_array_region(molten: &mut MoltenArena, region: ArrayRegion, src: &[u8]) -> ArrayOpStatus {
+    if region.elem_width == 0 {
         return ArrayOpStatus::WidthMismatch;
     }
-    let Some(bytes) = molten.bytes_mut(array) else {
+    let Some(buffer) = molten.buffer_mut(region.array) else {
         return ArrayOpStatus::InvalidHandle;
     };
-    let status = {
-        let payload = match parse_array_payload(bytes, elem_schema_ref, Some(elem_width)) {
+    let (offset, body_offset) = {
+        let payload = match parse_array_payload(&buffer.bytes, region.elem_schema_ref, None) {
             Ok(payload) => payload,
             Err(status) => return status,
         };
-        let Ok(index) = usize::try_from(index) else {
-            return ArrayOpStatus::OutOfRange;
-        };
-        if index >= payload.count {
-            return ArrayOpStatus::OutOfRange;
-        }
-        if src.len() < elem_width {
+        if src.len() < region.elem_width {
             return ArrayOpStatus::Overflow;
         }
-        payload.body_offset + index * payload.elem_width
+        let offset = match payload_region_offset(
+            &payload,
+            region.index,
+            region.elem_offset,
+            region.elem_width,
+        ) {
+            Ok(offset) => offset,
+            Err(status) => return status,
+        };
+        (offset, offset - payload.body_offset)
     };
-    bytes[status..status + elem_width].copy_from_slice(&src[..elem_width]);
+    buffer.bytes[offset..offset + region.elem_width].copy_from_slice(&src[..region.elem_width]);
+    buffer.initialized[body_offset..body_offset + region.elem_width].fill(true);
     ArrayOpStatus::Ok
 }
 
-fn bytemuck_i64_mut(value: &mut i64) -> &mut [u8] {
-    let ptr = core::ptr::from_mut(value).cast::<u8>();
-    unsafe { core::slice::from_raw_parts_mut(ptr, core::mem::size_of::<i64>()) }
+fn payload_region_offset(
+    payload: &ArrayPayload<'_>,
+    index: i64,
+    elem_offset: usize,
+    elem_width: usize,
+) -> Result<usize, ArrayOpStatus> {
+    let index = usize::try_from(index).map_err(|_| ArrayOpStatus::OutOfRange)?;
+    if index >= payload.count {
+        return Err(ArrayOpStatus::OutOfRange);
+    }
+    let region_end = elem_offset
+        .checked_add(elem_width)
+        .ok_or(ArrayOpStatus::Overflow)?;
+    if region_end > payload.elem_width {
+        return Err(ArrayOpStatus::WidthMismatch);
+    }
+    payload
+        .body_offset
+        .checked_add(
+            index
+                .checked_mul(payload.elem_width)
+                .ok_or(ArrayOpStatus::Overflow)?,
+        )
+        .and_then(|base| base.checked_add(elem_offset))
+        .ok_or(ArrayOpStatus::Overflow)
 }
 
 fn compare_value_bytes(
@@ -1577,6 +1797,10 @@ fn compare_value_bytes(
     let a = value_bytes(value_memories, a)
         .expect("CompareValueBytes left operand must be a resident value handle");
     let b = value_bytes(value_memories, b)
+    let memories = MemoryView::from(value_memories);
+    let a = handle_bytes(memories, molten, a)
+        .expect("CompareValueBytes left operand must be a resident value handle");
+    let b = handle_bytes(memories, molten, b)
         .expect("CompareValueBytes right operand must be a resident value handle");
     match a.cmp(b) {
         core::cmp::Ordering::Less => 0,
@@ -1609,6 +1833,28 @@ mod tests {
         Layout {
             size: n * 8,
             align: 8,
+        }
+    }
+
+    #[test]
+    fn task_molten_handle_namespace_reserves_poison_and_lent_space() {
+        assert_eq!(task_molten_handle(0), Some(ARRAY_POISON_HANDLE + 1));
+        assert_eq!(task_molten_index(ARRAY_POISON_HANDLE), None);
+        assert_eq!(classify_handle(ARRAY_POISON_HANDLE), None);
+        assert_eq!(task_molten_index(ARRAY_POISON_HANDLE + 1), Some(0));
+        assert_eq!(classify_handle(-1), Some(HandleKind::LentMolten(0)));
+
+        let max_index_i64 = LENT_MOLTEN_MIN - TASK_MOLTEN_FIRST - 1;
+        if let Ok(max_index) = usize::try_from(max_index_i64) {
+            let last = task_molten_handle(max_index).expect("last encodable handle");
+            assert_eq!(last, LENT_MOLTEN_MIN - 1);
+            assert_eq!(task_molten_index(last), Some(max_index));
+            assert_eq!(task_molten_handle(max_index.saturating_add(1)), None);
+        } else {
+            let max_index = usize::MAX;
+            let last = task_molten_handle(max_index).expect("usize::MAX still fits on this target");
+            assert!(last < LENT_MOLTEN_MIN);
+            assert_eq!(task_molten_index(last), Some(max_index));
         }
     }
 
