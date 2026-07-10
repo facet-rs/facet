@@ -21,6 +21,7 @@ const RUNG_011: &str = include_str!("ratchet/011-derived-comparisons.vix");
 const RUNG_012: &str = include_str!("ratchet/012-total-order.vix");
 const RUNG_013: &str = include_str!("ratchet/013-expression-statement.reject.vix");
 const RUNG_014: &str = include_str!("ratchet/014-if-else.vix");
+const RUNG_015: &str = include_str!("ratchet/015-boolean-operators.vix");
 
 /// The first rung is an architectural certificate, not just a boolean test.
 ///
@@ -993,6 +994,19 @@ fn rung_014_if_else_is_an_expression_through_vir_and_weavy() {
     assert!(report.passed());
     assert!(report.agrees());
     assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    assert_eq!(report.plain.counters.pure_host_calls, 0);
+    assert_eq!(report.chaos.counters.pure_host_calls, 0);
+    assert_eq!(report.plain.receipt_count, 0);
+    assert_eq!(report.chaos.receipt_count, 0);
+}
+
+#[test]
+fn rung_015_boolean_operators_reuse_structured_conditionals() {
+    let report = run_source(RUNG_015).expect("rung 015 compiles and runs");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 4);
     assert_eq!(report.plain.checks, report.chaos.checks);
     assert_eq!(report.plain.counters.pure_host_calls, 0);
     assert_eq!(report.chaos.counters.pure_host_calls, 0);
