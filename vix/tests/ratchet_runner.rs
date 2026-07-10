@@ -15,6 +15,7 @@ const RUNG_007: &str = include_str!("ratchet/007-enums.vix");
 const RUNG_008: &str = include_str!("ratchet/008-spread.vix");
 const RUNG_009: &str = include_str!("ratchet/009-structural-equality.vix");
 const RUNG_010: &str = include_str!("ratchet/010-spaceship.vix");
+const RUNG_011: &str = include_str!("ratchet/011-derived-comparisons.vix");
 
 /// The first rung is an architectural certificate, not just a boolean test.
 ///
@@ -710,6 +711,90 @@ fn rung_010_spaceship_returns_ambient_ordering_through_vir_and_weavy() {
     assert!(saw_value_bytes_order);
 
     let report = run_source(RUNG_010).expect("rung 010 compiles and runs");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    assert_eq!(report.plain.counters.pure_host_calls, 0);
+    assert_eq!(report.chaos.counters.pure_host_calls, 0);
+    assert_eq!(report.plain.receipt_count, 0);
+    assert_eq!(report.chaos.receipt_count, 0);
+}
+
+#[test]
+fn rung_011_relations_derive_from_spaceship_through_vir_and_weavy() {
+    let module = Compiler::new()
+        .compile(RUNG_011)
+        .expect("rung 011 compiles");
+    let derived = module
+        .functions
+        .iter()
+        .find(|function| function.name == "derived_comparisons")
+        .expect("rung 011 contains derived_comparisons");
+    assert_eq!(
+        derived
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.op, VirOp::Compare))
+            .count(),
+        3
+    );
+    assert_eq!(
+        derived
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.op, VirOp::Eq))
+            .count(),
+        2
+    );
+    assert_eq!(
+        derived
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.op, VirOp::Ne))
+            .count(),
+        1
+    );
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    assert_eq!(partitioned.islands.len(), 3);
+    let mut lowering_cache = LoweringCache::default();
+    let mut saw_mixed_tuple_order = false;
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 011 lowers to Weavy");
+        for function in &lowered.program.fns {
+            let has_integer_order = function
+                .code
+                .iter()
+                .any(|op| matches!(op, WeavyOp::LtI64 { .. }))
+                && function
+                    .code
+                    .iter()
+                    .any(|op| matches!(op, WeavyOp::GtI64 { .. }));
+            let has_value_bytes_order = function
+                .code
+                .iter()
+                .any(|op| matches!(op, WeavyOp::CompareValueBytes { .. }));
+            saw_mixed_tuple_order |= has_integer_order && has_value_bytes_order;
+            assert!(
+                function
+                    .code
+                    .iter()
+                    .all(|op| !matches!(op, WeavyOp::LeI64 { .. } | WeavyOp::GeI64 { .. }))
+            );
+            assert!(
+                function.code.iter().all(|op| !matches!(
+                    op,
+                    WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }
+                ))
+            );
+        }
+    }
+    assert!(saw_mixed_tuple_order);
+
+    let report = run_source(RUNG_011).expect("rung 011 compiles and runs");
     assert!(report.passed());
     assert!(report.agrees());
     assert_eq!(report.plain.checks.len(), 3);
