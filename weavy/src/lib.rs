@@ -17,6 +17,7 @@ pub use exec::{
     CompareSide, DriveTable, EntryWriteKind, ExecTask, ExecTaskState, Executable, FallbackReason,
     FaultSite, LaneFacts, LaneKind, StoreHandle, TaskFault,
 };
+pub use task::StructuralFieldSource;
 pub use verified::{
     AccessDefect, AccessRole, AllowedKinds, CallContract, CallContractId, CallSiteFacts,
     DriveRequirements, FrameContract, FrameRegion, FunctionContract, FunctionFacts,

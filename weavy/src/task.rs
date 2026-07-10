@@ -37,7 +37,7 @@ use core::task::{Context, Poll};
 
 use crate::exec::{CompareSide, TaskFault, fault_site};
 use crate::mem::Layout;
-use crate::{CallSiteFacts, VerifiedProgram};
+use crate::{CallSiteFacts, RegionId, VerifiedProgram};
 
 /// One immutable value payload made visible to task code for native reads.
 #[repr(C)]
@@ -592,12 +592,51 @@ pub struct ArgCopy {
     pub size: u32,
 }
 
+/// One declared field source for a complete structural construction.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StructuralFieldSource {
+    pub field: u32,
+    pub source: RegionId,
+}
+
 /// Typed, three-address instructions over frame offsets. The
 /// vocabulary grows per kind (AddF64, loads/stores of declared
 /// fields, sync host calls) — per the ruled stencil order, frame/call/
 /// return machinery lands before arithmetic variety.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum Op {
+    /// Construct one complete product from exactly one source per declared field.
+    ProductConstruct {
+        dst: RegionId,
+        fields: Vec<StructuralFieldSource>,
+    },
+    /// Project one declared product field into its exact typed destination.
+    ProductProject {
+        dst: RegionId,
+        product: RegionId,
+        field: u32,
+    },
+    /// Copy one complete structural value between exact equal value shapes.
+    CopyValue { dst: RegionId, src: RegionId },
+    /// Construct one complete compact enum from one statically selected variant.
+    EnumConstruct {
+        dst: RegionId,
+        variant: u32,
+        fields: Vec<StructuralFieldSource>,
+    },
+    /// Validate a compact enum selector and test it against one declared variant.
+    EnumIsVariant {
+        dst: RegionId,
+        value: RegionId,
+        variant: u32,
+    },
+    /// Validate the active variant, then project one exact declared field.
+    EnumProjectChecked {
+        dst: RegionId,
+        value: RegionId,
+        variant: u32,
+        field: u32,
+    },
     /// `frame[dst] = value` (i64).
     ConstI64 { dst: u32, value: i64 },
     /// `frame[dst] = frame[a] + frame[b]` (i64, wrapping).
