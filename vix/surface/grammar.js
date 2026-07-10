@@ -176,7 +176,26 @@ module.exports = grammar({
       ),
     record_expr: ($) =>
       prec(PREC.postfix, seq(field("type", $.type_path), field("fields", $.record_value_list))),
-    record_value_list: ($) => seq("{", sepBy(",", field("field", $.named_value)), "}"),
+    record_value_list: ($) =>
+      seq(
+        "{",
+        optional(
+          choice(
+            seq(
+              field("spread", $.record_spread),
+              optional(seq(",", sepBy(",", field("field", $.named_value)))),
+            ),
+            seq(
+              field("field", $.named_value),
+              repeat(seq(",", field("field", $.named_value))),
+              optional(seq(",", field("spread", $.record_spread))),
+              optional(","),
+            ),
+          ),
+        ),
+        "}",
+      ),
+    record_spread: ($) => seq("..", field("base", $._expr)),
     named_value: ($) =>
       seq(
         field("name", $.identifier),

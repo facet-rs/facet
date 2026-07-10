@@ -882,11 +882,11 @@ fn lower_named_record_values(
     context: &ModuleContext<'_>,
     owner: &str,
     declared_fields: &[RecordField],
-    supplied_fields: &[ast::NamedValue],
-    span: Span,
+    supplied: &ast::RecordValueList,
+    spread_type: Option<&Type>,
 ) -> Result<Vec<NodeId>, Diagnostics> {
     let mut provided = BTreeMap::new();
-    for field in supplied_fields {
+    for field in &supplied.fields {
         if provided.insert(field.name.value.clone(), field).is_some() {
             return Err(field_diagnostic(
                 DiagnosticCode::DuplicateField,
@@ -897,18 +897,52 @@ fn lower_named_record_values(
         }
     }
 
+    let spread_base = match (&supplied.spread, spread_type) {
+        (None, _) => None,
+        (Some(spread), Some(expected)) => {
+            let base = lower_value(nodes, bindings, context, &spread.base)?;
+            require_type(&base, expected, spread.span)?;
+            Some((spread, base))
+        }
+        (Some(spread), None) => {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                spread.span,
+                "record-variant spread",
+            )));
+        }
+    };
+
     let mut inputs = Vec::with_capacity(declared_fields.len());
-    for declared in declared_fields {
-        let field = provided.remove(&declared.name).ok_or_else(|| {
-            field_diagnostic(DiagnosticCode::MissingField, span, owner, &declared.name)
-        })?;
-        let value = if let Some(expression) = &field.value {
-            lower_value(nodes, bindings, context, expression)?
+    for (index, declared) in declared_fields.iter().enumerate() {
+        let node = if let Some(field) = provided.remove(&declared.name) {
+            let value = if let Some(expression) = &field.value {
+                lower_value(nodes, bindings, context, expression)?
+            } else {
+                lookup_binding(bindings, &field.name.value, field.name.span)?
+            };
+            require_type(&value, &declared.ty, field.span)?;
+            value.node
+        } else if let Some((spread, base)) = &spread_base {
+            let index = u32::try_from(index).map_err(|_| {
+                type_mismatch(spread.span, "aggregate field index", index.to_string())
+            })?;
+            push_node(
+                nodes,
+                spread.span,
+                declared.ty.clone(),
+                EffectFacts::PURE,
+                vec![base.node],
+                Op::Project { index },
+            )
         } else {
-            lookup_binding(bindings, &field.name.value, field.name.span)?
+            return Err(field_diagnostic(
+                DiagnosticCode::MissingField,
+                supplied.span,
+                owner,
+                &declared.name,
+            ));
         };
-        require_type(&value, &declared.ty, field.span)?;
-        inputs.push(value.node);
+        inputs.push(node);
     }
     if let Some((name, field)) = provided.into_iter().next() {
         return Err(field_diagnostic(
@@ -938,8 +972,8 @@ fn lower_named_constructor(
             context,
             &qualified_name,
             &record.fields,
-            &expression.fields.fields,
-            expression.span,
+            &expression.fields,
+            Some(ty),
         )?;
         let ty = Type::Record(record.clone());
         return Ok(LoweredValue {
@@ -1004,8 +1038,8 @@ fn lower_named_constructor(
         context,
         &format!("{}::{}", enumeration.name, variant.name),
         fields,
-        &expression.fields.fields,
-        expression.span,
+        &expression.fields,
+        None,
     )?;
     let variant_index = u32::try_from(variant_index).map_err(|_| {
         variant_diagnostic(
