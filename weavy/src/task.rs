@@ -678,12 +678,6 @@ pub enum Op {
         stride: u32,
         src: u32,
     },
-    /// Checked read from a store-backed `Array<T>` word payload.
-    ///
-    /// `frame[array]` is a store handle. The value-memory table entry
-    /// at that handle must be an array-words payload with matching
-    /// `elem_schema_ref`. In-bounds reads write the element to `dst`
-    /// and `1` to `present`; misses write zeroes to both.
     /// Legacy checked read from an `Array<T>` one-word payload.
     ///
     /// `frame[array]` is a store handle (nonnegative) or a molten handle

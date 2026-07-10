@@ -45,6 +45,7 @@ pub struct Ctx {
     /// 3 = ret (driver pops the frame), 4 = sync host call (driver
     /// invokes the host over the frame, re-enters at the continuation).
     exit: *mut i64,
+    /// Read-only value payload table for native store-backed loads.
     store_value_memories: *const RawValueMemory,
     store_value_memory_count: usize,
     /// Molten payloads lent by an external owner; read-only.
@@ -143,6 +144,7 @@ unsafe fn write_i64(frame: *mut u8, off: u64, value: i64) {
     (frame.add(off as usize) as *mut i64).write_unaligned(value);
 }
 
+#[inline(always)]
 unsafe fn handle_bytes(c: &Ctx, handle: i64) -> Option<(*const u8, usize)> {
     let memory = if handle < 0 {
         let mut len = 0usize;
