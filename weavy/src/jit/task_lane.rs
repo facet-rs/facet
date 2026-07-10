@@ -37,6 +37,36 @@ struct Ctx {
     store_value_memory_count: usize,
     molten_value_memories: *const crate::task::ValueMemory,
     molten_value_memory_count: usize,
+    lent_molten_value_memories: *const crate::task::ValueMemory,
+    lent_molten_value_memory_count: usize,
+    molten: *mut core::ffi::c_void,
+    molten_alloc: unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64) -> i64,
+    molten_bytes: unsafe extern "C" fn(*mut core::ffi::c_void, i64, *mut usize) -> *mut u8,
+    array_new: unsafe extern "C" fn(*mut core::ffi::c_void, i64, usize, i64, *mut i64) -> i64,
+    array_store:
+        unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *const u8, usize, i64) -> i64,
+    array_load: unsafe extern "C" fn(
+        *const crate::task::ValueMemory,
+        usize,
+        *const crate::task::ValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        *mut u8,
+        usize,
+        i64,
+    ) -> i64,
+    array_len: unsafe extern "C" fn(
+        *const crate::task::ValueMemory,
+        usize,
+        *const crate::task::ValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        *mut i64,
+    ) -> i64,
 }
 
 /// Whether the task JIT lane is usable on this target.
@@ -214,9 +244,25 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                 task_stencils::STORE_IX,
                 Continuations::Fallthrough(task_stencils::STORE_IX_CONT),
             ),
+            Op::ArrayNew { .. } => (
+                task_stencils::ARRAY_NEW,
+                Continuations::Fallthrough(task_stencils::ARRAY_NEW_CONT),
+            ),
+            Op::ArrayStoreWord { .. } | Op::ArrayStore { .. } => (
+                task_stencils::ARRAY_STORE_WORD,
+                Continuations::Fallthrough(task_stencils::ARRAY_STORE_WORD_CONT),
+            ),
             Op::LoadArrayWord { .. } => (
                 task_stencils::LOAD_ARRAY_WORD,
                 Continuations::Fallthrough(task_stencils::LOAD_ARRAY_WORD_CONT),
+            ),
+            Op::LoadArray { .. } => (
+                task_stencils::LOAD_ARRAY,
+                Continuations::Fallthrough(task_stencils::LOAD_ARRAY_CONT),
+            ),
+            Op::LoadArrayLen { .. } => (
+                task_stencils::LOAD_ARRAY_LEN,
+                Continuations::Fallthrough(task_stencils::LOAD_ARRAY_LEN_CONT),
             ),
             Op::CompareValueBytes { .. } => (
                 task_stencils::COMPARE_VALUE_BYTES,
@@ -331,6 +377,8 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
             Op::Jump { .. } => 1,
             Op::JumpIfZero { .. } => 3,
             Op::LoadIndexedI64 { .. } | Op::StoreIndexedI64 { .. } => 4,
+            Op::ArrayNew { .. } => 5,
+            Op::ArrayStoreWord { .. } | Op::LoadArray { .. } | Op::ArrayStore { .. } => 6,
             Op::LoadArrayWord { .. } => 5,
             Op::CompareValueBytes { .. } => 3,
             Op::Await { .. } => 3,
@@ -399,6 +447,23 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                     layout.push_prog_word(root.prog_index, u64::from(*v));
                 }
             }
+            Op::ArrayNew {
+                dst,
+                status,
+                count_slot,
+                elem_width,
+                elem_schema_ref,
+            } => {
+                for v in [
+                    u64::from(*dst),
+                    u64::from(*status),
+                    u64::from(*count_slot),
+                    u64::from(*elem_width),
+                    *elem_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
             Op::LoadArrayWord {
                 dst,
                 present,
@@ -411,6 +476,77 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                     u64::from(*present),
                     u64::from(*array),
                     u64::from(*index),
+                    *elem_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::ArrayStoreWord {
+                status,
+                array,
+                index,
+                src,
+                elem_schema_ref,
+            } => {
+                for v in [
+                    u64::from(*status),
+                    u64::from(*array),
+                    u64::from(*index),
+                    u64::from(*src),
+                    8,
+                    *elem_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::ArrayStore {
+                status,
+                array,
+                index,
+                src,
+                elem_width,
+                elem_schema_ref,
+            } => {
+                for v in [
+                    u64::from(*status),
+                    u64::from(*array),
+                    u64::from(*index),
+                    u64::from(*src),
+                    u64::from(*elem_width),
+                    *elem_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::LoadArray {
+                dst,
+                status,
+                array,
+                index,
+                elem_width,
+                elem_schema_ref,
+            } => {
+                for v in [
+                    u64::from(*dst),
+                    u64::from(*status),
+                    u64::from(*array),
+                    u64::from(*index),
+                    u64::from(*elem_width),
+                    *elem_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::LoadArrayLen {
+                dst,
+                status,
+                array,
+                elem_schema_ref,
+            } => {
+                for v in [
+                    u64::from(*dst),
+                    u64::from(*status),
+                    u64::from(*array),
                     *elem_schema_ref as u64,
                 ] {
                     layout.push_prog_word(root.prog_index, v);
@@ -626,6 +762,15 @@ impl JitTask {
                 store_value_memory_count: value_memories.store.len(),
                 molten_value_memories: value_memories.molten.as_ptr(),
                 molten_value_memory_count: value_memories.molten.len(),
+                lent_molten_value_memories: value_memories.molten.as_ptr(),
+                lent_molten_value_memory_count: value_memories.molten.len(),
+                molten: (&raw mut self.molten).cast::<core::ffi::c_void>(),
+                molten_alloc: crate::task::molten_alloc_abi,
+                molten_bytes: crate::task::molten_bytes_abi,
+                array_new: crate::task::array_new_abi,
+                array_store: crate::task::array_store_abi,
+                array_load: crate::task::array_load_abi,
+                array_len: crate::task::array_len_abi,
             };
             // SAFETY: `frame.resume` is a chain offset of this compiled
             // function; the copied code uses the extern "C" fn(*mut Ctx)
@@ -778,7 +923,7 @@ impl Advance for JitRunning<'_> {
 mod tests {
     use super::*;
     use crate::mem::Layout;
-    use crate::task::{Fn as TaskFn, Task, ValueMemories, ValueMemory};
+    use crate::task::{ArrayOpStatus, Fn as TaskFn, Task, ValueMemories, ValueMemory};
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn jit_tasks_await_real_futures() {
@@ -1325,6 +1470,507 @@ mod tests {
             task.run_hosted_with_value_memories(&jit, &mut [], &[], &mut [], memories),
             TaskStep::Done
         );
+        assert_eq!(task.result, interp.result);
+        assert_eq!(task.trace, interp.trace);
+    }
+
+    /// An array-words payload: [tag=0, elem_schema_ref, count, words..].
+    fn array_words_payload(elem_schema_ref: i64, elements: &[i64]) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&0i64.to_le_bytes());
+        bytes.extend_from_slice(&elem_schema_ref.to_le_bytes());
+        bytes.extend_from_slice(&(elements.len() as i64).to_le_bytes());
+        for element in elements {
+            bytes.extend_from_slice(&element.to_le_bytes());
+        }
+        bytes
+    }
+
+    /// Authoritative array payload: [tag=1, elem_schema_ref, count, elem_width, bytes..].
+    fn array_elements_payload(
+        elem_schema_ref: i64,
+        elem_width: i64,
+        elements: &[&[u8]],
+    ) -> Vec<u8> {
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(&1i64.to_le_bytes());
+        bytes.extend_from_slice(&elem_schema_ref.to_le_bytes());
+        bytes.extend_from_slice(&(elements.len() as i64).to_le_bytes());
+        bytes.extend_from_slice(&elem_width.to_le_bytes());
+        for element in elements {
+            assert_eq!(element.len(), elem_width as usize);
+            bytes.extend_from_slice(element);
+        }
+        bytes
+    }
+
+    fn result_words(bytes: &[u8]) -> Vec<i64> {
+        bytes
+            .chunks_exact(8)
+            .map(|word| i64::from_le_bytes(word.try_into().expect("one result word")))
+            .collect()
+    }
+
+    fn run_array_program_with_memories(program: &Program, memories: ValueMemories<'_>) -> Vec<i64> {
+        let mut interp = Task::spawn(program, FnId(0));
+        assert_eq!(
+            interp.run_hosted_with_value_memories(program, &mut [], &[], &mut [], memories),
+            TaskStep::Done
+        );
+
+        let Some(jit) = JitProgram::compile(program) else {
+            assert!(
+                !available(),
+                "task JIT refused an array substrate program on a native target"
+            );
+            return result_words(&interp.result);
+        };
+        let mut task = JitTask::spawn(&jit, FnId(0));
+        assert_eq!(
+            task.run_hosted_with_value_memories(&jit, &mut [], &[], &mut [], memories),
+            TaskStep::Done
+        );
+        assert_eq!(task.result, interp.result);
+        assert_eq!(task.trace, interp.trace);
+        result_words(&interp.result)
+    }
+
+    #[test]
+    fn local_molten_handles_do_not_shadow_lent_molten_payloads() {
+        const SCHEMA: i64 = 0x55aa;
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(10),
+                code: vec![
+                    Op::ConstI64 { dst: 8, value: 1 },
+                    Op::ArrayNew {
+                        dst: 0,
+                        status: 16,
+                        count_slot: 8,
+                        elem_width: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::ConstI64 { dst: 24, value: -1 },
+                    Op::ConstI64 { dst: 32, value: 0 },
+                    Op::LoadArrayWord {
+                        dst: 40,
+                        present: 48,
+                        array: 24,
+                        index: 32,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::LoadArrayWord {
+                        dst: 56,
+                        present: 64,
+                        array: 0,
+                        index: 32,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::Ret { src: 16, size: 56 },
+                ],
+            }],
+        };
+        let lent = array_words_payload(SCHEMA, &[99]);
+        let molten = [ValueMemory::from_slice(&lent)];
+        let memories = ValueMemories {
+            store: &[],
+            molten: &molten,
+        };
+
+        assert_eq!(
+            run_array_program_with_memories(&program, memories),
+            vec![ArrayOpStatus::Ok as i64, -1, 0, 99, 1, 0, 1,]
+        );
+    }
+
+    #[test]
+    fn dynamic_count_and_checked_oversized_allocation_match_between_lanes() {
+        const SCHEMA: i64 = 0x7777;
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(10),
+                code: vec![
+                    Op::ConstI64 { dst: 0, value: 2 },
+                    Op::ArrayNew {
+                        dst: 8,
+                        status: 16,
+                        count_slot: 0,
+                        elem_width: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::LoadArrayLen {
+                        dst: 24,
+                        status: 32,
+                        array: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::ConstI64 {
+                        dst: 64,
+                        value: i64::MAX,
+                    },
+                    Op::ArrayNew {
+                        dst: 48,
+                        status: 56,
+                        count_slot: 64,
+                        elem_width: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::Ret { src: 16, size: 48 },
+                ],
+            }],
+        };
+
+        assert_eq!(
+            run_array_program_with_memories(&program, ValueMemories::empty()),
+            vec![
+                ArrayOpStatus::Ok as i64,
+                2,
+                ArrayOpStatus::Ok as i64,
+                0,
+                0,
+                ArrayOpStatus::Overflow as i64,
+            ]
+        );
+    }
+
+    #[test]
+    fn multiword_elements_construct_fill_and_read_in_both_lanes() {
+        const SCHEMA: i64 = 0x2222;
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(15),
+                code: vec![
+                    Op::ConstI64 { dst: 0, value: 2 },
+                    Op::ArrayNew {
+                        dst: 8,
+                        status: 16,
+                        count_slot: 0,
+                        elem_width: 16,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::ConstI64 { dst: 24, value: 0 },
+                    Op::ConstI64 { dst: 32, value: 11 },
+                    Op::ConstI64 { dst: 40, value: 12 },
+                    Op::ArrayStore {
+                        status: 48,
+                        array: 8,
+                        index: 24,
+                        src: 32,
+                        elem_width: 16,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::ConstI64 { dst: 24, value: 1 },
+                    Op::ConstI64 { dst: 32, value: 21 },
+                    Op::ConstI64 { dst: 40, value: 22 },
+                    Op::ArrayStore {
+                        status: 56,
+                        array: 8,
+                        index: 24,
+                        src: 32,
+                        elem_width: 16,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::LoadArray {
+                        dst: 64,
+                        status: 80,
+                        array: 8,
+                        index: 24,
+                        elem_width: 16,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::Ret { src: 48, size: 48 },
+                ],
+            }],
+        };
+
+        assert_eq!(
+            run_array_program_with_memories(&program, ValueMemories::empty()),
+            vec![
+                ArrayOpStatus::Ok as i64,
+                ArrayOpStatus::Ok as i64,
+                21,
+                22,
+                ArrayOpStatus::Ok as i64,
+                0,
+            ]
+        );
+    }
+
+    #[test]
+    fn malformed_invalid_width_mismatch_and_out_of_range_status_are_distinct() {
+        const SCHEMA: i64 = 0x3333;
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(24),
+                code: vec![
+                    Op::ConstI64 { dst: 0, value: 0 },
+                    Op::ConstI64 { dst: 8, value: 1 },
+                    Op::LoadArray {
+                        dst: 80,
+                        status: 96,
+                        array: 0,
+                        index: 8,
+                        elem_width: 16,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::ConstI64 { dst: 48, value: 1 },
+                    Op::ConstI64 { dst: 56, value: 10 },
+                    Op::LoadArray {
+                        dst: 104,
+                        status: 120,
+                        array: 48,
+                        index: 8,
+                        elem_width: 16,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::ConstI64 { dst: 184, value: 2 },
+                    Op::LoadArray {
+                        dst: 128,
+                        status: 144,
+                        array: 0,
+                        index: 56,
+                        elem_width: 16,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::LoadArray {
+                        dst: 152,
+                        status: 168,
+                        array: 184,
+                        index: 8,
+                        elem_width: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::ArrayStore {
+                        status: 176,
+                        array: 0,
+                        index: 8,
+                        src: 80,
+                        elem_width: 16,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::Ret { src: 80, size: 104 },
+                ],
+            }],
+        };
+        let first = [1i64.to_le_bytes(), 2i64.to_le_bytes()].concat();
+        let second = [3i64.to_le_bytes(), 4i64.to_le_bytes()].concat();
+        let valid = array_elements_payload(SCHEMA, 16, &[&first, &second]);
+        let malformed = [1u8, 2, 3];
+        let width_mismatch = array_elements_payload(SCHEMA, 16, &[&first]);
+        let store = [
+            ValueMemory::from_slice(&valid),
+            ValueMemory::from_slice(&malformed),
+            ValueMemory::from_slice(&width_mismatch),
+        ];
+        let memories = ValueMemories {
+            store: &store,
+            molten: &[],
+        };
+
+        assert_eq!(
+            run_array_program_with_memories(&program, memories),
+            vec![
+                3,
+                4,
+                ArrayOpStatus::Ok as i64,
+                0,
+                0,
+                ArrayOpStatus::MalformedPayload as i64,
+                0,
+                0,
+                ArrayOpStatus::OutOfRange as i64,
+                0,
+                0,
+                ArrayOpStatus::WidthMismatch as i64,
+                ArrayOpStatus::InvalidHandle as i64,
+            ]
+        );
+    }
+
+    #[test]
+    fn store_backed_array_reads_match_the_interpreter() {
+        const SCHEMA: i64 = 0x5eed_1234_abcd_0001u64 as i64;
+        // frame: [0]=array handle, [1]=index, [2]=elem, [3]=present,
+        //        [4]=len, [5]=len present, [6]=oob elem, [7]=oob present,
+        //        [8]=wrong-schema len, [9]=wrong-schema present
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(10),
+                code: vec![
+                    Op::ConstI64 { dst: 0, value: 0 },
+                    Op::ConstI64 { dst: 8, value: 2 },
+                    Op::LoadArrayWord {
+                        dst: 16,
+                        present: 24,
+                        array: 0,
+                        index: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::LoadArrayLen {
+                        dst: 32,
+                        status: 40,
+                        array: 0,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    // Out of range: both destinations are zeroed.
+                    Op::ConstI64 { dst: 8, value: 9 },
+                    Op::LoadArrayWord {
+                        dst: 48,
+                        present: 56,
+                        array: 0,
+                        index: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    // A payload tagged with another element schema does not answer.
+                    Op::LoadArrayLen {
+                        dst: 64,
+                        status: 72,
+                        array: 0,
+                        elem_schema_ref: SCHEMA ^ 1,
+                    },
+                    Op::Ret { src: 16, size: 64 },
+                ],
+            }],
+        };
+        let payload = array_words_payload(SCHEMA, &[10, 20, 30]);
+        let store = [ValueMemory::from_slice(&payload)];
+        let memories = ValueMemories {
+            store: &store,
+            molten: &[],
+        };
+
+        let mut interp = Task::spawn(&program, FnId(0));
+        assert_eq!(
+            interp.run_hosted_with_value_memories(&program, &mut [], &[], &mut [], memories),
+            TaskStep::Done
+        );
+        let words = interp
+            .result
+            .chunks_exact(8)
+            .map(|word| i64::from_le_bytes(word.try_into().expect("one result word")))
+            .collect::<Vec<_>>();
+        assert_eq!(
+            words,
+            [
+                30,
+                1,
+                3,
+                ArrayOpStatus::Ok as i64,
+                0,
+                0,
+                0,
+                ArrayOpStatus::SchemaMismatch as i64,
+            ]
+        );
+
+        let Some(jit) = JitProgram::compile(&program) else {
+            assert!(
+                !available(),
+                "task JIT refused store-backed array reads on a native target"
+            );
+            return;
+        };
+        let mut task = JitTask::spawn(&jit, FnId(0));
+        assert_eq!(
+            task.run_hosted_with_value_memories(&jit, &mut [], &[], &mut [], memories),
+            TaskStep::Done
+        );
+        assert_eq!(task.result, interp.result);
+        assert_eq!(task.trace, interp.trace);
+    }
+
+    /// Interior construction: build a molten array, fill it, read it back. No
+    /// store, no host call, no identity — and both lanes agree word for word.
+    #[test]
+    fn molten_array_construction_matches_the_interpreter() {
+        const SCHEMA: i64 = 7;
+        // frame: [0]=array, [1]=index, [2]=value, [3]=elem, [4]=present,
+        //        [5]=len, [6]=len present, [7]=oob elem, [8]=oob present
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(10),
+                code: vec![
+                    Op::ConstI64 { dst: 72, value: 3 },
+                    Op::ArrayNew {
+                        dst: 0,
+                        status: 8,
+                        count_slot: 72,
+                        elem_width: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::ConstI64 { dst: 8, value: 0 },
+                    Op::ConstI64 { dst: 16, value: 10 },
+                    Op::ArrayStoreWord {
+                        status: 72,
+                        array: 0,
+                        index: 8,
+                        src: 16,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::ConstI64 { dst: 8, value: 1 },
+                    Op::ConstI64 { dst: 16, value: 20 },
+                    Op::ArrayStoreWord {
+                        status: 72,
+                        array: 0,
+                        index: 8,
+                        src: 16,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::ConstI64 { dst: 8, value: 2 },
+                    Op::ConstI64 { dst: 16, value: 30 },
+                    Op::ArrayStoreWord {
+                        status: 72,
+                        array: 0,
+                        index: 8,
+                        src: 16,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    // Read position 2 back out.
+                    Op::LoadArrayWord {
+                        dst: 24,
+                        present: 32,
+                        array: 0,
+                        index: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::LoadArrayLen {
+                        dst: 40,
+                        status: 48,
+                        array: 0,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    // Out of range on a molten array behaves as on a store one.
+                    Op::ConstI64 { dst: 8, value: 3 },
+                    Op::LoadArrayWord {
+                        dst: 56,
+                        present: 64,
+                        array: 0,
+                        index: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::Ret { src: 24, size: 48 },
+                ],
+            }],
+        };
+
+        let mut interp = Task::spawn(&program, FnId(0));
+        assert_eq!(interp.run(&program, &mut [], &[]), TaskStep::Done);
+        let words = interp
+            .result
+            .chunks_exact(8)
+            .map(|word| i64::from_le_bytes(word.try_into().expect("one result word")))
+            .collect::<Vec<_>>();
+        assert_eq!(words, [30, 1, 3, ArrayOpStatus::Ok as i64, 0, 0]);
+
+        let Some(jit) = JitProgram::compile(&program) else {
+            assert!(
+                !available(),
+                "task JIT refused molten array construction on a native target"
+            );
+            return;
+        };
+        let mut task = JitTask::spawn(&jit, FnId(0));
+        assert_eq!(task.run(&jit, &mut [], &[]), TaskStep::Done);
         assert_eq!(task.result, interp.result);
         assert_eq!(task.trace, interp.trace);
     }

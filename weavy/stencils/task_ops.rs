@@ -50,6 +50,40 @@ pub struct Ctx {
     pub store_value_memory_count: usize,
     pub molten_value_memories: *const ValueMemory,
     pub molten_value_memory_count: usize,
+    /// Molten payloads lent by an external owner; read-only.
+    pub lent_molten_value_memories: *const ValueMemory,
+    pub lent_molten_value_memory_count: usize,
+    /// The task's private molten arena, reached only through the two ABI
+    /// functions below so both lanes share one arena semantics.
+    pub molten: *mut core::ffi::c_void,
+    pub molten_alloc: unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64) -> i64,
+    pub molten_bytes: unsafe extern "C" fn(*mut core::ffi::c_void, i64, *mut usize) -> *mut u8,
+    pub array_new:
+        unsafe extern "C" fn(*mut core::ffi::c_void, i64, usize, i64, *mut i64) -> i64,
+    pub array_store:
+        unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *const u8, usize, i64) -> i64,
+    pub array_load: unsafe extern "C" fn(
+        *const ValueMemory,
+        usize,
+        *const ValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        *mut u8,
+        usize,
+        i64,
+    ) -> i64,
+    pub array_len: unsafe extern "C" fn(
+        *const ValueMemory,
+        usize,
+        *const ValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        *mut i64,
+    ) -> i64,
 }
 
 /// MUST match `crate::task::ValueMemory`.
@@ -425,12 +459,125 @@ pub unsafe extern "C" fn weavy_task_load_array_word(cx: *mut Ctx) {
         c.store_value_memory_count,
         c.molten_value_memories,
         c.molten_value_memory_count,
+    let mut value = 0i64;
+    let status = (c.array_load)(
+        c.store_value_memories,
+        c.store_value_memory_count,
+        c.lent_molten_value_memories,
+        c.lent_molten_value_memory_count,
+        c.molten,
         read_i64(c.frame, array),
         read_i64(c.frame, index),
+        (&raw mut value).cast::<u8>(),
+        8,
         elem_schema_ref,
     );
     write_i64(c.frame, dst, value);
-    write_i64(c.frame, present, ok);
+    write_i64(c.frame, present, i64::from(status == 1));
+    cont!(cx);
+}
+
+/// Reserve a molten array — immediates:
+/// [dst, status, count_slot, elem_width, elem_schema_ref].
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_array_new(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let status = *c.prog.add(1);
+    let count_slot = *c.prog.add(2);
+    let elem_width = *c.prog.add(3) as usize;
+    let elem_schema_ref = *c.prog.add(4) as i64;
+    c.prog = c.prog.add(5);
+    let mut handle = 0i64;
+    let op_status = (c.array_new)(
+        c.molten,
+        read_i64(c.frame, count_slot),
+        elem_width,
+        elem_schema_ref,
+        &raw mut handle,
+    );
+    write_i64(c.frame, dst, handle);
+    write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+/// Fill one position of a molten array — immediates:
+/// [status, array, index, src, elem_width, elem_schema_ref].
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_array_store_word(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let status = *c.prog;
+    let array = *c.prog.add(1);
+    let index = *c.prog.add(2);
+    let src = *c.prog.add(3);
+    let elem_width = *c.prog.add(4) as usize;
+    let elem_schema_ref = *c.prog.add(5) as i64;
+    c.prog = c.prog.add(6);
+    let array = read_i64(c.frame, array);
+    let index = read_i64(c.frame, index);
+    let op_status = (c.array_store)(
+        c.molten,
+        array,
+        index,
+        c.frame.add(src as usize),
+        elem_width,
+        elem_schema_ref,
+    );
+    write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+/// Checked array element region read — immediates:
+/// [dst, status, array, index, elem_width, elem_schema_ref].
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_load_array(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let status = *c.prog.add(1);
+    let array = *c.prog.add(2);
+    let index = *c.prog.add(3);
+    let elem_width = *c.prog.add(4) as usize;
+    let elem_schema_ref = *c.prog.add(5) as i64;
+    c.prog = c.prog.add(6);
+    let op_status = (c.array_load)(
+        c.store_value_memories,
+        c.store_value_memory_count,
+        c.lent_molten_value_memories,
+        c.lent_molten_value_memory_count,
+        c.molten,
+        read_i64(c.frame, array),
+        read_i64(c.frame, index),
+        c.frame.add(dst as usize),
+        elem_width,
+        elem_schema_ref,
+    );
+    write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+/// Array element count — immediates:
+/// [dst, status, array, elem_schema_ref].
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_load_array_len(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let status = *c.prog.add(1);
+    let array = *c.prog.add(2);
+    let elem_schema_ref = *c.prog.add(3) as i64;
+    c.prog = c.prog.add(4);
+    let mut count = 0i64;
+    let op_status = (c.array_len)(
+        c.store_value_memories,
+        c.store_value_memory_count,
+        c.lent_molten_value_memories,
+        c.lent_molten_value_memory_count,
+        c.molten,
+        read_i64(c.frame, array),
+        elem_schema_ref,
+        &raw mut count,
+    );
+    write_i64(c.frame, dst, count);
+    write_i64(c.frame, status, op_status);
     cont!(cx);
 }
 
