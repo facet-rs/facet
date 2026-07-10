@@ -44,7 +44,7 @@ struct Ctx {
     molten_bytes: unsafe extern "C" fn(*const core::ffi::c_void, i64, *mut usize) -> *const u8,
     array_new: unsafe extern "C" fn(*mut core::ffi::c_void, i64, usize, i64, *mut i64) -> i64,
     array_store:
-        unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, usize, *const u8, usize, i64) -> i64,
+        unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *const u8, usize, i64) -> i64,
     array_load: unsafe extern "C" fn(
         *const crate::task::RawValueMemory,
         usize,
@@ -53,7 +53,6 @@ struct Ctx {
         *mut core::ffi::c_void,
         i64,
         i64,
-        usize,
         *mut u8,
         usize,
         i64,
@@ -379,7 +378,7 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
             Op::JumpIfZero { .. } => 3,
             Op::LoadIndexedI64 { .. } | Op::StoreIndexedI64 { .. } => 4,
             Op::ArrayNew { .. } => 5,
-            Op::ArrayStoreWord { .. } | Op::LoadArray { .. } | Op::ArrayStore { .. } => 7,
+            Op::ArrayStoreWord { .. } | Op::LoadArray { .. } | Op::ArrayStore { .. } => 6,
             Op::LoadArrayWord { .. } => 5,
             Op::CompareValueBytes { .. } => 3,
             Op::Await { .. } => 3,
@@ -494,7 +493,6 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                     u64::from(*array),
                     u64::from(*index),
                     u64::from(*src),
-                    0,
                     8,
                     *elem_schema_ref as u64,
                 ] {
@@ -506,7 +504,6 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                 array,
                 index,
                 src,
-                elem_offset,
                 elem_width,
                 elem_schema_ref,
             } => {
@@ -515,7 +512,6 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                     u64::from(*array),
                     u64::from(*index),
                     u64::from(*src),
-                    u64::from(*elem_offset),
                     u64::from(*elem_width),
                     *elem_schema_ref as u64,
                 ] {
@@ -527,7 +523,6 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                 status,
                 array,
                 index,
-                elem_offset,
                 elem_width,
                 elem_schema_ref,
             } => {
@@ -536,7 +531,6 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                     u64::from(*status),
                     u64::from(*array),
                     u64::from(*index),
-                    u64::from(*elem_offset),
                     u64::from(*elem_width),
                     *elem_schema_ref as u64,
                 ] {
@@ -1718,7 +1712,6 @@ mod tests {
                         array: 8,
                         index: 24,
                         src: 32,
-                        elem_offset: 0,
                         elem_width: 8,
                         elem_schema_ref: SCHEMA ^ 1,
                     },
@@ -1728,7 +1721,6 @@ mod tests {
                         array: 8,
                         index: 24,
                         src: 32,
-                        elem_offset: 0,
                         elem_width: 8,
                         elem_schema_ref: SCHEMA,
                     },
@@ -1772,7 +1764,6 @@ mod tests {
                         array: 8,
                         index: 24,
                         src: 32,
-                        elem_offset: 0,
                         elem_width: 16,
                         elem_schema_ref: SCHEMA,
                     },
@@ -1784,7 +1775,6 @@ mod tests {
                         array: 8,
                         index: 24,
                         src: 32,
-                        elem_offset: 0,
                         elem_width: 16,
                         elem_schema_ref: SCHEMA,
                     },
@@ -1793,7 +1783,6 @@ mod tests {
                         status: 80,
                         array: 8,
                         index: 24,
-                        elem_offset: 0,
                         elem_width: 16,
                         elem_schema_ref: SCHEMA,
                     },
@@ -1816,13 +1805,16 @@ mod tests {
     }
 
     #[test]
-    fn task_local_reads_require_complete_region_initialization() {
+    fn task_local_reads_require_whole_element_initialization() {
+        // Writes are whole-element, so initialization is a per-element
+        // property: a slot reads `Uninitialized` until its complete element is
+        // stored, and storing one element never initializes a sibling.
         const SCHEMA: i64 = 0x2223;
         let program = Program {
             fns: vec![TaskFn {
                 frame: frame_of_i64s(13),
                 code: vec![
-                    Op::ConstI64 { dst: 0, value: 1 },
+                    Op::ConstI64 { dst: 0, value: 2 },
                     Op::ArrayNew {
                         dst: 8,
                         status: 16,
@@ -1831,12 +1823,13 @@ mod tests {
                         elem_schema_ref: SCHEMA,
                     },
                     Op::ConstI64 { dst: 24, value: 0 },
+                    // Element 0 unwritten: whole-element read is Uninitialized,
+                    // destination zeroed.
                     Op::LoadArray {
                         dst: 48,
                         status: 64,
                         array: 8,
                         index: 24,
-                        elem_offset: 0,
                         elem_width: 16,
                         elem_schema_ref: SCHEMA,
                     },
@@ -1844,43 +1837,35 @@ mod tests {
                         dst: 32,
                         value: 0x1111,
                     },
+                    Op::ConstI64 {
+                        dst: 40,
+                        value: 0x2222,
+                    },
+                    // One whole 16-byte element store.
                     Op::ArrayStore {
                         status: 72,
                         array: 8,
                         index: 24,
                         src: 32,
-                        elem_offset: 0,
-                        elem_width: 8,
+                        elem_width: 16,
                         elem_schema_ref: SCHEMA,
                     },
+                    // Element 0 now reads back complete.
                     Op::LoadArray {
                         dst: 48,
                         status: 80,
                         array: 8,
                         index: 24,
-                        elem_offset: 0,
                         elem_width: 16,
                         elem_schema_ref: SCHEMA,
                     },
-                    Op::ConstI64 {
-                        dst: 40,
-                        value: 0x2222,
-                    },
-                    Op::ArrayStore {
-                        status: 88,
-                        array: 8,
-                        index: 24,
-                        src: 40,
-                        elem_offset: 8,
-                        elem_width: 8,
-                        elem_schema_ref: SCHEMA,
-                    },
+                    // Element 1 was never written: still Uninitialized.
+                    Op::ConstI64 { dst: 24, value: 1 },
                     Op::LoadArray {
-                        dst: 48,
+                        dst: 88,
                         status: 96,
                         array: 8,
                         index: 24,
-                        elem_offset: 0,
                         elem_width: 16,
                         elem_schema_ref: SCHEMA,
                     },
@@ -1893,16 +1878,16 @@ mod tests {
             run_array_program_with_memories(&program, ValueMemories::empty()),
             vec![
                 ArrayOpStatus::Ok as i64,
+                1,
+                0x1111,
+                0x2222,
+                0x1111,
+                0x2222,
+                ArrayOpStatus::Uninitialized as i64,
+                ArrayOpStatus::Ok as i64,
+                ArrayOpStatus::Ok as i64,
                 0,
-                0x1111,
-                0x2222,
-                0x1111,
-                0x2222,
                 ArrayOpStatus::Uninitialized as i64,
-                ArrayOpStatus::Ok as i64,
-                ArrayOpStatus::Uninitialized as i64,
-                ArrayOpStatus::Ok as i64,
-                ArrayOpStatus::Ok as i64,
             ]
         );
     }
@@ -1921,7 +1906,6 @@ mod tests {
                         status: 96,
                         array: 0,
                         index: 8,
-                        elem_offset: 0,
                         elem_width: 16,
                         elem_schema_ref: SCHEMA,
                     },
@@ -1932,7 +1916,6 @@ mod tests {
                         status: 120,
                         array: 48,
                         index: 8,
-                        elem_offset: 0,
                         elem_width: 16,
                         elem_schema_ref: SCHEMA,
                     },
@@ -1942,16 +1925,17 @@ mod tests {
                         status: 144,
                         array: 0,
                         index: 56,
-                        elem_offset: 0,
                         elem_width: 16,
                         elem_schema_ref: SCHEMA,
                     },
+                    // Whole-element width 8 against a valid 16-wide payload is a
+                    // WidthMismatch (the advertised element width is wider than
+                    // the op expects).
                     Op::LoadArray {
                         dst: 152,
                         status: 168,
                         array: 184,
                         index: 0,
-                        elem_offset: 12,
                         elem_width: 8,
                         elem_schema_ref: SCHEMA,
                     },
@@ -1960,7 +1944,6 @@ mod tests {
                         array: 0,
                         index: 8,
                         src: 80,
-                        elem_offset: 0,
                         elem_width: 16,
                         elem_schema_ref: SCHEMA,
                     },
@@ -2004,6 +1987,95 @@ mod tests {
     }
 
     #[test]
+    fn wider_advertised_element_width_is_width_mismatch_and_zeroes_destination() {
+        // A structurally valid payload of the matching schema whose advertised
+        // element width (16) is WIDER than the whole-element op's expected
+        // width (8) must fail as WidthMismatch — never a silent truncation to
+        // the op's width — and must zero the destination it did not fill.
+        const SCHEMA: i64 = 0x5150;
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(6),
+                code: vec![
+                    Op::ConstI64 { dst: 0, value: 0 },
+                    Op::ConstI64 { dst: 8, value: 0 },
+                    // Pre-seed the destination so a zeroing failure is visible.
+                    Op::ConstI64 {
+                        dst: 24,
+                        value: 0x7fff,
+                    },
+                    Op::LoadArray {
+                        dst: 24,
+                        status: 32,
+                        array: 0,
+                        index: 8,
+                        elem_width: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::Ret { src: 24, size: 16 },
+                ],
+            }],
+        };
+        let elem = [1i64.to_le_bytes(), 2i64.to_le_bytes()].concat();
+        let wide = array_elements_payload(SCHEMA, 16, &[&elem]);
+        let store = [ValueMemory::from_slice(&wide)];
+        let memories = ValueMemories {
+            store: &store,
+            molten: &[],
+        };
+
+        assert_eq!(
+            run_array_program_with_memories(&program, memories),
+            vec![0, ArrayOpStatus::WidthMismatch as i64],
+        );
+    }
+
+    #[test]
+    fn invalid_tag_with_other_schema_is_malformed_not_schema_mismatch() {
+        // A >=24-byte payload with an unrecognized tag is structurally
+        // malformed. Structural validation precedes schema comparison, so even
+        // though its schema word differs from the op's expected schema, the
+        // status must be MalformedPayload, never SchemaMismatch.
+        const SCHEMA: i64 = 0x6161;
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(5),
+                code: vec![
+                    Op::ConstI64 { dst: 0, value: 0 },
+                    Op::ConstI64 { dst: 8, value: 0 },
+                    Op::LoadArray {
+                        dst: 16,
+                        status: 24,
+                        array: 0,
+                        index: 8,
+                        elem_width: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::Ret { src: 24, size: 8 },
+                ],
+            }],
+        };
+        // tag=0x0bad (neither words nor elements), a DIFFERENT schema, count=0
+        // — exactly the 24-byte minimum header, so the length gate is passed
+        // only after the tag is already rejected.
+        let mut invalid = Vec::new();
+        invalid.extend_from_slice(&0x0badi64.to_le_bytes());
+        invalid.extend_from_slice(&(SCHEMA ^ 0x1).to_le_bytes());
+        invalid.extend_from_slice(&0i64.to_le_bytes());
+        assert_eq!(invalid.len(), 24);
+        let store = [ValueMemory::from_slice(&invalid)];
+        let memories = ValueMemories {
+            store: &store,
+            molten: &[],
+        };
+
+        assert_eq!(
+            run_array_program_with_memories(&program, memories),
+            vec![ArrayOpStatus::MalformedPayload as i64],
+        );
+    }
+
+    #[test]
     fn nonresident_sentinel_is_invalid_handle_not_resident_empty_slice() {
         // `ValueMemory::empty()` (null ptr, len 0) is the nonresident/evicted
         // sentinel and must read as InvalidHandle through the checked array
@@ -2024,7 +2096,6 @@ mod tests {
                         status: 32,
                         array: 0,
                         index: 16,
-                        elem_offset: 0,
                         elem_width: 8,
                         elem_schema_ref: SCHEMA,
                     },
@@ -2033,7 +2104,6 @@ mod tests {
                         status: 48,
                         array: 8,
                         index: 16,
-                        elem_offset: 0,
                         elem_width: 8,
                         elem_schema_ref: SCHEMA,
                     },

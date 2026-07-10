@@ -271,11 +271,13 @@ impl MoltenArena {
         bytes.extend_from_slice(&count_i64(count)?.to_le_bytes());
         bytes.extend_from_slice(&count_i64(elem_width)?.to_le_bytes());
         bytes.resize(total, 0);
+        // Whole-element writes make initialization a per-element property: one
+        // flag per slot, set the moment its complete element is stored.
         let mut initialized = Vec::new();
         initialized
-            .try_reserve_exact(data_len)
+            .try_reserve_exact(count)
             .map_err(|_| ArrayOpStatus::AllocationFailed)?;
-        initialized.resize(data_len, false);
+        initialized.resize(count, false);
 
         self.buffers.push(MoltenBuffer { bytes, initialized });
         Ok(handle)
@@ -430,7 +432,6 @@ pub(crate) unsafe extern "C" fn array_store_abi(
     arena: *mut core::ffi::c_void,
     array: i64,
     index: i64,
-    elem_offset: usize,
     src: *const u8,
     elem_width: usize,
     elem_schema_ref: i64,
@@ -449,7 +450,6 @@ pub(crate) unsafe extern "C" fn array_store_abi(
         ArrayRegion {
             array,
             index,
-            elem_offset,
             elem_width,
             elem_schema_ref,
         },
@@ -477,7 +477,6 @@ pub(crate) unsafe extern "C" fn array_load_abi(
     arena: *mut core::ffi::c_void,
     array: i64,
     index: i64,
-    elem_offset: usize,
     dst: *mut u8,
     elem_width: usize,
     elem_schema_ref: i64,
@@ -514,7 +513,6 @@ pub(crate) unsafe extern "C" fn array_load_abi(
         ArrayRegion {
             array,
             index,
-            elem_offset,
             elem_width,
             elem_schema_ref,
         },
@@ -721,31 +719,32 @@ pub enum Op {
     },
     /// Checked region copy into a molten array element.
     ///
-    /// The array must be task-local molten storage. `elem_width` bytes are
-    /// copied from `frame[src..]` into element `frame[index]` when the handle,
-    /// payload, width, schema, and index all validate. `frame[status]` receives
-    /// [`ArrayOpStatus`].
+    /// The array must be task-local molten storage. This is a WHOLE-ELEMENT
+    /// operation: the complete `elem_width`-byte element is copied from
+    /// `frame[src..]` into element `frame[index]` when the handle, payload,
+    /// exact element width, schema, and index all validate. Records and nested
+    /// values are addressed by ordinary static projection on the frame side.
+    /// `frame[status]` receives [`ArrayOpStatus`].
     ArrayStore {
         status: u32,
         array: u32,
         index: u32,
         src: u32,
-        elem_offset: u32,
         elem_width: u32,
         elem_schema_ref: i64,
     },
-    /// Checked region copy out of a store-backed, lent molten, or task-local
-    /// molten array element.
+    /// Checked whole-element copy out of a store-backed, lent molten, or
+    /// task-local molten array element.
     ///
-    /// `elem_width` bytes are copied to `frame[dst..]` when the handle, payload,
-    /// width, schema, and index all validate. On failure those destination bytes
-    /// are zeroed and `frame[status]` receives the precise [`ArrayOpStatus`].
+    /// The complete `elem_width`-byte element is copied to `frame[dst..]` when
+    /// the handle, payload, exact element width, schema, and index all validate.
+    /// On failure those destination bytes are zeroed and `frame[status]`
+    /// receives the precise [`ArrayOpStatus`].
     LoadArray {
         dst: u32,
         status: u32,
         array: u32,
         index: u32,
-        elem_offset: u32,
         elem_width: u32,
         elem_schema_ref: i64,
     },
@@ -1163,7 +1162,6 @@ impl Task {
                         ArrayRegion {
                             array,
                             index,
-                            elem_offset: 0,
                             elem_width: 8,
                             elem_schema_ref,
                         },
@@ -1177,7 +1175,6 @@ impl Task {
                     array,
                     index,
                     src,
-                    elem_offset,
                     elem_width,
                     elem_schema_ref,
                 } => {
@@ -1188,7 +1185,6 @@ impl Task {
                         ArrayRegion {
                             array,
                             index,
-                            elem_offset: elem_offset as usize,
                             elem_width: elem_width as usize,
                             elem_schema_ref,
                         },
@@ -1224,7 +1220,6 @@ impl Task {
                     status,
                     array,
                     index,
-                    elem_offset,
                     elem_width,
                     elem_schema_ref,
                 } => {
@@ -1239,7 +1234,6 @@ impl Task {
                             ArrayRegion {
                                 array,
                                 index,
-                                elem_offset: elem_offset as usize,
                                 elem_width: elem_width as usize,
                                 elem_schema_ref,
                             },
@@ -1534,7 +1528,6 @@ struct ArrayPayload<'a> {
 struct ArrayRegion {
     array: i64,
     index: i64,
-    elem_offset: usize,
     elem_width: usize,
     elem_schema_ref: i64,
 }
@@ -1544,16 +1537,15 @@ fn parse_array_payload<'a>(
     elem_schema_ref: i64,
     expected_elem_width: Option<usize>,
 ) -> Result<ArrayPayload<'a>, ArrayOpStatus> {
+    // Structural validation FIRST, before any schema comparison: a minimum
+    // header, a recognized tag, a positive element width, and a checked exact
+    // total length. Only bytes that pass this gate are a structurally valid
+    // array; malformed external bytes are classified `MalformedPayload` even
+    // when their schema word happens to differ from what a caller expects.
     if bytes.len() < ARRAY_WORDS_HEADER_SIZE {
         return Err(ArrayOpStatus::MalformedPayload);
     }
     let tag = read_i64_at(bytes, 0);
-    let schema = read_i64_at(bytes, 8);
-    if schema != elem_schema_ref {
-        return Err(ArrayOpStatus::SchemaMismatch);
-    }
-    let count =
-        usize::try_from(read_i64_at(bytes, 16)).map_err(|_| ArrayOpStatus::MalformedPayload)?;
     let (elem_width, body_offset) = match tag {
         // Live compatibility path: existing store-backed `LoadArrayWord`
         // callers and `weavy/examples/array_get_bench.rs` still provide the
@@ -1572,17 +1564,26 @@ fn parse_array_payload<'a>(
         }
         _ => return Err(ArrayOpStatus::MalformedPayload),
     };
-    if let Some(expected) = expected_elem_width
-        && elem_width != expected
-    {
-        return Err(ArrayOpStatus::WidthMismatch);
-    }
+    let count =
+        usize::try_from(read_i64_at(bytes, 16)).map_err(|_| ArrayOpStatus::MalformedPayload)?;
     let expected_len = count
         .checked_mul(elem_width)
         .and_then(|n| body_offset.checked_add(n))
         .ok_or(ArrayOpStatus::MalformedPayload)?;
     if bytes.len() != expected_len {
         return Err(ArrayOpStatus::MalformedPayload);
+    }
+    // Structurally valid: now the schema, then the expected element width.
+    // A valid array of another schema is `SchemaMismatch`; a valid array of the
+    // matching schema but a different width is `WidthMismatch`.
+    let schema = read_i64_at(bytes, 8);
+    if schema != elem_schema_ref {
+        return Err(ArrayOpStatus::SchemaMismatch);
+    }
+    if let Some(expected) = expected_elem_width
+        && elem_width != expected
+    {
+        return Err(ArrayOpStatus::WidthMismatch);
     }
     Ok(ArrayPayload {
         bytes,
@@ -1647,7 +1648,6 @@ fn compare_value_bytes(value_memories: ValueMemories<'_>, a: i64, b: i64) -> i64
         ArrayRegion {
             array,
             index,
-            elem_offset: 0,
             elem_width: 8,
             elem_schema_ref,
         },
@@ -1688,27 +1688,23 @@ fn load_array_region(
         Ok(resident) => resident,
         Err(status) => return status,
     };
-    let payload = match parse_array_payload(resident.bytes, region.elem_schema_ref, None) {
+    let payload = match parse_array_payload(
+        resident.bytes,
+        region.elem_schema_ref,
+        Some(region.elem_width),
+    ) {
         Ok(payload) => payload,
         Err(status) => return status,
     };
     if dst.len() < region.elem_width {
         return ArrayOpStatus::Overflow;
     }
-    let offset = match payload_region_offset(
-        &payload,
-        region.index,
-        region.elem_offset,
-        region.elem_width,
-    ) {
-        Ok(offset) => offset,
+    let (offset, elem_index) = match payload_element_offset(&payload, region.index) {
+        Ok(located) => located,
         Err(status) => return status,
     };
-    let body_offset = offset - payload.body_offset;
     if let Some(initialized) = resident.initialized
-        && !initialized[body_offset..body_offset + region.elem_width]
-            .iter()
-            .all(|&init| init)
+        && !initialized[elem_index]
     {
         return ArrayOpStatus::Uninitialized;
     }
@@ -1723,55 +1719,49 @@ fn store_array_region(molten: &mut MoltenArena, region: ArrayRegion, src: &[u8])
     let Some(buffer) = molten.buffer_mut(region.array) else {
         return ArrayOpStatus::InvalidHandle;
     };
-    let (offset, body_offset) = {
-        let payload = match parse_array_payload(&buffer.bytes, region.elem_schema_ref, None) {
+    let (offset, elem_index) = {
+        let payload = match parse_array_payload(
+            &buffer.bytes,
+            region.elem_schema_ref,
+            Some(region.elem_width),
+        ) {
             Ok(payload) => payload,
             Err(status) => return status,
         };
         if src.len() < region.elem_width {
             return ArrayOpStatus::Overflow;
         }
-        let offset = match payload_region_offset(
-            &payload,
-            region.index,
-            region.elem_offset,
-            region.elem_width,
-        ) {
-            Ok(offset) => offset,
+        match payload_element_offset(&payload, region.index) {
+            Ok(located) => located,
             Err(status) => return status,
-        };
-        (offset, offset - payload.body_offset)
+        }
     };
     buffer.bytes[offset..offset + region.elem_width].copy_from_slice(&src[..region.elem_width]);
-    buffer.initialized[body_offset..body_offset + region.elem_width].fill(true);
+    buffer.initialized[elem_index] = true;
     ArrayOpStatus::Ok
 }
 
-fn payload_region_offset(
+/// Locate a whole element within a structurally valid payload. Returns the
+/// element's byte offset and its element index. The element width is not
+/// re-checked here: `parse_array_payload` was called with `Some(elem_width)`,
+/// so `payload.elem_width` already equals the operation's expected width.
+fn payload_element_offset(
     payload: &ArrayPayload<'_>,
     index: i64,
-    elem_offset: usize,
-    elem_width: usize,
-) -> Result<usize, ArrayOpStatus> {
+) -> Result<(usize, usize), ArrayOpStatus> {
     let index = usize::try_from(index).map_err(|_| ArrayOpStatus::OutOfRange)?;
     if index >= payload.count {
         return Err(ArrayOpStatus::OutOfRange);
     }
-    let region_end = elem_offset
-        .checked_add(elem_width)
-        .ok_or(ArrayOpStatus::Overflow)?;
-    if region_end > payload.elem_width {
-        return Err(ArrayOpStatus::WidthMismatch);
-    }
-    payload
+    let offset = payload
         .body_offset
         .checked_add(
             index
                 .checked_mul(payload.elem_width)
                 .ok_or(ArrayOpStatus::Overflow)?,
         )
-        .and_then(|base| base.checked_add(elem_offset))
-        .ok_or(ArrayOpStatus::Overflow)
+        .ok_or(ArrayOpStatus::Overflow)?;
+    Ok((offset, index))
 }
 
 fn compare_value_bytes(
@@ -2591,7 +2581,6 @@ mod tests {
             ArrayRegion {
                 array: 0,
                 index: 0,
-                elem_offset: 0,
                 elem_width: 8,
                 elem_schema_ref: 0,
             },
@@ -2621,7 +2610,6 @@ mod tests {
             ArrayRegion {
                 array: 0,
                 index: 0,
-                elem_offset: 0,
                 elem_width: 8,
                 elem_schema_ref: 0,
             },

@@ -60,7 +60,6 @@ pub struct Ctx {
         *mut core::ffi::c_void,
         i64,
         i64,
-        usize,
         *const u8,
         usize,
         i64,
@@ -73,7 +72,6 @@ pub struct Ctx {
         *mut core::ffi::c_void,
         i64,
         i64,
-        usize,
         *mut u8,
         usize,
         i64,
@@ -406,7 +404,6 @@ pub unsafe extern "C" fn weavy_task_load_array_word(cx: *mut Ctx) {
         c.molten,
         read_i64(c.frame, array),
         read_i64(c.frame, index),
-        0,
         value.as_mut_ptr(),
         8,
         elem_schema_ref,
@@ -440,8 +437,8 @@ pub unsafe extern "C" fn weavy_task_array_new(cx: *mut Ctx) {
     cont!(cx);
 }
 
-/// Fill one position of a molten array — immediates:
-/// [status, array, index, src, elem_offset, elem_width, elem_schema_ref].
+/// Fill one whole element of a molten array — immediates:
+/// [status, array, index, src, elem_width, elem_schema_ref].
 #[no_mangle]
 pub unsafe extern "C" fn weavy_task_array_store_word(cx: *mut Ctx) {
     let c = &mut *cx;
@@ -449,17 +446,15 @@ pub unsafe extern "C" fn weavy_task_array_store_word(cx: *mut Ctx) {
     let array = *c.prog.add(1);
     let index = *c.prog.add(2);
     let src = *c.prog.add(3);
-    let elem_offset = *c.prog.add(4) as usize;
-    let elem_width = *c.prog.add(5) as usize;
-    let elem_schema_ref = *c.prog.add(6) as i64;
-    c.prog = c.prog.add(7);
+    let elem_width = *c.prog.add(4) as usize;
+    let elem_schema_ref = *c.prog.add(5) as i64;
+    c.prog = c.prog.add(6);
     let array = read_i64(c.frame, array);
     let index = read_i64(c.frame, index);
     let op_status = (c.array_store)(
         c.molten,
         array,
         index,
-        elem_offset,
         c.frame.add(src as usize),
         elem_width,
         elem_schema_ref,
@@ -468,8 +463,8 @@ pub unsafe extern "C" fn weavy_task_array_store_word(cx: *mut Ctx) {
     cont!(cx);
 }
 
-/// Checked array element region read — immediates:
-/// [dst, status, array, index, elem_offset, elem_width, elem_schema_ref].
+/// Checked whole-element array read — immediates:
+/// [dst, status, array, index, elem_width, elem_schema_ref].
 #[no_mangle]
 pub unsafe extern "C" fn weavy_task_load_array(cx: *mut Ctx) {
     let c = &mut *cx;
@@ -477,10 +472,9 @@ pub unsafe extern "C" fn weavy_task_load_array(cx: *mut Ctx) {
     let status = *c.prog.add(1);
     let array = *c.prog.add(2);
     let index = *c.prog.add(3);
-    let elem_offset = *c.prog.add(4) as usize;
-    let elem_width = *c.prog.add(5) as usize;
-    let elem_schema_ref = *c.prog.add(6) as i64;
-    c.prog = c.prog.add(7);
+    let elem_width = *c.prog.add(4) as usize;
+    let elem_schema_ref = *c.prog.add(5) as i64;
+    c.prog = c.prog.add(6);
     let op_status = (c.array_load)(
         c.store_value_memories,
         c.store_value_memory_count,
@@ -489,7 +483,6 @@ pub unsafe extern "C" fn weavy_task_load_array(cx: *mut Ctx) {
         c.molten,
         read_i64(c.frame, array),
         read_i64(c.frame, index),
-        elem_offset,
         c.frame.add(dst as usize),
         elem_width,
         elem_schema_ref,
