@@ -7172,6 +7172,113 @@ pub fn parse_prepared_weavy_hostcalls_resolved_tree_and_scanner(
     })
 }
 
+#[cfg(not(all(
+    snark_jit_active,
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+)))]
+/// Execute a prepared Weavy plan through host-call blocks.
+pub fn parse_prepared_weavy_hostcalls_with_report(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+) -> Result<WeavyParseReport, WeavyParseError> {
+    parse_prepared_weavy_hostcalls_with_report_and_scanner(plan, parser, table, input, None)
+}
+
+#[cfg(not(all(
+    snark_jit_active,
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+)))]
+/// Execute a prepared Weavy plan through host-call blocks with a scanner host.
+pub fn parse_prepared_weavy_hostcalls_with_report_and_scanner(
+    _plan: &WeavyParsePlan,
+    _parser: &parser_ir::ParserGrammar,
+    _table: &parser_ir::ParseTable,
+    _input: &str,
+    _external_scanner: Option<&dyn ExternalScannerHost>,
+) -> Result<WeavyParseReport, WeavyParseError> {
+    Err(WeavyParseError::UnsupportedCanonicalOp)
+}
+
+#[cfg(not(all(
+    snark_jit_active,
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+)))]
+/// Execute a prepared Weavy plan through host-call blocks and return only the tree.
+pub fn parse_prepared_weavy_hostcalls_tree(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+) -> Result<SexpNode, WeavyParseError> {
+    parse_prepared_weavy_hostcalls_tree_and_scanner(plan, parser, table, input, None)
+}
+
+#[cfg(not(all(
+    snark_jit_active,
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+)))]
+/// Execute a prepared Weavy plan through host-call blocks with a scanner host and return
+/// only the tree.
+pub fn parse_prepared_weavy_hostcalls_tree_and_scanner(
+    _plan: &WeavyParsePlan,
+    _parser: &parser_ir::ParserGrammar,
+    _table: &parser_ir::ParseTable,
+    _input: &str,
+    _external_scanner: Option<&dyn ExternalScannerHost>,
+) -> Result<SexpNode, WeavyParseError> {
+    Err(WeavyParseError::UnsupportedCanonicalOp)
+}
+
+#[cfg(not(all(
+    snark_jit_active,
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+)))]
+/// Execute a prepared Weavy plan through host-call blocks and return the ranged CST.
+pub fn parse_prepared_weavy_hostcalls_resolved_tree(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+) -> Result<parser_ir::ResolvedCstNode, WeavyParseError> {
+    parse_prepared_weavy_hostcalls_resolved_tree_and_scanner(plan, parser, table, input, None)
+}
+
+#[cfg(not(all(
+    snark_jit_active,
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+)))]
+/// Execute a prepared Weavy plan through host-call blocks with a scanner host and return
+/// the ranged CST.
+pub fn parse_prepared_weavy_hostcalls_resolved_tree_and_scanner(
+    _plan: &WeavyParsePlan,
+    _parser: &parser_ir::ParserGrammar,
+    _table: &parser_ir::ParseTable,
+    _input: &str,
+    _external_scanner: Option<&dyn ExternalScannerHost>,
+) -> Result<parser_ir::ResolvedCstNode, WeavyParseError> {
+    Err(WeavyParseError::UnsupportedCanonicalOp)
+}
+
 /// Execute a prepared Weavy plan and collect reusable-node metadata.
 pub fn parse_prepared_weavy_collecting_reuse_with_report_and_scanner(
     plan: &WeavyParsePlan,

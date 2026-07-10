@@ -575,7 +575,6 @@ where
 }
 
 enum KeyHashPlan<T> {
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     Native(facet_hash::NativeHashPlan<T>),
     Interpreted(facet_hash::HashPlan<T>),
 }
@@ -585,7 +584,6 @@ where
     T: Facet<'static>,
 {
     fn build() -> Result<Self, facet_hash::HashError> {
-        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         if let Ok(plan) = facet_hash::NativeHashPlan::<T>::build() {
             return Ok(Self::Native(plan));
         }
@@ -595,7 +593,6 @@ where
 
     fn hash64(&self, value: &T) -> Result<u64, facet_hash::HashError> {
         match self {
-            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
             Self::Native(plan) => plan.hash64(value),
             Self::Interpreted(plan) => plan.hash64(value),
         }
@@ -795,11 +792,11 @@ mod tests {
     fn scalar_key_hash_plan_uses_native_when_available() {
         let plan = KeyHashPlan::<u32>::build().unwrap();
 
-        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-        assert!(matches!(plan, KeyHashPlan::Native(_)));
-
-        #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-        assert!(matches!(plan, KeyHashPlan::Interpreted(_)));
+        if facet_hash::NativeHashPlan::<u32>::build().is_ok() {
+            assert!(matches!(plan, KeyHashPlan::Native(_)));
+        } else {
+            assert!(matches!(plan, KeyHashPlan::Interpreted(_)));
+        }
     }
 
     #[test]

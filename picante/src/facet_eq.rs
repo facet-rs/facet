@@ -20,10 +20,6 @@ pub(crate) struct PlannedEquality<T> {
 }
 
 enum PlannedEqualityBackend<T> {
-    #[cfg(any(
-        all(target_os = "macos", target_arch = "aarch64"),
-        all(target_os = "linux", target_arch = "x86_64")
-    ))]
     Native(Arc<facet_hash::NativeEqualityPlan<T>>),
     Interpreted(Arc<facet_hash::EqualityPlan<T>>),
     None,
@@ -40,10 +36,6 @@ impl<T> Clone for PlannedEquality<T> {
 impl<T> Clone for PlannedEqualityBackend<T> {
     fn clone(&self) -> Self {
         match self {
-            #[cfg(any(
-                all(target_os = "macos", target_arch = "aarch64"),
-                all(target_os = "linux", target_arch = "x86_64")
-            ))]
             Self::Native(plan) => Self::Native(plan.clone()),
             Self::Interpreted(plan) => Self::Interpreted(plan.clone()),
             Self::None => Self::None,
@@ -56,24 +48,12 @@ where
     T: Facet<'static>,
 {
     pub(crate) fn new() -> Self {
-        #[cfg(any(
-            all(target_os = "macos", target_arch = "aarch64"),
-            all(target_os = "linux", target_arch = "x86_64")
-        ))]
         let backend = if let Ok(native) = facet_hash::NativeEqualityPlan::<T>::build() {
             PlannedEqualityBackend::Native(Arc::new(native))
         } else if let Ok(plan) = facet_hash::EqualityPlan::<T>::build() {
             PlannedEqualityBackend::Interpreted(Arc::new(plan))
         } else {
             PlannedEqualityBackend::None
-        };
-        #[cfg(not(any(
-            all(target_os = "macos", target_arch = "aarch64"),
-            all(target_os = "linux", target_arch = "x86_64")
-        )))]
-        let backend = match facet_hash::EqualityPlan::<T>::build() {
-            Ok(plan) => PlannedEqualityBackend::Interpreted(Arc::new(plan)),
-            Err(_) => PlannedEqualityBackend::None,
         };
 
         Self { backend }
@@ -84,13 +64,7 @@ where
         !matches!(self.backend, PlannedEqualityBackend::None)
     }
 
-    #[cfg(all(
-        test,
-        any(
-            all(target_os = "macos", target_arch = "aarch64"),
-            all(target_os = "linux", target_arch = "x86_64")
-        )
-    ))]
+    #[cfg(test)]
     pub(crate) fn has_native_plan(&self) -> bool {
         matches!(self.backend, PlannedEqualityBackend::Native(_))
     }
@@ -106,10 +80,6 @@ where
         }
 
         match &self.backend {
-            #[cfg(any(
-                all(target_os = "macos", target_arch = "aarch64"),
-                all(target_os = "linux", target_arch = "x86_64")
-            ))]
             PlannedEqualityBackend::Native(plan) => {
                 if let Ok(equal) = plan.eq(a, b) {
                     return equal;
@@ -502,10 +472,6 @@ mod tests {
         assert!(!facet_eq_direct(&a, &c));
     }
 
-    #[cfg(any(
-        all(target_os = "macos", target_arch = "aarch64"),
-        all(target_os = "linux", target_arch = "x86_64")
-    ))]
     #[test]
     fn planned_equality_uses_native_for_supported_scalar_structs() {
         let equality = PlannedEquality::<ScalarPair>::new();
@@ -513,7 +479,10 @@ mod tests {
         let same = ScalarPair { left: 1, right: -2 };
         let different = ScalarPair { left: 1, right: -3 };
 
-        assert!(equality.has_native_plan());
+        assert_eq!(
+            equality.has_native_plan(),
+            facet_hash::NativeEqualityPlan::<ScalarPair>::build().is_ok()
+        );
         assert!(equality.eq(&left, &same));
         assert!(!equality.eq(&left, &different));
     }

@@ -26,7 +26,6 @@ pub mod api {
 
     use facet::Facet;
     use phon_engine::{CompactError, Registry, typed};
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     use phon_ir::MemOp;
     use phon_ir::{Lowered, LoweredMemProgramStats, lowered_mem_program_stats};
     use phon_schema::DecodeError;
@@ -117,7 +116,6 @@ pub mod api {
         }
     }
 
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     impl From<phon_jit::native::NativeProgramStats> for NativeJitStats {
         fn from(value: phon_jit::native::NativeProgramStats) -> Self {
             Self {
@@ -311,9 +309,7 @@ pub mod api {
     // r[impl crates.jit-opt-in]
     pub struct Codec<T> {
         lowered: Lowered,
-        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         native_decode: Option<phon_jit::native::NativeDecode>,
-        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
         native_encode: Option<phon_jit::native::NativeEncode>,
         _marker: PhantomData<fn() -> T>,
     }
@@ -333,51 +329,26 @@ pub mod api {
             let lowered =
                 typed::lower_typed(&derived.descriptor, &derived.descriptor_blocks, &reg)?;
 
-            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            {
-                let native_decode = native_decode_supported(&lowered)
-                    .then(|| phon_jit::native::NativeDecode::compile_lowered(&lowered));
-                let native_encode = native_encode_supported(&lowered)
-                    .then(|| phon_jit::native::NativeEncode::compile_lowered(&lowered));
-                Ok(Codec {
-                    lowered,
-                    native_decode,
-                    native_encode,
-                    _marker: PhantomData,
-                })
-            }
-
-            #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-            {
-                Ok(Codec {
-                    lowered,
-                    _marker: PhantomData,
-                })
-            }
+            let native_decode = native_decode_supported(&lowered)
+                .then(|| phon_jit::native::NativeDecode::compile_lowered(&lowered));
+            let native_encode = native_encode_supported(&lowered)
+                .then(|| phon_jit::native::NativeEncode::compile_lowered(&lowered));
+            Ok(Codec {
+                lowered,
+                native_decode,
+                native_encode,
+                _marker: PhantomData,
+            })
         }
 
         #[cfg(test)]
         pub(crate) fn decode_uses_native_jit(&self) -> bool {
-            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            {
-                self.native_decode.is_some()
-            }
-            #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-            {
-                false
-            }
+            self.native_decode.is_some()
         }
 
         #[cfg(test)]
         pub(crate) fn encode_uses_native_jit(&self) -> bool {
-            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            {
-                self.native_encode.is_some()
-            }
-            #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-            {
-                false
-            }
+            self.native_encode.is_some()
         }
 
         /// Report the subtrees that make this codec fall back from the native JIT.
@@ -385,28 +356,20 @@ pub mod api {
         /// This is strict-recording diagnostics only. It does not change whether
         /// encode/decode run with the native JIT or the interpreter.
         pub fn jit_fallback_report(&self) -> JitFallbackReport {
-            let report = jit_fallback_report_for_lowered(&self.lowered);
-            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            {
-                let mut report = report;
-                if self.native_decode.is_none() && report.decode.is_empty() {
-                    report.decode.push(JitFallbackRecord {
-                        path: "$".to_string(),
-                        reason: "native decode JIT was not compiled for this program",
-                    });
-                }
-                if self.native_encode.is_none() && report.encode.is_empty() {
-                    report.encode.push(JitFallbackRecord {
-                        path: "$".to_string(),
-                        reason: "native encode JIT was not compiled for this program",
-                    });
-                }
-                report
+            let mut report = jit_fallback_report_for_lowered(&self.lowered);
+            if self.native_decode.is_none() && report.decode.is_empty() {
+                report.decode.push(JitFallbackRecord {
+                    path: "$".to_string(),
+                    reason: "native decode JIT was not compiled for this program",
+                });
             }
-            #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-            {
-                report
+            if self.native_encode.is_none() && report.encode.is_empty() {
+                report.encode.push(JitFallbackRecord {
+                    path: "$".to_string(),
+                    reason: "native encode JIT was not compiled for this program",
+                });
             }
+            report
         }
 
         /// Report the lowered IR shape and, when compiled, the native JIT shape.
@@ -415,21 +378,10 @@ pub mod api {
         /// decode run with the native JIT or the interpreter.
         pub fn jit_shape_report(&self) -> JitShapeReport {
             let lowered = lowered_mem_program_stats(&self.lowered);
-            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            {
-                JitShapeReport {
-                    lowered,
-                    decode_native: self.native_decode.as_ref().map(|jit| jit.stats().into()),
-                    encode_native: self.native_encode.as_ref().map(|jit| jit.stats().into()),
-                }
-            }
-            #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-            {
-                JitShapeReport {
-                    lowered,
-                    decode_native: None,
-                    encode_native: None,
-                }
+            JitShapeReport {
+                lowered,
+                decode_native: self.native_decode.as_ref().map(|jit| jit.stats().into()),
+                encode_native: self.native_encode.as_ref().map(|jit| jit.stats().into()),
             }
         }
 
@@ -441,11 +393,8 @@ pub mod api {
         // r[impl typed.no-dynamic-bounce]
         pub fn encode(&self, value: &T) -> Result<Vec<u8>, Error> {
             let base = core::ptr::from_ref(value).cast::<u8>();
-            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            {
-                if let Some(jit) = &self.native_encode {
-                    return Ok(unsafe { jit.run(base) });
-                }
+            if let Some(jit) = &self.native_encode {
+                return Ok(unsafe { jit.run(base) });
             }
             Ok(unsafe { typed::encode_with(&self.lowered, base) })
         }
@@ -460,12 +409,9 @@ pub mod api {
         // r[impl typed.no-dynamic-bounce]
         pub fn decode(&self, bytes: &'facet [u8]) -> Result<T, Error> {
             let mut slot = MaybeUninit::<T>::uninit();
-            #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-            {
-                if let Some(jit) = &self.native_decode {
-                    unsafe { jit.run(bytes, slot.as_mut_ptr().cast::<u8>()) }?;
-                    return Ok(unsafe { slot.assume_init() });
-                }
+            if let Some(jit) = &self.native_decode {
+                unsafe { jit.run(bytes, slot.as_mut_ptr().cast::<u8>()) }?;
+                return Ok(unsafe { slot.assume_init() });
             }
             unsafe { typed::decode_with(&self.lowered, bytes, slot.as_mut_ptr().cast::<u8>()) }?;
             Ok(unsafe { slot.assume_init() })
@@ -494,7 +440,6 @@ pub mod api {
         Codec::<T>::new()?.decode(bytes)
     }
 
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     fn native_decode_supported(lowered: &Lowered) -> bool {
         phon_jit::native::available()
             && decode_program_supported(&lowered.program)
@@ -504,7 +449,6 @@ pub mod api {
                 .all(|block| decode_program_supported(block))
     }
 
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     fn record_decode_fallbacks(program: &[MemOp], path: &str, out: &mut Vec<JitFallbackRecord>) {
         for (idx, op) in program.iter().enumerate() {
             let op_path = format!("{path}.{idx}");
@@ -518,7 +462,6 @@ pub mod api {
         walk_nested_programs(program, path, out, record_decode_fallbacks);
     }
 
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     fn record_encode_fallbacks(program: &[MemOp], path: &str, out: &mut Vec<JitFallbackRecord>) {
         for (idx, op) in program.iter().enumerate() {
             let op_path = format!("{path}.{idx}");
@@ -541,7 +484,6 @@ pub mod api {
         walk_nested_programs(program, path, out, record_encode_fallbacks);
     }
 
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     fn walk_nested_programs(
         program: &[MemOp],
         path: &str,
@@ -579,7 +521,6 @@ pub mod api {
         }
     }
 
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     fn native_encode_supported(lowered: &Lowered) -> bool {
         phon_jit::native::available()
             && encode_program_supported(&lowered.program)
@@ -589,7 +530,6 @@ pub mod api {
                 .all(|block| encode_program_supported(block))
     }
 
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     fn decode_program_supported(program: &[MemOp]) -> bool {
         program.iter().all(|op| match op {
             MemOp::Scalar { .. }
@@ -615,7 +555,6 @@ pub mod api {
         })
     }
 
-    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     fn encode_program_supported(program: &[MemOp]) -> bool {
         program.iter().all(|op| match op {
             MemOp::Scalar { .. } | MemOp::ScalarRun(_) | MemOp::Bytes(_) | MemOp::Borrow(_) => true,
@@ -642,29 +581,21 @@ pub mod api {
     // r[impl exec.strict-recording]
     // r[impl crates.jit-opt-in]
     pub fn jit_fallback_report_for_lowered(lowered: &Lowered) -> JitFallbackReport {
-        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-        {
-            if !phon_jit::native::available() {
-                return JitFallbackReport::unavailable("native JIT is not active for this build");
-            }
-            let mut report = JitFallbackReport::default();
-            record_decode_fallbacks(&lowered.program, "$", &mut report.decode);
-            record_encode_fallbacks(&lowered.program, "$", &mut report.encode);
-            for (schema, block) in &lowered.blocks {
-                let path = format!("$block[{schema}]");
-                record_decode_fallbacks(block, &path, &mut report.decode);
-                record_encode_fallbacks(block, &path, &mut report.encode);
-            }
-            report
+        if !phon_jit::native::available() {
+            return JitFallbackReport::unavailable("native JIT is not active for this build");
         }
-        #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-        {
-            let _ = lowered;
-            JitFallbackReport::unavailable("native JIT is not active for this build")
+        let mut report = JitFallbackReport::default();
+        record_decode_fallbacks(&lowered.program, "$", &mut report.decode);
+        record_encode_fallbacks(&lowered.program, "$", &mut report.encode);
+        for (schema, block) in &lowered.blocks {
+            let path = format!("$block[{schema}]");
+            record_decode_fallbacks(block, &path, &mut report.decode);
+            record_encode_fallbacks(block, &path, &mut report.encode);
         }
+        report
     }
 
-    #[cfg(all(test, target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(test)]
     mod tests {
         use phon_ir::ir::{Lowered, MemOp};
 
@@ -694,6 +625,13 @@ pub mod api {
             assert!(!native_encode_supported(&lowered));
 
             let report = jit_fallback_report_for_lowered(&lowered);
+            if !phon_jit::native::available() {
+                assert_eq!(
+                    report,
+                    JitFallbackReport::unavailable("native JIT is not active for this build")
+                );
+                return;
+            }
 
             assert_eq!(
                 report.decode,
@@ -753,8 +691,7 @@ mod tests {
         let shape = codec.jit_shape_report();
         assert_eq!(shape.lowered.block_count, 0);
         assert!(shape.lowered.total.op_count > 0);
-        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-        {
+        if codec.decode_uses_native_jit() && codec.encode_uses_native_jit() {
             assert!(codec.decode_uses_native_jit());
             assert!(codec.encode_uses_native_jit());
             assert!(codec.jit_fallback_report().is_empty());
@@ -766,9 +703,7 @@ mod tests {
             assert!(encode_native.chain_count > 0);
             assert!(encode_native.stencil_count >= shape.lowered.total.op_count);
             assert!(encode_native.prog_slot_count > 0);
-        }
-        #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-        {
+        } else {
             assert!(!codec.decode_uses_native_jit());
             assert!(!codec.encode_uses_native_jit());
             assert!(shape.decode_native.is_none());
@@ -803,13 +738,10 @@ mod tests {
     #[test]
     fn api_result_uses_native_jit_when_available() {
         let codec = api::Codec::<ApiResultMsg>::new().unwrap();
-        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-        {
+        if phon_jit::native::available() {
             assert!(codec.decode_uses_native_jit());
             assert!(codec.encode_uses_native_jit());
-        }
-        #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
-        {
+        } else {
             assert!(!codec.decode_uses_native_jit());
             assert!(!codec.encode_uses_native_jit());
         }
@@ -831,8 +763,7 @@ mod tests {
     #[test]
     fn api_native_sized_ints_roundtrip_and_stay_native_clean_when_layout_matches() {
         let codec = api::Codec::<ApiNativeSizedMsg>::new().unwrap();
-        #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
-        {
+        if codec.decode_uses_native_jit() && codec.encode_uses_native_jit() {
             assert!(codec.decode_uses_native_jit());
             assert!(codec.encode_uses_native_jit());
             assert!(codec.jit_fallback_report().is_empty());
