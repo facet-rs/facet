@@ -1604,14 +1604,14 @@ mod tests {
     }
 
     #[test]
-    fn value_byte_comparison_matches_the_interpreter_and_short_circuits_identity() {
+    fn value_byte_comparison_matches_the_interpreter_and_checks_identity_residency() {
         let program = Program {
             fns: vec![TaskFn {
                 frame: frame_of_i64s(6),
                 code: vec![
                     Op::ConstI64 { dst: 0, value: 0 },
                     Op::ConstI64 { dst: 8, value: 1 },
-                    Op::ConstI64 { dst: 16, value: 99 },
+                    Op::ConstI64 { dst: 16, value: 0 },
                     Op::CompareValueBytes {
                         dst: 24,
                         a: 0,
