@@ -50,6 +50,9 @@ The value model: how values are typed, constructed, read, and discriminated.
 > preserve one identical structural-shape identity. A one-word product is not
 > thereby a scalar leaf. Structural branch merges use whole-value copies;
 > field-wise raw copies are not an alternate construction or projection API.
+> An empty product consumes no storage but retains its declared structural
+> identity; co-located zero-width regions are distinguished by that identity,
+> not by invented padding or ambiguous byte-range lookup.
 
 > r[machine.value.proof-carrying-force]
 >

@@ -101,6 +101,13 @@ artifacts and never second-guesses the substrate.
 > followed by one complete product construction; a separate mutation/update
 > primitive is not required for correctness.
 >
+> A zero-word product still has structural-shape identity even though it owns
+> no frame bytes. Several zero-word regions may therefore have the same byte
+> offset without being aliases. Typed operations, call arguments, and returns
+> identify such a value through its declared region and shape identity, not by
+> choosing the first region whose `(offset, size)` happens to be `(n, 0)`.
+> Unit construction allocates no dummy word and fabricates no padding.
+>
 > Compact discriminated values add selector-correlated shape facts to that
 > manifest. The contract names the enum shape, its compact width and selector
 > word, every valid variant, and each variant field's shape and shared-payload
