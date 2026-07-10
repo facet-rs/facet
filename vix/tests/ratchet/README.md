@@ -1,6 +1,7 @@
 # The ratchet
 
-One hundred rungs. Each is a vix test file that does not compile today.
+One hundred and forty rungs. Each is a Vix test file that begins red and becomes
+permanently green only through the production compiler/runtime path.
 When `vx test --ratchet` reports rung 100 green, the language described in
 the vix book (`/vix`) exists. That is the definition of done.
 

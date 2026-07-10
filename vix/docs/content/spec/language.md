@@ -394,11 +394,14 @@ and test function are language syntax.
 
 ## Diagnostics
 
-Parser, name-resolution, type, lowering, and runtime diagnostics are typed
-records with a stable code, primary span, labeled related spans, structured
-payload, and optional fix. Rendered prose is not an API. Lowering a legal program
-through a conservative path emits a reasoned performance diagnostic; silently
-falling off a fast path is forbidden.
+> r[lang.diagnostics.typed]
+>
+> Parser, name-resolution, type, lowering, and runtime diagnostics are typed
+> records with a stable code, primary span, labeled related spans, structured
+> payload, and optional fix. Rendered prose is not an API.
+
+Lowering a legal program through a conservative path emits a reasoned
+performance diagnostic; silently falling off a fast path is forbidden.
 
 Diagnostics requested for multiple targets are keyed by target and diagnostic
 identity. Arrival order and executor identity do not enter the result.

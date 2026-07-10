@@ -1,9 +1,9 @@
 //! vix — the demand-driven build language.
 //!
-//! v0 surface: parse vix source into the grammar-derived typed AST. The grammar
-//! (playgrounds/snark/src/bundled/vix/grammar.js) is the single source of truth;
-//! build.rs derives the AST types AND the resolved-CST lowering from its fields.
-//! Nobody hand-writes the AST.
+//! The authoritative compiler path starts at [`surface`], lowers through [`vir`]
+//! and [`lowering`], and runs through [`runtime`]. The crate-root parser and
+//! [`machine`] module remain during migration for existing consumers; the ratchet
+//! does not enter them. Both syntax trees are generated from Snark grammars.
 
 use snark::{
     grammar::RawGrammarJson,
@@ -19,18 +19,25 @@ pub mod ast {
 }
 
 pub mod binder;
+pub mod compiler;
 pub(crate) mod data;
+pub mod diagnostic;
 pub mod exec;
 pub mod fetch;
 pub mod ide;
+pub mod lowering;
 pub mod machine;
 pub(crate) mod module;
+pub mod ratchet;
 #[cfg(all(feature = "real-process", not(target_arch = "wasm32")))]
 pub mod real_process;
 pub mod reloc_selection;
 #[cfg(all(feature = "runner-rpc", not(target_arch = "wasm32")))]
 pub mod rpc_process;
+pub mod runtime;
+pub mod surface;
 pub mod value;
+pub mod vir;
 
 /// The tree-sitter grammar.json emitted from grammar.js at build time, embedded so
 /// the runtime parser needs no JS engine.

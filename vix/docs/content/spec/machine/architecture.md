@@ -95,6 +95,14 @@ source maps, primitive ABI requirements, capture identities, and grants. They
 need Weavy and the registered primitives, not vixc. Native code is produced and
 cached locally where allowed.
 
+Executor admission checks two distinct support records. Weavy support names the
+bytecode vocabulary epoch, registered intrinsic ABIs, interpreter/JIT lanes,
+target architectures, and resource limits. Tool capabilities name rustc, clang,
+SDKs, runners, and other ambient or materialized executable closures. Weavy has
+no language-level `CapabilitySet`; its support record says which lowered
+instructions it can execute, while the Vix capability set says which effects the
+placed demand may request.
+
 ## Runtime state and basic scheduling
 
 > r[machine.runtime.state-machines]
@@ -110,6 +118,13 @@ join or pending effect parks the task. `join` and `publish` are atomic scheduler
 mutations. The initial implementation MAY have one deterministic worker, but it
 must use these same state transitions, event vocabulary, admission interface,
 and kill/replay contract; concurrency cannot require a second scheduler.
+
+A Weavy task is only the discardable execution state: its frame arena, live
+frame chain, program counters, and suspension slots. It carries no value
+identity, memo authority, capability discovery, or placement policy. Killing it
+leaves the demand record and any demand-owned effect ticket intact. This is the
+boundary that permits migration and memory-pressure eviction without inventing
+task serialization as a semantic format.
 
 ## Causal observability
 

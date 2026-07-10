@@ -1,0 +1,123 @@
+//! Production-path ratchet runner: source -> generated AST -> VIR -> Weavy.
+
+use crate::compiler::Compiler;
+use crate::diagnostic::Diagnostics;
+use crate::lowering::{LoweringCache, LoweringCacheCounters};
+use crate::runtime::{
+    ChaosPolicy, Counters, DemandState, Evaluation, Event, EventLog, LocationId, Runtime,
+    TaskState, ValueId,
+};
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct CheckRun {
+    pub identity: ValueId,
+    pub passed: bool,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct SuiteRun {
+    pub checks: Vec<CheckRun>,
+    pub counters: Counters,
+    pub events: Vec<Event>,
+    pub receipt_count: u64,
+    pub all_demands_ready: bool,
+    pub all_tasks_terminal: bool,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct RatchetReport {
+    pub plain: SuiteRun,
+    pub chaos: SuiteRun,
+    pub lowering_cache: LoweringCacheCounters,
+}
+
+impl RatchetReport {
+    #[must_use]
+    pub fn agrees(&self) -> bool {
+        self.plain.checks == self.chaos.checks
+    }
+
+    #[must_use]
+    pub fn passed(&self) -> bool {
+        self.agrees()
+            && self.plain.checks.iter().all(|check| check.passed)
+            && self.chaos.checks.iter().all(|check| check.passed)
+            && self.plain.all_demands_ready
+            && self.chaos.all_demands_ready
+            && self.plain.all_tasks_terminal
+            && self.chaos.all_tasks_terminal
+    }
+}
+
+/// Run every declared test twice. The chaos lane discards the first running
+/// task at an edge safepoint and must publish the same identities.
+///
+/// r[impl machine.scheduler.chaos-kill-oracle]
+/// r[impl machine.scheduler.replay-is-semantics]
+pub fn run_source(source: &str) -> Result<RatchetReport, Diagnostics> {
+    let module = Compiler::new().compile(source)?;
+    let mut cache = LoweringCache::default();
+
+    let plain = run_lane(&module, &mut cache, ChaosPolicy::default())?;
+    let chaos = run_lane(
+        &module,
+        &mut cache,
+        ChaosPolicy {
+            kill_first_running_task: true,
+        },
+    )?;
+    Ok(RatchetReport {
+        plain,
+        chaos,
+        lowering_cache: cache.counters(),
+    })
+}
+
+fn run_lane(
+    module: &crate::vir::Module,
+    cache: &mut LoweringCache,
+    chaos: ChaosPolicy,
+) -> Result<SuiteRun, Diagnostics> {
+    let mut runtime = Runtime::new(EventLog::default());
+    let mut checks = Vec::new();
+    let mut kill_available = chaos.kill_first_running_task;
+
+    for test in &module.tests {
+        let partitioned = module.partition_test(test);
+        for island in &partitioned.islands {
+            let lowered = cache.get_or_lower(island)?;
+            let location = LocationId::for_test_island(&partitioned.name, island.id.0);
+            let evaluation: Evaluation = runtime.evaluate(
+                island.id,
+                location,
+                lowered,
+                ChaosPolicy {
+                    kill_first_running_task: kill_available,
+                },
+            )?;
+            kill_available = false;
+            checks.push(CheckRun {
+                identity: evaluation.identity,
+                passed: evaluation.passed,
+            });
+        }
+    }
+
+    let counters = runtime.counters();
+    let receipt_count = runtime.receipts().count() as u64;
+    let all_demands_ready = runtime
+        .demands()
+        .all(|demand| demand.state == DemandState::Ready);
+    let all_tasks_terminal = runtime
+        .tasks()
+        .all(|task| matches!(task.state, TaskState::Completed | TaskState::Discarded));
+    let events = runtime.into_sink().into_events();
+    Ok(SuiteRun {
+        checks,
+        counters,
+        events,
+        receipt_count,
+        all_demands_ready,
+        all_tasks_terminal,
+    })
+}
