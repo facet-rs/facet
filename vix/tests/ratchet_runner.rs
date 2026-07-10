@@ -6,6 +6,7 @@ use vix::runtime::{DemandState, EventKind, MemoVerdict, TaskState};
 use vix::surface::{SurfaceParser, ast};
 use vix::vir::{EffectKind, FunctionId, NodeRef, Op as VirOp, Type as VirType, VariantPayload};
 use weavy::task::Op as WeavyOp;
+use weavy::{PayloadKind, ProgramDefect, RegionShape, ValueShapeKind, WordKind};
 
 const RUNG_001: &str = include_str!("ratchet/001-harness.vix");
 const RUNG_002: &str = include_str!("ratchet/002-arithmetic.vix");
@@ -68,6 +69,31 @@ fn pcs_for_node(
         .enumerate()
         .filter_map(|(pc, owner)| (*owner == node).then_some(pc))
         .collect()
+}
+
+fn with_first_lowered<T>(
+    source: &str,
+    inspect: impl FnOnce(&vix::lowering::LoweringArtifact) -> T,
+) -> T {
+    let module = Compiler::new().compile(source).expect("source compiles");
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut lowering_cache = LoweringCache::default();
+    let lowered = lowering_cache
+        .get_or_lower(&partitioned.islands[0])
+        .expect("source lowers to Weavy");
+    inspect(lowered)
+}
+
+fn shape_words(shape: &RegionShape) -> Vec<Vec<WordKind>> {
+    shape
+        .words
+        .iter()
+        .map(|kinds| kinds.as_slice().to_vec())
+        .collect()
+}
+
+fn region_byte_len(region: &weavy::FrameRegion) -> usize {
+    region.shape.checked_byte_len().expect("region size fits")
 }
 
 /// The first rung is an architectural certificate, not just a boolean test.
@@ -242,6 +268,293 @@ fn pc_node_attribution_is_cached_but_node_spans_stay_per_compilation() {
     assert_ne!(output_source.span, shifted_source.span);
     assert_eq!(lowering_cache.counters().misses, 1);
     assert_eq!(lowering_cache.counters().hits, 1);
+}
+
+#[test]
+fn scalar_contract_verifies_through_real_weavy_program_path() {
+    const SOURCE: &str = r#"
+#[test]
+fn scalar_contract() -> Stream<Check> {
+    yield expect_eq((1 + 2) * 3, 9);
+}
+"#;
+
+    with_first_lowered(SOURCE, |lowered| {
+        let verified = lowered.program.clone().verify(lowered.contract.clone());
+        assert!(
+            verified.is_ok(),
+            "scalar-only lowered artifacts should certify through Program::verify: {verified:?}",
+        );
+    });
+}
+
+#[test]
+fn emitted_contract_covers_product_enum_nested_and_zero_word_shapes() {
+    const SOURCE: &str = r#"
+struct Empty {}
+struct Wrap { pair: (Bool, String), empty: Empty }
+
+enum Outcome {
+    Flag(Bool),
+    Label(String),
+}
+
+fn has_empty(empty: Empty) -> Bool {
+    true
+}
+
+#[test]
+fn structural_contracts() -> Stream<Check> {
+    let empty = Empty {};
+    let nested = ((true, "ok"), false);
+    let wrapped = Wrap { pair: (true, "ok"), empty };
+    let outcome = Outcome::Label("ok");
+    yield expect(has_empty(wrapped.empty)
+        && nested.1 == false
+        && wrapped.pair.0
+        && match outcome {
+        Outcome::Flag(value) => value,
+        Outcome::Label(label) => label == "ok",
+    });
+}
+"#;
+
+    with_first_lowered(SOURCE, |lowered| {
+        let contract = &lowered.contract;
+        assert!(
+            contract
+                .functions
+                .iter()
+                .flat_map(|function| &function.frame.regions)
+                .any(|region| region.shape.words.is_empty() && region.value_shape.is_some())
+        );
+        assert!(contract.schemas.iter().any(|schema| {
+            schema.inline.words.is_empty()
+                && schema.value_shape.is_some()
+                && matches!(schema.payload, PayloadKind::Inline)
+        }));
+
+        let nested_product = contract.value_shapes.iter().any(|shape| match &shape.kind {
+            ValueShapeKind::Product { fields } => {
+                fields.len() == 2
+                    && fields[0].shape.words.len() == 2
+                    && fields[0].value_shape.is_some()
+                    && fields[1].shape.words.len() == 1
+                    && fields[1].value_shape.is_none()
+            }
+            ValueShapeKind::Enum { .. } => false,
+        });
+        assert!(
+            nested_product,
+            "nested aggregate fields must carry nested ValueShapeRef"
+        );
+
+        let enum_shape = contract
+            .value_shapes
+            .iter()
+            .find_map(|shape| match &shape.kind {
+                ValueShapeKind::Enum { selector, variants }
+                    if variants.len() == 2
+                        && selector.offset == 0
+                        && selector.shape == RegionShape::word(WordKind::Scalar) =>
+                {
+                    Some((shape, variants))
+                }
+                _ => None,
+            })
+            .expect("Outcome emits a selector-correlated enum value shape");
+        assert_eq!(
+            shape_words(&enum_shape.0.shape),
+            vec![
+                vec![WordKind::Scalar],
+                vec![
+                    WordKind::Scalar,
+                    WordKind::Handle(
+                        lowered
+                            .contract
+                            .schemas
+                            .iter()
+                            .position(|schema| matches!(
+                                schema.payload,
+                                PayloadKind::OpaqueBytes {
+                                    byte_comparable: true
+                                }
+                            ))
+                            .map(|index| weavy::SchemaRef(index as u32))
+                            .expect("String schema is present")
+                    )
+                ]
+            ]
+        );
+        assert_eq!(enum_shape.1[0].fields.len(), 1);
+        assert_eq!(enum_shape.1[0].fields[0].offset, 8);
+        assert_eq!(
+            enum_shape.1[0].fields[0].shape,
+            RegionShape::word(WordKind::Scalar)
+        );
+        assert_eq!(enum_shape.1[1].fields.len(), 1);
+        assert_eq!(enum_shape.1[1].fields[0].offset, 8);
+        assert!(matches!(
+            enum_shape.1[1].fields[0].shape.words[0].as_slice(),
+            [WordKind::Handle(_)]
+        ));
+    });
+}
+
+#[test]
+fn closure_values_carry_exact_signature_call_contract() {
+    with_first_lowered(RUNG_021, |lowered| {
+        assert!(!lowered.contract.calls.is_empty());
+        let callable_function = lowered
+            .contract
+            .functions
+            .iter()
+            .find(|function| function.call_contract.is_some())
+            .expect("closure target carries an indirect-call contract");
+        let call_contract = callable_function
+            .call_contract
+            .expect("call contract is present");
+        let call = &lowered.contract.calls[call_contract.0 as usize];
+        assert_eq!(call.entries.len(), 1);
+
+        let closure_region = lowered
+            .contract
+            .functions
+            .iter()
+            .flat_map(|function| &function.frame.regions)
+            .find(|region| {
+                matches!(
+                    region.shape.words.as_slice(),
+                    [callable, scalar]
+                        if matches!(callable.as_slice(), [WordKind::Callable(_)])
+                            && scalar.as_slice() == [WordKind::Scalar]
+                )
+            })
+            .expect("closure value is Callable(call-contract) plus environment scalar");
+        assert!(closure_region.value_shape.is_some());
+    });
+}
+
+#[test]
+fn direct_string_call_contract_entries_match_argcopy_abi() {
+    const SOURCE: &str = r#"
+fn check_string(value: String) -> Bool {
+    value == "hello"
+}
+
+#[test]
+fn direct_string_call() -> Stream<Check> {
+    yield expect(check_string("hello"));
+}
+"#;
+
+    with_first_lowered(SOURCE, |lowered| {
+        assert_eq!(lowered.program.fns.len(), 2);
+        let root = &lowered.contract.functions[0];
+        let callee = &lowered.contract.functions[1];
+        assert_eq!(
+            root.entries.len(),
+            2,
+            "root declares its local argument string and the foreign callee string constant"
+        );
+        assert_eq!(
+            callee.entries.len(),
+            2,
+            "callee entries are parameter first, then local string constant"
+        );
+        let root_call = lowered.program.fns[0]
+            .code
+            .iter()
+            .find_map(|op| match op {
+                WeavyOp::Call { args, .. } => Some(args),
+                _ => None,
+            })
+            .expect("root calls check_string directly");
+        assert_eq!(root_call.len(), callee.entries.len());
+        for (arg, entry) in root_call.iter().zip(&callee.entries) {
+            let region = &callee.frame.regions[entry.0 as usize];
+            assert_eq!(arg.dst, region.offset);
+            assert_eq!(arg.size as usize, region_byte_len(region));
+        }
+    });
+}
+
+#[test]
+fn frame_contract_regions_do_not_overlap_for_word_regions() {
+    with_first_lowered(RUNG_004, |lowered| {
+        for function in &lowered.contract.functions {
+            for (left_index, left) in function.frame.regions.iter().enumerate() {
+                let left_start = left.offset as usize;
+                let left_end = left_start + region_byte_len(left);
+                for (right_index, right) in function.frame.regions.iter().enumerate() {
+                    if left_index >= right_index {
+                        continue;
+                    }
+                    let right_start = right.offset as usize;
+                    let right_end = right_start + region_byte_len(right);
+                    assert!(
+                        left_end == left_start
+                            || right_end == right_start
+                            || left_end <= right_start
+                            || right_end <= left_start,
+                        "non-empty frame contract regions {left_index} and {right_index} overlap",
+                    );
+                }
+            }
+        }
+    });
+}
+
+#[test]
+fn cached_contract_is_stable_across_span_only_edits() {
+    let module = Compiler::new()
+        .compile(RUNG_003)
+        .expect("rung 003 compiles");
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut lowering_cache = LoweringCache::default();
+    let lowered = lowering_cache
+        .get_or_lower(&partitioned.islands[0])
+        .expect("rung 003 lowers");
+    let recipe = lowered.recipe;
+    let contract = lowered.contract.clone();
+
+    let shifted_source = format!("\n\n{RUNG_003}");
+    let shifted_module = Compiler::new()
+        .compile(&shifted_source)
+        .expect("span-only edit compiles");
+    let shifted = shifted_module.partition_test(&shifted_module.tests[0]);
+    let shifted_lowered = lowering_cache
+        .get_or_lower(&shifted.islands[0])
+        .expect("span-only edit reuses lowering artifact");
+
+    assert_eq!(shifted_lowered.recipe, recipe);
+    assert_eq!(shifted_lowered.contract, contract);
+    assert_eq!(lowering_cache.counters().misses, 1);
+    assert_eq!(lowering_cache.counters().hits, 1);
+}
+
+#[test]
+fn structural_raw_copy_boundary_is_typed_and_preserved() {
+    const SOURCE: &str = r#"
+#[test]
+fn tuple_boundary() -> Stream<Check> {
+    let pair = (true, false);
+    yield expect(pair.0);
+}
+"#;
+
+    with_first_lowered(SOURCE, |lowered| {
+        let err = lowered
+            .program
+            .clone()
+            .verify(lowered.contract.clone())
+            .expect_err("raw CopyI64 tuple construction is still outside structural verification");
+        assert!(matches!(
+            err.defect,
+            ProgramDefect::StructuralTransferMismatch { .. }
+                | ProgramDefect::StructuralPartialCopy { .. }
+        ));
+    });
 }
 
 #[test]

@@ -510,6 +510,7 @@ impl<'a> ProgramContractBuilder<'a> {
         slot: FrameSlot,
         ty: &Type,
     ) -> Result<WeavyFrameRegion, Diagnostics> {
+        self.schema_for_type(ty, Span { start: 0, end: 0 })?;
         let shape = self.shape_for_type(ty, Span { start: 0, end: 0 })?;
         let mut region = WeavyFrameRegion::new(slot.byte_offset(), shape);
         if let Some(value_shape) = self.value_shape_for_type(ty, Span { start: 0, end: 0 })? {
