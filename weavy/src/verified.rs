@@ -2215,6 +2215,14 @@ impl Verifier<'_> {
                 }
             }
             Op::ConstF64 { dst, bits: _ } => {
+                self.reject_raw_structural_word(
+                    function_id,
+                    pc,
+                    function_index,
+                    frame,
+                    *dst,
+                    AccessRole::Destination,
+                )?;
                 self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
             }
             Op::Trace { id: _ } => {}
@@ -6045,6 +6053,15 @@ mod tests {
                 },
             ),
             (
+                "raw float const",
+                Op::ConstF64 { dst: 16, bits: 0 },
+                ProgramDefect::RawStructuralWordAccess {
+                    role: AccessRole::Destination,
+                    region: RegionId(2),
+                    value_shape: ValueShapeRef(0),
+                },
+            ),
+            (
                 "raw copy",
                 Op::CopyI64 { dst: 0, src: 16 },
                 ProgramDefect::RawStructuralWordAccess {
@@ -6135,5 +6152,95 @@ mod tests {
                 }
             )
         );
+    }
+
+    #[test]
+    fn rejects_invalid_compact_enum_operation_references() {
+        let scalar = RegionShape::word(WordKind::Scalar);
+        let enum_shape = RegionShape::new(vec![kinds(WordKind::Scalar), kinds(WordKind::Scalar)]);
+        let make = |op| {
+            let (program, mut contract) = single_function(
+                4,
+                vec![op, Op::Ret { src: 24, size: 8 }],
+                vec![
+                    word_region(0, WordKind::Scalar),
+                    structural_region(8, enum_shape.clone(), ValueShapeRef(0)),
+                    word_region(24, WordKind::Scalar),
+                ],
+                2,
+            );
+            contract.value_shapes = vec![ValueShapeContract {
+                shape: enum_shape.clone(),
+                kind: ValueShapeKind::Enum {
+                    selector: selector(0, scalar.clone()),
+                    variants: vec![variant(vec![field(8, scalar.clone())])],
+                },
+            }];
+            (program, contract)
+        };
+        let cases = [
+            (
+                "construct variant",
+                Op::EnumConstruct {
+                    dst: RegionId(1),
+                    variant: 1,
+                    fields: vec![],
+                },
+                ProgramDefect::EnumVariantOutOfRange {
+                    value_shape: ValueShapeRef(0),
+                    variant: 1,
+                    variant_count: 1,
+                },
+            ),
+            (
+                "construct missing field",
+                Op::EnumConstruct {
+                    dst: RegionId(1),
+                    variant: 0,
+                    fields: vec![],
+                },
+                ProgramDefect::StructuralFieldCount {
+                    value_shape: ValueShapeRef(0),
+                    variant: Some(0),
+                    expected: 1,
+                    actual: 0,
+                },
+            ),
+            (
+                "projection field",
+                Op::EnumProjectChecked {
+                    dst: RegionId(2),
+                    value: RegionId(1),
+                    variant: 0,
+                    field: 1,
+                },
+                ProgramDefect::StructuralFieldOutOfRange {
+                    value_shape: ValueShapeRef(0),
+                    variant: Some(0),
+                    field: 1,
+                    field_count: 1,
+                },
+            ),
+            (
+                "enum region",
+                Op::EnumIsVariant {
+                    dst: RegionId(2),
+                    value: RegionId(99),
+                    variant: 0,
+                },
+                ProgramDefect::StructuralRegionOutOfRange {
+                    region: RegionId(99),
+                    region_count: 3,
+                },
+            ),
+        ];
+        for (name, op, defect) in cases {
+            let (program, contract) = make(op);
+            assert_eq!(
+                program.verify(contract).expect_err(name),
+                op_error(0, defect),
+                "{name}"
+            );
+        }
     }
 }
