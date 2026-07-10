@@ -8712,7 +8712,6 @@ pub fn poly(n: Int) -> Int {
 }
 "#;
 
-    // r[impl machine.execution.jit-single-feature]
     fn lanes() -> Vec<Lane> {
         let mut lanes = vec![Lane::Interp];
         if weavy::jit::task_lane::available() {

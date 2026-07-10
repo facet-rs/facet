@@ -14,6 +14,11 @@ source {
             name vix
             include ("std/**/*.vix" "corpus-next/**/*.vix" "tests/ratchet/**/*.vix")
         }
+        {
+            name weavy
+            include ("../weavy/build/**/*.rs" "../weavy/src/**/*.rs")
+            test_include ("../weavy/tests/**/*.rs")
+        }
     )
 }
 
