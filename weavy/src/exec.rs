@@ -15,7 +15,7 @@ use crate::jit::task_lane::{JitExecutable, JitTask};
 use crate::task::{FnId, HostFn, Op, Task, TaskEvent, TaskStep, TraceMode, ValueMemories};
 use crate::{
     CallContractId, CallSiteFacts, DriveRequirements, FrameRegion, FunctionContract, RegionId,
-    VerifiedProgram, WordKind,
+    SchemaRef, VerifiedProgram, WordKind,
 };
 
 /// Which lane an [`Executable`] selected for new tasks.
@@ -56,6 +56,36 @@ pub enum CompareSide {
     Right,
 }
 
+/// Declared entry value kind accepted by a typed entry writer.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum EntryWriteKind {
+    Scalar,
+    StoreHandle(SchemaRef),
+}
+
+/// Nonnegative store-backed value handle.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StoreHandle {
+    index: usize,
+}
+
+impl StoreHandle {
+    #[must_use]
+    pub fn new(index: usize) -> Option<Self> {
+        i64::try_from(index).ok()?;
+        Some(Self { index })
+    }
+
+    #[must_use]
+    pub fn index(self) -> usize {
+        self.index
+    }
+
+    fn as_i64(self) -> i64 {
+        i64::try_from(self.index).expect("StoreHandle constructor checked i64 range")
+    }
+}
+
 /// One dynamic fault location in a verified task program.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct FaultSite {
@@ -73,6 +103,29 @@ pub enum TaskFault {
         function_count: usize,
     },
     InvalidEntryShape {
+        entry: FnId,
+        index: usize,
+        region: RegionId,
+    },
+    EntryKindMismatch {
+        entry: FnId,
+        index: usize,
+        region: RegionId,
+        expected: EntryWriteKind,
+        actual: WordKind,
+    },
+    EntryMissing {
+        entry: FnId,
+        index: usize,
+        region: RegionId,
+        kind: WordKind,
+    },
+    EntryAlreadyInitialized {
+        entry: FnId,
+        index: usize,
+        region: RegionId,
+    },
+    EntryWriteAfterDrive {
         entry: FnId,
         index: usize,
         region: RegionId,
@@ -190,6 +243,7 @@ impl Executable {
 
     pub fn spawn(&self, entry: FnId) -> Result<ExecTask<'_>, TaskFault> {
         self.validate_entry(entry)?;
+        let entry_count = self.function(entry)?.entries.len();
         let lane = match &self.native {
             Some(native) => Lane::Native(JitTask::spawn_verified(native, entry)),
             None => Lane::Interpreter(Task::spawn_with_mode(
@@ -203,6 +257,8 @@ impl Executable {
             entry,
             lane,
             poisoned: None,
+            entries_initialized: vec![false; entry_count],
+            entries_closed: false,
         })
     }
 
@@ -258,6 +314,8 @@ pub struct ExecTask<'exec> {
     entry: FnId,
     lane: Lane,
     poisoned: Option<TaskFault>,
+    entries_initialized: Vec<bool>,
+    entries_closed: bool,
 }
 
 enum Lane {
@@ -267,51 +325,54 @@ enum Lane {
 
 impl ExecTask<'_> {
     pub fn write_entry_i64(&mut self, index: usize, value: i64) -> Result<(), TaskFault> {
-        self.write_entry_word(index, value, |kind| kind == WordKind::Scalar)
+        self.write_entry_word(index, value, EntryWriteKind::Scalar)
     }
 
-    pub fn write_entry_callable_id(&mut self, index: usize, value: i64) -> Result<(), TaskFault> {
-        self.write_entry_word(index, value, |kind| matches!(kind, WordKind::Callable(_)))
-    }
-
-    pub fn write_entry_handle(&mut self, index: usize, value: i64) -> Result<(), TaskFault> {
-        self.write_entry_word(index, value, |kind| matches!(kind, WordKind::Handle(_)))
+    pub fn write_entry_store_handle(
+        &mut self,
+        index: usize,
+        schema: SchemaRef,
+        handle: StoreHandle,
+    ) -> Result<(), TaskFault> {
+        self.write_entry_word(index, handle.as_i64(), EntryWriteKind::StoreHandle(schema))
     }
 
     fn write_entry_word(
         &mut self,
         index: usize,
         value: i64,
-        accepts: impl FnOnce(WordKind) -> bool,
+        expected: EntryWriteKind,
     ) -> Result<(), TaskFault> {
         self.check_not_poisoned()?;
-        let function = self.executable.function(self.entry)?;
-        let Some(region) = function.entries.get(index).copied() else {
-            return Err(TaskFault::InvalidEntryShape {
+        let entry = self.entry_info(index)?;
+        if self.entries_closed {
+            return Err(TaskFault::EntryWriteAfterDrive {
                 entry: self.entry,
                 index,
-                region: RegionId(u32::MAX),
+                region: entry.region,
             });
-        };
-        let region_contract = &function.frame.regions[region.0 as usize];
-        let Some(kind) = entry_word_kind(region_contract) else {
-            return Err(TaskFault::InvalidEntryShape {
+        }
+        if self.entries_initialized[index] {
+            return Err(TaskFault::EntryAlreadyInitialized {
                 entry: self.entry,
                 index,
-                region,
+                region: entry.region,
             });
-        };
-        if !accepts(kind) {
-            return Err(TaskFault::InvalidEntryShape {
+        }
+        if !entry_write_matches(expected, entry.kind) {
+            return Err(TaskFault::EntryKindMismatch {
                 entry: self.entry,
                 index,
-                region,
+                region: entry.region,
+                expected,
+                actual: entry.kind,
             });
         }
         match &mut self.lane {
-            Lane::Interpreter(task) => task.write_i64(region_contract.offset, value),
-            Lane::Native(task) => task.write_i64(region_contract.offset, value),
+            Lane::Interpreter(task) => task.write_i64(entry.offset, value),
+            Lane::Native(task) => task.write_i64(entry.offset, value),
         }
+        self.entries_initialized[index] = true;
         Ok(())
     }
 
@@ -336,6 +397,7 @@ impl ExecTask<'_> {
         value_memories: ValueMemories<'_>,
     ) -> Result<TaskStep, TaskFault> {
         self.check_not_poisoned()?;
+        self.entries_closed = true;
         check_drive_requirements(
             self.executable.verified.drive_requirements(),
             ready,
@@ -343,6 +405,8 @@ impl ExecTask<'_> {
             hosts,
         )
         .map_err(|fault| self.poison(fault))?;
+        self.check_entries_initialized()
+            .map_err(|fault| self.poison(fault))?;
 
         let step = match (&self.executable.native, &mut self.lane) {
             (_, Lane::Interpreter(task)) => task.run_verified_with_value_memories(
@@ -402,6 +466,61 @@ impl ExecTask<'_> {
         Ok(())
     }
 
+    fn check_entries_initialized(&self) -> Result<(), TaskFault> {
+        for (index, initialized) in self.entries_initialized.iter().copied().enumerate() {
+            if !initialized {
+                let entry = self.entry_info(index)?;
+                return Err(TaskFault::EntryMissing {
+                    entry: self.entry,
+                    index,
+                    region: entry.region,
+                    kind: entry.kind,
+                });
+            }
+        }
+        Ok(())
+    }
+
+    fn entry_info(&self, index: usize) -> Result<EntryInfo, TaskFault> {
+        let function = self.executable.function(self.entry)?;
+        let Some(region) = function.entries.get(index).copied() else {
+            return Err(TaskFault::InvalidEntryShape {
+                entry: self.entry,
+                index,
+                region: RegionId(u32::MAX),
+            });
+        };
+        let region_contract = &function.frame.regions[region.0 as usize];
+        let Some(kind) = entry_word_kind(region_contract) else {
+            return Err(TaskFault::InvalidEntryShape {
+                entry: self.entry,
+                index,
+                region,
+            });
+        };
+        Ok(EntryInfo {
+            region,
+            offset: region_contract.offset,
+            kind,
+        })
+    }
+
+    #[cfg(test)]
+    fn adversarial_initialize_entry_word_for_test(
+        &mut self,
+        index: usize,
+        value: i64,
+    ) -> Result<(), TaskFault> {
+        self.check_not_poisoned()?;
+        let entry = self.entry_info(index)?;
+        match &mut self.lane {
+            Lane::Interpreter(task) => task.write_i64(entry.offset, value),
+            Lane::Native(task) => task.write_i64(entry.offset, value),
+        }
+        self.entries_initialized[index] = true;
+        Ok(())
+    }
+
     fn check_result_available(&self) -> Result<(), TaskFault> {
         if let Some(fault) = &self.poisoned {
             return Err(TaskFault::PoisonedResult {
@@ -415,6 +534,13 @@ impl ExecTask<'_> {
         self.poisoned = Some(fault.clone());
         fault
     }
+}
+
+#[derive(Clone, Copy)]
+struct EntryInfo {
+    region: RegionId,
+    offset: u32,
+    kind: WordKind,
 }
 
 fn check_drive_requirements(
@@ -458,6 +584,14 @@ fn entry_word_kind(region: &FrameRegion) -> Option<WordKind> {
     match kind {
         WordKind::Scalar | WordKind::Callable(_) | WordKind::Handle(_) => Some(*kind),
         WordKind::Status | WordKind::Opaque => None,
+    }
+}
+
+fn entry_write_matches(expected: EntryWriteKind, actual: WordKind) -> bool {
+    match (expected, actual) {
+        (EntryWriteKind::Scalar, WordKind::Scalar) => true,
+        (EntryWriteKind::StoreHandle(expected), WordKind::Handle(actual)) => expected == actual,
+        _ => false,
     }
 }
 
@@ -573,6 +707,67 @@ mod tests {
             },
             ProgramContract {
                 functions: vec![scalar_contract(3, &[0, 1], 2)],
+                calls: vec![],
+                schemas: vec![],
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    fn scalar_identity_program() -> (Program, ProgramContract) {
+        (
+            Program {
+                fns: vec![function(1, vec![Op::Ret { src: 0, size: 8 }])],
+            },
+            ProgramContract {
+                functions: vec![scalar_contract(1, &[0], 0)],
+                calls: vec![],
+                schemas: vec![],
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    fn mixed_scalar_handle_program() -> (Program, ProgramContract) {
+        let schema = SchemaRef(0);
+        (
+            Program {
+                fns: vec![function(2, vec![Op::Ret { src: 0, size: 8 }])],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    2,
+                    vec![
+                        word_region(0, WordKind::Scalar),
+                        word_region(8, WordKind::Handle(schema)),
+                    ],
+                    &[0, 1],
+                    0,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![SchemaContract {
+                    inline: RegionShape::word(WordKind::Handle(schema)),
+                    value_shape: None,
+                    payload: PayloadKind::OpaqueBytes {
+                        byte_comparable: true,
+                    },
+                }],
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    fn entry_then_await_program() -> (Program, ProgramContract) {
+        (
+            Program {
+                fns: vec![function(
+                    1,
+                    vec![Op::Await { dst: 0, input: 0 }, Op::Ret { src: 0, size: 8 }],
+                )],
+            },
+            ProgramContract {
+                functions: vec![scalar_contract(1, &[0], 0)],
                 calls: vec![],
                 schemas: vec![],
                 value_shapes: vec![],
@@ -908,6 +1103,124 @@ mod tests {
     }
 
     #[test]
+    fn drive_faults_when_declared_entry_was_not_written() {
+        let executable = Executable::new(verify(scalar_add_program()));
+        let mut task = executable.spawn(FnId(0)).unwrap();
+        task.write_entry_i64(0, 20).unwrap();
+
+        assert!(matches!(
+            task.drive(&mut [], &[]),
+            Err(TaskFault::EntryMissing {
+                entry: FnId(0),
+                index: 1,
+                region: RegionId(1),
+                kind: WordKind::Scalar,
+            })
+        ));
+        assert!(matches!(
+            task.write_entry_i64(1, 22),
+            Err(TaskFault::PoisonedReDrive { .. })
+        ));
+    }
+
+    #[test]
+    fn duplicate_entry_write_faults_without_mutating() {
+        let executable = Executable::new(verify(scalar_identity_program()));
+        let mut task = executable.spawn(FnId(0)).unwrap();
+        task.write_entry_i64(0, 7).unwrap();
+        assert_eq!(
+            task.write_entry_i64(0, 9),
+            Err(TaskFault::EntryAlreadyInitialized {
+                entry: FnId(0),
+                index: 0,
+                region: RegionId(0),
+            })
+        );
+
+        assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
+        assert_eq!(task.result_i64(), Ok(7));
+    }
+
+    #[test]
+    fn wrong_entry_writer_faults_without_mutating_or_initializing() {
+        let schema = SchemaRef(0);
+        let handle = StoreHandle::new(7).unwrap();
+        let executable = Executable::new(verify(mixed_scalar_handle_program()));
+        let mut task = executable.spawn(FnId(0)).unwrap();
+
+        assert_eq!(
+            task.write_entry_store_handle(0, schema, handle),
+            Err(TaskFault::EntryKindMismatch {
+                entry: FnId(0),
+                index: 0,
+                region: RegionId(0),
+                expected: EntryWriteKind::StoreHandle(schema),
+                actual: WordKind::Scalar,
+            })
+        );
+        assert_eq!(
+            task.write_entry_i64(1, 99),
+            Err(TaskFault::EntryKindMismatch {
+                entry: FnId(0),
+                index: 1,
+                region: RegionId(1),
+                expected: EntryWriteKind::Scalar,
+                actual: WordKind::Handle(schema),
+            })
+        );
+
+        task.write_entry_i64(0, 42).unwrap();
+        task.write_entry_store_handle(1, schema, handle).unwrap();
+        assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
+        assert_eq!(task.result_i64(), Ok(42));
+    }
+
+    #[test]
+    fn mixed_scalar_and_handle_entries_initialize_completely() {
+        let schema = SchemaRef(0);
+        let executable = Executable::new(verify(mixed_scalar_handle_program()));
+        let mut task = executable.spawn(FnId(0)).unwrap();
+
+        task.write_entry_i64(0, 42).unwrap();
+        task.write_entry_store_handle(1, schema, StoreHandle::new(0).unwrap())
+            .unwrap();
+        assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
+        assert_eq!(task.result_i64(), Ok(42));
+    }
+
+    #[test]
+    fn entry_writers_close_after_any_drive_attempt() {
+        let executable = Executable::new(verify(scalar_identity_program()));
+        let mut task = executable.spawn(FnId(0)).unwrap();
+        task.write_entry_i64(0, 7).unwrap();
+        assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
+        assert_eq!(
+            task.write_entry_i64(0, 9),
+            Err(TaskFault::EntryWriteAfterDrive {
+                entry: FnId(0),
+                index: 0,
+                region: RegionId(0),
+            })
+        );
+
+        let executable = Executable::new(verify(entry_then_await_program()));
+        let mut task = executable.spawn(FnId(0)).unwrap();
+        task.write_entry_i64(0, 5).unwrap();
+        assert_eq!(
+            task.drive(&mut [false], &[0]),
+            Ok(TaskStep::Parked { input: 0 })
+        );
+        assert_eq!(
+            task.write_entry_i64(0, 6),
+            Err(TaskFault::EntryWriteAfterDrive {
+                entry: FnId(0),
+                index: 0,
+                region: RegionId(0),
+            })
+        );
+    }
+
+    #[test]
     fn public_executable_reports_indirect_faults_and_poisons() {
         let oversized = i64::from(u32::MAX) + 1;
         let cases: [(i64, &str, fn(&TaskFault) -> bool); 4] = [
@@ -972,7 +1285,8 @@ mod tests {
         for (callee, name, matches_expected) in cases {
             let executable = Executable::new(verify(indirect_program()));
             let mut task = executable.spawn(FnId(0)).unwrap();
-            task.write_entry_callable_id(0, callee).unwrap();
+            task.adversarial_initialize_entry_word_for_test(0, callee)
+                .unwrap();
             task.write_entry_i64(1, 21).unwrap();
             let fault = task.drive(&mut [], &[]).expect_err(name);
             assert!(matches_expected(&fault), "{name}: {fault:?}");
@@ -996,8 +1310,10 @@ mod tests {
         };
         let executable = Executable::new(verify(compare_program()));
         let mut task = executable.spawn(FnId(0)).unwrap();
-        task.write_entry_handle(0, 0).unwrap();
-        task.write_entry_handle(1, 0).unwrap();
+        task.write_entry_store_handle(0, SchemaRef(0), StoreHandle::new(0).unwrap())
+            .unwrap();
+        task.write_entry_store_handle(1, SchemaRef(0), StoreHandle::new(0).unwrap())
+            .unwrap();
         let fault = task
             .drive_hosted_with_value_memories(&mut [], &[], &mut [], memories)
             .expect_err("equal unresident compare");
