@@ -11,7 +11,7 @@
 use core::fmt;
 
 use crate::mem::Layout;
-use crate::task::{ArgCopy, FnId, Op, Program};
+use crate::task::{ArgCopy, FnId, Op, Program, StructuralFieldSource};
 
 const WORD_SIZE: usize = size_of::<i64>();
 const WORD_SIZE_U32: u32 = 8;
@@ -696,6 +696,55 @@ pub enum ProgramDefect {
         source_size: usize,
         destination_size: usize,
     },
+    RawStructuralWordAccess {
+        role: AccessRole,
+        region: RegionId,
+        value_shape: ValueShapeRef,
+    },
+    StructuralRegionOutOfRange {
+        region: RegionId,
+        region_count: usize,
+    },
+    StructuralRegionRequiresShape {
+        region: RegionId,
+    },
+    StructuralKindMismatch {
+        region: RegionId,
+        value_shape: ValueShapeRef,
+        expected: StructuralKind,
+    },
+    StructuralFieldOutOfRange {
+        value_shape: ValueShapeRef,
+        variant: Option<u32>,
+        field: u32,
+        field_count: usize,
+    },
+    StructuralFieldCount {
+        value_shape: ValueShapeRef,
+        variant: Option<u32>,
+        expected: usize,
+        actual: usize,
+    },
+    DuplicateStructuralField {
+        value_shape: ValueShapeRef,
+        variant: Option<u32>,
+        field: u32,
+    },
+    StructuralFieldSourceMismatch {
+        value_shape: ValueShapeRef,
+        variant: Option<u32>,
+        field: u32,
+        source: RegionId,
+        expected_shape: RegionShape,
+        actual_shape: RegionShape,
+        expected_value_shape: Option<ValueShapeRef>,
+        actual_value_shape: Option<ValueShapeRef>,
+    },
+    EnumVariantOutOfRange {
+        value_shape: ValueShapeRef,
+        variant: u32,
+        variant_count: usize,
+    },
     CallArgumentCount {
         expected: usize,
         actual: usize,
@@ -776,6 +825,13 @@ pub enum ProgramDefect {
         input: u32,
     },
     ReachableFallthrough,
+}
+
+/// Structural shape class required by a typed operation.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum StructuralKind {
+    Product,
+    Enum,
 }
 
 /// Structured verifier error. Function and PC are absent only for global
@@ -1737,7 +1793,107 @@ impl Verifier<'_> {
         let function_id = FnId(function_index as u32);
         let frame = &validated.frames[function_index];
         match op {
+            Op::ProductConstruct { dst, fields } => {
+                let (value_shape, declared) =
+                    self.product_region(function_id, pc, function_index, *dst)?;
+                self.validate_structural_fields(
+                    function_id,
+                    pc,
+                    function_index,
+                    value_shape,
+                    None,
+                    declared,
+                    fields,
+                )?;
+            }
+            Op::ProductProject {
+                dst,
+                product,
+                field,
+            } => {
+                let (value_shape, fields) =
+                    self.product_region(function_id, pc, function_index, *product)?;
+                let declared = self.structural_field(function_id, pc, value_shape, None, fields, *field)?;
+                self.validate_structural_destination(
+                    function_id,
+                    pc,
+                    function_index,
+                    value_shape,
+                    None,
+                    *field,
+                    *dst,
+                    declared,
+                )?;
+            }
+            Op::CopyValue { dst, src } => {
+                let source = self.structural_region(function_id, pc, function_index, *src)?;
+                let destination = self.structural_region(function_id, pc, function_index, *dst)?;
+                if source.value_shape != destination.value_shape || source.shape != destination.shape {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::StructuralTransferMismatch {
+                            source: source.value_shape,
+                            destination: destination.value_shape,
+                        },
+                    ));
+                }
+            }
+            Op::EnumConstruct {
+                dst,
+                variant,
+                fields,
+            } => {
+                let (value_shape, variants) =
+                    self.enum_region(function_id, pc, function_index, *dst)?;
+                let declared = self.enum_variant(function_id, pc, value_shape, variants, *variant)?;
+                self.validate_structural_fields(
+                    function_id,
+                    pc,
+                    function_index,
+                    value_shape,
+                    Some(*variant),
+                    &declared.fields,
+                    fields,
+                )?;
+            }
+            Op::EnumIsVariant { dst, value, variant } => {
+                let (value_shape, variants) =
+                    self.enum_region(function_id, pc, function_index, *value)?;
+                self.enum_variant(function_id, pc, value_shape, variants, *variant)?;
+                self.scalar_region(function_id, pc, function_index, *dst)?;
+            }
+            Op::EnumProjectChecked {
+                dst,
+                value,
+                variant,
+                field,
+            } => {
+                let (value_shape, variants) =
+                    self.enum_region(function_id, pc, function_index, *value)?;
+                let variant_contract =
+                    self.enum_variant(function_id, pc, value_shape, variants, *variant)?;
+                let declared = self.structural_field(
+                    function_id,
+                    pc,
+                    value_shape,
+                    Some(*variant),
+                    &variant_contract.fields,
+                    *field,
+                )?;
+                self.validate_structural_destination(
+                    function_id,
+                    pc,
+                    function_index,
+                    value_shape,
+                    Some(*variant),
+                    *field,
+                    *dst,
+                    declared,
+                )?;
+            }
             Op::ConstI64 { dst, value } => {
+                self.reject_raw_structural_word(function_id, pc, function_index, frame, *dst, AccessRole::Destination)?;
                 let kinds =
                     self.word_kinds(function_id, pc, frame, *dst, AccessRole::Destination)?;
                 self.validate_const(function_id, pc, *value, kinds)?;
@@ -1754,11 +1910,16 @@ impl Verifier<'_> {
             | Op::GeI64 { dst, a, b }
             | Op::AddF64 { dst, a, b }
             | Op::MulF64 { dst, a, b } => {
+                self.reject_raw_structural_word(function_id, pc, function_index, frame, *dst, AccessRole::Destination)?;
+                self.reject_raw_structural_word(function_id, pc, function_index, frame, *a, AccessRole::LeftOperand)?;
+                self.reject_raw_structural_word(function_id, pc, function_index, frame, *b, AccessRole::RightOperand)?;
                 self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
                 self.require_scalar_read(function_id, pc, frame, *a, AccessRole::LeftOperand)?;
                 self.require_scalar_read(function_id, pc, frame, *b, AccessRole::RightOperand)?;
             }
             Op::CopyI64 { dst, src } => {
+                self.reject_raw_structural_word(function_id, pc, function_index, frame, *dst, AccessRole::Destination)?;
+                self.reject_raw_structural_word(function_id, pc, function_index, frame, *src, AccessRole::Source)?;
                 let (destination_index, destination_word) =
                     self.word_region_index(function_id, pc, frame, *dst, AccessRole::Destination)?;
                 let (source_index, source_word) =
@@ -1808,6 +1969,7 @@ impl Verifier<'_> {
             }
             Op::Jump { target } => self.validate_jump(function_id, pc, *target)?,
             Op::JumpIfZero { value, target } => {
+                self.reject_raw_structural_word(function_id, pc, function_index, frame, *value, AccessRole::Condition)?;
                 self.require_scalar_read(function_id, pc, frame, *value, AccessRole::Condition)?;
                 self.validate_jump(function_id, pc, *target)?;
             }
@@ -2107,6 +2269,310 @@ impl Verifier<'_> {
             }
         }
         Ok(None)
+    }
+
+    fn structural_region(
+        &self,
+        function: FnId,
+        pc: usize,
+        function_index: usize,
+        region: RegionId,
+    ) -> Result<&FrameRegion, ProgramError> {
+        let regions = &self.contract.functions[function_index].frame.regions;
+        let Some(region_contract) = usize::try_from(region.0)
+            .ok()
+            .and_then(|index| regions.get(index))
+        else {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::StructuralRegionOutOfRange {
+                    region,
+                    region_count: regions.len(),
+                },
+            ));
+        };
+        if region_contract.value_shape.is_none() {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::StructuralRegionRequiresShape { region },
+            ));
+        }
+        Ok(region_contract)
+    }
+
+    fn product_region(
+        &self,
+        function: FnId,
+        pc: usize,
+        function_index: usize,
+        region: RegionId,
+    ) -> Result<(ValueShapeRef, &[ValueFieldUse]), ProgramError> {
+        let region_contract = self.structural_region(function, pc, function_index, region)?;
+        let value_shape = region_contract.value_shape.expect("checked above");
+        match &self.contract.value_shapes[value_shape.0 as usize].kind {
+            ValueShapeKind::Product { fields } => Ok((value_shape, fields)),
+            ValueShapeKind::Enum { .. } => Err(self.op(
+                function,
+                pc,
+                ProgramDefect::StructuralKindMismatch {
+                    region,
+                    value_shape,
+                    expected: StructuralKind::Product,
+                },
+            )),
+        }
+    }
+
+    fn enum_region(
+        &self,
+        function: FnId,
+        pc: usize,
+        function_index: usize,
+        region: RegionId,
+    ) -> Result<(ValueShapeRef, &[ValueVariant]), ProgramError> {
+        let region_contract = self.structural_region(function, pc, function_index, region)?;
+        let value_shape = region_contract.value_shape.expect("checked above");
+        match &self.contract.value_shapes[value_shape.0 as usize].kind {
+            ValueShapeKind::Enum { variants, .. } => Ok((value_shape, variants)),
+            ValueShapeKind::Product { .. } => Err(self.op(
+                function,
+                pc,
+                ProgramDefect::StructuralKindMismatch {
+                    region,
+                    value_shape,
+                    expected: StructuralKind::Enum,
+                },
+            )),
+        }
+    }
+
+    fn enum_variant<'a>(
+        &self,
+        function: FnId,
+        pc: usize,
+        value_shape: ValueShapeRef,
+        variants: &'a [ValueVariant],
+        variant: u32,
+    ) -> Result<&'a ValueVariant, ProgramError> {
+        variants.get(variant as usize).ok_or_else(|| {
+            self.op(
+                function,
+                pc,
+                ProgramDefect::EnumVariantOutOfRange {
+                    value_shape,
+                    variant,
+                    variant_count: variants.len(),
+                },
+            )
+        })
+    }
+
+    fn structural_field<'a>(
+        &self,
+        function: FnId,
+        pc: usize,
+        value_shape: ValueShapeRef,
+        variant: Option<u32>,
+        fields: &'a [ValueFieldUse],
+        field: u32,
+    ) -> Result<&'a ValueFieldUse, ProgramError> {
+        fields.get(field as usize).ok_or_else(|| {
+            self.op(
+                function,
+                pc,
+                ProgramDefect::StructuralFieldOutOfRange {
+                    value_shape,
+                    variant,
+                    field,
+                    field_count: fields.len(),
+                },
+            )
+        })
+    }
+
+    fn validate_structural_fields(
+        &self,
+        function: FnId,
+        pc: usize,
+        function_index: usize,
+        value_shape: ValueShapeRef,
+        variant: Option<u32>,
+        declared: &[ValueFieldUse],
+        sources: &[StructuralFieldSource],
+    ) -> Result<(), ProgramError> {
+        if declared.len() != sources.len() {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::StructuralFieldCount {
+                    value_shape,
+                    variant,
+                    expected: declared.len(),
+                    actual: sources.len(),
+                },
+            ));
+        }
+        let mut seen = vec![false; declared.len()];
+        for source in sources {
+            let field = self.structural_field(
+                function,
+                pc,
+                value_shape,
+                variant,
+                declared,
+                source.field,
+            )?;
+            if core::mem::replace(&mut seen[source.field as usize], true) {
+                return Err(self.op(
+                    function,
+                    pc,
+                    ProgramDefect::DuplicateStructuralField {
+                        value_shape,
+                        variant,
+                        field: source.field,
+                    },
+                ));
+            }
+            self.validate_structural_source(
+                function,
+                pc,
+                function_index,
+                value_shape,
+                variant,
+                source.field,
+                source.source,
+                field,
+            )?;
+        }
+        Ok(())
+    }
+
+    fn validate_structural_source(
+        &self,
+        function: FnId,
+        pc: usize,
+        function_index: usize,
+        value_shape: ValueShapeRef,
+        variant: Option<u32>,
+        field_index: u32,
+        source: RegionId,
+        field: &ValueFieldUse,
+    ) -> Result<(), ProgramError> {
+        let regions = &self.contract.functions[function_index].frame.regions;
+        let Some(actual) = regions.get(source.0 as usize) else {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::StructuralRegionOutOfRange {
+                    region: source,
+                    region_count: regions.len(),
+                },
+            ));
+        };
+        if actual.shape != field.shape || actual.value_shape != field.value_shape {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::StructuralFieldSourceMismatch {
+                    value_shape,
+                    variant,
+                    field: field_index,
+                    source,
+                    expected_shape: field.shape.clone(),
+                    actual_shape: actual.shape.clone(),
+                    expected_value_shape: field.value_shape,
+                    actual_value_shape: actual.value_shape,
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_structural_destination(
+        &self,
+        function: FnId,
+        pc: usize,
+        function_index: usize,
+        value_shape: ValueShapeRef,
+        variant: Option<u32>,
+        field_index: u32,
+        destination: RegionId,
+        field: &ValueFieldUse,
+    ) -> Result<(), ProgramError> {
+        self.validate_structural_source(
+            function,
+            pc,
+            function_index,
+            value_shape,
+            variant,
+            field_index,
+            destination,
+            field,
+        )
+    }
+
+    fn scalar_region(
+        &self,
+        function: FnId,
+        pc: usize,
+        function_index: usize,
+        region: RegionId,
+    ) -> Result<(), ProgramError> {
+        let regions = &self.contract.functions[function_index].frame.regions;
+        let Some(actual) = regions.get(region.0 as usize) else {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::StructuralRegionOutOfRange {
+                    region,
+                    region_count: regions.len(),
+                },
+            ));
+        };
+        if actual.value_shape.is_some() || actual.shape != RegionShape::word(WordKind::Scalar) {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::KindMismatch {
+                    role: AccessRole::Destination,
+                    required: KindRequirement::Scalar,
+                    allowed: actual
+                        .shape
+                        .words
+                        .first()
+                        .cloned()
+                        .unwrap_or_else(|| AllowedKinds::new(WordKind::Opaque)),
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    fn reject_raw_structural_word(
+        &self,
+        function: FnId,
+        pc: usize,
+        function_index: usize,
+        frame: &ValidatedFrame,
+        offset: u32,
+        role: AccessRole,
+    ) -> Result<(), ProgramError> {
+        let (region_index, _) = self.word_region_index(function, pc, frame, offset, role)?;
+        let region = &self.contract.functions[function_index].frame.regions[region_index];
+        if let Some(value_shape) = region.value_shape {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::RawStructuralWordAccess {
+                    role,
+                    region: RegionId(region_index as u32),
+                    value_shape,
+                },
+            ));
+        }
+        Ok(())
     }
 
     fn validate_const(
@@ -2731,6 +3197,12 @@ impl Verifier<'_> {
                         pending.push(pc + 1);
                     }
                     Op::ConstI64 { .. }
+                    | Op::ProductConstruct { .. }
+                    | Op::ProductProject { .. }
+                    | Op::CopyValue { .. }
+                    | Op::EnumConstruct { .. }
+                    | Op::EnumIsVariant { .. }
+                    | Op::EnumProjectChecked { .. }
                     | Op::AddI64 { .. }
                     | Op::SubI64 { .. }
                     | Op::MulI64 { .. }

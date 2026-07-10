@@ -182,6 +182,11 @@ fn emit_cont(out: &mut String, name: &str, of: &str, stencil: &Stencil) {
 /// guaranteed-tail-call discipline as the async lane.
 #[cfg(feature = "jit")]
 const TASK_SYMBOLS: &[&str] = &[
+    "weavy_task_copy_value",
+    "weavy_task_product_construct",
+    "weavy_task_enum_construct",
+    "weavy_task_enum_is_variant",
+    "weavy_task_enum_project_checked",
     "weavy_task_const",
     "weavy_task_add",
     "weavy_task_mul",
@@ -216,6 +221,11 @@ const TASK_SYMBOLS: &[&str] = &[
 ];
 
 const TASK_NAMES: &[(&str, &str)] = &[
+    ("COPY_VALUE", "weavy_task_copy_value"),
+    ("PRODUCT_CONSTRUCT", "weavy_task_product_construct"),
+    ("ENUM_CONSTRUCT", "weavy_task_enum_construct"),
+    ("ENUM_IS_VARIANT", "weavy_task_enum_is_variant"),
+    ("ENUM_PROJECT_CHECKED", "weavy_task_enum_project_checked"),
     ("CONST", "weavy_task_const"),
     ("ADD", "weavy_task_add"),
     ("MUL", "weavy_task_mul"),

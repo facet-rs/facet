@@ -105,6 +105,8 @@ const EXIT_TRACE_MARK: i64 = 5;
 const EXIT_HOST_CALL_YIELD: i64 = 6;
 const EXIT_COMPARE_LEFT_UNRESIDENT: i64 = 7;
 const EXIT_COMPARE_RIGHT_UNRESIDENT: i64 = 8;
+const EXIT_INVALID_ENUM_SELECTOR: i64 = 9;
+const EXIT_ENUM_PROJECTION_MISMATCH: i64 = 10;
 
 const LENT_MOLTEN_MIN: i64 = i64::MIN / 2;
 
@@ -151,6 +153,119 @@ unsafe fn read_i64(frame: *mut u8, off: u64) -> i64 {
 #[inline(always)]
 unsafe fn write_i64(frame: *mut u8, off: u64, value: i64) {
     (frame.add(off as usize) as *mut i64).write_unaligned(value);
+}
+
+#[inline(always)]
+unsafe fn copy_bytes(frame: *mut u8, dst: u64, src: u64, len: u64) {
+    let mut index = 0u64;
+    while index < len {
+        let byte = unsafe { frame.add((src + index) as usize).read() };
+        unsafe { frame.add((dst + index) as usize).write(byte) };
+        index += 1;
+    }
+}
+
+/// Complete structural copy — immediates: [dst, src, len].
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_copy_value(cx: *mut Ctx) {
+    let c = unsafe { &mut *cx };
+    let p = c.prog;
+    unsafe { copy_bytes(c.frame, *p, *p.add(1), *p.add(2)) };
+    c.prog = unsafe { p.add(3) };
+    unsafe { cont!(cx) }
+}
+
+/// Complete product construction — immediates: [count, dst, src, len] * count.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_product_construct(cx: *mut Ctx) {
+    let c = unsafe { &mut *cx };
+    let p = c.prog;
+    let count = unsafe { *p } as usize;
+    let mut index = 0usize;
+    while index < count {
+        let q = unsafe { p.add(1 + index * 3) };
+        unsafe { copy_bytes(c.frame, *q, *q.add(1), *q.add(2)) };
+        index += 1;
+    }
+    c.prog = unsafe { p.add(1 + count * 3) };
+    unsafe { cont!(cx) }
+}
+
+/// Compact enum construction — immediates:
+/// [dst, len, selector, variant, count, (dst, src, len) * count].
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_enum_construct(cx: *mut Ctx) {
+    let c = unsafe { &mut *cx };
+    let p = c.prog;
+    let dst = unsafe { *p };
+    let len = unsafe { *p.add(1) };
+    let selector = unsafe { *p.add(2) };
+    let variant = unsafe { *p.add(3) } as i64;
+    let count = unsafe { *p.add(4) } as usize;
+    let mut byte = 0u64;
+    while byte < len {
+        unsafe { c.frame.add((dst + byte) as usize).write(0) };
+        byte += 1;
+    }
+    unsafe { write_i64(c.frame, dst + selector, variant) };
+    let mut index = 0usize;
+    while index < count {
+        let q = unsafe { p.add(5 + index * 3) };
+        unsafe { copy_bytes(c.frame, *q, *q.add(1), *q.add(2)) };
+        index += 1;
+    }
+    c.prog = unsafe { p.add(5 + count * 3) };
+    unsafe { cont!(cx) }
+}
+
+/// Checked enum variant test — immediates:
+/// [dst, value, selector, requested, variant_count, pc].
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_enum_is_variant(cx: *mut Ctx) {
+    let c = unsafe { &mut *cx };
+    let p = c.prog;
+    let actual = unsafe { read_i64(c.frame, *p.add(1) + *p.add(2)) };
+    let count = unsafe { *p.add(4) };
+    if actual < 0 || actual as u64 >= count {
+        unsafe {
+            *c.await_index = *p.add(5);
+            *c.resume = actual as u64;
+            *c.exit = EXIT_INVALID_ENUM_SELECTOR;
+        }
+        return;
+    }
+    unsafe { write_i64(c.frame, *p, i64::from(actual == *p.add(3) as i64)) };
+    c.prog = unsafe { p.add(6) };
+    unsafe { cont!(cx) }
+}
+
+/// Checked enum projection — immediates:
+/// [dst, value, selector, requested, variant_count, field, len, pc].
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_enum_project_checked(cx: *mut Ctx) {
+    let c = unsafe { &mut *cx };
+    let p = c.prog;
+    let actual = unsafe { read_i64(c.frame, *p.add(1) + *p.add(2)) };
+    let count = unsafe { *p.add(4) };
+    if actual < 0 || actual as u64 >= count {
+        unsafe {
+            *c.await_index = *p.add(7);
+            *c.resume = actual as u64;
+            *c.exit = EXIT_INVALID_ENUM_SELECTOR;
+        }
+        return;
+    }
+    if actual != unsafe { *p.add(3) } as i64 {
+        unsafe {
+            *c.await_index = *p.add(7);
+            *c.resume = actual as u64;
+            *c.exit = EXIT_ENUM_PROJECTION_MISMATCH;
+        }
+        return;
+    }
+    unsafe { copy_bytes(c.frame, *p, *p.add(1) + *p.add(5), *p.add(6)) };
+    c.prog = unsafe { p.add(8) };
+    unsafe { cont!(cx) }
 }
 
 #[inline(always)]

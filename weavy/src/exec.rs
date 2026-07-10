@@ -15,7 +15,7 @@ use crate::jit::task_lane::{JitExecutable, JitTask};
 use crate::task::{FnId, HostFn, Op, Task, TaskEvent, TaskStep, TraceMode, ValueMemories};
 use crate::{
     CallContractId, CallSiteFacts, DriveRequirements, FrameRegion, FunctionContract, RegionId,
-    SchemaRef, VerifiedProgram, WordKind,
+    SchemaRef, ValueShapeRef, VerifiedProgram, WordKind,
 };
 
 /// Which lane an [`Executable`] selected for new tasks.
@@ -176,6 +176,18 @@ pub enum TaskFault {
         site: FaultSite,
         side: CompareSide,
         handle: i64,
+    },
+    InvalidEnumSelector {
+        site: FaultSite,
+        value_shape: ValueShapeRef,
+        expected: Vec<i64>,
+        actual: i64,
+    },
+    EnumProjectionMismatch {
+        site: FaultSite,
+        value_shape: ValueShapeRef,
+        expected: i64,
+        actual: i64,
     },
     NativeFaultExit {
         function: FnId,

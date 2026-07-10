@@ -1037,6 +1037,18 @@ impl Task {
                 panic!("function {:?} fell off its code without Ret", fn_id);
             }
             match code[frame.pc].clone() {
+                op @ (Op::ProductConstruct { .. }
+                | Op::ProductProject { .. }
+                | Op::CopyValue { .. }
+                | Op::EnumConstruct { .. }
+                | Op::EnumIsVariant { .. }
+                | Op::EnumProjectChecked { .. }) => {
+                    let Some(verified) = verified else {
+                        panic!("typed structural operation requires VerifiedProgram");
+                    };
+                    self.execute_structural(verified, fn_id, pc, base, &op)?;
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
                 Op::ConstI64 { dst, value } => {
                     write_i64_at(&mut self.arena, base + dst as usize, value);
                     self.frames.last_mut().expect("frame").pc += 1;
@@ -1446,6 +1458,163 @@ impl Task {
                 }
             }
         }
+    }
+
+    fn execute_structural(
+        &mut self,
+        verified: &VerifiedProgram,
+        function: FnId,
+        pc: usize,
+        base: usize,
+        op: &Op,
+    ) -> Result<(), TaskFault> {
+        let contract = &verified.contract().functions[function.0 as usize];
+        let region = |id: RegionId| &contract.frame.regions[id.0 as usize];
+        let copy_region = |arena: &mut Vec<u8>, destination: RegionId, source: RegionId| {
+            let destination = region(destination);
+            let source = region(source);
+            arena.copy_within(
+                base + source.offset as usize..base + source.offset as usize + source.shape.words.len() * 8,
+                base + destination.offset as usize,
+            );
+        };
+        match op {
+            Op::ProductConstruct { dst, fields } => {
+                let value_shape = region(*dst).value_shape.unwrap();
+                let crate::ValueShapeKind::Product { fields: declared } =
+                    &verified.contract().value_shapes[value_shape.0 as usize].kind
+                else {
+                    unreachable!();
+                };
+                for source in fields {
+                    let field = &declared[source.field as usize];
+                    let source_region = region(source.source);
+                    let len = field.shape.words.len() * 8;
+                    self.arena.copy_within(
+                        base + source_region.offset as usize
+                            ..base + source_region.offset as usize + len,
+                        base + region(*dst).offset as usize + field.offset as usize,
+                    );
+                }
+            }
+            Op::ProductProject {
+                dst,
+                product,
+                field,
+            } => {
+                let value_shape = region(*product).value_shape.unwrap();
+                let crate::ValueShapeKind::Product { fields } =
+                    &verified.contract().value_shapes[value_shape.0 as usize].kind
+                else {
+                    unreachable!();
+                };
+                let field = &fields[*field as usize];
+                let len = field.shape.words.len() * 8;
+                self.arena.copy_within(
+                    base + region(*product).offset as usize + field.offset as usize
+                        ..base + region(*product).offset as usize + field.offset as usize + len,
+                    base + region(*dst).offset as usize,
+                );
+            }
+            Op::CopyValue { dst, src } => copy_region(&mut self.arena, *dst, *src),
+            Op::EnumConstruct {
+                dst,
+                variant,
+                fields,
+            } => {
+                let destination = region(*dst);
+                let value_shape = destination.value_shape.unwrap();
+                let crate::ValueShapeKind::Enum {
+                    selector,
+                    variants,
+                } = &verified.contract().value_shapes[value_shape.0 as usize].kind
+                else {
+                    unreachable!();
+                };
+                let start = base + destination.offset as usize;
+                self.arena[start..start + destination.shape.words.len() * 8].fill(0);
+                write_i64_at(&mut self.arena, start + selector.offset as usize, i64::from(*variant));
+                for source in fields {
+                    let field = &variants[*variant as usize].fields[source.field as usize];
+                    let source_region = region(source.source);
+                    let len = field.shape.words.len() * 8;
+                    self.arena.copy_within(
+                        base + source_region.offset as usize
+                            ..base + source_region.offset as usize + len,
+                        start + field.offset as usize,
+                    );
+                }
+            }
+            Op::EnumIsVariant { dst, value, variant } => {
+                let actual = self.checked_enum_selector(verified, function, pc, base, *value, op)?;
+                write_i64_at(
+                    &mut self.arena,
+                    base + region(*dst).offset as usize,
+                    i64::from(actual == i64::from(*variant)),
+                );
+            }
+            Op::EnumProjectChecked {
+                dst,
+                value,
+                variant,
+                field,
+            } => {
+                let actual = self.checked_enum_selector(verified, function, pc, base, *value, op)?;
+                if actual != i64::from(*variant) {
+                    let value_shape = region(*value).value_shape.unwrap();
+                    return Err(TaskFault::EnumProjectionMismatch {
+                        site: fault_site(verified, function, pc)?,
+                        value_shape,
+                        expected: i64::from(*variant),
+                        actual,
+                    });
+                }
+                let value_shape = region(*value).value_shape.unwrap();
+                let crate::ValueShapeKind::Enum { variants, .. } =
+                    &verified.contract().value_shapes[value_shape.0 as usize].kind
+                else {
+                    unreachable!();
+                };
+                let field = &variants[*variant as usize].fields[*field as usize];
+                let len = field.shape.words.len() * 8;
+                self.arena.copy_within(
+                    base + region(*value).offset as usize + field.offset as usize
+                        ..base + region(*value).offset as usize + field.offset as usize + len,
+                    base + region(*dst).offset as usize,
+                );
+            }
+            _ => unreachable!(),
+        }
+        Ok(())
+    }
+
+    fn checked_enum_selector(
+        &self,
+        verified: &VerifiedProgram,
+        function: FnId,
+        pc: usize,
+        base: usize,
+        value: RegionId,
+        op: &Op,
+    ) -> Result<i64, TaskFault> {
+        let region = &verified.contract().functions[function.0 as usize].frame.regions[value.0 as usize];
+        let value_shape = region.value_shape.unwrap();
+        let crate::ValueShapeKind::Enum { selector, variants } =
+            &verified.contract().value_shapes[value_shape.0 as usize].kind
+        else {
+            unreachable!();
+        };
+        let actual = read_i64_at(&self.arena, base + region.offset as usize + selector.offset as usize);
+        if usize::try_from(actual).is_err() || actual as usize >= variants.len() {
+            return Err(TaskFault::InvalidEnumSelector {
+                site: fault_site(verified, function, pc)?,
+                value_shape,
+                expected: (0..variants.len()).map(|variant| variant as i64).collect(),
+                actual,
+            });
+        }
+        let _ = op;
+        Ok(actual)
     }
 }
 

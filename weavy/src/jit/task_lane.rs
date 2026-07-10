@@ -26,7 +26,7 @@ use crate::jit::{NativeProgram, StencilLayout, task_stencils};
 use crate::task::{
     Advance, ArgCopy, FnId, HostFn, Op, Program, TaskEvent, TaskStep, TraceMode, ValueMemories,
 };
-use crate::{CallSiteFacts, VerifiedProgram};
+use crate::{CallSiteFacts, FunctionContract, ProgramContract, ValueShapeKind, VerifiedProgram};
 
 /// Threaded state — MUST match `Ctx` in stencils/task_ops.rs.
 #[repr(C)]
@@ -79,6 +79,8 @@ const EXIT_TRACE_MARK: i64 = 5;
 const EXIT_HOST_CALL_YIELD: i64 = 6;
 const EXIT_COMPARE_LEFT_UNRESIDENT: i64 = 7;
 const EXIT_COMPARE_RIGHT_UNRESIDENT: i64 = 8;
+const EXIT_INVALID_ENUM_SELECTOR: i64 = 9;
+const EXIT_ENUM_PROJECTION_MISMATCH: i64 = 10;
 
 /// Whether the task JIT lane is usable on this target.
 pub fn available() -> bool {
@@ -129,7 +131,11 @@ impl JitProgram {
         }
         #[cfg(test)]
         JIT_PROGRAM_COMPILE_COUNT.fetch_add(1, Ordering::Relaxed);
-        let fns = program.fns.iter().map(|f| compile_fn(f, mode)).collect();
+        let fns = program
+            .fns
+            .iter()
+            .map(|f| compile_fn(f, None, None, mode))
+            .collect();
         Some(JitProgram { fns })
     }
 }
@@ -142,7 +148,19 @@ pub(crate) struct JitExecutable {
 
 impl JitExecutable {
     pub(crate) fn compile(verified: Arc<VerifiedProgram>, mode: TraceMode) -> Option<Self> {
-        let program = JitProgram::compile_with_mode(verified.program(), mode)?;
+        if !available() {
+            return None;
+        }
+        let fns = verified
+            .program()
+            .fns
+            .iter()
+            .zip(&verified.contract().functions)
+            .map(|(function, contract)| {
+                compile_fn(function, Some(contract), Some(verified.contract()), mode)
+            })
+            .collect();
+        let program = JitProgram { fns };
         Some(Self { verified, program })
     }
 
@@ -208,7 +226,12 @@ enum Continuations {
     },
 }
 
-fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
+fn compile_fn(
+    f: &crate::task::Fn,
+    function_contract: Option<&FunctionContract>,
+    program_contract: Option<&ProgramContract>,
+    mode: TraceMode,
+) -> CompiledFn {
     let mut layout = StencilLayout::new();
     let root = layout.start_chain();
 
@@ -225,6 +248,26 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
             continue;
         }
         let (bytes, cont): (&[u8], Continuations) = match op {
+            Op::ProductConstruct { .. } => (
+                task_stencils::PRODUCT_CONSTRUCT,
+                Continuations::Fallthrough(task_stencils::PRODUCT_CONSTRUCT_CONT),
+            ),
+            Op::ProductProject { .. } | Op::CopyValue { .. } => (
+                task_stencils::COPY_VALUE,
+                Continuations::Fallthrough(task_stencils::COPY_VALUE_CONT),
+            ),
+            Op::EnumConstruct { .. } => (
+                task_stencils::ENUM_CONSTRUCT,
+                Continuations::Fallthrough(task_stencils::ENUM_CONSTRUCT_CONT),
+            ),
+            Op::EnumIsVariant { .. } => (
+                task_stencils::ENUM_IS_VARIANT,
+                Continuations::Fallthrough(task_stencils::ENUM_IS_VARIANT_CONT),
+            ),
+            Op::EnumProjectChecked { .. } => (
+                task_stencils::ENUM_PROJECT_CHECKED,
+                Continuations::Fallthrough(task_stencils::ENUM_PROJECT_CHECKED_CONT),
+            ),
             Op::ConstI64 { .. } => (
                 task_stencils::CONST,
                 Continuations::Fallthrough(task_stencils::CONST_CONT),
@@ -408,6 +451,11 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
         }
         prog_starts.push(Some(prog_len));
         prog_len += match op {
+            Op::ProductConstruct { fields, .. } => 1 + fields.len() * 3,
+            Op::ProductProject { .. } | Op::CopyValue { .. } => 3,
+            Op::EnumConstruct { fields, .. } => 5 + fields.len() * 3,
+            Op::EnumIsVariant { .. } => 6,
+            Op::EnumProjectChecked { .. } => 8,
             Op::ConstI64 { .. } | Op::ConstF64 { .. } => 2,
             Op::CopyI64 { .. } => 2,
             Op::AddI64 { .. }
@@ -441,6 +489,87 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
     let mut calls = HashMap::new();
     for (i, op) in f.code.iter().enumerate() {
         match op {
+            Op::ProductConstruct { dst, fields } => {
+                let (function_contract, program_contract) = verified_compile_contracts(
+                    function_contract,
+                    program_contract,
+                );
+                let destination = &function_contract.frame.regions[dst.0 as usize];
+                let value_shape = destination.value_shape.unwrap();
+                let ValueShapeKind::Product { fields: declared } =
+                    &program_contract.value_shapes[value_shape.0 as usize].kind
+                else {
+                    unreachable!();
+                };
+                layout.push_prog_word(root.prog_index, fields.len() as u64);
+                for source in fields {
+                    let field = &declared[source.field as usize];
+                    let source_region = &function_contract.frame.regions[source.source.0 as usize];
+                    for value in [
+                        u64::from(destination.offset + field.offset),
+                        u64::from(source_region.offset),
+                        (field.shape.words.len() * 8) as u64,
+                    ] {
+                        layout.push_prog_word(root.prog_index, value);
+                    }
+                }
+            }
+            Op::ProductProject { dst, product, field } => {
+                let (function_contract, program_contract) = verified_compile_contracts(function_contract, program_contract);
+                let destination = &function_contract.frame.regions[dst.0 as usize];
+                let product = &function_contract.frame.regions[product.0 as usize];
+                let value_shape = product.value_shape.unwrap();
+                let ValueShapeKind::Product { fields } = &program_contract.value_shapes[value_shape.0 as usize].kind else { unreachable!() };
+                let field = &fields[*field as usize];
+                for value in [u64::from(destination.offset), u64::from(product.offset + field.offset), (field.shape.words.len() * 8) as u64] {
+                    layout.push_prog_word(root.prog_index, value);
+                }
+            }
+            Op::CopyValue { dst, src } => {
+                let (function_contract, _) = verified_compile_contracts(function_contract, program_contract);
+                let destination = &function_contract.frame.regions[dst.0 as usize];
+                let source = &function_contract.frame.regions[src.0 as usize];
+                for value in [u64::from(destination.offset), u64::from(source.offset), (source.shape.words.len() * 8) as u64] {
+                    layout.push_prog_word(root.prog_index, value);
+                }
+            }
+            Op::EnumConstruct { dst, variant, fields } => {
+                let (function_contract, program_contract) = verified_compile_contracts(function_contract, program_contract);
+                let destination = &function_contract.frame.regions[dst.0 as usize];
+                let value_shape = destination.value_shape.unwrap();
+                let ValueShapeKind::Enum { selector, variants } = &program_contract.value_shapes[value_shape.0 as usize].kind else { unreachable!() };
+                for value in [u64::from(destination.offset), (destination.shape.words.len() * 8) as u64, u64::from(selector.offset), u64::from(*variant), fields.len() as u64] {
+                    layout.push_prog_word(root.prog_index, value);
+                }
+                for source in fields {
+                    let field = &variants[*variant as usize].fields[source.field as usize];
+                    let source_region = &function_contract.frame.regions[source.source.0 as usize];
+                    for value in [u64::from(destination.offset + field.offset), u64::from(source_region.offset), (field.shape.words.len() * 8) as u64] {
+                        layout.push_prog_word(root.prog_index, value);
+                    }
+                }
+            }
+            Op::EnumIsVariant { dst, value, variant } => {
+                let (function_contract, program_contract) = verified_compile_contracts(function_contract, program_contract);
+                let destination = &function_contract.frame.regions[dst.0 as usize];
+                let value_region = &function_contract.frame.regions[value.0 as usize];
+                let value_shape = value_region.value_shape.unwrap();
+                let ValueShapeKind::Enum { selector, variants } = &program_contract.value_shapes[value_shape.0 as usize].kind else { unreachable!() };
+                for immediate in [u64::from(destination.offset), u64::from(value_region.offset), u64::from(selector.offset), u64::from(*variant), variants.len() as u64, i as u64] {
+                    layout.push_prog_word(root.prog_index, immediate);
+                }
+            }
+            Op::EnumProjectChecked { dst, value, variant, field } => {
+                let (function_contract, program_contract) = verified_compile_contracts(function_contract, program_contract);
+                let destination = &function_contract.frame.regions[dst.0 as usize];
+                let value_region = &function_contract.frame.regions[value.0 as usize];
+                let value_shape = value_region.value_shape.unwrap();
+                let ValueShapeKind::Enum { selector, variants } = &program_contract.value_shapes[value_shape.0 as usize].kind else { unreachable!() };
+                let field = &variants[*variant as usize].fields[*field as usize];
+                for immediate in [u64::from(destination.offset), u64::from(value_region.offset), u64::from(selector.offset), u64::from(*variant), variants.len() as u64, u64::from(field.offset), (field.shape.words.len() * 8) as u64, i as u64] {
+                    layout.push_prog_word(root.prog_index, immediate);
+                }
+            }
             Op::ConstI64 { dst, value } => {
                 layout.push_prog_word(root.prog_index, u64::from(*dst));
                 layout.push_prog_word(root.prog_index, *value as u64);
@@ -685,6 +814,16 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
         calls,
         frame_size: f.frame.size,
         frame_align: f.frame.align,
+    }
+}
+
+fn verified_compile_contracts<'a>(
+    function: Option<&'a FunctionContract>,
+    program: Option<&'a ProgramContract>,
+) -> (&'a FunctionContract, &'a ProgramContract) {
+    match (function, program) {
+        (Some(function), Some(program)) => (function, program),
+        _ => panic!("typed structural operation requires VerifiedProgram"),
     }
 }
 
@@ -1032,6 +1171,48 @@ impl JitTask {
                             CompareSide::Right
                         },
                         handle: resume_scratch as i64,
+                    });
+                }
+                EXIT_INVALID_ENUM_SELECTOR | EXIT_ENUM_PROJECTION_MISMATCH => {
+                    let Some(verified) = verified else {
+                        panic!("typed structural operation requires VerifiedProgram");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("verified pc fits usize");
+                    let site = fault_site(verified, frame.fn_id, pc)?;
+                    let actual = resume_scratch as i64;
+                    let function = &verified.contract().functions[frame.fn_id.0 as usize];
+                    let (value, expected) = match &site.op {
+                        Op::EnumIsVariant { value, .. } => (*value, None),
+                        Op::EnumProjectChecked { value, variant, .. } => {
+                            (*value, Some(i64::from(*variant)))
+                        }
+                        _ => {
+                            return Err(TaskFault::NativeFaultExit {
+                                function: frame.fn_id,
+                                code: exit_scratch,
+                            });
+                        }
+                    };
+                    let region = &function.frame.regions[value.0 as usize];
+                    let value_shape = region.value_shape.unwrap();
+                    if exit_scratch == EXIT_ENUM_PROJECTION_MISMATCH {
+                        return Err(TaskFault::EnumProjectionMismatch {
+                            site,
+                            value_shape,
+                            expected: expected.unwrap(),
+                            actual,
+                        });
+                    }
+                    let ValueShapeKind::Enum { variants, .. } =
+                        &verified.contract().value_shapes[value_shape.0 as usize].kind
+                    else {
+                        unreachable!();
+                    };
+                    return Err(TaskFault::InvalidEnumSelector {
+                        site,
+                        value_shape,
+                        expected: (0..variants.len()).map(|variant| variant as i64).collect(),
+                        actual,
                     });
                 }
                 code => {
