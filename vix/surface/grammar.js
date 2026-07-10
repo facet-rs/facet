@@ -3,11 +3,13 @@
 // grows this grammar and its generated typed AST before it grows the checker.
 
 const PREC = {
-  compare: 1,
-  add: 2,
-  mul: 3,
-  unary: 4,
-  postfix: 5,
+  or: 1,
+  and: 2,
+  compare: 3,
+  add: 4,
+  mul: 5,
+  unary: 6,
+  postfix: 7,
 };
 
 function sepBy(sep, rule) {
@@ -148,6 +150,8 @@ module.exports = grammar({
 
     binary: ($) => {
       const table = [
+        [PREC.or, "||"],
+        [PREC.and, "&&"],
         [PREC.compare, choice("<=>", "==", "!=", "<", "<=", ">", ">=")],
         [PREC.add, choice("+", "-")],
         [PREC.mul, choice("*", "/")],

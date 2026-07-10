@@ -767,17 +767,7 @@ fn lower_value(
 ) -> Result<LoweredValue, Diagnostics> {
     match expression {
         ast::Expr::If(expression) => lower_if(nodes, bindings, context, expression),
-        ast::Expr::Bool(value) => Ok(LoweredValue {
-            node: push_node(
-                nodes,
-                value.span,
-                Type::Bool,
-                EffectFacts::PURE,
-                Vec::new(),
-                Op::Bool(value.value),
-            ),
-            ty: Type::Bool,
-        }),
+        ast::Expr::Bool(value) => Ok(lower_bool_constant(nodes, value.span, value.value)),
         ast::Expr::Number(value) => lower_integer_literal(nodes, value.span, &value.value),
         ast::Expr::Str(value) => Ok(LoweredValue {
             node: push_node(
@@ -899,13 +889,7 @@ fn lower_if(
 
     let consequent_start = nodes.len();
     let consequent_value = lower_value_block(nodes, bindings, context, &expression.consequent)?;
-    let consequent = ControlRegion {
-        nodes: nodes[consequent_start..]
-            .iter()
-            .map(|node| node.id)
-            .collect(),
-        output: consequent_value.node,
-    };
+    let consequent = control_region(nodes, consequent_start, consequent_value.node);
 
     let alternative_start = nodes.len();
     let alternative_value = match &expression.alternative {
@@ -917,13 +901,7 @@ fn lower_if(
         &consequent_value.ty,
         if_branch_span(&expression.alternative),
     )?;
-    let alternative = ControlRegion {
-        nodes: nodes[alternative_start..]
-            .iter()
-            .map(|node| node.id)
-            .collect(),
-        output: alternative_value.node,
-    };
+    let alternative = control_region(nodes, alternative_start, alternative_value.node);
 
     let ty = consequent_value.ty;
     Ok(LoweredValue {
@@ -978,6 +956,13 @@ fn if_branch_span(branch: &ast::IfBranch) -> Span {
     match branch {
         ast::IfBranch::Block(block) => block.span,
         ast::IfBranch::If(expression) => expression.span,
+    }
+}
+
+fn control_region(nodes: &[Node], start: usize, output: NodeId) -> ControlRegion {
+    ControlRegion {
+        nodes: nodes[start..].iter().map(|node| node.id).collect(),
+        output,
     }
 }
 
@@ -1693,6 +1678,29 @@ fn lower_binary(
     binary: &ast::Binary,
 ) -> Result<LoweredValue, Diagnostics> {
     let left = lower_value(nodes, bindings, context, &binary.left)?;
+    match binary.op.value.as_str() {
+        "&&" => {
+            return lower_short_circuit_boolean(
+                nodes,
+                bindings,
+                context,
+                binary,
+                left,
+                BooleanOperator::And,
+            );
+        }
+        "||" => {
+            return lower_short_circuit_boolean(
+                nodes,
+                bindings,
+                context,
+                binary,
+                left,
+                BooleanOperator::Or,
+            );
+        }
+        _ => {}
+    }
     let right = lower_value(nodes, bindings, context, &binary.right)?;
     let (ty, op) = match binary.op.value.as_str() {
         "+" => {
@@ -1771,6 +1779,74 @@ fn lower_binary(
         ),
         ty,
     })
+}
+
+#[derive(Clone, Copy)]
+enum BooleanOperator {
+    And,
+    Or,
+}
+
+fn lower_short_circuit_boolean(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    binary: &ast::Binary,
+    left: LoweredValue,
+    operator: BooleanOperator,
+) -> Result<LoweredValue, Diagnostics> {
+    require_type(&left, &Type::Bool, expr_span(&binary.left))?;
+
+    let consequent_start = nodes.len();
+    let consequent_value = match operator {
+        BooleanOperator::And => {
+            let right = lower_value(nodes, bindings, context, &binary.right)?;
+            require_type(&right, &Type::Bool, expr_span(&binary.right))?;
+            right
+        }
+        BooleanOperator::Or => lower_bool_constant(nodes, binary.op.span, true),
+    };
+    let consequent = control_region(nodes, consequent_start, consequent_value.node);
+
+    let alternative_start = nodes.len();
+    let alternative_value = match operator {
+        BooleanOperator::And => lower_bool_constant(nodes, binary.op.span, false),
+        BooleanOperator::Or => {
+            let right = lower_value(nodes, bindings, context, &binary.right)?;
+            require_type(&right, &Type::Bool, expr_span(&binary.right))?;
+            right
+        }
+    };
+    let alternative = control_region(nodes, alternative_start, alternative_value.node);
+
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            binary.span,
+            Type::Bool,
+            EffectFacts::PURE,
+            vec![left.node],
+            Op::If {
+                consequent,
+                alternative,
+            },
+        ),
+        ty: Type::Bool,
+    })
+}
+
+fn lower_bool_constant(nodes: &mut Vec<Node>, span: Span, value: bool) -> LoweredValue {
+    LoweredValue {
+        node: push_node(
+            nodes,
+            span,
+            Type::Bool,
+            EffectFacts::PURE,
+            Vec::new(),
+            Op::Bool(value),
+        ),
+        ty: Type::Bool,
+    }
 }
 
 #[derive(Clone, Copy)]

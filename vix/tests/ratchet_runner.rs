@@ -1003,6 +1003,64 @@ fn rung_014_if_else_is_an_expression_through_vir_and_weavy() {
 
 #[test]
 fn rung_015_boolean_operators_reuse_structured_conditionals() {
+    let module = Compiler::new()
+        .compile(RUNG_015)
+        .expect("rung 015 compiles");
+    let function = &module.functions[module.tests[0].function.0 as usize];
+    let conditionals = function
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.op, VirOp::If { .. }))
+        .collect::<Vec<_>>();
+    assert_eq!(conditionals.len(), 3);
+    assert!(
+        conditionals
+            .iter()
+            .all(|node| node.ty == VirType::Bool && node.inputs.len() == 1)
+    );
+    assert!(
+        function
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.op, VirOp::Eq))
+            .count()
+            >= 2
+    );
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    assert_eq!(partitioned.islands.len(), 4);
+    let mut lowered_conditionals = 0;
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let source_map = source_map_for(island);
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 015 lowers to Weavy");
+        for conditional in island
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.op, VirOp::If { .. }))
+        {
+            lowered_conditionals += 1;
+            let trace_id = source_map
+                .iter()
+                .find(|entry| entry.function == island.function && entry.node == conditional.id)
+                .expect("short-circuit conditional has source attribution")
+                .trace_id;
+            assert!(lowered.program.fns[0].code.windows(2).any(|ops| {
+                matches!(ops[0], WeavyOp::Trace { id } if id == trace_id)
+                    && matches!(ops[1], WeavyOp::JumpIfZero { .. })
+            }));
+        }
+        assert!(lowered.program.fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+    }
+    assert_eq!(lowered_conditionals, 3);
+
     let report = run_source(RUNG_015).expect("rung 015 compiles and runs");
     assert!(report.passed());
     assert!(report.agrees());
