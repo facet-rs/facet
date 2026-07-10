@@ -48,8 +48,14 @@ pub struct Ctx {
     /// Read-only value payload table for native store-backed loads.
     pub store_value_memories: *const ValueMemory,
     pub store_value_memory_count: usize,
-    pub molten_value_memories: *const ValueMemory,
-    pub molten_value_memory_count: usize,
+    /// Molten payloads lent by an external owner; read-only.
+    pub lent_molten_value_memories: *const ValueMemory,
+    pub lent_molten_value_memory_count: usize,
+    /// The task's private molten arena, reached only through the two ABI
+    /// functions below so both lanes share one arena semantics.
+    pub molten: *mut core::ffi::c_void,
+    pub molten_alloc: unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64) -> i64,
+    pub molten_bytes: unsafe extern "C" fn(*mut core::ffi::c_void, i64, *mut usize) -> *mut u8,
 }
 
 /// MUST match `crate::task::ValueMemory`.
@@ -111,63 +117,58 @@ unsafe fn read_i64_from(ptr: *const u8, off: usize) -> i64 {
 }
 
 #[inline(always)]
-unsafe fn array_words(
-    store_memories: *const ValueMemory,
-    store_memory_count: usize,
-    molten_memories: *const ValueMemory,
-    molten_memory_count: usize,
-    array: i64,
-    elem_schema_ref: i64,
-) -> Option<(*const u8, usize)> {
-    let (memories, memory_count, handle) = if array < 0 {
-        let handle = (-1i64).checked_sub(array)?;
-        (molten_memories, molten_memory_count, handle as usize)
+unsafe fn handle_bytes(c: &Ctx, handle: i64) -> Option<(*mut u8, usize)> {
+    let memory = if handle < 0 {
+        let mut len = 0usize;
+        let ptr = (c.molten_bytes)(c.molten, handle, &raw mut len);
+        if !ptr.is_null() {
+            return Some((ptr, len));
+        }
+        let index = (-1i64).checked_sub(handle)? as usize;
+        if index >= c.lent_molten_value_memory_count {
+            return None;
+        }
+        *c.lent_molten_value_memories.add(index)
     } else {
-        (store_memories, store_memory_count, array as usize)
+        let index = handle as usize;
+        if index >= c.store_value_memory_count {
+            return None;
+        }
+        *c.store_value_memories.add(index)
     };
-    if handle >= memory_count {
+    if memory.ptr.is_null() {
         return None;
     }
-    let memory = *memories.add(handle);
-    if memory.ptr.is_null() || memory.len < 24 {
+    Some((memory.ptr as *mut u8, memory.len))
+}
+
+#[inline(always)]
+unsafe fn array_words(c: &Ctx, array: i64, elem_schema_ref: i64) -> Option<(*mut u8, usize)> {
+    let (ptr, len) = handle_bytes(c, array)?;
+    if len < 24 {
         return None;
     }
-    if read_i64_from(memory.ptr, 0) != 0 || read_i64_from(memory.ptr, 8) != elem_schema_ref {
+    if read_i64_from(ptr, 0) != 0 || read_i64_from(ptr, 8) != elem_schema_ref {
         return None;
     }
-    let count = read_i64_from(memory.ptr, 16);
+    let count = read_i64_from(ptr, 16);
     if count < 0 {
         return None;
     }
     let count = count as usize;
     let expected = count.checked_mul(8).and_then(|n| 24usize.checked_add(n))?;
-    if memory.len != expected {
+    if len != expected {
         return None;
     }
-    Some((memory.ptr, count))
+    Some((ptr, count))
 }
 
 #[inline(always)]
-unsafe fn load_array_word(
-    store_memories: *const ValueMemory,
-    store_memory_count: usize,
-    molten_memories: *const ValueMemory,
-    molten_memory_count: usize,
-    array: i64,
-    index: i64,
-    elem_schema_ref: i64,
-) -> (i64, i64) {
+unsafe fn load_array_word(c: &Ctx, array: i64, index: i64, elem_schema_ref: i64) -> (i64, i64) {
     if index < 0 {
         return (0, 0);
     }
-    let Some((ptr, count)) = array_words(
-        store_memories,
-        store_memory_count,
-        molten_memories,
-        molten_memory_count,
-        array,
-        elem_schema_ref,
-    ) else {
+    let Some((ptr, count)) = array_words(c, array, elem_schema_ref) else {
         return (0, 0);
     };
     let index = index as usize;
@@ -178,79 +179,28 @@ unsafe fn load_array_word(
 }
 
 #[inline(always)]
-unsafe fn load_array_len(
-    store_memories: *const ValueMemory,
-    store_memory_count: usize,
-    molten_memories: *const ValueMemory,
-    molten_memory_count: usize,
-    array: i64,
-    elem_schema_ref: i64,
-) -> (i64, i64) {
-    match array_words(
-        store_memories,
-        store_memory_count,
-        molten_memories,
-        molten_memory_count,
-        array,
-        elem_schema_ref,
-    ) {
+unsafe fn load_array_len(c: &Ctx, array: i64, elem_schema_ref: i64) -> (i64, i64) {
+    match array_words(c, array, elem_schema_ref) {
         Some((_, count)) => (1, count as i64),
         None => (0, 0),
     }
 }
 
 #[inline(always)]
-unsafe fn value_memory(
-    store_memories: *const ValueMemory,
-    store_memory_count: usize,
-    molten_memories: *const ValueMemory,
-    molten_memory_count: usize,
-    handle: i64,
-) -> Option<ValueMemory> {
-    let (memories, memory_count, handle) = if handle < 0 {
-        let handle = (-1i64).checked_sub(handle)?;
-        (molten_memories, molten_memory_count, handle as usize)
-    } else {
-        (store_memories, store_memory_count, handle as usize)
-    };
-    if handle >= memory_count {
-        return None;
-    }
-    let memory = *memories.add(handle);
-    if memory.ptr.is_null() {
-        return None;
-    }
-    Some(memory)
-}
-
-#[inline(always)]
-unsafe fn compare_value_bytes(
-    store_memories: *const ValueMemory,
-    store_memory_count: usize,
-    molten_memories: *const ValueMemory,
-    molten_memory_count: usize,
-    a: i64,
-    b: i64,
-) -> i64 {
+unsafe fn compare_value_bytes(c: &Ctx, a: i64, b: i64) -> i64 {
     if a == b {
         return 1;
     }
-    let a = value_memory(
-        store_memories,
-        store_memory_count,
-        molten_memories,
-        molten_memory_count,
-        a,
-    )
-    .unwrap_unchecked();
-    let b = value_memory(
-        store_memories,
-        store_memory_count,
-        molten_memories,
-        molten_memory_count,
-        b,
-    )
-    .unwrap_unchecked();
+    let a = handle_bytes(c, a).unwrap_unchecked();
+    let b = handle_bytes(c, b).unwrap_unchecked();
+    let a = ValueMemory {
+        ptr: a.0 as *const u8,
+        len: a.1,
+    };
+    let b = ValueMemory {
+        ptr: b.0 as *const u8,
+        len: b.1,
+    };
     let shared = if a.len < b.len { a.len } else { b.len };
     let mut index = 0usize;
     while index < shared {
@@ -461,10 +411,7 @@ pub unsafe extern "C" fn weavy_task_load_array_word(cx: *mut Ctx) {
     let elem_schema_ref = *c.prog.add(4) as i64;
     c.prog = c.prog.add(5);
     let (ok, value) = load_array_word(
-        c.store_value_memories,
-        c.store_value_memory_count,
-        c.molten_value_memories,
-        c.molten_value_memory_count,
+        c,
         read_i64(c.frame, array),
         read_i64(c.frame, index),
         elem_schema_ref,
@@ -474,7 +421,44 @@ pub unsafe extern "C" fn weavy_task_load_array_word(cx: *mut Ctx) {
     cont!(cx);
 }
 
-/// Store-backed array element count — immediates:
+/// Reserve a molten array — immediates: [dst, count, elem_schema_ref].
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_array_new(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let count = *c.prog.add(1) as i64;
+    let elem_schema_ref = *c.prog.add(2) as i64;
+    c.prog = c.prog.add(3);
+    let handle = (c.molten_alloc)(c.molten, count, elem_schema_ref);
+    write_i64(c.frame, dst, handle);
+    cont!(cx);
+}
+
+/// Fill one position of a molten array — immediates: [array, index, src].
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_array_store_word(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let array = *c.prog;
+    let index = *c.prog.add(1);
+    let src = *c.prog.add(2);
+    c.prog = c.prog.add(3);
+    let array = read_i64(c.frame, array);
+    let index = read_i64(c.frame, index);
+    let value = read_i64(c.frame, src);
+    if array < 0 && index >= 0 {
+        let mut len = 0usize;
+        let ptr = (c.molten_bytes)(c.molten, array, &raw mut len);
+        if !ptr.is_null() && len >= 24 {
+            let count = read_i64_from(ptr, 16);
+            if count >= 0 && (index as usize) < count as usize {
+                (ptr.add(24 + index as usize * 8) as *mut i64).write_unaligned(value);
+            }
+        }
+    }
+    cont!(cx);
+}
+
+/// Array element count — immediates:
 /// [dst, present, array, elem_schema_ref].
 #[no_mangle]
 pub unsafe extern "C" fn weavy_task_load_array_len(cx: *mut Ctx) {
@@ -484,14 +468,7 @@ pub unsafe extern "C" fn weavy_task_load_array_len(cx: *mut Ctx) {
     let array = *c.prog.add(2);
     let elem_schema_ref = *c.prog.add(3) as i64;
     c.prog = c.prog.add(4);
-    let (ok, value) = load_array_len(
-        c.store_value_memories,
-        c.store_value_memory_count,
-        c.molten_value_memories,
-        c.molten_value_memory_count,
-        read_i64(c.frame, array),
-        elem_schema_ref,
-    );
+    let (ok, value) = load_array_len(c, read_i64(c.frame, array), elem_schema_ref);
     write_i64(c.frame, dst, value);
     write_i64(c.frame, present, ok);
     cont!(cx);
@@ -506,14 +483,7 @@ pub unsafe extern "C" fn weavy_task_compare_value_bytes(cx: *mut Ctx) {
     let a = *c.prog.add(1);
     let b = *c.prog.add(2);
     c.prog = c.prog.add(3);
-    let ordering = compare_value_bytes(
-        c.store_value_memories,
-        c.store_value_memory_count,
-        c.molten_value_memories,
-        c.molten_value_memory_count,
-        read_i64(c.frame, a),
-        read_i64(c.frame, b),
-    );
+    let ordering = compare_value_bytes(c, read_i64(c.frame, a), read_i64(c.frame, b));
     write_i64(c.frame, dst, ordering);
     cont!(cx);
 }

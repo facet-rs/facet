@@ -219,10 +219,11 @@ artifact collection defined below.
 > r[lang.collection.array-index]
 >
 > `a[i]` on `a: [T]` has type `T`. The index is an `Int` addressing positions
-> `0..a.len()`. An index outside that range is a typed demand failure at the
-> index expression, carrying both the demanded index and the array's length. It
-> is never a defaulted element, never a wrapped or saturated index, and never an
-> `Option<T>` — an array read that succeeds has produced a `T`, so no caller
+> `0..a.len()`. An index outside that range ends the current demand with a typed
+> `IndexOutOfBounds` failure at the indexing expression, carrying the demanded
+> index and the array's length. It is never a defaulted element, never a wrapped
+> or saturated index, never an `Option<T>`, never a machine invariant, and never
+> a process panic — an array read that succeeds has produced a `T`, so no caller
 > unwraps one. Bounds are checked against the array value, never inferred from
 > its type.
 
@@ -328,8 +329,10 @@ collision returns `TreeConflict` with the full path and both entries. A separate
 Postfix `?` is the only in-program observation of demand failure. For an
 expression of type `T`, `expression?` has `Result<T,Failure>`. It does not force
 the expression and does not turn failure into `Option`. `Option.unwrap()` fails
-with a typed `UnwrapOnNone` payload at the call span. `Result<T,E>` remains an
-ordinary domain value for answers a caller is expected to branch on.
+with a typed `UnwrapOnNone` payload at the call span. Indexing outside an
+array's positions fails with a typed `IndexOutOfBounds` payload at the indexing
+span (`lang.collection.array-index`). `Result<T,E>` remains an ordinary domain
+value for answers a caller is expected to branch on.
 
 ## Typed decoding
 

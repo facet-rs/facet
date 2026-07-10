@@ -10416,6 +10416,8 @@ fn op_name(op: &Op) -> &'static str {
         Op::StoreIndexedI64 { .. } => "StoreIndexedI64",
         Op::LoadArrayWord { .. } => "LoadArrayWord",
         Op::LoadArrayLen { .. } => "LoadArrayLen",
+        Op::ArrayNew { .. } => "ArrayNew",
+        Op::ArrayStoreWord { .. } => "ArrayStoreWord",
         Op::CompareValueBytes { .. } => "CompareValueBytes",
         Op::ConstF64 { .. } => "ConstF64",
         Op::AddF64 { .. } => "AddF64",

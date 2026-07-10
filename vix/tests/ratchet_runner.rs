@@ -183,7 +183,7 @@ fn rung_003_lexical_bindings_and_strings_run_through_vir_and_weavy() {
         lowered
             .constants
             .iter()
-            .any(|constant| constant.bytes.as_slice() == b"hello")
+            .any(|constant| constant.memory.as_slice() == b"hello")
     );
     assert!(lowered.render().contains("EqI64"));
 
@@ -1694,22 +1694,173 @@ fn rung_025_ordering_is_an_ordinary_matchable_enum() {
     assert_eq!(report.chaos.receipt_count, 0);
 }
 
+/// Rung 026 certifies the general array mechanism, not three literals.
+///
+/// `[T]` is parameterized only by `T`; length is data on the value. Interior
+/// construction is task-private molten vocabulary — no store intern, no
+/// identity, no host call — and every read is checked against the array itself.
+///
+/// r[verify lang.collection.array-positions-are-data]
+/// r[verify lang.collection.array-index]
+/// r[verify machine.island.molten-private]
 #[test]
-fn rung_026_is_red_at_the_first_array_literal() {
-    let diagnostics = Compiler::new()
+fn rung_026_arrays_are_dense_values_indexed_and_measured_through_vir_and_weavy() {
+    let module = Compiler::new()
         .compile(RUNG_026)
-        .expect_err("rung 026 is the next red production-path rung");
-    assert_eq!(diagnostics.entries.len(), 1);
-    let diagnostic = &diagnostics.entries[0];
-    assert_eq!(diagnostic.code, DiagnosticCode::ParseRejected);
-    assert_eq!(diagnostic.primary.start, 0);
-    assert_eq!(diagnostic.primary.end, 247);
-    assert!(matches!(
-        &diagnostic.payload,
-        vix::diagnostic::DiagnosticPayload::Parse { detail }
-            if detail.contains("byte_position: 133")
-                && detail.contains("expected: [\"(\", \"|\", \"if\"")
-    ));
+        .expect("rung 026 compiles");
+
+    // The source type carries the element type and nothing else.
+    let arrays = module.functions[0]
+        .nodes
+        .iter()
+        .filter(|node| node.op == VirOp::Array)
+        .collect::<Vec<_>>();
+    let [array] = arrays.as_slice() else {
+        panic!("rung 026 builds exactly one array");
+    };
+    assert_eq!(array.ty, VirType::array(VirType::Int));
+    assert_eq!(array.ty.name(), "[Int]");
+    assert_eq!(array.inputs.len(), 3);
+
+    // Indexing yields the element type; length is an ordinary Int read.
+    let index = module.functions[0]
+        .nodes
+        .iter()
+        .find(|node| node.op == VirOp::ArrayIndex)
+        .expect("rung 026 indexes an array");
+    assert_eq!(index.ty, VirType::Int);
+    assert!(index.effect.fallible);
+    let length = module.functions[0]
+        .nodes
+        .iter()
+        .find(|node| node.op == VirOp::ArrayLen)
+        .expect("rung 026 measures an array");
+    assert_eq!(length.ty, VirType::Int);
+    assert!(!length.effect.fallible);
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    assert_eq!(partitioned.islands.len(), 3);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 026 lowers to Weavy");
+
+        // Construction is molten and task-private: nothing is admitted into the
+        // store, and no host call is reachable.
+        assert!(lowered.constants.is_empty());
+        assert!(lowered.program.fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+        assert!(lowered.program.fns.iter().any(|function| {
+            function
+                .code
+                .iter()
+                .any(|op| matches!(op, WeavyOp::ArrayNew { .. }))
+                && function
+                    .code
+                    .iter()
+                    .any(|op| matches!(op, WeavyOp::ArrayStoreWord { .. }))
+        }));
+        // Every read is checked against the value, never folded away.
+        assert!(lowered.program.fns.iter().any(|function| {
+            function.code.iter().any(|op| {
+                matches!(
+                    op,
+                    WeavyOp::LoadArrayWord { .. } | WeavyOp::LoadArrayLen { .. }
+                )
+            })
+        }));
+    }
+
+    let report = run_source(RUNG_026).expect("rung 026 compiles and runs");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    assert_eq!(report.plain.counters.pure_host_calls, 0);
+    assert_eq!(report.chaos.counters.pure_host_calls, 0);
+    assert_eq!(report.plain.receipt_count, 0);
+    assert_eq!(report.chaos.receipt_count, 0);
+    assert_contiguous_sequences(&report.plain.events);
+    assert_contiguous_sequences(&report.chaos.events);
+}
+
+/// The array mechanism is general: elements are arbitrary one-word values, the
+/// index is dynamic, and both cross a call boundary. Nothing here is a literal
+/// the compiler could have folded.
+///
+/// r[verify lang.collection.array-positions-are-data]
+#[test]
+fn rung_026_arrays_hold_computed_elements_and_dynamic_indices() {
+    const SOURCE: &str = r#"
+fn at(i: Int) where { xs: [Int] } -> Int {
+    xs[i]
+}
+
+fn double(x: Int) -> Int {
+    x * 2
+}
+
+#[test]
+fn general_arrays() -> Stream<Check> {
+    let n = 5;
+    let xs = [double(1), n + 1, 9];
+    yield expect_eq(at(0) where { xs: xs }, 2);
+    yield expect_eq(at(1) where { xs: xs }, 6);
+    yield expect_eq(xs.len(), 3);
+}
+"#;
+    let report = run_source(SOURCE).expect("computed elements and dynamic indices run");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.counters.pure_host_calls, 0);
+}
+
+/// An out-of-bounds index fails the demand with the index and the length. It is
+/// not a zero, not an `Option`, not a panic, and not a machine invariant.
+///
+/// r[verify lang.collection.array-index]
+/// r[verify machine.error.index-out-of-bounds]
+#[test]
+fn rung_026_out_of_bounds_indexing_is_a_typed_demand_failure() {
+    const PAST_THE_END: &str = r#"
+#[test]
+fn past_the_end() -> Stream<Check> {
+    let xs = [10, 20, 30];
+    yield expect_eq(xs[7], 0);
+}
+"#;
+    const NEGATIVE: &str = r#"
+fn at(i: Int) where { xs: [Int] } -> Int {
+    xs[i]
+}
+
+#[test]
+fn before_the_start() -> Stream<Check> {
+    let xs = [10, 20];
+    yield expect_eq(at(0 - 1) where { xs: xs }, 0);
+}
+"#;
+    for (source, index, length) in [(PAST_THE_END, 7, 3), (NEGATIVE, -1, 2)] {
+        let diagnostics = run_source(source).expect_err("an out-of-bounds read fails the demand");
+        assert_eq!(diagnostics.entries.len(), 1);
+        let diagnostic = &diagnostics.entries[0];
+        assert_eq!(diagnostic.code, DiagnosticCode::IndexOutOfBounds);
+        assert_eq!(
+            diagnostic.payload,
+            vix::diagnostic::DiagnosticPayload::IndexOutOfBounds { index, length }
+        );
+        // The failure is attributed to the indexing expression itself.
+        assert_eq!(
+            &source[diagnostic.primary.start as usize..diagnostic.primary.end as usize],
+            if index < 0 { "xs[i]" } else { "xs[7]" }
+        );
+    }
 }
 
 fn reject_header(source: &str) -> (&str, usize) {

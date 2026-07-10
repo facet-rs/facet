@@ -25,7 +25,7 @@ pub enum DiagnosticCode {
     VariantPayloadMismatch,
     NonExhaustiveMatch,
     ExpressionStatement,
-    IndexOutOfRange,
+    IndexOutOfBounds,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -70,7 +70,7 @@ pub enum DiagnosticPayload {
     },
     ExpressionStatement,
     /// The demanded index and the length of the array it addressed.
-    IndexOutOfRange {
+    IndexOutOfBounds {
         index: i64,
         length: i64,
     },
@@ -124,7 +124,7 @@ impl Diagnostic {
             },
             DiagnosticPayload::Match { .. } => "non-exhaustive match".to_owned(),
             DiagnosticPayload::ExpressionStatement => "expression statement".to_owned(),
-            DiagnosticPayload::IndexOutOfRange { index, length } => {
+            DiagnosticPayload::IndexOutOfBounds { index, length } => {
                 format!("index {index} is outside an array of length {length}")
             }
         }

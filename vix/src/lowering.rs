@@ -10,8 +10,7 @@ use weavy::task::{
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics};
 use crate::runtime::{
-    DemandKey, DemandPreimage, FramedPreimage, FrameRegion, FrameSlot, FrameWords, RecipeId,
-    SchemaId,
+    DemandKey, DemandPreimage, FrameRegion, FrameSlot, FrameWords, RecipeId, SchemaId,
 };
 use crate::support::Span;
 use crate::vir::{
@@ -21,7 +20,7 @@ use crate::vir::{
 
 /// Island outcome status words. Word 0 of a fault-ABI return region.
 pub const OUTCOME_OK: i64 = 0;
-pub const OUTCOME_INDEX_OUT_OF_RANGE: i64 = 1;
+pub const OUTCOME_INDEX_OUT_OF_BOUNDS: i64 = 1;
 pub const OUTCOME_MALFORMED_ARRAY: i64 = 2;
 
 /// Words reserved at the head of a fault-ABI return region: status, and the
@@ -328,48 +327,42 @@ struct ConstantBody {
     memory: Vec<u8>,
 }
 
-/// Materialize every literal value the island admits before entry: strings and
-/// dense array literals. Identity is built from a framed walk over the value's
-/// positions; the machine payload is built separately.
+/// Materialize every literal the island admits into the store before entry.
 ///
-/// r[impl machine.identity.framed-encoding]
+/// Only strings qualify today: a string is an immutable published value whose
+/// bytes are already its framed content. Arrays are NOT here — interior array
+/// construction is task-private molten vocabulary that never interns, never
+/// hashes, and never publishes an identity (`machine.island.molten-private`).
 fn constant_bodies(island: &Island) -> Result<BTreeMap<NodeRef, ConstantBody>, Diagnostics> {
     let mut bodies = BTreeMap::new();
-    let mut collect = |function: FunctionId, nodes: &[Node]| -> Result<(), Diagnostics> {
-        let by_id = nodes
-            .iter()
-            .map(|node| (node.id, node))
-            .collect::<BTreeMap<_, _>>();
+    let mut collect = |function: FunctionId, nodes: &[Node]| {
         for node in nodes {
-            let body = match &node.op {
-                Op::String(value) => ConstantBody {
-                    schema: SchemaId::named("vix.String.v1"),
-                    identity_preimage: value.as_bytes().to_vec(),
-                    memory: value.as_bytes().to_vec(),
-                },
-                Op::Array => array_constant_body(node, &by_id)?,
-                _ => continue,
+            let Op::String(value) = &node.op else {
+                continue;
             };
             bodies.insert(
                 NodeRef {
                     function,
                     node: node.id,
                 },
-                body,
+                ConstantBody {
+                    schema: SchemaId::named("vix.String.v1"),
+                    identity_preimage: value.as_bytes().to_vec(),
+                    memory: value.as_bytes().to_vec(),
+                },
             );
         }
-        Ok(())
     };
-    collect(island.function, &island.nodes)?;
+    collect(island.function, &island.nodes);
     for function in &island.callees {
-        collect(function.id, &function.nodes)?;
+        collect(function.id, &function.nodes);
     }
     Ok(bodies)
 }
 
-/// The schema tag a store-backed array payload carries for its elements. Only
+/// The schema tag an array-words payload carries for its elements. Only
 /// word-shaped elements have one: a payload of handles would make a container's
-/// identity depend on process-local integers, which
+/// identity depend on process-local integers at freeze, which
 /// `machine.identity.handle-by-referent` forbids.
 fn array_element_schema(element: &Type, span: Span) -> Result<SchemaId, Diagnostics> {
     match element {
@@ -377,73 +370,11 @@ fn array_element_schema(element: &Type, span: Span) -> Result<SchemaId, Diagnost
         _ => Err(lowering_diagnostic(
             span,
             &format!(
-                "a store-backed array of {} needs the molten construction service",
+                "an array of {} needs a referent-hashing element payload",
                 element.name()
             ),
         )),
     }
-}
-
-fn array_constant_body(
-    node: &Node,
-    by_id: &BTreeMap<NodeId, &Node>,
-) -> Result<ConstantBody, Diagnostics> {
-    let element = node.ty.array_element().ok_or_else(|| {
-        lowering_diagnostic(node.span, "array construction has a non-array VIR type")
-    })?;
-    let element_schema = array_element_schema(element, node.span)?;
-
-    let mut elements = Vec::with_capacity(node.inputs.len());
-    for &input in &node.inputs {
-        let input = by_id.get(&input).copied().ok_or_else(|| {
-            lowering_diagnostic(node.span, "array element is not a node of this function")
-        })?;
-        if &input.ty != element {
-            return Err(lowering_diagnostic(
-                input.span,
-                "array element has the wrong VIR type",
-            ));
-        }
-        let word = match &input.op {
-            Op::Int(value) => *value,
-            Op::Bool(value) => i64::from(*value),
-            _ => {
-                return Err(lowering_diagnostic(
-                    input.span,
-                    concat!(
-                        "array construction from computed elements needs the molten ",
-                        "construction service (machine.store.construction-services)"
-                    ),
-                ));
-            }
-        };
-        elements.push(word);
-    }
-
-    let schema = SchemaId::named(&node.ty.name());
-    let count = u64::try_from(elements.len())
-        .map_err(|_| lowering_diagnostic(node.span, "array length overflow"))?;
-
-    let mut preimage = FramedPreimage::start(b"vix.array.v1", schema, count);
-    preimage.seq_len(count);
-    for (index, &word) in elements.iter().enumerate() {
-        preimage.field(index as u64, element_schema);
-        preimage.word(word);
-    }
-
-    let mut memory = Vec::with_capacity(24 + elements.len() * 8);
-    memory.extend_from_slice(&0i64.to_le_bytes());
-    memory.extend_from_slice(&element_schema.ref_word().to_le_bytes());
-    memory.extend_from_slice(&(count as i64).to_le_bytes());
-    for word in &elements {
-        memory.extend_from_slice(&word.to_le_bytes());
-    }
-
-    Ok(ConstantBody {
-        schema,
-        identity_preimage: preimage.finish(),
-        memory,
-    })
 }
 
 fn constant_closures(
@@ -517,6 +448,8 @@ struct FunctionLayout {
     constant_slots: BTreeMap<NodeRef, FrameSlot>,
     scratch: Option<FrameSlot>,
     control_scratch: Option<ControlScratch>,
+    /// Holds the position word while an array literal fills itself.
+    array_scratch: Option<FrameSlot>,
     fault: Option<FaultLayout>,
     frame_size: usize,
 }
@@ -641,6 +574,16 @@ impl FunctionLayout {
         } else {
             None
         };
+        let array_scratch = if nodes.iter().any(|node| matches!(node.op, Op::Array)) {
+            let slot = FrameSlot::for_word(next_word)
+                .ok_or_else(|| lowering_diagnostic(span, "Weavy array offset overflow"))?;
+            next_word = next_word
+                .checked_add(FrameWords::ONE.as_usize())
+                .ok_or_else(|| lowering_diagnostic(span, "function frame size overflow"))?;
+            Some(slot)
+        } else {
+            None
+        };
         let mut constant_slots = BTreeMap::new();
         for &constant in constants {
             let slot = if constant.function == function {
@@ -650,7 +593,7 @@ impl FunctionLayout {
                     .ok_or_else(|| {
                         lowering_diagnostic(span, "closure names a missing local constant")
                     })?;
-                if !matches!(node.op, Op::String(_) | Op::Array) {
+                if !matches!(node.op, Op::String(_)) {
                     return Err(lowering_diagnostic(
                         node.span,
                         "closure constant is not an admitted literal node",
@@ -725,6 +668,7 @@ impl FunctionLayout {
             constant_slots,
             scratch,
             control_scratch,
+            array_scratch,
             fault,
             frame_size,
         })
@@ -1025,7 +969,7 @@ fn lower_node_sequence(
 /// Read one array position through the checked store vocabulary.
 ///
 /// The `present` flag is the machine's answer, not a folded constant: an
-/// out-of-range read publishes an `IndexOutOfRange` outcome carrying the
+/// out-of-range read publishes an `IndexOutOfBounds` outcome carrying the
 /// demanded index and the array's own length, and abandons the island.
 ///
 /// r[impl lang.collection.array-index]
@@ -1076,7 +1020,7 @@ fn lower_array_index_node(
     });
     outputs.code.push(WeavyOp::ConstI64 {
         dst: fault.status(node.span)?.byte_offset(),
-        value: OUTCOME_INDEX_OUT_OF_RANGE,
+        value: OUTCOME_INDEX_OUT_OF_BOUNDS,
     });
     outputs.code.push(WeavyOp::CopyI64 {
         dst: fault.detail(0, node.span)?.byte_offset(),
@@ -1210,7 +1154,7 @@ fn array_read_element(node: &Node, array: &LoweredSlot) -> Result<Type, Diagnost
         node,
         array,
         &array.ty.clone(),
-        ValueRepresentation::RealizedHandle,
+        ValueRepresentation::MoltenHandle,
     )?;
     Ok(element)
 }
@@ -1700,6 +1644,11 @@ fn collect_compare_fields<'a>(
 enum ValueRepresentation {
     Word,
     RealizedHandle,
+    /// A task-private molten handle. It has no identity and may not cross an
+    /// island edge until a freeze/publish service exists.
+    ///
+    /// r[impl machine.island.molten-private]
+    MoltenHandle,
     InlineComposite,
 }
 
@@ -2027,31 +1976,48 @@ fn lower_node(
             )
         }
         Op::Array => {
-            let constant = NodeRef {
-                function: function.id,
-                node: node.id,
-            };
-            if function.layout.constant_slot(constant, node.span)? != dst_slot {
+            // Interior construction: reserve a task-private molten payload and
+            // fill its positions from already-lowered element words. No
+            // scheduler request, no intern, no identity, no host call.
+            //
+            // r[impl machine.island.molten-private]
+            // r[impl lang.collection.array-positions-are-data]
+            let element = node.ty.array_element().ok_or_else(|| {
+                lowering_diagnostic(node.span, "array construction has a non-array VIR type")
+            })?;
+            let element_schema_ref = array_element_schema(element, node.span)?.ref_word();
+            if dst_region.words() != FrameWords::ONE {
                 return Err(lowering_diagnostic(
                     node.span,
-                    "array literal does not occupy its local closure slot",
+                    "an array handle occupies one frame word",
                 ));
             }
-            let body = context.constant_bodies.get(&constant).ok_or_else(|| {
-                lowering_diagnostic(node.span, "array literal has no admitted constant body")
+            let count = u32::try_from(node.inputs.len())
+                .map_err(|_| lowering_diagnostic(node.span, "array length overflow"))?;
+            let position = function.layout.array_scratch.ok_or_else(|| {
+                lowering_diagnostic(node.span, "array construction has no position scratch word")
             })?;
-            let root_layout = context
-                .layouts
-                .get(&context.root_function)
-                .ok_or_else(|| lowering_diagnostic(node.span, "missing island root layout"))?;
-            constants.push(ValueConstant {
-                node: constant,
-                slot: root_layout.constant_slot(constant, node.span)?,
-                schema: body.schema,
-                identity_preimage: body.identity_preimage.clone(),
-                memory: body.memory.clone(),
-            });
-            (Vec::new(), ValueRepresentation::RealizedHandle)
+
+            let mut ops = vec![WeavyOp::ArrayNew {
+                dst,
+                count,
+                elem_schema_ref: element_schema_ref,
+            }];
+            for index in 0..node.inputs.len() {
+                let value = input_value(node, values, index)?;
+                require_value(node, &value, element, ValueRepresentation::Word)?;
+                ops.push(WeavyOp::ConstI64 {
+                    dst: position.byte_offset(),
+                    value: i64::try_from(index)
+                        .map_err(|_| lowering_diagnostic(node.span, "array index overflow"))?,
+                });
+                ops.push(WeavyOp::ArrayStoreWord {
+                    array: dst,
+                    index: position.byte_offset(),
+                    src: value.region.start().byte_offset(),
+                });
+            }
+            (ops, ValueRepresentation::MoltenHandle)
         }
         Op::ArrayIndex | Op::ArrayLen => {
             return Err(lowering_diagnostic(
@@ -2635,7 +2601,8 @@ fn type_words(ty: &Type, span: Span) -> Result<FrameWords, Diagnostics> {
 fn representation_for_type(ty: &Type, span: Span) -> Result<ValueRepresentation, Diagnostics> {
     match ty {
         Type::Bool | Type::Int | Type::Check => Ok(ValueRepresentation::Word),
-        Type::String | Type::Array(_) => Ok(ValueRepresentation::RealizedHandle),
+        Type::String => Ok(ValueRepresentation::RealizedHandle),
+        Type::Array(_) => Ok(ValueRepresentation::MoltenHandle),
         Type::Function { .. } | Type::Tuple(_) | Type::Record(_) | Type::Enum(_) => {
             Ok(ValueRepresentation::InlineComposite)
         }

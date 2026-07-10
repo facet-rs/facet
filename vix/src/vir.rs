@@ -286,7 +286,10 @@ impl Type {
     pub fn equality_is_structural(&self) -> bool {
         match self {
             Self::Bool | Self::Int | Self::String => true,
-            Self::Array(element) => element.equality_is_structural(),
+            // Arrays are molten inside an island: two equal-content arrays are
+            // distinct handles until a freeze/publish service gives them one
+            // identity. Structural equality lands with that service.
+            Self::Array(_) => false,
             Self::Function { .. } => false,
             Self::Tuple(elements) => elements.iter().all(Self::equality_is_structural),
             Self::Record(record) => record
@@ -306,7 +309,7 @@ impl Type {
     pub fn structural_order_is_defined(&self) -> bool {
         match self {
             Self::Bool | Self::Int | Self::String => true,
-            Self::Array(element) => element.structural_order_is_defined(),
+            Self::Array(_) => false,
             Self::Function { .. } => false,
             Self::Tuple(elements) => elements.iter().all(Self::structural_order_is_defined),
             Self::Record(record) => record

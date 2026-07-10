@@ -35,8 +35,11 @@ struct Ctx {
     exit: *mut i64,
     store_value_memories: *const crate::task::ValueMemory,
     store_value_memory_count: usize,
-    molten_value_memories: *const crate::task::ValueMemory,
-    molten_value_memory_count: usize,
+    lent_molten_value_memories: *const crate::task::ValueMemory,
+    lent_molten_value_memory_count: usize,
+    molten: *mut core::ffi::c_void,
+    molten_alloc: unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64) -> i64,
+    molten_bytes: unsafe extern "C" fn(*mut core::ffi::c_void, i64, *mut usize) -> *mut u8,
 }
 
 /// Whether the task JIT lane is usable on this target.
@@ -214,6 +217,14 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                 task_stencils::STORE_IX,
                 Continuations::Fallthrough(task_stencils::STORE_IX_CONT),
             ),
+            Op::ArrayNew { .. } => (
+                task_stencils::ARRAY_NEW,
+                Continuations::Fallthrough(task_stencils::ARRAY_NEW_CONT),
+            ),
+            Op::ArrayStoreWord { .. } => (
+                task_stencils::ARRAY_STORE_WORD,
+                Continuations::Fallthrough(task_stencils::ARRAY_STORE_WORD_CONT),
+            ),
             Op::LoadArrayWord { .. } => (
                 task_stencils::LOAD_ARRAY_WORD,
                 Continuations::Fallthrough(task_stencils::LOAD_ARRAY_WORD_CONT),
@@ -335,6 +346,7 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
             Op::Jump { .. } => 1,
             Op::JumpIfZero { .. } => 3,
             Op::LoadIndexedI64 { .. } | Op::StoreIndexedI64 { .. } => 4,
+            Op::ArrayNew { .. } | Op::ArrayStoreWord { .. } => 3,
             Op::LoadArrayWord { .. } => 5,
             Op::LoadArrayLen { .. } => 4,
             Op::CompareValueBytes { .. } => 3,
@@ -401,6 +413,20 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                 src,
             } => {
                 for v in [base, index, stride, src] {
+                    layout.push_prog_word(root.prog_index, u64::from(*v));
+                }
+            }
+            Op::ArrayNew {
+                dst,
+                count,
+                elem_schema_ref,
+            } => {
+                for v in [u64::from(*dst), u64::from(*count), *elem_schema_ref as u64] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::ArrayStoreWord { array, index, src } => {
+                for v in [array, index, src] {
                     layout.push_prog_word(root.prog_index, u64::from(*v));
                 }
             }
@@ -537,6 +563,9 @@ struct JitFrame {
 /// [`crate::task::Task`], frames in the same arena discipline.
 pub struct JitTask {
     arena: Vec<u8>,
+    /// Interior construction state, identical in ownership and lifetime to the
+    /// interpreter's. Both lanes reach it through the same ABI.
+    molten: crate::task::MoltenArena,
     frames: Vec<JitFrame>,
     pub result: Vec<u8>,
     pub trace: Vec<TaskEvent>,
@@ -548,6 +577,7 @@ impl JitTask {
     pub fn spawn(program: &JitProgram, entry: FnId) -> Self {
         let mut task = JitTask {
             arena: Vec::new(),
+            molten: crate::task::MoltenArena::default(),
             frames: Vec::new(),
             result: Vec::new(),
             trace: Vec::new(),
@@ -644,8 +674,11 @@ impl JitTask {
                 exit: &mut exit_scratch,
                 store_value_memories: value_memories.store.as_ptr(),
                 store_value_memory_count: value_memories.store.len(),
-                molten_value_memories: value_memories.molten.as_ptr(),
-                molten_value_memory_count: value_memories.molten.len(),
+                lent_molten_value_memories: value_memories.molten.as_ptr(),
+                lent_molten_value_memory_count: value_memories.molten.len(),
+                molten: (&raw mut self.molten).cast::<core::ffi::c_void>(),
+                molten_alloc: crate::task::molten_alloc_abi,
+                molten_bytes: crate::task::molten_bytes_abi,
             };
             // SAFETY: `frame.resume` is a chain offset of this compiled
             // function; the copied code uses the extern "C" fn(*mut Ctx)
@@ -1441,52 +1474,91 @@ mod tests {
         assert_eq!(task.trace, interp.trace);
     }
 
+    /// Interior construction: build a molten array, fill it, read it back. No
+    /// store, no host call, no identity — and both lanes agree word for word.
     #[test]
-    fn molten_array_length_matches_the_interpreter() {
+    fn molten_array_construction_matches_the_interpreter() {
         const SCHEMA: i64 = 7;
+        // frame: [0]=array, [1]=index, [2]=value, [3]=elem, [4]=present,
+        //        [5]=len, [6]=len present, [7]=oob elem, [8]=oob present
         let program = Program {
             fns: vec![TaskFn {
-                frame: frame_of_i64s(3),
+                frame: frame_of_i64s(9),
                 code: vec![
-                    // Molten handles are the negative half of the handle space.
-                    Op::ConstI64 { dst: 0, value: -1 },
+                    Op::ArrayNew {
+                        dst: 0,
+                        count: 3,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::ConstI64 { dst: 8, value: 0 },
+                    Op::ConstI64 { dst: 16, value: 10 },
+                    Op::ArrayStoreWord {
+                        array: 0,
+                        index: 8,
+                        src: 16,
+                    },
+                    Op::ConstI64 { dst: 8, value: 1 },
+                    Op::ConstI64 { dst: 16, value: 20 },
+                    Op::ArrayStoreWord {
+                        array: 0,
+                        index: 8,
+                        src: 16,
+                    },
+                    Op::ConstI64 { dst: 8, value: 2 },
+                    Op::ConstI64 { dst: 16, value: 30 },
+                    Op::ArrayStoreWord {
+                        array: 0,
+                        index: 8,
+                        src: 16,
+                    },
+                    // Read position 2 back out.
+                    Op::LoadArrayWord {
+                        dst: 24,
+                        present: 32,
+                        array: 0,
+                        index: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
                     Op::LoadArrayLen {
-                        dst: 8,
-                        present: 16,
+                        dst: 40,
+                        present: 48,
                         array: 0,
                         elem_schema_ref: SCHEMA,
                     },
-                    Op::Ret { src: 8, size: 16 },
+                    // Out of range on a molten array behaves as on a store one.
+                    Op::ConstI64 { dst: 8, value: 3 },
+                    Op::LoadArrayWord {
+                        dst: 56,
+                        present: 64,
+                        array: 0,
+                        index: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::Ret { src: 24, size: 48 },
                 ],
             }],
         };
-        let payload = array_words_payload(SCHEMA, &[4, 5]);
-        let molten = [ValueMemory::from_slice(&payload)];
-        let memories = ValueMemories {
-            store: &[],
-            molten: &molten,
-        };
 
         let mut interp = Task::spawn(&program, FnId(0));
-        assert_eq!(
-            interp.run_hosted_with_value_memories(&program, &mut [], &[], &mut [], memories),
-            TaskStep::Done
-        );
-        assert_eq!(interp.result_i64(), 2);
+        assert_eq!(interp.run(&program, &mut [], &[]), TaskStep::Done);
+        let words = interp
+            .result
+            .chunks_exact(8)
+            .map(|word| i64::from_le_bytes(word.try_into().expect("one result word")))
+            .collect::<Vec<_>>();
+        assert_eq!(words, [30, 1, 3, 1, 0, 0]);
 
         let Some(jit) = JitProgram::compile(&program) else {
             assert!(
                 !available(),
-                "task JIT refused molten array length on a native target"
+                "task JIT refused molten array construction on a native target"
             );
             return;
         };
         let mut task = JitTask::spawn(&jit, FnId(0));
-        assert_eq!(
-            task.run_hosted_with_value_memories(&jit, &mut [], &[], &mut [], memories),
-            TaskStep::Done
-        );
+        assert_eq!(task.run(&jit, &mut [], &[]), TaskStep::Done);
         assert_eq!(task.result, interp.result);
+        assert_eq!(task.trace, interp.trace);
     }
 
     #[test]

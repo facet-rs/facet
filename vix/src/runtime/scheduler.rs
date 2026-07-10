@@ -4,7 +4,7 @@ use weavy::task::{FnId, Task, TaskEvent as WeavyTaskEvent, TaskStep};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics};
 use crate::lowering::{
-    LoweringArtifact, LoweringAttribution, OUTCOME_INDEX_OUT_OF_RANGE, OUTCOME_MALFORMED_ARRAY,
+    LoweringArtifact, LoweringAttribution, OUTCOME_INDEX_OUT_OF_BOUNDS, OUTCOME_MALFORMED_ARRAY,
     OUTCOME_OK,
 };
 use crate::support::Span;
@@ -258,11 +258,11 @@ impl<S: EventSink> Runtime<S> {
         };
         match word(0)? {
             OUTCOME_OK => Ok(word(3)? != 0),
-            OUTCOME_INDEX_OUT_OF_RANGE => Err(Diagnostics::one(Diagnostic {
-                code: DiagnosticCode::IndexOutOfRange,
+            OUTCOME_INDEX_OUT_OF_BOUNDS => Err(Diagnostics::one(Diagnostic {
+                code: DiagnosticCode::IndexOutOfBounds,
                 primary: fault_span(task, attribution),
                 labels: Vec::new(),
-                payload: DiagnosticPayload::IndexOutOfRange {
+                payload: DiagnosticPayload::IndexOutOfBounds {
                     index: word(1)?,
                     length: word(2)?,
                 },

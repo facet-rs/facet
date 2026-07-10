@@ -65,6 +65,12 @@ impl ValueMemory {
 #[derive(Clone, Copy, Debug, Default)]
 pub struct ValueMemories<'a> {
     pub store: &'a [ValueMemory],
+    /// Molten payloads lent by an external owner, read-only for the task.
+    ///
+    /// The task's own [`MoltenArena`] is authoritative for the handles it
+    /// allocated; this table answers only for handles the task did not
+    /// allocate itself. A task that constructs its own molten values is lent no
+    /// table, and a lender's tasks construct none — the two never overlap.
     pub molten: &'a [ValueMemory],
 }
 
@@ -74,6 +80,100 @@ impl ValueMemories<'_> {
         Self {
             store: &[],
             molten: &[],
+        }
+    }
+}
+
+/// A task-private molten arena: mutable, in-flight, not interned.
+///
+/// It is owned by exactly one [`Task`] and dies with it, so a discarded task
+/// drops its molten state wholesale. Nothing in here has a public identity: no
+/// content hash is computed, no handle is store-assigned, and no value here can
+/// cross an island boundary. Crossing an edge requires freeze/publish, which
+/// this type deliberately does not provide.
+///
+/// Molten handles are the negative half of the handle space (`-1 - index`), so
+/// a handle word never aliases a store handle.
+#[derive(Clone, Debug, Default)]
+pub struct MoltenArena {
+    buffers: Vec<Vec<u8>>,
+}
+
+impl MoltenArena {
+    /// Reserve a zeroed array-words payload of `count` elements and return its
+    /// molten handle. Elements are written afterwards through
+    /// [`Op::ArrayStoreWord`]; the payload is well-formed from allocation on.
+    pub fn alloc_array_words(&mut self, count: i64, elem_schema_ref: i64) -> i64 {
+        let count = usize::try_from(count).expect("array length is nonnegative");
+        let mut bytes = Vec::with_capacity(24 + count * 8);
+        bytes.extend_from_slice(&0i64.to_le_bytes());
+        bytes.extend_from_slice(&elem_schema_ref.to_le_bytes());
+        bytes.extend_from_slice(&(count as i64).to_le_bytes());
+        bytes.resize(24 + count * 8, 0);
+        self.buffers.push(bytes);
+        molten_handle(self.buffers.len() - 1)
+    }
+
+    #[must_use]
+    pub fn bytes(&self, handle: i64) -> Option<&[u8]> {
+        self.buffers.get(molten_index(handle)?).map(Vec::as_slice)
+    }
+
+    fn bytes_mut(&mut self, handle: i64) -> Option<&mut [u8]> {
+        let index = molten_index(handle)?;
+        self.buffers.get_mut(index).map(Vec::as_mut_slice)
+    }
+
+    /// Number of live molten allocations. Observability only.
+    #[must_use]
+    pub fn len(&self) -> usize {
+        self.buffers.len()
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.buffers.is_empty()
+    }
+}
+
+const fn molten_handle(index: usize) -> i64 {
+    -1 - (index as i64)
+}
+
+fn molten_index(handle: i64) -> Option<usize> {
+    usize::try_from((-1i64).checked_sub(handle)?).ok()
+}
+
+/// The molten ABI the JIT stencils call through. Both lanes reach the arena by
+/// these two functions, so interpreter and JIT share one arena semantics.
+///
+/// # Safety
+/// `arena` must point to a live [`MoltenArena`].
+pub unsafe extern "C" fn molten_alloc_abi(
+    arena: *mut core::ffi::c_void,
+    count: i64,
+    elem_schema_ref: i64,
+) -> i64 {
+    let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
+    arena.alloc_array_words(count, elem_schema_ref)
+}
+
+/// # Safety
+/// `arena` must point to a live [`MoltenArena`]; `out_len` must be writable.
+pub unsafe extern "C" fn molten_bytes_abi(
+    arena: *mut core::ffi::c_void,
+    handle: i64,
+    out_len: *mut usize,
+) -> *mut u8 {
+    let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
+    match arena.bytes_mut(handle) {
+        Some(bytes) => {
+            unsafe { *out_len = bytes.len() };
+            bytes.as_mut_ptr()
+        }
+        None => {
+            unsafe { *out_len = 0 };
+            core::ptr::null_mut()
         }
     }
 }
@@ -185,12 +285,12 @@ pub enum Op {
         stride: u32,
         src: u32,
     },
-    /// Checked read from a store-backed `Array<T>` word payload.
+    /// Checked read from an `Array<T>` word payload.
     ///
-    /// `frame[array]` is a store handle. The value-memory table entry
-    /// at that handle must be an array-words payload with matching
-    /// `elem_schema_ref`. In-bounds reads write the element to `dst`
-    /// and `1` to `present`; misses write zeroes to both.
+    /// `frame[array]` is a store handle (nonnegative) or a molten handle
+    /// (negative). Its payload must be an array-words run with matching
+    /// `elem_schema_ref`. In-bounds reads write the element to `dst` and `1` to
+    /// `present`; misses write zeroes to both.
     LoadArrayWord {
         dst: u32,
         present: u32,
@@ -198,14 +298,33 @@ pub enum Op {
         index: u32,
         elem_schema_ref: i64,
     },
-    /// Element count of a store-backed `Array<T>` word payload.
+    /// Reserve a task-private molten array of `count` word elements and write
+    /// its molten handle to `frame[dst]`.
+    ///
+    /// This is interior construction, not publication: no scheduler request, no
+    /// store intern, no identity, no host call. The arena belongs to the task
+    /// and dies with it, so a discarded task leaves nothing behind.
+    ArrayNew {
+        dst: u32,
+        count: u32,
+        elem_schema_ref: i64,
+    },
+    /// `molten[frame[array]][frame[index]] = frame[src]` — fill one position of
+    /// a molten array under construction.
+    ///
+    /// Bounds and moltenness are the lowering's obligation, exactly as for
+    /// [`Op::StoreIndexedI64`]: the count is known where the array was
+    /// allocated. A write naming a store handle or an out-of-range position is
+    /// a compiler bug and is dropped, never a runtime tag or check.
+    ArrayStoreWord { array: u32, index: u32, src: u32 },
+    /// Element count of an `Array<T>` word payload.
     ///
     /// The twin of [`Op::LoadArrayWord`] over the same payload header:
-    /// `frame[array]` is a handle whose value-memory entry must be an
-    /// array-words payload with matching `elem_schema_ref`. A well-formed
-    /// payload writes its count to `dst` and `1` to `present`; a malformed
-    /// or absent one writes zeroes to both. Length is a property of the
-    /// value, never of the frame layout.
+    /// `frame[array]` is a store or molten handle whose payload must be an
+    /// array-words run with matching `elem_schema_ref`. A well-formed payload
+    /// writes its count to `dst` and `1` to `present`; a malformed or absent
+    /// one writes zeroes to both. Length is a property of the value, never of
+    /// the frame layout.
     LoadArrayLen {
         dst: u32,
         present: u32,
@@ -314,6 +433,8 @@ struct FrameRecord {
 #[derive(Clone, Debug)]
 pub struct Task {
     arena: Vec<u8>,
+    /// Interior construction state. Private to this task, dropped with it.
+    molten: MoltenArena,
     frames: Vec<FrameRecord>,
     /// Root return bytes once [`TaskStep::Done`].
     pub result: Vec<u8>,
@@ -336,6 +457,7 @@ impl Task {
     pub fn spawn_with_mode(program: &Program, entry: FnId, mode: TraceMode) -> Self {
         let mut task = Task {
             arena: Vec::new(),
+            molten: MoltenArena::default(),
             frames: Vec::new(),
             result: Vec::new(),
             trace: Vec::new(),
@@ -576,6 +698,24 @@ impl Task {
                     write_i64_at(&mut self.arena, at, v);
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
+                Op::ArrayNew {
+                    dst,
+                    count,
+                    elem_schema_ref,
+                } => {
+                    let handle = self
+                        .molten
+                        .alloc_array_words(i64::from(count), elem_schema_ref);
+                    write_i64_at(&mut self.arena, base + dst as usize, handle);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::ArrayStoreWord { array, index, src } => {
+                    let array = read_i64_at(&self.arena, base + array as usize);
+                    let index = read_i64_at(&self.arena, base + index as usize);
+                    let value = read_i64_at(&self.arena, base + src as usize);
+                    store_molten_array_word(&mut self.molten, array, index, value);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
                 Op::LoadArrayWord {
                     dst,
                     present,
@@ -586,7 +726,7 @@ impl Task {
                     let array = read_i64_at(&self.arena, base + array as usize);
                     let index = read_i64_at(&self.arena, base + index as usize);
                     let (ok, value) =
-                        load_array_word(value_memories, array, index, elem_schema_ref);
+                        load_array_word(value_memories, &self.molten, array, index, elem_schema_ref);
                     write_i64_at(&mut self.arena, base + dst as usize, value);
                     write_i64_at(&mut self.arena, base + present as usize, i64::from(ok));
                     self.frames.last_mut().expect("frame").pc += 1;
@@ -598,7 +738,8 @@ impl Task {
                     elem_schema_ref,
                 } => {
                     let array = read_i64_at(&self.arena, base + array as usize);
-                    let (ok, value) = load_array_len(value_memories, array, elem_schema_ref);
+                    let (ok, value) =
+                        load_array_len(value_memories, &self.molten, array, elem_schema_ref);
                     write_i64_at(&mut self.arena, base + dst as usize, value);
                     write_i64_at(&mut self.arena, base + present as usize, i64::from(ok));
                     self.frames.last_mut().expect("frame").pc += 1;
@@ -606,7 +747,7 @@ impl Task {
                 Op::CompareValueBytes { dst, a, b } => {
                     let a = read_i64_at(&self.arena, base + a as usize);
                     let b = read_i64_at(&self.arena, base + b as usize);
-                    let ordering = compare_value_bytes(value_memories, a, b);
+                    let ordering = compare_value_bytes(value_memories, &self.molten, a, b);
                     write_i64_at(&mut self.arena, base + dst as usize, ordering);
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
@@ -820,23 +961,37 @@ fn write_i64_at(arena: &mut [u8], at: usize, value: i64) {
     arena[at..at + 8].copy_from_slice(&value.to_le_bytes());
 }
 
-/// Validate an array-words payload header and return its body and element count.
-fn array_words<'a>(
+/// Resolve a handle to its payload. Negative handles name molten values: the
+/// task's own arena first, then any table an external owner lent. Nonnegative
+/// handles index the lent store table.
+fn handle_bytes<'a>(
     value_memories: ValueMemories<'a>,
-    array: i64,
-    elem_schema_ref: i64,
-) -> Option<(&'a [u8], usize)> {
-    let (handle, memories) = if array < 0 {
-        let handle = usize::try_from((-1i64).checked_sub(array)?).ok()?;
-        (handle, value_memories.molten)
+    molten: &'a MoltenArena,
+    handle: i64,
+) -> Option<&'a [u8]> {
+    let memory = if handle < 0 {
+        if let Some(bytes) = molten.bytes(handle) {
+            return Some(bytes);
+        }
+        let index = usize::try_from((-1i64).checked_sub(handle)?).ok()?;
+        value_memories.molten.get(index).copied()?
     } else {
-        (usize::try_from(array).ok()?, value_memories.store)
+        value_memories
+            .store
+            .get(usize::try_from(handle).ok()?)
+            .copied()?
     };
-    let memory = memories.get(handle).copied()?;
-    if memory.ptr.is_null() || memory.len < 24 {
+    if memory.ptr.is_null() {
         return None;
     }
-    let bytes = unsafe { core::slice::from_raw_parts(memory.ptr, memory.len) };
+    Some(unsafe { core::slice::from_raw_parts(memory.ptr, memory.len) })
+}
+
+/// Validate an array-words payload header and return its body and element count.
+fn array_words(bytes: &[u8], elem_schema_ref: i64) -> Option<(&[u8], usize)> {
+    if bytes.len() < 24 {
+        return None;
+    }
     if read_i64_at(bytes, 0) != 0 || read_i64_at(bytes, 8) != elem_schema_ref {
         return None;
     }
@@ -850,11 +1005,14 @@ fn array_words<'a>(
 
 fn load_array_word(
     value_memories: ValueMemories<'_>,
+    molten: &MoltenArena,
     array: i64,
     index: i64,
     elem_schema_ref: i64,
 ) -> (bool, i64) {
-    let Some((bytes, count)) = array_words(value_memories, array, elem_schema_ref) else {
+    let Some((bytes, count)) = handle_bytes(value_memories, molten, array)
+        .and_then(|bytes| array_words(bytes, elem_schema_ref))
+    else {
         return (false, 0);
     };
     let Ok(index) = usize::try_from(index) else {
@@ -868,22 +1026,48 @@ fn load_array_word(
 
 fn load_array_len(
     value_memories: ValueMemories<'_>,
+    molten: &MoltenArena,
     array: i64,
     elem_schema_ref: i64,
 ) -> (bool, i64) {
-    match array_words(value_memories, array, elem_schema_ref) {
+    match handle_bytes(value_memories, molten, array)
+        .and_then(|bytes| array_words(bytes, elem_schema_ref))
+    {
         Some((_, count)) => (true, count as i64),
         None => (false, 0),
     }
 }
 
-fn compare_value_bytes(value_memories: ValueMemories<'_>, a: i64, b: i64) -> i64 {
+/// Fill one position of a molten array. See [`Op::ArrayStoreWord`] for the
+/// lowering's obligations.
+fn store_molten_array_word(molten: &mut MoltenArena, array: i64, index: i64, value: i64) {
+    let Ok(index) = usize::try_from(index) else {
+        return;
+    };
+    let Some(bytes) = molten.bytes_mut(array) else {
+        return;
+    };
+    let Some((_, count)) = array_words(bytes, read_i64_at(bytes, 8)) else {
+        return;
+    };
+    if index >= count {
+        return;
+    }
+    write_i64_at(bytes, 24 + index * 8, value);
+}
+
+fn compare_value_bytes(
+    value_memories: ValueMemories<'_>,
+    molten: &MoltenArena,
+    a: i64,
+    b: i64,
+) -> i64 {
     if a == b {
         return 1;
     }
-    let a = value_bytes(value_memories, a)
+    let a = handle_bytes(value_memories, molten, a)
         .expect("CompareValueBytes left operand must be a resident value handle");
-    let b = value_bytes(value_memories, b)
+    let b = handle_bytes(value_memories, molten, b)
         .expect("CompareValueBytes right operand must be a resident value handle");
     match a.cmp(b) {
         core::cmp::Ordering::Less => 0,
@@ -892,19 +1076,7 @@ fn compare_value_bytes(value_memories: ValueMemories<'_>, a: i64, b: i64) -> i64
     }
 }
 
-fn value_bytes(value_memories: ValueMemories<'_>, handle: i64) -> Option<&[u8]> {
-    let (handle, memories) = if handle < 0 {
-        let handle = (-1i64).checked_sub(handle)?;
-        (usize::try_from(handle).ok()?, value_memories.molten)
-    } else {
-        (usize::try_from(handle).ok()?, value_memories.store)
-    };
-    let memory = memories.get(handle).copied()?;
-    if memory.ptr.is_null() {
-        return None;
-    }
-    Some(unsafe { core::slice::from_raw_parts(memory.ptr, memory.len) })
-}
+
 
 #[cfg(test)]
 mod tests {

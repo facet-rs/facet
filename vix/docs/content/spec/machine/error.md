@@ -43,6 +43,18 @@ the string `"unwrap on None"` and no location, no subject, no demand chain.
 > panic. It is never folded into a legitimate-miss or `Ok(false)` path.
 > (Twin of `machine.obs.loud-fallbacks`.)
 
+> r[machine.error.index-out-of-bounds]
+>
+> [SETTLED] A dense-array read outside `0..len` is a typed `IndexOutOfBounds`
+> demand failure carrying the demanded index, the array's length, and the
+> indexing span. The machine's checked array-read vocabulary reports absence
+> through a `present` witness so the lowering can raise it; a lowering that
+> folds the miss into a zero element, a wrapped index, or an `Option` has
+> erased the failure's address. Unlike
+> `machine.error.structural-impossibility`, an out-of-bounds index is a
+> legitimate program outcome, not an invariant break: a malformed array payload
+> is the invariant break.
+
 > r[machine.error.failure-is-a-value]
 >
 > [DESIGN, round 11] A failure **is a value**. It has a schema and a content hash
