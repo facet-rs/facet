@@ -452,6 +452,28 @@ fn direct_string_call() -> Stream<Check> {
         assert_eq!(lowered.program.fns.len(), 2);
         let root = &lowered.contract.functions[0];
         let callee = &lowered.contract.functions[1];
+        assert_eq!(lowered.constants.len(), 2, "one publication per NodeRef");
+        for constant in &lowered.constants {
+            assert_eq!(constant.root.function, FunctionId(0));
+            assert_eq!(constant.root.schema, weavy::SchemaRef(0));
+            assert_eq!(constant.owner.schema, weavy::SchemaRef(0));
+            assert_eq!(constant.root.schema, constant.owner.schema);
+            match constant.owner.function {
+                FunctionId(0) => {
+                    assert_eq!(constant.root.entry, 0);
+                    assert_eq!(constant.owner.entry, 0);
+                    assert_eq!(constant.root.slot.byte_offset(), 0);
+                    assert_eq!(constant.owner.slot.byte_offset(), 0);
+                }
+                FunctionId(1) => {
+                    assert_eq!(constant.root.entry, 1);
+                    assert_eq!(constant.owner.entry, 1);
+                    assert_eq!(constant.root.slot.byte_offset(), 24);
+                    assert_eq!(constant.owner.slot.byte_offset(), 8);
+                }
+                function => panic!("unexpected constant owner {function:?}"),
+            }
+        }
         assert_eq!(
             root.entries.len(),
             2,
@@ -471,6 +493,8 @@ fn direct_string_call() -> Stream<Check> {
             })
             .expect("root calls check_string directly");
         assert_eq!(root_call.len(), callee.entries.len());
+        assert_eq!(root_call[1].dst, 8);
+        assert_eq!(root_call[1].size, 8);
         for (arg, entry) in root_call.iter().zip(&callee.entries) {
             let region = &callee.frame.regions[entry.0 as usize];
             assert_eq!(arg.dst, region.offset);
