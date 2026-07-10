@@ -1082,14 +1082,15 @@ impl Verifier<'_> {
                 self.validate_value_shape_ref(nested_site, nested, &field.shape, None)?;
             }
             let bounds = RegionBounds { start, end };
-            if let Some((variant_index, selector)) = variant {
-                if selector.start < bounds.end && bounds.start < selector.end {
-                    return Err(self.global(ProgramDefect::ValueShapeFieldOverlapsSelector {
-                        value_shape,
-                        variant: variant_index,
-                        field: field_index,
-                    }));
-                }
+            if let Some((variant_index, selector)) = variant
+                && selector.start < bounds.end
+                && bounds.start < selector.end
+            {
+                return Err(self.global(ProgramDefect::ValueShapeFieldOverlapsSelector {
+                    value_shape,
+                    variant: variant_index,
+                    field: field_index,
+                }));
             }
             for (prior_index, prior) in ranges.iter().copied().enumerate() {
                 if prior.start < bounds.end && bounds.start < prior.end {
