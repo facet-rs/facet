@@ -5123,7 +5123,13 @@ mod tests {
             Program {
                 fns: vec![function(
                     2,
-                    vec![Op::CopyI64 { dst: 8, src: 0 }, Op::Ret { src: 8, size: 8 }],
+                    vec![
+                        Op::CopyValue {
+                            dst: RegionId(1),
+                            src: RegionId(0),
+                        },
+                        Op::Ret { src: 8, size: 8 },
+                    ],
                 )],
             },
             ProgramContract {
@@ -5397,7 +5403,13 @@ mod tests {
 
         let copy_ref_mismatch = single_function(
             2,
-            vec![Op::CopyI64 { dst: 8, src: 0 }, Op::Ret { src: 8, size: 8 }],
+            vec![
+                Op::CopyValue {
+                    dst: RegionId(1),
+                    src: RegionId(0),
+                },
+                Op::Ret { src: 8, size: 8 },
+            ],
             vec![
                 structural_region(0, scalar.clone(), ValueShapeRef(0)),
                 structural_region(8, scalar.clone(), ValueShapeRef(1)),
@@ -5489,16 +5501,15 @@ mod tests {
                 ),
             },
             InvalidCase {
-                name: "partial multiword structural copy",
+                name: "raw multiword structural copy",
                 program: partial_copy.0,
                 contract: partial_copy_contract,
                 expected: op_error(
                     0,
-                    ProgramDefect::StructuralPartialCopy {
-                        source: Some(ValueShapeRef(0)),
-                        destination: Some(ValueShapeRef(0)),
-                        source_size: 16,
-                        destination_size: 16,
+                    ProgramDefect::RawStructuralWordAccess {
+                        role: AccessRole::Destination,
+                        region: RegionId(1),
+                        value_shape: ValueShapeRef(0),
                     },
                 ),
             },
