@@ -203,30 +203,30 @@ impl<I> HostCallChain<I> {
         }
         #[cfg(weavy_jit_active)]
         {
-        let mut layout = StencilLayout::new();
-        let root = layout.start_chain();
-        let mut previous = None;
-        let mut call_slots = Vec::with_capacity(infos.len());
-        for _ in &infos {
-            let slot = layout.reserve_prog_slot(root.prog_index);
-            call_slots.push(slot);
-            let current = layout.emit_stencil(stencils::HOSTCALL);
-            if let Some(previous) = previous {
-                layout.patch_hostcall_continuation(previous, current);
+            let mut layout = StencilLayout::new();
+            let root = layout.start_chain();
+            let mut previous = None;
+            let mut call_slots = Vec::with_capacity(infos.len());
+            for _ in &infos {
+                let slot = layout.reserve_prog_slot(root.prog_index);
+                call_slots.push(slot);
+                let current = layout.emit_stencil(stencils::HOSTCALL);
+                if let Some(previous) = previous {
+                    layout.patch_hostcall_continuation(previous, current);
+                }
+                previous = Some(current);
             }
-            previous = Some(current);
-        }
-        let done = layout.emit_done();
-        if let Some(previous) = previous {
-            layout.patch_hostcall_continuation(previous, done);
-        }
+            let done = layout.emit_done();
+            if let Some(previous) = previous {
+                layout.patch_hostcall_continuation(previous, done);
+            }
 
-        Self {
-            infos,
-            call_slots,
-            calls: Vec::new(),
-            native: NativeProgram::new(layout, root),
-        }
+            Self {
+                infos,
+                call_slots,
+                calls: Vec::new(),
+                native: NativeProgram::new(layout, root),
+            }
         }
     }
 
@@ -242,29 +242,29 @@ impl<I> HostCallChain<I> {
         }
         #[cfg(weavy_jit_active)]
         {
-        let call: unsafe extern "C" fn(*mut (), *const ()) -> bool = typed_hostcall::<C, I>;
-        let calls_bound = self.calls.len() == self.infos.len()
-            && self
-                .calls
-                .iter()
-                .all(|record| core::ptr::fn_addr_eq(record.call, call));
-        if !calls_bound {
-            self.calls.clear();
-            self.calls
-                .extend(self.infos.iter().map(|info| HostCallInfo {
-                    info: core::ptr::from_ref(info).cast(),
-                    call,
-                }));
-            for (slot, call) in self.call_slots.iter().copied().zip(&self.calls) {
-                self.native
-                    .fill_prog_slot(slot, core::ptr::from_ref(call) as u64);
+            let call: unsafe extern "C" fn(*mut (), *const ()) -> bool = typed_hostcall::<C, I>;
+            let calls_bound = self.calls.len() == self.infos.len()
+                && self
+                    .calls
+                    .iter()
+                    .all(|record| core::ptr::fn_addr_eq(record.call, call));
+            if !calls_bound {
+                self.calls.clear();
+                self.calls
+                    .extend(self.infos.iter().map(|info| HostCallInfo {
+                        info: core::ptr::from_ref(info).cast(),
+                        call,
+                    }));
+                for (slot, call) in self.call_slots.iter().copied().zip(&self.calls) {
+                    self.native
+                        .fill_prog_slot(slot, core::ptr::from_ref(call) as u64);
+                }
             }
-        }
-        let mut host_ctx = HostCallCtx::new(self.native.entry_prog(), cx);
-        let entry = unsafe { self.native.entry_fn::<HostCallCtx<C>>() };
-        unsafe {
-            entry(&mut host_ctx);
-        }
+            let mut host_ctx = HostCallCtx::new(self.native.entry_prog(), cx);
+            let entry = unsafe { self.native.entry_fn::<HostCallCtx<C>>() };
+            unsafe {
+                entry(&mut host_ctx);
+            }
         }
     }
 
@@ -289,7 +289,7 @@ impl<I> HostCallChain<I> {
         }
         #[cfg(weavy_jit_active)]
         {
-        self.calls.len()
+            self.calls.len()
         }
     }
 
@@ -302,7 +302,7 @@ impl<I> HostCallChain<I> {
         }
         #[cfg(weavy_jit_active)]
         {
-        self.native.stencil_count()
+            self.native.stencil_count()
         }
     }
 }
@@ -346,33 +346,33 @@ impl<I> RawHostCallChain<I> {
         }
         #[cfg(weavy_jit_active)]
         {
-        let calls: Vec<_> = infos
-            .iter()
-            .map(|info| HostCallInfo {
-                info: core::ptr::from_ref(info).cast(),
-                call,
-            })
-            .collect();
-        let mut layout = StencilLayout::new();
-        let root = layout.start_chain();
-        let mut previous = None;
-        for call in &calls {
-            let current = layout.emit_hostcall(root, core::ptr::from_ref(call));
-            if let Some(previous) = previous {
-                layout.patch_hostcall_continuation(previous, current);
+            let calls: Vec<_> = infos
+                .iter()
+                .map(|info| HostCallInfo {
+                    info: core::ptr::from_ref(info).cast(),
+                    call,
+                })
+                .collect();
+            let mut layout = StencilLayout::new();
+            let root = layout.start_chain();
+            let mut previous = None;
+            for call in &calls {
+                let current = layout.emit_hostcall(root, core::ptr::from_ref(call));
+                if let Some(previous) = previous {
+                    layout.patch_hostcall_continuation(previous, current);
+                }
+                previous = Some(current);
             }
-            previous = Some(current);
-        }
-        let done = layout.emit_done();
-        if let Some(previous) = previous {
-            layout.patch_hostcall_continuation(previous, done);
-        }
+            let done = layout.emit_done();
+            if let Some(previous) = previous {
+                layout.patch_hostcall_continuation(previous, done);
+            }
 
-        Self {
-            infos,
-            calls,
-            native: NativeProgram::new(layout, root),
-        }
+            Self {
+                infos,
+                calls,
+                native: NativeProgram::new(layout, root),
+            }
         }
     }
 
@@ -390,11 +390,11 @@ impl<I> RawHostCallChain<I> {
         }
         #[cfg(weavy_jit_active)]
         {
-        let mut host_ctx = HostCallCtx::new(self.native.entry_prog(), cx);
-        let entry = unsafe { self.native.entry_fn::<HostCallCtx<C>>() };
-        unsafe {
-            entry(&mut host_ctx);
-        }
+            let mut host_ctx = HostCallCtx::new(self.native.entry_prog(), cx);
+            let entry = unsafe { self.native.entry_fn::<HostCallCtx<C>>() };
+            unsafe {
+                entry(&mut host_ctx);
+            }
         }
     }
 
@@ -419,7 +419,7 @@ impl<I> RawHostCallChain<I> {
         }
         #[cfg(weavy_jit_active)]
         {
-        self.calls.len()
+            self.calls.len()
         }
     }
 
@@ -432,7 +432,7 @@ impl<I> RawHostCallChain<I> {
         }
         #[cfg(weavy_jit_active)]
         {
-        self.native.stencil_count()
+            self.native.stencil_count()
         }
     }
 }

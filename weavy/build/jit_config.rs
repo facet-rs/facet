@@ -24,9 +24,7 @@ pub fn parse_policy(value: Option<&str>) -> Result<JitPolicy, String> {
     match value {
         None | Some("") | Some("1") => Ok(JitPolicy::Allow),
         Some("0") => Ok(JitPolicy::Deny),
-        Some(other) => Err(format!(
-            "WEAVY_JIT must be unset, 1, or 0; got {other:?}"
-        )),
+        Some(other) => Err(format!("WEAVY_JIT must be unset, 1, or 0; got {other:?}")),
     }
 }
 
