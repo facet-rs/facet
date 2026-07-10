@@ -27,6 +27,7 @@ const RUNG_017: &str = include_str!("ratchet/017-match-guards.vix");
 const RUNG_018: &str = include_str!("ratchet/018-non-exhaustive.reject.vix");
 const RUNG_019: &str = include_str!("ratchet/019-let-destructuring.vix");
 const RUNG_020: &str = include_str!("ratchet/020-match-destructuring.vix");
+const RUNG_021: &str = include_str!("ratchet/021-closure-destructuring.vix");
 
 /// The first rung is an architectural certificate, not just a boolean test.
 ///
@@ -1243,6 +1244,19 @@ fn rung_020_tuple_match_patterns_select_and_bind_in_source_order() {
     assert!(report.passed());
     assert!(report.agrees());
     assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    assert_eq!(report.plain.counters.pure_host_calls, 0);
+    assert_eq!(report.chaos.counters.pure_host_calls, 0);
+    assert_eq!(report.plain.receipt_count, 0);
+    assert_eq!(report.chaos.receipt_count, 0);
+}
+
+#[test]
+fn rung_021_closure_parameters_destructure_callable_values() {
+    let report = run_source(RUNG_021).expect("rung 021 compiles and runs");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 1);
     assert_eq!(report.plain.checks, report.chaos.checks);
     assert_eq!(report.plain.counters.pure_host_calls, 0);
     assert_eq!(report.chaos.counters.pure_host_calls, 0);
