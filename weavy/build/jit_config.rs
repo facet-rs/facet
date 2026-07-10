@@ -22,7 +22,7 @@ impl JitPolicy {
 /// change execution mode.
 pub fn parse_policy(value: Option<&str>) -> Result<JitPolicy, String> {
     match value {
-        None | Some("") | Some("1") => Ok(JitPolicy::Allow),
+        None | Some("1") => Ok(JitPolicy::Allow),
         Some("0") => Ok(JitPolicy::Deny),
         Some(other) => Err(format!("WEAVY_JIT must be unset, 1, or 0; got {other:?}")),
     }
@@ -58,9 +58,11 @@ mod tests {
     #[test]
     fn parses_negative_policy_override() {
         assert_eq!(parse_policy(None), Ok(JitPolicy::Allow));
-        assert_eq!(parse_policy(Some("")), Ok(JitPolicy::Allow));
         assert_eq!(parse_policy(Some("1")), Ok(JitPolicy::Allow));
         assert_eq!(parse_policy(Some("0")), Ok(JitPolicy::Deny));
+
+        let err = parse_policy(Some("")).unwrap_err();
+        assert!(err.contains("WEAVY_JIT"));
 
         let err = parse_policy(Some("false")).unwrap_err();
         assert!(err.contains("WEAVY_JIT"));

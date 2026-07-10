@@ -100,9 +100,9 @@ fn jit_inactive_when_policy_denies_even_on_supported_targets() {
 #[test]
 fn parses_weavy_jit_policy() {
     assert_eq!(jit_config::parse_policy(None), Ok(JitPolicy::Allow));
-    assert_eq!(jit_config::parse_policy(Some("")), Ok(JitPolicy::Allow));
     assert_eq!(jit_config::parse_policy(Some("1")), Ok(JitPolicy::Allow));
     assert_eq!(jit_config::parse_policy(Some("0")), Ok(JitPolicy::Deny));
+    assert!(jit_config::parse_policy(Some("")).is_err());
     assert!(jit_config::parse_policy(Some("false")).is_err());
 }
 
