@@ -26,7 +26,7 @@ fn main() {
 
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
-    let weavy_jit_active = env::var_os("DEP_WEAVY_JIT").is_some();
+    let weavy_jit_active = env::var("DEP_WEAVY_JIT").as_deref() == Ok("1");
     if weavy_jit_active
         && ((target_os == "macos" && target_arch == "aarch64")
             || (target_os == "linux" && target_arch == "x86_64"))

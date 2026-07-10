@@ -37,7 +37,7 @@ fn main() {
 
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
-    let weavy_jit_active = env::var_os("DEP_WEAVY_JIT").is_some();
+    let weavy_jit_active = env::var("DEP_WEAVY_JIT").as_deref() == Ok("1");
     if weavy_jit_active && native_copy_patch_target(&target_os, &target_arch) {
         println!("cargo:rustc-cfg=facet_hash_jit_active");
         emit_native(&out, &generated, &target_os, &target_arch);

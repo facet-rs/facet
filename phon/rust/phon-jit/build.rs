@@ -72,7 +72,7 @@ fn main() {
     // read back via `links = "weavy"` + `DEP_WEAVY_JIT`) AND phon-jit's own narrower
     // stencil support (macos-aarch64 only — it has no linux-x86_64 stencils yet, unlike
     // Weavy's own copy-patch matrix).
-    let weavy_jit_active = env::var_os("DEP_WEAVY_JIT").is_some();
+    let weavy_jit_active = env::var("DEP_WEAVY_JIT").as_deref() == Ok("1");
 
     if weavy_jit_active && target_os == "macos" && target_arch == "aarch64" {
         println!("cargo:rustc-cfg=phon_jit_native");
