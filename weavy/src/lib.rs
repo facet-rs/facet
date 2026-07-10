@@ -20,7 +20,6 @@ pub use verified::{
     RegionShape, SchemaContract, SchemaRef, ShapeOwner, UnsupportedOp, VerifiedProgram, WordKind,
 };
 
-#[cfg(feature = "jit")]
 pub mod jit;
 
 use std::collections::BTreeMap;

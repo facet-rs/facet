@@ -13,7 +13,7 @@ use core::marker::PhantomData;
 use core::mem::{ManuallyDrop, MaybeUninit};
 use core::str::FromStr;
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -44,7 +44,7 @@ use crate::parser::{
     JsonObjectOrderedScalarStep, JsonScalarInput, JsonScalarToken, JsonSequenceScalarStep,
 };
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -54,7 +54,7 @@ use crate::parser::{NativeArrayStep, NativeOrderedRootCursor};
 use crate::scanner::{NumberHint, ParsedNumber, SpannedToken, Token as ScanToken};
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -191,7 +191,7 @@ pub struct JsonWeavyPlan<T> {
     lowered: DenseLowered<ExecOp>,
     execution: JsonWeavyExecutionMode,
     #[cfg(all(
-        feature = "jit",
+        facet_json_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -227,7 +227,7 @@ where
         let mut jit_fallback_reason = None;
 
         #[cfg(all(
-            feature = "jit",
+            facet_json_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -246,7 +246,7 @@ where
         };
 
         #[cfg(not(all(
-            feature = "jit",
+            facet_json_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -260,7 +260,7 @@ where
             lowered,
             execution,
             #[cfg(all(
-                feature = "jit",
+                facet_json_jit_active,
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")
@@ -282,7 +282,7 @@ where
     #[must_use]
     pub fn active_backend(&self) -> JsonWeavyActiveBackend {
         #[cfg(all(
-            feature = "jit",
+            facet_json_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -373,7 +373,7 @@ where
         let root = PtrUninit::from_maybe_uninit(&mut slot);
 
         #[cfg(all(
-            feature = "jit",
+            facet_json_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -397,7 +397,7 @@ where
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -410,7 +410,7 @@ struct JsonNativePlan {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -421,7 +421,7 @@ struct JsonNativePlan {
 unsafe impl Send for JsonNativePlan {}
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -431,7 +431,7 @@ unsafe impl Send for JsonNativePlan {}
 unsafe impl Sync for JsonNativePlan {}
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -443,7 +443,7 @@ enum JsonNativeRootInfo {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -459,7 +459,7 @@ struct JsonNativeScalarStructInfo {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -469,7 +469,7 @@ type NativeCursorScalarReader =
     fn(&mut NativeOrderedRootCursor<'_>, PtrUninit) -> Result<bool, DeserializeError>;
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -483,7 +483,7 @@ struct JsonNativeScalarStructListInfo {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -492,7 +492,7 @@ struct JsonNativeScalarStructListInfo {
 const JSON_NATIVE_STATUS_OK: u64 = 0;
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -501,7 +501,7 @@ const JSON_NATIVE_STATUS_OK: u64 = 0;
 const JSON_NATIVE_STATUS_FALLBACK: u64 = 1;
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -510,7 +510,7 @@ const JSON_NATIVE_STATUS_FALLBACK: u64 = 1;
 const ORDERED_PROBE_BACKOFF: u8 = u8::MAX;
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -530,7 +530,7 @@ struct JsonNativeState {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -763,7 +763,7 @@ impl JsonNativePlan {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -788,7 +788,7 @@ unsafe extern "C" fn json_native_read_root(state: *mut (), info: *const ()) -> b
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -1301,7 +1301,7 @@ impl JsonNativeState {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -1330,7 +1330,7 @@ fn native_cursor_scalar_reader(scalar: ScalarType) -> NativeCursorScalarReader {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -1344,7 +1344,7 @@ fn read_native_cursor_raw(
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -1365,7 +1365,7 @@ fn read_native_cursor_unit(
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -1386,7 +1386,7 @@ fn read_native_cursor_bool(
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -1410,7 +1410,7 @@ where
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -1434,7 +1434,7 @@ where
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -1455,7 +1455,7 @@ fn read_native_cursor_f32(
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -1476,7 +1476,7 @@ fn read_native_cursor_f64(
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -1499,7 +1499,7 @@ impl JsonNativeRootInfo {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -1526,7 +1526,7 @@ impl JsonNativeScalarStructInfo {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -1543,7 +1543,7 @@ impl JsonNativeScalarStructListInfo {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -1556,7 +1556,7 @@ struct NativeScalarStructGuard<'program> {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -1582,7 +1582,7 @@ impl<'program> NativeScalarStructGuard<'program> {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -1604,23 +1604,23 @@ impl Drop for NativeScalarStructGuard<'_> {
     }
 }
 
-#[cfg(not(feature = "jit"))]
+#[cfg(not(facet_json_jit_active))]
 fn json_weavy_native_jit_available() -> bool {
     false
 }
 
-#[cfg(feature = "jit")]
+#[cfg(facet_json_jit_active)]
 fn json_weavy_native_jit_available() -> bool {
     weavy::jit::NATIVE_COPY_PATCH_AVAILABLE
 }
 
-#[cfg(not(feature = "jit"))]
+#[cfg(not(facet_json_jit_active))]
 fn json_weavy_jit_fallback_reason() -> &'static str {
     "facet-json was built without its jit feature"
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     not(any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -9907,7 +9907,7 @@ fn tiny_i32_struct_fields_are_fusible(fields: &[ScalarFieldPlan]) -> bool {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_json_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")

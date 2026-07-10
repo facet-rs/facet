@@ -3,14 +3,15 @@ use std::collections::{BTreeMap, BTreeSet, HashMap};
 use vix::machine::driver::Lane;
 use vix::machine::{DriveEvent, Machine};
 
+// r[verify machine.execution.jit-single-feature]
+//
+// Vix carries no jit feature of its own: whether `Lane::Jit` is exercised
+// follows Weavy's single build-time decision, read back at runtime.
 pub fn lanes() -> Vec<Lane> {
-    let lanes = vec![Lane::Interp];
-    #[cfg(feature = "jit")]
-    let lanes = {
-        let mut lanes = lanes;
+    let mut lanes = vec![Lane::Interp];
+    if weavy::jit::task_lane::available() {
         lanes.push(Lane::Jit);
-        lanes
-    };
+    }
     lanes
 }
 

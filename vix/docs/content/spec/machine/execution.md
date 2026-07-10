@@ -32,18 +32,21 @@ artifacts and never second-guesses the substrate.
 >   `weavy_jit_active` rustc-cfg (gating weavy's own runtime executor + stencil
 >   extraction) and `cargo::metadata=jit=1` (via `links = "weavy"`), so every
 >   direct dependent's build script reads `DEP_WEAVY_JIT` and gates its own
->   per-crate stencil extraction on the same single decision.
+>   per-crate stencil extraction on the same single decision (each dependent
+>   may additionally narrow the matrix further for its own stencils, e.g.
+>   phon-jit only ships macos-aarch64 ones today, but never widen it).
 > - The JIT API surface is always compiled; only the copy-patch runtime
 >   executor and the build-time stencil extraction are behind `jit_active`.
 >   Consumers compile unconditionally and check
 >   `NATIVE_COPY_PATCH_AVAILABLE` at runtime.
 >
-> This means an iOS build falls to the interpreter by construction — no W+X
-> code compiled, no per-crate feature, no `default-features` dance at the app
-> root — while a desktop/server build JITs. (Rationale:
-> compiling the copy-patch machinery is build-time waste, not runtime W+X, so
-> the feature is about waste and single-source-of-truth, not a hard W^X
-> blocker.)
+> This means an iOS build (or any target outside the matrix) falls to the
+> interpreter by construction — no W+X code compiled, no per-crate feature, no
+> `default-features` dance at the app root — while a desktop/server build on a
+> matrix-supported target JITs. (Rationale: compiling the copy-patch machinery
+> is build-time waste, not runtime W+X, so the feature is about waste and
+> single-source-of-truth, not a hard W^X blocker — the matrix itself is a
+> correctness constraint, not a portability nicety.)
 
 > r[machine.execution.verified-admission]
 >

@@ -195,7 +195,6 @@ impl Machine for Interp {
 // JIT lane — native-only acceleration; must match the interpreter exactly.
 // ---------------------------------------------------------------------------
 
-#[cfg(feature = "jit")]
 mod jit_lane {
     use super::{Machine, Op, Step};
     use crate::jit::{NativeProgram, StencilLayout, async_stencils};
@@ -326,22 +325,12 @@ mod jit_lane {
 /// Whether the JIT async lane is usable on this target. When false,
 /// [`AsyncExec::new`] uses the interpreter (which is always available).
 pub fn jit_available() -> bool {
-    #[cfg(feature = "jit")]
-    {
-        jit_lane::available()
-    }
-    #[cfg(not(feature = "jit"))]
-    {
-        false
-    }
+    jit_lane::available()
 }
 
 fn best_machine(ops: &[Op]) -> (Box<dyn Machine>, bool) {
-    #[cfg(feature = "jit")]
-    {
-        if let Some(m) = jit_lane::JitMachine::compile(ops) {
-            return (Box::new(m), true);
-        }
+    if let Some(m) = jit_lane::JitMachine::compile(ops) {
+        return (Box::new(m), true);
     }
     (Box::new(Interp::new(ops)), false)
 }

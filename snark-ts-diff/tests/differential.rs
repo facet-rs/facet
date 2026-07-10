@@ -334,12 +334,9 @@ fn report_prints_direct_execution_lanes() {
     assert!(stdout.contains("lexer_dominant_execution:"));
 }
 
-#[cfg(all(
-    feature = "jit",
-    any(
-        all(target_os = "macos", target_arch = "aarch64"),
-        all(target_os = "linux", target_arch = "x86_64")
-    )
+#[cfg(any(
+    all(target_os = "macos", target_arch = "aarch64"),
+    all(target_os = "linux", target_arch = "x86_64")
 ))]
 #[test]
 fn hostcalls_print_execution_lanes() {

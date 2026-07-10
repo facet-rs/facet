@@ -7,12 +7,12 @@ source {
     impls (
         {
             name rust
-            include ("vix/src/**/*.rs")
-            test_include ("vix/tests/**/*.rs")
+            include ("src/**/*.rs")
+            test_include ("tests/**/*.rs")
         }
         {
             name vix
-            include ("vix/std/**/*.vix" "vix/corpus-next/**/*.vix" "vix/tests/ratchet/**/*.vix")
+            include ("std/**/*.vix" "corpus-next/**/*.vix" "tests/ratchet/**/*.vix")
         }
     )
 }

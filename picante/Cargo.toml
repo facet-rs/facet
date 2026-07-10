@@ -35,7 +35,6 @@ picante-macros = { workspace = true, optional = true }
 
 [features]
 default = ["macros"]
-jit = ["facet-hash/jit"]
 macros = ["dep:picante-macros"]
 
 [dev-dependencies]

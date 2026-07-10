@@ -6,7 +6,7 @@ use facet::Facet;
 use facet_hash::EqualityPlan;
 use facet_hash::HashPlan;
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -618,7 +618,7 @@ fn unsupported_enums_fail_while_building() {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -639,7 +639,7 @@ fn native_plan_matches_interpreter_stream_for_scalar_struct() {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -665,7 +665,7 @@ fn native_plan_matches_interpreter_stream_for_nested_scalar_struct() {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -690,7 +690,7 @@ fn native_plan_matches_interpreter_stream_for_text_scalars() {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -711,7 +711,7 @@ fn native_plan_matches_interpreter_stream_for_root_array() {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -735,7 +735,7 @@ fn native_plan_matches_interpreter_stream_for_array_field() {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -759,7 +759,7 @@ fn native_plan_hashes_floats_by_bits() {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -780,7 +780,7 @@ fn native_plan_reports_code_layout_stats() {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -801,7 +801,7 @@ fn native_array_plan_reports_const_layout_stats() {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -817,7 +817,7 @@ fn native_plan_rejects_aggregate_fields_for_now() {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -842,7 +842,7 @@ fn native_equality_matches_interpreter_for_scalar_struct() {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -879,7 +879,7 @@ fn native_equality_matches_interpreter_for_text_scalars() {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -913,7 +913,7 @@ fn native_equality_matches_interpreter_for_array_field() {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -947,7 +947,7 @@ fn native_equality_compares_floats_by_bits() {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -967,7 +967,7 @@ fn native_equality_reports_code_layout_stats() {
 }
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")

@@ -26,7 +26,7 @@ fn main() {
         run_interp_host(&host, &payload, iters)
     });
 
-    #[cfg(feature = "jit")]
+    #[cfg(weavy_jit_active)]
     {
         use weavy::jit::task_lane::JitProgram;
 
@@ -123,7 +123,7 @@ fn run_interp_host(program: &Program, payload: &[u8], iters: usize) -> i64 {
     sum
 }
 
-#[cfg(feature = "jit")]
+#[cfg(weavy_jit_active)]
 fn run_jit_native(
     program: &weavy::jit::task_lane::JitProgram,
     memories: &[ValueMemory],
@@ -153,7 +153,7 @@ fn run_jit_native(
     sum
 }
 
-#[cfg(feature = "jit")]
+#[cfg(weavy_jit_active)]
 fn run_jit_host(program: &weavy::jit::task_lane::JitProgram, payload: &[u8], iters: usize) -> i64 {
     use weavy::jit::task_lane::JitTask;
 
@@ -179,7 +179,7 @@ fn drive_interp_host(task: &mut Task, program: &Program, hosts: &mut [HostFn<'_>
     }
 }
 
-#[cfg(feature = "jit")]
+#[cfg(weavy_jit_active)]
 fn drive_jit_host(
     task: &mut weavy::jit::task_lane::JitTask,
     program: &weavy::jit::task_lane::JitProgram,

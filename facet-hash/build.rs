@@ -1,11 +1,11 @@
 //! Build-time stencil extraction for facet-hash's opt-in native backend.
 
-use std::{env, fs, path::PathBuf};
+use std::{
+    env, fs,
+    path::{Path, PathBuf},
+};
 
-#[cfg(feature = "jit")]
 use copypatch::extract::{Stencil, compile_object, extract_stencil, nightly_available};
-#[cfg(feature = "jit")]
-use std::path::Path;
 
 const EMPTY_STENCILS: &str = "\
 pub const SCALAR: &[u8] = &[];\n\
@@ -19,7 +19,6 @@ pub const EQ_SCALAR_RUN_CONT: &[usize] = &[];\n\
 pub const DONE: &[u8] = &[];\n\
 pub const EQ_DONE: &[u8] = &[];\n";
 
-#[cfg(feature = "jit")]
 const SYMBOLS: &[&str] = &[
     "facet_hash_stencil_scalar",
     "facet_hash_stencil_scalar_run",
@@ -31,24 +30,23 @@ const SYMBOLS: &[&str] = &[
 
 fn main() {
     println!("cargo:rustc-check-cfg=cfg(facet_hash_jit_tailcall)");
+    println!("cargo:rustc-check-cfg=cfg(facet_hash_jit_active)");
 
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let generated = out.join("stencils.rs");
 
-    #[cfg(feature = "jit")]
-    {
-        let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-        let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
-        if native_copy_patch_target(&target_os, &target_arch) {
-            emit_native(&out, &generated, &target_os, &target_arch);
-            return;
-        }
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    let weavy_jit_active = env::var_os("DEP_WEAVY_JIT").is_some();
+    if weavy_jit_active && native_copy_patch_target(&target_os, &target_arch) {
+        println!("cargo:rustc-cfg=facet_hash_jit_active");
+        emit_native(&out, &generated, &target_os, &target_arch);
+        return;
     }
 
     fs::write(&generated, EMPTY_STENCILS).unwrap();
 }
 
-#[cfg(feature = "jit")]
 fn native_copy_patch_target(target_os: &str, target_arch: &str) -> bool {
     matches!(
         (target_os, target_arch),
@@ -56,7 +54,6 @@ fn native_copy_patch_target(target_os: &str, target_arch: &str) -> bool {
     )
 }
 
-#[cfg(feature = "jit")]
 fn emit_native(out: &Path, generated: &Path, target_os: &str, target_arch: &str) {
     println!("cargo:rerun-if-changed=stencils/stencils.rs");
     println!("cargo:rerun-if-changed=stencils/stencils_tailcall.rs");
@@ -140,7 +137,6 @@ fn emit_native(out: &Path, generated: &Path, target_os: &str, target_arch: &str)
     fs::write(generated, out).unwrap();
 }
 
-#[cfg(feature = "jit")]
 fn emit(out: &mut String, name: &str, doc: &str, stencil: &Stencil) {
     out.push_str(&format!(
         "/// {doc}\npub const {name}: &[u8] = &{:?};\n",
@@ -148,7 +144,6 @@ fn emit(out: &mut String, name: &str, doc: &str, stencil: &Stencil) {
     ));
 }
 
-#[cfg(feature = "jit")]
 fn emit_cont(out: &mut String, name: &str, of: &str, stencil: &Stencil) {
     out.push_str(&format!(
         "/// Byte offsets within `{of}` of the continuation relocations to patch.\n\

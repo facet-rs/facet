@@ -263,7 +263,7 @@ fn main() {
     let dib = bench("interpreter borrowed", iters, || {
         decode_interp_borrowed(&program_b, &wire)
     });
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     let (dj, djb) = {
         use phon_jit::native::NativeDecode;
         let jit = NativeDecode::compile(&program.program);
@@ -285,7 +285,7 @@ fn main() {
 
     println!("\nencode:");
     let ei = bench("interpreter owned", iters, || encode_interp(&program, base));
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     let ej = {
         use phon_jit::native::NativeEncode;
         let jit = NativeEncode::compile(&program.program);
@@ -299,7 +299,7 @@ fn main() {
         "\nspeedup (borrowed vs owned decode):  interpreter {:.2}x",
         di / dib
     );
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
         println!(
             "                                     jit         {:.2}x",
@@ -312,6 +312,6 @@ fn main() {
             ei / ej,
         );
     }
-    #[cfg(not(all(feature = "jit", target_os = "macos", target_arch = "aarch64")))]
+    #[cfg(not(all(target_os = "macos", target_arch = "aarch64")))]
     let _ = (di, dib, ei);
 }
