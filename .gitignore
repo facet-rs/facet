@@ -67,6 +67,7 @@ scripts/app.js
 .tracey/
 .playwright-mcp/
 .playwright-cli/
+.pnpm-store/
 *.callgrind
 callgrind.*
 heaptrack.*.zst
