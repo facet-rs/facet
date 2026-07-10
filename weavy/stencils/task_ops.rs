@@ -97,6 +97,15 @@ struct RawValueMemory {
     len: usize,
 }
 
+const EXIT_AWAIT_PARKED: i64 = 1;
+const EXIT_CALL: i64 = 2;
+const EXIT_RET: i64 = 3;
+const EXIT_HOST_CALL: i64 = 4;
+const EXIT_TRACE_MARK: i64 = 5;
+const EXIT_HOST_CALL_YIELD: i64 = 6;
+const EXIT_COMPARE_LEFT_UNRESIDENT: i64 = 7;
+const EXIT_COMPARE_RIGHT_UNRESIDENT: i64 = 8;
+
 const LENT_MOLTEN_MIN: i64 = i64::MIN / 2;
 
 extern "C" {
@@ -175,19 +184,21 @@ unsafe fn handle_bytes(c: &Ctx, handle: i64) -> Option<(*const u8, usize)> {
 
 #[inline(always)]
 unsafe fn compare_value_bytes(c: &mut Ctx, pc: u64, a: i64, b: i64) -> Option<i64> {
-    if a == b {
-        return Some(1);
-    }
-    let Some(a) = handle_bytes(c, a) else {
+    let a_handle = a;
+    let b_handle = b;
+    let Some(a) = handle_bytes(c, a_handle) else {
         *c.await_index = pc;
-        *c.resume = a as u64;
-        *c.exit = 7;
+        *c.resume = a_handle as u64;
+        *c.exit = EXIT_COMPARE_LEFT_UNRESIDENT;
         return None;
     };
-    let Some(b) = handle_bytes(c, b) else {
+    if a_handle == b_handle {
+        return Some(1);
+    }
+    let Some(b) = handle_bytes(c, b_handle) else {
         *c.await_index = pc;
-        *c.resume = b as u64;
-        *c.exit = 8;
+        *c.resume = b_handle as u64;
+        *c.exit = EXIT_COMPARE_RIGHT_UNRESIDENT;
         return None;
     };
     let a = RawValueMemory {
@@ -564,7 +575,7 @@ pub unsafe extern "C" fn weavy_task_await(cx: *mut Ctx) {
     } else {
         *c.resume = resume_off;
         *c.await_index = index as u64;
-        *c.exit = 1;
+        *c.exit = EXIT_AWAIT_PARKED;
     }
 }
 
@@ -578,7 +589,7 @@ pub unsafe extern "C" fn weavy_task_call(cx: *mut Ctx) {
     let resume_off = *c.prog;
     c.prog = c.prog.add(1);
     *c.resume = resume_off;
-    *c.exit = 2;
+    *c.exit = EXIT_CALL;
 }
 
 /// RET SITE — immediates: [src, size]. Exit code 3. The `resume` and
@@ -594,7 +605,7 @@ pub unsafe extern "C" fn weavy_task_ret(cx: *mut Ctx) {
     let size = *c.prog.add(1);
     *c.resume = src;
     *c.await_index = size;
-    *c.exit = 3;
+    *c.exit = EXIT_RET;
 }
 
 /// `frame[dst] = frame[a] + frame[b]` (f64, IEEE) — immediates: [dst, a, b].
@@ -639,7 +650,7 @@ pub unsafe extern "C" fn weavy_task_hostcall(cx: *mut Ctx) {
     c.prog = c.prog.add(2);
     *c.resume = continuation;
     *c.await_index = host;
-    *c.exit = 4;
+    *c.exit = EXIT_HOST_CALL;
 }
 
 /// SYNC HOST CALL YIELD — same immediates as HOST CALL, but exit code
@@ -653,7 +664,7 @@ pub unsafe extern "C" fn weavy_task_hostcall_yield(cx: *mut Ctx) {
     c.prog = c.prog.add(2);
     *c.resume = continuation;
     *c.await_index = host;
-    *c.exit = 6;
+    *c.exit = EXIT_HOST_CALL_YIELD;
 }
 
 /// TRACE MARK — immediates: [continuation, id], consumed before exit
@@ -670,7 +681,7 @@ pub unsafe extern "C" fn weavy_task_trace(cx: *mut Ctx) {
     c.prog = c.prog.add(2);
     *c.resume = continuation;
     *c.await_index = id;
-    *c.exit = 5;
+    *c.exit = EXIT_TRACE_MARK;
 }
 
 /// End of chain — reaching this is a lowering bug (RET is mandatory);

@@ -9,11 +9,13 @@
 //! those raw APIs remain public, the full `machine.execution.verified-admission`
 //! rule is not claimed.
 
-use crate::jit::task_lane::{JitProgram, JitTask};
+use std::sync::Arc;
+
+use crate::jit::task_lane::{JitExecutable, JitTask};
 use crate::task::{FnId, HostFn, Op, Task, TaskEvent, TaskStep, TraceMode, ValueMemories};
 use crate::{
-    CallContractId, CallSiteFacts, DriveRequirements, FunctionContract, RegionId, VerifiedProgram,
-    WordKind,
+    CallContractId, CallSiteFacts, DriveRequirements, FrameRegion, FunctionContract, RegionId,
+    VerifiedProgram, WordKind,
 };
 
 /// Which lane an [`Executable`] selected for new tasks.
@@ -91,7 +93,7 @@ pub enum TaskFault {
     },
     IndirectCalleeOutOfRange {
         site: FaultSite,
-        callee: u32,
+        callee: i64,
         function_count: usize,
     },
     IndirectCalleeContractMismatch {
@@ -100,24 +102,36 @@ pub enum TaskFault {
         expected: CallContractId,
         actual: Option<CallContractId>,
     },
+    MissingIndirectCallFacts {
+        site: FaultSite,
+    },
     UnresidentCompareValueBytes {
         site: FaultSite,
         side: CompareSide,
         handle: i64,
     },
     NativeFaultExit {
-        site: FaultSite,
+        function: FnId,
         code: i64,
     },
+    InvalidFaultSite {
+        function: FnId,
+        pc: usize,
+        function_count: usize,
+        op_count: Option<usize>,
+    },
     PoisonedReDrive {
+        original: Box<TaskFault>,
+    },
+    PoisonedResult {
         original: Box<TaskFault>,
     },
 }
 
 /// A verified program prepared for execution.
 pub struct Executable {
-    verified: VerifiedProgram,
-    native: Option<JitProgram>,
+    verified: Arc<VerifiedProgram>,
+    native: Option<JitExecutable>,
     lane_facts: LaneFacts,
     mode: TraceMode,
 }
@@ -130,10 +144,11 @@ impl Executable {
 
     #[must_use]
     pub fn with_trace_mode(verified: VerifiedProgram, mode: TraceMode) -> Self {
+        let verified = Arc::new(verified);
         let native_available = crate::jit::task_lane::available();
         let disabled = native_disabled_by_environment();
         let native = if native_available && !disabled {
-            JitProgram::compile_with_mode(verified.program(), mode)
+            JitExecutable::compile(Arc::clone(&verified), mode)
         } else {
             None
         };
@@ -176,7 +191,7 @@ impl Executable {
     pub fn spawn(&self, entry: FnId) -> Result<ExecTask<'_>, TaskFault> {
         self.validate_entry(entry)?;
         let lane = match &self.native {
-            Some(native) => Lane::Native(JitTask::spawn(native, entry)),
+            Some(native) => Lane::Native(JitTask::spawn_verified(native, entry)),
             None => Lane::Interpreter(Task::spawn_with_mode(
                 self.verified.program(),
                 entry,
@@ -195,9 +210,7 @@ impl Executable {
         let function = self.function(entry)?;
         for (index, region) in function.entries.iter().copied().enumerate() {
             let region_contract = &function.frame.regions[region.0 as usize];
-            if region_contract.shape.words.len() != 1
-                || !region_contract.shape.words[0].is_exactly(WordKind::Scalar)
-            {
+            if entry_word_kind(region_contract).is_none() {
                 return Err(TaskFault::InvalidEntryShape {
                     entry,
                     index,
@@ -254,6 +267,23 @@ enum Lane {
 
 impl ExecTask<'_> {
     pub fn write_entry_i64(&mut self, index: usize, value: i64) -> Result<(), TaskFault> {
+        self.write_entry_word(index, value, |kind| kind == WordKind::Scalar)
+    }
+
+    pub fn write_entry_callable_id(&mut self, index: usize, value: i64) -> Result<(), TaskFault> {
+        self.write_entry_word(index, value, |kind| matches!(kind, WordKind::Callable(_)))
+    }
+
+    pub fn write_entry_handle(&mut self, index: usize, value: i64) -> Result<(), TaskFault> {
+        self.write_entry_word(index, value, |kind| matches!(kind, WordKind::Handle(_)))
+    }
+
+    fn write_entry_word(
+        &mut self,
+        index: usize,
+        value: i64,
+        accepts: impl FnOnce(WordKind) -> bool,
+    ) -> Result<(), TaskFault> {
         self.check_not_poisoned()?;
         let function = self.executable.function(self.entry)?;
         let Some(region) = function.entries.get(index).copied() else {
@@ -264,9 +294,14 @@ impl ExecTask<'_> {
             });
         };
         let region_contract = &function.frame.regions[region.0 as usize];
-        if region_contract.shape.words.len() != 1
-            || !region_contract.shape.words[0].is_exactly(WordKind::Scalar)
-        {
+        let Some(kind) = entry_word_kind(region_contract) else {
+            return Err(TaskFault::InvalidEntryShape {
+                entry: self.entry,
+                index,
+                region,
+            });
+        };
+        if !accepts(kind) {
             return Err(TaskFault::InvalidEntryShape {
                 entry: self.entry,
                 index,
@@ -317,14 +352,9 @@ impl ExecTask<'_> {
                 hosts,
                 value_memories,
             ),
-            (Some(native), Lane::Native(task)) => task.run_verified_with_value_memories(
-                &self.executable.verified,
-                native,
-                ready,
-                awaited,
-                hosts,
-                value_memories,
-            ),
+            (Some(native), Lane::Native(task)) => {
+                task.run_verified_with_value_memories(native, ready, awaited, hosts, value_memories)
+            }
             (None, Lane::Native(_)) => unreachable!("native task exists only with native program"),
         };
         step.map_err(|fault| self.poison(fault))
@@ -338,17 +368,18 @@ impl ExecTask<'_> {
         }
     }
 
-    #[must_use]
-    pub fn result(&self) -> &[u8] {
-        match &self.lane {
+    pub fn result(&self) -> Result<&[u8], TaskFault> {
+        self.check_result_available()?;
+        Ok(match &self.lane {
             Lane::Interpreter(task) => &task.result,
             Lane::Native(task) => &task.result,
-        }
+        })
     }
 
     pub fn result_i64(&self) -> Result<i64, TaskFault> {
+        self.check_result_available()?;
         self.executable.validate_result_i64(self.entry)?;
-        let result = self.result();
+        let result = self.result()?;
         if result.len() != size_of::<i64>() {
             let function = self.executable.function(self.entry)?;
             return Err(TaskFault::InvalidResultShape {
@@ -365,6 +396,15 @@ impl ExecTask<'_> {
     fn check_not_poisoned(&self) -> Result<(), TaskFault> {
         if let Some(fault) = &self.poisoned {
             return Err(TaskFault::PoisonedReDrive {
+                original: Box::new(fault.clone()),
+            });
+        }
+        Ok(())
+    }
+
+    fn check_result_available(&self) -> Result<(), TaskFault> {
+        if let Some(fault) = &self.poisoned {
+            return Err(TaskFault::PoisonedResult {
                 original: Box::new(fault.clone()),
             });
         }
@@ -408,24 +448,56 @@ fn native_disabled_by_environment() -> bool {
     std::env::var_os("WEAVY_JIT").is_some_and(|value| value == "0")
 }
 
-pub(crate) fn fault_site(verified: &VerifiedProgram, function: FnId, pc: usize) -> FaultSite {
-    let op = verified.program().fns[function.0 as usize].code[pc].clone();
+fn entry_word_kind(region: &FrameRegion) -> Option<WordKind> {
+    let [word] = region.shape.words.as_slice() else {
+        return None;
+    };
+    let [kind] = word.as_slice() else {
+        return None;
+    };
+    match kind {
+        WordKind::Scalar | WordKind::Callable(_) | WordKind::Handle(_) => Some(*kind),
+        WordKind::Status | WordKind::Opaque => None,
+    }
+}
+
+pub(crate) fn fault_site(
+    verified: &VerifiedProgram,
+    function: FnId,
+    pc: usize,
+) -> Result<FaultSite, TaskFault> {
+    let Some(function_program) = verified.program().fns.get(function.0 as usize) else {
+        return Err(TaskFault::InvalidFaultSite {
+            function,
+            pc,
+            function_count: verified.program().fns.len(),
+            op_count: None,
+        });
+    };
+    let Some(op) = function_program.code.get(pc).cloned() else {
+        return Err(TaskFault::InvalidFaultSite {
+            function,
+            pc,
+            function_count: verified.program().fns.len(),
+            op_count: Some(function_program.code.len()),
+        });
+    };
     let call = verified
         .facts()
         .function(function)
         .and_then(|function| function.pc(pc))
         .and_then(|pc| pc.call());
-    FaultSite {
+    Ok(FaultSite {
         function,
         pc,
         op,
         call,
-    }
+    })
 }
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Mutex, MutexGuard};
+    use std::sync::{Arc, Mutex, MutexGuard};
 
     use super::*;
     use crate::jit::task_lane;
@@ -577,7 +649,7 @@ mod tests {
             },
             ProgramContract {
                 functions: vec![
-                    function_contract(3, callable_regions(CallContractId(0)), &[], 2, None),
+                    function_contract(3, callable_regions(CallContractId(0)), &[0, 1], 2, None),
                     function_contract(
                         2,
                         vec![
@@ -637,7 +709,7 @@ mod tests {
                         word_region(8, WordKind::Handle(schema)),
                         word_region(16, WordKind::Scalar),
                     ],
-                    &[],
+                    &[0, 1],
                     2,
                     None,
                 )],
@@ -721,23 +793,16 @@ mod tests {
     }
 
     fn run_native(
-        verified: &VerifiedProgram,
+        verified: Arc<VerifiedProgram>,
         seed: impl FnOnce(&mut JitTask),
         value_memories: ValueMemories<'_>,
     ) -> Option<LaneRun> {
-        let jit = JitProgram::compile_with_mode(verified.program(), TraceMode::Innards)?;
-        let mut task = JitTask::spawn(&jit, FnId(0));
+        let jit = JitExecutable::compile(verified, TraceMode::Innards)?;
+        let mut task = JitTask::spawn_verified(&jit, FnId(0));
         seed(&mut task);
         Some(
-            task.run_verified_with_value_memories(
-                verified,
-                &jit,
-                &mut [],
-                &[],
-                &mut [],
-                value_memories,
-            )
-            .map(|step| (step, task.result, task.trace)),
+            task.run_verified_with_value_memories(&jit, &mut [], &[], &mut [], value_memories)
+                .map(|step| (step, task.result, task.trace)),
         )
     }
 
@@ -843,8 +908,161 @@ mod tests {
     }
 
     #[test]
+    fn public_executable_reports_indirect_faults_and_poisons() {
+        let oversized = i64::from(u32::MAX) + 1;
+        let cases: [(i64, &str, fn(&TaskFault) -> bool); 4] = [
+            (-1, "negative", |fault: &TaskFault| {
+                matches!(
+                    fault,
+                    TaskFault::IndirectCalleeNegative {
+                        value: -1,
+                        site: FaultSite {
+                            function: FnId(0),
+                            pc: 0,
+                            ..
+                        },
+                    }
+                )
+            }),
+            (oversized, "oversized", |fault: &TaskFault| {
+                matches!(
+                    fault,
+                    TaskFault::IndirectCalleeOutOfRange {
+                        callee,
+                        function_count: 3,
+                        site: FaultSite {
+                            function: FnId(0),
+                            pc: 0,
+                            ..
+                        },
+                    } if *callee == i64::from(u32::MAX) + 1
+                )
+            }),
+            (99, "range", |fault: &TaskFault| {
+                matches!(
+                    fault,
+                    TaskFault::IndirectCalleeOutOfRange {
+                        callee: 99,
+                        function_count: 3,
+                        site: FaultSite {
+                            function: FnId(0),
+                            pc: 0,
+                            ..
+                        },
+                    }
+                )
+            }),
+            (2, "contract", |fault: &TaskFault| {
+                matches!(
+                    fault,
+                    TaskFault::IndirectCalleeContractMismatch {
+                        callee: FnId(2),
+                        expected: CallContractId(0),
+                        actual: Some(CallContractId(1)),
+                        site: FaultSite {
+                            function: FnId(0),
+                            pc: 0,
+                            ..
+                        },
+                    }
+                )
+            }),
+        ];
+
+        for (callee, name, matches_expected) in cases {
+            let executable = Executable::new(verify(indirect_program()));
+            let mut task = executable.spawn(FnId(0)).unwrap();
+            task.write_entry_callable_id(0, callee).unwrap();
+            task.write_entry_i64(1, 21).unwrap();
+            let fault = task.drive(&mut [], &[]).expect_err(name);
+            assert!(matches_expected(&fault), "{name}: {fault:?}");
+            assert!(matches!(
+                task.drive(&mut [], &[]),
+                Err(TaskFault::PoisonedReDrive { .. })
+            ));
+            assert!(matches!(
+                task.result_i64(),
+                Err(TaskFault::PoisonedResult { .. })
+            ));
+        }
+    }
+
+    #[test]
+    fn public_executable_reports_unresident_compare_and_hides_result() {
+        let store = [ValueMemory::empty()];
+        let memories = ValueMemories {
+            store: &store,
+            molten: &[],
+        };
+        let executable = Executable::new(verify(compare_program()));
+        let mut task = executable.spawn(FnId(0)).unwrap();
+        task.write_entry_handle(0, 0).unwrap();
+        task.write_entry_handle(1, 0).unwrap();
+        let fault = task
+            .drive_hosted_with_value_memories(&mut [], &[], &mut [], memories)
+            .expect_err("equal unresident compare");
+        assert!(matches!(
+            fault,
+            TaskFault::UnresidentCompareValueBytes {
+                side: CompareSide::Left,
+                handle: 0,
+                site: FaultSite {
+                    function: FnId(0),
+                    pc: 0,
+                    ..
+                },
+            }
+        ));
+        assert!(matches!(
+            task.drive(&mut [], &[]),
+            Err(TaskFault::PoisonedReDrive { .. })
+        ));
+        assert!(matches!(
+            task.result(),
+            Err(TaskFault::PoisonedResult { .. })
+        ));
+    }
+
+    #[test]
+    fn missing_indirect_call_facts_fault_instead_of_skipping_contract() {
+        let mut verified = verify(indirect_program());
+        verified.clear_call_facts_for_test(FnId(0), 0);
+        let verified = Arc::new(verified);
+        let interp = run_interpreter(
+            &verified,
+            |task| {
+                task.write_i64(0, 1);
+                task.write_i64(8, 21);
+            },
+            ValueMemories::empty(),
+        )
+        .expect_err("missing call facts");
+        assert!(matches!(
+            interp,
+            TaskFault::MissingIndirectCallFacts {
+                site: FaultSite {
+                    function: FnId(0),
+                    pc: 0,
+                    call: None,
+                    ..
+                }
+            }
+        ));
+        if let Some(native) = run_native(
+            Arc::clone(&verified),
+            |task| {
+                task.write_i64(0, 1);
+                task.write_i64(8, 21);
+            },
+            ValueMemories::empty(),
+        ) {
+            assert_eq!(native.expect_err("missing call facts"), interp);
+        }
+    }
+
+    #[test]
     fn interpreter_and_native_match_results_steps_traces_and_faults() {
-        let verified = verify(indirect_program());
+        let verified = Arc::new(verify(indirect_program()));
         let interp = run_interpreter(
             &verified,
             |task| {
@@ -855,7 +1073,7 @@ mod tests {
         )
         .unwrap();
         if let Some(native) = run_native(
-            &verified,
+            Arc::clone(&verified),
             |task| {
                 task.write_i64(0, 1);
                 task.write_i64(8, 21);
@@ -865,9 +1083,14 @@ mod tests {
             assert_eq!(native.unwrap(), interp);
         }
 
-        let fault_cases = [(-1, "negative"), (99, "range"), (2, "contract")];
+        let fault_cases = [
+            (-1, "negative"),
+            (i64::from(u32::MAX) + 1, "oversized"),
+            (99, "range"),
+            (2, "contract"),
+        ];
         for (callee, name) in fault_cases {
-            let verified = verify(indirect_program());
+            let verified = Arc::new(verify(indirect_program()));
             let interp = run_interpreter(
                 &verified,
                 |task| {
@@ -878,7 +1101,7 @@ mod tests {
             )
             .expect_err(name);
             if let Some(native) = run_native(
-                &verified,
+                Arc::clone(&verified),
                 |task| {
                     task.write_i64(0, callee);
                     task.write_i64(8, 21);
@@ -889,7 +1112,7 @@ mod tests {
             }
         }
 
-        let verified = verify(compare_program());
+        let verified = Arc::new(verify(compare_program()));
         let store = [ValueMemory::from_slice(b"left"), ValueMemory::empty()];
         let memories = ValueMemories {
             store: &store,
@@ -913,7 +1136,7 @@ mod tests {
             }
         ));
         if let Some(native) = run_native(
-            &verified,
+            Arc::clone(&verified),
             |task| {
                 task.write_i64(0, 0);
                 task.write_i64(8, 1);
@@ -921,6 +1144,40 @@ mod tests {
             memories,
         ) {
             assert_eq!(native.expect_err("unresident compare"), interp);
+        }
+
+        let verified = Arc::new(verify(compare_program()));
+        let store = [ValueMemory::empty()];
+        let memories = ValueMemories {
+            store: &store,
+            molten: &[],
+        };
+        let interp = run_interpreter(
+            &verified,
+            |task| {
+                task.write_i64(0, 0);
+                task.write_i64(8, 0);
+            },
+            memories,
+        )
+        .expect_err("equal unresident compare");
+        assert!(matches!(
+            interp,
+            TaskFault::UnresidentCompareValueBytes {
+                side: CompareSide::Left,
+                handle: 0,
+                ..
+            }
+        ));
+        if let Some(native) = run_native(
+            Arc::clone(&verified),
+            |task| {
+                task.write_i64(0, 0);
+                task.write_i64(8, 0);
+            },
+            memories,
+        ) {
+            assert_eq!(native.expect_err("equal unresident compare"), interp);
         }
     }
 

@@ -359,6 +359,15 @@ impl VerifiedProgram {
     pub fn drive_requirements(&self) -> DriveRequirements {
         self.drive_requirements
     }
+
+    #[cfg(test)]
+    pub(crate) fn clear_call_facts_for_test(&mut self, function: FnId, pc: usize) {
+        if let Some(function) = self.facts.functions.get_mut(function.0 as usize)
+            && let Some(pc) = function.pcs.get_mut(pc)
+        {
+            pc.call = None;
+        }
+    }
 }
 
 /// Which frame access an instruction was validating.

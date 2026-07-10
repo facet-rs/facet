@@ -90,7 +90,6 @@ impl<'a> ValueMemory<'a> {
         unsafe { self.raw.as_slice() }
     }
 
-    #[cfg(feature = "jit")]
     pub(crate) fn raw(&self) -> RawValueMemory {
         self.raw
     }
@@ -132,7 +131,6 @@ impl ValueMemories<'_> {
     }
 }
 
-#[cfg(feature = "jit")]
 #[derive(Clone, Copy)]
 struct RawValueMemories<'a> {
     store: &'a [RawValueMemory],
@@ -142,7 +140,6 @@ struct RawValueMemories<'a> {
 #[derive(Clone, Copy)]
 enum MemoryView<'a> {
     Borrowed(ValueMemories<'a>),
-    #[cfg(feature = "jit")]
     Raw(RawValueMemories<'a>),
 }
 
@@ -160,7 +157,6 @@ impl<'a> MemoryView<'a> {
                 .get(index)
                 .ok_or(ArrayOpStatus::InvalidHandle)?
                 .as_slice(),
-            #[cfg(feature = "jit")]
             MemoryView::Raw(memories) => {
                 let raw = memories
                     .store
@@ -180,7 +176,6 @@ impl<'a> MemoryView<'a> {
                 .get(index)
                 .ok_or(ArrayOpStatus::InvalidHandle)?
                 .as_slice(),
-            #[cfg(feature = "jit")]
             MemoryView::Raw(memories) => {
                 let raw = memories
                     .molten
@@ -375,7 +370,6 @@ fn count_i64(value: usize) -> Result<i64, ArrayOpStatus> {
 /// `out_len` must be non-null and writable for one `usize`. The returned pointer
 /// is valid only until the next mutation of the arena and must never be written
 /// through.
-#[cfg(feature = "jit")]
 pub(crate) unsafe extern "C" fn molten_bytes_abi(
     arena: *const core::ffi::c_void,
     handle: i64,
@@ -403,7 +397,6 @@ pub(crate) unsafe extern "C" fn molten_bytes_abi(
 /// `out_handle` must be non-null and writable for one `i64`; it must not alias
 /// memory inside `arena`. This function writes [`ARRAY_POISON_HANDLE`] before it
 /// attempts allocation, then overwrites it only after a successful allocation.
-#[cfg(feature = "jit")]
 pub(crate) unsafe extern "C" fn array_new_abi(
     arena: *mut core::ffi::c_void,
     count: i64,
@@ -435,7 +428,6 @@ pub(crate) unsafe extern "C" fn array_new_abi(
 /// `elem_width > 0`; it must not alias the target molten allocation. Pointer
 /// precondition failures return [`ArrayOpStatus::InvalidHandle`] and do not
 /// dereference `src`.
-#[cfg(feature = "jit")]
 pub(crate) unsafe extern "C" fn array_store_abi(
     arena: *mut core::ffi::c_void,
     array: i64,
@@ -476,7 +468,6 @@ pub(crate) unsafe extern "C" fn array_store_abi(
 /// the source payload. Pointer precondition failures return
 /// [`ArrayOpStatus::InvalidHandle`] without promising destination zeroing;
 /// semantic failures after those preconditions zero the destination region.
-#[cfg(feature = "jit")]
 pub(crate) unsafe extern "C" fn array_load_abi(
     store_value_memories: *const RawValueMemory,
     store_value_memory_count: usize,
@@ -536,7 +527,6 @@ pub(crate) unsafe extern "C" fn array_load_abi(
 /// readable for the duration of the call. `arena` must point to a live
 /// [`MoltenArena`] and must not be mutably aliased. `out_count` must be
 /// non-null, writable for one `i64`, and must not alias `arena`.
-#[cfg(feature = "jit")]
 pub(crate) unsafe extern "C" fn array_len_abi(
     store_value_memories: *const RawValueMemory,
     store_value_memory_count: usize,
@@ -767,10 +757,10 @@ pub enum Op {
     /// Lexicographically compare two resident value-memory byte runs.
     ///
     /// `frame[a]` and `frame[b]` are value handles. The result is the closed
-    /// three-way ordinal `0 = less`, `1 = equal`, `2 = greater`. Equal handles
-    /// short-circuit without reading either body. For distinct handles, task
-    /// admission must have made both bodies resident in the value-memory table;
-    /// violating that contract is a driver bug.
+    /// three-way ordinal `0 = less`, `1 = equal`, `2 = greater`. Task admission
+    /// must have made every handle it compares resident in the value-memory
+    /// table; even equal handle integers fault if the shared handle is not
+    /// resident.
     CompareValueBytes { dst: u32, a: u32, b: u32 },
     /// `frame[dst] = f64::from_bits(bits)` — the immediate carries the
     /// BIT PATTERN (keeps `Op: Eq`; the machine is type-blind about a
@@ -1113,16 +1103,37 @@ impl Task {
                 }
                 Op::CallIndirect { callee, args, ret } => {
                     let raw = read_i64_at(&self.arena, base + callee as usize);
-                    let callee = match u32::try_from(raw) {
-                        Ok(callee) => FnId(callee),
-                        Err(_) => {
-                            let Some(verified) = verified else {
-                                panic!("indirect callee is a non-negative local function id");
-                            };
-                            return Err(TaskFault::IndirectCalleeNegative {
-                                site: fault_site(verified, fn_id, pc),
-                                value: raw,
-                            });
+                    let callee = if raw < 0 {
+                        let Some(verified) = verified else {
+                            panic!("indirect callee is a non-negative local function id");
+                        };
+                        return Err(TaskFault::IndirectCalleeNegative {
+                            site: fault_site(verified, fn_id, pc)?,
+                            value: raw,
+                        });
+                    } else {
+                        match u32::try_from(raw) {
+                            Ok(callee) => FnId(callee),
+                            Err(_) => {
+                                let Some(verified) = verified else {
+                                    panic!("indirect callee fits a local function id");
+                                };
+                                let site = fault_site(verified, fn_id, pc)?;
+                                let function_count = site
+                                    .call
+                                    .and_then(|call| match call {
+                                        CallSiteFacts::Indirect { obligation, .. } => {
+                                            Some(obligation.function_count)
+                                        }
+                                        CallSiteFacts::Direct { .. } => None,
+                                    })
+                                    .unwrap_or_else(|| verified.program().fns.len());
+                                return Err(TaskFault::IndirectCalleeOutOfRange {
+                                    site,
+                                    callee: raw,
+                                    function_count,
+                                });
+                            }
                         }
                     };
                     if let Some(verified) = verified {
@@ -1312,17 +1323,19 @@ impl Task {
                 Op::CompareValueBytes { dst, a, b } => {
                     let a = read_i64_at(&self.arena, base + a as usize);
                     let b = read_i64_at(&self.arena, base + b as usize);
-                    let ordering = compare_value_bytes(value_memories, &self.molten, a, b)
-                        .map_err(|(side, handle)| {
-                            verified.map_or_else(
-                                || panic!("legacy raw CompareValueBytes operand is not resident"),
-                                |verified| TaskFault::UnresidentCompareValueBytes {
-                                    site: fault_site(verified, fn_id, pc),
-                                    side,
-                                    handle,
-                                },
-                            )
-                        })?;
+                    let ordering = match compare_value_bytes(value_memories, &self.molten, a, b) {
+                        Ok(ordering) => ordering,
+                        Err((side, handle)) => {
+                            let Some(verified) = verified else {
+                                panic!("legacy raw CompareValueBytes operand is not resident");
+                            };
+                            return Err(TaskFault::UnresidentCompareValueBytes {
+                                site: fault_site(verified, fn_id, pc)?,
+                                side,
+                                handle,
+                            });
+                        }
+                    };
                     write_i64_at(&mut self.arena, base + dst as usize, ordering);
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
@@ -1792,15 +1805,15 @@ fn check_indirect_callee_contract(
     pc: usize,
     callee: FnId,
 ) -> Result<(), TaskFault> {
-    let site = fault_site(verified, function, pc);
+    let site = fault_site(verified, function, pc)?;
     let Some(CallSiteFacts::Indirect { obligation, .. }) = site.call else {
-        return Ok(());
+        return Err(TaskFault::MissingIndirectCallFacts { site });
     };
     let callee_index = callee.0 as usize;
     if callee_index >= obligation.function_count {
         return Err(TaskFault::IndirectCalleeOutOfRange {
             site,
-            callee: callee.0,
+            callee: i64::from(callee.0),
             function_count: obligation.function_count,
         });
     }
@@ -1825,11 +1838,11 @@ fn compare_value_bytes(
     a: i64,
     b: i64,
 ) -> Result<i64, (CompareSide, i64)> {
+    let memories = MemoryView::from(value_memories);
+    let a_bytes = handle_bytes(memories, molten, a).map_err(|_| (CompareSide::Left, a))?;
     if a == b {
         return Ok(1);
     }
-    let memories = MemoryView::from(value_memories);
-    let a_bytes = handle_bytes(memories, molten, a).map_err(|_| (CompareSide::Left, a))?;
     let b_bytes = handle_bytes(memories, molten, b).map_err(|_| (CompareSide::Right, b))?;
     Ok(match a_bytes.cmp(b_bytes) {
         core::cmp::Ordering::Less => 0,
