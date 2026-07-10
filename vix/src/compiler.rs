@@ -869,9 +869,43 @@ fn lower_value(
             })
         }
         ast::Expr::Paren(paren) => lower_value(nodes, bindings, context, &paren.inner),
-        ast::Expr::Unary(_) => Err(Diagnostics::one(Diagnostic::unsupported(
-            expr_span(expression),
-            "unary value expression",
+        ast::Expr::Unary(unary) => lower_unary_value(nodes, bindings, context, unary),
+    }
+}
+
+fn lower_unary_value(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    unary: &ast::Unary,
+) -> Result<LoweredValue, Diagnostics> {
+    let value = lower_value(nodes, bindings, context, &unary.value)?;
+    match unary.op.value.as_str() {
+        "!" => {
+            require_type(&value, &Type::Bool, expr_span(&unary.value))?;
+            let false_node = push_node(
+                nodes,
+                unary.op.span,
+                Type::Bool,
+                EffectFacts::PURE,
+                Vec::new(),
+                Op::Bool(false),
+            );
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    unary.span,
+                    Type::Bool,
+                    EffectFacts::PURE,
+                    vec![value.node, false_node],
+                    Op::Eq,
+                ),
+                ty: Type::Bool,
+            })
+        }
+        _ => Err(Diagnostics::one(Diagnostic::unsupported(
+            unary.op.span,
+            format!("unary operator `{}`", unary.op.value),
         ))),
     }
 }
