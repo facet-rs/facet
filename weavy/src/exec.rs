@@ -305,7 +305,7 @@ impl Executable {
         let function = self.function(entry)?;
         for (index, region) in function.entries.iter().copied().enumerate() {
             let region_contract = &function.frame.regions[region.0 as usize];
-            if region_contract.value_shape.is_none() && entry_word_kind(region_contract).is_none() {
+            if region_contract.value_shape.is_some() || entry_word_kind(region_contract).is_none() {
                 return Err(TaskFault::InvalidEntryShape {
                     entry,
                     index,
@@ -364,60 +364,6 @@ enum Lane {
 }
 
 impl ExecTask<'_> {
-    pub fn write_entry_value(&mut self, index: usize, bytes: &[u8]) -> Result<(), TaskFault> {
-        self.check_not_poisoned()?;
-        let function = self.executable.function(self.entry)?;
-        let Some(region) = function.entries.get(index).copied() else {
-            return Err(TaskFault::InvalidEntryIndex {
-                entry: self.entry,
-                index,
-                entry_count: function.entries.len(),
-            });
-        };
-        let region_contract = &function.frame.regions[region.0 as usize];
-        let Some(value_shape) = region_contract.value_shape else {
-            return Err(TaskFault::InvalidEntryShape {
-                entry: self.entry,
-                index,
-                region,
-            });
-        };
-        if self.entries_closed {
-            return Err(TaskFault::EntryWriteAfterDrive {
-                entry: self.entry,
-                index,
-                region,
-            });
-        }
-        if self.entries_initialized[index] {
-            return Err(TaskFault::EntryAlreadyInitialized {
-                entry: self.entry,
-                index,
-                region,
-            });
-        }
-        let expected = region_contract
-            .shape
-            .checked_byte_len()
-            .unwrap_or(usize::MAX);
-        if bytes.len() != expected {
-            return Err(TaskFault::EntryValueSize {
-                entry: self.entry,
-                index,
-                region,
-                value_shape,
-                expected,
-                actual: bytes.len(),
-            });
-        }
-        match &mut self.lane {
-            Lane::Interpreter(task) => task.write_bytes(region_contract.offset, bytes),
-            Lane::Native(task) => task.write_bytes(region_contract.offset, bytes),
-        }
-        self.entries_initialized[index] = true;
-        Ok(())
-    }
-
     pub fn write_entry_i64(&mut self, index: usize, value: i64) -> Result<(), TaskFault> {
         self.write_entry_word(index, value, EntryWriteKind::Scalar)
     }
@@ -1300,7 +1246,7 @@ mod tests {
                         structural_region(0, enum_shape, ValueShapeRef(0)),
                         word_region(16, WordKind::Scalar),
                     ],
-                    &[0],
+                    &[],
                     1,
                     None,
                 )],
@@ -1309,6 +1255,12 @@ mod tests {
                 value_shapes: vec![value_shape],
             },
         )
+    }
+
+    fn structural_entry_program(op: Op) -> (Program, ProgramContract) {
+        let (program, mut contract) = enum_program(op);
+        contract.functions[0].entries.push(RegionId(0));
+        (program, contract)
     }
 
     #[test]
@@ -1514,7 +1466,7 @@ mod tests {
 
     fn run_public_fault(
         verified: VerifiedProgram,
-        bytes: &[u8],
+        selector: i64,
         force_interpreter: bool,
     ) -> (TaskFault, Vec<TaskEvent>, TaskFault) {
         let previous = std::env::var_os("WEAVY_JIT");
@@ -1529,7 +1481,11 @@ mod tests {
             None => unsafe { std::env::remove_var("WEAVY_JIT") },
         }
         let mut task = executable.spawn(FnId(0)).unwrap();
-        task.write_entry_value(0, bytes).unwrap();
+        // Seed a valid local enum, then corrupt only its selector through a
+        // test-private frame hook before entering the verified program.
+        task.adversarial_write_word_at_offset_for_test(0, 0);
+        task.adversarial_write_word_at_offset_for_test(8, 42);
+        task.adversarial_write_word_at_offset_for_test(0, selector);
         let fault = task.drive(&mut [], &[]).unwrap_err();
         let trace = task.trace().to_vec();
         let poison = task.drive(&mut [], &[]).unwrap_err();
@@ -1564,9 +1520,8 @@ mod tests {
                 0usize,
             ),
         ] {
-            let bytes = [selector.to_le_bytes(), 42i64.to_le_bytes()].concat();
-            let interpreter = run_public_fault(verify(enum_program(op.clone())), &bytes, true);
-            let native = run_public_fault(verify(enum_program(op.clone())), &bytes, false);
+            let interpreter = run_public_fault(verify(enum_program(op.clone())), selector, true);
+            let native = run_public_fault(verify(enum_program(op.clone())), selector, false);
             assert_eq!(interpreter, native, "{name}");
             let site = match &interpreter.0 {
                 TaskFault::InvalidEnumSelector {
@@ -1712,6 +1667,23 @@ mod tests {
                 region: RegionId(0),
             }
         );
+    }
+
+    #[test]
+    fn public_spawn_rejects_structural_entry_until_typed_writer_exists() {
+        let executable = Executable::new(verify(structural_entry_program(Op::EnumIsVariant {
+            dst: RegionId(1),
+            value: RegionId(0),
+            variant: 0,
+        })));
+        assert!(matches!(
+            executable.spawn(FnId(0)),
+            Err(TaskFault::InvalidEntryShape {
+                entry: FnId(0),
+                index: 0,
+                region: RegionId(0),
+            })
+        ));
     }
 
     #[test]
