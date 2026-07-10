@@ -20,13 +20,15 @@ artifacts and never second-guesses the substrate.
 > phon, and every other weavy consumer carry no jit feature of their own — the
 > per-crate `#[cfg(feature = "jit")]` gates that caused the dependency-position
 > `Op` build break are abolished. Weavy's `jit` feature is the master switch
-> (`jit_active = feature_on ∧ platform_supports`): OFF means off for good,
-> nothing downstream can turn JIT on against it; ON means on only where the
-> platform supports executable memory. Mechanism:
+> (`jit_active = feature_on ∧ target_supports_copy_patch`): OFF means off for
+> good, nothing downstream can turn JIT on against it; ON means on only where
+> the platform supports executable memory. Mechanism:
 >
-> - Weavy's build script computes `jit_active` from `CARGO_FEATURE_JIT` and
->   `CARGO_CFG_TARGET_OS` (W^X-locked targets — iOS/tvOS/watchOS/visionOS —
->   force it off even when the feature is on) and emits both a
+> - Weavy's build script computes `jit_active` from `CARGO_FEATURE_JIT`,
+>   `CARGO_CFG_TARGET_OS`, and `CARGO_CFG_TARGET_ARCH`. The predicate is the
+>   copy-patch backend's explicit supported `(OS, architecture)` matrix;
+>   W^X-locked targets (iOS/tvOS/watchOS/visionOS) and unsupported
+>   architectures force it off even when the feature is on. It emits both a
 >   `weavy_jit_active` rustc-cfg (gating weavy's own runtime executor + stencil
 >   extraction) and `cargo::metadata=jit=1` (via `links = "weavy"`), so every
 >   direct dependent's build script reads `DEP_WEAVY_JIT` and gates its own
@@ -71,9 +73,13 @@ artifacts and never second-guesses the substrate.
 > membrane and faults identically in every lane.
 >
 > Host and await table lengths supplied at drive time are checked against the
-> verified program requirements before native code can enter. Malformed input is
-> a typed `MachineError` reported the same way for every lane, never a panic,
-> undefined behavior, silent truncation, or Vix `Failure`.
+> verified program requirements before native code can enter. Weavy reports
+> malformed programs as its own typed `ProgramError` and dynamic invariant
+> violations as its own typed `TaskFault`, carrying function/op/contract facts.
+> Vix wraps those values without stringification into `MachineError` and adds
+> source attribution; Weavy does not depend on Vix types. The result is reported
+> the same way for every lane, never as a panic, undefined behavior, silent
+> truncation, or Vix `Failure`.
 >
 > Fast native stencils may omit only checks already discharged by
 > `VerifiedProgram`. The safe interpreter remains the behavioral oracle. The
@@ -96,13 +102,27 @@ artifacts and never second-guesses the substrate.
 > using the access membrane for dynamic aggregate, value, and indirect function
 > checks even when their frame/op checks were statically discharged.
 >
-> Weavy owns an opt-in checked execution mode with independent shadow metadata:
-> redzones, poison, generation tags, dynamic kind/schema shadows, and whatever
-> additional lane-local witnesses are needed. A checked-mode violation reports
-> a typed fault naming the function, PC, op, and violated contract. Checked
-> execution cannot affect Vix value identity, memo entries, receipts, or program
-> semantics; it observes the same program through stricter Weavy-owned
-> instrumentation.
+> Borrowed value-memory descriptors retain their borrow lifetime in Weavy's safe
+> public API. Raw pointer/length descriptors exist only inside the private native
+> ABI and are materialized for one drive while the borrow is live; safe code
+> cannot construct a dangling value-memory table.
+>
+> Weavy owns opt-in checked execution with independent shadow metadata: redzones,
+> poison, generation tags, dynamic kind/schema shadows, and whatever additional
+> lane-local witnesses are needed. This is an audit/instrumentation policy, not
+> a fourth consumer-selected execution lane: the ordinary execution API has no
+> `Interp`/`Jit`/`Checked` mode argument. A consumer may ask Weavy's separate
+> diagnostic API for an audit fact, or Weavy may instrument the selected lane
+> under its own policy; neither lets the consumer select the semantic executor.
+> Effectful host operations are shadowed inline or audited against a recorded
+> host transcript — an audit never repeats an external effect merely to compare
+> engines.
+>
+> A checked-execution violation reports a typed `TaskFault` naming the function,
+> PC, op, and violated contract. Checked execution cannot affect Vix value
+> identity, memo entries, receipts, or program semantics; it observes the same
+> program through stricter Weavy-owned instrumentation and cannot publish an
+> alternative result.
 
 > r[machine.execution.facts-precomputed]
 >
