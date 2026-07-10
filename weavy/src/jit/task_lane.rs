@@ -968,12 +968,6 @@ impl JitTask {
         self.arena[at..at + 8].copy_from_slice(&value.to_le_bytes());
     }
 
-    pub(crate) fn write_bytes(&mut self, offset: u32, bytes: &[u8]) {
-        let base = self.frames.last().expect("live frame").base;
-        self.arena[base + offset as usize..base + offset as usize + bytes.len()]
-            .copy_from_slice(bytes);
-    }
-
     fn alloc_frame(&mut self, f: &CompiledFn) -> usize {
         let align = f.frame_align.max(1);
         let base = self.arena.len().div_ceil(align) * align;

@@ -949,12 +949,6 @@ impl Task {
         write_i64_at(&mut self.arena, base + offset as usize, value);
     }
 
-    pub(crate) fn write_bytes(&mut self, offset: u32, bytes: &[u8]) {
-        let base = self.frames.last().expect("live frame").base;
-        self.arena[base + offset as usize..base + offset as usize + bytes.len()]
-            .copy_from_slice(bytes);
-    }
-
     /// Read an i64 from the task result (root return bytes).
     #[must_use]
     pub fn result_i64(&self) -> i64 {
