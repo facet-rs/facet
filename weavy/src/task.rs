@@ -147,6 +147,12 @@ pub enum Op {
         args: Vec<ArgCopy>,
         ret: u32,
     },
+    /// Frame-direct call through a closure's local function-id word.
+    CallIndirect {
+        callee: u32,
+        args: Vec<ArgCopy>,
+        ret: u32,
+    },
     /// Return `size` bytes at `src` to the caller's designated return
     /// slot (or to the task result if this is the root frame), then
     /// pop the frame.
@@ -477,6 +483,26 @@ impl Task {
                     for copy in &args {
                         // Frame-direct: caller bytes land at the
                         // callee's statically known offsets.
+                        let src = base + copy.src as usize;
+                        let dst = callee_frame + copy.dst as usize;
+                        self.arena.copy_within(src..src + copy.size as usize, dst);
+                    }
+                    self.frames.push(FrameRecord {
+                        fn_id: callee,
+                        base: callee_frame,
+                        pc: 0,
+                        ret_to: Some(base + ret as usize),
+                    });
+                    self.trace.push(TaskEvent::FrameEntered(callee));
+                }
+                Op::CallIndirect { callee, args, ret } => {
+                    let callee = FnId(
+                        u32::try_from(read_i64_at(&self.arena, base + callee as usize))
+                            .expect("indirect callee is a non-negative local function id"),
+                    );
+                    self.frames.last_mut().expect("frame").pc += 1;
+                    let callee_frame = self.alloc_frame(program.fns[callee.0 as usize].frame);
+                    for copy in &args {
                         let src = base + copy.src as usize;
                         let dst = callee_frame + copy.dst as usize;
                         self.arena.copy_within(src..src + copy.size as usize, dst);

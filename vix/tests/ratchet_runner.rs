@@ -1253,6 +1253,77 @@ fn rung_020_tuple_match_patterns_select_and_bind_in_source_order() {
 
 #[test]
 fn rung_021_closure_parameters_destructure_callable_values() {
+    let module = Compiler::new()
+        .compile(RUNG_021)
+        .expect("rung 021 compiles");
+    assert_eq!(module.functions.len(), 3);
+    assert_eq!(
+        module
+            .functions
+            .iter()
+            .map(|function| function.name.as_str())
+            .collect::<Vec<_>>(),
+        [
+            "closure_destructuring",
+            "closure_destructuring::closure#0",
+            "closure_destructuring::closure#1",
+        ]
+    );
+    assert_eq!(
+        module
+            .functions
+            .iter()
+            .flat_map(|function| &function.nodes)
+            .filter(|node| matches!(node.op, VirOp::Closure(_)))
+            .count(),
+        2
+    );
+    assert_eq!(
+        module
+            .functions
+            .iter()
+            .flat_map(|function| &function.nodes)
+            .filter(|node| matches!(node.op, VirOp::CallValue))
+            .count(),
+        2
+    );
+    assert_eq!(
+        module
+            .functions
+            .iter()
+            .skip(1)
+            .flat_map(|function| &function.nodes)
+            .filter(|node| matches!(node.op, VirOp::Project { .. }))
+            .count(),
+        6,
+        "both closure parameter patterns lower to ordinary tuple projections"
+    );
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    assert_eq!(partitioned.islands.len(), 1);
+    assert_eq!(partitioned.islands[0].callees.len(), 2);
+    let mut lowering_cache = LoweringCache::default();
+    let lowered = lowering_cache
+        .get_or_lower(&partitioned.islands[0])
+        .expect("rung 021 lowers to Weavy");
+    assert_eq!(lowered.program.fns.len(), 3);
+    assert_eq!(
+        lowered
+            .program
+            .fns
+            .iter()
+            .flat_map(|function| &function.code)
+            .filter(|op| matches!(op, WeavyOp::CallIndirect { .. }))
+            .count(),
+        2
+    );
+    assert!(lowered.program.fns.iter().all(|function| {
+        function
+            .code
+            .iter()
+            .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+    }));
+
     let report = run_source(RUNG_021).expect("rung 021 compiles and runs");
     assert!(report.passed());
     assert!(report.agrees());

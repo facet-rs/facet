@@ -147,6 +147,10 @@ pub enum Type {
     Check,
     StreamCheck,
     String,
+    Function {
+        parameter: Box<Type>,
+        result: Box<Type>,
+    },
     Tuple(Vec<Type>),
     Record(RecordType),
     Enum(EnumType),
@@ -166,6 +170,9 @@ impl Type {
             Self::Check => "Check".to_owned(),
             Self::StreamCheck => "Stream<Check>".to_owned(),
             Self::String => "String".to_owned(),
+            Self::Function { parameter, result } => {
+                format!("fn({}) -> {}", parameter.name(), result.name())
+            }
             Self::Tuple(elements) => {
                 let trailing_comma = if elements.len() == 1 { "," } else { "" };
                 let elements = elements
@@ -186,6 +193,7 @@ impl Type {
     pub fn word_width(&self) -> Option<usize> {
         match self {
             Self::Bool | Self::Int | Self::Check | Self::String => Some(1),
+            Self::Function { .. } => Some(2),
             Self::StreamCheck => None,
             Self::Tuple(elements) => elements.iter().try_fold(0usize, |width, element| {
                 width.checked_add(element.word_width()?)
@@ -207,6 +215,7 @@ impl Type {
     pub fn equality_is_structural(&self) -> bool {
         match self {
             Self::Bool | Self::Int | Self::String => true,
+            Self::Function { .. } => false,
             Self::Tuple(elements) => elements.iter().all(Self::equality_is_structural),
             Self::Record(record) => record
                 .fields
@@ -225,6 +234,7 @@ impl Type {
     pub fn structural_order_is_defined(&self) -> bool {
         match self {
             Self::Bool | Self::Int | Self::String => true,
+            Self::Function { .. } => false,
             Self::Tuple(elements) => elements.iter().all(Self::structural_order_is_defined),
             Self::Record(record) => record
                 .fields
@@ -292,6 +302,8 @@ pub enum Op {
     String(String),
     Parameter(ParameterId),
     Call(FunctionId),
+    Closure(FunctionId),
+    CallValue,
     Tuple,
     Record,
     Project {
@@ -522,10 +534,10 @@ fn collect_callees(
     order: &mut Vec<Function>,
 ) {
     for node in nodes {
-        let Op::Call(callee) = &node.op else {
-            continue;
+        let callee = match &node.op {
+            Op::Call(callee) | Op::Closure(callee) => *callee,
+            _ => continue,
         };
-        let callee = *callee;
         if !seen.insert(callee) {
             continue;
         }
@@ -784,6 +796,16 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             }
             frame(&mut op, &canonical_control_region(fallback));
         }
+        Op::Closure(function) => {
+            op.push(21);
+            op.extend_from_slice(
+                &function_ids
+                    .get(function)
+                    .expect("closure function belongs to the island closure")
+                    .to_le_bytes(),
+            );
+        }
+        Op::CallValue => op.push(22),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());
@@ -810,6 +832,12 @@ fn canonical_type(ty: &Type) -> Vec<u8> {
         Type::Check => b"check".to_vec(),
         Type::StreamCheck => b"stream-check".to_vec(),
         Type::String => b"string".to_vec(),
+        Type::Function { parameter, result } => {
+            let mut bytes = b"function".to_vec();
+            frame(&mut bytes, &canonical_type(parameter));
+            frame(&mut bytes, &canonical_type(result));
+            bytes
+        }
         Type::Tuple(elements) => {
             let mut bytes = b"tuple".to_vec();
             frame(&mut bytes, &(elements.len() as u64).to_le_bytes());

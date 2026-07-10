@@ -1,5 +1,6 @@
 //! Surface AST checking and lowering to Vix IR.
 
+use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics, Label};
@@ -57,6 +58,66 @@ struct ParameterSignature {
 struct ModuleContext<'a> {
     signatures: &'a BTreeMap<String, FunctionSignature>,
     types: &'a BTreeMap<String, Type>,
+    closures: RefCell<ClosureState>,
+}
+
+struct ClosureState {
+    next_function: u32,
+    functions: BTreeMap<FunctionId, Function>,
+    scopes: Vec<ClosureScope>,
+}
+
+struct ClosureScope {
+    path: String,
+    next_closure: u32,
+}
+
+impl ModuleContext<'_> {
+    fn enter_function(&self, path: String) {
+        self.closures.borrow_mut().scopes.push(ClosureScope {
+            path,
+            next_closure: 0,
+        });
+    }
+
+    fn leave_function(&self) {
+        self.closures
+            .borrow_mut()
+            .scopes
+            .pop()
+            .expect("function lowering has an active closure scope");
+    }
+
+    fn allocate_closure(&self) -> (FunctionId, String) {
+        let mut state = self.closures.borrow_mut();
+        let scope = state
+            .scopes
+            .last_mut()
+            .expect("closure lowering occurs inside a function");
+        let ordinal = scope.next_closure;
+        scope.next_closure = scope
+            .next_closure
+            .checked_add(1)
+            .expect("closure count fits u32");
+        let name = format!("{}::closure#{ordinal}", scope.path);
+        let id = FunctionId(state.next_function);
+        state.next_function = state
+            .next_function
+            .checked_add(1)
+            .expect("function count fits u32");
+        (id, name)
+    }
+
+    fn insert_closure(&self, function: Function) {
+        assert!(
+            self.closures
+                .borrow_mut()
+                .functions
+                .insert(function.id, function)
+                .is_none(),
+            "closure function ids are unique"
+        );
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -238,6 +299,10 @@ impl<'a> TypeResolver<'a> {
                 generic.span,
                 "generic type",
             ))),
+            ast::Type::Function(function) => Ok(Type::Function {
+                parameter: Box::new(self.resolve_type(&function.parameter)?),
+                result: Box::new(self.resolve_type(&function.result)?),
+            }),
             ast::Type::Tuple(tuple) => tuple
                 .elems
                 .iter()
@@ -279,6 +344,12 @@ fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
     let context = ModuleContext {
         signatures: &signatures,
         types: &types,
+        closures: RefCell::new(ClosureState {
+            next_function: u32::try_from(ordered_signatures.len())
+                .expect("module function count fits u32"),
+            functions: BTreeMap::new(),
+            scopes: Vec::new(),
+        }),
     };
     let mut module = Module {
         records: source
@@ -313,8 +384,11 @@ fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
         let signature = ordered_signatures
             .next()
             .expect("every function has a declared signature");
+        context.enter_function(function.name.value.clone());
         let lowered = lower_function(signature, function, &context)
-            .map_err(|diagnostics| anchor_function_diagnostics(function, diagnostics))?;
+            .map_err(|diagnostics| anchor_function_diagnostics(function, diagnostics));
+        context.leave_function();
+        let lowered = lowered?;
         if signature.is_test {
             module.tests.push(Test {
                 name: function.name.value.clone(),
@@ -322,6 +396,15 @@ fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
             });
         }
         module.functions.push(lowered);
+    }
+    let closures = context.closures.into_inner().functions;
+    for (id, function) in closures {
+        assert_eq!(
+            usize::try_from(id.0).expect("function id fits usize"),
+            module.functions.len(),
+            "closure functions append in FunctionId order"
+        );
+        module.functions.push(function);
     }
 
     Ok(module)
@@ -565,6 +648,10 @@ fn lower_declared_type(
             generic.span,
             "generic type",
         ))),
+        ast::Type::Function(function) => Ok(Type::Function {
+            parameter: Box::new(lower_declared_type(&function.parameter, types)?),
+            result: Box::new(lower_declared_type(&function.result, types)?),
+        }),
         ast::Type::Tuple(tuple) => tuple
             .elems
             .iter()
@@ -826,7 +913,18 @@ fn lower_value(
     context: &ModuleContext<'_>,
     expression: &ast::Expr,
 ) -> Result<LoweredValue, Diagnostics> {
+    lower_value_expected(nodes, bindings, context, expression, None)
+}
+
+fn lower_value_expected(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    expression: &ast::Expr,
+    expected: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
     match expression {
+        ast::Expr::Closure(closure) => lower_closure(nodes, bindings, context, closure, expected),
         ast::Expr::If(expression) => lower_if(nodes, bindings, context, expression),
         ast::Expr::Bool(value) => Ok(lower_bool_constant(nodes, value.span, value.value)),
         ast::Expr::Number(value) => lower_integer_literal(nodes, value.span, &value.value),
@@ -849,10 +947,35 @@ fn lower_value(
         ast::Expr::Variant(variant) => lower_variant(nodes, bindings, context, variant),
         ast::Expr::Match(match_expr) => lower_match(nodes, bindings, context, match_expr),
         ast::Expr::Tuple(tuple) => {
+            let expected_elements = match expected {
+                Some(Type::Tuple(elements)) if elements.len() == tuple.elems.len() => {
+                    Some(elements.as_slice())
+                }
+                Some(Type::Tuple(elements)) => {
+                    return Err(type_mismatch(
+                        tuple.span,
+                        format!("tuple with {} elements", elements.len()),
+                        format!("tuple with {} elements", tuple.elems.len()),
+                    ));
+                }
+                Some(expected) => {
+                    return Err(type_mismatch(tuple.span, expected.name(), "tuple"));
+                }
+                None => None,
+            };
             let values = tuple
                 .elems
                 .iter()
-                .map(|element| lower_value(nodes, bindings, context, element))
+                .enumerate()
+                .map(|(index, element)| {
+                    lower_value_expected(
+                        nodes,
+                        bindings,
+                        context,
+                        element,
+                        expected_elements.map(|elements| &elements[index]),
+                    )
+                })
                 .collect::<Result<Vec<_>, _>>()?;
             let ty = Type::Tuple(values.iter().map(|value| value.ty.clone()).collect());
             Ok(LoweredValue {
@@ -934,9 +1057,130 @@ fn lower_value(
                 ty,
             })
         }
-        ast::Expr::Paren(paren) => lower_value(nodes, bindings, context, &paren.inner),
+        ast::Expr::Paren(paren) => {
+            lower_value_expected(nodes, bindings, context, &paren.inner, expected)
+        }
         ast::Expr::Unary(unary) => lower_unary_value(nodes, bindings, context, unary),
     }
+}
+
+fn lower_closure(
+    nodes: &mut Vec<Node>,
+    _outer_bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    closure: &ast::ClosureExpr,
+    expected: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    let expected_signature = match expected {
+        Some(Type::Function { parameter, result }) => Some((parameter.as_ref(), result.as_ref())),
+        Some(expected) => {
+            return Err(type_mismatch(closure.span, expected.name(), "closure"));
+        }
+        None => None,
+    };
+    let parameter_ty = match (&closure.ty, expected_signature) {
+        (Some(declared), expected) => {
+            let declared = lower_declared_type(declared, context.types)?;
+            if let Some((expected, _)) = expected
+                && &declared != expected
+            {
+                return Err(type_mismatch(
+                    type_span(closure.ty.as_ref().expect("declared closure type")),
+                    expected.name(),
+                    declared.name(),
+                ));
+            }
+            declared
+        }
+        (None, Some((expected, _))) => expected.clone(),
+        (None, None) => {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                closure.span,
+                "closure parameter without an expected type",
+            )));
+        }
+    };
+
+    let (id, name) = context.allocate_closure();
+    context.enter_function(name.clone());
+    let lowered = (|| {
+        let mut closure_nodes = Vec::new();
+        let parameter_id = ParameterId(0);
+        let parameter_node = push_node(
+            &mut closure_nodes,
+            pattern_span(&closure.pattern),
+            parameter_ty.clone(),
+            EffectFacts::PURE,
+            Vec::new(),
+            Op::Parameter(parameter_id),
+        );
+        let parameter_value = LoweredValue {
+            node: parameter_node,
+            ty: parameter_ty.clone(),
+        };
+        let mut closure_bindings = BTreeMap::new();
+        bind_irrefutable_pattern(
+            &mut closure_nodes,
+            &mut closure_bindings,
+            &closure.pattern,
+            &parameter_value,
+        )?;
+
+        let expected_result = expected_signature.map(|(_, result)| result);
+        let output = match &closure.body {
+            ast::ClosureBody::Block(block) => {
+                lower_value_block(&mut closure_nodes, &closure_bindings, context, block)?
+            }
+            ast::ClosureBody::Expr(expression) => lower_value_expected(
+                &mut closure_nodes,
+                &closure_bindings,
+                context,
+                expression,
+                expected_result,
+            )?,
+        };
+        if let Some(expected_result) = expected_result {
+            require_type(&output, expected_result, closure.span)?;
+        }
+        let ty = Type::Function {
+            parameter: Box::new(parameter_ty.clone()),
+            result: Box::new(output.ty.clone()),
+        };
+        Ok::<_, Diagnostics>((
+            Function {
+                id,
+                name: name.clone(),
+                span: closure.span,
+                parameters: vec![Parameter {
+                    id: parameter_id,
+                    node: parameter_node,
+                    name: "$argument".to_owned(),
+                    ty: parameter_ty,
+                    kind: ParameterKind::Positional,
+                }],
+                return_type: output.ty,
+                nodes: closure_nodes,
+                output: Some(output.node),
+                yielded_checks: Vec::new(),
+            },
+            ty,
+        ))
+    })();
+    context.leave_function();
+    let (function, ty) = lowered?;
+    context.insert_closure(function);
+
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            closure.span,
+            ty.clone(),
+            EffectFacts::PURE,
+            Vec::new(),
+            Op::Closure(id),
+        ),
+        ty,
+    })
 }
 
 fn lower_if(
@@ -1886,16 +2130,23 @@ fn lower_call(
     context: &ModuleContext<'_>,
     call: &ast::Call,
 ) -> Result<LoweredValue, Diagnostics> {
-    let signature = context.signatures.get(&call.callee.value).ok_or_else(|| {
-        Diagnostics::one(Diagnostic {
-            code: DiagnosticCode::UnknownName,
-            primary: call.callee.span,
-            labels: Vec::new(),
-            payload: DiagnosticPayload::Name {
-                name: call.callee.value.clone(),
-            },
-        })
-    })?;
+    if let Some(callee) = bindings.get(&call.callee.value) {
+        return lower_value_call(nodes, bindings, context, call, callee.clone());
+    }
+    let signature = context
+        .signatures
+        .get(&call.callee.value)
+        .ok_or_else(|| unknown_name(call.callee.span, &call.callee.value))?;
+    lower_direct_call(nodes, bindings, context, call, signature)
+}
+
+fn lower_direct_call(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::Call,
+    signature: &FunctionSignature,
+) -> Result<LoweredValue, Diagnostics> {
     if signature.is_test {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             call.span,
@@ -1918,7 +2169,7 @@ fn lower_call(
 
     let mut inputs = Vec::with_capacity(signature.parameters.len());
     for (parameter, argument) in positional.into_iter().zip(&call.args.args) {
-        let value = lower_value(nodes, bindings, context, argument)?;
+        let value = lower_value_expected(nodes, bindings, context, argument, Some(&parameter.ty))?;
         require_type(&value, &parameter.ty, expr_span(argument))?;
         inputs.push(value.node);
     }
@@ -1955,7 +2206,7 @@ fn lower_call(
             )
         })?;
         let value = if let Some(expression) = &field.value {
-            lower_value(nodes, bindings, context, expression)?
+            lower_value_expected(nodes, bindings, context, expression, Some(&parameter.ty))?
         } else {
             lookup_binding(bindings, &field.name.value, field.name.span)?
         };
@@ -1982,6 +2233,51 @@ fn lower_call(
             Op::Call(signature.id),
         ),
         ty: signature.return_type.clone(),
+    })
+}
+
+fn lower_value_call(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::Call,
+    callee: LoweredValue,
+) -> Result<LoweredValue, Diagnostics> {
+    if call.named_args.is_some() {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "named arguments on a function value",
+        )));
+    }
+    let Type::Function { parameter, result } = &callee.ty else {
+        return Err(type_mismatch(
+            call.callee.span,
+            "callable value",
+            callee.ty.name(),
+        ));
+    };
+    if call.args.args.len() != 1 {
+        return Err(invalid_arity(call.span, 1, call.args.args.len()));
+    }
+    let argument = lower_value_expected(
+        nodes,
+        bindings,
+        context,
+        &call.args.args[0],
+        Some(parameter),
+    )?;
+    require_type(&argument, parameter, expr_span(&call.args.args[0]))?;
+    let result = result.as_ref().clone();
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            call.span,
+            result.clone(),
+            EffectFacts::PURE,
+            vec![callee.node, argument.node],
+            Op::CallValue,
+        ),
+        ty: result,
     })
 }
 
@@ -2311,6 +2607,7 @@ fn push_node(
 
 fn expr_span(expression: &ast::Expr) -> Span {
     match expression {
+        ast::Expr::Closure(value) => value.span,
         ast::Expr::If(value) => value.span,
         ast::Expr::Match(value) => value.span,
         ast::Expr::Binary(value) => value.span,
@@ -2330,6 +2627,7 @@ fn expr_span(expression: &ast::Expr) -> Span {
 
 fn type_span(ty: &ast::Type) -> Span {
     match ty {
+        ast::Type::Function(value) => value.span,
         ast::Type::Generic(value) => value.span,
         ast::Type::Tuple(value) => value.span,
         ast::Type::Path(value) => value.span,

@@ -294,7 +294,7 @@ fn constant_closures(island: &Island) -> BTreeMap<FunctionId, BTreeSet<NodeRef>>
             nodes
                 .iter()
                 .filter_map(|node| match &node.op {
-                    Op::Call(callee) => Some(*callee),
+                    Op::Call(callee) | Op::Closure(callee) => Some(*callee),
                     _ => None,
                 })
                 .collect::<BTreeSet<_>>(),
@@ -1112,6 +1112,12 @@ fn collect_compare_leaves(
                 b: b.start(),
             });
         }
+        Type::Function { .. } => {
+            return Err(lowering_diagnostic(
+                span,
+                "function comparison requires stable closure identity",
+            ));
+        }
         Type::Tuple(elements) => {
             collect_compare_fields(elements.iter(), a, b, span, leaves)?;
         }
@@ -1283,6 +1289,71 @@ fn lower_node(
         }
         Op::Call(callee) => {
             let op = lower_call_node(node, dst_region, values, *callee, function.layout, context)?;
+            (vec![op], representation_for_type(&node.ty, node.span)?)
+        }
+        Op::Closure(callee) => {
+            require_input_count(node, 0)?;
+            if !matches!(node.ty, Type::Function { .. }) || dst_region.words().as_usize() != 2 {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "closure value does not occupy its two-word ABI",
+                ));
+            }
+            let target = context.functions.get(callee).copied().ok_or_else(|| {
+                lowering_diagnostic(node.span, "closure function is absent from the island")
+            })?;
+            let target_layout = context.layouts.get(callee).ok_or_else(|| {
+                lowering_diagnostic(node.span, "closure function has no frame layout")
+            })?;
+            let Type::Function { parameter, result } = &node.ty else {
+                unreachable!("closure type was checked above")
+            };
+            let [target_parameter] = target.parameters.as_slice() else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "closure function does not have exactly one parameter",
+                ));
+            };
+            if &target_parameter.ty != parameter.as_ref()
+                || &target.return_type != result.as_ref()
+                || target_layout
+                    .region(target_parameter.node, node.span)?
+                    .start()
+                    != FrameSlot::for_word(0).expect("word zero is a frame slot")
+            {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "closure function does not satisfy the callable ABI",
+                ));
+            }
+            if !target_layout.constant_slots.is_empty() {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "indirect closure constants require an environment",
+                ));
+            }
+            let callee = context.function_ids.get(callee).copied().ok_or_else(|| {
+                lowering_diagnostic(node.span, "closure function has no local ABI id")
+            })?;
+            let environment = dst_region.word(1).ok_or_else(|| {
+                lowering_diagnostic(node.span, "closure environment offset overflow")
+            })?;
+            (
+                vec![
+                    WeavyOp::ConstI64 {
+                        dst,
+                        value: i64::from(callee),
+                    },
+                    WeavyOp::ConstI64 {
+                        dst: environment.byte_offset(),
+                        value: 0,
+                    },
+                ],
+                ValueRepresentation::InlineComposite,
+            )
+        }
+        Op::CallValue => {
+            let op = lower_call_value_node(node, dst_region, values)?;
             (vec![op], representation_for_type(&node.ty, node.span)?)
         }
         Op::Add | Op::Sub | Op::Mul => {
@@ -1485,6 +1556,52 @@ fn lower_call_node(
     Ok(WeavyOp::Call {
         callee: WeavyFnId(callee),
         args,
+        ret: dst.start().byte_offset(),
+    })
+}
+
+fn lower_call_value_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+) -> Result<WeavyOp, Diagnostics> {
+    require_input_count(node, 2)?;
+    let callee = input_value(node, values, 0)?;
+    let Type::Function { parameter, result } = &callee.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "indirect call input is not a function value",
+        ));
+    };
+    require_value(
+        node,
+        &callee,
+        &callee.ty,
+        ValueRepresentation::InlineComposite,
+    )?;
+    if callee.region.words().as_usize() != 2 || result.as_ref() != &node.ty {
+        return Err(lowering_diagnostic(
+            node.span,
+            "indirect call does not match the closure ABI",
+        ));
+    }
+    let argument = input_value(node, values, 1)?;
+    require_value(
+        node,
+        &argument,
+        parameter,
+        representation_for_type(parameter, node.span)?,
+    )?;
+    Ok(WeavyOp::CallIndirect {
+        callee: callee.region.start().byte_offset(),
+        args: vec![ArgCopy {
+            src: argument.region.start().byte_offset(),
+            dst: 0,
+            size: argument
+                .region
+                .byte_size()
+                .ok_or_else(|| lowering_diagnostic(node.span, "argument size overflow"))?,
+        }],
         ret: dst.start().byte_offset(),
     })
 }
@@ -1920,7 +2037,7 @@ fn representation_for_type(ty: &Type, span: Span) -> Result<ValueRepresentation,
     match ty {
         Type::Bool | Type::Int | Type::Check => Ok(ValueRepresentation::Word),
         Type::String => Ok(ValueRepresentation::RealizedHandle),
-        Type::Tuple(_) | Type::Record(_) | Type::Enum(_) => {
+        Type::Function { .. } | Type::Tuple(_) | Type::Record(_) | Type::Enum(_) => {
             Ok(ValueRepresentation::InlineComposite)
         }
         Type::StreamCheck => Err(lowering_diagnostic(

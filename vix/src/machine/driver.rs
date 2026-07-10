@@ -10408,6 +10408,7 @@ fn op_name(op: &Op) -> &'static str {
         Op::Jump { .. } => "Jump",
         Op::JumpIfZero { .. } => "JumpIfZero",
         Op::Call { .. } => "Call",
+        Op::CallIndirect { .. } => "CallIndirect",
         Op::Ret { .. } => "Ret",
         Op::Await { .. } => "Await",
         Op::LoadIndexedI64 { .. } => "LoadIndexedI64",

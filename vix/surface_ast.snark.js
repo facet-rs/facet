@@ -5,6 +5,7 @@ ast({
   _statement: { enum: "Stmt" },
   _expr: { enum: "Expr" },
   _if_branch: { enum: "IfBranch" },
+  _closure_body: { enum: "ClosureBody" },
   _type: { enum: "Type" },
   _pattern: { enum: "Pattern" },
   _variant_type_payload: { enum: "VariantTypePayload" },
@@ -24,6 +25,7 @@ ast({
   record_expr: { as: "Record" },
   variant_expr: { as: "Variant" },
   match_expr: { as: "Match" },
+  closure_expr: { as: "Closure" },
   variant_pattern: { as: "Variant" },
   binding_pattern: { as: "Binding" },
   number_pattern: { as: "Number" },
@@ -35,6 +37,7 @@ ast({
   tuple_expr: { as: "Tuple" },
   generic_type: { as: "Generic" },
   tuple_type: { as: "Tuple" },
+  function_type: { as: "Function" },
   type_path: { as: "Path" },
 
   identifier: { as: "Identifier", decode: "text" },

@@ -95,7 +95,16 @@ module.exports = grammar({
         optional(seq("=", field("default", $._expr))),
       ),
 
-    _type: ($) => choice($.generic_type, $.tuple_type, $.type_path),
+    _type: ($) => choice($.function_type, $.generic_type, $.tuple_type, $.type_path),
+    function_type: ($) =>
+      seq(
+        "fn",
+        "(",
+        field("parameter", $._type),
+        ")",
+        "->",
+        field("result", $._type),
+      ),
     generic_type: ($) =>
       seq(field("base", $.type_path), "<", sepBy(",", field("arg", $._type)), ">"),
     tuple_type: ($) =>
@@ -120,6 +129,7 @@ module.exports = grammar({
 
     _expr: ($) =>
       choice(
+        $.closure_expr,
         $.if_expr,
         $.match_expr,
         $.binary,
@@ -134,6 +144,16 @@ module.exports = grammar({
         $.string,
         $.number,
         $.boolean,
+      ),
+
+    _closure_body: ($) => choice($.block, $._expr),
+    closure_expr: ($) =>
+      seq(
+        "|",
+        field("pattern", $._pattern),
+        optional(seq(":", field("type", $._type))),
+        "|",
+        field("body", $._closure_body),
       ),
 
     _if_branch: ($) => choice($.block, $.if_expr),

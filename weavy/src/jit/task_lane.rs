@@ -45,8 +45,14 @@ pub fn available() -> bool {
 }
 
 #[derive(Clone, Debug)]
+enum CallTarget {
+    Static(FnId),
+    Frame(u32),
+}
+
+#[derive(Clone, Debug)]
 struct CallDesc {
-    callee: FnId,
+    target: CallTarget,
     args: Vec<ArgCopy>,
     ret: u32,
 }
@@ -216,7 +222,7 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                 task_stencils::AWAIT,
                 Continuations::Fallthrough(task_stencils::AWAIT_CONT),
             ),
-            Op::Call { .. } => (
+            Op::Call { .. } | Op::CallIndirect { .. } => (
                 task_stencils::CALL,
                 Continuations::Fallthrough(task_stencils::CALL_CONT),
             ),
@@ -323,7 +329,7 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
             Op::LoadArrayWord { .. } => 5,
             Op::CompareValueBytes { .. } => 3,
             Op::Await { .. } => 3,
-            Op::Call { .. } => 1,
+            Op::Call { .. } | Op::CallIndirect { .. } => 1,
             Op::Ret { .. } => 2,
             Op::HostCall { .. } | Op::HostCallYield { .. } | Op::Trace { .. } => 2,
         };
@@ -428,7 +434,19 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                 calls.insert(
                     continuation,
                     CallDesc {
-                        callee: *callee,
+                        target: CallTarget::Static(*callee),
+                        args: args.clone(),
+                        ret: *ret,
+                    },
+                );
+            }
+            Op::CallIndirect { callee, args, ret } => {
+                let continuation = next_emitted(&starts, i + 1, done) as u64;
+                layout.push_prog_word(root.prog_index, continuation);
+                calls.insert(
+                    continuation,
+                    CallDesc {
+                        target: CallTarget::Frame(*callee),
                         args: args.clone(),
                         ret: *ret,
                     },
@@ -637,7 +655,22 @@ impl JitTask {
                         let top = self.frames.last_mut().expect("frame");
                         top.resume = usize::try_from(continuation).expect("offset");
                     }
-                    let callee = &program.fns[desc.callee.0 as usize];
+                    let callee_id = match desc.target {
+                        CallTarget::Static(callee) => callee,
+                        CallTarget::Frame(offset) => {
+                            let at = frame.base + offset as usize;
+                            let raw = i64::from_le_bytes(
+                                self.arena[at..at + 8]
+                                    .try_into()
+                                    .expect("closure function id occupies one word"),
+                            );
+                            FnId(
+                                u32::try_from(raw)
+                                    .expect("indirect callee is a non-negative local function id"),
+                            )
+                        }
+                    };
+                    let callee = &program.fns[callee_id.0 as usize];
                     let callee_base = self.alloc_frame(callee);
                     for copy in &desc.args {
                         let src = frame.base + copy.src as usize;
@@ -645,13 +678,13 @@ impl JitTask {
                         self.arena.copy_within(src..src + copy.size as usize, dst);
                     }
                     self.frames.push(JitFrame {
-                        fn_id: desc.callee,
+                        fn_id: callee_id,
                         base: callee_base,
                         resume: 0,
                         prog_pos: 0,
                         ret_to: Some(frame.base + desc.ret as usize),
                     });
-                    self.trace.push(TaskEvent::FrameEntered(desc.callee));
+                    self.trace.push(TaskEvent::FrameEntered(callee_id));
                 }
                 3 => {
                     let src = frame.base + usize::try_from(resume_scratch).expect("src");
@@ -997,6 +1030,39 @@ mod tests {
         assert_eq!(jit_steps, interp_steps, "step sequences diverge");
         assert_eq!(task.result, interp.result, "results diverge");
         assert_eq!(task.trace, interp.trace, "frame traces diverge");
+    }
+
+    #[test]
+    fn indirect_calls_match_the_interpreter() {
+        let program = Program {
+            fns: vec![
+                TaskFn {
+                    frame: frame_of_i64s(3),
+                    code: vec![
+                        Op::ConstI64 { dst: 0, value: 1 },
+                        Op::ConstI64 { dst: 8, value: 21 },
+                        Op::CallIndirect {
+                            callee: 0,
+                            args: vec![ArgCopy {
+                                src: 8,
+                                dst: 0,
+                                size: 8,
+                            }],
+                            ret: 16,
+                        },
+                        Op::Ret { src: 16, size: 8 },
+                    ],
+                },
+                TaskFn {
+                    frame: frame_of_i64s(2),
+                    code: vec![
+                        Op::AddI64 { dst: 8, a: 0, b: 0 },
+                        Op::Ret { src: 8, size: 8 },
+                    ],
+                },
+            ],
+        };
+        differential(&program, FnId(0), &[(&[], &[])]);
     }
 
     #[test]
