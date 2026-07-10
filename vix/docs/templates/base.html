@@ -160,14 +160,15 @@
             </div>
             <nav class="sitemap" aria-label="Sitemap">
                 {% for s in sites %}
-                {% if s.root %}
+                {% set site_root = get_section(path=s.mount) %}
+                {% if site_root %}
                 <section class="sitemap-source">
                     <a class="sitemap-title" href="{{ s.mount }}" data-x-site>{{ s.name or "facet" }}</a>
                     <div class="sitemap-links">
-                        {% for p in s.root.pages | sort(attribute="weight") %}
+                        {% for p in site_root.pages | sort(attribute="weight") %}
                         <a href="{{ p.permalink }}">{{ p.title }}</a>
                         {% endfor %}
-                        {% for sec in s.root.subsections | sort(attribute="weight") %}
+                        {% for sec in site_root.subsections | sort(attribute="weight") %}
                         <a href="{{ sec.permalink }}">{{ sec.title }}</a>
                         {% endfor %}
                     </div>

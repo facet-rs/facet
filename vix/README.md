@@ -28,3 +28,9 @@ changes source semantics belongs in the language specification; a question
 about evaluation belongs in the runtime specification; a solver decision
 belongs in the Rodin specification. Rungs and corpus programs may expose a
 missing ruling, but they do not create a second language by accident.
+
+Implementation follows the book's [ratchet-climbing
+strategy](docs/content/implementation-strategy.md): one authoritative VIR and
+runtime lane, specification work at the point it becomes load-bearing, a frozen
+old evaluator, and deliberate parallelism only across stable ownership
+boundaries.
