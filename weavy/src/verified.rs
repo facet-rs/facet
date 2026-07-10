@@ -2783,6 +2783,54 @@ mod tests {
         region(offset, RegionShape::word(kind))
     }
 
+    fn structural_region(
+        offset: u32,
+        shape: RegionShape,
+        value_shape: ValueShapeRef,
+    ) -> FrameRegion {
+        region(offset, shape).with_value_shape(value_shape)
+    }
+
+    fn schema(inline: RegionShape, payload: PayloadKind) -> SchemaContract {
+        SchemaContract {
+            inline,
+            value_shape: None,
+            payload,
+        }
+    }
+
+    fn structural_schema(
+        inline: RegionShape,
+        value_shape: ValueShapeRef,
+        payload: PayloadKind,
+    ) -> SchemaContract {
+        SchemaContract {
+            inline,
+            value_shape: Some(value_shape),
+            payload,
+        }
+    }
+
+    fn field(offset: u32, shape: RegionShape) -> ValueFieldUse {
+        ValueFieldUse::new(offset, shape)
+    }
+
+    fn structural_field(
+        offset: u32,
+        shape: RegionShape,
+        value_shape: ValueShapeRef,
+    ) -> ValueFieldUse {
+        ValueFieldUse::new(offset, shape).with_value_shape(value_shape)
+    }
+
+    fn selector(offset: u32, shape: RegionShape) -> ValueSelector {
+        ValueSelector { offset, shape }
+    }
+
+    fn variant(fields: Vec<ValueFieldUse>) -> ValueVariant {
+        ValueVariant { fields }
+    }
+
     fn function(words: usize, code: Vec<Op>) -> Fn {
         Fn {
             frame: layout(words),
@@ -4246,6 +4294,772 @@ mod tests {
                 program.verify(contract).expect_err(name),
                 expected,
                 "{name}"
+            );
+        }
+    }
+    #[test]
+    fn verifies_structural_value_shapes() {
+        let string = SchemaRef(0);
+        let string_schema = schema(
+            RegionShape::word(WordKind::Handle(string)),
+            PayloadKind::OpaqueBytes {
+                byte_comparable: true,
+            },
+        );
+        let scalar = RegionShape::word(WordKind::Scalar);
+        let scalar_or_string = RegionShape::new(vec![
+            kinds(WordKind::Scalar).allowing(WordKind::Handle(string)),
+        ]);
+        let outcome_shape = RegionShape::new(vec![
+            kinds(WordKind::Scalar),
+            scalar_or_string.words[0].clone(),
+        ]);
+        let outcome = ValueShapeContract {
+            shape: outcome_shape.clone(),
+            kind: ValueShapeKind::Enum {
+                selector: selector(0, scalar.clone()),
+                variants: vec![
+                    variant(vec![field(8, scalar.clone())]),
+                    variant(vec![field(8, RegionShape::word(WordKind::Handle(string)))]),
+                ],
+            },
+        };
+
+        let pair_shape = RegionShape::new(vec![kinds(WordKind::Scalar), kinds(WordKind::Scalar)]);
+        let pair = ValueShapeContract {
+            shape: pair_shape.clone(),
+            kind: ValueShapeKind::Product {
+                fields: vec![field(0, scalar.clone()), field(8, scalar.clone())],
+            },
+        };
+        let nested_shape = RegionShape::new(
+            [scalar.words.clone(), outcome_shape.words.clone()]
+                .concat()
+                .to_vec(),
+        );
+        let nested = ValueShapeContract {
+            shape: nested_shape.clone(),
+            kind: ValueShapeKind::Product {
+                fields: vec![
+                    field(0, scalar.clone()),
+                    structural_field(8, outcome_shape.clone(), ValueShapeRef(0)),
+                ],
+            },
+        };
+        let one_word = ValueShapeContract {
+            shape: scalar.clone(),
+            kind: ValueShapeKind::Product {
+                fields: vec![field(0, scalar.clone())],
+            },
+        };
+
+        let valid_outcome = (
+            Program {
+                fns: vec![function(2, vec![Op::Ret { src: 0, size: 16 }])],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    2,
+                    vec![structural_region(
+                        0,
+                        outcome_shape.clone(),
+                        ValueShapeRef(0),
+                    )],
+                    &[],
+                    0,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![string_schema.clone()],
+                value_shapes: vec![outcome.clone()],
+            },
+        );
+
+        let valid_nested = (
+            Program {
+                fns: vec![function(3, vec![Op::Ret { src: 0, size: 24 }])],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    3,
+                    vec![structural_region(0, nested_shape.clone(), ValueShapeRef(1))],
+                    &[],
+                    0,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![string_schema],
+                value_shapes: vec![outcome, nested],
+            },
+        );
+
+        let valid_array = {
+            let array = SchemaRef(1);
+            let code = vec![
+                Op::ArrayNew {
+                    dst: 0,
+                    status: 8,
+                    count_slot: 16,
+                    elem_width: 16,
+                    elem_schema_ref: 0,
+                },
+                Op::ArrayStore {
+                    status: 8,
+                    array: 0,
+                    index: 40,
+                    src: 24,
+                    elem_width: 16,
+                    elem_schema_ref: 0,
+                },
+                Op::LoadArray {
+                    dst: 48,
+                    status: 8,
+                    array: 0,
+                    index: 40,
+                    elem_width: 16,
+                    elem_schema_ref: 0,
+                },
+                Op::Ret { src: 48, size: 16 },
+            ];
+            (
+                Program {
+                    fns: vec![function(8, code)],
+                },
+                ProgramContract {
+                    functions: vec![function_contract(
+                        8,
+                        vec![
+                            word_region(0, WordKind::Handle(array)),
+                            word_region(8, WordKind::Status),
+                            word_region(16, WordKind::Scalar),
+                            structural_region(24, pair_shape.clone(), ValueShapeRef(0)),
+                            word_region(40, WordKind::Scalar),
+                            structural_region(48, pair_shape.clone(), ValueShapeRef(0)),
+                        ],
+                        &[],
+                        5,
+                        None,
+                    )],
+                    calls: vec![],
+                    schemas: vec![
+                        structural_schema(
+                            pair_shape.clone(),
+                            ValueShapeRef(0),
+                            PayloadKind::Inline,
+                        ),
+                        schema(
+                            RegionShape::word(WordKind::Handle(array)),
+                            PayloadKind::DenseArray {
+                                element: SchemaRef(0),
+                            },
+                        ),
+                    ],
+                    value_shapes: vec![pair.clone()],
+                },
+            )
+        };
+
+        let valid_copy = (
+            Program {
+                fns: vec![function(
+                    2,
+                    vec![Op::CopyI64 { dst: 8, src: 0 }, Op::Ret { src: 8, size: 8 }],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    2,
+                    vec![
+                        structural_region(0, scalar.clone(), ValueShapeRef(0)),
+                        structural_region(8, scalar.clone(), ValueShapeRef(0)),
+                    ],
+                    &[],
+                    1,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![],
+                value_shapes: vec![one_word],
+            },
+        );
+
+        let duplicate_nominal_shapes = (
+            Program::default(),
+            ProgramContract {
+                functions: vec![],
+                calls: vec![],
+                schemas: vec![],
+                value_shapes: vec![pair.clone(), pair],
+            },
+        );
+
+        for (name, program, contract) in [
+            ("compact enum", valid_outcome.0, valid_outcome.1),
+            ("nested product enum", valid_nested.0, valid_nested.1),
+            ("dense structural array", valid_array.0, valid_array.1),
+            ("one word structural copy", valid_copy.0, valid_copy.1),
+            (
+                "distinct nominal shapes",
+                duplicate_nominal_shapes.0,
+                duplicate_nominal_shapes.1,
+            ),
+        ] {
+            program.verify(contract).expect(name);
+        }
+    }
+
+    fn structural_direct_program(
+        caller_arg: Option<ValueShapeRef>,
+        callee_arg: Option<ValueShapeRef>,
+        callee_result: Option<ValueShapeRef>,
+        caller_result: Option<ValueShapeRef>,
+    ) -> (Program, ProgramContract) {
+        let shape = RegionShape::new(vec![kinds(WordKind::Scalar), kinds(WordKind::Scalar)]);
+        let with_ref = |offset, value_shape| {
+            let region = region(offset, shape.clone());
+            if let Some(value_shape) = value_shape {
+                region.with_value_shape(value_shape)
+            } else {
+                region
+            }
+        };
+        let shape_contract = || ValueShapeContract {
+            shape: shape.clone(),
+            kind: ValueShapeKind::Product {
+                fields: vec![
+                    field(0, RegionShape::word(WordKind::Scalar)),
+                    field(8, RegionShape::word(WordKind::Scalar)),
+                ],
+            },
+        };
+        (
+            Program {
+                fns: vec![
+                    function(
+                        4,
+                        vec![
+                            Op::Call {
+                                callee: FnId(1),
+                                args: vec![ArgCopy {
+                                    src: 0,
+                                    dst: 0,
+                                    size: 16,
+                                }],
+                                ret: 16,
+                            },
+                            Op::Ret { src: 16, size: 16 },
+                        ],
+                    ),
+                    function(2, vec![Op::Ret { src: 0, size: 16 }]),
+                ],
+            },
+            ProgramContract {
+                functions: vec![
+                    function_contract(
+                        4,
+                        vec![with_ref(0, caller_arg), with_ref(16, caller_result)],
+                        &[0],
+                        1,
+                        None,
+                    ),
+                    function_contract(
+                        2,
+                        vec![with_ref(0, callee_arg.or(callee_result))],
+                        &[0],
+                        0,
+                        None,
+                    ),
+                ],
+                calls: vec![],
+                schemas: vec![],
+                value_shapes: vec![shape_contract(), shape_contract()],
+            },
+        )
+    }
+
+    #[test]
+    fn verifies_structural_transfer_identity() {
+        let same = structural_direct_program(
+            Some(ValueShapeRef(0)),
+            Some(ValueShapeRef(0)),
+            Some(ValueShapeRef(0)),
+            Some(ValueShapeRef(0)),
+        );
+        same.0.verify(same.1).expect("same structural ref");
+
+        let cases = vec![
+            InvalidCase {
+                name: "different argument ref",
+                program: structural_direct_program(
+                    Some(ValueShapeRef(0)),
+                    Some(ValueShapeRef(1)),
+                    Some(ValueShapeRef(1)),
+                    Some(ValueShapeRef(1)),
+                )
+                .0,
+                contract: structural_direct_program(
+                    Some(ValueShapeRef(0)),
+                    Some(ValueShapeRef(1)),
+                    Some(ValueShapeRef(1)),
+                    Some(ValueShapeRef(1)),
+                )
+                .1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::StructuralTransferMismatch {
+                        source: Some(ValueShapeRef(0)),
+                        destination: Some(ValueShapeRef(1)),
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "structural to flat argument",
+                program: structural_direct_program(Some(ValueShapeRef(0)), None, None, None).0,
+                contract: structural_direct_program(Some(ValueShapeRef(0)), None, None, None).1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::StructuralTransferMismatch {
+                        source: Some(ValueShapeRef(0)),
+                        destination: None,
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "flat to structural argument",
+                program: structural_direct_program(
+                    None,
+                    Some(ValueShapeRef(0)),
+                    Some(ValueShapeRef(0)),
+                    Some(ValueShapeRef(0)),
+                )
+                .0,
+                contract: structural_direct_program(
+                    None,
+                    Some(ValueShapeRef(0)),
+                    Some(ValueShapeRef(0)),
+                    Some(ValueShapeRef(0)),
+                )
+                .1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::StructuralTransferMismatch {
+                        source: None,
+                        destination: Some(ValueShapeRef(0)),
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "different result ref",
+                program: structural_direct_program(
+                    Some(ValueShapeRef(0)),
+                    Some(ValueShapeRef(0)),
+                    Some(ValueShapeRef(0)),
+                    Some(ValueShapeRef(1)),
+                )
+                .0,
+                contract: structural_direct_program(
+                    Some(ValueShapeRef(0)),
+                    Some(ValueShapeRef(0)),
+                    Some(ValueShapeRef(0)),
+                    Some(ValueShapeRef(1)),
+                )
+                .1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::StructuralTransferMismatch {
+                        source: Some(ValueShapeRef(0)),
+                        destination: Some(ValueShapeRef(1)),
+                    },
+                ),
+            },
+        ];
+
+        for case in cases {
+            assert_eq!(
+                case.program.verify(case.contract).expect_err(case.name),
+                case.expected,
+                "{}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_structural_copy_and_array_transfer_mismatches() {
+        let scalar = RegionShape::word(WordKind::Scalar);
+        let pair_shape = RegionShape::new(vec![kinds(WordKind::Scalar), kinds(WordKind::Scalar)]);
+        let one_word = || ValueShapeContract {
+            shape: scalar.clone(),
+            kind: ValueShapeKind::Product {
+                fields: vec![field(0, scalar.clone())],
+            },
+        };
+        let pair = || ValueShapeContract {
+            shape: pair_shape.clone(),
+            kind: ValueShapeKind::Product {
+                fields: vec![field(0, scalar.clone()), field(8, scalar.clone())],
+            },
+        };
+
+        let copy_ref_mismatch = single_function(
+            2,
+            vec![Op::CopyI64 { dst: 8, src: 0 }, Op::Ret { src: 8, size: 8 }],
+            vec![
+                structural_region(0, scalar.clone(), ValueShapeRef(0)),
+                structural_region(8, scalar.clone(), ValueShapeRef(1)),
+            ],
+            1,
+        );
+        let mut copy_ref_contract = copy_ref_mismatch.1;
+        copy_ref_contract.value_shapes = vec![one_word(), one_word()];
+
+        let partial_copy = single_function(
+            4,
+            vec![
+                Op::CopyI64 { dst: 16, src: 0 },
+                Op::Ret { src: 16, size: 16 },
+            ],
+            vec![
+                structural_region(0, pair_shape.clone(), ValueShapeRef(0)),
+                structural_region(16, pair_shape.clone(), ValueShapeRef(0)),
+            ],
+            1,
+        );
+        let mut partial_copy_contract = partial_copy.1;
+        partial_copy_contract.value_shapes = vec![pair()];
+
+        let array = SchemaRef(1);
+        let array_mismatch = (
+            Program {
+                fns: vec![function(
+                    7,
+                    vec![
+                        Op::ArrayNew {
+                            dst: 0,
+                            status: 8,
+                            count_slot: 16,
+                            elem_width: 16,
+                            elem_schema_ref: 0,
+                        },
+                        Op::ArrayStore {
+                            status: 8,
+                            array: 0,
+                            index: 40,
+                            src: 24,
+                            elem_width: 16,
+                            elem_schema_ref: 0,
+                        },
+                        Op::Ret { src: 16, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    7,
+                    vec![
+                        word_region(0, WordKind::Handle(array)),
+                        word_region(8, WordKind::Status),
+                        word_region(16, WordKind::Scalar),
+                        structural_region(24, pair_shape.clone(), ValueShapeRef(1)),
+                        word_region(40, WordKind::Scalar),
+                    ],
+                    &[],
+                    2,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![
+                    structural_schema(pair_shape.clone(), ValueShapeRef(0), PayloadKind::Inline),
+                    schema(
+                        RegionShape::word(WordKind::Handle(array)),
+                        PayloadKind::DenseArray {
+                            element: SchemaRef(0),
+                        },
+                    ),
+                ],
+                value_shapes: vec![pair(), pair()],
+            },
+        );
+
+        let cases = vec![
+            InvalidCase {
+                name: "copy different refs",
+                program: copy_ref_mismatch.0,
+                contract: copy_ref_contract,
+                expected: op_error(
+                    0,
+                    ProgramDefect::StructuralTransferMismatch {
+                        source: Some(ValueShapeRef(0)),
+                        destination: Some(ValueShapeRef(1)),
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "partial multiword structural copy",
+                program: partial_copy.0,
+                contract: partial_copy_contract,
+                expected: op_error(
+                    0,
+                    ProgramDefect::StructuralPartialCopy {
+                        source: Some(ValueShapeRef(0)),
+                        destination: Some(ValueShapeRef(0)),
+                        source_size: 16,
+                        destination_size: 16,
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "array source different ref",
+                program: array_mismatch.0,
+                contract: array_mismatch.1,
+                expected: op_error(
+                    1,
+                    ProgramDefect::StructuralTransferMismatch {
+                        source: Some(ValueShapeRef(1)),
+                        destination: Some(ValueShapeRef(0)),
+                    },
+                ),
+            },
+        ];
+
+        for case in cases {
+            assert_eq!(
+                case.program.verify(case.contract).expect_err(case.name),
+                case.expected,
+                "{}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_structural_value_shape_table_defects() {
+        let scalar = RegionShape::word(WordKind::Scalar);
+        let pair_shape = RegionShape::new(vec![kinds(WordKind::Scalar), kinds(WordKind::Scalar)]);
+        let string = SchemaRef(0);
+        let string_schema = schema(
+            RegionShape::word(WordKind::Handle(string)),
+            PayloadKind::OpaqueBytes {
+                byte_comparable: true,
+            },
+        );
+        let table = |schemas, value_shapes| ProgramContract {
+            functions: vec![],
+            calls: vec![],
+            schemas,
+            value_shapes,
+        };
+        let product = |fields| ValueShapeContract {
+            shape: pair_shape.clone(),
+            kind: ValueShapeKind::Product { fields },
+        };
+        let enum_shape = |selector, variants| ValueShapeContract {
+            shape: pair_shape.clone(),
+            kind: ValueShapeKind::Enum { selector, variants },
+        };
+
+        let frame_mismatch = (
+            Program {
+                fns: vec![function(1, vec![Op::Ret { src: 0, size: 8 }])],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    1,
+                    vec![structural_region(0, scalar.clone(), ValueShapeRef(0))],
+                    &[],
+                    0,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![],
+                value_shapes: vec![product(vec![
+                    field(0, scalar.clone()),
+                    field(8, scalar.clone()),
+                ])],
+            },
+        );
+
+        let cases = vec![
+            InvalidCase {
+                name: "bad selector kind",
+                program: Program::default(),
+                contract: table(
+                    vec![string_schema.clone()],
+                    vec![enum_shape(
+                        selector(0, RegionShape::word(WordKind::Handle(string))),
+                        vec![variant(vec![field(8, scalar.clone())])],
+                    )],
+                ),
+                expected: global_error(ProgramDefect::ValueShapeSelectorInvalidShape {
+                    value_shape: ValueShapeRef(0),
+                    shape: RegionShape::word(WordKind::Handle(string)),
+                }),
+            },
+            InvalidCase {
+                name: "bad selector offset",
+                program: Program::default(),
+                contract: table(
+                    vec![],
+                    vec![enum_shape(
+                        selector(4, scalar.clone()),
+                        vec![variant(vec![field(8, scalar.clone())])],
+                    )],
+                ),
+                expected: global_error(ProgramDefect::ValueShapeSelectorOffsetNotWordAligned {
+                    value_shape: ValueShapeRef(0),
+                    offset: 4,
+                }),
+            },
+            InvalidCase {
+                name: "field alignment",
+                program: Program::default(),
+                contract: table(vec![], vec![product(vec![field(4, scalar.clone())])]),
+                expected: global_error(ProgramDefect::ValueShapeFieldOffsetNotWordAligned {
+                    value_shape: ValueShapeRef(0),
+                    site: ValueFieldSite::Product { field: 0 },
+                    offset: 4,
+                }),
+            },
+            InvalidCase {
+                name: "field range",
+                program: Program::default(),
+                contract: table(vec![], vec![product(vec![field(8, pair_shape.clone())])]),
+                expected: global_error(ProgramDefect::ValueShapeFieldOutOfBounds {
+                    value_shape: ValueShapeRef(0),
+                    site: ValueFieldSite::Product { field: 0 },
+                    end: 24,
+                    shape_size: 16,
+                }),
+            },
+            InvalidCase {
+                name: "field kind outside flattened shape",
+                program: Program::default(),
+                contract: table(
+                    vec![string_schema.clone()],
+                    vec![product(vec![field(
+                        0,
+                        RegionShape::word(WordKind::Handle(string)),
+                    )])],
+                ),
+                expected: global_error(ProgramDefect::ValueShapeFieldKinds {
+                    value_shape: ValueShapeRef(0),
+                    site: ValueFieldSite::Product { field: 0 },
+                    field: RegionShape::word(WordKind::Handle(string)),
+                    parent: scalar.clone(),
+                }),
+            },
+            InvalidCase {
+                name: "product field overlap",
+                program: Program::default(),
+                contract: table(
+                    vec![],
+                    vec![product(vec![
+                        field(0, scalar.clone()),
+                        field(0, scalar.clone()),
+                    ])],
+                ),
+                expected: global_error(ProgramDefect::ValueShapeFieldOverlap {
+                    value_shape: ValueShapeRef(0),
+                    first: ValueFieldSite::Product { field: 0 },
+                    second: ValueFieldSite::Product { field: 1 },
+                }),
+            },
+            InvalidCase {
+                name: "variant field overlaps selector",
+                program: Program::default(),
+                contract: table(
+                    vec![],
+                    vec![enum_shape(
+                        selector(0, scalar.clone()),
+                        vec![variant(vec![field(0, scalar.clone())])],
+                    )],
+                ),
+                expected: global_error(ProgramDefect::ValueShapeFieldOverlapsSelector {
+                    value_shape: ValueShapeRef(0),
+                    variant: 0,
+                    field: 0,
+                }),
+            },
+            InvalidCase {
+                name: "variant field overlap",
+                program: Program::default(),
+                contract: table(
+                    vec![],
+                    vec![enum_shape(
+                        selector(0, scalar.clone()),
+                        vec![variant(vec![
+                            field(8, scalar.clone()),
+                            field(8, scalar.clone()),
+                        ])],
+                    )],
+                ),
+                expected: global_error(ProgramDefect::ValueShapeFieldOverlap {
+                    value_shape: ValueShapeRef(0),
+                    first: ValueFieldSite::Variant {
+                        variant: 0,
+                        field: 0,
+                    },
+                    second: ValueFieldSite::Variant {
+                        variant: 0,
+                        field: 1,
+                    },
+                }),
+            },
+            InvalidCase {
+                name: "missing nested structural ref",
+                program: Program::default(),
+                contract: table(
+                    vec![],
+                    vec![product(vec![structural_field(
+                        0,
+                        pair_shape.clone(),
+                        ValueShapeRef(1),
+                    )])],
+                ),
+                expected: global_error(ProgramDefect::ValueShapeReferenceOutOfRange {
+                    site: ValueShapeReferenceSite::ProductField {
+                        value_shape: ValueShapeRef(0),
+                        field: 0,
+                    },
+                    value_shape: ValueShapeRef(1),
+                    value_shape_count: 1,
+                }),
+            },
+            InvalidCase {
+                name: "frame flattened mismatch",
+                program: frame_mismatch.0,
+                contract: frame_mismatch.1,
+                expected: function_error(ProgramDefect::StructuralShapeMismatch {
+                    site: ValueShapeReferenceSite::FrameRegion(RegionId(0)),
+                    value_shape: ValueShapeRef(0),
+                    expected: pair_shape.clone(),
+                    actual: scalar.clone(),
+                }),
+            },
+            InvalidCase {
+                name: "inline structural cycle",
+                program: Program::default(),
+                contract: table(
+                    vec![],
+                    vec![ValueShapeContract {
+                        shape: scalar.clone(),
+                        kind: ValueShapeKind::Product {
+                            fields: vec![structural_field(0, scalar.clone(), ValueShapeRef(0))],
+                        },
+                    }],
+                ),
+                expected: global_error(ProgramDefect::ValueShapeCycle {
+                    value_shape: ValueShapeRef(0),
+                }),
+            },
+        ];
+
+        for case in cases {
+            assert_eq!(
+                case.program.verify(case.contract).expect_err(case.name),
+                case.expected,
+                "{}",
+                case.name
             );
         }
     }
