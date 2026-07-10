@@ -1,10 +1,10 @@
 use vix::compiler::Compiler;
 use vix::diagnostic::DiagnosticCode;
-use vix::lowering::{LoweringCache, source_map_for};
+use vix::lowering::{LoweringCache, attribution_for, source_map_for};
 use vix::ratchet::run_source;
 use vix::runtime::{DemandState, EventKind, MemoVerdict, TaskState};
 use vix::surface::{SurfaceParser, ast};
-use vix::vir::{EffectKind, Op as VirOp, Type as VirType, VariantPayload};
+use vix::vir::{EffectKind, FunctionId, NodeRef, Op as VirOp, Type as VirType, VariantPayload};
 use weavy::task::Op as WeavyOp;
 
 const RUNG_001: &str = include_str!("ratchet/001-harness.vix");
@@ -33,6 +33,42 @@ const RUNG_023: &str = include_str!("ratchet/023-option.vix");
 const RUNG_024: &str = include_str!("ratchet/024-user-result.vix");
 const RUNG_025: &str = include_str!("ratchet/025-ordering-enum.vix");
 const RUNG_026: &str = include_str!("ratchet/026-arrays.vix");
+
+fn frame_index(functions: &[FunctionId], function: FunctionId) -> usize {
+    functions
+        .iter()
+        .position(|candidate| *candidate == function)
+        .expect("function has a lowered Weavy frame")
+}
+
+fn assert_pc_maps_complete(lowered: &vix::lowering::LoweringArtifact) {
+    assert_eq!(lowered.program.fns.len(), lowered.pc_nodes.len());
+    for (frame, function) in lowered.program.fns.iter().enumerate() {
+        assert_eq!(
+            function.code.len(),
+            lowered.pc_nodes[frame].len(),
+            "frame {frame} must attribute every Weavy pc",
+        );
+        for pc in 0..function.code.len() {
+            assert!(
+                lowered.node_for_pc(frame as u32, pc as u32).is_some(),
+                "frame {frame} pc {pc} must resolve to a VIR node",
+            );
+        }
+    }
+}
+
+fn pcs_for_node(
+    lowered: &vix::lowering::LoweringArtifact,
+    frame: usize,
+    node: NodeRef,
+) -> Vec<usize> {
+    lowered.pc_nodes[frame]
+        .iter()
+        .enumerate()
+        .filter_map(|(pc, owner)| (*owner == node).then_some(pc))
+        .collect()
+}
 
 /// The first rung is an architectural certificate, not just a boolean test.
 ///
@@ -152,6 +188,203 @@ fn rung_001_certifies_the_new_compiler_and_runtime_spine() {
             ..
         }
     )));
+}
+
+#[test]
+fn pc_node_attribution_is_cached_but_node_spans_stay_per_compilation() {
+    let module = Compiler::new()
+        .compile(RUNG_001)
+        .expect("rung 001 compiles");
+    let partitioned = module.partition_test(&module.tests[0]);
+    let island = &partitioned.islands[0];
+    let attribution = attribution_for(island);
+    let output_node = NodeRef {
+        function: island.function,
+        node: island.output,
+    };
+    let output_source = attribution
+        .source_for_node(output_node)
+        .expect("output node has per-compilation source attribution");
+
+    let mut lowering_cache = LoweringCache::default();
+    let lowered = lowering_cache
+        .get_or_lower(island)
+        .expect("rung 001 lowers to Weavy");
+    assert_pc_maps_complete(lowered);
+    let root_frame = frame_index(&attribution.functions, island.function);
+    let last_pc = lowered.program.fns[root_frame].code.len() - 1;
+    assert_eq!(
+        lowered.node_for_pc(root_frame as u32, last_pc as u32),
+        Some(output_node),
+        "synthetic return belongs to the function output node",
+    );
+    let recipe = lowered.recipe;
+    let rendered = lowered.render();
+    let pc_nodes = lowered.pc_nodes.clone();
+
+    let shifted_source = format!("\n\n{RUNG_001}");
+    let shifted_module = Compiler::new()
+        .compile(&shifted_source)
+        .expect("span-only edit compiles");
+    let shifted_partitioned = shifted_module.partition_test(&shifted_module.tests[0]);
+    let shifted_island = &shifted_partitioned.islands[0];
+    let shifted_attribution = attribution_for(shifted_island);
+    let shifted_source = shifted_attribution
+        .source_for_node(output_node)
+        .expect("shifted output node has source attribution");
+    let shifted_lowered = lowering_cache
+        .get_or_lower(shifted_island)
+        .expect("span-only edit reuses bytecode");
+    assert_pc_maps_complete(shifted_lowered);
+    assert_eq!(shifted_lowered.recipe, recipe);
+    assert_eq!(shifted_lowered.render(), rendered);
+    assert_eq!(shifted_lowered.pc_nodes, pc_nodes);
+    assert_ne!(output_source.span, shifted_source.span);
+    assert_eq!(lowering_cache.counters().misses, 1);
+    assert_eq!(lowering_cache.counters().hits, 1);
+}
+
+#[test]
+fn structured_if_and_match_emit_control_and_arm_pcs_with_distinct_owners() {
+    const SOURCE: &str = r#"
+enum Flag {
+    A,
+    B,
+}
+
+fn choose(flag: Flag) -> Int {
+    match flag {
+        Flag::A => if true { 10 } else { 11 },
+        Flag::B => 20,
+    }
+}
+
+#[test]
+fn attribution() -> Stream<Check> {
+    yield expect_eq(choose(Flag::A), 10);
+    yield expect_eq(choose(Flag::B), 20);
+}
+"#;
+
+    let module = Compiler::new().compile(SOURCE).expect("source compiles");
+    let choose = module
+        .functions
+        .iter()
+        .find(|function| function.name == "choose")
+        .expect("choose function exists");
+    let match_node = choose
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::Match { .. }))
+        .expect("choose lowers through Match");
+    let if_node = choose
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::If { .. }))
+        .expect("first arm lowers through If");
+    let VirOp::Match { arms } = &match_node.op else {
+        unreachable!("match node selected above")
+    };
+    let arm_a_output = NodeRef {
+        function: choose.id,
+        node: arms[0].output,
+    };
+    let arm_b_output = NodeRef {
+        function: choose.id,
+        node: arms[1].output,
+    };
+    let VirOp::If {
+        consequent,
+        alternative,
+    } = &if_node.op
+    else {
+        unreachable!("if node selected above")
+    };
+    let consequent_output = NodeRef {
+        function: choose.id,
+        node: consequent.output,
+    };
+    let alternative_output = NodeRef {
+        function: choose.id,
+        node: alternative.output,
+    };
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    let island = &partitioned.islands[0];
+    let attribution = attribution_for(island);
+    let mut lowering_cache = LoweringCache::default();
+    let lowered = lowering_cache
+        .get_or_lower(island)
+        .expect("source lowers to Weavy");
+    assert_pc_maps_complete(lowered);
+
+    let choose_frame = frame_index(&attribution.functions, choose.id);
+    let choose_code = &lowered.program.fns[choose_frame].code;
+    let match_ref = NodeRef {
+        function: choose.id,
+        node: match_node.id,
+    };
+    let if_ref = NodeRef {
+        function: choose.id,
+        node: if_node.id,
+    };
+
+    assert!(choose_code.iter().enumerate().any(|(pc, op)| {
+        matches!(
+            op,
+            WeavyOp::EqI64 { .. } | WeavyOp::JumpIfZero { .. } | WeavyOp::Jump { .. }
+        ) && lowered.node_for_pc(choose_frame as u32, pc as u32) == Some(match_ref)
+    }));
+    assert!(choose_code.iter().enumerate().any(|(pc, op)| {
+        matches!(op, WeavyOp::JumpIfZero { .. } | WeavyOp::Jump { .. })
+            && lowered.node_for_pc(choose_frame as u32, pc as u32) == Some(if_ref)
+    }));
+
+    let if_owned_pcs = pcs_for_node(lowered, choose_frame, if_ref);
+    assert!(
+        if_owned_pcs.iter().any(|pc| matches!(
+            choose_code[*pc],
+            WeavyOp::JumpIfZero { .. } | WeavyOp::Jump { .. } | WeavyOp::CopyI64 { .. }
+        )),
+        "the nested if node should own its dispatch and merge scaffolding",
+    );
+    assert!(
+        pcs_for_node(lowered, choose_frame, consequent_output)
+            .iter()
+            .any(|pc| matches!(choose_code[*pc], WeavyOp::ConstI64 { value: 10, .. })),
+        "the consequent literal must own its emitted Weavy pc",
+    );
+    assert!(
+        pcs_for_node(lowered, choose_frame, alternative_output)
+            .iter()
+            .any(|pc| matches!(choose_code[*pc], WeavyOp::ConstI64 { value: 11, .. })),
+        "the alternative literal must own its emitted Weavy pc",
+    );
+
+    let arm_a_pcs = pcs_for_node(lowered, choose_frame, arm_a_output);
+    assert!(
+        arm_a_pcs.iter().any(|pc| matches!(
+            choose_code[*pc],
+            WeavyOp::CopyI64 { .. } | WeavyOp::Ret { .. }
+        )),
+        "arm A output must own at least one lowered Weavy pc",
+    );
+    let arm_b_pcs = pcs_for_node(lowered, choose_frame, arm_b_output);
+    assert!(
+        arm_b_pcs
+            .iter()
+            .any(|pc| matches!(choose_code[*pc], WeavyOp::ConstI64 { value: 20, .. })),
+        "arm B output must own its literal pc",
+    );
+
+    let last_pc = choose_code.len() - 1;
+    assert_eq!(
+        lowered.node_for_pc(choose_frame as u32, last_pc as u32),
+        Some(NodeRef {
+            function: choose.id,
+            node: choose.output.expect("choose has an output node"),
+        }),
+    );
 }
 
 #[test]

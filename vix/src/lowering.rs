@@ -44,6 +44,13 @@ impl LoweringAttribution {
             .get(trace_id as usize)
             .filter(|entry| entry.trace_id == trace_id)
     }
+
+    #[must_use]
+    pub fn source_for_node(&self, node: NodeRef) -> Option<&SourceMapEntry> {
+        self.source_map
+            .iter()
+            .find(|entry| entry.function == node.function && entry.node == node.node)
+    }
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -61,10 +68,19 @@ pub struct LoweringArtifact {
     pub demand_key: DemandKey,
     pub demand_preimage: DemandPreimage,
     pub program: WeavyProgram,
+    pub pc_nodes: Vec<Vec<NodeRef>>,
     pub constants: Vec<ValueConstant>,
 }
 
 impl LoweringArtifact {
+    #[must_use]
+    pub fn node_for_pc(&self, frame: u32, pc: u32) -> Option<NodeRef> {
+        self.pc_nodes
+            .get(frame as usize)
+            .and_then(|nodes| nodes.get(pc as usize))
+            .copied()
+    }
+
     #[must_use]
     pub fn render(&self) -> String {
         let mut out = String::new();
@@ -239,26 +255,31 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
 
     let mut constants = Vec::new();
     let mut functions_out = Vec::with_capacity(1 + island.callees.len());
-    functions_out.push(lower_vir_function(
+    let mut pc_nodes = Vec::with_capacity(1 + island.callees.len());
+    let lowered_root = lower_vir_function(
         island.function,
         &island.nodes,
         &[],
         island.output,
         &context,
         &mut constants,
-    )?);
+    )?;
+    functions_out.push(lowered_root.function);
+    pc_nodes.push(lowered_root.pc_nodes);
     for function in &island.callees {
         let output = function.output.ok_or_else(|| {
             lowering_diagnostic(function.span, "called VIR function has no return node")
         })?;
-        functions_out.push(lower_vir_function(
+        let lowered = lower_vir_function(
             function.id,
             &function.nodes,
             &function.parameters,
             output,
             &context,
             &mut constants,
-        )?);
+        )?;
+        functions_out.push(lowered.function);
+        pc_nodes.push(lowered.pc_nodes);
     }
     let program = WeavyProgram { fns: functions_out };
     let demand_preimage = DemandPreimage {
@@ -270,6 +291,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
         demand_key: DemandKey::from_preimage(&demand_preimage),
         demand_preimage,
         program,
+        pc_nodes,
         constants,
     })
 }
@@ -482,9 +504,15 @@ enum PendingOp {
     JumpIfZero { value: u32, target: CodeLabel },
 }
 
+struct PendingInstruction {
+    op: PendingOp,
+    source: Option<NodeRef>,
+}
+
 struct CodeBuilder {
-    ops: Vec<PendingOp>,
+    ops: Vec<PendingInstruction>,
     labels: Vec<Option<usize>>,
+    current_source: Option<NodeRef>,
 }
 
 impl CodeBuilder {
@@ -492,15 +520,27 @@ impl CodeBuilder {
         Self {
             ops: Vec::with_capacity(capacity),
             labels: Vec::new(),
+            current_source: None,
         }
     }
 
+    fn swap_source(&mut self, source: Option<NodeRef>) -> Option<NodeRef> {
+        std::mem::replace(&mut self.current_source, source)
+    }
+
     fn push(&mut self, op: WeavyOp) {
-        self.ops.push(PendingOp::Concrete(op));
+        self.ops.push(PendingInstruction {
+            op: PendingOp::Concrete(op),
+            source: self.current_source,
+        });
     }
 
     fn extend(&mut self, ops: impl IntoIterator<Item = WeavyOp>) {
-        self.ops.extend(ops.into_iter().map(PendingOp::Concrete));
+        self.ops
+            .extend(ops.into_iter().map(|op| PendingInstruction {
+                op: PendingOp::Concrete(op),
+                source: self.current_source,
+            }));
     }
 
     fn label(&mut self) -> CodeLabel {
@@ -522,31 +562,44 @@ impl CodeBuilder {
     }
 
     fn jump(&mut self, target: CodeLabel) {
-        self.ops.push(PendingOp::Jump(target));
-    }
-
-    fn jump_if_zero(&mut self, value: FrameSlot, target: CodeLabel) {
-        self.ops.push(PendingOp::JumpIfZero {
-            value: value.byte_offset(),
-            target,
+        self.ops.push(PendingInstruction {
+            op: PendingOp::Jump(target),
+            source: self.current_source,
         });
     }
 
-    fn finish(self, span: Span) -> Result<Vec<WeavyOp>, Diagnostics> {
+    fn jump_if_zero(&mut self, value: FrameSlot, target: CodeLabel) {
+        self.ops.push(PendingInstruction {
+            op: PendingOp::JumpIfZero {
+                value: value.byte_offset(),
+                target,
+            },
+            source: self.current_source,
+        });
+    }
+
+    fn finish(self, span: Span) -> Result<(Vec<WeavyOp>, Vec<NodeRef>), Diagnostics> {
         let labels = self.labels;
-        self.ops
-            .into_iter()
-            .map(|op| match op {
-                PendingOp::Concrete(op) => Ok(op),
-                PendingOp::Jump(label) => Ok(WeavyOp::Jump {
+        let mut code = Vec::with_capacity(self.ops.len());
+        let mut pc_nodes = Vec::with_capacity(self.ops.len());
+        for instruction in self.ops {
+            let source = instruction.source.ok_or_else(|| {
+                lowering_diagnostic(span, "Weavy instruction has no owning VIR node")
+            })?;
+            let op = match instruction.op {
+                PendingOp::Concrete(op) => op,
+                PendingOp::Jump(label) => WeavyOp::Jump {
                     target: Self::resolve(&labels, label, span)?,
-                }),
-                PendingOp::JumpIfZero { value, target } => Ok(WeavyOp::JumpIfZero {
+                },
+                PendingOp::JumpIfZero { value, target } => WeavyOp::JumpIfZero {
                     value,
                     target: Self::resolve(&labels, target, span)?,
-                }),
-            })
-            .collect()
+                },
+            };
+            code.push(op);
+            pc_nodes.push(source);
+        }
+        Ok((code, pc_nodes))
     }
 
     fn resolve(labels: &[Option<usize>], label: CodeLabel, span: Span) -> Result<u32, Diagnostics> {
@@ -558,6 +611,11 @@ impl CodeBuilder {
     }
 }
 
+struct LoweredWeavyFunction {
+    function: WeavyFn,
+    pc_nodes: Vec<NodeRef>,
+}
+
 fn lower_vir_function(
     function: FunctionId,
     nodes: &[Node],
@@ -565,7 +623,7 @@ fn lower_vir_function(
     output: NodeId,
     context: &LoweringContext<'_>,
     constants: &mut Vec<ValueConstant>,
-) -> Result<WeavyFn, Diagnostics> {
+) -> Result<LoweredWeavyFunction, Diagnostics> {
     let layout = context
         .layouts
         .get(&function)
@@ -604,19 +662,27 @@ fn lower_vir_function(
         .ok_or_else(|| {
             lowering_diagnostic(output_node.span, "function output has no frame region")
         })?;
+    let previous_source = code.swap_source(Some(NodeRef {
+        function,
+        node: output,
+    }));
     code.push(WeavyOp::Ret {
         src: output_region.start().byte_offset(),
         size: output_region
             .byte_size()
             .ok_or_else(|| lowering_diagnostic(output_node.span, "return size overflow"))?,
     });
-    let code = code.finish(output_node.span)?;
-    Ok(WeavyFn {
-        frame: Layout {
-            size: layout.frame_size,
-            align: FrameSlot::word_align(),
+    code.swap_source(previous_source);
+    let (code, pc_nodes) = code.finish(output_node.span)?;
+    Ok(LoweredWeavyFunction {
+        function: WeavyFn {
+            frame: Layout {
+                size: layout.frame_size,
+                align: FrameSlot::word_align(),
+            },
+            code,
         },
-        code,
+        pc_nodes,
     })
 }
 
@@ -682,15 +748,17 @@ fn lower_node_sequence(
             return Err(lowering_diagnostic(node.span, "duplicate VIR node id"));
         }
         let dst = sequence.function.layout.region(node.id, node.span)?;
+        let node_ref = NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        };
         let trace_id = sequence
             .lowering
             .trace_ids
-            .get(&NodeRef {
-                function: sequence.function.id,
-                node: node.id,
-            })
+            .get(&node_ref)
             .copied()
             .ok_or_else(|| lowering_diagnostic(node.span, "VIR node has no trace attribution"))?;
+        let previous_source = outputs.code.swap_source(Some(node_ref));
         outputs.code.push(WeavyOp::Trace { id: trace_id });
         let representation = match &node.op {
             Op::Match { .. } => lower_match_node(node, dst, values, sequence, outputs)?,
@@ -713,6 +781,7 @@ fn lower_node_sequence(
                 lowered.representation
             }
         };
+        outputs.code.swap_source(previous_source);
         values.insert(
             node.id,
             LoweredSlot {
