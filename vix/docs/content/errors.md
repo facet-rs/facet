@@ -19,19 +19,21 @@ fn require_key(m: Map<String, Version>) where { key: String } -> Version {
 ## `fail` says what; the machine says where
 
 You supply a **payload** — any value, and it should be a typed one. The subject's
-identity and the source span are attached for you, because they are part of what the
-failure *is*. The **demand chain** — the breadcrumb of demands that led here — is
-reconstructed when someone looks (see below).
+published identity and the failing operation's stable source site are attached for
+you, because they are part of what the failure *is*. The current source span and
+the **demand chain** — the breadcrumb of demands that led here — are reconstructed
+when someone looks (see below).
 
 You cannot forget any of it, because you never attach any of it.
 
-> A failure that cannot name its subject is a bug in the machine, not in your
-> program.
+> A failure that cannot name a published subject is a bug in the machine, not in
+> your program. A task-private molten value has no published subject identity yet;
+> the failure's payload carries the stable details the diagnostic needs.
 
 This is why `fail "something went wrong"` is a weak thing to write and a fine thing
 to have written: the string is a poor payload, but the failure still knows which
-demand it belonged to and which source span raised it, and whoever reads it will see
-what asked.
+demand it belonged to and which stable source site raised it, and whoever reads
+it will see the current span and what asked.
 
 **Coming from Rust**: `panic!` loses the chain and unwinds a stack you don't have.
 `Err(String)` loses the address. Here, neither is possible — the address is not
@@ -74,8 +76,9 @@ reason a test reports every check that fails rather than the first.
 Because a failure is a value and an outcome is memoized, a failing demand is an
 ordinary memo entry — **with its read-set.**
 
-A build that failed yesterday fails *instantly* today, with the identical
-diagnostic, without running the compiler again.
+A build that failed yesterday fails *instantly* today, with the identical failure
+value and a diagnostic rendered through today's source attribution, without
+running the compiler again.
 
 And early cutoff applies to failures. That failed compile depended on exactly the
 files its read-set names. Edit your README, or an unrelated crate, and the failure
@@ -86,17 +89,20 @@ A failure is not a special case of the memo. It is the memo, working.
 
 ## The chain is not in the value
 
-A failure carries its payload, its subject, and its source span. Those are
-intrinsic: they are what the failure *is*, and they go into its identity.
+A failure carries its payload, its optional published subject identity, and its
+stable source-site identity. Those are intrinsic: they are what the failure *is*,
+and they go into its identity.
 
-The **demand chain** does not. It names who asked, and two callers of the same
-failing computation ask differently. Were the chain part of the identity, the same
-failure reached from two places would be two different values and the memo would
-never hit — the second caller would recompile a failure that was already known.
+The current byte span and the **demand chain** do not. They name the current
+source rendering and who asked, and they differ by compilation and caller. Were
+either part of the identity, the same failure reached from two places or across a
+formatting-only edit would be two different values and the memo would never hit —
+the second caller would recompile a failure that was already known.
 
-So the chain is reconstructed when you look, by reading the live demand map. The
-failure is content; the chain is context; you always see both, and only one is
-hashed.
+So the span and chain are reconstructed when you look, by resolving the stored
+source site through the current source map and reading the live demand map. The
+failure is content; the span and chain are context; you always see both, and only
+one side is hashed.
 
 ## `?` is the only way to see a failure from inside
 
@@ -110,7 +116,7 @@ its address intact**:
 ```vix
 match parse_manifest text ? {
     Ok(m)   => use m,
-    Err(f)  => yield diagnostic_for f,   // f has payload, subject, span, chain
+    Err(f)  => yield diagnostic_for f,   // f has payload, subject, site; reports span, chain
 }
 ```
 

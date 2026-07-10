@@ -81,7 +81,8 @@ a tuple is what "the same kind of thing, in order" means.
 
 A failing `expect_eq` renders both sides — structurally, for any type, because
 every value is serializable; you never write a `Debug` impl to earn diagnostics.
-A failure carries the check's source span.
+A failure carries the check's stable source site and reports the current source
+span.
 
 `Check` is `must_use`. Constructing one and forgetting to yield it is a compile
 error, not a test that silently passes.

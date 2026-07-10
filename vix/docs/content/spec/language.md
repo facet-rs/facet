@@ -209,6 +209,25 @@ artifact collection defined below.
 %[a, b, c]
 ```
 
+> r[lang.collection.array-positions-are-data]
+>
+> An array's positions are its fields, and its length is a property of each
+> value rather than of its type. `[T]` names arrays of every length; there is no
+> `[T; N]`. Two arrays with equal elements in equal positions are the same
+> value, whatever built them.
+
+> r[lang.collection.array-index]
+>
+> `a[i]` on `a: [T]` has type `T`. The index is an `Int` addressing positions
+> `0..a.len()`. An index outside that range ends the current demand with a typed
+> `IndexOutOfBounds` failure at the indexing expression's stable source site,
+> carrying the demanded index and the array's length. Reporting resolves that
+> site through the current source map to produce the current span. It is never a
+> defaulted element, never a wrapped or saturated index, never an `Option<T>`,
+> never a machine invariant, and never a process panic — an array read that
+> succeeds has produced a `T`, so no caller unwraps one. Bounds are checked
+> against the array value, never inferred from its type.
+
 > r[lang.collection.map-canonical]
 >
 > Map construction order does not affect value identity. Rows are sorted by
@@ -305,14 +324,19 @@ collision returns `TreeConflict` with the full path and both entries. A separate
 > r[lang.failure.typed]
 >
 > `fail payload` ends the current demand with a typed `Failure`. `Failure` is a
-> value; the runtime attaches the subject identity, source span, and reporting
-> demand chain. No language operation returns `Result<_, String>`.
+> value whose identity includes the typed payload, an optional published subject
+> identity, and the stable source-site identity of the failing operation. Raw
+> byte spans and the reporting demand chain are observation context, resolved
+> when the failure is reported, not stored in the value. No language operation
+> returns `Result<_, String>`.
 
 Postfix `?` is the only in-program observation of demand failure. For an
 expression of type `T`, `expression?` has `Result<T,Failure>`. It does not force
 the expression and does not turn failure into `Option`. `Option.unwrap()` fails
-with a typed `UnwrapOnNone` payload at the call span. `Result<T,E>` remains an
-ordinary domain value for answers a caller is expected to branch on.
+with a typed `UnwrapOnNone` payload at the call site. Indexing outside an
+array's positions fails with a typed `IndexOutOfBounds` payload at the indexing
+site (`lang.collection.array-index`). `Result<T,E>` remains an ordinary domain
+value for answers a caller is expected to branch on.
 
 ## Typed decoding
 
