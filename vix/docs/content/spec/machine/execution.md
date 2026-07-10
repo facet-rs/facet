@@ -82,6 +82,16 @@ artifacts and never second-guesses the substrate.
 > fast lane; it is proof material cached with the lowering artifact. Frame
 > layout byte bounds alone are insufficient.
 >
+> A function's concrete entry contract lists every region that may be
+> initialized before its first instruction: declared parameters in source ABI
+> order, followed by the lowering artifact's deterministic closure-constant
+> bindings. Direct calls copy that same sequence, and the root runtime
+> materializes constants through the same typed entry accessor; a constant is
+> never installed by an unchecked frame-offset write. An indirect call contract
+> remains the source-level callable signature. A closure with captured
+> constants must represent its environment explicitly before it can satisfy
+> that signature; hidden extra indirect-call entries are forbidden.
+>
 > Declared frame regions do not overlap. Several mutually exclusive control-flow
 > arms may write the same declared result region; that is one region with
 > several verified writers, not an overlay. Verification checks each op's
