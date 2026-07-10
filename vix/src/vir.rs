@@ -14,12 +14,25 @@ pub struct NodeId(pub u32);
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct IslandId(pub u32);
 
-#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Type {
     Bool,
+    Int,
     Check,
     StreamCheck,
+}
+
+impl Type {
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Bool => "Bool",
+            Self::Int => "Int",
+            Self::Check => "Check",
+            Self::StreamCheck => "Stream<Check>",
+        }
+    }
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
@@ -54,6 +67,12 @@ impl EffectFacts {
 #[repr(u8)]
 pub enum Op {
     Bool(bool),
+    Int(i64),
+    Add,
+    Sub,
+    Mul,
+    Eq,
+    Ne,
     Expect,
     Yield,
 }
@@ -197,6 +216,7 @@ impl Island {
                 &mut bytes,
                 match node.ty {
                     Type::Bool => b"bool",
+                    Type::Int => b"int",
                     Type::Check => b"check",
                     Type::StreamCheck => b"stream-check",
                 },
@@ -205,6 +225,17 @@ impl Island {
                 Op::Bool(value) => frame(&mut bytes, &[0, u8::from(value)]),
                 Op::Expect => frame(&mut bytes, &[1]),
                 Op::Yield => frame(&mut bytes, &[2]),
+                Op::Int(value) => {
+                    let mut encoded = Vec::with_capacity(9);
+                    encoded.push(3);
+                    encoded.extend_from_slice(&value.to_le_bytes());
+                    frame(&mut bytes, &encoded);
+                }
+                Op::Add => frame(&mut bytes, &[4]),
+                Op::Sub => frame(&mut bytes, &[5]),
+                Op::Mul => frame(&mut bytes, &[6]),
+                Op::Eq => frame(&mut bytes, &[7]),
+                Op::Ne => frame(&mut bytes, &[8]),
             }
             for input in &node.inputs {
                 frame(&mut bytes, &input.0.to_le_bytes());

@@ -162,9 +162,7 @@ impl<S: EventSink> Runtime<S> {
                 }
                 TaskStep::Parked { .. } => {
                     self.transition_task(task_id, TaskState::Parked)?;
-                    return Err(runtime_invariant(
-                        "pure rung-001 island unexpectedly parked",
-                    ));
+                    return Err(runtime_invariant("pure island unexpectedly parked"));
                 }
             }
             for event in &task.trace {

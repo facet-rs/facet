@@ -4,6 +4,7 @@ use vix::ratchet::run_source;
 use vix::runtime::{DemandState, EventKind, MemoVerdict, TaskState};
 
 const RUNG_001: &str = include_str!("ratchet/001-harness.vix");
+const RUNG_002: &str = include_str!("ratchet/002-arithmetic.vix");
 
 /// The first rung is an architectural certificate, not just a boolean test.
 ///
@@ -41,7 +42,8 @@ fn rung_001_certifies_the_new_compiler_and_runtime_spine() {
     let recipe = lowered.recipe;
     assert!(rendered_weavy.contains("Trace { id: 0 }"));
     assert!(rendered_weavy.contains("ConstI64 { dst: 0, value: 1 }"));
-    assert!(rendered_weavy.contains("Ret { src: 0, size: 8 }"));
+    assert!(rendered_weavy.contains("CopyI64 { dst: 8, src: 0 }"));
+    assert!(rendered_weavy.contains("Ret { src: 8, size: 8 }"));
 
     let shifted_source = format!("\n{RUNG_001}");
     let shifted_module = Compiler::new()
@@ -122,6 +124,17 @@ fn rung_001_certifies_the_new_compiler_and_runtime_spine() {
             ..
         }
     )));
+}
+
+#[test]
+fn rung_002_integer_arithmetic_runs_through_vir_and_weavy() {
+    let report = run_source(RUNG_002).expect("rung 002 compiles and runs");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    assert_eq!(report.plain.receipt_count, 0);
+    assert_eq!(report.chaos.receipt_count, 0);
 }
 
 fn assert_contiguous_sequences(events: &[vix::runtime::Event]) {

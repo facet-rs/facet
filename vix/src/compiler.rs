@@ -138,7 +138,7 @@ fn lower_function(
             ast::Stmt::Let(statement) => {
                 return Err(Diagnostics::one(Diagnostic::unsupported(
                     statement.span,
-                    "let lowering enters at rung 003",
+                    "let bindings are not yet lowered",
                 )));
             }
         }
@@ -172,28 +172,48 @@ fn lower_check(nodes: &mut Vec<Node>, expression: &ast::Expr) -> Result<NodeId, 
             },
         }));
     };
-    if call.callee.value != "expect" {
-        return Err(Diagnostics::one(Diagnostic {
-            code: DiagnosticCode::UnknownName,
-            primary: call.callee.span,
-            labels: Vec::new(),
-            payload: DiagnosticPayload::Name {
-                name: call.callee.value.clone(),
-            },
-        }));
+    if call.named_args.is_some() {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "named arguments on a check constructor",
+        )));
     }
-    if call.args.args.len() != 1 || call.named_args.is_some() {
-        return Err(Diagnostics::one(Diagnostic {
-            code: DiagnosticCode::InvalidArity,
-            primary: call.span,
-            labels: Vec::new(),
-            payload: DiagnosticPayload::Arity {
-                expected: 1,
-                found: call.args.args.len() as u32,
-            },
-        }));
-    }
-    let condition = lower_bool(nodes, &call.args.args[0])?;
+    let condition = match call.callee.value.as_str() {
+        "expect" => {
+            check_arity(call, 1)?;
+            let condition = lower_value(nodes, &call.args.args[0])?;
+            require_type(condition, Type::Bool, expr_span(&call.args.args[0]))?;
+            condition.node
+        }
+        "expect_eq" | "expect_ne" => {
+            check_arity(call, 2)?;
+            let left = lower_value(nodes, &call.args.args[0])?;
+            let right = lower_value(nodes, &call.args.args[1])?;
+            require_same_type(left, right, call.span)?;
+            push_node(
+                nodes,
+                call.span,
+                Type::Bool,
+                EffectFacts::PURE,
+                vec![left.node, right.node],
+                if call.callee.value == "expect_eq" {
+                    Op::Eq
+                } else {
+                    Op::Ne
+                },
+            )
+        }
+        _ => {
+            return Err(Diagnostics::one(Diagnostic {
+                code: DiagnosticCode::UnknownName,
+                primary: call.callee.span,
+                labels: Vec::new(),
+                payload: DiagnosticPayload::Name {
+                    name: call.callee.value.clone(),
+                },
+            }));
+        }
+    };
     Ok(push_node(
         nodes,
         call.span,
@@ -204,27 +224,142 @@ fn lower_check(nodes: &mut Vec<Node>, expression: &ast::Expr) -> Result<NodeId, 
     ))
 }
 
-fn lower_bool(nodes: &mut Vec<Node>, expression: &ast::Expr) -> Result<NodeId, Diagnostics> {
+#[derive(Clone, Copy)]
+struct LoweredValue {
+    node: NodeId,
+    ty: Type,
+}
+
+fn lower_value(nodes: &mut Vec<Node>, expression: &ast::Expr) -> Result<LoweredValue, Diagnostics> {
     match expression {
-        ast::Expr::Bool(value) => Ok(push_node(
-            nodes,
-            value.span,
-            Type::Bool,
-            EffectFacts::PURE,
-            Vec::new(),
-            Op::Bool(value.value),
-        )),
-        ast::Expr::Paren(paren) => lower_bool(nodes, &paren.inner),
-        _ => Err(Diagnostics::one(Diagnostic {
-            code: DiagnosticCode::TypeMismatch,
-            primary: expr_span(expression),
-            labels: Vec::new(),
-            payload: DiagnosticPayload::Type {
-                expected: "Bool".to_owned(),
-                found: "unsupported expression".to_owned(),
-            },
-        })),
+        ast::Expr::Bool(value) => Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                value.span,
+                Type::Bool,
+                EffectFacts::PURE,
+                Vec::new(),
+                Op::Bool(value.value),
+            ),
+            ty: Type::Bool,
+        }),
+        ast::Expr::Number(value) => {
+            let parsed = value.value.parse::<i64>().map_err(|_| {
+                type_mismatch(
+                    value.span,
+                    "Int",
+                    format!("number literal `{}`", value.value),
+                )
+            })?;
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    value.span,
+                    Type::Int,
+                    EffectFacts::PURE,
+                    Vec::new(),
+                    Op::Int(parsed),
+                ),
+                ty: Type::Int,
+            })
+        }
+        ast::Expr::Binary(binary) => lower_binary(nodes, binary),
+        ast::Expr::Paren(paren) => lower_value(nodes, &paren.inner),
+        _ => Err(Diagnostics::one(Diagnostic::unsupported(
+            expr_span(expression),
+            "value expression",
+        ))),
     }
+}
+
+fn lower_binary(nodes: &mut Vec<Node>, binary: &ast::Binary) -> Result<LoweredValue, Diagnostics> {
+    let left = lower_value(nodes, &binary.left)?;
+    let right = lower_value(nodes, &binary.right)?;
+    let (ty, op) = match binary.op.value.as_str() {
+        "+" => {
+            require_type(left, Type::Int, expr_span(&binary.left))?;
+            require_type(right, Type::Int, expr_span(&binary.right))?;
+            (Type::Int, Op::Add)
+        }
+        "-" => {
+            require_type(left, Type::Int, expr_span(&binary.left))?;
+            require_type(right, Type::Int, expr_span(&binary.right))?;
+            (Type::Int, Op::Sub)
+        }
+        "*" => {
+            require_type(left, Type::Int, expr_span(&binary.left))?;
+            require_type(right, Type::Int, expr_span(&binary.right))?;
+            (Type::Int, Op::Mul)
+        }
+        "==" => {
+            require_same_type(left, right, binary.span)?;
+            (Type::Bool, Op::Eq)
+        }
+        "!=" => {
+            require_same_type(left, right, binary.span)?;
+            (Type::Bool, Op::Ne)
+        }
+        _ => {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                binary.op.span,
+                format!("binary operator `{}`", binary.op.value),
+            )));
+        }
+    };
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            binary.span,
+            ty,
+            EffectFacts::PURE,
+            vec![left.node, right.node],
+            op,
+        ),
+        ty,
+    })
+}
+
+fn check_arity(call: &ast::Call, expected: u32) -> Result<(), Diagnostics> {
+    let found = call.args.args.len() as u32;
+    if found != expected {
+        return Err(Diagnostics::one(Diagnostic {
+            code: DiagnosticCode::InvalidArity,
+            primary: call.span,
+            labels: Vec::new(),
+            payload: DiagnosticPayload::Arity { expected, found },
+        }));
+    }
+    Ok(())
+}
+
+fn require_type(value: LoweredValue, expected: Type, span: Span) -> Result<(), Diagnostics> {
+    if value.ty != expected {
+        return Err(type_mismatch(span, expected.name(), value.ty.name()));
+    }
+    Ok(())
+}
+
+fn require_same_type(
+    left: LoweredValue,
+    right: LoweredValue,
+    span: Span,
+) -> Result<(), Diagnostics> {
+    if left.ty != right.ty {
+        return Err(type_mismatch(span, left.ty.name(), right.ty.name()));
+    }
+    Ok(())
+}
+
+fn type_mismatch(span: Span, expected: impl Into<String>, found: impl Into<String>) -> Diagnostics {
+    Diagnostics::one(Diagnostic {
+        code: DiagnosticCode::TypeMismatch,
+        primary: span,
+        labels: Vec::new(),
+        payload: DiagnosticPayload::Type {
+            expected: expected.into(),
+            found: found.into(),
+        },
+    })
 }
 
 fn push_node(
