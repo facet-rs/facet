@@ -170,12 +170,17 @@ impl HostCallChainLayout {
     }
 }
 
-/// Executable typed host-call chain over Weavy's shared copy-and-patch stencils.
-#[cfg(weavy_jit_active)]
+/// Typed host-call chain over Weavy's shared copy-and-patch stencils.
+///
+/// The type always compiles. When native copy-and-patch is inactive, it retains
+/// caller metadata but cannot execute.
 pub struct HostCallChain<I> {
     infos: Vec<I>,
+    #[cfg(weavy_jit_active)]
     call_slots: Vec<ProgSlot>,
+    #[cfg(weavy_jit_active)]
     calls: Vec<HostCallInfo>,
+    #[cfg(weavy_jit_active)]
     native: NativeProgram,
 }
 
@@ -184,16 +189,20 @@ pub struct HostCallChain<I> {
 // are rebuilt for the caller's current context. Moving the chain to another
 // thread is sound when the consumer metadata is `Send`; sharing still requires
 // external synchronization because `run` takes `&mut self`.
-#[cfg(weavy_jit_active)]
 unsafe impl<I: Send> Send for HostCallChain<I> {}
 
-#[cfg(weavy_jit_active)]
 impl<I> HostCallChain<I> {
     /// Build an executable chain that calls each metadata item in order.
     ///
     /// Empty chains are valid and immediately return.
     #[must_use]
     pub fn new(infos: Vec<I>) -> Self {
+        #[cfg(not(weavy_jit_active))]
+        {
+            Self { infos }
+        }
+        #[cfg(weavy_jit_active)]
+        {
         let mut layout = StencilLayout::new();
         let root = layout.start_chain();
         let mut previous = None;
@@ -218,6 +227,7 @@ impl<I> HostCallChain<I> {
             calls: Vec::new(),
             native: NativeProgram::new(layout, root),
         }
+        }
     }
 
     /// Run the copied host-call chain against a typed context.
@@ -225,6 +235,13 @@ impl<I> HostCallChain<I> {
     where
         I: HostCall<C>,
     {
+        #[cfg(not(weavy_jit_active))]
+        {
+            let _ = cx;
+            panic!("native copy-and-patch host-call chains are unavailable in this build");
+        }
+        #[cfg(weavy_jit_active)]
+        {
         let call: unsafe extern "C" fn(*mut (), *const ()) -> bool = typed_hostcall::<C, I>;
         let calls_bound = self.calls.len() == self.infos.len()
             && self
@@ -248,6 +265,7 @@ impl<I> HostCallChain<I> {
         unsafe {
             entry(&mut host_ctx);
         }
+        }
     }
 
     /// Metadata items in this chain.
@@ -265,37 +283,52 @@ impl<I> HostCallChain<I> {
     /// Number of raw host-call ABI records materialized for the most recent run.
     #[must_use]
     pub fn hostcall_count(&self) -> usize {
+        #[cfg(not(weavy_jit_active))]
+        {
+            0
+        }
+        #[cfg(weavy_jit_active)]
+        {
         self.calls.len()
+        }
     }
 
     /// Number of copied stencils emitted by this chain.
     #[must_use]
     pub fn stencil_count(&self) -> usize {
+        #[cfg(not(weavy_jit_active))]
+        {
+            0
+        }
+        #[cfg(weavy_jit_active)]
+        {
         self.native.stencil_count()
+        }
     }
 }
 
-/// Executable host-call chain whose raw ABI records are fixed at construction.
-#[cfg(weavy_jit_active)]
+/// Host-call chain whose raw ABI records are fixed at construction.
+///
+/// The type always compiles. When native copy-and-patch is inactive, it retains
+/// caller metadata but cannot execute.
 pub struct RawHostCallChain<I> {
     infos: Vec<I>,
+    #[cfg(weavy_jit_active)]
     calls: Vec<HostCallInfo>,
+    #[cfg(weavy_jit_active)]
     native: NativeProgram,
 }
 
 // SAFETY: The copied code, metadata, and side program streams are immutable
 // after construction. Moving the chain to another thread is sound when the
 // consumer metadata is `Send`.
-#[cfg(weavy_jit_active)]
 unsafe impl<I: Send> Send for RawHostCallChain<I> {}
 
 // SAFETY: `run` only mutates caller-provided context; the chain itself is
 // immutable after construction. Sharing is sound when consumer metadata is
 // `Sync` and its raw callback upholds its own context-safety contract.
-#[cfg(weavy_jit_active)]
 unsafe impl<I: Sync> Sync for RawHostCallChain<I> {}
 
-#[cfg(weavy_jit_active)]
 impl<I> RawHostCallChain<I> {
     /// Build an executable chain using one erased callback for each metadata item.
     ///
@@ -306,6 +339,13 @@ impl<I> RawHostCallChain<I> {
         infos: Vec<I>,
         call: unsafe extern "C" fn(cx: *mut (), info: *const ()) -> bool,
     ) -> Self {
+        #[cfg(not(weavy_jit_active))]
+        {
+            let _ = call;
+            Self { infos }
+        }
+        #[cfg(weavy_jit_active)]
+        {
         let calls: Vec<_> = infos
             .iter()
             .map(|info| HostCallInfo {
@@ -333,6 +373,7 @@ impl<I> RawHostCallChain<I> {
             calls,
             native: NativeProgram::new(layout, root),
         }
+        }
     }
 
     /// Run the copied host-call chain against a caller-owned context.
@@ -342,10 +383,18 @@ impl<I> RawHostCallChain<I> {
     /// The erased callback supplied to [`Self::new`] must accept a pointer to
     /// `C` as its first argument for this chain execution.
     pub unsafe fn run<C>(&self, cx: &mut C) {
+        #[cfg(not(weavy_jit_active))]
+        {
+            let _ = cx;
+            panic!("native copy-and-patch host-call chains are unavailable in this build");
+        }
+        #[cfg(weavy_jit_active)]
+        {
         let mut host_ctx = HostCallCtx::new(self.native.entry_prog(), cx);
         let entry = unsafe { self.native.entry_fn::<HostCallCtx<C>>() };
         unsafe {
             entry(&mut host_ctx);
+        }
         }
     }
 
@@ -364,13 +413,27 @@ impl<I> RawHostCallChain<I> {
     /// Number of raw host-call ABI records materialized in this chain.
     #[must_use]
     pub fn hostcall_count(&self) -> usize {
+        #[cfg(not(weavy_jit_active))]
+        {
+            0
+        }
+        #[cfg(weavy_jit_active)]
+        {
         self.calls.len()
+        }
     }
 
     /// Number of copied stencils emitted by this chain.
     #[must_use]
     pub fn stencil_count(&self) -> usize {
+        #[cfg(not(weavy_jit_active))]
+        {
+            0
+        }
+        #[cfg(weavy_jit_active)]
+        {
         self.native.stencil_count()
+        }
     }
 }
 
