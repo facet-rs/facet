@@ -13,6 +13,7 @@ const RUNG_005: &str = include_str!("ratchet/005-tuples.vix");
 const RUNG_006: &str = include_str!("ratchet/006-records.vix");
 const RUNG_007: &str = include_str!("ratchet/007-enums.vix");
 const RUNG_008: &str = include_str!("ratchet/008-spread.vix");
+const RUNG_009: &str = include_str!("ratchet/009-structural-equality.vix");
 
 /// The first rung is an architectural certificate, not just a boolean test.
 ///
@@ -553,6 +554,76 @@ fn rung_008_record_spread_builds_a_fresh_value_through_vir_and_weavy() {
     }
 
     let report = run_source(RUNG_008).expect("rung 008 compiles and runs");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    assert_eq!(report.plain.counters.pure_host_calls, 0);
+    assert_eq!(report.chaos.counters.pure_host_calls, 0);
+    assert_eq!(report.plain.receipt_count, 0);
+    assert_eq!(report.chaos.receipt_count, 0);
+}
+
+#[test]
+fn rung_009_ambient_structural_equality_runs_through_vir_and_weavy() {
+    let module = Compiler::new()
+        .compile(RUNG_009)
+        .expect("rung 009 compiles");
+    let line = module
+        .records
+        .iter()
+        .find(|record| record.name == "Line")
+        .expect("rung 009 declares Line");
+    assert_eq!(
+        VirType::Record(line.clone()).word_width(),
+        Some(4),
+        "Line equality recursively covers four Int words"
+    );
+    let structural_equality = module
+        .functions
+        .iter()
+        .find(|function| function.name == "structural_equality")
+        .expect("rung 009 contains structural_equality");
+    assert_eq!(
+        structural_equality
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.op, VirOp::Eq))
+            .count(),
+        4,
+        "three source equalities plus boolean-not canonicalized as equality with false"
+    );
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    assert_eq!(partitioned.islands.len(), 3);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 009 lowers to Weavy");
+        assert!(lowered.program.fns.iter().any(|function| {
+            function
+                .code
+                .iter()
+                .filter(|op| matches!(op, WeavyOp::EqI64 { .. }))
+                .count()
+                >= 4
+                && function
+                    .code
+                    .iter()
+                    .filter(|op| matches!(op, WeavyOp::MulI64 { .. }))
+                    .count()
+                    >= 3
+        }));
+        assert!(lowered.program.fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+    }
+
+    let report = run_source(RUNG_009).expect("rung 009 compiles and runs");
     assert!(report.passed());
     assert!(report.agrees());
     assert_eq!(report.plain.checks.len(), 3);
