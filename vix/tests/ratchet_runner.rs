@@ -238,7 +238,7 @@ fn rung_005_tuples_and_positional_projection_run_through_vir_and_weavy() {
     assert_eq!(lowered.program.fns.len(), 2);
     assert!(lowered.program.fns[0].code.iter().any(|op| matches!(
         op,
-        WeavyOp::Call { args, .. } if args.iter().any(|argument| argument.size == 16)
+        WeavyOp::Call { args, .. } if args.len() == 1 && args[0].size == 16
     )));
     assert!(
         lowered.program.fns[1]

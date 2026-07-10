@@ -24,7 +24,7 @@ pub struct NodeRef {
 pub struct IslandId(pub u32);
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
-#[repr(C)]
+#[repr(u8)]
 pub enum Type {
     Bool,
     Int,
@@ -44,12 +44,13 @@ impl Type {
             Self::StreamCheck => "Stream<Check>".to_owned(),
             Self::String => "String".to_owned(),
             Self::Tuple(elements) => {
+                let trailing_comma = if elements.len() == 1 { "," } else { "" };
                 let elements = elements
                     .iter()
                     .map(Self::name)
                     .collect::<Vec<_>>()
                     .join(", ");
-                format!("({elements})")
+                format!("({elements}{trailing_comma})")
             }
         }
     }
