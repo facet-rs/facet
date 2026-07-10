@@ -64,6 +64,7 @@ scripts/pnpm-lock.yaml
 scripts/app.js
 .tracey/
 .playwright-mcp/
+.playwright-cli/
 *.callgrind
 callgrind.*
 heaptrack.*.zst

@@ -116,8 +116,10 @@ Keep three axes separate:
 3. the physical executor, which is unobservable cost-model choice.
 
 Dispatch and return are asymmetric. A capture may enter a `place` only when its
-identity is known without evaluating the placed block. The block's derived result
-is computed remotely, acquires identity there, and crosses back.
+identity is known without evaluating the placed block. The block's derived results
+are computed remotely and acquire identity there. Finished values cross back by
+identity; progressive projections and codata cross as remote demand edges as they
+resolve.
 
 A Tree crosses as an identity plus a mount grant. Files materialize per path on
 read, and both hits and misses enter the receipt. `exec` and `place` remain
@@ -331,14 +333,46 @@ lowered representation to become language identity.
 
 ### Q7. Does codata cross a `place` boundary?
 
-**Recommendation for v0:** no implicit codata transport between evaluators. Place
-the consumer with the producer, and return a finished value. Distributed
-back-pressure, cancellation, reconnection, replay, and observation authority are
-a separate protocol, not a transparent island edge.
+**Corrected after review with Amos:** yes. A `place` boundary is not a forced
+materialization boundary. Codata and progressive value projections may cross it as
+remote demand edges.
 
-If a later use case requires it, add an explicit relay/materialization primitive
-whose policy and receipt are visible. Do not make every `ByteStream` crossing
-silently instantiate that protocol.
+Rustc pipelining is the forcing example. Suppose rustc A runs on executor X and
+produces both `liba.rmeta` and `liba.rlib`, while dependent rustc B is admissible on
+executor Y:
+
+1. B demands A's `out.tree / p"liba.rmeta"` projection. It does not demand A's
+   complete output tree or `liba.rlib`.
+2. The demand routes to X, where A is running. X consumes whatever readiness
+   protocol A's command grammar declares. That may be a tool-controlled message;
+   for a protocol-less command it is process exit. A filesystem close is authority
+   only when the grammar promises close-final output.
+3. Once `liba.rmeta` is ready, X freezes it as a Blob, computes its content
+   identity, publishes the projection's completion and receipt, and makes the Blob
+   resolvable in the CAS. A continues producing `liba.rlib`.
+4. Y receives the completed projection identity and mount grant, resolves the Blob
+   from its store, a peer, or X, and resumes B. A and B now overlap on different
+   executors.
+
+The readiness stream need not itself leave X when the placed lowering turns it
+into the progressive Tree projection, but the projection becoming ready before its
+aggregate is complete is already the same distributed-demand protocol class. A
+consumer which directly demands stdout/stderr elements across the boundary uses
+that protocol without the Tree indirection.
+
+The evaluator-to-evaluator protocol therefore needs demand/credit, ordered
+delivery, cancellation, reconnection, and replay or spill. Timing and transport
+chunk boundaries remain unobservable; stream elements or byte ranges are semantic
+demands, and completion resumes the remote waiter exactly as a local pending edge
+does.
+
+Forbidding cross-host codata would let an executor expose a simpler
+run-to-completion request/response surface in isolation. It does not simplify the
+system we are building: remote joins, effect tickets, progressive Trees,
+cancellation, executor loss, and rustc pipelining already require long-lived
+duplex demand/completion traffic. The ban would preserve nearly all of that
+machinery while preventing the placement policy from putting a pipelined consumer
+on another worker. It buys the wrong simplification and is withdrawn.
 
 ### Q8. What exactly is the persistent store seam?
 
@@ -373,6 +407,8 @@ These are expected lag and should not keep reopening the architecture:
 - bring fetch onto required BLAKE3 identity plus optional upstream digest;
 - port exec to recursive Tree, byte codata, typed answers, and no naked status;
 - converge the facet exec protocol and Vixen runner implementation over Vox RPC;
+- implement cross-evaluator codata and progressive-projection demand, credit,
+  cancellation, and replay;
 - replace the AST probe and move resolver/type/hover queries into Vix;
 - implement placed-subgraph transport and its static capability/admissibility
   analysis.
