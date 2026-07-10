@@ -2110,7 +2110,9 @@ impl RuntimeWeavyHostCallBlockCache {
         };
         let hostcall_sites = chain.hostcall_site_count();
         let hostcall_stencils = chain.stencil_count();
-        chain.run(&mut state);
+        chain
+            .run(&mut state)
+            .map_err(|_| RuntimeWeavyStepError::UnsupportedCanonicalOp)?;
         if let Some(error) = state.error {
             stats.errored_blocks += 1;
             return Err(error);

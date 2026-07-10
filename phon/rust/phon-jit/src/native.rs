@@ -22,7 +22,7 @@ use phon_ir::ir::{Lowered, MemOp, MemProgram, SkipOp};
 use phon_schema::bytes::Reader;
 use phon_schema::{DecodeError, SchemaId, Value, read_value, write_value};
 
-use weavy::jit::{Chain, ExecBuf, NativeProgram, StencilLayout};
+use weavy::jit::{Chain, NativeProgram, StencilLayout};
 
 use crate::stencils::{
     BORROW, BORROW_CONT, BYTES, BYTES_CONT, BYTES_ENC, BYTES_ENC_CONT, CALLBLOCK, CALLBLOCK_CONT,
@@ -50,8 +50,11 @@ pub fn available() -> bool {
 /// the same substrate.
 #[must_use]
 pub fn smoke(x: i64) -> i64 {
-    let buf = ExecBuf::new(crate::stencils::SMOKE);
-    let f: extern "C" fn(i64) -> i64 = unsafe { core::mem::transmute(buf.as_ptr()) };
+    let mut layout = StencilLayout::new();
+    let root = layout.start_chain();
+    layout.emit_stencil(crate::stencils::SMOKE);
+    let native = NativeProgram::new(layout, root);
+    let f: extern "C" fn(i64) -> i64 = unsafe { core::mem::transmute(native.code_ptr()) };
     f(x)
 }
 

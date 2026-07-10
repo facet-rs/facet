@@ -25,7 +25,9 @@
 //!    `push_prog_word` (immediates) + `emit_stencil` (copy the bytes), then
 //!    [`StencilLayout::patch_continuation`] each hole to its successor's offset.
 //!    [`NativeProgram`] maps the result executable and hands out entry function pointers;
-//!    the caller owns the context ABI (`extern "C" fn(*mut C)`).
+//!    the caller owns the context ABI (`extern "C" fn(*mut C)`). The executable buffer is
+//!    not public API; consumers build through these layout/program types and probe
+//!    [`NATIVE_COPY_PATCH_AVAILABLE`] for runtime availability.
 //!
 //! 3. **Two execution lanes.**
 //!    - **Host-call lane** ([`HostCallInfo`]/[`HostCallCtx`]/[`HostCallChain`], plus the shared
@@ -74,7 +76,7 @@ pub fn patch_x86_rel32(_: &mut [u8], _: usize, _: usize) {
 }
 
 #[cfg(weavy_jit_active)]
-pub use copypatch::ExecBuf;
+use copypatch::ExecBuf;
 
 /// Shared copy-and-patch stencil bytes extracted by Weavy's build script.
 ///
@@ -107,6 +109,18 @@ pub mod task_lane;
 
 /// Whether this build can allocate and run native copy-and-patch code.
 pub const NATIVE_COPY_PATCH_AVAILABLE: bool = cfg!(weavy_jit_active);
+
+/// Native copy-and-patch execution was requested in a build where it is inactive.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct NativeUnavailable;
+
+impl core::fmt::Display for NativeUnavailable {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        f.write_str("native copy-and-patch execution is unavailable in this build")
+    }
+}
+
+impl std::error::Error for NativeUnavailable {}
 
 /// One consumer-supplied intrinsic in a shared Weavy host-call chain.
 #[repr(C)]
@@ -231,14 +245,14 @@ impl<I> HostCallChain<I> {
     }
 
     /// Run the copied host-call chain against a typed context.
-    pub fn run<C>(&mut self, cx: &mut C)
+    pub fn run<C>(&mut self, cx: &mut C) -> Result<(), NativeUnavailable>
     where
         I: HostCall<C>,
     {
         #[cfg(not(weavy_jit_active))]
         {
             let _ = cx;
-            panic!("native copy-and-patch host-call chains are unavailable in this build");
+            Err(NativeUnavailable)
         }
         #[cfg(weavy_jit_active)]
         {
@@ -265,6 +279,7 @@ impl<I> HostCallChain<I> {
             unsafe {
                 entry(&mut host_ctx);
             }
+            Ok(())
         }
     }
 
@@ -382,11 +397,11 @@ impl<I> RawHostCallChain<I> {
     ///
     /// The erased callback supplied to [`Self::new`] must accept a pointer to
     /// `C` as its first argument for this chain execution.
-    pub unsafe fn run<C>(&self, cx: &mut C) {
+    pub unsafe fn run<C>(&self, cx: &mut C) -> Result<(), NativeUnavailable> {
         #[cfg(not(weavy_jit_active))]
         {
             let _ = cx;
-            panic!("native copy-and-patch host-call chains are unavailable in this build");
+            Err(NativeUnavailable)
         }
         #[cfg(weavy_jit_active)]
         {
@@ -395,6 +410,7 @@ impl<I> RawHostCallChain<I> {
             unsafe {
                 entry(&mut host_ctx);
             }
+            Ok(())
         }
     }
 
@@ -873,8 +889,8 @@ mod tests {
         assert_eq!(chain.stencil_count(), 3);
         assert_eq!(chain.hostcall_count(), 0);
         let mut state = State { value: 1 };
-        chain.run(&mut state);
-        chain.run(&mut state);
+        chain.run(&mut state).unwrap();
+        chain.run(&mut state).unwrap();
 
         assert_eq!(state.value, 83);
         assert_eq!(chain.infos().len(), 2);
@@ -925,7 +941,7 @@ mod tests {
         assert_eq!(chain.stencil_count(), 4);
         assert_eq!(chain.hostcall_count(), 0);
         let mut state = State { value: 0 };
-        chain.run(&mut state);
+        chain.run(&mut state).unwrap();
 
         assert_eq!(state.value, 11);
         assert_eq!(chain.hostcall_count(), 3);
@@ -961,13 +977,48 @@ mod tests {
 
         let mut state = State { value: 1 };
         unsafe {
-            chain.run(&mut state);
-            chain.run(&mut state);
+            chain.run(&mut state).unwrap();
+            chain.run(&mut state).unwrap();
         }
 
         assert_eq!(state.value, 83);
         assert_eq!(chain.infos().len(), 2);
         assert_eq!(chain.hostcall_count(), 2);
         assert_eq!(chain.stencil_count(), 3);
+    }
+
+    #[cfg(not(weavy_jit_active))]
+    #[test]
+    fn hostcall_chain_reports_native_unavailable_when_inactive() {
+        use super::{HostCall, HostCallChain, NativeUnavailable};
+
+        struct Add(i64);
+
+        impl HostCall<i64> for Add {
+            fn call(&self, cx: &mut i64) -> bool {
+                *cx += self.0;
+                true
+            }
+        }
+
+        let mut chain = HostCallChain::new(vec![Add(1)]);
+        let mut value = 0;
+        assert_eq!(chain.run(&mut value), Err(NativeUnavailable));
+        assert_eq!(value, 0);
+    }
+
+    #[cfg(not(weavy_jit_active))]
+    #[test]
+    fn raw_hostcall_chain_reports_native_unavailable_when_inactive() {
+        use super::{NativeUnavailable, RawHostCallChain};
+
+        unsafe extern "C" fn add(_: *mut (), _: *const ()) -> bool {
+            true
+        }
+
+        let chain = RawHostCallChain::new(vec![()], add);
+        let mut value = 0;
+        assert_eq!(unsafe { chain.run(&mut value) }, Err(NativeUnavailable));
+        assert_eq!(value, 0);
     }
 }
