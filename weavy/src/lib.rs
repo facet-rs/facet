@@ -22,6 +22,10 @@ pub use verified::{
 
 pub mod jit;
 
+#[cfg(test)]
+#[path = "../build/jit_config.rs"]
+mod jit_config;
+
 use std::collections::BTreeMap;
 use std::mem::MaybeUninit;
 

@@ -15,17 +15,17 @@ links = "weavy"
 rustdoc-args = ["--html-in-header", "arborium-header.html"]
 
 [dependencies]
-copypatch = { workspace = true }
+copypatch = { workspace = true, optional = true }
 
 [build-dependencies]
-copypatch = { workspace = true, features = ["build"] }
+copypatch = { workspace = true, features = ["build"], optional = true }
 
 [features]
 # The only `jit` feature in the ecosystem (r[machine.execution.jit-single-feature]).
 # Downstream crates carry none of their own; they read this crate's build-script
 # decision via `links = "weavy"` + `DEP_WEAVY_JIT`.
 default = ["jit"]
-jit = []
+jit = ["dep:copypatch", "copypatch/build"]
 
 # The async lane's driver uses only `core::future` — no runtime dependency.
 # tokio is dev-only, to provide an executor + timers for the suspend tests.

@@ -1,3 +1,4 @@
+#[cfg(feature = "jit")]
 use copypatch::extract::{Stencil, StencilN, compile_object, extract_stencil, extract_stencil_n};
 use std::{
     env, fs,
@@ -7,12 +8,14 @@ use std::{
 #[path = "build/jit_config.rs"]
 mod jit_config;
 
+#[cfg(feature = "jit")]
 const SYMBOLS: &[&str] = &["weavy_stencil_hostcall", "weavy_stencil_done"];
 
 fn main() {
     println!("cargo::rustc-check-cfg=cfg(weavy_jit_active)");
     println!("cargo::rerun-if-changed=build.rs");
     println!("cargo::rerun-if-changed=build/jit_config.rs");
+    println!("cargo::rerun-if-env-changed=WEAVY_JIT");
 
     let out = PathBuf::from(env::var("OUT_DIR").unwrap());
     let generated = out.join("weavy_stencils.rs");
@@ -21,14 +24,20 @@ fn main() {
     let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
     let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
     let feature_jit = env::var_os("CARGO_FEATURE_JIT").is_some();
+    let policy_value = env::var("WEAVY_JIT").ok();
+    let policy = jit_config::parse_policy(policy_value.as_deref()).unwrap_or_else(|err| {
+        println!("cargo::error={err}");
+        panic!("{err}");
+    });
 
-    if jit_config::jit_active(feature_jit, &target_os, &target_arch) {
+    if jit_config::jit_active(feature_jit, policy, &target_os, &target_arch) {
         println!("cargo::rustc-cfg=weavy_jit_active");
         println!("cargo::metadata=jit=1");
         emit_native(&out, &generated);
         emit_async_native(&out, &async_generated);
         emit_task_native(&out, &task_generated);
     } else {
+        println!("cargo::metadata=jit=0");
         emit_empty(&generated);
         emit_async_empty(&async_generated);
         emit_task_empty(&task_generated);
@@ -39,6 +48,7 @@ fn main() {
 /// evaluator. Compiled with GUARANTEED tail calls (`become`, via
 /// RUSTC_BOOTSTRAP on the stencil rustc only) so suspension is sound for
 /// arbitrary-length chains — the whole chain runs in one driver-owned frame.
+#[cfg(feature = "jit")]
 const ASYNC_SYMBOLS: &[&str] = &[
     "weavy_async_push",
     "weavy_async_await",
@@ -57,6 +67,7 @@ fn emit_async_empty(generated: &Path) {
     fs::write(generated, s).unwrap();
 }
 
+#[cfg(feature = "jit")]
 fn emit_async_native(out: &Path, generated: &Path) {
     println!("cargo:rerun-if-changed=stencils/async_ops.rs");
 
@@ -97,6 +108,11 @@ fn emit_async_native(out: &Path, generated: &Path) {
     fs::write(generated, s).unwrap();
 }
 
+#[cfg(not(feature = "jit"))]
+fn emit_async_native(_: &Path, _: &Path) {
+    unreachable!("Weavy native stencil extraction requires the jit feature")
+}
+
 fn emit_empty(generated: &Path) {
     fs::write(
         generated,
@@ -107,6 +123,7 @@ fn emit_empty(generated: &Path) {
     .unwrap();
 }
 
+#[cfg(feature = "jit")]
 fn emit_native(out: &Path, generated: &Path) {
     println!("cargo:rerun-if-changed=stencils/hostcall.rs");
     println!("cargo:rerun-if-changed=build.rs");
@@ -138,6 +155,12 @@ fn emit_native(out: &Path, generated: &Path) {
     fs::write(generated, s).unwrap();
 }
 
+#[cfg(not(feature = "jit"))]
+fn emit_native(_: &Path, _: &Path) {
+    unreachable!("Weavy native stencil extraction requires the jit feature")
+}
+
+#[cfg(feature = "jit")]
 fn emit(out: &mut String, name: &str, doc: &str, stencil: &Stencil) {
     out.push_str(&format!(
         "/// {doc}\npub const {name}: &[u8] = &{:?};\n",
@@ -145,6 +168,7 @@ fn emit(out: &mut String, name: &str, doc: &str, stencil: &Stencil) {
     ));
 }
 
+#[cfg(feature = "jit")]
 fn emit_cont(out: &mut String, name: &str, of: &str, stencil: &Stencil) {
     out.push_str(&format!(
         "/// Byte offsets within `{of}` of the continuation relocations to patch.\n\
@@ -156,6 +180,7 @@ fn emit_cont(out: &mut String, name: &str, of: &str, stencil: &Stencil) {
 /// Task lane stencils: typed three-address ops over FRAME offsets (tooth 2 —
 /// frames as declared records in per-task arenas; the ruled ABI). Same
 /// guaranteed-tail-call discipline as the async lane.
+#[cfg(feature = "jit")]
 const TASK_SYMBOLS: &[&str] = &[
     "weavy_task_const",
     "weavy_task_add",
@@ -238,6 +263,7 @@ fn emit_task_empty(generated: &Path) {
     fs::write(generated, s).unwrap();
 }
 
+#[cfg(feature = "jit")]
 fn emit_task_native(out: &Path, generated: &Path) {
     println!("cargo:rerun-if-changed=stencils/task_ops.rs");
 
@@ -278,6 +304,12 @@ fn emit_task_native(out: &Path, generated: &Path) {
     fs::write(generated, s).unwrap();
 }
 
+#[cfg(not(feature = "jit"))]
+fn emit_task_native(_: &Path, _: &Path) {
+    unreachable!("Weavy native stencil extraction requires the jit feature")
+}
+
+#[cfg(feature = "jit")]
 fn emit_n(out: &mut String, name: &str, doc: &str, stencil: &StencilN) {
     out.push_str(&format!(
         "/// {doc}\npub const {name}: &[u8] = &{:?};\n",
@@ -285,6 +317,7 @@ fn emit_n(out: &mut String, name: &str, doc: &str, stencil: &StencilN) {
     ));
 }
 
+#[cfg(feature = "jit")]
 fn emit_cont_group(out: &mut String, name: &str, of: &str, relocs: &[usize]) {
     out.push_str(&format!(
         "/// Byte offsets within `{of}` of the continuation relocations to patch.\n\

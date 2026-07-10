@@ -60,7 +60,18 @@
 //! For profilers, [`debug::write_jitdump`] emits a perf jitdump (`/tmp/jit-<pid>.dump`) that
 //! `perf` and stax consume to symbolicate and per-instruction-annotate JIT'd code.
 
+#[cfg(feature = "jit")]
 pub use copypatch::{patch_branch26, patch_x86_rel32};
+
+#[cfg(not(feature = "jit"))]
+pub fn patch_branch26(_: &mut [u8], _: usize, _: usize) {
+    unreachable!("native copy-and-patch is unavailable without Weavy's jit feature")
+}
+
+#[cfg(not(feature = "jit"))]
+pub fn patch_x86_rel32(_: &mut [u8], _: usize, _: usize) {
+    unreachable!("native copy-and-patch is unavailable without Weavy's jit feature")
+}
 
 #[cfg(weavy_jit_active)]
 pub use copypatch::ExecBuf;
