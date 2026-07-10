@@ -20,33 +20,50 @@ artifacts and never second-guesses the substrate.
 > phon, and every other weavy consumer carry no jit feature of their own — the
 > per-crate `#[cfg(feature = "jit")]` gates that caused the dependency-position
 > `Op` build break are abolished. Weavy's `jit` feature is the master switch
-> (`jit_active = feature_on ∧ target_supports_copy_patch`): OFF means off for
-> good, nothing downstream can turn JIT on against it; ON means on only where
-> the platform supports executable memory. Mechanism:
+> and is default-on for normal desktop/server builds. Cargo positive features
+> are additive, so a dependency graph can enable that feature transitively; the
+> dominant global OFF switch is Weavy's own negative build policy
+> `WEAVY_JIT=0`, read only by Weavy. The policy may disable JIT, but it never
+> widens the Cargo feature or target matrix. The build predicate is
+> `jit_active = feature_enabled ∧ policy_allows ∧ target_supports_copy_patch`:
+> OFF means off for good, nothing downstream can turn JIT on against it; ON
+> means on only where the platform supports executable memory. Mechanism:
 >
 > - Weavy's build script computes `jit_active` from `CARGO_FEATURE_JIT`,
->   `CARGO_CFG_TARGET_OS`, and `CARGO_CFG_TARGET_ARCH`. The predicate is the
->   copy-patch backend's explicit supported `(OS, architecture)` matrix;
->   W^X-locked targets (iOS/tvOS/watchOS/visionOS) and unsupported
->   architectures force it off even when the feature is on. It emits both a
->   `weavy_jit_active` rustc-cfg (gating weavy's own runtime executor + stencil
->   extraction) and `cargo::metadata=jit=1` (via `links = "weavy"`), so every
->   direct dependent's build script reads `DEP_WEAVY_JIT` and gates its own
->   per-crate stencil extraction on the same single decision (each dependent
->   may additionally narrow the matrix further for its own stencils, e.g.
->   phon-jit only ships macos-aarch64 ones today, but never widen it).
+>   `WEAVY_JIT`, `CARGO_CFG_TARGET_OS`, and `CARGO_CFG_TARGET_ARCH`.
+>   `WEAVY_JIT` unset or `1` allows the feature/matrix decision; `WEAVY_JIT=0`
+>   denies it; any other value is a build error. The target predicate is the
+>   copy-patch backend's explicit supported `(OS, architecture)` matrix:
+>   macOS/aarch64 and Linux/x86_64. W^X-locked targets
+>   (iOS/tvOS/watchOS/visionOS) and unsupported architectures force it off even
+>   when the feature and policy are on. Weavy emits `weavy_jit_active` only
+>   when active, and always emits explicit `cargo::metadata=jit=1` or
+>   `cargo::metadata=jit=0` through `links = "weavy"`. Every direct dependent's
+>   build script compares `DEP_WEAVY_JIT` to exactly `1`; presence alone is not
+>   active. A dependent may additionally narrow the matrix further for its own
+>   stencils, e.g. phon-jit only ships macos-aarch64 ones today, but never widen
+>   it.
 > - The JIT API surface is always compiled; only the copy-patch runtime
 >   executor and the build-time stencil extraction are behind `jit_active`.
 >   Consumers compile unconditionally and check
 >   `NATIVE_COPY_PATCH_AVAILABLE` at runtime.
+> - With Weavy's Cargo feature disabled, optional copy-patch dependencies and
+>   build work should be avoided wherever Cargo can express that soundly. When
+>   the feature is enabled but the policy or target matrix makes
+>   `jit_active = false`, builds must at least skip stencil extraction and the
+>   native executor, and must not compile W+X/native execution code. This is not
+>   a promise that Cargo can prune every cross-target dependency edge.
 >
 > This means an iOS build (or any target outside the matrix) falls to the
-> interpreter by construction — no W+X code compiled, no per-crate feature, no
-> `default-features` dance at the app root — while a desktop/server build on a
-> matrix-supported target JITs. (Rationale: compiling the copy-patch machinery
-> is build-time waste, not runtime W+X, so the feature is about waste and
-> single-source-of-truth, not a hard W^X blocker — the matrix itself is a
-> correctness constraint, not a portability nicety.)
+> interpreter by construction — no W+X/native executor compiled, no per-crate
+> feature — while a desktop/server build on a matrix-supported target JITs by
+> default without an app-root feature dance. A graph-wide disable is expressed
+> as Weavy policy (`WEAVY_JIT=0`), not by trying to defeat Cargo feature
+> unification with downstream `default-features = false` choreography.
+> (Rationale: compiling ordinary dependency crates may still be Cargo-visible
+> build-time waste, but compiling or running copy-patch executable machinery is
+> controlled by Weavy's predicate; the matrix itself is a correctness
+> constraint, not a portability nicety.)
 
 > r[machine.execution.verified-admission]
 >
