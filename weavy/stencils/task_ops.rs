@@ -174,12 +174,22 @@ unsafe fn handle_bytes(c: &Ctx, handle: i64) -> Option<(*const u8, usize)> {
 }
 
 #[inline(always)]
-unsafe fn compare_value_bytes(c: &Ctx, a: i64, b: i64) -> i64 {
+unsafe fn compare_value_bytes(c: &mut Ctx, pc: u64, a: i64, b: i64) -> Option<i64> {
     if a == b {
-        return 1;
+        return Some(1);
     }
-    let a = handle_bytes(c, a).unwrap_unchecked();
-    let b = handle_bytes(c, b).unwrap_unchecked();
+    let Some(a) = handle_bytes(c, a) else {
+        *c.await_index = pc;
+        *c.resume = a as u64;
+        *c.exit = 7;
+        return None;
+    };
+    let Some(b) = handle_bytes(c, b) else {
+        *c.await_index = pc;
+        *c.resume = b as u64;
+        *c.exit = 8;
+        return None;
+    };
     let a = RawValueMemory {
         ptr: a.0,
         len: a.1,
@@ -194,20 +204,20 @@ unsafe fn compare_value_bytes(c: &Ctx, a: i64, b: i64) -> i64 {
         let left = a.ptr.add(index).read();
         let right = b.ptr.add(index).read();
         if left < right {
-            return 0;
+            return Some(0);
         }
         if left > right {
-            return 2;
+            return Some(2);
         }
         index += 1;
     }
-    if a.len < b.len {
+    Some(if a.len < b.len {
         0
     } else if a.len > b.len {
         2
     } else {
         1
-    }
+    })
 }
 
 /// `frame[dst] = value` — immediates: [dst, value].
@@ -527,10 +537,13 @@ pub unsafe extern "C" fn weavy_task_compare_value_bytes(cx: *mut Ctx) {
     let dst = *c.prog;
     let a = *c.prog.add(1);
     let b = *c.prog.add(2);
-    c.prog = c.prog.add(3);
-    let ordering = compare_value_bytes(c, read_i64(c.frame, a), read_i64(c.frame, b));
-    write_i64(c.frame, dst, ordering);
-    cont!(cx);
+    let pc = *c.prog.add(3);
+    c.prog = c.prog.add(4);
+    if let Some(ordering) = compare_value_bytes(c, pc, read_i64(c.frame, a), read_i64(c.frame, b))
+    {
+        write_i64(c.frame, dst, ordering);
+        cont!(cx);
+    }
 }
 
 /// AWAIT — immediates: [resume_off, index, dst], NOT consumed on the

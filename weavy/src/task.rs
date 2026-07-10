@@ -35,7 +35,9 @@ use core::marker::PhantomData;
 use core::pin::Pin;
 use core::task::{Context, Poll};
 
+use crate::exec::{CompareSide, TaskFault, fault_site};
 use crate::mem::Layout;
+use crate::{CallSiteFacts, VerifiedProgram};
 
 /// One immutable value payload made visible to task code for native reads.
 #[repr(C)]
@@ -958,10 +960,49 @@ impl Task {
         hosts: &mut [HostFn<'_>],
         value_memories: ValueMemories<'_>,
     ) -> TaskStep {
+        self.run_hosted_with_value_memories_inner(
+            None,
+            program,
+            ready,
+            awaited,
+            hosts,
+            value_memories,
+        )
+        .unwrap_or_else(|fault| panic!("legacy raw task fault: {fault:?}"))
+    }
+
+    pub(crate) fn run_verified_with_value_memories(
+        &mut self,
+        verified: &VerifiedProgram,
+        ready: &mut [bool],
+        awaited: &[i64],
+        hosts: &mut [HostFn<'_>],
+        value_memories: ValueMemories<'_>,
+    ) -> Result<TaskStep, TaskFault> {
+        self.run_hosted_with_value_memories_inner(
+            Some(verified),
+            verified.program(),
+            ready,
+            awaited,
+            hosts,
+            value_memories,
+        )
+    }
+
+    fn run_hosted_with_value_memories_inner(
+        &mut self,
+        verified: Option<&VerifiedProgram>,
+        program: &Program,
+        ready: &mut [bool],
+        awaited: &[i64],
+        hosts: &mut [HostFn<'_>],
+        value_memories: ValueMemories<'_>,
+    ) -> Result<TaskStep, TaskFault> {
         loop {
             let frame = self.frames.last().expect("running task has a frame");
             let base = frame.base;
             let fn_id = frame.fn_id;
+            let pc = frame.pc;
             let code = &program.fns[frame.fn_id.0 as usize].code;
             if frame.pc >= code.len() {
                 panic!("function {:?} fell off its code without Ret", fn_id);
@@ -1071,10 +1112,22 @@ impl Task {
                     self.trace.push(TaskEvent::FrameEntered(callee));
                 }
                 Op::CallIndirect { callee, args, ret } => {
-                    let callee = FnId(
-                        u32::try_from(read_i64_at(&self.arena, base + callee as usize))
-                            .expect("indirect callee is a non-negative local function id"),
-                    );
+                    let raw = read_i64_at(&self.arena, base + callee as usize);
+                    let callee = match u32::try_from(raw) {
+                        Ok(callee) => FnId(callee),
+                        Err(_) => {
+                            let Some(verified) = verified else {
+                                panic!("indirect callee is a non-negative local function id");
+                            };
+                            return Err(TaskFault::IndirectCalleeNegative {
+                                site: fault_site(verified, fn_id, pc),
+                                value: raw,
+                            });
+                        }
+                    };
+                    if let Some(verified) = verified {
+                        check_indirect_callee_contract(verified, fn_id, pc, callee)?;
+                    }
                     self.frames.last_mut().expect("frame").pc += 1;
                     let callee_frame = self.alloc_frame(program.fns[callee.0 as usize].frame);
                     for copy in &args {
@@ -1100,7 +1153,7 @@ impl Task {
                         }
                         None => {
                             self.result = self.arena[start..start + size as usize].to_vec();
-                            return TaskStep::Done;
+                            return Ok(TaskStep::Done);
                         }
                     }
                 }
@@ -1259,7 +1312,17 @@ impl Task {
                 Op::CompareValueBytes { dst, a, b } => {
                     let a = read_i64_at(&self.arena, base + a as usize);
                     let b = read_i64_at(&self.arena, base + b as usize);
-                    let ordering = compare_value_bytes(value_memories, &self.molten, a, b);
+                    let ordering = compare_value_bytes(value_memories, &self.molten, a, b)
+                        .map_err(|(side, handle)| {
+                            verified.map_or_else(
+                                || panic!("legacy raw CompareValueBytes operand is not resident"),
+                                |verified| TaskFault::UnresidentCompareValueBytes {
+                                    site: fault_site(verified, fn_id, pc),
+                                    side,
+                                    handle,
+                                },
+                            )
+                        })?;
                     write_i64_at(&mut self.arena, base + dst as usize, ordering);
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
@@ -1304,7 +1367,7 @@ impl Task {
                     let end = base + frame_layout.size;
                     hosts[host as usize](&mut self.arena[base..end]);
                     self.frames.last_mut().expect("frame").pc += 1;
-                    return TaskStep::Yielded;
+                    return Ok(TaskStep::Yielded);
                 }
                 Op::Await { dst, input } => {
                     let idx = input as usize;
@@ -1326,7 +1389,7 @@ impl Task {
                             self.parked_on = Some(input);
                             self.trace.push(TaskEvent::Parked { input });
                         }
-                        return TaskStep::Parked { input };
+                        return Ok(TaskStep::Parked { input });
                     }
                 }
             }
@@ -1723,25 +1786,56 @@ fn payload_element_offset(
     Ok((offset, index))
 }
 
+fn check_indirect_callee_contract(
+    verified: &VerifiedProgram,
+    function: FnId,
+    pc: usize,
+    callee: FnId,
+) -> Result<(), TaskFault> {
+    let site = fault_site(verified, function, pc);
+    let Some(CallSiteFacts::Indirect { obligation, .. }) = site.call else {
+        return Ok(());
+    };
+    let callee_index = callee.0 as usize;
+    if callee_index >= obligation.function_count {
+        return Err(TaskFault::IndirectCalleeOutOfRange {
+            site,
+            callee: callee.0,
+            function_count: obligation.function_count,
+        });
+    }
+    let actual = verified
+        .facts()
+        .function(callee)
+        .and_then(|function| function.call_contract());
+    if actual != Some(obligation.contract) {
+        return Err(TaskFault::IndirectCalleeContractMismatch {
+            site,
+            callee,
+            expected: obligation.contract,
+            actual,
+        });
+    }
+    Ok(())
+}
+
 fn compare_value_bytes(
     value_memories: ValueMemories<'_>,
     molten: &MoltenArena,
     a: i64,
     b: i64,
-) -> i64 {
+) -> Result<i64, (CompareSide, i64)> {
     if a == b {
-        return 1;
+        return Ok(1);
     }
     let memories = MemoryView::from(value_memories);
-    let a = handle_bytes(memories, molten, a)
-        .expect("CompareValueBytes left operand must be a resident value handle");
-    let b = handle_bytes(memories, molten, b)
-        .expect("CompareValueBytes right operand must be a resident value handle");
-    match a.cmp(b) {
+    let a_bytes = handle_bytes(memories, molten, a).map_err(|_| (CompareSide::Left, a))?;
+    let b_bytes = handle_bytes(memories, molten, b).map_err(|_| (CompareSide::Right, b))?;
+    Ok(match a_bytes.cmp(b_bytes) {
         core::cmp::Ordering::Less => 0,
         core::cmp::Ordering::Equal => 1,
         core::cmp::Ordering::Greater => 2,
-    }
+    })
 }
 
 #[cfg(test)]

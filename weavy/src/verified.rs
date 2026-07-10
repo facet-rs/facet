@@ -73,7 +73,7 @@ impl AllowedKinds {
         self.kinds.binary_search(&kind).is_ok()
     }
 
-    fn is_exactly(&self, kind: WordKind) -> bool {
+    pub(crate) fn is_exactly(&self, kind: WordKind) -> bool {
         self.kinds.len() == 1 && self.kinds[0] == kind
     }
 

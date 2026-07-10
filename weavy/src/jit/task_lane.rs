@@ -17,11 +17,15 @@
 //! invisible at runtime.
 
 use std::collections::HashMap;
+#[cfg(test)]
+use std::sync::atomic::{AtomicUsize, Ordering};
 
+use crate::exec::{CompareSide, TaskFault, fault_site};
 use crate::jit::{NativeProgram, StencilLayout, task_stencils};
 use crate::task::{
     Advance, ArgCopy, FnId, HostFn, Op, Program, TaskEvent, TaskStep, TraceMode, ValueMemories,
 };
+use crate::{CallSiteFacts, VerifiedProgram};
 
 /// Threaded state — MUST match `Ctx` in stencils/task_ops.rs.
 #[repr(C)]
@@ -82,6 +86,7 @@ struct CallDesc {
     target: CallTarget,
     args: Vec<ArgCopy>,
     ret: u32,
+    pc: usize,
 }
 
 struct CompiledFn {
@@ -89,8 +94,15 @@ struct CompiledFn {
     /// Call descriptors keyed by the call site's CONTINUATION chain
     /// offset (what the CALL stencil reports through `resume`).
     calls: HashMap<u64, CallDesc>,
+    prog_pcs: HashMap<usize, usize>,
     frame_size: usize,
     frame_align: usize,
+}
+
+impl CompiledFn {
+    fn pc_for_prog_pos(&self, prog_pos: usize) -> Option<usize> {
+        self.prog_pcs.get(&prog_pos).copied()
+    }
 }
 
 /// A compiled task program: one native chain per function.
@@ -112,9 +124,24 @@ impl JitProgram {
         if !available() {
             return None;
         }
+        #[cfg(test)]
+        JIT_PROGRAM_COMPILE_COUNT.fetch_add(1, Ordering::Relaxed);
         let fns = program.fns.iter().map(|f| compile_fn(f, mode)).collect();
         Some(JitProgram { fns })
     }
+}
+
+#[cfg(test)]
+static JIT_PROGRAM_COMPILE_COUNT: AtomicUsize = AtomicUsize::new(0);
+
+#[cfg(test)]
+pub(crate) fn reset_jit_program_compile_count() {
+    JIT_PROGRAM_COMPILE_COUNT.store(0, Ordering::Relaxed);
+}
+
+#[cfg(test)]
+pub(crate) fn jit_program_compile_count() -> usize {
+    JIT_PROGRAM_COMPILE_COUNT.load(Ordering::Relaxed)
 }
 
 /// First emitted stencil at or after op `i` (stripped ops have no
@@ -378,13 +405,19 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
             Op::ArrayStoreWord { .. } | Op::LoadArray { .. } | Op::ArrayStore { .. } => 6,
             Op::LoadArrayWord { .. } => 5,
             Op::LoadArrayLen { .. } => 4,
-            Op::CompareValueBytes { .. } => 3,
+            Op::CompareValueBytes { .. } => 4,
             Op::Await { .. } => 3,
             Op::Call { .. } | Op::CallIndirect { .. } => 1,
             Op::Ret { .. } => 2,
             Op::HostCall { .. } | Op::HostCallYield { .. } | Op::Trace { .. } => 2,
         };
     }
+
+    let prog_pcs = prog_starts
+        .iter()
+        .enumerate()
+        .filter_map(|(pc, start)| start.map(|start| (start, pc)))
+        .collect();
 
     // Pass 2: the immediate stream, in op order (consumption order).
     let mut calls = HashMap::new();
@@ -554,6 +587,7 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                 for v in [dst, a, b] {
                     layout.push_prog_word(root.prog_index, u64::from(*v));
                 }
+                layout.push_prog_word(root.prog_index, i as u64);
             }
             Op::Await { dst, input } => {
                 // [resume_off = own start, index, dst] — idempotent
@@ -577,6 +611,7 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                         target: CallTarget::Static(*callee),
                         args: args.clone(),
                         ret: *ret,
+                        pc: i,
                     },
                 );
             }
@@ -589,6 +624,7 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                         target: CallTarget::Frame(*callee),
                         args: args.clone(),
                         ret: *ret,
+                        pc: i,
                     },
                 );
             }
@@ -629,6 +665,7 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
     CompiledFn {
         native,
         calls,
+        prog_pcs,
         frame_size: f.frame.size,
         frame_align: f.frame.align,
     }
@@ -728,6 +765,45 @@ impl JitTask {
         hosts: &mut [HostFn<'_>],
         value_memories: ValueMemories<'_>,
     ) -> TaskStep {
+        self.run_hosted_with_value_memories_inner(
+            None,
+            program,
+            ready,
+            awaited,
+            hosts,
+            value_memories,
+        )
+        .unwrap_or_else(|fault| panic!("legacy raw JIT task fault: {fault:?}"))
+    }
+
+    pub(crate) fn run_verified_with_value_memories(
+        &mut self,
+        verified: &VerifiedProgram,
+        program: &JitProgram,
+        ready: &mut [bool],
+        awaited: &[i64],
+        hosts: &mut [HostFn<'_>],
+        value_memories: ValueMemories<'_>,
+    ) -> Result<TaskStep, TaskFault> {
+        self.run_hosted_with_value_memories_inner(
+            Some(verified),
+            program,
+            ready,
+            awaited,
+            hosts,
+            value_memories,
+        )
+    }
+
+    fn run_hosted_with_value_memories_inner(
+        &mut self,
+        verified: Option<&VerifiedProgram>,
+        program: &JitProgram,
+        ready: &mut [bool],
+        awaited: &[i64],
+        hosts: &mut [HostFn<'_>],
+        value_memories: ValueMemories<'_>,
+    ) -> Result<TaskStep, TaskFault> {
         self.ready_scratch.clear();
         self.ready_scratch
             .extend(ready.iter().map(|&r| i64::from(r)));
@@ -803,7 +879,7 @@ impl JitTask {
                         self.parked_on = Some(input);
                         self.trace.push(TaskEvent::Parked { input });
                     }
-                    return TaskStep::Parked { input };
+                    return Ok(TaskStep::Parked { input });
                 }
                 2 => {
                     // Call: continuation offset doubles as the side-table key.
@@ -813,6 +889,7 @@ impl JitTask {
                         let top = self.frames.last_mut().expect("frame");
                         top.resume = usize::try_from(continuation).expect("offset");
                     }
+                    let target_is_frame = matches!(desc.target, CallTarget::Frame(_));
                     let callee_id = match desc.target {
                         CallTarget::Static(callee) => callee,
                         CallTarget::Frame(offset) => {
@@ -822,12 +899,25 @@ impl JitTask {
                                     .try_into()
                                     .expect("closure function id occupies one word"),
                             );
-                            FnId(
-                                u32::try_from(raw)
-                                    .expect("indirect callee is a non-negative local function id"),
-                            )
+                            match u32::try_from(raw) {
+                                Ok(callee) => FnId(callee),
+                                Err(_) => {
+                                    let Some(verified) = verified else {
+                                        panic!(
+                                            "indirect callee is a non-negative local function id"
+                                        );
+                                    };
+                                    return Err(TaskFault::IndirectCalleeNegative {
+                                        site: fault_site(verified, frame.fn_id, desc.pc),
+                                        value: raw,
+                                    });
+                                }
+                            }
                         }
                     };
+                    if target_is_frame && let Some(verified) = verified {
+                        check_indirect_callee_contract(verified, frame.fn_id, desc.pc, callee_id)?;
+                    }
                     let callee = &program.fns[callee_id.0 as usize];
                     let callee_base = self.alloc_frame(callee);
                     for copy in &desc.args {
@@ -855,7 +945,7 @@ impl JitTask {
                         }
                         None => {
                             self.result = self.arena[src..src + size].to_vec();
-                            return TaskStep::Done;
+                            return Ok(TaskStep::Done);
                         }
                     }
                 }
@@ -889,9 +979,35 @@ impl JitTask {
                     }
                     let end = frame.base + compiled.frame_size;
                     hosts[host](&mut self.arena[frame.base..end]);
-                    return TaskStep::Yielded;
+                    return Ok(TaskStep::Yielded);
                 }
-                code => panic!("task chain exited with code {code} (fell through without Ret?)"),
+                7 | 8 => {
+                    let Some(verified) = verified else {
+                        panic!("legacy raw CompareValueBytes operand is not resident");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("pc");
+                    return Err(TaskFault::UnresidentCompareValueBytes {
+                        site: fault_site(verified, frame.fn_id, pc),
+                        side: if exit_scratch == 7 {
+                            CompareSide::Left
+                        } else {
+                            CompareSide::Right
+                        },
+                        handle: resume_scratch as i64,
+                    });
+                }
+                code => {
+                    if let Some(verified) = verified {
+                        let pc = compiled
+                            .pc_for_prog_pos(frame.prog_pos)
+                            .unwrap_or(frame.prog_pos);
+                        return Err(TaskFault::NativeFaultExit {
+                            site: fault_site(verified, frame.fn_id, pc),
+                            code,
+                        });
+                    }
+                    panic!("task chain exited with code {code} (fell through without Ret?)");
+                }
             }
         }
     }
@@ -924,6 +1040,39 @@ impl Advance for JitRunning<'_> {
     fn result_bytes(&self) -> &[u8] {
         &self.task.result
     }
+}
+
+fn check_indirect_callee_contract(
+    verified: &VerifiedProgram,
+    function: FnId,
+    pc: usize,
+    callee: FnId,
+) -> Result<(), TaskFault> {
+    let site = fault_site(verified, function, pc);
+    let Some(CallSiteFacts::Indirect { obligation, .. }) = site.call else {
+        return Ok(());
+    };
+    let callee_index = callee.0 as usize;
+    if callee_index >= obligation.function_count {
+        return Err(TaskFault::IndirectCalleeOutOfRange {
+            site,
+            callee: callee.0,
+            function_count: obligation.function_count,
+        });
+    }
+    let actual = verified
+        .facts()
+        .function(callee)
+        .and_then(|function| function.call_contract());
+    if actual != Some(obligation.contract) {
+        return Err(TaskFault::IndirectCalleeContractMismatch {
+            site,
+            callee,
+            expected: obligation.contract,
+            actual,
+        });
+    }
+    Ok(())
 }
 
 #[cfg(test)]

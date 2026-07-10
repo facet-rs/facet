@@ -7,11 +7,16 @@
 //! backends can use the same program/block shape.
 
 pub mod r#async;
+pub mod exec;
 pub mod ir;
 pub mod mem;
 pub mod task;
 pub mod verified;
 
+pub use exec::{
+    CompareSide, DriveTable, ExecTask, Executable, FallbackReason, FaultSite, LaneFacts, LaneKind,
+    TaskFault,
+};
 pub use verified::{
     AccessDefect, AccessRole, AllowedKinds, CallContract, CallContractId, CallSiteFacts,
     DriveRequirements, FrameContract, FrameRegion, FunctionContract, FunctionFacts,
