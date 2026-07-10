@@ -32,6 +32,7 @@ const RUNG_022: &str = include_str!("ratchet/022-record-patterns.vix");
 const RUNG_023: &str = include_str!("ratchet/023-option.vix");
 const RUNG_024: &str = include_str!("ratchet/024-user-result.vix");
 const RUNG_025: &str = include_str!("ratchet/025-ordering-enum.vix");
+const RUNG_026: &str = include_str!("ratchet/026-arrays.vix");
 
 /// The first rung is an architectural certificate, not just a boolean test.
 ///
@@ -1691,6 +1692,24 @@ fn rung_025_ordering_is_an_ordinary_matchable_enum() {
     assert_eq!(report.chaos.counters.pure_host_calls, 0);
     assert_eq!(report.plain.receipt_count, 0);
     assert_eq!(report.chaos.receipt_count, 0);
+}
+
+#[test]
+fn rung_026_is_red_at_the_first_array_literal() {
+    let diagnostics = Compiler::new()
+        .compile(RUNG_026)
+        .expect_err("rung 026 is the next red production-path rung");
+    assert_eq!(diagnostics.entries.len(), 1);
+    let diagnostic = &diagnostics.entries[0];
+    assert_eq!(diagnostic.code, DiagnosticCode::ParseRejected);
+    assert_eq!(diagnostic.primary.start, 0);
+    assert_eq!(diagnostic.primary.end, 247);
+    assert!(matches!(
+        &diagnostic.payload,
+        vix::diagnostic::DiagnosticPayload::Parse { detail }
+            if detail.contains("byte_position: 133")
+                && detail.contains("expected: [\"(\", \"|\", \"if\"")
+    ));
 }
 
 fn reject_header(source: &str) -> (&str, usize) {
