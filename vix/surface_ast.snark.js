@@ -4,6 +4,7 @@ ast({
   _item: { enum: "Item" },
   _statement: { enum: "Stmt" },
   _expr: { enum: "Expr" },
+  _if_branch: { enum: "IfBranch" },
   _type: { enum: "Type" },
   _pattern: { enum: "Pattern" },
   _variant_type_payload: { enum: "VariantTypePayload" },
@@ -15,6 +16,7 @@ ast({
   let_statement: { as: "Let", struct: "LetStmt" },
   yield_statement: { as: "Yield", struct: "YieldStmt" },
   expression_statement: { as: "Expression", struct: "ExpressionStmt" },
+  if_expr: { as: "If" },
   field_access: {
     as: "Field",
     fields: { name: { enum: "Member" } },

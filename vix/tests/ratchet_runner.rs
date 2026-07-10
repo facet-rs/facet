@@ -921,6 +921,74 @@ fn rung_013_expression_statement_is_rejected_with_declared_message_and_line() {
 
 #[test]
 fn rung_014_if_else_is_an_expression_through_vir_and_weavy() {
+    let module = Compiler::new()
+        .compile(RUNG_014)
+        .expect("rung 014 compiles");
+    let sign = module
+        .functions
+        .iter()
+        .find(|function| function.name == "sign")
+        .expect("rung 014 contains sign");
+    let conditionals = sign
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.op, VirOp::If { .. }))
+        .collect::<Vec<_>>();
+    assert_eq!(conditionals.len(), 2);
+    assert!(conditionals.iter().all(|node| {
+        let VirOp::If {
+            consequent,
+            alternative,
+        } = &node.op
+        else {
+            unreachable!("conditionals were selected above")
+        };
+        node.ty == VirType::Int
+            && node.inputs.len() == 1
+            && consequent.nodes.contains(&consequent.output)
+            && alternative.nodes.contains(&alternative.output)
+    }));
+    assert!(sign.nodes.iter().all(|node| !matches!(node.op, VirOp::Sub)));
+    assert!(
+        sign.nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::Int(-1)))
+    );
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    assert_eq!(partitioned.islands.len(), 3);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let source_map = source_map_for(island);
+        let conditional_trace_ids = conditionals
+            .iter()
+            .map(|conditional| {
+                source_map
+                    .iter()
+                    .find(|entry| entry.function == sign.id && entry.node == conditional.id)
+                    .expect("conditional has source attribution")
+                    .trace_id
+            })
+            .collect::<Vec<_>>();
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 014 lowers to Weavy");
+        for trace_id in conditional_trace_ids {
+            assert!(lowered.program.fns.iter().any(|function| {
+                function.code.windows(2).any(|ops| {
+                    matches!(ops[0], WeavyOp::Trace { id } if id == trace_id)
+                        && matches!(ops[1], WeavyOp::JumpIfZero { .. })
+                })
+            }));
+        }
+        assert!(lowered.program.fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+    }
+
     let report = run_source(RUNG_014).expect("rung 014 compiles and runs");
     assert!(report.passed());
     assert!(report.agrees());

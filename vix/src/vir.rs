@@ -128,6 +128,12 @@ pub struct MatchArm {
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct ControlRegion {
+    pub nodes: Vec<NodeId>,
+    pub output: NodeId,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Type {
     Bool,
@@ -282,11 +288,24 @@ pub enum Op {
     Call(FunctionId),
     Tuple,
     Record,
-    Project { index: u32 },
-    Variant { variant: u32 },
-    VariantProject { variant: u32, field: u32 },
-    Match { arms: Vec<MatchArm> },
+    Project {
+        index: u32,
+    },
+    Variant {
+        variant: u32,
+    },
+    VariantProject {
+        variant: u32,
+        field: u32,
+    },
+    Match {
+        arms: Vec<MatchArm>,
+    },
     Compare,
+    If {
+        consequent: ControlRegion,
+        alternative: ControlRegion,
+    },
 }
 
 /// One SSA-like operation. Dependencies are explicit node ids; no Rust
@@ -519,10 +538,20 @@ fn collect_callees(
 
 fn prune_control_regions(nodes: &mut [Node], needed: &BTreeSet<NodeId>) {
     for node in nodes {
-        if let Op::Match { arms } = &mut node.op {
-            for arm in arms {
-                arm.nodes.retain(|node| needed.contains(node));
+        match &mut node.op {
+            Op::Match { arms } => {
+                for arm in arms {
+                    arm.nodes.retain(|node| needed.contains(node));
+                }
             }
+            Op::If {
+                consequent,
+                alternative,
+            } => {
+                consequent.nodes.retain(|node| needed.contains(node));
+                alternative.nodes.retain(|node| needed.contains(node));
+            }
+            _ => {}
         }
     }
 }
@@ -535,10 +564,20 @@ fn collect_dependencies(function: &Function, node: NodeId, needed: &mut BTreeSet
     for &input in &node.inputs {
         collect_dependencies(function, input, needed);
     }
-    if let Op::Match { arms } = &node.op {
-        for arm in arms {
-            collect_dependencies(function, arm.output, needed);
+    match &node.op {
+        Op::Match { arms } => {
+            for arm in arms {
+                collect_dependencies(function, arm.output, needed);
+            }
         }
+        Op::If {
+            consequent,
+            alternative,
+        } => {
+            collect_dependencies(function, consequent.output, needed);
+            collect_dependencies(function, alternative.output, needed);
+        }
+        _ => {}
     }
 }
 
@@ -701,6 +740,21 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             }
         }
         Op::Compare => op.push(18),
+        Op::If {
+            consequent,
+            alternative,
+        } => {
+            op.push(19);
+            for region in [consequent, alternative] {
+                let mut encoded = Vec::new();
+                frame(&mut encoded, &(region.nodes.len() as u64).to_le_bytes());
+                for node in &region.nodes {
+                    frame(&mut encoded, &node.0.to_le_bytes());
+                }
+                frame(&mut encoded, &region.output.0.to_le_bytes());
+                frame(&mut op, &encoded);
+            }
+        }
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());

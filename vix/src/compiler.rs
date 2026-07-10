@@ -6,9 +6,9 @@ use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnosti
 use crate::support::Span;
 use crate::surface::{SurfaceParser, ast};
 use crate::vir::{
-    EffectFacts, EnumType, EnumVariant, Function, FunctionId, MatchArm as VirMatchArm, Module,
-    Node, NodeId, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, Parameter, ParameterId,
-    ParameterKind, RecordField, RecordType, Test, Type, VariantPayload,
+    ControlRegion, EffectFacts, EnumType, EnumVariant, Function, FunctionId,
+    MatchArm as VirMatchArm, Module, Node, NodeId, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT,
+    Op, Parameter, ParameterId, ParameterKind, RecordField, RecordType, Test, Type, VariantPayload,
 };
 
 pub struct Compiler {
@@ -591,12 +591,7 @@ fn lower_function(
     for statement in &function.body.stmts {
         match statement {
             ast::Stmt::Expression(statement) => {
-                return Err(Diagnostics::one(Diagnostic {
-                    code: DiagnosticCode::ExpressionStatement,
-                    primary: statement.span,
-                    labels: Vec::new(),
-                    payload: DiagnosticPayload::ExpressionStatement,
-                }));
+                return Err(expression_statement_diagnostic(statement.span));
             }
             ast::Stmt::Yield(statement) if signature.is_test => {
                 let check = lower_check(&mut nodes, &bindings, context, &statement.value)?;
@@ -617,22 +612,7 @@ fn lower_function(
                 )));
             }
             ast::Stmt::Let(statement) => {
-                if bindings.contains_key(&statement.name.value) {
-                    return Err(Diagnostics::one(Diagnostic {
-                        code: DiagnosticCode::DuplicateBinding,
-                        primary: statement.name.span,
-                        labels: Vec::new(),
-                        payload: DiagnosticPayload::Name {
-                            name: statement.name.value.clone(),
-                        },
-                    }));
-                }
-                let value = lower_value(&mut nodes, &bindings, context, &statement.value)?;
-                if let Some(annotation) = &statement.ty {
-                    let expected = lower_declared_type(annotation, context.types)?;
-                    require_type(&value, &expected, type_span(annotation))?;
-                }
-                bindings.insert(statement.name.value.clone(), value);
+                lower_let_statement(&mut nodes, &mut bindings, context, statement)?;
             }
         }
     }
@@ -667,6 +647,40 @@ fn lower_function(
         nodes,
         output,
         yielded_checks,
+    })
+}
+
+fn lower_let_statement(
+    nodes: &mut Vec<Node>,
+    bindings: &mut BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    statement: &ast::LetStmt,
+) -> Result<(), Diagnostics> {
+    if bindings.contains_key(&statement.name.value) {
+        return Err(Diagnostics::one(Diagnostic {
+            code: DiagnosticCode::DuplicateBinding,
+            primary: statement.name.span,
+            labels: Vec::new(),
+            payload: DiagnosticPayload::Name {
+                name: statement.name.value.clone(),
+            },
+        }));
+    }
+    let value = lower_value(nodes, bindings, context, &statement.value)?;
+    if let Some(annotation) = &statement.ty {
+        let expected = lower_declared_type(annotation, context.types)?;
+        require_type(&value, &expected, type_span(annotation))?;
+    }
+    bindings.insert(statement.name.value.clone(), value);
+    Ok(())
+}
+
+fn expression_statement_diagnostic(span: Span) -> Diagnostics {
+    Diagnostics::one(Diagnostic {
+        code: DiagnosticCode::ExpressionStatement,
+        primary: span,
+        labels: Vec::new(),
+        payload: DiagnosticPayload::ExpressionStatement,
     })
 }
 
@@ -752,6 +766,7 @@ fn lower_value(
     expression: &ast::Expr,
 ) -> Result<LoweredValue, Diagnostics> {
     match expression {
+        ast::Expr::If(expression) => lower_if(nodes, bindings, context, expression),
         ast::Expr::Bool(value) => Ok(LoweredValue {
             node: push_node(
                 nodes,
@@ -763,26 +778,7 @@ fn lower_value(
             ),
             ty: Type::Bool,
         }),
-        ast::Expr::Number(value) => {
-            let parsed = value.value.parse::<i64>().map_err(|_| {
-                type_mismatch(
-                    value.span,
-                    "Int",
-                    format!("number literal `{}`", value.value),
-                )
-            })?;
-            Ok(LoweredValue {
-                node: push_node(
-                    nodes,
-                    value.span,
-                    Type::Int,
-                    EffectFacts::PURE,
-                    Vec::new(),
-                    Op::Int(parsed),
-                ),
-                ty: Type::Int,
-            })
-        }
+        ast::Expr::Number(value) => lower_integer_literal(nodes, value.span, &value.value),
         ast::Expr::Str(value) => Ok(LoweredValue {
             node: push_node(
                 nodes,
@@ -892,15 +888,108 @@ fn lower_value(
     }
 }
 
+fn lower_if(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    expression: &ast::IfExpr,
+) -> Result<LoweredValue, Diagnostics> {
+    let condition = lower_value(nodes, bindings, context, &expression.condition)?;
+    require_type(&condition, &Type::Bool, expr_span(&expression.condition))?;
+
+    let consequent_start = nodes.len();
+    let consequent_value = lower_value_block(nodes, bindings, context, &expression.consequent)?;
+    let consequent = ControlRegion {
+        nodes: nodes[consequent_start..]
+            .iter()
+            .map(|node| node.id)
+            .collect(),
+        output: consequent_value.node,
+    };
+
+    let alternative_start = nodes.len();
+    let alternative_value = match &expression.alternative {
+        ast::IfBranch::Block(block) => lower_value_block(nodes, bindings, context, block)?,
+        ast::IfBranch::If(expression) => lower_if(nodes, bindings, context, expression)?,
+    };
+    require_type(
+        &alternative_value,
+        &consequent_value.ty,
+        if_branch_span(&expression.alternative),
+    )?;
+    let alternative = ControlRegion {
+        nodes: nodes[alternative_start..]
+            .iter()
+            .map(|node| node.id)
+            .collect(),
+        output: alternative_value.node,
+    };
+
+    let ty = consequent_value.ty;
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            expression.span,
+            ty.clone(),
+            EffectFacts::PURE,
+            vec![condition.node],
+            Op::If {
+                consequent,
+                alternative,
+            },
+        ),
+        ty,
+    })
+}
+
+fn lower_value_block(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    block: &ast::Block,
+) -> Result<LoweredValue, Diagnostics> {
+    let mut bindings = bindings.clone();
+    for statement in &block.stmts {
+        match statement {
+            ast::Stmt::Expression(statement) => {
+                return Err(expression_statement_diagnostic(statement.span));
+            }
+            ast::Stmt::Yield(statement) => {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    statement.span,
+                    "yield inside a value block",
+                )));
+            }
+            ast::Stmt::Let(statement) => {
+                lower_let_statement(nodes, &mut bindings, context, statement)?;
+            }
+        }
+    }
+    let tail = block.tail.as_ref().ok_or_else(|| {
+        Diagnostics::one(Diagnostic::unsupported(
+            block.span,
+            "value block without a tail value",
+        ))
+    })?;
+    lower_value(nodes, &bindings, context, tail)
+}
+
+fn if_branch_span(branch: &ast::IfBranch) -> Span {
+    match branch {
+        ast::IfBranch::Block(block) => block.span,
+        ast::IfBranch::If(expression) => expression.span,
+    }
+}
+
 fn lower_unary_value(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     unary: &ast::Unary,
 ) -> Result<LoweredValue, Diagnostics> {
-    let value = lower_value(nodes, bindings, context, &unary.value)?;
     match unary.op.value.as_str() {
         "!" => {
+            let value = lower_value(nodes, bindings, context, &unary.value)?;
             require_type(&value, &Type::Bool, expr_span(&unary.value))?;
             let false_node = push_node(
                 nodes,
@@ -922,11 +1011,41 @@ fn lower_unary_value(
                 ty: Type::Bool,
             })
         }
+        "-" => {
+            let ast::Expr::Number(number) = &unary.value else {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    unary.op.span,
+                    "unary operator `-`",
+                )));
+            };
+            lower_integer_literal(nodes, unary.span, &format!("-{}", number.value))
+        }
         _ => Err(Diagnostics::one(Diagnostic::unsupported(
             unary.op.span,
             format!("unary operator `{}`", unary.op.value),
         ))),
     }
+}
+
+fn lower_integer_literal(
+    nodes: &mut Vec<Node>,
+    span: Span,
+    literal: &str,
+) -> Result<LoweredValue, Diagnostics> {
+    let value = literal
+        .parse::<i64>()
+        .map_err(|_| type_mismatch(span, "Int", format!("number literal `{literal}`")))?;
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            span,
+            Type::Int,
+            EffectFacts::PURE,
+            Vec::new(),
+            Op::Int(value),
+        ),
+        ty: Type::Int,
+    })
 }
 
 fn lower_named_record_values(
@@ -1785,6 +1904,7 @@ fn push_node(
 
 fn expr_span(expression: &ast::Expr) -> Span {
     match expression {
+        ast::Expr::If(value) => value.span,
         ast::Expr::Match(value) => value.span,
         ast::Expr::Binary(value) => value.span,
         ast::Expr::Unary(value) => value.span,

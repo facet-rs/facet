@@ -533,10 +533,20 @@ fn lower_node_sequence(
                 "control region names a missing node",
             )
         })?;
-        if let Op::Match { arms } = &node.op {
-            for arm in arms {
-                controlled.extend(arm.nodes.iter().copied());
+        match &node.op {
+            Op::Match { arms } => {
+                for arm in arms {
+                    controlled.extend(arm.nodes.iter().copied());
+                }
             }
+            Op::If {
+                consequent,
+                alternative,
+            } => {
+                controlled.extend(consequent.nodes.iter().copied());
+                controlled.extend(alternative.nodes.iter().copied());
+            }
+            _ => {}
         }
     }
 
@@ -564,6 +574,7 @@ fn lower_node_sequence(
         outputs.code.push(WeavyOp::Trace { id: trace_id });
         let representation = match &node.op {
             Op::Match { .. } => lower_match_node(node, dst, values, sequence, outputs)?,
+            Op::If { .. } => lower_if_node(node, dst, values, sequence, outputs, active_variant)?,
             Op::Compare => lower_compare_node(node, dst, values, sequence, outputs)?,
             _ => {
                 let lowered = lower_node(
@@ -589,6 +600,73 @@ fn lower_node_sequence(
         );
     }
     Ok(())
+}
+
+fn lower_if_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+    active_variant: Option<u32>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    let Op::If {
+        consequent,
+        alternative,
+    } = &node.op
+    else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "non-If node reached structured conditional lowering",
+        ));
+    };
+    require_input_count(node, 1)?;
+    let condition = input_value(node, values, 0)?;
+    require_value(node, &condition, &Type::Bool, ValueRepresentation::Word)?;
+    let result_representation = representation_for_type(&node.ty, node.span)?;
+
+    let alternative_label = outputs.code.label();
+    let end = outputs.code.label();
+    outputs
+        .code
+        .jump_if_zero(condition.region.start(), alternative_label);
+
+    let mut consequent_values = values.clone();
+    lower_node_sequence(
+        &consequent.nodes,
+        &mut consequent_values,
+        sequence,
+        outputs,
+        active_variant,
+    )?;
+    let consequent_output = consequent_values.get(&consequent.output).ok_or_else(|| {
+        lowering_diagnostic(node.span, "if consequent output has no lowered value")
+    })?;
+    require_value(node, consequent_output, &node.ty, result_representation)?;
+    outputs
+        .code
+        .extend(copy_region(node, consequent_output.region, dst)?);
+    outputs.code.jump(end);
+
+    outputs.code.bind(alternative_label, node.span)?;
+    let mut alternative_values = values.clone();
+    lower_node_sequence(
+        &alternative.nodes,
+        &mut alternative_values,
+        sequence,
+        outputs,
+        active_variant,
+    )?;
+    let alternative_output = alternative_values.get(&alternative.output).ok_or_else(|| {
+        lowering_diagnostic(node.span, "if alternative output has no lowered value")
+    })?;
+    require_value(node, alternative_output, &node.ty, result_representation)?;
+    outputs
+        .code
+        .extend(copy_region(node, alternative_output.region, dst)?);
+    outputs.code.bind(end, node.span)?;
+
+    Ok(result_representation)
 }
 
 fn lower_match_node(
@@ -1050,6 +1128,12 @@ fn lower_node(
             return Err(lowering_diagnostic(
                 node.span,
                 "structured Match reached scalar node lowering",
+            ));
+        }
+        Op::If { .. } => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "structured If reached scalar node lowering",
             ));
         }
         Op::Compare => {

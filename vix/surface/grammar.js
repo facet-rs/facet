@@ -118,6 +118,7 @@ module.exports = grammar({
 
     _expr: ($) =>
       choice(
+        $.if_expr,
         $.match_expr,
         $.binary,
         $.unary,
@@ -131,6 +132,18 @@ module.exports = grammar({
         $.string,
         $.number,
         $.boolean,
+      ),
+
+    _if_branch: ($) => choice($.block, $.if_expr),
+    if_expr: ($) =>
+      prec.right(
+        seq(
+          "if",
+          field("condition", $._expr),
+          field("consequent", $.block),
+          "else",
+          field("alternative", $._if_branch),
+        ),
       ),
 
     binary: ($) => {
