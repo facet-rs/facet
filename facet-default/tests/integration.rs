@@ -159,6 +159,20 @@ fn test_builtin_default_syntax() {
     assert_eq!(config.number, 42, "number should be 42");
 }
 
+/// Repro for `#[facet(default = 0.0)]` on an `f32` field.
+#[test]
+fn test_f32_literal_default() {
+    #[derive(Facet, Debug, PartialEq)]
+    #[facet(derive(Default))]
+    pub struct Kweh {
+        #[facet(default = 0.0)]
+        chocobo: f32,
+    }
+
+    let kweh = Kweh::default();
+    assert_eq!(kweh.chocobo, 0.0);
+}
+
 /// Test builtin #[facet(default)] without value (uses Default::default())
 #[test]
 fn test_builtin_default_no_value() {
