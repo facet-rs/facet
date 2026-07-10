@@ -100,6 +100,26 @@ pub struct EnumType {
     pub variants: Vec<EnumVariant>,
 }
 
+pub const ORDERING_LESS_VARIANT: u32 = 0;
+pub const ORDERING_EQUAL_VARIANT: u32 = 1;
+pub const ORDERING_GREATER_VARIANT: u32 = 2;
+
+impl EnumType {
+    #[must_use]
+    pub fn ordering() -> Self {
+        Self {
+            name: "Ordering".to_owned(),
+            variants: ["Less", "Equal", "Greater"]
+                .into_iter()
+                .map(|name| EnumVariant {
+                    name: name.to_owned(),
+                    payload: VariantPayload::Unit,
+                })
+                .collect(),
+        }
+    }
+}
+
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct MatchArm {
     pub variant: u32,
@@ -121,6 +141,11 @@ pub enum Type {
 }
 
 impl Type {
+    #[must_use]
+    pub fn ordering() -> Self {
+        Self::Enum(EnumType::ordering())
+    }
+
     #[must_use]
     pub fn name(&self) -> String {
         match self {
@@ -182,6 +207,34 @@ impl Type {
             Self::Check | Self::StreamCheck => false,
         }
     }
+
+    /// r[related lang.value.structural-order]
+    #[must_use]
+    pub fn structural_order_is_defined(&self) -> bool {
+        match self {
+            Self::Bool | Self::Int | Self::String => true,
+            Self::Tuple(elements) => elements.iter().all(Self::structural_order_is_defined),
+            Self::Record(record) => record
+                .fields
+                .iter()
+                .all(|field| field.ty.structural_order_is_defined()),
+            Self::Enum(enumeration) => {
+                enumeration
+                    .variants
+                    .iter()
+                    .all(|variant| match &variant.payload {
+                        VariantPayload::Unit => true,
+                        VariantPayload::Tuple(elements) => {
+                            elements.iter().all(Self::structural_order_is_defined)
+                        }
+                        VariantPayload::Record(fields) => fields
+                            .iter()
+                            .all(|field| field.ty.structural_order_is_defined()),
+                    })
+            }
+            Self::Check | Self::StreamCheck => false,
+        }
+    }
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
@@ -233,6 +286,7 @@ pub enum Op {
     Variant { variant: u32 },
     VariantProject { variant: u32, field: u32 },
     Match { arms: Vec<MatchArm> },
+    Compare,
 }
 
 /// One SSA-like operation. Dependencies are explicit node ids; no Rust
@@ -646,6 +700,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
                 frame(&mut op, &encoded);
             }
         }
+        Op::Compare => op.push(18),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());

@@ -96,6 +96,14 @@ impl<'a> TypeResolver<'a> {
                 ),
                 ast::Item::Fn(_) => continue,
             };
+            if name == "Ordering" {
+                return Err(Diagnostics::one(Diagnostic {
+                    code: DiagnosticCode::DuplicateDefinition,
+                    primary: span,
+                    labels: Vec::new(),
+                    payload: DiagnosticPayload::Name { name: name.clone() },
+                }));
+            }
             if declarations.insert(name.clone(), declaration).is_some() {
                 return Err(Diagnostics::one(Diagnostic {
                     code: DiagnosticCode::DuplicateDefinition,
@@ -108,7 +116,7 @@ impl<'a> TypeResolver<'a> {
         Ok(Self {
             declarations,
             resolving: BTreeSet::new(),
-            resolved: BTreeMap::new(),
+            resolved: BTreeMap::from([("Ordering".to_owned(), Type::ordering())]),
         })
     }
 
@@ -217,6 +225,9 @@ impl<'a> TypeResolver<'a> {
             ast::Type::Generic(_) if is_stream_check_type(ty) => Ok(Type::StreamCheck),
             ast::Type::Path(path) => {
                 let name = path_name(path);
+                if let Some(ty) = self.resolved.get(&name) {
+                    return Ok(ty.clone());
+                }
                 if !self.declarations.contains_key(&name) {
                     return Err(unknown_name(path.span, name));
                 }
@@ -1579,6 +1590,17 @@ fn lower_binary(
         "!=" => {
             require_same_type(&left, &right, binary.span)?;
             (Type::Bool, Op::Ne)
+        }
+        "<=>" => {
+            require_same_type(&left, &right, binary.span)?;
+            if !left.ty.structural_order_is_defined() {
+                return Err(type_mismatch(
+                    binary.span,
+                    "structurally ordered value",
+                    left.ty.name(),
+                ));
+            }
+            (Type::ordering(), Op::Compare)
         }
         _ => {
             return Err(Diagnostics::one(Diagnostic::unsupported(

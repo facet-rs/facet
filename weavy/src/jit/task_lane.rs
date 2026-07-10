@@ -208,6 +208,10 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                 task_stencils::LOAD_ARRAY_WORD,
                 Continuations::Fallthrough(task_stencils::LOAD_ARRAY_WORD_CONT),
             ),
+            Op::CompareValueBytes { .. } => (
+                task_stencils::COMPARE_VALUE_BYTES,
+                Continuations::Fallthrough(task_stencils::COMPARE_VALUE_BYTES_CONT),
+            ),
             Op::Await { .. } => (
                 task_stencils::AWAIT,
                 Continuations::Fallthrough(task_stencils::AWAIT_CONT),
@@ -317,6 +321,7 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
             Op::JumpIfZero { .. } => 3,
             Op::LoadIndexedI64 { .. } | Op::StoreIndexedI64 { .. } => 4,
             Op::LoadArrayWord { .. } => 5,
+            Op::CompareValueBytes { .. } => 3,
             Op::Await { .. } => 3,
             Op::Call { .. } => 1,
             Op::Ret { .. } => 2,
@@ -397,6 +402,11 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
                     *elem_schema_ref as u64,
                 ] {
                     layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::CompareValueBytes { dst, a, b } => {
+                for v in [dst, a, b] {
+                    layout.push_prog_word(root.prog_index, u64::from(*v));
                 }
             }
             Op::Await { dst, input } => {
@@ -729,7 +739,7 @@ impl Advance for JitRunning<'_> {
 mod tests {
     use super::*;
     use crate::mem::Layout;
-    use crate::task::{Fn as TaskFn, Task};
+    use crate::task::{Fn as TaskFn, Task, ValueMemories, ValueMemory};
 
     #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
     async fn jit_tasks_await_real_futures() {
@@ -1129,6 +1139,70 @@ mod tests {
         let mut interp = Task::spawn(&program, FnId(0));
         assert_eq!(interp.run(&program, &mut [], &[]), TaskStep::Done);
         assert_eq!(interp.result_i64(), 6);
+    }
+
+    #[test]
+    fn value_byte_comparison_matches_the_interpreter_and_short_circuits_identity() {
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(6),
+                code: vec![
+                    Op::ConstI64 { dst: 0, value: 0 },
+                    Op::ConstI64 { dst: 8, value: 1 },
+                    Op::ConstI64 { dst: 16, value: 99 },
+                    Op::CompareValueBytes {
+                        dst: 24,
+                        a: 0,
+                        b: 8,
+                    },
+                    Op::CompareValueBytes {
+                        dst: 32,
+                        a: 8,
+                        b: 0,
+                    },
+                    Op::CompareValueBytes {
+                        dst: 40,
+                        a: 16,
+                        b: 16,
+                    },
+                    Op::Ret { src: 24, size: 24 },
+                ],
+            }],
+        };
+        let store = [ValueMemory::from_slice(b"b"), ValueMemory::from_slice(b"a")];
+        let memories = ValueMemories {
+            store: &store,
+            molten: &[],
+        };
+
+        let mut interp = Task::spawn(&program, FnId(0));
+        assert_eq!(
+            interp.run_hosted_with_value_memories(&program, &mut [], &[], &mut [], memories,),
+            TaskStep::Done
+        );
+        assert_eq!(
+            interp
+                .result
+                .chunks_exact(8)
+                .map(|word| i64::from_le_bytes(word.try_into().expect("one result word")))
+                .collect::<Vec<_>>(),
+            [2, 0, 1]
+        );
+
+        let Some(jit) = JitProgram::compile(&program) else {
+            assert!(
+                !available(),
+                "task JIT refused value-byte comparison on a native target"
+            );
+            return;
+        };
+        let mut task = JitTask::spawn(&jit, FnId(0));
+        assert_eq!(
+            task.run_hosted_with_value_memories(&jit, &mut [], &[], &mut [], memories),
+            TaskStep::Done
+        );
+        assert_eq!(task.result, interp.result);
+        assert_eq!(task.trace, interp.trace);
     }
 
     #[test]

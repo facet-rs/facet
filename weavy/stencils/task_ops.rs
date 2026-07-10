@@ -159,6 +159,80 @@ unsafe fn load_array_word(
     (1, read_i64_from(memory.ptr, 24 + index * 8))
 }
 
+#[inline(always)]
+unsafe fn value_memory(
+    store_memories: *const ValueMemory,
+    store_memory_count: usize,
+    molten_memories: *const ValueMemory,
+    molten_memory_count: usize,
+    handle: i64,
+) -> Option<ValueMemory> {
+    let (memories, memory_count, handle) = if handle < 0 {
+        let handle = (-1i64).checked_sub(handle)?;
+        (molten_memories, molten_memory_count, handle as usize)
+    } else {
+        (store_memories, store_memory_count, handle as usize)
+    };
+    if handle >= memory_count {
+        return None;
+    }
+    let memory = *memories.add(handle);
+    if memory.ptr.is_null() {
+        return None;
+    }
+    Some(memory)
+}
+
+#[inline(always)]
+unsafe fn compare_value_bytes(
+    store_memories: *const ValueMemory,
+    store_memory_count: usize,
+    molten_memories: *const ValueMemory,
+    molten_memory_count: usize,
+    a: i64,
+    b: i64,
+) -> i64 {
+    if a == b {
+        return 1;
+    }
+    let a = value_memory(
+        store_memories,
+        store_memory_count,
+        molten_memories,
+        molten_memory_count,
+        a,
+    )
+    .unwrap_unchecked();
+    let b = value_memory(
+        store_memories,
+        store_memory_count,
+        molten_memories,
+        molten_memory_count,
+        b,
+    )
+    .unwrap_unchecked();
+    let shared = if a.len < b.len { a.len } else { b.len };
+    let mut index = 0usize;
+    while index < shared {
+        let left = a.ptr.add(index).read();
+        let right = b.ptr.add(index).read();
+        if left < right {
+            return 0;
+        }
+        if left > right {
+            return 2;
+        }
+        index += 1;
+    }
+    if a.len < b.len {
+        0
+    } else if a.len > b.len {
+        2
+    } else {
+        1
+    }
+}
+
 /// `frame[dst] = value` — immediates: [dst, value].
 #[no_mangle]
 pub unsafe extern "C" fn weavy_task_const(cx: *mut Ctx) {
@@ -336,6 +410,27 @@ pub unsafe extern "C" fn weavy_task_load_array_word(cx: *mut Ctx) {
     );
     write_i64(c.frame, dst, value);
     write_i64(c.frame, present, ok);
+    cont!(cx);
+}
+
+/// Lexicographic resident value-byte comparison — immediates: [dst, a, b].
+/// Writes the closed three-way ordinal 0=less, 1=equal, 2=greater.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_compare_value_bytes(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let a = *c.prog.add(1);
+    let b = *c.prog.add(2);
+    c.prog = c.prog.add(3);
+    let ordering = compare_value_bytes(
+        c.store_value_memories,
+        c.store_value_memory_count,
+        c.molten_value_memories,
+        c.molten_value_memory_count,
+        read_i64(c.frame, a),
+        read_i64(c.frame, b),
+    );
+    write_i64(c.frame, dst, ordering);
     cont!(cx);
 }
 

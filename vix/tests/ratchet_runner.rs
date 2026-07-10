@@ -635,8 +635,80 @@ fn rung_009_ambient_structural_equality_runs_through_vir_and_weavy() {
     assert_eq!(report.chaos.receipt_count, 0);
 }
 
+// r[related lang.value.structural-order]
+// r[related machine.value.structural-order]
 #[test]
 fn rung_010_spaceship_returns_ambient_ordering_through_vir_and_weavy() {
+    let module = Compiler::new()
+        .compile(RUNG_010)
+        .expect("rung 010 compiles");
+    assert_eq!(VirType::ordering().word_width(), Some(1));
+    let spaceship = module
+        .functions
+        .iter()
+        .find(|function| function.name == "spaceship")
+        .expect("rung 010 contains spaceship");
+    assert_eq!(
+        spaceship
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.op, VirOp::Compare))
+            .count(),
+        3
+    );
+    assert!(
+        spaceship
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.op, VirOp::Compare))
+            .all(|node| node.ty == VirType::ordering())
+    );
+    let mut ordering_variants = spaceship
+        .nodes
+        .iter()
+        .filter_map(|node| match (&node.ty, &node.op) {
+            (ty, VirOp::Variant { variant }) if *ty == VirType::ordering() => Some(*variant),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    ordering_variants.sort_unstable();
+    assert_eq!(ordering_variants, [0, 1, 2]);
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    assert_eq!(partitioned.islands.len(), 3);
+    let mut lowering_cache = LoweringCache::default();
+    let mut saw_integer_order = false;
+    let mut saw_value_bytes_order = false;
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 010 lowers to Weavy");
+        saw_integer_order |= lowered.program.fns.iter().any(|function| {
+            function
+                .code
+                .iter()
+                .any(|op| matches!(op, WeavyOp::LtI64 { .. }))
+                && function
+                    .code
+                    .iter()
+                    .any(|op| matches!(op, WeavyOp::GtI64 { .. }))
+        });
+        saw_value_bytes_order |= lowered.program.fns.iter().any(|function| {
+            function
+                .code
+                .iter()
+                .any(|op| matches!(op, WeavyOp::CompareValueBytes { .. }))
+        });
+        assert!(lowered.program.fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+    }
+    assert!(saw_integer_order);
+    assert!(saw_value_bytes_order);
+
     let report = run_source(RUNG_010).expect("rung 010 compiles and runs");
     assert!(report.passed());
     assert!(report.agrees());

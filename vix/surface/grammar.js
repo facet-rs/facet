@@ -134,7 +134,7 @@ module.exports = grammar({
 
     binary: ($) => {
       const table = [
-        [PREC.compare, choice("==", "!=", "<", "<=", ">", ">=")],
+        [PREC.compare, choice("<=>", "==", "!=", "<", "<=", ">", ">=")],
         [PREC.add, choice("+", "-")],
         [PREC.mul, choice("*", "/")],
       ];

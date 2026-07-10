@@ -14,7 +14,8 @@ use crate::runtime::{
 };
 use crate::support::Span;
 use crate::vir::{
-    EnumType, Function, FunctionId, Island, Node, NodeId, NodeRef, Op, Type, VariantPayload,
+    EnumType, Function, FunctionId, Island, Node, NodeId, NodeRef, ORDERING_EQUAL_VARIANT,
+    ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, Type, VariantPayload,
 };
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -303,12 +304,13 @@ impl FunctionLayout {
         }
 
         let needs_scratch = nodes.iter().any(|node| {
-            matches!(node.op, Op::Eq | Op::Ne)
-                && node
-                    .inputs
-                    .first()
-                    .and_then(|input| regions.get(input))
-                    .is_some_and(|region| region.words().as_usize() > 1)
+            matches!(node.op, Op::Compare)
+                || (matches!(node.op, Op::Eq | Op::Ne)
+                    && node
+                        .inputs
+                        .first()
+                        .and_then(|input| regions.get(input))
+                        .is_some_and(|region| region.words().as_usize() > 1))
         });
         let scratch = if needs_scratch {
             let slot = FrameSlot::for_word(next_word)
@@ -560,20 +562,22 @@ fn lower_node_sequence(
             .copied()
             .ok_or_else(|| lowering_diagnostic(node.span, "VIR node has no trace attribution"))?;
         outputs.code.push(WeavyOp::Trace { id: trace_id });
-        let representation = if matches!(node.op, Op::Match { .. }) {
-            lower_match_node(node, dst, values, sequence, outputs)?
-        } else {
-            let lowered = lower_node(
-                node,
-                dst,
-                values,
-                sequence.function,
-                sequence.lowering,
-                outputs.constants,
-                active_variant,
-            )?;
-            outputs.code.extend(lowered.ops);
-            lowered.representation
+        let representation = match &node.op {
+            Op::Match { .. } => lower_match_node(node, dst, values, sequence, outputs)?,
+            Op::Compare => lower_compare_node(node, dst, values, sequence, outputs)?,
+            _ => {
+                let lowered = lower_node(
+                    node,
+                    dst,
+                    values,
+                    sequence.function,
+                    sequence.lowering,
+                    outputs.constants,
+                    active_variant,
+                )?;
+                outputs.code.extend(lowered.ops);
+                lowered.representation
+            }
         };
         values.insert(
             node.id,
@@ -684,6 +688,225 @@ fn lower_match_node(
     }
     outputs.code.bind(end, node.span)?;
     Ok(result_representation)
+}
+
+#[derive(Clone, Copy)]
+enum CompareLeafKind {
+    SignedWord,
+    ValueBytes,
+}
+
+#[derive(Clone, Copy)]
+struct CompareLeaf {
+    kind: CompareLeafKind,
+    a: FrameSlot,
+    b: FrameSlot,
+}
+
+// r[related machine.value.structural-order]
+fn lower_compare_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_node_type(node, Type::ordering())?;
+    let (a, b) = binary_values(node, values)?;
+    if a.ty != b.ty {
+        return Err(lowering_diagnostic(
+            node.span,
+            "comparison operands have different VIR types",
+        ));
+    }
+    if !a.ty.structural_order_is_defined() {
+        return Err(lowering_diagnostic(
+            node.span,
+            "structural order is not defined for this VIR type",
+        ));
+    }
+    let representation = representation_for_type(&a.ty, node.span)?;
+    require_value(node, &a, &a.ty, representation)?;
+    require_value(node, &b, &a.ty, representation)?;
+    if dst.words() != FrameWords::ONE {
+        return Err(lowering_diagnostic(
+            node.span,
+            "Ordering result does not occupy one frame word",
+        ));
+    }
+
+    let mut leaves = Vec::new();
+    collect_compare_leaves(&a.ty, a.region, b.region, node.span, &mut leaves)?;
+    let dst = dst.start();
+    let end = outputs.code.label();
+    if leaves.is_empty() {
+        outputs.code.push(WeavyOp::ConstI64 {
+            dst: dst.byte_offset(),
+            value: i64::from(ORDERING_EQUAL_VARIANT),
+        });
+    }
+    for (index, leaf) in leaves.iter().enumerate() {
+        let is_last = index + 1 == leaves.len();
+        match leaf.kind {
+            CompareLeafKind::SignedWord => {
+                let not_less = outputs.code.label();
+                outputs.code.push(WeavyOp::LtI64 {
+                    dst: dst.byte_offset(),
+                    a: leaf.a.byte_offset(),
+                    b: leaf.b.byte_offset(),
+                });
+                outputs.code.jump_if_zero(dst, not_less);
+                outputs.code.push(WeavyOp::ConstI64 {
+                    dst: dst.byte_offset(),
+                    value: i64::from(ORDERING_LESS_VARIANT),
+                });
+                outputs.code.jump(end);
+                outputs.code.bind(not_less, node.span)?;
+
+                let equal = outputs.code.label();
+                outputs.code.push(WeavyOp::GtI64 {
+                    dst: dst.byte_offset(),
+                    a: leaf.a.byte_offset(),
+                    b: leaf.b.byte_offset(),
+                });
+                outputs.code.jump_if_zero(dst, equal);
+                outputs.code.push(WeavyOp::ConstI64 {
+                    dst: dst.byte_offset(),
+                    value: i64::from(ORDERING_GREATER_VARIANT),
+                });
+                outputs.code.jump(end);
+                outputs.code.bind(equal, node.span)?;
+                if is_last {
+                    outputs.code.push(WeavyOp::ConstI64 {
+                        dst: dst.byte_offset(),
+                        value: i64::from(ORDERING_EQUAL_VARIANT),
+                    });
+                }
+            }
+            CompareLeafKind::ValueBytes => {
+                outputs.code.push(WeavyOp::CompareValueBytes {
+                    dst: dst.byte_offset(),
+                    a: leaf.a.byte_offset(),
+                    b: leaf.b.byte_offset(),
+                });
+                if !is_last {
+                    let scratch = sequence.function.layout.scratch.ok_or_else(|| {
+                        lowering_diagnostic(node.span, "comparison has no scratch word")
+                    })?;
+                    outputs.code.push(WeavyOp::ConstI64 {
+                        dst: scratch.byte_offset(),
+                        value: i64::from(ORDERING_EQUAL_VARIANT),
+                    });
+                    outputs.code.push(WeavyOp::EqI64 {
+                        dst: scratch.byte_offset(),
+                        a: dst.byte_offset(),
+                        b: scratch.byte_offset(),
+                    });
+                    outputs.code.jump_if_zero(scratch, end);
+                }
+            }
+        }
+    }
+    outputs.code.bind(end, node.span)?;
+    Ok(ValueRepresentation::InlineComposite)
+}
+
+fn collect_compare_leaves(
+    ty: &Type,
+    a: FrameRegion,
+    b: FrameRegion,
+    span: Span,
+    leaves: &mut Vec<CompareLeaf>,
+) -> Result<(), Diagnostics> {
+    if a.words() != b.words() || a.words() != type_words(ty, span)? {
+        return Err(lowering_diagnostic(
+            span,
+            "comparison operands have incompatible frame regions",
+        ));
+    }
+    match ty {
+        Type::Bool | Type::Int => {
+            leaves.push(CompareLeaf {
+                kind: CompareLeafKind::SignedWord,
+                a: a.start(),
+                b: b.start(),
+            });
+        }
+        Type::String => {
+            leaves.push(CompareLeaf {
+                kind: CompareLeafKind::ValueBytes,
+                a: a.start(),
+                b: b.start(),
+            });
+        }
+        Type::Tuple(elements) => {
+            collect_compare_fields(elements.iter(), a, b, span, leaves)?;
+        }
+        Type::Record(record) => {
+            collect_compare_fields(
+                record.fields.iter().map(|field| &field.ty),
+                a,
+                b,
+                span,
+                leaves,
+            )?;
+        }
+        Type::Enum(enumeration)
+            if enumeration
+                .variants
+                .iter()
+                .all(|variant| variant.payload.is_empty()) =>
+        {
+            leaves.push(CompareLeaf {
+                kind: CompareLeafKind::SignedWord,
+                a: a.start(),
+                b: b.start(),
+            });
+        }
+        Type::Enum(_) => {
+            return Err(lowering_diagnostic(
+                span,
+                "payload enum comparison needs variant-directed lowering",
+            ));
+        }
+        Type::Check | Type::StreamCheck => {
+            return Err(lowering_diagnostic(
+                span,
+                "comparison reached a non-orderable VIR type",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn collect_compare_fields<'a>(
+    fields: impl IntoIterator<Item = &'a Type>,
+    a: FrameRegion,
+    b: FrameRegion,
+    span: Span,
+    leaves: &mut Vec<CompareLeaf>,
+) -> Result<(), Diagnostics> {
+    let mut offset = 0usize;
+    for ty in fields {
+        let words = type_words(ty, span)?;
+        let a = a
+            .subregion(offset, words)
+            .ok_or_else(|| lowering_diagnostic(span, "comparison field lies outside operand"))?;
+        let b = b
+            .subregion(offset, words)
+            .ok_or_else(|| lowering_diagnostic(span, "comparison field lies outside operand"))?;
+        collect_compare_leaves(ty, a, b, span, leaves)?;
+        offset = offset
+            .checked_add(words.as_usize())
+            .ok_or_else(|| lowering_diagnostic(span, "comparison field offset overflow"))?;
+    }
+    if offset != a.words().as_usize() {
+        return Err(lowering_diagnostic(
+            span,
+            "comparison fields do not cover the operand",
+        ));
+    }
+    Ok(())
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -827,6 +1050,12 @@ fn lower_node(
             return Err(lowering_diagnostic(
                 node.span,
                 "structured Match reached scalar node lowering",
+            ));
+        }
+        Op::Compare => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "structured Compare reached scalar node lowering",
             ));
         }
         Op::Eq | Op::Ne => {

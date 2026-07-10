@@ -190,6 +190,14 @@ pub enum Op {
         index: u32,
         elem_schema_ref: i64,
     },
+    /// Lexicographically compare two resident value-memory byte runs.
+    ///
+    /// `frame[a]` and `frame[b]` are value handles. The result is the closed
+    /// three-way ordinal `0 = less`, `1 = equal`, `2 = greater`. Equal handles
+    /// short-circuit without reading either body. For distinct handles, task
+    /// admission must have made both bodies resident in the value-memory table;
+    /// violating that contract is a driver bug.
+    CompareValueBytes { dst: u32, a: u32, b: u32 },
     /// `frame[dst] = f64::from_bits(bits)` — the immediate carries the
     /// BIT PATTERN (keeps `Op: Eq`; the machine is type-blind about a
     /// 64-bit store anyway — the op exists so lowerings and readers
@@ -534,6 +542,13 @@ impl Task {
                     write_i64_at(&mut self.arena, base + present as usize, i64::from(ok));
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
+                Op::CompareValueBytes { dst, a, b } => {
+                    let a = read_i64_at(&self.arena, base + a as usize);
+                    let b = read_i64_at(&self.arena, base + b as usize);
+                    let ordering = compare_value_bytes(value_memories, a, b);
+                    write_i64_at(&mut self.arena, base + dst as usize, ordering);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
                 Op::Trace { id } => {
                     if self.mode == TraceMode::Innards {
                         self.trace.push(TaskEvent::Mark(id));
@@ -788,6 +803,35 @@ fn load_array_word(
         return (false, 0);
     }
     (true, read_i64_at(bytes, 24 + index * 8))
+}
+
+fn compare_value_bytes(value_memories: ValueMemories<'_>, a: i64, b: i64) -> i64 {
+    if a == b {
+        return 1;
+    }
+    let a = value_bytes(value_memories, a)
+        .expect("CompareValueBytes left operand must be a resident value handle");
+    let b = value_bytes(value_memories, b)
+        .expect("CompareValueBytes right operand must be a resident value handle");
+    match a.cmp(b) {
+        core::cmp::Ordering::Less => 0,
+        core::cmp::Ordering::Equal => 1,
+        core::cmp::Ordering::Greater => 2,
+    }
+}
+
+fn value_bytes(value_memories: ValueMemories<'_>, handle: i64) -> Option<&[u8]> {
+    let (handle, memories) = if handle < 0 {
+        let handle = (-1i64).checked_sub(handle)?;
+        (usize::try_from(handle).ok()?, value_memories.molten)
+    } else {
+        (usize::try_from(handle).ok()?, value_memories.store)
+    };
+    let memory = memories.get(handle).copied()?;
+    if memory.ptr.is_null() {
+        return None;
+    }
+    Some(unsafe { core::slice::from_raw_parts(memory.ptr, memory.len) })
 }
 
 #[cfg(test)]
