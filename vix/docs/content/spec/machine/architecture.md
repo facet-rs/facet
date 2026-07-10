@@ -41,9 +41,13 @@ explicit typed record. Lowering cannot consult a global host-function number.
 > interiors perform no memo lookup, identity publication, receipt recording, or
 > scheduler request. Edges are the only semantic demand boundaries.
 
-Mandatory cuts occur where demand is observably partial: effects, an unproven
-branch or projection, codata, placement, or a value deliberately exposed for
-independent memoization. Cost cuts MAY add or remove edges for sharing,
+Mandatory semantic cuts occur only when observably partial demand crosses an
+island boundary: effects, codata, placement, or a branch/projection whose
+selected result is independently demandable or cannot be resolved by local pure
+control/dataflow and therefore requires a demand, memo, suspension, receipt, or
+publication boundary. Ordinary pure branches and projections, including locally
+checked fallible control, remain inside the island when their control and failure
+handling resolve locally. Cost cuts MAY add or remove edges for sharing,
 parallelism, code size, or recomputation economics. Because every graph node has
 semantic recipe and value identity independent of the partition, repartitioning
 may change reuse rate but never correctness or identity.

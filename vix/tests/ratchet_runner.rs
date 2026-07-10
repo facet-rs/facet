@@ -4,7 +4,7 @@ use vix::lowering::{LoweringCache, source_map_for};
 use vix::ratchet::run_source;
 use vix::runtime::{DemandState, EventKind, MemoVerdict, TaskState};
 use vix::surface::{SurfaceParser, ast};
-use vix::vir::{Op as VirOp, Type as VirType, VariantPayload};
+use vix::vir::{EffectKind, Op as VirOp, Type as VirType, VariantPayload};
 use weavy::task::Op as WeavyOp;
 
 const RUNG_001: &str = include_str!("ratchet/001-harness.vix");
@@ -1738,42 +1738,95 @@ fn computed_array_and_dynamic_index() -> Stream<Check> {
         .iter()
         .find(|function| function.name == "computed_array_and_dynamic_index")
         .expect("test function exists");
+    let double = module
+        .functions
+        .iter()
+        .find(|function| function.name == "double")
+        .expect("double function exists");
     let array = function
         .nodes
         .iter()
         .find(|node| matches!(node.op, VirOp::Array))
         .expect("array literal becomes an Array VIR node");
     assert_eq!(array.ty, VirType::array(VirType::Int));
+    assert_eq!(array.ty.word_width(), Some(1));
     assert_eq!(array.inputs.len(), 3);
-    assert!(
-        array
-            .inputs
-            .iter()
-            .any(|input| matches!(function.nodes[input.0 as usize].op, VirOp::Call(_)))
-    );
-    assert!(
-        array
-            .inputs
-            .iter()
-            .any(|input| matches!(function.nodes[input.0 as usize].op, VirOp::Add))
-    );
+    assert_eq!(array.effect.kind, EffectKind::Pure);
+    assert!(!array.effect.fallible);
+    assert!(!array.effect.placed);
+    let [first_id, middle_id, third_id] = array.inputs.as_slice() else {
+        panic!("array literal has exactly three authored inputs");
+    };
+    let first = &function.nodes[first_id.0 as usize];
+    let middle = &function.nodes[middle_id.0 as usize];
+    let third = &function.nodes[third_id.0 as usize];
+    assert!(matches!(first.op, VirOp::Call(callee) if callee == double.id));
+    assert_eq!(first.inputs.len(), 1);
+    assert!(matches!(
+        function.nodes[first.inputs[0].0 as usize].op,
+        VirOp::Int(5)
+    ));
+    assert!(matches!(middle.op, VirOp::Add));
+    assert_eq!(middle.inputs.len(), 2);
+    assert!(matches!(
+        function.nodes[middle.inputs[0].0 as usize].op,
+        VirOp::Int(5)
+    ));
+    assert!(matches!(
+        function.nodes[middle.inputs[1].0 as usize].op,
+        VirOp::Int(1)
+    ));
+    assert!(matches!(third.op, VirOp::Call(callee) if callee == double.id));
+    assert_eq!(third.inputs.len(), 1);
+    assert!(matches!(
+        function.nodes[third.inputs[0].0 as usize].op,
+        VirOp::Int(4)
+    ));
 
     let index = function
         .nodes
         .iter()
         .find(|node| matches!(node.op, VirOp::ArrayIndex))
         .expect("dynamic indexing becomes an ArrayIndex VIR node");
+    let dynamic_sub = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::Sub))
+        .expect("dynamic index expression becomes a Sub VIR node");
     assert_eq!(index.ty, VirType::Int);
+    assert_eq!(index.inputs, [array.id, dynamic_sub.id]);
+    assert_eq!(index.effect.kind, EffectKind::Pure);
     assert!(index.effect.fallible);
+    assert!(!index.effect.placed);
+    assert_eq!(dynamic_sub.inputs.len(), 2);
     assert!(matches!(
-        function.nodes[index.inputs[1].0 as usize].op,
-        VirOp::Sub
+        function.nodes[dynamic_sub.inputs[0].0 as usize].op,
+        VirOp::Int(5)
     ));
-    assert!(
-        function
-            .nodes
-            .iter()
-            .any(|node| matches!(node.op, VirOp::ArrayLen) && node.ty == VirType::Int)
+    assert!(matches!(
+        function.nodes[dynamic_sub.inputs[1].0 as usize].op,
+        VirOp::Int(4)
+    ));
+    assert_eq!(
+        &SOURCE[index.span.start as usize..index.span.end as usize],
+        "xs[index]"
+    );
+
+    let array_lengths = function
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.op, VirOp::ArrayLen))
+        .collect::<Vec<_>>();
+    assert_eq!(array_lengths.len(), 1);
+    let array_length = array_lengths[0];
+    assert_eq!(array_length.ty, VirType::Int);
+    assert_eq!(array_length.inputs, [array.id]);
+    assert_eq!(array_length.effect.kind, EffectKind::Pure);
+    assert!(!array_length.effect.fallible);
+    assert!(!array_length.effect.placed);
+    assert_eq!(
+        &SOURCE[array_length.span.start as usize..array_length.span.end as usize],
+        "xs.len()"
     );
 
     let diagnostics = Compiler::new()
