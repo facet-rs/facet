@@ -2,11 +2,14 @@ use vix::compiler::Compiler;
 use vix::lowering::{LoweringCache, source_map_for};
 use vix::ratchet::run_source;
 use vix::runtime::{DemandState, EventKind, MemoVerdict, TaskState};
+use vix::vir::Op as VirOp;
+use weavy::task::Op as WeavyOp;
 
 const RUNG_001: &str = include_str!("ratchet/001-harness.vix");
 const RUNG_002: &str = include_str!("ratchet/002-arithmetic.vix");
 const RUNG_003: &str = include_str!("ratchet/003-bindings.vix");
 const RUNG_004: &str = include_str!("ratchet/004-functions.vix");
+const RUNG_005: &str = include_str!("ratchet/005-tuples.vix");
 
 /// The first rung is an architectural certificate, not just a boolean test.
 ///
@@ -206,6 +209,59 @@ fn rung_004_functions_and_application_run_through_vir_and_weavy() {
         event.kind,
         EventKind::WeavyFrameEntered { function, .. } if function.0 == 1
     )));
+}
+
+#[test]
+fn rung_005_tuples_and_positional_projection_run_through_vir_and_weavy() {
+    let module = Compiler::new()
+        .compile(RUNG_005)
+        .expect("rung 005 compiles");
+    assert!(module.functions.iter().any(|function| {
+        function
+            .nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::Tuple))
+    }));
+    assert!(module.functions.iter().any(|function| {
+        function
+            .nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::Project { .. }))
+    }));
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    assert_eq!(partitioned.islands.len(), 3);
+    let mut lowering_cache = LoweringCache::default();
+    let lowered = lowering_cache
+        .get_or_lower(&partitioned.islands[2])
+        .expect("rung 005 lowers to Weavy");
+    assert_eq!(lowered.program.fns.len(), 2);
+    assert!(lowered.program.fns[0].code.iter().any(|op| matches!(
+        op,
+        WeavyOp::Call { args, .. } if args.iter().any(|argument| argument.size == 16)
+    )));
+    assert!(
+        lowered.program.fns[1]
+            .code
+            .iter()
+            .any(|op| matches!(op, WeavyOp::Ret { size: 16, .. }))
+    );
+    assert!(lowered.program.fns.iter().all(|function| {
+        function
+            .code
+            .iter()
+            .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+    }));
+
+    let report = run_source(RUNG_005).expect("rung 005 compiles and runs");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    assert_eq!(report.plain.counters.pure_host_calls, 0);
+    assert_eq!(report.chaos.counters.pure_host_calls, 0);
+    assert_eq!(report.plain.receipt_count, 0);
+    assert_eq!(report.chaos.receipt_count, 0);
 }
 
 fn assert_contiguous_sequences(events: &[vix::runtime::Event]) {

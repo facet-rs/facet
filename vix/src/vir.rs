@@ -23,25 +23,56 @@ pub struct NodeRef {
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct IslandId(pub u32);
 
-#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
-#[repr(u8)]
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(C)]
 pub enum Type {
     Bool,
     Int,
     Check,
     StreamCheck,
     String,
+    Tuple(Vec<Type>),
 }
 
 impl Type {
     #[must_use]
-    pub const fn name(self) -> &'static str {
+    pub fn name(&self) -> String {
         match self {
-            Self::Bool => "Bool",
-            Self::Int => "Int",
-            Self::Check => "Check",
-            Self::StreamCheck => "Stream<Check>",
-            Self::String => "String",
+            Self::Bool => "Bool".to_owned(),
+            Self::Int => "Int".to_owned(),
+            Self::Check => "Check".to_owned(),
+            Self::StreamCheck => "Stream<Check>".to_owned(),
+            Self::String => "String".to_owned(),
+            Self::Tuple(elements) => {
+                let elements = elements
+                    .iter()
+                    .map(Self::name)
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                format!("({elements})")
+            }
+        }
+    }
+
+    /// Number of inline Weavy frame words occupied by a realized value.
+    /// Codata streams do not have an island-interior value representation.
+    #[must_use]
+    pub fn word_width(&self) -> Option<usize> {
+        match self {
+            Self::Bool | Self::Int | Self::Check | Self::String => Some(1),
+            Self::StreamCheck => None,
+            Self::Tuple(elements) => elements.iter().try_fold(0usize, |width, element| {
+                width.checked_add(element.word_width()?)
+            }),
+        }
+    }
+
+    #[must_use]
+    pub fn equality_is_structural(&self) -> bool {
+        match self {
+            Self::Bool | Self::Int | Self::String => true,
+            Self::Tuple(elements) => elements.iter().all(Self::equality_is_structural),
+            Self::Check | Self::StreamCheck => false,
         }
     }
 }
@@ -89,6 +120,8 @@ pub enum Op {
     String(String),
     Parameter(ParameterId),
     Call(FunctionId),
+    Tuple,
+    Project { index: u32 },
 }
 
 /// One SSA-like operation. Dependencies are explicit node ids; no Rust
@@ -340,7 +373,7 @@ fn canonical_function(
     frame(&mut bytes, b"function");
     frame(&mut bytes, &local_id.to_le_bytes());
     frame(&mut bytes, function.name.as_bytes());
-    frame(&mut bytes, type_name(function.return_type));
+    frame(&mut bytes, &canonical_type(&function.return_type));
     frame(
         &mut bytes,
         &(function.parameters.len() as u64).to_le_bytes(),
@@ -350,7 +383,7 @@ fn canonical_function(
         frame(&mut encoded, &parameter.id.0.to_le_bytes());
         frame(&mut encoded, &parameter.node.0.to_le_bytes());
         frame(&mut encoded, parameter.name.as_bytes());
-        frame(&mut encoded, type_name(parameter.ty));
+        frame(&mut encoded, &canonical_type(&parameter.ty));
         frame(
             &mut encoded,
             match parameter.kind {
@@ -373,7 +406,7 @@ fn canonical_function(
 fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<u8> {
     let mut bytes = Vec::new();
     frame(&mut bytes, &node.id.0.to_le_bytes());
-    frame(&mut bytes, type_name(node.ty));
+    frame(&mut bytes, &canonical_type(&node.ty));
     frame(
         &mut bytes,
         &[
@@ -416,6 +449,11 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
                     .to_le_bytes(),
             );
         }
+        Op::Tuple => op.push(12),
+        Op::Project { index } => {
+            op.push(13);
+            op.extend_from_slice(&index.to_le_bytes());
+        }
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());
@@ -425,13 +463,21 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
     bytes
 }
 
-const fn type_name(ty: Type) -> &'static [u8] {
+fn canonical_type(ty: &Type) -> Vec<u8> {
     match ty {
-        Type::Bool => b"bool",
-        Type::Int => b"int",
-        Type::Check => b"check",
-        Type::StreamCheck => b"stream-check",
-        Type::String => b"string",
+        Type::Bool => b"bool".to_vec(),
+        Type::Int => b"int".to_vec(),
+        Type::Check => b"check".to_vec(),
+        Type::StreamCheck => b"stream-check".to_vec(),
+        Type::String => b"string".to_vec(),
+        Type::Tuple(elements) => {
+            let mut bytes = b"tuple".to_vec();
+            frame(&mut bytes, &(elements.len() as u64).to_le_bytes());
+            for element in elements {
+                frame(&mut bytes, &canonical_type(element));
+            }
+            bytes
+        }
     }
 }
 

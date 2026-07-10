@@ -265,10 +265,12 @@ fn lower_declared_type(ty: &ast::Type) -> Result<Type, Diagnostics> {
             generic.span,
             "generic type",
         ))),
-        ast::Type::Tuple(tuple) => Err(Diagnostics::one(Diagnostic::unsupported(
-            tuple.span,
-            "tuple type",
-        ))),
+        ast::Type::Tuple(tuple) => tuple
+            .elems
+            .iter()
+            .map(lower_declared_type)
+            .collect::<Result<Vec<_>, _>>()
+            .map(Type::Tuple),
     }
 }
 
@@ -286,7 +288,7 @@ fn lower_function(
         let node = push_node(
             &mut nodes,
             parameter.span,
-            parameter.ty,
+            parameter.ty.clone(),
             EffectFacts::PURE,
             Vec::new(),
             Op::Parameter(parameter.id),
@@ -295,14 +297,14 @@ fn lower_function(
             parameter.name.clone(),
             LoweredValue {
                 node,
-                ty: parameter.ty,
+                ty: parameter.ty.clone(),
             },
         );
         parameters.push(Parameter {
             id: parameter.id,
             node,
             name: parameter.name.clone(),
-            ty: parameter.ty,
+            ty: parameter.ty.clone(),
             kind: parameter.kind,
         });
     }
@@ -341,7 +343,7 @@ fn lower_function(
                 let value = lower_value(&mut nodes, &bindings, signatures, &statement.value)?;
                 if let Some(annotation) = &statement.ty {
                     let expected = lower_declared_type(annotation)?;
-                    require_type(value, expected, type_span(annotation))?;
+                    require_type(&value, &expected, type_span(annotation))?;
                 }
                 bindings.insert(statement.name.value.clone(), value);
             }
@@ -358,7 +360,7 @@ fn lower_function(
         (None, true) => None,
         (Some(tail), false) => {
             let value = lower_value(&mut nodes, &bindings, signatures, tail)?;
-            require_type(value, signature.return_type, expr_span(tail))?;
+            require_type(&value, &signature.return_type, expr_span(tail))?;
             Some(value.node)
         }
         (None, false) => {
@@ -374,7 +376,7 @@ fn lower_function(
         name: function.name.value.clone(),
         span: function.span,
         parameters,
-        return_type: signature.return_type,
+        return_type: signature.return_type.clone(),
         nodes,
         output,
         yielded_checks,
@@ -408,14 +410,14 @@ fn lower_check(
         "expect" => {
             check_arity(call, 1)?;
             let condition = lower_value(nodes, bindings, signatures, &call.args.args[0])?;
-            require_type(condition, Type::Bool, expr_span(&call.args.args[0]))?;
+            require_type(&condition, &Type::Bool, expr_span(&call.args.args[0]))?;
             condition.node
         }
         "expect_eq" | "expect_ne" => {
             check_arity(call, 2)?;
             let left = lower_value(nodes, bindings, signatures, &call.args.args[0])?;
             let right = lower_value(nodes, bindings, signatures, &call.args.args[1])?;
-            require_same_type(left, right, call.span)?;
+            require_same_type(&left, &right, call.span)?;
             push_node(
                 nodes,
                 call.span,
@@ -450,7 +452,7 @@ fn lower_check(
     ))
 }
 
-#[derive(Clone, Copy)]
+#[derive(Clone)]
 struct LoweredValue {
     node: NodeId,
     ty: Type,
@@ -510,6 +512,68 @@ fn lower_value(
         }
         ast::Expr::Call(call) => lower_call(nodes, bindings, signatures, call),
         ast::Expr::Binary(binary) => lower_binary(nodes, bindings, signatures, binary),
+        ast::Expr::Tuple(tuple) => {
+            let values = tuple
+                .elems
+                .iter()
+                .map(|element| lower_value(nodes, bindings, signatures, element))
+                .collect::<Result<Vec<_>, _>>()?;
+            let ty = Type::Tuple(values.iter().map(|value| value.ty.clone()).collect());
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    tuple.span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    values.iter().map(|value| value.node).collect(),
+                    Op::Tuple,
+                ),
+                ty,
+            })
+        }
+        ast::Expr::Field(field) => {
+            let receiver = lower_value(nodes, bindings, signatures, &field.receiver)?;
+            let ast::Member::Index(index) = &field.name else {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    field.span,
+                    "named field projection",
+                )));
+            };
+            let index_value = index.value.parse::<usize>().map_err(|_| {
+                type_mismatch(
+                    index.span,
+                    "tuple index",
+                    format!("index `{}`", index.value),
+                )
+            })?;
+            let Type::Tuple(elements) = &receiver.ty else {
+                return Err(type_mismatch(
+                    expr_span(&field.receiver),
+                    "tuple",
+                    receiver.ty.name(),
+                ));
+            };
+            let ty = elements.get(index_value).cloned().ok_or_else(|| {
+                type_mismatch(
+                    index.span,
+                    format!("tuple index below {}", elements.len()),
+                    index.value.clone(),
+                )
+            })?;
+            let index_value = u32::try_from(index_value)
+                .map_err(|_| type_mismatch(index.span, "tuple index", index.value.clone()))?;
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    field.span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    vec![receiver.node],
+                    Op::Project { index: index_value },
+                ),
+                ty,
+            })
+        }
         ast::Expr::Paren(paren) => lower_value(nodes, bindings, signatures, &paren.inner),
         _ => Err(Diagnostics::one(Diagnostic::unsupported(
             expr_span(expression),
@@ -557,7 +621,7 @@ fn lower_call(
     let mut inputs = Vec::with_capacity(signature.parameters.len());
     for (parameter, argument) in positional.into_iter().zip(&call.args.args) {
         let value = lower_value(nodes, bindings, signatures, argument)?;
-        require_type(value, parameter.ty, expr_span(argument))?;
+        require_type(&value, &parameter.ty, expr_span(argument))?;
         inputs.push(value.node);
     }
 
@@ -597,7 +661,7 @@ fn lower_call(
         } else {
             lookup_binding(bindings, &field.name.value, field.name.span)?
         };
-        require_type(value, parameter.ty, field.span)?;
+        require_type(&value, &parameter.ty, field.span)?;
         inputs.push(value.node);
     }
 
@@ -614,12 +678,12 @@ fn lower_call(
         node: push_node(
             nodes,
             call.span,
-            signature.return_type,
+            signature.return_type.clone(),
             EffectFacts::PURE,
             inputs,
             Op::Call(signature.id),
         ),
-        ty: signature.return_type,
+        ty: signature.return_type.clone(),
     })
 }
 
@@ -628,7 +692,7 @@ fn lookup_binding(
     name: &str,
     span: Span,
 ) -> Result<LoweredValue, Diagnostics> {
-    bindings.get(name).copied().ok_or_else(|| {
+    bindings.get(name).cloned().ok_or_else(|| {
         Diagnostics::one(Diagnostic {
             code: DiagnosticCode::UnknownName,
             primary: span,
@@ -650,26 +714,26 @@ fn lower_binary(
     let right = lower_value(nodes, bindings, signatures, &binary.right)?;
     let (ty, op) = match binary.op.value.as_str() {
         "+" => {
-            require_type(left, Type::Int, expr_span(&binary.left))?;
-            require_type(right, Type::Int, expr_span(&binary.right))?;
+            require_type(&left, &Type::Int, expr_span(&binary.left))?;
+            require_type(&right, &Type::Int, expr_span(&binary.right))?;
             (Type::Int, Op::Add)
         }
         "-" => {
-            require_type(left, Type::Int, expr_span(&binary.left))?;
-            require_type(right, Type::Int, expr_span(&binary.right))?;
+            require_type(&left, &Type::Int, expr_span(&binary.left))?;
+            require_type(&right, &Type::Int, expr_span(&binary.right))?;
             (Type::Int, Op::Sub)
         }
         "*" => {
-            require_type(left, Type::Int, expr_span(&binary.left))?;
-            require_type(right, Type::Int, expr_span(&binary.right))?;
+            require_type(&left, &Type::Int, expr_span(&binary.left))?;
+            require_type(&right, &Type::Int, expr_span(&binary.right))?;
             (Type::Int, Op::Mul)
         }
         "==" => {
-            require_same_type(left, right, binary.span)?;
+            require_same_type(&left, &right, binary.span)?;
             (Type::Bool, Op::Eq)
         }
         "!=" => {
-            require_same_type(left, right, binary.span)?;
+            require_same_type(&left, &right, binary.span)?;
             (Type::Bool, Op::Ne)
         }
         _ => {
@@ -683,7 +747,7 @@ fn lower_binary(
         node: push_node(
             nodes,
             binary.span,
-            ty,
+            ty.clone(),
             EffectFacts::PURE,
             vec![left.node, right.node],
             op,
@@ -712,16 +776,16 @@ fn invalid_arity(span: Span, expected: usize, found: usize) -> Diagnostics {
     })
 }
 
-fn require_type(value: LoweredValue, expected: Type, span: Span) -> Result<(), Diagnostics> {
-    if value.ty != expected {
+fn require_type(value: &LoweredValue, expected: &Type, span: Span) -> Result<(), Diagnostics> {
+    if &value.ty != expected {
         return Err(type_mismatch(span, expected.name(), value.ty.name()));
     }
     Ok(())
 }
 
 fn require_same_type(
-    left: LoweredValue,
-    right: LoweredValue,
+    left: &LoweredValue,
+    right: &LoweredValue,
     span: Span,
 ) -> Result<(), Diagnostics> {
     if left.ty != right.ty {
@@ -767,6 +831,7 @@ fn expr_span(expression: &ast::Expr) -> Span {
         ast::Expr::Binary(value) => value.span,
         ast::Expr::Unary(value) => value.span,
         ast::Expr::Call(value) => value.span,
+        ast::Expr::Field(value) => value.span,
         ast::Expr::Tuple(value) => value.span,
         ast::Expr::Paren(value) => value.span,
         ast::Expr::Identifier(value) => value.span,

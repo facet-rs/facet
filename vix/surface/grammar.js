@@ -92,6 +92,7 @@ module.exports = grammar({
         $.binary,
         $.unary,
         $.call,
+        $.field_access,
         $.tuple_expr,
         $.paren,
         $.identifier,
@@ -125,6 +126,11 @@ module.exports = grammar({
           optional(field("named_args", $.where_args)),
         ),
       ),
+    field_access: ($) =>
+      prec(
+        PREC.postfix,
+        seq(field("receiver", $._expr), ".", field("name", choice($.identifier, $.tuple_index))),
+      ),
     arg_list: ($) => seq("(", sepBy(",", field("arg", $._expr)), ")"),
     where_args: ($) => seq("where", "{", sepBy(",", field("field", $.named_value)), "}"),
     named_value: ($) =>
@@ -139,6 +145,7 @@ module.exports = grammar({
     identifier: () => /[A-Za-z_][A-Za-z0-9_]*/,
     string: () => /"([^"\\]|\\.)*"/,
     number: () => /[0-9]+/,
+    tuple_index: () => /[0-9]+/,
     boolean: () => choice("true", "false"),
     line_comment: () => token(seq("//", /[^\n]*/)),
   },

@@ -399,7 +399,7 @@ module.exports = grammar({
     tuple_index: () => /[0-9]+/,
     boolean: () => choice("true", "false"),
 
-    line_comment: () => token(seq("//", /[^/\n][^\n]*|/)),
-    doc_comment: () => token(seq("///", /[^\n]*/)),
+    line_comment: () => token(prec(1, seq("//", /[^/\n][^\n]*|/))),
+    doc_comment: () => token(prec(2, seq("///", /[^\n]*/))),
   },
 });
