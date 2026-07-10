@@ -66,6 +66,7 @@ module.exports = grammar({
         optional(field("vis", "pub")),
         "enum",
         field("name", $.identifier),
+        optional(field("generics", $.generic_params)),
         field("variants", $.enum_variant_list),
       ),
     enum_variant_list: ($) => seq("{", sepBy(",", field("variant", $.enum_variant)), "}"),
@@ -260,6 +261,7 @@ module.exports = grammar({
         $.record_pattern,
         $.variant_pattern,
         $.binding_pattern,
+        $.string_pattern,
         $.number_pattern,
         $.wildcard_pattern,
         $.tuple_pattern,
@@ -267,6 +269,7 @@ module.exports = grammar({
     some_pattern: ($) => seq("Some", "(", field("payload", $._pattern), ")"),
     none_pattern: () => "None",
     binding_pattern: ($) => field("binding", $.identifier),
+    string_pattern: ($) => field("value", $.string),
     number_pattern: ($) => field("value", $.number),
     wildcard_pattern: () => "_",
     variant_pattern: ($) =>

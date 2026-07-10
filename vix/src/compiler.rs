@@ -126,11 +126,18 @@ enum TypeDeclaration<'a> {
     Enum(&'a ast::EnumItem),
 }
 
-impl TypeDeclaration<'_> {
+impl<'a> TypeDeclaration<'a> {
     fn span(self) -> Span {
         match self {
             Self::Record(record) => record.span,
             Self::Enum(enumeration) => enumeration.span,
+        }
+    }
+
+    fn generic_params(self) -> Option<&'a ast::GenericParams> {
+        match self {
+            Self::Record(_) => None,
+            Self::Enum(enumeration) => enumeration.generics.as_ref(),
         }
     }
 }
@@ -182,12 +189,151 @@ impl<'a> TypeResolver<'a> {
         })
     }
 
-    fn resolve_all(mut self) -> Result<BTreeMap<String, Type>, Diagnostics> {
+    fn resolve_all(
+        mut self,
+        source: &'a ast::SourceFile,
+    ) -> Result<BTreeMap<String, Type>, Diagnostics> {
         let names = self.declarations.keys().cloned().collect::<Vec<_>>();
         for name in names {
-            self.resolve_nominal(&name)?;
+            if self
+                .declarations
+                .get(&name)
+                .is_some_and(|declaration| declaration.generic_params().is_none())
+            {
+                self.resolve_nominal(&name)?;
+            }
+        }
+        for item in &source.items {
+            let ast::Item::Fn(function) = item else {
+                continue;
+            };
+            if function.generics.is_some() {
+                continue;
+            }
+            self.resolve_function_types(function)?;
         }
         Ok(self.resolved)
+    }
+
+    fn resolve_function_types(&mut self, function: &ast::FnItem) -> Result<(), Diagnostics> {
+        for parameter in &function.params.params {
+            self.resolve_type(&parameter.ty)?;
+        }
+        if let Some(where_params) = &function.where_params
+            && let Some(inline) = &where_params.inline
+        {
+            for parameter in &inline.params {
+                self.resolve_type(&parameter.ty)?;
+                if let Some(default) = &parameter.default {
+                    self.resolve_expr_types(default)?;
+                }
+            }
+        }
+        if let Some(return_type) = &function.return_type {
+            self.resolve_type(return_type)?;
+        }
+        self.resolve_block_types(&function.body)
+    }
+
+    fn resolve_block_types(&mut self, block: &ast::Block) -> Result<(), Diagnostics> {
+        for statement in &block.stmts {
+            match statement {
+                ast::Stmt::Let(statement) => {
+                    if let Some(ty) = &statement.ty {
+                        self.resolve_type(ty)?;
+                    }
+                    self.resolve_expr_types(&statement.value)?;
+                }
+                ast::Stmt::Yield(statement) => self.resolve_expr_types(&statement.value)?,
+                ast::Stmt::Expression(statement) => {
+                    self.resolve_expr_types(&statement.value)?;
+                }
+            }
+        }
+        if let Some(tail) = &block.tail {
+            self.resolve_expr_types(tail)?;
+        }
+        Ok(())
+    }
+
+    fn resolve_expr_types(&mut self, expression: &ast::Expr) -> Result<(), Diagnostics> {
+        match expression {
+            ast::Expr::Closure(closure) => {
+                if let Some(ty) = &closure.ty {
+                    self.resolve_type(ty)?;
+                }
+                match &closure.body {
+                    ast::ClosureBody::Block(block) => self.resolve_block_types(block)?,
+                    ast::ClosureBody::Expr(expression) => self.resolve_expr_types(expression)?,
+                }
+            }
+            ast::Expr::If(expression) => self.resolve_if_types(expression)?,
+            ast::Expr::Match(expression) => {
+                self.resolve_expr_types(&expression.scrutinee)?;
+                for arm in &expression.arms.arms {
+                    if let Some(guard) = &arm.guard {
+                        self.resolve_expr_types(guard)?;
+                    }
+                    self.resolve_expr_types(&arm.body)?;
+                }
+            }
+            ast::Expr::Binary(expression) => {
+                self.resolve_expr_types(&expression.left)?;
+                self.resolve_expr_types(&expression.right)?;
+            }
+            ast::Expr::Unary(expression) => self.resolve_expr_types(&expression.value)?,
+            ast::Expr::Call(expression) => {
+                for argument in &expression.args.args {
+                    self.resolve_expr_types(argument)?;
+                }
+                if let Some(named) = &expression.named_args {
+                    self.resolve_named_value_types(&named.fields)?;
+                }
+            }
+            ast::Expr::Field(expression) => self.resolve_expr_types(&expression.receiver)?,
+            ast::Expr::Variant(expression) => {
+                if let Some(payload) = &expression.tuple_payload {
+                    for argument in &payload.args {
+                        self.resolve_expr_types(argument)?;
+                    }
+                }
+            }
+            ast::Expr::Record(expression) => {
+                if let Some(spread) = &expression.fields.spread {
+                    self.resolve_expr_types(&spread.base)?;
+                }
+                self.resolve_named_value_types(&expression.fields.fields)?;
+            }
+            ast::Expr::Tuple(expression) => {
+                for element in &expression.elems {
+                    self.resolve_expr_types(element)?;
+                }
+            }
+            ast::Expr::Paren(expression) => self.resolve_expr_types(&expression.inner)?,
+            ast::Expr::Identifier(_)
+            | ast::Expr::Str(_)
+            | ast::Expr::Number(_)
+            | ast::Expr::Bool(_) => {}
+        }
+        Ok(())
+    }
+
+    fn resolve_if_types(&mut self, expression: &ast::IfExpr) -> Result<(), Diagnostics> {
+        self.resolve_expr_types(&expression.condition)?;
+        self.resolve_block_types(&expression.consequent)?;
+        match &expression.alternative {
+            ast::IfBranch::Block(block) => self.resolve_block_types(block),
+            ast::IfBranch::If(expression) => self.resolve_if_types(expression),
+        }
+    }
+
+    fn resolve_named_value_types(&mut self, fields: &[ast::NamedValue]) -> Result<(), Diagnostics> {
+        for field in fields {
+            if let Some(value) = &field.value {
+                self.resolve_expr_types(value)?;
+            }
+        }
+        Ok(())
     }
 
     fn resolve_nominal(&mut self, name: &str) -> Result<Type, Diagnostics> {
@@ -198,6 +344,12 @@ impl<'a> TypeResolver<'a> {
             .declarations
             .get(name)
             .ok_or_else(|| unknown_name(Span { start: 0, end: 0 }, name))?;
+        if let Some(generics) = declaration.generic_params() {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                generics.span,
+                format!("generic type `{name}` requires arguments"),
+            )));
+        }
         if !self.resolving.insert(name.to_owned()) {
             return Err(Diagnostics::one(Diagnostic::unsupported(
                 declaration.span(),
@@ -254,10 +406,116 @@ impl<'a> TypeResolver<'a> {
         Ok(ty)
     }
 
+    // r[impl lang.types.generic-enum-monomorphized]
+    fn resolve_generic_nominal(
+        &mut self,
+        base: &str,
+        arguments: Vec<Type>,
+        span: Span,
+    ) -> Result<Type, Diagnostics> {
+        let declaration = *self
+            .declarations
+            .get(base)
+            .ok_or_else(|| unknown_name(span, base))?;
+        let generics = declaration
+            .generic_params()
+            .ok_or_else(|| invalid_arity(span, 0, arguments.len()))?;
+        if generics.params.len() != arguments.len() {
+            return Err(invalid_arity(
+                generics.span,
+                generics.params.len(),
+                arguments.len(),
+            ));
+        }
+        let name = applied_type_name(base, &arguments);
+        if let Some(ty) = self.resolved.get(&name) {
+            return Ok(ty.clone());
+        }
+        if !self.resolving.insert(name.clone()) {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                span,
+                format!("recursive inline nominal type `{name}`"),
+            )));
+        }
+
+        let mut substitutions = BTreeMap::new();
+        for (parameter, argument) in generics.params.iter().zip(arguments) {
+            if substitutions
+                .insert(parameter.value.clone(), argument)
+                .is_some()
+            {
+                return Err(Diagnostics::one(Diagnostic {
+                    code: DiagnosticCode::DuplicateBinding,
+                    primary: parameter.span,
+                    labels: Vec::new(),
+                    payload: DiagnosticPayload::Name {
+                        name: parameter.value.clone(),
+                    },
+                }));
+            }
+        }
+
+        let TypeDeclaration::Enum(enumeration) = declaration else {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                span,
+                "generic record declaration",
+            )));
+        };
+        let mut variant_names = BTreeSet::new();
+        let mut variants = Vec::with_capacity(enumeration.variants.variants.len());
+        for variant in &enumeration.variants.variants {
+            if !variant_names.insert(variant.name.value.clone()) {
+                return Err(variant_diagnostic(
+                    DiagnosticCode::DuplicateVariant,
+                    variant.name.span,
+                    &name,
+                    &variant.name.value,
+                ));
+            }
+            let payload = match &variant.payload {
+                None => VariantPayload::Unit,
+                Some(ast::VariantTypePayload::Tuple(tuple)) => VariantPayload::Tuple(
+                    tuple
+                        .elems
+                        .iter()
+                        .map(|element| self.resolve_type_with(element, &substitutions))
+                        .collect::<Result<Vec<_>, _>>()?,
+                ),
+                Some(ast::VariantTypePayload::Record(record)) => {
+                    VariantPayload::Record(self.resolve_record_fields_with(
+                        &format!("{name}::{}", variant.name.value),
+                        &record.fields,
+                        &substitutions,
+                    )?)
+                }
+            };
+            variants.push(EnumVariant {
+                name: variant.name.value.clone(),
+                payload,
+            });
+        }
+        let ty = Type::Enum(EnumType {
+            name: name.clone(),
+            variants,
+        });
+        self.resolving.remove(&name);
+        self.resolved.insert(name, ty.clone());
+        Ok(ty)
+    }
+
     fn resolve_record_fields(
         &mut self,
         owner: &str,
         declared_fields: &[ast::RecordField],
+    ) -> Result<Vec<RecordField>, Diagnostics> {
+        self.resolve_record_fields_with(owner, declared_fields, &BTreeMap::new())
+    }
+
+    fn resolve_record_fields_with(
+        &mut self,
+        owner: &str,
+        declared_fields: &[ast::RecordField],
+        substitutions: &BTreeMap<String, Type>,
     ) -> Result<Vec<RecordField>, Diagnostics> {
         let mut field_names = BTreeSet::new();
         let mut fields = Vec::with_capacity(declared_fields.len());
@@ -272,13 +530,38 @@ impl<'a> TypeResolver<'a> {
             }
             fields.push(RecordField {
                 name: field.name.value.clone(),
-                ty: self.resolve_type(&field.ty)?,
+                ty: self.resolve_type_with(&field.ty, substitutions)?,
             });
         }
         Ok(fields)
     }
 
     fn resolve_type(&mut self, ty: &ast::Type) -> Result<Type, Diagnostics> {
+        self.resolve_type_with(ty, &BTreeMap::new())
+    }
+
+    fn resolve_type_with(
+        &mut self,
+        ty: &ast::Type,
+        substitutions: &BTreeMap<String, Type>,
+    ) -> Result<Type, Diagnostics> {
+        match ty {
+            ast::Type::Path(path) if path.segments.len() == 1 => {
+                let name = &path.segments[0].value;
+                if let Some(ty) = substitutions.get(name) {
+                    return Ok(ty.clone());
+                }
+                self.resolve_non_parameter_type(ty, substitutions)
+            }
+            _ => self.resolve_non_parameter_type(ty, substitutions),
+        }
+    }
+
+    fn resolve_non_parameter_type(
+        &mut self,
+        ty: &ast::Type,
+        substitutions: &BTreeMap<String, Type>,
+    ) -> Result<Type, Diagnostics> {
         match ty {
             ast::Type::Path(path) if path_is(path, "Bool") => Ok(Type::Bool),
             ast::Type::Path(path) if path_is(path, "Int") => Ok(Type::Int),
@@ -289,7 +572,9 @@ impl<'a> TypeResolver<'a> {
                 if generic.args.len() != 1 {
                     return Err(invalid_arity(generic.span, 1, generic.args.len()));
                 }
-                Ok(Type::option(self.resolve_type(&generic.args[0])?))
+                Ok(Type::option(
+                    self.resolve_type_with(&generic.args[0], substitutions)?,
+                ))
             }
             ast::Type::Path(path) => {
                 let name = path_name(path);
@@ -301,18 +586,22 @@ impl<'a> TypeResolver<'a> {
                 }
                 self.resolve_nominal(&name)
             }
-            ast::Type::Generic(generic) => Err(Diagnostics::one(Diagnostic::unsupported(
-                generic.span,
-                "generic type",
-            ))),
+            ast::Type::Generic(generic) => {
+                let arguments = generic
+                    .args
+                    .iter()
+                    .map(|argument| self.resolve_type_with(argument, substitutions))
+                    .collect::<Result<Vec<_>, _>>()?;
+                self.resolve_generic_nominal(&path_name(&generic.base), arguments, generic.span)
+            }
             ast::Type::Function(function) => Ok(Type::Function {
-                parameter: Box::new(self.resolve_type(&function.parameter)?),
-                result: Box::new(self.resolve_type(&function.result)?),
+                parameter: Box::new(self.resolve_type_with(&function.parameter, substitutions)?),
+                result: Box::new(self.resolve_type_with(&function.result, substitutions)?),
             }),
             ast::Type::Tuple(tuple) => tuple
                 .elems
                 .iter()
-                .map(|element| self.resolve_type(element))
+                .map(|element| self.resolve_type_with(element, substitutions))
                 .collect::<Result<Vec<_>, _>>()
                 .map(Type::Tuple),
         }
@@ -320,7 +609,16 @@ impl<'a> TypeResolver<'a> {
 }
 
 fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
-    let types = TypeResolver::new(source)?.resolve_all()?;
+    let types = TypeResolver::new(source)?.resolve_all(source)?;
+    let declared_type_names = source
+        .items
+        .iter()
+        .filter_map(|item| match item {
+            ast::Item::Struct(record) => Some(record.name.value.as_str()),
+            ast::Item::Enum(enumeration) => Some(enumeration.name.value.as_str()),
+            ast::Item::Fn(_) => None,
+        })
+        .collect::<BTreeSet<_>>();
     let mut signatures = BTreeMap::new();
     let mut ordered_signatures = Vec::new();
 
@@ -328,7 +626,8 @@ fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
         let ast::Item::Fn(function) = item else {
             continue;
         };
-        if types.contains_key(&function.name.value) || signatures.contains_key(&function.name.value)
+        if declared_type_names.contains(function.name.value.as_str())
+            || signatures.contains_key(&function.name.value)
         {
             return Err(Diagnostics::one(Diagnostic {
                 code: DiagnosticCode::DuplicateDefinition,
@@ -369,17 +668,7 @@ fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
                 ast::Item::Enum(_) | ast::Item::Fn(_) => None,
             })
             .collect(),
-        enums: source
-            .items
-            .iter()
-            .filter_map(|item| match item {
-                ast::Item::Enum(enumeration) => match types.get(&enumeration.name.value) {
-                    Some(Type::Enum(enumeration)) => Some(enumeration.clone()),
-                    _ => None,
-                },
-                ast::Item::Struct(_) | ast::Item::Fn(_) => None,
-            })
-            .collect(),
+        enums: resolved_enum_declarations(source, &types),
         ..Module::default()
     };
     let mut ordered_signatures = ordered_signatures.iter();
@@ -414,6 +703,30 @@ fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
     }
 
     Ok(module)
+}
+
+fn resolved_enum_declarations(
+    source: &ast::SourceFile,
+    types: &BTreeMap<String, Type>,
+) -> Vec<EnumType> {
+    let mut resolved = Vec::new();
+    for item in &source.items {
+        let ast::Item::Enum(declaration) = item else {
+            continue;
+        };
+        if declaration.generics.is_none() {
+            if let Some(Type::Enum(enumeration)) = types.get(&declaration.name.value) {
+                resolved.push(enumeration.clone());
+            }
+            continue;
+        }
+        let prefix = format!("{}<", declaration.name.value);
+        resolved.extend(types.iter().filter_map(|(name, ty)| match ty {
+            Type::Enum(enumeration) if name.starts_with(&prefix) => Some(enumeration.clone()),
+            _ => None,
+        }));
+    }
+    resolved
 }
 
 /// r[impl lang.diagnostics.non-exhaustive-match]
@@ -598,6 +911,21 @@ fn path_name(path: &ast::TypePath) -> String {
         .join("::")
 }
 
+fn applied_type_name(base: &str, arguments: &[Type]) -> String {
+    format!(
+        "{base}<{}>",
+        arguments
+            .iter()
+            .map(Type::name)
+            .collect::<Vec<_>>()
+            .join(", ")
+    )
+}
+
+fn nominal_base_name(name: &str) -> &str {
+    name.split_once('<').map_or(name, |(base, _)| base)
+}
+
 fn unknown_name(span: Span, name: impl Into<String>) -> Diagnostics {
     Diagnostics::one(Diagnostic {
         code: DiagnosticCode::UnknownName,
@@ -656,10 +984,18 @@ fn lower_declared_type(
             .get(&path_name(path))
             .cloned()
             .ok_or_else(|| unknown_name(path.span, path_name(path))),
-        ast::Type::Generic(generic) => Err(Diagnostics::one(Diagnostic::unsupported(
-            generic.span,
-            "generic type",
-        ))),
+        ast::Type::Generic(generic) => {
+            let arguments = generic
+                .args
+                .iter()
+                .map(|argument| lower_declared_type(argument, types))
+                .collect::<Result<Vec<_>, _>>()?;
+            let name = applied_type_name(&path_name(&generic.base), &arguments);
+            types
+                .get(&name)
+                .cloned()
+                .ok_or_else(|| unknown_name(generic.span, name))
+        }
         ast::Type::Function(function) => Ok(Type::Function {
             parameter: Box::new(lower_declared_type(&function.parameter, types)?),
             result: Box::new(lower_declared_type(&function.result, types)?),
@@ -879,6 +1215,10 @@ fn bind_irrefutable_pattern(
             pattern.span,
             "refutable pattern",
         ))),
+        ast::Pattern::Str(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
+            pattern.span,
+            "refutable pattern",
+        ))),
         ast::Pattern::Number(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
             pattern.span,
             "refutable pattern",
@@ -928,7 +1268,8 @@ fn lower_check(
         "expect_eq" | "expect_ne" => {
             check_arity(call, 2)?;
             let left = lower_value(nodes, bindings, context, &call.args.args[0])?;
-            let right = lower_value(nodes, bindings, context, &call.args.args[1])?;
+            let right =
+                lower_value_expected(nodes, bindings, context, &call.args.args[1], Some(&left.ty))?;
             require_same_type(&left, &right, call.span)?;
             push_node(
                 nodes,
@@ -1038,8 +1379,8 @@ fn lower_value_expected(
         }
         ast::Expr::Call(call) => lower_call(nodes, bindings, context, call),
         ast::Expr::Binary(binary) => lower_binary(nodes, bindings, context, binary),
-        ast::Expr::Variant(variant) => lower_variant(nodes, bindings, context, variant),
-        ast::Expr::Match(match_expr) => lower_match(nodes, bindings, context, match_expr),
+        ast::Expr::Variant(variant) => lower_variant(nodes, bindings, context, variant, expected),
+        ast::Expr::Match(match_expr) => lower_match(nodes, bindings, context, match_expr, expected),
         ast::Expr::Tuple(tuple) => {
             let expected_elements = match expected {
                 Some(Type::Tuple(elements)) if elements.len() == tuple.elems.len() => {
@@ -1715,22 +2056,42 @@ fn lower_variant(
     bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     expression: &ast::VariantExpr,
+    expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
-    let enumeration = context
-        .types
-        .get(&expression.path.type_name.value)
-        .ok_or_else(|| {
-            unknown_name(
+    let enumeration = if let Some(expected) = expected {
+        let Type::Enum(enumeration) = expected else {
+            return Err(type_mismatch(
+                expression.span,
+                expected.name(),
+                format!("{} enum constructor", expression.path.type_name.value),
+            ));
+        };
+        if nominal_base_name(&enumeration.name) != expression.path.type_name.value {
+            return Err(type_mismatch(
                 expression.path.type_name.span,
+                nominal_base_name(&enumeration.name),
                 &expression.path.type_name.value,
-            )
-        })?;
-    let Type::Enum(enumeration) = enumeration else {
-        return Err(type_mismatch(
-            expression.path.type_name.span,
-            "enum type",
-            enumeration.name(),
-        ));
+            ));
+        }
+        enumeration
+    } else {
+        let ty = context
+            .types
+            .get(&expression.path.type_name.value)
+            .ok_or_else(|| {
+                unknown_name(
+                    expression.path.type_name.span,
+                    &expression.path.type_name.value,
+                )
+            })?;
+        let Type::Enum(enumeration) = ty else {
+            return Err(type_mismatch(
+                expression.path.type_name.span,
+                "enum type",
+                ty.name(),
+            ));
+        };
+        enumeration
     };
     let (variant_index, variant) = find_variant(enumeration, &expression.path)?;
     let inputs = match (&variant.payload, &expression.tuple_payload) {
@@ -1745,7 +2106,8 @@ fn lower_variant(
             }
             let mut inputs = Vec::with_capacity(types.len());
             for (expected, argument) in types.iter().zip(&arguments.args) {
-                let value = lower_value(nodes, bindings, context, argument)?;
+                let value =
+                    lower_value_expected(nodes, bindings, context, argument, Some(expected))?;
                 require_type(&value, expected, expr_span(argument))?;
                 inputs.push(value.node);
             }
@@ -1789,6 +2151,7 @@ fn lower_match(
     bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     expression: &ast::MatchExpr,
+    expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
     let scrutinee = lower_value(nodes, bindings, context, &expression.scrutinee)?;
     let enumeration = match &scrutinee.ty {
@@ -1804,9 +2167,17 @@ fn lower_match(
         _ => None,
     };
     if let Some(enumeration) = enumeration {
-        return lower_enum_match(nodes, bindings, context, expression, scrutinee, enumeration);
+        return lower_enum_match(
+            nodes,
+            bindings,
+            context,
+            expression,
+            scrutinee,
+            enumeration,
+            expected,
+        );
     }
-    lower_ordered_match(nodes, bindings, context, expression, scrutinee)
+    lower_ordered_match(nodes, bindings, context, expression, scrutinee, expected)
 }
 
 fn lower_enum_match(
@@ -1816,6 +2187,7 @@ fn lower_enum_match(
     expression: &ast::MatchExpr,
     scrutinee: LoweredValue,
     enumeration: EnumType,
+    expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
     let mut seen = BTreeSet::new();
     let mut arms = Vec::with_capacity(expression.arms.arms.len());
@@ -1845,7 +2217,8 @@ fn lower_enum_match(
             variant,
             pattern,
         )?;
-        let output = lower_value(nodes, &arm_bindings, context, &arm.body)?;
+        let arm_expected = expected.or(result_type.as_ref());
+        let output = lower_value_expected(nodes, &arm_bindings, context, &arm.body, arm_expected)?;
         if let Some(expected) = &result_type {
             require_type(&output, expected, expr_span(&arm.body))?;
         } else {
@@ -1920,6 +2293,7 @@ fn lower_ordered_match(
     context: &ModuleContext<'_>,
     expression: &ast::MatchExpr,
     scrutinee: LoweredValue,
+    expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
     let mut arms = Vec::new();
     let mut fallback = None;
@@ -1957,7 +2331,8 @@ fn lower_ordered_match(
         .map(|condition| control_region(nodes, condition_start, condition.node));
 
         let body_start = nodes.len();
-        let output = lower_value(nodes, &arm_bindings, context, &arm.body)?;
+        let arm_expected = expected.or(result_type.as_ref());
+        let output = lower_value_expected(nodes, &arm_bindings, context, &arm.body, arm_expected)?;
         if let Some(expected) = &result_type {
             require_type(&output, expected, expr_span(&arm.body))?;
         } else {
@@ -2072,6 +2447,31 @@ fn lower_ordered_pattern(
                 ty: Type::Bool,
             }))
         }
+        ast::Pattern::Str(pattern) => {
+            require_type(scrutinee, &Type::String, pattern.span)?;
+            let literal = LoweredValue {
+                node: push_node(
+                    nodes,
+                    pattern.span,
+                    Type::String,
+                    EffectFacts::PURE,
+                    Vec::new(),
+                    Op::String(pattern.value.value.clone()),
+                ),
+                ty: Type::String,
+            };
+            Ok(Some(LoweredValue {
+                node: push_node(
+                    nodes,
+                    pattern.span,
+                    Type::Bool,
+                    EffectFacts::PURE,
+                    vec![scrutinee.node, literal.node],
+                    Op::Eq,
+                ),
+                ty: Type::Bool,
+            }))
+        }
         ast::Pattern::Wildcard(_) => Ok(None),
         ast::Pattern::Some(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
             pattern.span,
@@ -2174,6 +2574,7 @@ fn pattern_span(pattern: &ast::Pattern) -> Span {
         ast::Pattern::Record(pattern) => pattern.span,
         ast::Pattern::Variant(pattern) => pattern.span,
         ast::Pattern::Binding(pattern) => pattern.span,
+        ast::Pattern::Str(pattern) => pattern.span,
         ast::Pattern::Number(pattern) => pattern.span,
         ast::Pattern::Wildcard(span) => *span,
         ast::Pattern::Tuple(pattern) => pattern.span,
@@ -2322,10 +2723,11 @@ fn find_variant<'a>(
     enumeration: &'a EnumType,
     path: &ast::VariantPath,
 ) -> Result<(usize, &'a EnumVariant), Diagnostics> {
-    if path.type_name.value != enumeration.name {
+    let owner = nominal_base_name(&enumeration.name);
+    if path.type_name.value != owner {
         return Err(type_mismatch(
             path.type_name.span,
-            &enumeration.name,
+            owner,
             &path.type_name.value,
         ));
     }

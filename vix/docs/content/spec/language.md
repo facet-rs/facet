@@ -92,6 +92,16 @@ canonical encoding, hashing, and serialization are available for every Vix
 value by language law; there are no user-visible dictionaries or trait bounds
 for them.
 
+> r[lang.types.generic-enum-monomorphized]
+>
+> A generic enum declaration is a type template, never a runtime type. Applying
+> concrete type arguments substitutes every payload occurrence and produces a
+> concrete nominal enum whose identity includes the fully applied name and
+> substituted shape. Qualified constructor syntax names the declaration base;
+> the expected type selects the concrete application when a variant payload
+> does not mention every generic parameter. No erased type parameter or runtime
+> generic dictionary survives lowering.
+
 ## Types, records, and enums
 
 Named declarations are nominal. Anonymous `struct { ... }` types are

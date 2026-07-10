@@ -1507,8 +1507,97 @@ fn rung_023_option_construction_matching_and_checks() {
     assert_eq!(report.chaos.receipt_count, 0);
 }
 
+// r[verify lang.types.generic-enum-monomorphized]
 #[test]
 fn rung_024_user_generic_enums_construct_and_compare() {
+    let local_application = Compiler::new()
+        .compile(
+            r#"
+enum Outcome<T> {
+    Ok(T),
+    Err(String),
+}
+
+fn local_application(flag: Bool) -> Bool {
+    let result: Outcome<Bool> = Outcome::Ok(flag);
+    match result {
+        Outcome::Ok(value) => value,
+        Outcome::Err(_) => false,
+    }
+}
+"#,
+        )
+        .expect("a generic enum application local to a function is resolved");
+    assert_eq!(local_application.enums[0].name, "Outcome<Bool>");
+
+    let module = Compiler::new()
+        .compile(RUNG_024)
+        .expect("rung 024 compiles");
+    assert_eq!(module.enums.len(), 1);
+    let outcome = &module.enums[0];
+    assert_eq!(outcome.name, "Outcome<Bool>");
+    assert_eq!(
+        outcome
+            .variants
+            .iter()
+            .map(|variant| variant.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Ok", "Err"]
+    );
+    assert!(matches!(
+        &outcome.variants[0].payload,
+        VariantPayload::Tuple(payload) if payload == &[VirType::Bool]
+    ));
+    assert!(matches!(
+        &outcome.variants[1].payload,
+        VariantPayload::Tuple(payload) if payload == &[VirType::String]
+    ));
+    let outcome_type = VirType::Enum(outcome.clone());
+    assert_eq!(outcome_type.word_width(), Some(2));
+
+    let parse_flag = module
+        .functions
+        .iter()
+        .find(|function| function.name == "parse_flag")
+        .expect("rung 024 contains parse_flag");
+    assert_eq!(parse_flag.return_type, outcome_type);
+    assert_eq!(
+        parse_flag
+            .nodes
+            .iter()
+            .filter_map(|node| match node.op {
+                VirOp::Variant { variant } => Some(variant),
+                _ => None,
+            })
+            .collect::<Vec<_>>(),
+        [0, 0, 1]
+    );
+    let (arms, fallback) = parse_flag
+        .nodes
+        .iter()
+        .find_map(|node| match &node.op {
+            VirOp::OrderedMatch { arms, fallback } => Some((arms, fallback)),
+            _ => None,
+        })
+        .expect("string patterns lower to ordered control regions");
+    assert_eq!(arms.len(), 2);
+    assert!(fallback.nodes.contains(&fallback.output));
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    assert_eq!(partitioned.islands.len(), 2);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 024 lowers to Weavy");
+        assert!(lowered.program.fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+    }
+
     let report = run_source(RUNG_024).expect("rung 024 compiles and runs");
     assert!(report.passed());
     assert!(report.agrees());

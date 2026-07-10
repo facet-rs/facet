@@ -29,6 +29,7 @@ ast({
   some_pattern: { as: "Some" },
   none_pattern: { as: "None" },
   binding_pattern: { as: "Binding" },
+  string_pattern: { as: "Str" },
   number_pattern: { as: "Number" },
   wildcard_pattern: { as: "Wildcard" },
   variant_tuple_type: { as: "Tuple" },
