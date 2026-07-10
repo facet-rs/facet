@@ -66,8 +66,12 @@ impl AllowedKinds {
         self.kinds.binary_search(&kind).is_ok()
     }
 
-    fn intersects(&self, other: &Self) -> bool {
-        self.kinds.iter().any(|kind| other.contains(*kind))
+    fn is_exactly(&self, kind: WordKind) -> bool {
+        self.kinds.len() == 1 && self.kinds[0] == kind
+    }
+
+    fn is_subset_of(&self, destination: &Self) -> bool {
+        self.kinds.iter().all(|kind| destination.contains(*kind))
     }
 }
 
@@ -321,14 +325,9 @@ pub enum AccessDefect {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KindRequirement {
     Scalar,
+    Callable,
+    Handle,
     ConstantWord,
-}
-
-/// Operand side of a value-byte comparison.
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
-pub enum CompareOperand {
-    Left,
-    Right,
 }
 
 /// An instruction deliberately outside this admission checkpoint.
@@ -506,16 +505,9 @@ pub enum ProgramDefect {
         callee: FnId,
         function_count: usize,
     },
-    IndirectCallContractCount {
-        contracts: Vec<CallContractId>,
-    },
     ReturnRegionMismatch {
         expected: RegionId,
         actual: RegionId,
-    },
-    CompareHandleContract {
-        operand: CompareOperand,
-        schemas: Vec<SchemaRef>,
     },
     CompareSchemaMismatch {
         left: SchemaRef,
@@ -1030,15 +1022,15 @@ impl Verifier<'_> {
             | Op::GeI64 { dst, a, b }
             | Op::AddF64 { dst, a, b }
             | Op::MulF64 { dst, a, b } => {
-                self.require_scalar(function_id, pc, frame, *dst, AccessRole::Destination)?;
-                self.require_scalar(function_id, pc, frame, *a, AccessRole::LeftOperand)?;
-                self.require_scalar(function_id, pc, frame, *b, AccessRole::RightOperand)?;
+                self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                self.require_scalar_read(function_id, pc, frame, *a, AccessRole::LeftOperand)?;
+                self.require_scalar_read(function_id, pc, frame, *b, AccessRole::RightOperand)?;
             }
             Op::CopyI64 { dst, src } => {
                 let destination =
                     self.word_kinds(function_id, pc, frame, *dst, AccessRole::Destination)?;
                 let source = self.word_kinds(function_id, pc, frame, *src, AccessRole::Source)?;
-                if !source.intersects(destination) {
+                if !source.is_subset_of(destination) {
                     return Err(self.op(
                         function_id,
                         pc,
@@ -1051,7 +1043,7 @@ impl Verifier<'_> {
             }
             Op::Jump { target } => self.validate_jump(function_id, pc, *target)?,
             Op::JumpIfZero { value, target } => {
-                self.require_scalar(function_id, pc, frame, *value, AccessRole::Condition)?;
+                self.require_scalar_read(function_id, pc, frame, *value, AccessRole::Condition)?;
                 self.validate_jump(function_id, pc, *target)?;
             }
             Op::Call { callee, args, ret } => {
@@ -1093,31 +1085,15 @@ impl Verifier<'_> {
                 }));
             }
             Op::CallIndirect { callee, args, ret } => {
-                let kinds = self.word_kinds(function_id, pc, frame, *callee, AccessRole::Callee)?;
-                let contracts: Vec<_> = kinds
-                    .as_slice()
-                    .iter()
-                    .filter_map(|kind| match kind {
-                        WordKind::Callable(contract) => Some(*contract),
-                        WordKind::Scalar
-                        | WordKind::Status
-                        | WordKind::Handle(_)
-                        | WordKind::Opaque => None,
-                    })
-                    .collect();
-                let [call_contract] = contracts.as_slice() else {
-                    return Err(self.op(
-                        function_id,
-                        pc,
-                        ProgramDefect::IndirectCallContractCount { contracts },
-                    ));
-                };
+                let call_contract = self.read_callable(function_id, pc, frame, *callee)?;
                 let call_index = usize::try_from(call_contract.0).map_err(|_| {
                     self.op(
                         function_id,
                         pc,
-                        ProgramDefect::IndirectCallContractCount {
-                            contracts: vec![*call_contract],
+                        ProgramDefect::KindMismatch {
+                            role: AccessRole::Callee,
+                            required: KindRequirement::Callable,
+                            allowed: AllowedKinds::new(WordKind::Callable(call_contract)),
                         },
                     )
                 })?;
@@ -1135,7 +1111,7 @@ impl Verifier<'_> {
                 self.validate_call_shape(function_id, pc, frame, args, *ret, &target)?;
                 let obligation = IndirectCallObligation {
                     function_count: self.program.fns.len(),
-                    contract: *call_contract,
+                    contract: call_contract,
                 };
                 return Ok(Some(CallSiteFacts::Indirect {
                     result_size: validated_call.result.len(),
@@ -1173,7 +1149,13 @@ impl Verifier<'_> {
                 }
             }
             Op::Await { dst, input } => {
-                self.require_scalar(function_id, pc, frame, *dst, AccessRole::AwaitDestination)?;
+                self.require_scalar_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *dst,
+                    AccessRole::AwaitDestination,
+                )?;
                 let input_count = usize::try_from(*input)
                     .ok()
                     .and_then(|input| input.checked_add(1))
@@ -1187,14 +1169,11 @@ impl Verifier<'_> {
                 requirements.await_inputs = requirements.await_inputs.max(input_count);
             }
             Op::CompareValueBytes { dst, a, b } => {
-                self.require_scalar(function_id, pc, frame, *dst, AccessRole::Destination)?;
-                let left = self.word_kinds(function_id, pc, frame, *a, AccessRole::CompareLeft)?;
-                let right =
-                    self.word_kinds(function_id, pc, frame, *b, AccessRole::CompareRight)?;
+                self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
                 let left_schema =
-                    self.unique_handle_schema(function_id, pc, left, CompareOperand::Left)?;
+                    self.read_handle(function_id, pc, frame, *a, AccessRole::CompareLeft)?;
                 let right_schema =
-                    self.unique_handle_schema(function_id, pc, right, CompareOperand::Right)?;
+                    self.read_handle(function_id, pc, frame, *b, AccessRole::CompareRight)?;
                 if left_schema != right_schema {
                     return Err(self.op(
                         function_id,
@@ -1230,7 +1209,7 @@ impl Verifier<'_> {
                 }
             }
             Op::ConstF64 { dst, bits: _ } => {
-                self.require_scalar(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
             }
             Op::Trace { id: _ } => {}
             Op::LoadIndexedI64 { .. } => {
@@ -1259,20 +1238,17 @@ impl Verifier<'_> {
         value: i64,
         kinds: &AllowedKinds,
     ) -> Result<(), ProgramError> {
-        if kinds.contains(WordKind::Scalar) || kinds.contains(WordKind::Opaque) {
+        // A scalar write does not establish that another member of a union is
+        // present; later interpreted reads still require an exact kind.
+        if kinds.contains(WordKind::Scalar) {
             return Ok(());
         }
-        let allowed: Vec<_> = kinds
-            .as_slice()
-            .iter()
-            .filter_map(|kind| match kind {
-                WordKind::Callable(contract) => Some(*contract),
-                WordKind::Scalar | WordKind::Status | WordKind::Handle(_) | WordKind::Opaque => {
-                    None
-                }
-            })
-            .collect();
-        if allowed.is_empty() {
+        // Opaque admits a raw word write, but remains directional: it cannot
+        // turn a union into a callable or handle read.
+        if kinds.contains(WordKind::Opaque) {
+            return Ok(());
+        }
+        let [WordKind::Callable(expected_contract)] = kinds.as_slice() else {
             return Err(self.op(
                 function,
                 pc,
@@ -1282,7 +1258,7 @@ impl Verifier<'_> {
                     allowed: kinds.clone(),
                 },
             ));
-        }
+        };
         let Some(target_index) = u32::try_from(value)
             .ok()
             .and_then(|target| usize::try_from(target).ok())
@@ -1299,14 +1275,14 @@ impl Verifier<'_> {
         };
         let target = FnId(target_index as u32);
         let declared = self.contract.functions[target_index].call_contract;
-        if !declared.is_some_and(|contract| allowed.contains(&contract)) {
+        if declared != Some(*expected_contract) {
             return Err(self.op(
                 function,
                 pc,
                 ProgramDefect::ConstantCallableContractMismatch {
                     target,
                     declared,
-                    allowed,
+                    allowed: vec![*expected_contract],
                 },
             ));
         }
@@ -1359,7 +1335,7 @@ impl Verifier<'_> {
                 AccessRole::ArgumentSource { index },
             )?;
             let source = &self.contract.functions[function.0 as usize].frame.regions[source_index];
-            if !shapes_compatible(&source.shape, &destination.shape) {
+            if !shapes_assignable(&source.shape, &destination.shape) {
                 return Err(self.op(
                     function,
                     pc,
@@ -1380,7 +1356,7 @@ impl Verifier<'_> {
             AccessRole::CallResult,
         )?;
         let destination = &self.contract.functions[function.0 as usize].frame.regions[result_index];
-        if !shapes_compatible(&target.result.0.shape, &destination.shape) {
+        if !shapes_assignable(&target.result.0.shape, &destination.shape) {
             return Err(self.op(
                 function,
                 pc,
@@ -1406,34 +1382,75 @@ impl Verifier<'_> {
         Ok(())
     }
 
-    fn unique_handle_schema(
+    fn read_callable(
         &self,
         function: FnId,
         pc: usize,
-        kinds: &AllowedKinds,
-        operand: CompareOperand,
-    ) -> Result<SchemaRef, ProgramError> {
-        let schemas: Vec<_> = kinds
-            .as_slice()
-            .iter()
-            .filter_map(|kind| match kind {
-                WordKind::Handle(schema) => Some(*schema),
-                WordKind::Scalar | WordKind::Status | WordKind::Callable(_) | WordKind::Opaque => {
-                    None
-                }
-            })
-            .collect();
-        let [schema] = schemas.as_slice() else {
+        frame: &ValidatedFrame,
+        offset: u32,
+    ) -> Result<CallContractId, ProgramError> {
+        let kinds = self.word_kinds(function, pc, frame, offset, AccessRole::Callee)?;
+        let [WordKind::Callable(contract)] = kinds.as_slice() else {
             return Err(self.op(
                 function,
                 pc,
-                ProgramDefect::CompareHandleContract { operand, schemas },
+                ProgramDefect::KindMismatch {
+                    role: AccessRole::Callee,
+                    required: KindRequirement::Callable,
+                    allowed: kinds.clone(),
+                },
+            ));
+        };
+        Ok(*contract)
+    }
+
+    fn read_handle(
+        &self,
+        function: FnId,
+        pc: usize,
+        frame: &ValidatedFrame,
+        offset: u32,
+        role: AccessRole,
+    ) -> Result<SchemaRef, ProgramError> {
+        let kinds = self.word_kinds(function, pc, frame, offset, role)?;
+        let [WordKind::Handle(schema)] = kinds.as_slice() else {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::KindMismatch {
+                    role,
+                    required: KindRequirement::Handle,
+                    allowed: kinds.clone(),
+                },
             ));
         };
         Ok(*schema)
     }
 
-    fn require_scalar(
+    fn require_scalar_read(
+        &self,
+        function: FnId,
+        pc: usize,
+        frame: &ValidatedFrame,
+        offset: u32,
+        role: AccessRole,
+    ) -> Result<(), ProgramError> {
+        let kinds = self.word_kinds(function, pc, frame, offset, role)?;
+        if !kinds.is_exactly(WordKind::Scalar) {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::KindMismatch {
+                    role,
+                    required: KindRequirement::Scalar,
+                    allowed: kinds.clone(),
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    fn require_scalar_write(
         &self,
         function: FnId,
         pc: usize,
@@ -1718,13 +1735,13 @@ impl Verifier<'_> {
     }
 }
 
-fn shapes_compatible(source: &RegionShape, destination: &RegionShape) -> bool {
+fn shapes_assignable(source: &RegionShape, destination: &RegionShape) -> bool {
     source.words.len() == destination.words.len()
         && source
             .words
             .iter()
             .zip(&destination.words)
-            .all(|(source, destination)| source.intersects(destination))
+            .all(|(source, destination)| source.is_subset_of(destination))
 }
 
 #[cfg(test)]
@@ -2048,16 +2065,14 @@ mod tests {
         )
     }
 
-    fn gapped_union_and_schema_program() -> (Program, ProgramContract) {
-        let union = kinds(WordKind::Opaque).allowing(WordKind::Scalar);
+    fn gapped_and_schema_program() -> (Program, ProgramContract) {
         (
             Program {
                 fns: vec![function(
                     3,
                     vec![
                         Op::ConstI64 { dst: 0, value: 11 },
-                        Op::CopyI64 { dst: 16, src: 0 },
-                        Op::Ret { src: 16, size: 8 },
+                        Op::Ret { src: 0, size: 8 },
                     ],
                 )],
             },
@@ -2066,10 +2081,10 @@ mod tests {
                     3,
                     vec![
                         word_region(0, WordKind::Opaque),
-                        region(16, RegionShape::new(vec![union])),
+                        word_region(16, WordKind::Scalar),
                     ],
                     &[],
-                    1,
+                    0,
                     None,
                 )],
                 calls: vec![],
@@ -2143,7 +2158,7 @@ mod tests {
         let (direct_program, direct_contract) = valid_direct_program();
         let (indirect_program, indirect_contract) = indirect_program();
         let (compare_program, compare_contract) = compare_program(true);
-        let (gapped_program, gapped_contract) = gapped_union_and_schema_program();
+        let (gapped_program, gapped_contract) = gapped_and_schema_program();
         let cases = vec![
             ValidCase {
                 name: "scalar",
@@ -2194,7 +2209,7 @@ mod tests {
                 call: None,
             },
             ValidCase {
-                name: "gapped union and schema table",
+                name: "gapped schema table",
                 program: gapped_program,
                 contract: gapped_contract,
                 requirements: DriveRequirements::default(),
@@ -2336,15 +2351,6 @@ mod tests {
             ],
             1,
         );
-        let copy = single_function(
-            2,
-            vec![Op::CopyI64 { dst: 8, src: 0 }, Op::Ret { src: 8, size: 8 }],
-            vec![
-                word_region(0, WordKind::Scalar),
-                word_region(8, WordKind::Opaque),
-            ],
-            1,
-        );
         let await_kind = single_function(
             1,
             vec![Op::Await { dst: 0, input: 3 }, Op::Ret { src: 0, size: 8 }],
@@ -2469,18 +2475,6 @@ mod tests {
                 ),
             },
             InvalidCase {
-                name: "copy kind intersection",
-                program: copy.0,
-                contract: copy.1,
-                expected: op_error(
-                    0,
-                    ProgramDefect::IncompatibleWordKinds {
-                        source: kinds(WordKind::Scalar),
-                        destination: kinds(WordKind::Opaque),
-                    },
-                ),
-            },
-            InvalidCase {
                 name: "compare",
                 program: compare_program,
                 contract: compare_contract,
@@ -2508,22 +2502,19 @@ mod tests {
     }
 
     #[test]
-    fn rejects_ambiguous_indirect_and_mismatched_function_contracts() {
+    fn rejects_non_narrowed_indirect_and_mismatched_function_contracts() {
         let call_zero = CallContract {
             entries: vec![],
             result: word_region(0, WordKind::Scalar),
         };
-        let call_one = CallContract {
-            entries: vec![],
-            result: word_region(8, WordKind::Scalar),
-        };
-        let callable_kinds = kinds(WordKind::Callable(CallContractId(0)))
-            .allowing(WordKind::Callable(CallContractId(1)));
-        let ambiguous = (
+        let callable_kinds =
+            kinds(WordKind::Callable(CallContractId(0))).allowing(WordKind::Scalar);
+        let non_narrowed = (
             Program {
                 fns: vec![function(
                     2,
                     vec![
+                        Op::ConstI64 { dst: 0, value: 1 },
                         Op::CallIndirect {
                             callee: 0,
                             args: vec![],
@@ -2544,7 +2535,7 @@ mod tests {
                     1,
                     None,
                 )],
-                calls: vec![call_zero.clone(), call_one],
+                calls: vec![call_zero.clone()],
                 schemas: vec![],
             },
         );
@@ -2618,13 +2609,16 @@ mod tests {
 
         let cases = vec![
             InvalidCase {
-                name: "ambiguous indirect",
-                program: ambiguous.0,
-                contract: ambiguous.1,
+                name: "callable and scalar union",
+                program: non_narrowed.0,
+                contract: non_narrowed.1,
                 expected: op_error(
-                    0,
-                    ProgramDefect::IndirectCallContractCount {
-                        contracts: vec![CallContractId(0), CallContractId(1)],
+                    1,
+                    ProgramDefect::KindMismatch {
+                        role: AccessRole::Callee,
+                        required: KindRequirement::Callable,
+                        allowed: kinds(WordKind::Callable(CallContractId(0)))
+                            .allowing(WordKind::Scalar),
                     },
                 ),
             },
@@ -2655,6 +2649,156 @@ mod tests {
                         target: FnId(1),
                         declared: Some(CallContractId(1)),
                         allowed: vec![CallContractId(0)],
+                    },
+                ),
+            },
+        ];
+
+        for case in cases {
+            let error = case.program.verify(case.contract).expect_err(case.name);
+            assert_eq!(error, case.expected, "{}", case.name);
+        }
+    }
+
+    #[test]
+    fn rejects_union_reads_and_directional_assignment_leaks() {
+        let schema = SchemaRef(0);
+        let scalar_or_handle = kinds(WordKind::Scalar).allowing(WordKind::Handle(schema));
+        let scalar_or_handle_shape = RegionShape::new(vec![scalar_or_handle.clone()]);
+        let schemas = || {
+            vec![SchemaContract {
+                inline: RegionShape::default(),
+                payload: PayloadKind::Inline,
+            }]
+        };
+
+        let scalar_read = (
+            Program {
+                fns: vec![function(
+                    3,
+                    vec![
+                        Op::AddI64 {
+                            dst: 16,
+                            a: 0,
+                            b: 8,
+                        },
+                        Op::Ret { src: 16, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    3,
+                    vec![
+                        region(0, scalar_or_handle_shape.clone()),
+                        word_region(8, WordKind::Scalar),
+                        word_region(16, WordKind::Scalar),
+                    ],
+                    &[],
+                    2,
+                    None,
+                )],
+                calls: vec![],
+                schemas: schemas(),
+            },
+        );
+        let (compare_program, mut compare_contract) = compare_program(true);
+        compare_contract.functions[0].frame.regions[0].shape = scalar_or_handle_shape.clone();
+
+        let (copy_program, mut copy_contract) = single_function(
+            2,
+            vec![Op::CopyI64 { dst: 8, src: 0 }, Op::Ret { src: 8, size: 8 }],
+            vec![
+                region(0, scalar_or_handle_shape.clone()),
+                word_region(8, WordKind::Scalar),
+            ],
+            1,
+        );
+        copy_contract.schemas = schemas();
+
+        let (argument_program, mut argument_contract) = valid_direct_program();
+        argument_contract.schemas = schemas();
+        argument_contract.functions[0].frame.regions[0].shape = scalar_or_handle_shape.clone();
+
+        let (result_program, mut result_contract) = valid_direct_program();
+        result_contract.schemas = schemas();
+        result_contract.functions[1].frame.regions[2].shape = scalar_or_handle_shape.clone();
+
+        let (narrow_program, mut narrow_contract) = single_function(
+            2,
+            vec![Op::CopyI64 { dst: 8, src: 0 }, Op::Ret { src: 8, size: 8 }],
+            vec![
+                word_region(0, WordKind::Scalar),
+                region(8, scalar_or_handle_shape.clone()),
+            ],
+            1,
+        );
+        narrow_contract.schemas = schemas();
+        narrow_program
+            .verify(narrow_contract)
+            .expect("narrow-to-wide copy is admitted");
+
+        let cases = vec![
+            InvalidCase {
+                name: "scalar union read",
+                program: scalar_read.0,
+                contract: scalar_read.1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::KindMismatch {
+                        role: AccessRole::LeftOperand,
+                        required: KindRequirement::Scalar,
+                        allowed: scalar_or_handle.clone(),
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "handle and scalar union",
+                program: compare_program,
+                contract: compare_contract,
+                expected: op_error(
+                    0,
+                    ProgramDefect::KindMismatch {
+                        role: AccessRole::CompareLeft,
+                        required: KindRequirement::Handle,
+                        allowed: scalar_or_handle.clone(),
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "overlapping copy kinds",
+                program: copy_program,
+                contract: copy_contract,
+                expected: op_error(
+                    0,
+                    ProgramDefect::IncompatibleWordKinds {
+                        source: scalar_or_handle.clone(),
+                        destination: kinds(WordKind::Scalar),
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "call argument direction",
+                program: argument_program,
+                contract: argument_contract,
+                expected: op_error(
+                    0,
+                    ProgramDefect::CallArgumentKinds {
+                        index: 0,
+                        source: scalar_or_handle_shape.clone(),
+                        destination: RegionShape::word(WordKind::Scalar),
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "call result direction",
+                program: result_program,
+                contract: result_contract,
+                expected: op_error(
+                    0,
+                    ProgramDefect::CallResultKinds {
+                        source: scalar_or_handle_shape,
+                        destination: RegionShape::word(WordKind::Scalar),
                     },
                 ),
             },

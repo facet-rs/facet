@@ -14,7 +14,7 @@ pub mod verified;
 
 pub use verified::{
     AccessDefect, AccessRole, AllowedKinds, CallContract, CallContractId, CallSiteFacts,
-    CompareOperand, DriveRequirements, FrameContract, FrameRegion, FunctionContract, FunctionFacts,
+    DriveRequirements, FrameContract, FrameRegion, FunctionContract, FunctionFacts,
     IndirectCallObligation, KindRequirement, PayloadKind, PcFacts, ProgramContract, ProgramDefect,
     ProgramError, ProgramFacts, ProgramTable, ReferenceSite, RegionId, RegionReference,
     RegionShape, SchemaContract, SchemaRef, ShapeOwner, UnsupportedOp, VerifiedProgram, WordKind,
