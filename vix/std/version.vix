@@ -36,9 +36,9 @@ pub struct Version {
 
 pub fn parse_version(s: String) -> Version {
     let core = s.before("+");
-    let build = build_metadata s;
+    let build = build_metadata(s);
     let release = core.before("-");
-    let pre = prerelease_tag core;
+    let pre = prerelease_tag(core);
     // Pad so 1- and 2-component versions ("2", "2.35") parse too: take the
     // component before each of the first three dots.
     let padded = release + ".0.0";
@@ -58,7 +58,7 @@ pub fn parse_version(s: String) -> Version {
 
 fn prerelease_tag(s: String) -> PreTag {
     match s.contains("-") {
-        true => PreTag::Prerelease(parse_pre_idents (s.after("-")) where { out: [] }),
+        true => PreTag::Prerelease(parse_pre_idents(s.after("-"), out: [])),
         false => PreTag::Release,
     }
 }
@@ -74,31 +74,30 @@ fn none_string() -> Option<String> {
     None
 }
 
-fn parse_pre_idents(s: String) where { out: [PreIdent] } -> [PreIdent] {
-    if s == "" {
-        out
-    } else if s.contains(".") {
-        parse_pre_idents (s.after(".")) where { out: out.push(parse_pre_ident(s.before("."))) }
-    } else {
-        out.push(parse_pre_ident s)
+fn parse_pre_idents(s: String, out: [PreIdent]) -> [PreIdent] {
+    match s == "" {
+        true => out,
+        false => match s.contains(".") {
+            true => parse_pre_idents(s.after("."), out: out.push(parse_pre_ident(s.before(".")))),
+            false => out.push(parse_pre_ident(s)),
+        },
     }
 }
 
 fn parse_pre_ident(s: String) -> PreIdent {
-    if s.is_numeric() {
-        PreIdent::Numeric(s.parse_int())
-    } else {
-        PreIdent::Alpha(s)
+    match s.is_numeric() {
+        true => PreIdent::Numeric(s.parse_int()),
+        false => PreIdent::Alpha(s),
     }
 }
 
 // Equal SemVer precedence is not value equality: build metadata is ignored here.
-pub fn same_precedence(a: Version) where { b: Version } -> Bool {
+pub fn same_precedence(a: Version, b: Version) -> Bool {
     a.major == b.major && a.minor == b.minor && a.patch == b.patch && a.pre == b.pre
 }
 
 // a <= b by SemVer 2.0 precedence. Structural `<` carries the strict ordering;
 // `same_precedence` covers equal-precedence versions with different build data.
-pub fn version_lte(a: Version) where { b: Version } -> Bool {
-    a < b || same_precedence a where { b }
+pub fn version_lte(a: Version, b: Version) -> Bool {
+    a < b || same_precedence(a, b: b)
 }

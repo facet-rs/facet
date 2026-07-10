@@ -13349,6 +13349,44 @@ mod tests {
     }
 
     #[test]
+    fn line_comment_extra_beats_division_in_an_expression_state() {
+        let grammar_json = snark_dsl::emit_source_with_boa(
+            r#"
+            module.exports = grammar({
+              name: "comment_division",
+              extras: ($) => [/\s+/, $.line_comment],
+              rules: {
+                source_file: ($) => seq(field("left", $._expr), field("right", $._expr)),
+                _expr: ($) => choice($.binary, $.identifier),
+                binary: ($) => prec.left(1, seq(
+                  field("left", $._expr),
+                  "/",
+                  field("right", $._expr),
+                )),
+                identifier: () => /[a-z]+/,
+                line_comment: () => token(prec(1, seq("//", /[^\n]*/))),
+              },
+            });
+            "#,
+            "comment-division.js",
+        )
+        .expect("emit comment/division grammar");
+        let raw = crate::grammar::RawGrammarJson::from_tree_sitter_json_str(&grammar_json)
+            .expect("import comment/division grammar");
+        let validated = ValidatedGrammar::from_raw(&raw).expect("validate grammar");
+        let lexical = crate::lexical::LexicalFacts::from_grammar(&validated);
+        let parser = parser_ir::ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .expect("normalize grammar")
+            .prepare_productions_for_items()
+            .expect("prepare grammar");
+        let table = parser_ir::ParseTable::from_grammar(&parser).expect("build parse table");
+        let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("build Weavy plan");
+
+        parse_prepared_weavy_with_report(&plan, &parser, &table, "a\n// comment\nb")
+            .expect("line comment remains an extra where division is valid");
+    }
+
+    #[test]
     fn intrinsic_descriptors_use_snark_tree_sitter_dialect() {
         let descriptor = SnarkIntrinsic::Shift {
             version: StackVersionId(0),
