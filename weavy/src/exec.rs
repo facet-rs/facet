@@ -66,6 +66,10 @@ pub struct FaultSite {
 /// Dynamic task fault. Static program invalidity remains [`crate::ProgramError`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TaskFault {
+    InvalidEntryFunction {
+        entry: FnId,
+        function_count: usize,
+    },
     InvalidEntryShape {
         entry: FnId,
         index: usize,
@@ -188,7 +192,7 @@ impl Executable {
     }
 
     fn validate_entry(&self, entry: FnId) -> Result<(), TaskFault> {
-        let function = self.function(entry);
+        let function = self.function(entry)?;
         for (index, region) in function.entries.iter().copied().enumerate() {
             let region_contract = &function.frame.regions[region.0 as usize];
             if region_contract.shape.words.len() != 1
@@ -205,7 +209,7 @@ impl Executable {
     }
 
     fn validate_result_i64(&self, entry: FnId) -> Result<(), TaskFault> {
-        let function = self.function(entry);
+        let function = self.function(entry)?;
         let region = function.result;
         let region_contract = &function.frame.regions[region.0 as usize];
         if region_contract.shape.words.len() != 1
@@ -223,8 +227,15 @@ impl Executable {
         Ok(())
     }
 
-    fn function(&self, function: FnId) -> &FunctionContract {
-        &self.verified.contract().functions[function.0 as usize]
+    fn function(&self, function: FnId) -> Result<&FunctionContract, TaskFault> {
+        self.verified
+            .contract()
+            .functions
+            .get(function.0 as usize)
+            .ok_or(TaskFault::InvalidEntryFunction {
+                entry: function,
+                function_count: self.verified.contract().functions.len(),
+            })
     }
 }
 
@@ -244,7 +255,7 @@ enum Lane {
 impl ExecTask<'_> {
     pub fn write_entry_i64(&mut self, index: usize, value: i64) -> Result<(), TaskFault> {
         self.check_not_poisoned()?;
-        let function = self.executable.function(self.entry);
+        let function = self.executable.function(self.entry)?;
         let Some(region) = function.entries.get(index).copied() else {
             return Err(TaskFault::InvalidEntryShape {
                 entry: self.entry,
@@ -339,7 +350,7 @@ impl ExecTask<'_> {
         self.executable.validate_result_i64(self.entry)?;
         let result = self.result();
         if result.len() != size_of::<i64>() {
-            let function = self.executable.function(self.entry);
+            let function = self.executable.function(self.entry)?;
             return Err(TaskFault::InvalidResultShape {
                 entry: self.entry,
                 region: function.result,
@@ -426,6 +437,8 @@ mod tests {
     };
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
+
+    type LaneRun = Result<(TaskStep, Vec<u8>, Vec<TaskEvent>), TaskFault>;
 
     fn layout(words: usize) -> Layout {
         Layout {
@@ -699,7 +712,7 @@ mod tests {
         verified: &VerifiedProgram,
         seed: impl FnOnce(&mut Task),
         value_memories: ValueMemories<'_>,
-    ) -> Result<(TaskStep, Vec<u8>, Vec<TaskEvent>), TaskFault> {
+    ) -> LaneRun {
         let mut task = Task::spawn_with_mode(verified.program(), FnId(0), TraceMode::Innards);
         seed(&mut task);
         let step =
@@ -711,7 +724,7 @@ mod tests {
         verified: &VerifiedProgram,
         seed: impl FnOnce(&mut JitTask),
         value_memories: ValueMemories<'_>,
-    ) -> Option<Result<(TaskStep, Vec<u8>, Vec<TaskEvent>), TaskFault>> {
+    ) -> Option<LaneRun> {
         let jit = JitProgram::compile_with_mode(verified.program(), TraceMode::Innards)?;
         let mut task = JitTask::spawn(&jit, FnId(0));
         seed(&mut task);
@@ -797,6 +810,21 @@ mod tests {
                 region: RegionId(0),
             })
         ));
+    }
+
+    #[test]
+    fn public_spawn_rejects_unknown_entry_function() {
+        let executable = Executable::new(verify(scalar_add_program()));
+        let Err(fault) = executable.spawn(FnId(99)) else {
+            panic!("unknown entry function must fault");
+        };
+        assert_eq!(
+            fault,
+            TaskFault::InvalidEntryFunction {
+                entry: FnId(99),
+                function_count: 1,
+            }
+        );
     }
 
     #[test]
