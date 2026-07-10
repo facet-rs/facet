@@ -1,7 +1,6 @@
 +++
 title = "Standard library"
 weight = 30
-sort_by = "weight"
 +++
 
 The vix standard library, chapter by chapter. Everything here follows the

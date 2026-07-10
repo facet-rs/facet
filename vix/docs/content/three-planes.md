@@ -4,9 +4,6 @@ weight = 20
 +++
 
 
-*Status: provisional — this chapter states the design; formal rules are
-extracted from it.*
-
 ## The story this chapter must explain
 
 You pass a tree — say, a source directory of three hundred files — to a

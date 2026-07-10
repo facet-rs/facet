@@ -70,12 +70,13 @@ artifacts and never second-guesses the substrate.
 
 > r[machine.execution.safepoints]
 >
-> [SETTLED] Lowering injects a general SAFEPOINT mechanism at demand
-> boundaries and loop back-edges — patchable no-ops in the copy-patch lanes,
-> patched into real checks only when a consumer is pending. Safepoints are
-> shared infrastructure multiplexed across consumers: kill/migration barriers
-> (`machine.scheduler.replay-is-semantics`), performance counters
-> (`machine.obs.counters`), future GC points, and debugging. This is possible
+> [SETTLED] Lowering injects full edge safepoints at demand boundaries and
+> cheap interior pollpoints at loop backedges/long operations
+> (`machine.safepoint.two-classes`). Pollpoints are patchable no-ops or
+> predictable checks in copy-patch lanes and perform no identity, memo, receipt,
+> or scheduler work until armed. Both classes are shared infrastructure for
+> kill/migration barriers (`machine.scheduler.replay-is-semantics`), performance
+> counters (`machine.obs.counters`), future GC, profiling, and debugging. This is possible
 > because weavy owns lowering for every program it runs — the capability rustc
 > cannot offer arbitrary code — and it is a reason lowering is LOAD-BEARING
 > SUBSTRATE for the monorepo's projects (vix, phon, snark, fable, the

@@ -223,7 +223,7 @@ it compiles. It can never be any less than that.
 ---
 
 Specifications (rules traced to implementations via `r[impl ...]` /
-`r[verify ...]`; see `ddc coverage`): the [spec section](/vix/spec/).
+`r[verify ...]`; see `ddc coverage`): the [spec section](/spec/).
 Namespaces: `vix.*` — the semantics (this chapter is its preface);
 `vixc.*` — the compiler (islands, lowering, JIT; it is a compiler);
 `solver.*` — rodin. Implementation-charter rules migrate out of the

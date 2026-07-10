@@ -45,6 +45,16 @@ about what a build did; a vixen receipt is the observed read-set."
 > miss along the resolution is a receipt. (Extends
 > `ReadObservation::Absent`/`Listing`.)
 
+> r[machine.receipt.codata-granularity]
+>
+> [SETTLED] Consuming codata records the semantic projection consumed: a
+> `Stream<K,V>` element by key, a structured protocol message by protocol key,
+> or a `ByteStream` range by byte offset. It does not journal transport frames,
+> OS writes, or one undifferentiated "stream read." The producing primitive's
+> own external observations remain in its receipt and are remapped transitively
+> through memo hits. Codata delivery itself is a demand edge, not a mandatory
+> journal fact.
+
 > r[machine.receipt.read-set-as-value]
 >
 > [DESIGN] A read-set is a first-class vix value: typed, content-addressed,
@@ -74,22 +84,20 @@ about what a build did; a vixen receipt is the observed read-set."
 
 > r[machine.receipt.certificate-vs-derivation]
 >
-> [OPEN] The read-set certificate is sufficient for sound reuse [SETTLED, from
-> doc 90]. Whether the machine ALSO retains a walkable derivation (the demand
-> trace as queryable values, for human-facing explanation — "why was this
-> selected") or explanation stays resolver-built is undecided. The design
-> lean: retention-policy-gated trace-as-values, justified by the cachet/audit
-> product story; the cost is memory and a second retained structure. Decide
-> before R5.
+> [SETTLED] The read-set certificate is sufficient for sound reuse and is not a
+> derivation. The runtime emits a typed causal event trace which MAY be retained
+> and queried under policy for debugging and performance explanation; retention
+> never enters cache validity. Domain explanations remain domain values: Rodin,
+> for example, builds a proof/no-good derivation when a caller demands one rather
+> than asking a generic runtime trace to invent solver meaning.
 
 > r[machine.receipt.sealable-as-cachet]
 >
-> [DESIGN] A receipt can be sealed into a cachet: the signed, portable
-> attestation instrument (the recipe-embedded-artifact vehicle; signing
-> excludes the signature region). [OPEN sub-question: whether cachet sealing
-> and secret-value sealing (`sops()`-style, identity from ciphertext) share
-> one machine primitive or are two operations that happen to share an English
-> word. Two docs use "seal" for different things; unify or rename.]
+> [SETTLED] A receipt can be signed into a portable cachet with the `attest`
+> primitive; signing excludes the signature region. Secret-value encryption is
+> the distinct `seal` primitive producing `Sealed<T,Policy>`. They share no
+> primitive, request schema, or identity rule merely because old prose used the
+> same English verb.
 
 > r[machine.receipt.fetch-observation-pin]
 >

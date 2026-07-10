@@ -4,9 +4,6 @@ weight = 1
 +++
 
 
-*Status: provisional — this page documents the language as designed; parts
-are not implemented yet.*
-
 Vix has one collection structure and several names for it. A **map** takes keys to
 values and keeps its rows in key order. An **array** is a map whose keys are
 positions. A **set** is a map whose values carry no information. A **tree** is a map
@@ -45,9 +42,11 @@ let out      = exec cc`…`;                          // ExecOutcome; out.tree i
 The `%` sigil means *the keys are explicit*. Bare brackets mean *the keys are
 positions*.
 
-`Set<T>` is `Map<T, ()>` — a real alias, not an analogy. `[T]` is not, because an
-array's keys are `0..n-1` and **density is an invariant**, not a shape. That's also
-why an array's keys cost nothing to store: they *are* the field names.
+`Set<T>` uses the same canonical map representation with elements as keys and
+unit payloads, but it is a distinct standard type rather than a source alias.
+That gives it element-oriented methods without pretending `Map<T,()>.map` maps
+keys. `[T]` is also distinct because its keys are `0..n-1` and **density is an
+invariant**, not a shape. Array keys cost nothing to store: they are positions.
 
 A **`Tree`** is a map too, but a recursive one, keyed by a single path *segment*:
 
@@ -153,7 +152,7 @@ by its **location** — where in the demand graph it was described — which is 
 even when one `yield` site fires a thousand times inside a recursion, content-free,
 and known before anything runs. It is emphatically *not* the order elements arrive
 in. That distinction is the whole point of a stream, and the
-[testing chapter](/vix/testing) leans on it.
+[testing chapter](/testing) leans on it.
 
 **Coming from Rust/JS**: this is `enumerate()`, except you never call it, and it
 works for keys that aren't integers.
@@ -282,8 +281,8 @@ lookup can fail, and the type says so.
 
 Takes the value, or **fails the demand** — a typed failure carrying the unwrap's
 source span and the chain of demands that led there, never a bare string. It is not
-a panic and it does not unwind: the demand simply has no value, and everything that
-asked for it learns why.
+a panic and it does not unwind: the demand completes with a failed outcome, and
+everything that asked for it learns why.
 
 **Coming from Rust**: `.unwrap()` here costs you a *diagnostic*, not a process.
 
@@ -318,9 +317,10 @@ The only return type. Fails on duplicate keys.
 `any` and `all` commit the moment an unarrived element could no longer change the
 answer. `count` waits, because it must.
 
-### `Set<T>.map(f: T -> U) -> Map<T, U>`
+### `Set<T>.map(f: T -> U) -> Set<U>`
 
-The map from each element to its image.
+The set of images; equal images coalesce. `index_by` is the distinct operation
+that retains each source element as a key and attaches an image as its value.
 
 ---
 
@@ -330,7 +330,8 @@ The map from each element to its image.
   array that has forgotten why. If you want counts, you want `Map<T, Int>`.
 - **`enumerate`, `Indexed<T>`** — the key was always there.
 - **`pop`, `push`, `insert`, `remove` as mutations** — nothing mutates. The
-  by-value forms exist where they earn it (`split_last`, `take_min`).
+  by-value forms exist where they earn it (`split_last`, `appended`, `take_min`,
+  map/set `insert` returning a fresh collection).
 - **"First ready" selection** — an operation whose result depends on completion
   order would make program output nondeterministic. The implementation may
   *process* in arrival order whenever that's invisible; it may never *show* you.

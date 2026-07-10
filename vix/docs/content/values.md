@@ -3,9 +3,6 @@ title = "Values"
 weight = 5
 +++
 
-*Status: provisional — this page documents the language as designed; parts
-are not implemented yet.*
-
 Everything in vix is a value. A string is a value. A parsed manifest is a
 value. A compiled crate is a value. A test outcome is a value. A solved
 dependency graph is a value. If something doesn't evaluate to a tangible
@@ -27,7 +24,7 @@ let xs = [1, 2, 3];
 Records, enums with payloads, tuples, arrays. Field access is `p.x`;
 enums are consumed with `match` (see the pattern-matching chapter);
 arrays are structs whose fields are named `0`, `1`, `2` (see
-[Collections](/vix/std/collections)).
+[Collections](/std/collections)).
 
 ## Nothing mutates
 
@@ -126,7 +123,7 @@ This is not a convenience feature; it is load-bearing. Values are
 content-addressed — a value's identity is derived from what it *is* — and
 that is what makes builds cacheable, results shippable between machines,
 and collections deterministically orderable. The [three planes of
-identity](/vix/three-planes) chapter tells the whole story.
+identity](/three-planes) chapter tells the whole story.
 
 **Coming from Rust**: no `#[derive(PartialEq, Eq, Hash, Ord)]` stanzas,
 and no types that opt out. Functions and values containing them are

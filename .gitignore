@@ -54,6 +54,8 @@ chrome_profiler.json*
 
 # Dodeca code execution output
 .cache
+vix/docs/public/
+rodin/docs/public/
 bench-reports/
 scripts/.venv/
 *.egg-info/

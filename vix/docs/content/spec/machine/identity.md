@@ -99,13 +99,10 @@ driver.
 > recompression because the aggregate hash had no memory between crossings).
 > **This rule is scoped to ordered aggregates and says nothing about maps.**
 >
-> ROUND-10, SECOND CORRECTION: an earlier pass removed this rule's citation of the
-> OPEN `machine.identity.map-order-independence` and *kept the conclusion it had
-> been citing it for* ("maps use sort-first-then-stream"). Deleting a citation while
-> retaining what it justified is the same defect wearing a bandage — it is precisely
-> the failure this spec has now made three times. A settled rule may neither rest on
-> an unratified one nor quietly assert its content. Whether a carried hasher is
-> sound for maps is **undecided**, and lives with `map-order-independence`.
+> Maps canonicalize by structural key order
+> (`machine.identity.map-order-independence`). A mutable map builder may carry
+> keyed row state, but it MUST compute the final framed map hash from canonical
+> rows at freeze; an insertion-order rolling digest is unsound.
 
 > r[machine.identity.hash-at-construction]
 >
@@ -175,26 +172,11 @@ driver.
 
 > r[machine.identity.map-order-independence]
 >
-> [OPEN — never ratified; the "[SETTLED]" tag was asserted, not agreed (Amos,
-> round 7).] Map identity is insertion-order-independent: that much holds.
-> What is rejected is the characterization — **"a map is a set of pairs" is
-> wrong**: a map's keys are unique and a set of pairs' are not, so the sentence
-> licenses an encoding under which `Map<K,V>` and `Set<(K,V)>` with equal
-> contents could produce equal bytes.
->
-> ROUND-9 CORRECTION: this rule was first struck on the grounds that
-> sort-first-then-hash keys identity on a user-overridable `<=>`. That ground is
-> VOID — `<=>` is structural and not overridable
-> (`machine.identity.never-consults-order`), so ordering map rows by key order is
-> a function of content and is sound. What survives is Amos's objection to the
-> characterization, and the fact that the rule was never ratified.
->
-> ROUND-10 PROPOSED REPLACEMENT (needs Amos): a map is **not** a set of pairs. It
-> is a keyed collection whose keys are UNIQUE, whose rows are kept in key order
-> (structural order on `K`), and whose encoding is framed with its `SchemaId` —
-> so `Map<K,V>` and `Set<(K,V)>` with equal contents cannot produce equal bytes.
-> Insertion-order-independence follows from row order being a function of the
-> keys. Nothing may cite this rule as settled until it is.
+> [SETTLED] A map is a keyed collection with unique keys, not a set of pairs.
+> Its canonical rows are sorted by the structural order of `K`; encoding frames
+> the map schema, row count, and each key/value pair. Insertion order therefore
+> cannot affect identity, while `Map<K,V>` and `Set<(K,V)>` remain distinct
+> schemas and cannot share a canonical preimage.
 
 > r[machine.identity.merkle-tree]
 >
@@ -203,7 +185,7 @@ driver.
 > **Merkle map** over its semantic encoding — not over the store's chunking
 > (`machine.identity.tree-hash-is-not-node-hash`):
 > change one file, rehash one path. This is not an optimization — it is what makes
-> a workspace a value at all, and it is the "OPEN Merkle-map design" that
+> a workspace a value at all, and it is the Merkle-map design that
 > `machine.identity.carried-hasher` is scoped around. The daemon watching local
 > disk maintains it incrementally.
 
@@ -224,11 +206,11 @@ driver.
 > changing an interpreter does not rerun the process — while still consuming
 > progressively. Replay is the semantics; live consumption is the fast path.
 >
-> ASYMMETRY TO JUSTIFY: molten values may NOT cross an island edge (pending
-> think-item, lean "never — merge islands"). Molten and codata are structurally
-> the same problem: a thing with no stable public identity crossing a boundary
-> where identity lives. If streams may cross and molten may not, the asymmetry
-> must be principled. Currently it is not written down.
+> Codata and molten state are not symmetric. Molten state is a mutable,
+> single-owner builder private to one island and has no replay protocol. Codata
+> publishes immutable elements or byte ranges into an append-only logical log;
+> published pieces are independently identified and replayable. Only the latter
+> may cross (`machine.island.molten-private`).
 
 > r[machine.identity.schema-ref]
 >
@@ -248,14 +230,12 @@ driver.
 
 > r[machine.identity.taint-in-identity]
 >
-> [SETTLED] Structural taint (sealed values) is identity-affecting: a container
-> holding a sealed value hashes differently from the same-shaped container
-> holding untainted content. Taint identity is a CANONICAL LEAF-SET — a sorted,
-> deduplicated set of leaf taint ids — and union flattens (associative,
-> commutative, idempotent), so grouping cannot affect identity
-> (`union(a, union(b,c))` = `union(union(a,b), c)`). Taint cannot be dropped by
-> a copy path that looks only at raw bytes. (Preserved from
-> `hash_with_taint`/`combine_taints`, with the union algebra now specified.)
+> [SETTLED] Sealing is explicit value structure. `Sealed<T,Policy>` has a
+> distinct schema and ciphertext-derived identity, so a container holding one
+> necessarily hashes differently from an ordinary container. There is no
+> parallel taint digest to combine or accidentally drop. Structural copy and
+> projection preserve the wrapper through the same descriptor-driven paths as
+> every other value (`machine.value.taint-provenance`).
 
 > r[machine.identity.secret-plaintext-never-hashed]
 >
@@ -312,27 +292,24 @@ driver.
 >
 > This is the same disease that struck `machine.identity.canonical-memory` (ABI into
 > identity) and `ExecTree`'s UTF-8 split (a representation predicate into the schema): an
-> implementation convenience leaking into the semantic plane. Whether `TreeHash` and
-> `NodeHash` could ever share a canonical preimage is an OPEN question and must be
-> **proved**, not assumed.
+> implementation convenience leaking into the semantic plane. `TreeHash` and
+> `NodeHash` are intentionally domain-separated and MUST NOT share a preimage:
+> `blake3("vix/tree/v1" || semantic_tree)` versus
+> `blake3("vx/cas-node/v1" || versioned_phon_node)`. A side index maps between them.
 
 > r[machine.identity.tree-canonicalization]
 >
-> [OPEN, round 12 — Amos to rule. Do not decide these silently.]
+> [SETTLED] A `Name` is one nonempty valid-UTF-8 segment excluding `.`, `..`,
+> separators, and NUL. Spelling is preserved without normalization. Entry order
+> is Unicode scalar order; UTF-8 byte order is an equivalent storage comparator.
+> Tree names are case-sensitive on every platform.
 >
-> - **Entry order.** The store sorts `entries` by `name.as_bytes()` lexicographically.
->   Vix's structural order on `String` is by Unicode scalar value. For well-formed UTF-8
->   these coincide (UTF-8 preserves code-point order), so the two agree today — but only
->   because names are constrained to valid UTF-8 (`Symlink`: "Target must be valid UTF-8
->   (same restriction as name)"). State the constraint or state the divergence.
-> - **The executable bit is a `Bool`, not a mode.** No setuid, setgid, sticky, group/other
->   split. Windows has no execute bit at all. Is `executable: Bool` the semantic model on
->   every platform, and what does it mean on Windows — ignored, or an error to set?
-> - **Deliberately absent, and each is a decision, not an oversight**: mtime, uid/gid,
->   xattrs, hardlinks, device/FIFO/socket nodes, resource forks, ACLs, case-sensitivity of
->   names. Confirm each as a non-goal, or name the ones that must round-trip.
-> - **Symlink targets.** Absolute or relative? May a target escape the tree? A symlink is
->   the one entry whose *content* is a path, so it interacts with
->   `machine.placement.trees-cross-as-grants` and with relocation.
-> - **Empty directories** are representable in this model and are NOT in `Map<Path,Blob>`.
->   Confirm they must round-trip (they must, for `mkdir -p out` before a compiler runs).
+> `executable: Bool` is portable semantic intent and participates in identity on
+> every platform. Windows preserves it as metadata. mtime, uid/gid, other mode
+> bits, xattrs, resource forks, hardlink identity, device/FIFO/socket nodes, ACLs,
+> and host case-folding are outside `Tree`.
+>
+> Ordinary symlink targets are relative valid UTF-8, preserved verbatim.
+> Dangling links and `..` are representable; resolution may not escape the mount
+> grant. Absolute links require an explicit non-relocatable artifact/import
+> policy. Empty directories round-trip and participate in identity.

@@ -11,11 +11,12 @@ primitives reference by identity.
 
 > r[machine.primitive.trait]
 >
-> [DESIGN] Every primitive implements one trait: identity (versioned
-> `PrimitiveId` — primitive semantics enter demand keys, so a behavioral
-> change re-keys), vocabulary (schemas of its request/response value types),
-> memo policy, and non-blocking `begin(request, ctx) → Ticket` with completion
-> delivered to the scheduler (`machine.scheduler.completion-resumes-direct`).
+> [SETTLED] Every Rust primitive is registered through a typed adapter over one
+> object-safe runtime trait. Its descriptor contains a versioned `PrimitiveId`,
+> request/response schemas, memo policy, capability/admissibility requirements,
+> and protocol version. `begin(request_ref, EffectCtx) -> EffectTicket` is
+> non-blocking; completion is delivered to the scheduler. A behavioral change
+> changes `PrimitiveId` or protocol version and therefore re-keys demands.
 
 > r[machine.primitive.registered]
 >
@@ -34,8 +35,10 @@ primitives reference by identity.
 
 > r[machine.primitive.memo-policy]
 >
-> [DESIGN] Each primitive declares `Hermetic` (fully memoizable), `Pinned`
-> (memoizable by observation pin: fetch), or `Volatile` (never). `Hermetic` is
+> [SETTLED] Each primitive declares `Hermetic` (all inputs witnessed), `Pinned`
+> (response identity is present in the request, as for fetch), `Observed`
+> (identity becomes known through a receipted observation), or `Volatile`
+> (never persistently memoized). `Hermetic` is
 > a real obligation, not a label: it requires determinism PLUS interposition
 > for every non-store input (files, env, time, randomness, network, process
 > state) so that every input is a witnessed observation or pin. A backend that
@@ -49,17 +52,17 @@ primitives reference by identity.
 
 > r[machine.primitive.effectctx-witness-only]
 >
-> [DESIGN] A primitive's window into the machine is `EffectCtx`: witness-typed
-> store reads ONLY (a primitive physically cannot read unobserved), result
-> interning, event emission, and mount minting. A Rust-side primitive's
-> read-set is exactly its witnessed reads — receipts for primitives fall out
-> of Law 18 with no separate declaration mechanism.
+> [SETTLED] A primitive's only machine window is `EffectCtx`: witness-typed
+> reads, typed result interning, progressive projection/codata publication,
+> event emission, mount-grant minting, and completion. It exposes no raw store,
+> memo, scheduler, path, network, or executor handle. A Rust-side primitive's
+> read-set is exactly its witnessed reads; receipts require no opt-in call sites.
 
 > r[machine.primitive.effect-set-v1]
 >
-> [DESIGN] The initial registered set is the census class-B eleven: exec,
-> fetch, doc-parse, crate-archive, ELF-doc, AST-doc, OCI-doc, target-probe,
-> and the sealed triple (seal / declassify / to-string). Pure operations are
+> [DESIGN] The initial registered set is exec, fetch, observe, format decode,
+> archive extraction, ELF/AST/OCI probes, attest, and the sealed operations
+> (seal / reveal / identity rendering). Pure operations are
 > not primitives (`machine.execution.no-pure-hostcalls`); `glob` over a
 > concrete tree is the named example of a mis-classified pure op.
 
@@ -87,6 +90,16 @@ primitives reference by identity.
 > command grammars (`machine.capability.no-argv-dialect`), and normalization
 > is the grammar's job — the equivalence is preserved, its implementation
 > moves out of hand-rolled Rust.
+
+> r[machine.primitive.command-package]
+>
+> [SETTLED] A versioned capability package owns four cooperating contracts:
+> the command grammar (argv roles, validation, normalization, possible
+> products), termination grammar (typed answer or failure), output protocol
+> (stdout/stderr framing), and product protocol (when a declared product is
+> immutable and ready). The invocation declares what may exist; the protocol
+> declares readiness; Vix demand decides what is frozen/published; store policy
+> decides residency. The machine never infers these from filenames or argv.
 
 > r[machine.primitive.exec-probed-toolchain]
 >
@@ -138,8 +151,10 @@ primitives reference by identity.
 > A read whose result identity is unknown until it is performed is a DIFFERENT
 > PRIMITIVE — an **observation** — and is not `fetch` with an argument omitted.
 > One function may not be hermetic-or-discovering depending on the presence of a
-> parameter (Amos, round 10). The observation primitive's name and shape are
-> OPEN; until it lands, checksumless retrieval has no surface.
+> parameter. The generic primitive is named `observe`; capability packages
+> expose typed observation constructors and policies rather than an untyped URL
+> read. An observation result is pinned into its receipt at execution time and
+> cannot enter a trust-free placed subgraph.
 >
 > Corollary: `machine.primitive.memo-policy`'s parenthetical "(memoizable by
 > observation pin: fetch)" is stale. `fetch` is `Pinned` because its identity is
@@ -147,14 +162,12 @@ primitives reference by identity.
 
 > r[machine.primitive.capabilities-by-identity]
 >
-> [SETTLED, round 10] Capabilities (daemon-advertised toolchains) are referenced
-> by IDENTITY, never by handle. `Rustc::acquire(spec)` opens no binary — nothing
-> in a vix program evaluates, so it cannot. It NAMES one. Acquisition therefore
-> happens outside a `place`, and must: the recipe pins one toolchain identity and
-> every executor materializes *that* one, or the same recipe yields different
-> artifacts on different machines. A capability is structurally a pinned blob —
-> an identity some machine may be able to materialize. If none can, the demand
-> fails before anything has run.
+> [SETTLED] Capabilities are referenced by identity, never by process-local
+> handle. A root injects a capability value or a package/toolchain solve returns
+> one; there is no ambient `Rustc::acquire`. The selected identity is captured
+> before placement and every executor materializes that exact closure. If no
+> admissible executor can satisfy its execution contract, the demand fails
+> before an effect starts.
 
 > r[machine.primitive.typed-deserialization]
 >
@@ -172,15 +185,13 @@ primitives reference by identity.
 
 > r[machine.primitive.exec-outcome]
 >
-> [DESIGN, round 12] `exec` returns a struct with three fields and **no exit status**:
-> `{ tree: Tree, stdout: Stream<Int, String>, stderr: Stream<Int, String> }`.
+> [SETTLED] A capability template produces `Command<A>` and `exec` returns:
+> `ExecOutcome<A> { answer: A, tree: Tree, stdout: ByteStream, stderr: ByteStream }`.
+> There is no exit-status field.
 >
-> `stdout`/`stderr` are **codata fields**. A stream may be a record field; the field's
-> semantic content is the value it drains to (`machine.identity.streams-cross-island-edges`
-> — a field is an edge), so `ExecOutcome` acquires an identity when the process finishes
-> while a consumer may read lines long before. Keys are LINE NUMBERS: a process writes its
-> output in order, and only the timing varies, so consuming stdout is deterministic even
-> though arrival is not.
+> `stdout`/`stderr` are byte codata whose completed values are Blobs. OS writes
+> and transport frames are not keys. Immutable published ranges are addressed
+> by byte offset; text decoding and line framing are explicit projections.
 >
 > `tree` is an ordinary value whose PROJECTIONS resolve at different times. Demanding
 > `out.tree / p"early.txt"` does not demand the whole tree. Progressive exec trees are
@@ -190,24 +201,12 @@ primitives reference by identity.
 
 > r[machine.primitive.exit-status-is-not-a-value]
 >
-> [DESIGN, round 12] An exit code is a naked `Int` where a typed outcome belongs, so the
-> language does not expose one. A nonzero exit is a **failure**
-> (`machine.error.failure-is-a-value`): the machine attaches subject, span and demand
-> chain; the payload carries the status and the collected stderr.
->
-> Where a nonzero exit is a legitimate ANSWER — `grep` returning 1 for "no match" — that
-> answer must come from somewhere, and the only place it can come from is the **command
-> grammar**, which already types argv on the way in. That is the requirement the schema
-> below must eventually satisfy; it is **not** a facility that exists today.
->
-> **OPEN, and blocking: how an accepted exit code becomes a typed result.**
-> `ExecOutcome { tree, stdout, stderr }` carries no status, so with `grep`'s 0 and 1 both
-> accepted, `Match` and `NoMatch` are **indistinguishable** in the returned value. The
-> mapping from an accepted status to a typed result schema is NOT ruled, and this rule does
-> not invent one. Until Amos rules it, a command grammar may only declare which statuses
-> **fail**; it may not declare a status an "outcome", because there is nowhere for the
-> outcome to go. An unrecognised status fails. `$?` and its undocumented magic numbers do
-> not exist either way.
+> [SETTLED] The command package's termination grammar maps process termination
+> to either an `A` constructor or a typed `Failure`. Conventional commands use
+> `A = ()` and map exit zero to unit. A grep-shaped package may map zero to
+> `Match` and one to `NoMatch`. Unmapped exits and signals fail with raw
+> termination information. The mapping is versioned command semantics and
+> enters command identity. `$?` and undocumented magic integers do not exist.
 
 > r[machine.primitive.fetch-returns-a-blob]
 >
@@ -255,31 +254,13 @@ primitives reference by identity.
 > `place` evaluates a subgraph of demands on another evaluator
 > (`machine.placement.identity-crosses`). It does not inspect the subgraph.
 >
-> Stream processing happens remotely by **placing the surrounding block**, not by handing
-> a closure to `exec`. A placed block that consumes `out.stdout` consumes it next to the
-> process; only the resulting value crosses back.
+> Stream processing normally runs next to the process by placing the surrounding
+> block. It may also cross to another evaluator through the generic codata demand
+> protocol (`machine.placement.codata-crosses`). `exec` has no observer callback
+> in either case.
 >
-> **The observer closure is NOT obsolete. It is the lowering.** `vix-language-design.md`
-> §"What ships to executors" already described it as "the canonical AST of the closure …
-> holding the process handle, able to return anything incl. streams" — which is precisely
-> the lowering of a placed block over an exec's codata fields. What is retired is the
-> observer as a *surface construct* and as a *special exec mechanism*. Any document
-> presenting `exec cmd where { observer: … }` is stale.
->
-> Readiness follows: a file appearing in an output tree is a filesystem fact, and readiness
-> is a **protocol fact** — a tool that announces artifact availability on a stream it
-> controls can be read for that announcement, and a placed block reading `out.stdout` is
-> then the readiness authority. A subfile projection resolving early is the consequence.
->
-> Two claims an earlier draft made and could not support:
->
-> - It asserted that *rustc announces artifacts on stdout, which is how cargo pipelines
->   rmeta.* Cargo/rustc pipelining uses a readiness signal, but identifying that signal with
->   stdout is **unsourced**. Do not repeat it without a citation.
-> - It made a VFS **close event** the generic fallback for protocol-less tools. That is
->   **unsound**: a process may close a file and reopen and mutate it. For a protocol-less
->   tool the safe readiness authority is **process exit**, unless the command grammar
->   promises monotonic or close-final outputs — in which case the close event is admissible
->   *because the grammar promised it*, not because the filesystem said so.
->
-> (`/vix-design/exec-observers` — findings intact, mechanism superseded.)
+> Readiness is a product-protocol fact, not a filesystem guess. The package may
+> accept a tool-controlled message or promise monotonic/close-final output. For
+> a protocol-less tool, process exit is the safe readiness authority; a bare VFS
+> close is not, because a process may reopen and mutate the file. Progressive
+> Tree projection is the result of the protocol publishing an immutable product.

@@ -1,7 +1,6 @@
 +++
 title = "The runtime"
 weight = 2
-sort_by = "weight"
 +++
 
 Normative specification for the vix machine — the demand scheduler,
@@ -17,12 +16,13 @@ proposal (committee-converged), the vixen KB design corpus, and an
 archaeology sweep of the current driver ("the accidental spec") whose
 correct semantics are preserved here and whose defects are explicitly not.
 
-Every rule carries a confidence marker:
+Every rule is normative. Historical confidence markers mean:
 
 - **[SETTLED]** — decreed or committee-converged; changing it is a project decision, not an implementation choice.
-- **[DESIGN]** — concrete agreed design; changing it needs a written reason.
-- **[OPEN]** — a decision is required before or during implementation; the
-  rule states the alternatives rather than picking one.
+- **[DESIGN]** — an agreed design obligation whose implementation is pending.
+
+There are no live **[OPEN]** rules. New ambiguity is resolved in this
+specification before implementation chooses a behavior.
 
 ## Charter rules
 

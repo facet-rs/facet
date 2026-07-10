@@ -13,13 +13,13 @@ adversarial review found the spec happy-path-complete but failure-thin.
 
 > r[machine.lifecycle.effect-failure-is-a-result]
 >
-> [DESIGN] A failed effect — exec exits non-zero, fetch 404s, a test fails —
-> is a receipted RESULT, not a `MachineError`. It memoizes under the
-> primitive's policy (a known-failing compile is not re-run; a failing test
-> carries its receipt). A `MachineError` is reserved for machine-internal
-> failure (a broken invariant, a cycle, an exhausted resource) — the two are
-> distinct and a primitive's completion carries which one it is. (The
-> preserved `ExecEvent` vocabulary gains an explicit failure variant.)
+> [SETTLED] A semantic negative effect outcome — for example an exec termination
+> mapped to failure by its command grammar — is a receipted `Failure` value and
+> memoizes under the primitive policy. Transport loss, current replica/origin
+> unavailability, cancellation, or exhausted executor resources are transient
+> machine/control-plane failures and do not memoize. A primitive completion
+> distinguishes `Ok(value)`, `Failed(Failure)`, and `MachineError`; it never
+> infers the class from a rendered string or a raw status.
 
 > r[machine.lifecycle.failure-carries-receipt]
 >
@@ -32,19 +32,21 @@ adversarial review found the spec happy-path-complete but failure-thin.
 
 > r[machine.lifecycle.ticket-liveness]
 >
-> [OPEN → DESIGN] The machine gives no totality guarantee for external effects
-> (a network fetch may hang forever), and the scheduler has no clock. Liveness
-> is therefore a primitive-declared and caller-requestable property: a ticket
-> may carry a deadline or lease, and a cancellation primitive wakes all
-> waiters on that demand with a typed `MachineError` (cancelled/timed-out) and
-> prevents memo publication. The deadline is enforced by the primitive's own
-> runtime (which does have a clock), not by a scheduler poll. OPEN sub-point:
-> whether deadlines are mandatory on every external effect or opt-in.
+> [SETTLED] The machine gives no totality guarantee for an external effect and
+> the scheduler owns no clock. Every ticket supports cancellation and a
+> renewable ownership lease. A caller or executor policy MAY abandon its
+> subscription at a deadline; that deadline is control-plane policy and cannot
+> become a memoized Vix failure merely because one executor was slow. If the
+> last waiter leaves, policy may cancel the demand and backend ticket. A timeout
+> intended to be semantic must be an explicit primitive request field and thus
+> part of recipe identity. Primitive runtimes enforce clocks and deliver typed
+> completions; the scheduler never polls time.
 
 > r[machine.lifecycle.cancellation-poisons-not-memoizes]
 >
-> [DESIGN] A cancelled or timed-out effect never becomes a memo entry — it is a
-> transient `MachineError`, not a receipted result. Re-demand re-runs it.
+> [SETTLED] A cancelled, abandoned, lease-expired, or policy-timed-out effect
+> never becomes a memo entry. It is a transient control-plane completion, not a
+> receipted language result. Re-demand starts or joins valid work again.
 >
 ## Freeze / publish atomicity
 

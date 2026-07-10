@@ -3,9 +3,6 @@ title = "Description, not action"
 weight = 10
 +++
 
-*Status: provisional — this page documents the language as designed; parts
-are not implemented yet.*
-
 A vix program does not run. It *describes* — and something outside the
 program decides what, of everything described, is worth computing.
 
@@ -138,7 +135,7 @@ result.
 sense — not lazy-by-default-with-escape-hatches (`seq`, bang patterns,
 `deepseq`), but lazy as in *the program has no evaluation vocabulary at
 all*. The strictness your intuition wants back is the implementation's
-job, done well, invisibly (see [Islands](/vix/three-planes) territory in
+job, done well, invisibly (see [Islands](/three-planes) territory in
 the under-the-hood chapters).
 
 **Coming from build systems**: this is the part where vix stops being "a

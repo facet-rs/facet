@@ -31,9 +31,10 @@ the string `"unwrap on None"` and no location, no subject, no demand chain.
 
 > r[machine.error.option-unwrap-span]
 >
-> [DESIGN] A vix-level unwrap of `None` produces a `MachineError` carrying the
-> unwrap's vix source span and the demand chain. The bare-string sentinel and
-> span-less unwrap requests are banned.
+> [SETTLED] A Vix-level unwrap of `None` produces a `Failure` with typed
+> `UnwrapOnNone` payload and the unwrap source span. Reporting reconstructs the
+> current demand chain. This is a language outcome, not a machine invariant
+> error; bare strings and span-less unwrap requests are banned.
 
 > r[machine.error.structural-impossibility]
 >

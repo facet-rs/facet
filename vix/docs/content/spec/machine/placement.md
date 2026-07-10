@@ -90,7 +90,7 @@ Distinguish two boundaries that are easy to fuse and must not be:
 >
 > 1. **The target** — what the artifact is FOR. Semantic. It changes the value.
 > 2. **The selected toolchain's host / execution ABI** — including Cargo's `HOST`. This is a
->    **pinned semantic property of the toolchain** (it is part of what `Rust::acquire` names,
+>    **pinned semantic property of the selected toolchain capability**,
 >    and it enters exec identity via `machine.primitive.exec-probed-toolchain`) **and** a
 >    scheduler **admissibility constraint**. It is not cost-model.
 > 3. **The physical executor** — which machine, of the admissible set, actually ran it.
@@ -113,9 +113,10 @@ Distinguish two boundaries that are easy to fuse and must not be:
 > known before the block is evaluated. It acquires an identity where it is computed, and
 > that identity crosses back.
 >
-> The two directions are not symmetric and must not be conflated. A placed block that
-> consumes `out.stdout` and returns a diagnostic does not violate `identity-crosses`: the
-> stream never crossed the boundary, and the diagnostic crossed back as a finished value.
+> The two directions are not symmetric and must not be conflated. A placed block
+> may consume codata locally and return a finished diagnostic, or another
+> evaluator may subscribe to codata/projections across the boundary. Both use
+> the same remote demand/completion protocol; transport timing is unobservable.
 
 > r[machine.placement.trees-cross-as-grants]
 >
@@ -153,17 +154,19 @@ Distinguish two boundaries that are easy to fuse and must not be:
 > different kind of object from one containing only pinned inputs, and must be
 > visible as such.
 
-## Open
+> r[machine.placement.artifact-shipping]
+>
+> [SETTLED] Dispatch ships partitioned/lowered architecture-neutral artifacts,
+> source maps, capture identities, primitive ABI requirements, and grants. The
+> canonical closure AST remains semantic identity and audit authority, but the
+> executor needs Weavy and registered primitives rather than vixc. It may JIT
+> the shipped artifact locally.
 
-- **Does the AST travel, or the lowered island?** Lowering artifacts are already
-  epoch-scoped and as-if, so both are sound. The choice decides whether an
-  executor must host `vixc` or only `weavy` — that is, whether an executor can be
-  a static binary on a machine you do not administer.
-- **Is capability disjointness a mandatory island cut?** Effects are already
-  mandatory cuts (`vix/_index.md`), so an island contains at most one effect and
-  therefore at most one capability requirement: capability disjointness may be a
-  *theorem* rather than a rule. Confirm, and delete this bullet.
-- **Does codata cross a `place` boundary?** Streams cross island edges (ruled,
-  round 10). A stream produced by a process on one evaluator and consumed on
-  another makes back-pressure and cancellation a distributed protocol. If the
-  consumer is inside the place, nothing crosses but the final value.
+> r[machine.placement.codata-crosses]
+>
+> [SETTLED] Codata and progressive projections may cross placement boundaries
+> as remote demand edges. The protocol provides semantic keys or byte offsets,
+> credit/backpressure, cancellation, completion, reconnection, and replay/spill.
+> A transport frame is never a stream element. Capability disjointness needs no
+> separate island rule: every effect is already a mandatory cut and carries its
+> own derived admissibility requirements.

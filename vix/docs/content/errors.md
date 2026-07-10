@@ -3,9 +3,6 @@ title = "Failure"
 weight = 22
 +++
 
-*Status: provisional — this page documents the language as designed; parts are
-not implemented yet.*
-
 A failure **is a value**. It has a schema and a content hash like everything else,
 so it can be stored, memoized, put in a record, and returned. What makes it a
 failure is not what it is — it's what the machine does when you demand it.

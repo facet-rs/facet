@@ -66,14 +66,14 @@ The value model: how values are typed, constructed, read, and discriminated.
 
 > r[machine.value.taint-provenance]
 >
-> [OPEN] Sub-value taint granularity is unresolved between two prior rulings:
-> `vix-spec.md` V30 ("provenance is graph-side; sub-value taint is a
-> non-goal") and `secrets-as-sealed-values.md` Q1 (per-leaf structural
-> precision where the machine understands the derivation, whole-output taint
-> only for opaque exec). These are mutually exclusive as written. Until
-> adjudicated, the rewrite implements taint-as-identity (see
-> `machine.identity.taint-in-identity`) at whole-value granularity and blocks
-> any per-leaf work on this rule.
+> [SETTLED] There is no shadow taint bitmap or graph-side taint attached to an
+> otherwise ordinary value. A secret is an explicit `Sealed<T, Policy>` leaf
+> with ciphertext-derived identity and capability-gated reveal. Aggregates gain
+> per-leaf precision through their ordinary structure: copying or projecting a
+> sealed leaf preserves the wrapper; unrelated siblings remain ordinary.
+> Primitives whose derivation is opaque may return a whole-output sealed wrapper.
+> Provenance and reveal facts live in receipts/journals rather than hidden value
+> metadata.
 
 > r[machine.value.structural-order]
 >
@@ -101,10 +101,11 @@ The value model: how values are typed, constructed, read, and discriminated.
 >   **Closure**: definition identity, then its capture record structurally.
 > - **Tuple**: as a struct with fields `0, 1, …`.
 >
-> **`Stream<K,V>` is NOT a value and has no structural order.** It is codata: recipe
-> identity, no value identity, not a struct field, not a map key, not sortable
-> (`machine.identity.streams-cross-island-edges`). "Every value is ordered" excludes
-> it because it is not a value until collected.
+> **`Stream<K,V>` and `ByteStream` are codata and have no structural order.**
+> They have recipe identity while live and completed semantic content
+> (`Map<K,V>` or `Blob`) once drained. They may be record fields and inter-island
+> edges, but are not map keys or sortable while live
+> (`machine.identity.streams-cross-island-edges`).
 >
 > **Values are DAGs.** A runtime value cannot contain itself, so structural
 > comparison terminates (`machine.store.*`: values form a DAG by construction).

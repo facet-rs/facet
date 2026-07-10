@@ -41,8 +41,9 @@ campaigns.
 
 > r[machine.obs.ir-dump]
 >
-> [DESIGN] Lowered weavy IR has a first-class text dump. A machine whose
-> compiled form cannot be read is unreviewable by construction.
+> [SETTLED] Graph VIR, partitioned VIR, lowered Weavy IR, native mapping tables,
+> and the source-map chain have deterministic text plus typed inspection forms.
+> A machine whose compiled form cannot be read is unreviewable by construction.
 
 > r[machine.obs.snapshot-no-clone]
 >

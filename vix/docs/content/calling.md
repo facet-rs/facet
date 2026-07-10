@@ -3,9 +3,6 @@ title = "Calling"
 weight = 7
 +++
 
-*Status: provisional — this page documents the language as designed; parts are
-not implemented yet.*
-
 ```vix
 let manifests = parse_workspace root where { members, target };
 ```
@@ -19,7 +16,7 @@ A value followed by a value calls the first with the second.
 
 ```vix
 parse root            // call parse with root
-Rustc::acquire spec   // call acquire with spec
+double 21             // call double with 21
 ```
 
 Parentheses are **grouping**. They are never call syntax. So `parse (root)` is
@@ -76,10 +73,10 @@ otherwise have made you write `Guard`. Watch for that.
 site **constructs** it.
 
 ```vix
-fn exec(cmd: Command) where {
+fn exec(cmd: Command<A>) where {
     mounts:   [Mount] = [],
     writable: [Path]  = [],
-} -> ExecOutcome
+} -> ExecOutcome<A>
 ```
 
 `where` sits to the **left of `->`**, because it names *inputs*, and inputs belong
@@ -136,7 +133,9 @@ domains.insert pkg where { value: narrowed }
 xs.map(f)
 ```
 
-The receiver is the subject.
+The receiver is implicit in method syntax. A method may take one additional
+positional argument; empty `()` is the zero-argument method form. Parentheses
+around a nonempty method argument are still grouping: `xs.map(f)` is `xs.map (f)`.
 
 ## What you can't write, and why
 

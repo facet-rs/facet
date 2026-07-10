@@ -3,9 +3,6 @@ title = "Effects, and where they run"
 weight = 32
 +++
 
-*Status: provisional — this page documents the language as designed; parts are
-not implemented yet.*
-
 Running a compiler is not a side effect. It is an expensive way to compute a
 value, on a machine that happens to have a compiler.
 
@@ -29,19 +26,21 @@ runs nothing.
 ## What `exec` gives back
 
 ```vix
-struct ExecOutcome {
-    tree:   Tree,                // recursive: files, dirs, symlinks, exec bits
-    stdout: Stream<Int, String>, // keyed by line number
-    stderr: Stream<Int, String>,
+struct ExecOutcome<A> {
+    answer: A,
+    tree: Tree,          // recursive: files, dirs, symlinks, exec bits
+    stdout: ByteStream,  // drains to Blob; decode/framing is explicit
+    stderr: ByteStream,
 }
 ```
 
-Three fields and **no exit status.**
+Four fields and **no exit status.**
 
-`stdout` and `stderr` are **codata**: you can read a line while the process is still
-running, which is what a diagnostic renderer and a readiness check both want. Keys are
-line numbers, not arrival order — a process writes its output in order, and only the
-*timing* varies. The field's semantic content is the value it drains to, so
+`stdout` and `stderr` are **byte codata**: you can decode and read a line while the
+process is still running, which is what a diagnostic renderer and a readiness check both
+want. OS writes and network frames are not semantic boundaries. Immutable ranges are
+addressed by byte offset; UTF-8 and line framing are explicit typed projections. Each
+field's semantic content is the `Blob` it drains to, so
 `ExecOutcome` has an identity as soon as the process is done, and a reader may consume
 it long before.
 
@@ -54,24 +53,18 @@ arriving at a subprocess.
 
 So there isn't one.
 
-A nonzero exit is not a number you inspect. It is a **failure**: `exec` fails, the
-machine attaches the subject, the span and the demand chain, and the payload carries
-what you'd want.
+A process termination is interpreted by the capability package's termination grammar.
+It becomes either the typed `answer` field or a **failure**: the machine attaches the
+subject, span and demand chain, and the payload carries the raw termination information.
 
 ```vix
 let out = exec cc`-c {src} -o {obj}`;   // a bad compile poisons whatever demanded it
 ```
 
-Anything the grammar does not recognise fails, carrying the status and the stderr it
-collected. `exec cmd?` gives you `Result<ExecOutcome, Failure>` when you want to handle it.
-
-> **Unruled, and it blocks a real case.** Some tools use a nonzero exit as an *answer*:
-> `grep` returns 1 for "no match". A command grammar must be able to declare that. But
-> `ExecOutcome` carries no status, so with 0 and 1 both accepted there is nowhere for
-> "which one happened" to live — `Match` and `NoMatch` would be indistinguishable in the
-> value. **How an accepted exit code becomes a typed result is not decided**, and this
-> chapter will not invent a command-specific encoding for it. Until it is ruled, a grammar
-> may declare which statuses *fail*, and nothing more.
+Anything the grammar does not recognise fails. A conventional command has answer type
+`()` and maps exit zero to unit. A grep-shaped command has an answer enum and maps zero
+to `Match`, one to `NoMatch`. `exec cmd?` gives
+`Result<ExecOutcome<A>, Failure>` when you want to handle failure.
 
 **Coming from a shell**: `$?` is gone, and so is the habit of comparing it to a
 magic number nobody documented.
@@ -154,8 +147,10 @@ somewhere, and what they saw becomes the receipt's authority. They are not a
 ## A command is a tool projected out of a closure
 
 ```vix
-let rust = Rust::acquire spec;
-let out  = exec rust.rustc`--edition 2024 {src / p"lib.rs"}`;
+fn compile(src: Tree) where { rust: Rust } -> Tree {
+    let out = exec rust.rustc`--edition 2024 {src / p"lib.rs"}`;
+    out.tree
+}
 ```
 
 Executables are seldom self-contained. `cc` is `cc1`, a specs file, a libc, a
@@ -176,9 +171,10 @@ A closure guarantees hermeticity in exactly one of two ways:
   everything downstream the moment it changes. Xcode and MSVC are this, because they
   cannot legally be the first thing.
 
-Neither `Rust::acquire spec` nor a materialized closure opens a binary. Nothing in a
-vix program evaluates, so they cannot. They *name* one. If no machine can satisfy an
-ambient closure, the demand fails before anything has run.
+The demand root supplies `rust`, or a package/toolchain solve returns it as a value.
+There is no ambient `Rust::acquire`: capability discovery and selection cannot read the
+host into a Vix program. If no admissible machine can satisfy the selected closure, the
+demand fails before anything has run.
 
 ## Reads are witnessed, and so are misses
 
@@ -232,7 +228,7 @@ Put them together and the interesting thing happens by itself:
 ```vix
 let diagnostics = place {
     let out = exec rustc`--error-format=json {src}`;
-    out.stderr.filter(is_error).map(render).collect()      // runs next to the process
+    out.stderr.decode(Utf8).lines().filter(is_error).map(render).collect()
 };
 ```
 
@@ -244,14 +240,11 @@ together.
 And note which way the identity rule points. *"A value may cross only if its identity is
 known without evaluating it"* governs **dispatch** — what you capture and ship. It says
 nothing about **results**: `diagnostics` is computed over there, so its identity is not
-knowable before the block runs, and it acquires one where it is computed. The stream never
-crossed the boundary; the finished value crossed back.
-
-**Coming from the March design**: an *observer closure* used to be shipped with every
-exec — "the canonical AST of the closure, holding the process handle, able to return
-anything including streams." That closure was never a feature of `exec`. It was the
-**lowering** of exactly the block above. It still is. What changed is that you no longer
-write it: you write ordinary code, and placement decides where it runs.
+knowable before the block runs, and it acquires one where it is computed. In this example
+stderr stays local and the finished value crosses back. A consumer on another evaluator
+may instead subscribe to byte ranges or progressive tree projections directly: codata is
+a remote demand edge with credit, cancellation, and replay. Placement is not a forced
+materialization boundary.
 
 Readiness works the same way. A file appearing in an output tree is a **filesystem** fact;
 readiness is a **protocol** fact. A tool that announces artifact availability on a stream
@@ -264,13 +257,32 @@ not readiness: a process may close a file and reopen it and write more. A comman
 may promise that its outputs are monotonic or close-final, and *then* a close event is
 admissible — because the grammar promised it, not because the filesystem said so.
 
+### Rustc pipelining across hosts
+
+Suppose rustc A runs on executor X and produces `liba.rmeta` and `liba.rlib`, while
+dependent rustc B is placed on Y. B demands only A's
+`out.tree / p"liba.rmeta"` projection. X consumes the Rust capability package's product
+protocol. When that protocol declares the metadata product immutable, X freezes the
+Blob into its local value store, publishes the projection identity and receipt, and keeps
+A running for the rlib. Y receives the completed projection plus grant, resolves the Blob
+from X, a peer, or another admissible replica, and starts B.
+
+The `.rmeta` is committed eagerly **with respect to that demanded projection**, not because
+every file a process happened to write is automatically a memo result. The producer-local
+store is the first required replica; replication and retention are policy. Bulk bytes move
+on the store data plane. The demand/control lane carries identity, grant, completion,
+receipt, credit, cancellation, and lease traffic.
+
+With no product-readiness protocol, B waits for A's process exit. A VFS close becomes
+authority only when the capability package promises close-final or monotonic output.
+
 ## `place` is a strong boundary
 
 Sometimes a demand should be evaluated somewhere else — because that machine has
 the capability, or the bytes, or simply because there are more of them.
 
 ```vix
-let out = place (exec rustc`-c {src} -o out`);
+let out = place { exec rustc`-c {src} -o out` };
 ```
 
 An island edge carries a *value* between two computations in one evaluator. A
@@ -294,7 +306,7 @@ that it needs something the boundary never accounted for.
 
 ```vix
 let f   = fetch url where { blake3: "b1a4…" };
-let out = place (exec rustc`-c {f} -o out`);
+let out = place { exec rustc`-c {f} -o out` };
 ```
 
 **On the executor.** Nothing outside the `place` demands `f`'s bytes — the only

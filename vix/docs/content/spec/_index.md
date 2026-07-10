@@ -1,18 +1,17 @@
 +++
 title = "Specification"
 weight = 40
-sort_by = "weight"
 +++
 
-Conjoined specs: each rule here is implemented and verified by annotated
-code. Coverage is queryable (`ddc coverage nav`), so "does the
-implementation match the spec" is a fact, not a review impression.
+Conjoined specifications. Rules are implemented and verified by annotated code;
+coverage is queryable with `ddc coverage`, so conformance is evidence rather
+than review impression.
 
-- **The runtime** — scheduler, store, identity, memo, receipts, primitives,
-  persistence, observability. Confidence-tagged rules
-  (SETTLED / DESIGN / OPEN).
+- **The language** defines source syntax, typing, values, codata, commands,
+  placement, and tests.
+- **The runtime** defines islands, demand, identity, memoization, receipts,
+  scheduling, primitives, persistence, placement transport, and observability.
 
-Related specifications live with their components: the rodin solver at
-[/rodin](/rodin), the daemon and capability packages under `vixd.*` when
-that spec lands. The language surface and native vocabulary (`lang.*`)
-is a planned sibling here.
+The Rodin solver specification lives at [/rodin](/rodin). Vixen capability,
+runner, store-placement, and trust policy remain product specifications; they
+may implement this runtime without becoming language semantics.

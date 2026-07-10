@@ -1,0 +1,21 @@
+@schema {id crate:dodeca-config@1, cli ddc}
+
+source {
+    content docs/content
+    repo "https://github.com/facet-rs/facet/tree/main/rodin"
+
+    impls (
+        {
+            name vix
+            include ("rodin/*.vix")
+        }
+        {
+            name rust
+            test_include ("vix/tests/rodin*.rs" "vix/tests/cargo_manifest.rs")
+        }
+    )
+}
+
+site {
+    output docs/public
+}

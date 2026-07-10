@@ -3,8 +3,8 @@ title = "Building a solver"
 weight = 90
 +++
 
-*Status: provisional — this chapter follows the design of rodin, the real
-solver, whose specification lives at [/rodin](/rodin).*
+This chapter follows Rodin, whose normative solver specification lives at
+[/rodin](/rodin).
 
 You want to build a dependency solver. Given manifests and a package
 index, pick one version per package so every requirement holds — an
@@ -138,7 +138,7 @@ Tomorrow, facts whose reads still hold are reusable; facts invalidated by
 a new publish simply fail re-verification and are re-derived. You build
 none of this. The persistence chapter of a solver README is, here, a
 property of the substrate. The details are in
-[the three planes of identity](/vix/three-planes).
+[the three planes of identity](/three-planes).
 
 ## Incremental for free, exact by construction
 

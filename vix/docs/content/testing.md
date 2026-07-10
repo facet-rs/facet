@@ -3,9 +3,8 @@ title = "Testing"
 weight = 35
 +++
 
-*Status: provisional — this page documents the language as designed; the
-test system is specified here before it is implemented, deliberately: the
-conformance ladder (`vix/tests/ratchet/`) is written against this page.*
+The conformance ladder (`vix/tests/ratchet/`) is written against this page and
+the normative language/runtime specifications.
 
 Tests in vix are values, like everything else. A test describes checks; running
 tests means demanding them; a failure is an ordinary value that says what went
@@ -33,7 +32,7 @@ new grammar. Running a test means demanding its checks.
 `vx test` demands every test in scope. `vx test point_fields` demands one. A test
 nobody demands costs nothing, like everything else described and not asked for.
 
-Runner directives are attribute fields, not magic comments:
+In-language test options are attribute fields:
 
 ```vix
 #[test { budget_wall: 5s, budget_rss: 1GB }]
@@ -50,7 +49,7 @@ the harness, which stands outside the program, supplies it:
 #[test]
 fn exec_echo(sh: Sh) -> Stream<Check> {
     let out = exec sh`echo "hello ratchet"`;
-    yield expect_eq(out.stdout.trim(), "hello ratchet");
+    yield expect_eq(out.stdout.decode(Utf8).text().trim(), "hello ratchet");
 }
 ```
 
@@ -165,18 +164,21 @@ The harness drains the stream — which constructs every `Check` and demands not
 completed trace. **You never order them; the variant does.** Yield them wherever
 they read best.
 
-And that is what makes `never_demanded(expensive())` typecheck. A trace-check
-constructor does not take a `T`. It takes the *description* of a demand:
+And that is what makes `never_demanded(expensive())` work. Function arguments
+are wires, so a trace-check constructor can identify the described invocation
+without reading its result. These are harness intrinsics, not a general
+reflection type:
 
 ```vix
-fn never_demanded<T>(d: Demand<T>) -> Check
+fn never_demanded<T>(described: T) -> Check
 fn demanded_times<A, R>(f: fn(A) -> R) where { times: Int } -> Check
 ```
 
-`Demand<T>` is what an un-demanded expression already is. Writing `expensive()` in
-argument position produces one; nothing else in the language needs to know, because
-nothing else can force it. `expect_eq(expensive(), 1)` takes `T`, so demanding that
-check forces both sides — which is exactly the difference between the two kinds.
+Writing `expensive()` in argument position passes its wire; the trace intrinsic
+records its recipe/location description without consuming the value.
+`expect_eq(expensive(), 1)` constructs a value check whose payload consumes `T`,
+so demanding that check demands both sides. There is no user-visible
+`Demand<T>`/promise wrapper.
 
 **Coming from Rust/Python/JS**: your generator resumes where it left off and
 yields in program order. This one does not. If you write code that depends on
@@ -201,11 +203,16 @@ Compile-fail cannot live in-language, so these keep their headers. The runner
 compiles the file, expects failure, and matches the diagnostic. A reject file that
 compiles is a failing test.
 
+Fixture selection, rerun mutations, alternate source files, and expected harness
+flags are likewise file-level harness metadata when they describe orchestration
+rather than a Vix value. They remain leading `//!` directives until the ratchet
+gains an adjacent typed Styx manifest; they are not language statements.
+
 ## The ratchet
 
 The conformance suite (`vix/tests/ratchet/`) is a numbered ladder, ordered so that
 each rung uses only surface introduced at or below it. `vx test --ratchet` reports
 the highest rung *N* such that every rung ≤ *N* passes — the ratchet never counts
 a green rung above a red one. Rung 100 is a working miniature of
-[the solver chapter](/vix/building-a-solver). When rung 100 is green, the language
+[the solver chapter](/building-a-solver). When rung 100 is green, the language
 in this book exists. Rungs 101 and up say it is good.

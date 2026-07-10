@@ -11,13 +11,11 @@ cache.
 
 > r[machine.persistence.trait-boundary]
 >
-> [DESIGN] The persistence seam is a trait defined purely in vix semantic terms
+> [SETTLED] The persistence seam is a trait defined purely in vix semantic terms
 > (get value by (schema, hash) — only realized-tier values persist, so no tier
 > axis is needed; look up memo by demand key; enumerate projection candidates).
-> Open vix depends on no product crate; the proprietary side implements the
-> trait against vx-store. This is the open/proprietary seam applied to
-> persistence. [DESIGN not SETTLED: the interface is load-bearing but its shape
-> comes from a doc with its own open questions.]
+> Open Vix depends on no product crate; Vixen implements the trait against
+> vx-store. This is the open/product seam applied to persistence.
 
 > r[machine.persistence.value-vs-claim]
 >
@@ -65,3 +63,70 @@ cache.
 > [DESIGN] The memo and store expose persistability interfaces from the first
 > commit (the trait, not the backing). LED's "no serialization exists" is the
 > gap being closed, not a license to design in-memory-only.
+
+> r[machine.persistence.four-lifetimes]
+>
+> [SETTLED] Identity, claim, replica, and lease are distinct. An identity is an
+> immutable fact and never expires. A claim maps a recipe/nomination to result
+> identity plus receipt and may expire. A replica says one store currently has
+> the body and may be evicted. A lease/root promises availability for a policy
+> lifetime. No expiration policy changes an identity.
+
+> r[machine.persistence.value-and-claim-interfaces]
+>
+> [SETTLED] The persistence seam exposes a typed value CAS and a separately
+> trusted claim index even when one service implements both. Open Vix verifies
+> claims. Vixen governs tenant namespaces, provenance, signatures, sampling,
+> residency, leases, and collection. A claim may outlive its value body: resolve
+> another replica, recompute and verify the named identity, or report
+> unavailable without inventing a new value.
+
+> r[machine.persistence.replica-eviction]
+>
+> [SETTLED] Every individual CAS replica and every memo candidate is evictable.
+> Policy may evict the globally last body only when a live source, permitted
+> recomputation path, or accepted-loss policy exists. Unsaved editor snapshots
+> retain a live source lease; pinned upstream blobs may rely on admissible
+> origins/peers; published artifacts with archival SLAs retain durable roots;
+> irreproducible observations require retained flesh for as long as their claims
+> promise availability.
+
+> r[machine.persistence.store-placement]
+>
+> [SETTLED] Store placement first applies hard admissibility filters: tenant and
+> ACL/grant, sovereignty jurisdiction, encryption/key domain, secret/proprietary
+> policy, execution contract, self-hosting requirement, and observation trust.
+> Knowing a hash grants no authority. Among admissible stores, policy minimizes
+> measured/predicted cost: current residency, read-set bytes, memory/disk/LAN
+> latency, egress price, queueing, recomputation cost, hotness, durability, and
+> fanout. Sovereignty changes permitted residency and execution, never semantic
+> identity.
+
+> r[machine.persistence.enterprise-shards]
+>
+> [SETTLED] Enterprise shards are storage and trust domains, not alternate hash
+> spaces. The same identity may exist in several tenants without cross-tenant
+> discoverability. Physical cross-tenant dedup is optional policy because
+> equality itself can leak information. Claim sources are ordered by trust
+> (tenant-owned, vendor-signed, public/untrusted, editor-ephemeral) and do not
+> become mutually trusted by sharing blob hashes.
+
+> r[machine.persistence.data-plane]
+>
+> [SETTLED] Orchestrator/control traffic carries demands, identities, grants,
+> receipts, leases, cancellations, placement decisions, and residency hints.
+> Bulk value bytes move store-to-store or source-provider-to-store on the data
+> plane. A Vox connection may multiplex a store lane and small verified bodies
+> may inline as an optimization, but the orchestrator is never the mandatory
+> payload bottleneck. If the orchestrator itself demands diagnostics or codata,
+> those demanded bytes naturally flow to it.
+
+> r[machine.persistence.editor-snapshots]
+>
+> [SETTLED] An editor buffer is first an in-memory source provider with content
+> identity, not an eagerly uploaded shared-CAS object. Remote consumers pull
+> only demanded files/ranges. Fanout policy may publish changed chunks once to
+> an ephemeral tenant/regional shard, use peer transfer, colocate demands, or
+> reconstruct from a prior snapshot plus deltas/CDC, always verifying the final
+> content identity. A small edit creates a new identity without requiring a
+> full-file disk write or full-file network upload.

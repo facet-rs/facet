@@ -23,21 +23,6 @@
 source {
     content docs/content
     repo "https://github.com/facet-rs/facet"
-
-    // Requirement coverage (dodeca's absorbed-tracey model): rules are
-    // `r[...]` blocks in this source's markdown; code carries
-    // `r[impl ...]` / `r[verify ...]` comments.
-    impls (
-        {
-            name rust
-            include ("vix/src/**/*.rs" "weavy/src/**/*.rs")
-            test_include ("vix/tests/**/*.rs" "weavy/tests/**/*.rs")
-        }
-        {
-            name vix
-            include ("rodin/**/*.vix" "vix/std/**/*.vix" "playgrounds/snark/src/bundled/vix/samples/**/*.vix")
-        }
-    )
 }
 
 mounts (
@@ -49,10 +34,18 @@ mounts (
     { name strid,   path /strid,   local strid/docs/content,     repo "https://github.com/facet-rs/facet/tree/main/strid" }
     { name fable,   path /fable,   local fable/docs/content,     repo "https://github.com/facet-rs/facet/tree/main/fable" }
     { name weavy,   path /weavy,   local weavy/docs/content,     repo "https://github.com/facet-rs/facet/tree/main/weavy" }
-    { name vix,          path /vix,          local vix/docs/content,          repo "https://github.com/facet-rs/facet/tree/main/vix" }
-    { name vix-design,   path /vix-design,   local vix/docs/content-design,   repo "https://github.com/facet-rs/facet/tree/main/vix" }
-    { name rodin,        path /rodin,        local rodin/docs/content,        repo "https://github.com/facet-rs/facet/tree/main/rodin" }
-    { name vix-internal, path /vix-internal, local vix/docs-internal/content, repo "https://github.com/facet-rs/facet/tree/main/vix" }
+    {
+        name vix
+        path /vix
+        local vix/docs/content
+        repo "https://github.com/facet-rs/facet/tree/main/vix"
+    }
+    {
+        name rodin
+        path /rodin
+        local rodin/docs/content
+        repo "https://github.com/facet-rs/facet/tree/main/rodin"
+    }
     { name vox,     path /vox,     local vox/docs/content,       repo "https://github.com/bearcove/vox" }
     { name facet-axum,       path /facet-axum,       local facet-axum/docs/content,       repo "https://github.com/facet-rs/facet/tree/main/facet-axum" }
     { name facet-cargo-toml, path /facet-cargo-toml, local facet-cargo-toml/docs/content, repo "https://github.com/facet-rs/facet/tree/main/facet-cargo-toml" }

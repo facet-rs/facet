@@ -27,12 +27,14 @@ memory, freeze/publish, snapshots, and reload semantics.
 
 > r[machine.store.reclamation-policy]
 >
-> [DESIGN] The store is append-only for a machine's lifetime; reclamation is
-> dropping the machine. This is the *written* policy, stated in the Handle
-> doc. The interface stays reclamation-ready: handles opaque, no raw-index
-> leakage, values form a DAG (no cycles by construction) so refcounting
-> remains a future option without cycle collection. Eviction design is
-> deferred and must account for memo pinning.
+> [SETTLED] Handles and identity metadata are stable for the lifetime of a
+> machine snapshot; resident bodies are not append-only. A handle slot is
+> `Resident(bytes)` or `Evicted { schema, content_hash, sources }`. Policy may
+> evict and rehydrate bodies without changing handles, identities, or claims.
+> Value DAG reachability, active leases, roots, hotness, recomputation cost, and
+> source availability govern reclamation. Memo candidates and claim metadata
+> are independently evictable. Reusing a numeric handle for a different value
+> within one snapshot is forbidden.
 
 > r[machine.store.dedup]
 >

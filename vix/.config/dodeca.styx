@@ -1,0 +1,22 @@
+@schema {id crate:dodeca-config@1, cli ddc}
+
+source {
+    content docs/content
+    repo "https://github.com/facet-rs/facet/tree/main/vix"
+
+    impls (
+        {
+            name rust
+            include ("vix/src/**/*.rs")
+            test_include ("vix/tests/**/*.rs")
+        }
+        {
+            name vix
+            include ("vix/std/**/*.vix" "vix/corpus-next/**/*.vix" "vix/tests/ratchet/**/*.vix")
+        }
+    )
+}
+
+site {
+    output docs/public
+}
