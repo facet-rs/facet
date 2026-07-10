@@ -226,9 +226,11 @@ impl<S: EventSink> Runtime<S> {
             .constants
             .iter()
             .map(|constant| {
-                let interned = self.store.intern_realized(constant.schema, &constant.bytes);
+                let interned = self
+                    .store
+                    .intern_realized(constant.store_schema, &constant.bytes);
                 self.observe_interned(interned);
-                (constant.slot, interned.handle)
+                (constant.root.slot, interned.handle)
             })
             .collect()
     }

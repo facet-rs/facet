@@ -64,12 +64,30 @@ impl LoweringAttribution {
     }
 }
 
-#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ConstantBinding {
+    pub function: FunctionId,
+    pub entry: usize,
+    pub slot: FrameSlot,
+    pub schema: WeavySchemaRef,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
 pub struct ValueConstant {
     pub node: NodeRef,
-    pub slot: FrameSlot,
-    pub schema: SchemaId,
+    pub root: ConstantBinding,
+    pub owner: ConstantBinding,
+    pub store_schema: SchemaId,
     pub bytes: Vec<u8>,
+}
+
+struct PendingValueConstant {
+    node: NodeRef,
+    root_slot: FrameSlot,
+    owner_slot: FrameSlot,
+    store_schema: SchemaId,
+    bytes: Vec<u8>,
+    span: Span,
 }
 
 /// Cached executable bytes for one VIR recipe. Per-compilation source spans
@@ -99,10 +117,17 @@ impl LoweringArtifact {
         for constant in &self.constants {
             let _ = writeln!(
                 out,
-                "constant n{} frame[{}] schema={} bytes={}",
+                "constant n{} root(function={}, entry={}, frame[{}], schema={:?}) owner(function={}, entry={}, frame[{}], schema={:?}) store_schema={} bytes={}",
                 constant.node.node.0,
-                constant.slot.byte_offset(),
-                constant.schema.0.hex(),
+                constant.root.function.0,
+                constant.root.entry,
+                constant.root.slot.byte_offset(),
+                constant.root.schema,
+                constant.owner.function.0,
+                constant.owner.entry,
+                constant.owner.slot.byte_offset(),
+                constant.owner.schema,
+                constant.store_schema.0.hex(),
                 constant.bytes.len()
             );
         }
@@ -265,7 +290,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
         layouts: &layouts,
     };
 
-    let mut constants = Vec::new();
+    let mut pending_constants = BTreeMap::new();
     let mut functions_out = Vec::with_capacity(1 + island.callees.len());
     let mut pc_nodes = Vec::with_capacity(1 + island.callees.len());
     let lowered_root = lower_vir_function(
@@ -274,7 +299,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
         &[],
         island.output,
         &context,
-        &mut constants,
+        &mut pending_constants,
     )?;
     functions_out.push(lowered_root.function);
     pc_nodes.push(lowered_root.pc_nodes);
@@ -288,13 +313,20 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
             &function.parameters,
             output,
             &context,
-            &mut constants,
+            &mut pending_constants,
         )?;
         functions_out.push(lowered.function);
         pc_nodes.push(lowered.pc_nodes);
     }
     let program = WeavyProgram { fns: functions_out };
     let contract = ProgramContractBuilder::build(island, &program, &layouts, &constant_closures)?;
+    let constants = bind_constants(
+        pending_constants,
+        &contract,
+        island,
+        &layouts,
+        &function_ids,
+    )?;
     let demand_preimage = DemandPreimage {
         closure: recipe,
         arguments: Vec::new(),
@@ -308,6 +340,152 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
         pc_nodes,
         constants,
     })
+}
+
+fn bind_constants(
+    pending: BTreeMap<NodeRef, PendingValueConstant>,
+    contract: &WeavyProgramContract,
+    island: &Island,
+    layouts: &BTreeMap<FunctionId, FunctionLayout>,
+    function_ids: &BTreeMap<FunctionId, u32>,
+) -> Result<Vec<ValueConstant>, Diagnostics> {
+    pending
+        .into_values()
+        .map(|pending| {
+            let owner_parameters = if pending.node.function == island.function {
+                0
+            } else {
+                island
+                    .callees
+                    .iter()
+                    .find(|function| function.id == pending.node.function)
+                    .map_or(0, |function| function.parameters.len())
+            };
+            let root_entry =
+                constant_entry_index(island.function, pending.node, 0, layouts, pending.span)?;
+            let owner_entry = constant_entry_index(
+                pending.node.function,
+                pending.node,
+                owner_parameters,
+                layouts,
+                pending.span,
+            )?;
+            let root_schema = validate_constant_entry(
+                contract,
+                function_ids,
+                island.function,
+                root_entry,
+                pending.root_slot,
+                pending.span,
+                "root constant publication",
+            )?;
+            let owner_schema = validate_constant_entry(
+                contract,
+                function_ids,
+                pending.node.function,
+                owner_entry,
+                pending.owner_slot,
+                pending.span,
+                "owning-function constant",
+            )?;
+            if root_schema != owner_schema {
+                return Err(lowering_diagnostic(
+                    pending.span,
+                    "constant root and owner contract schemas differ",
+                ));
+            }
+            Ok(ValueConstant {
+                node: pending.node,
+                root: ConstantBinding {
+                    function: island.function,
+                    entry: root_entry,
+                    slot: pending.root_slot,
+                    schema: root_schema,
+                },
+                owner: ConstantBinding {
+                    function: pending.node.function,
+                    entry: owner_entry,
+                    slot: pending.owner_slot,
+                    schema: owner_schema,
+                },
+                store_schema: pending.store_schema,
+                bytes: pending.bytes,
+            })
+        })
+        .collect()
+}
+
+fn constant_entry_index(
+    function: FunctionId,
+    node: NodeRef,
+    parameter_count: usize,
+    layouts: &BTreeMap<FunctionId, FunctionLayout>,
+    span: Span,
+) -> Result<usize, Diagnostics> {
+    let layout = layouts
+        .get(&function)
+        .ok_or_else(|| lowering_diagnostic(span, "constant owner has no function layout"))?;
+    let ordinal = layout
+        .constant_slots
+        .keys()
+        .position(|candidate| *candidate == node)
+        .ok_or_else(|| lowering_diagnostic(span, "constant is absent from its function ABI"))?;
+    parameter_count
+        .checked_add(ordinal)
+        .ok_or_else(|| lowering_diagnostic(span, "constant entry index overflow"))
+}
+
+fn validate_constant_entry(
+    contract: &WeavyProgramContract,
+    function_ids: &BTreeMap<FunctionId, u32>,
+    function: FunctionId,
+    entry: usize,
+    slot: FrameSlot,
+    span: Span,
+    role: &str,
+) -> Result<WeavySchemaRef, Diagnostics> {
+    let function_index = function_ids
+        .get(&function)
+        .copied()
+        .and_then(|index| usize::try_from(index).ok())
+        .ok_or_else(|| lowering_diagnostic(span, "constant function is absent from the ABI"))?;
+    let function_contract = contract
+        .functions
+        .get(function_index)
+        .ok_or_else(|| lowering_diagnostic(span, "constant function contract is absent"))?;
+    let region_id = *function_contract
+        .entries
+        .get(entry)
+        .ok_or_else(|| lowering_diagnostic(span, "constant entry is absent from the ABI"))?;
+    let region = function_contract
+        .frame
+        .regions
+        .get(region_id.0 as usize)
+        .ok_or_else(|| lowering_diagnostic(span, "constant entry region is absent"))?;
+    if region.offset != slot.byte_offset() {
+        return Err(lowering_diagnostic(
+            span,
+            &format!("{role} offset does not match its recorded frame slot"),
+        ));
+    }
+    let schema = match region.shape.words.as_slice() {
+        [kinds] => match kinds.as_slice() {
+            [WeavyWordKind::Handle(schema)] => *schema,
+            _ => {
+                return Err(lowering_diagnostic(
+                    span,
+                    &format!("{role} is not an exact one-word Handle(schema)"),
+                ));
+            }
+        },
+        _ => {
+            return Err(lowering_diagnostic(
+                span,
+                &format!("{role} is not an exact one-word Handle(schema)"),
+            ));
+        }
+    };
+    Ok(schema)
 }
 
 struct ProgramContractBuilder<'a> {
@@ -1116,7 +1294,7 @@ fn lower_vir_function(
     parameters: &[crate::vir::Parameter],
     output: NodeId,
     context: &LoweringContext<'_>,
-    constants: &mut Vec<ValueConstant>,
+    constants: &mut BTreeMap<NodeRef, PendingValueConstant>,
 ) -> Result<LoweredWeavyFunction, Diagnostics> {
     let layout = context
         .layouts
@@ -1187,7 +1365,7 @@ struct SequenceContext<'nodes, 'function, 'lowering> {
 }
 
 struct SequenceOutputs<'constants, 'code> {
-    constants: &'constants mut Vec<ValueConstant>,
+    constants: &'constants mut BTreeMap<NodeRef, PendingValueConstant>,
     code: &'code mut CodeBuilder,
 }
 
@@ -1788,7 +1966,7 @@ fn lower_node(
     values: &BTreeMap<NodeId, LoweredSlot>,
     function: &FunctionLoweringContext<'_>,
     context: &LoweringContext<'_>,
-    constants: &mut Vec<ValueConstant>,
+    constants: &mut BTreeMap<NodeRef, PendingValueConstant>,
     active_variant: Option<u32>,
 ) -> Result<LoweredNode, Diagnostics> {
     let dst_region = dst;
@@ -1831,12 +2009,27 @@ fn lower_node(
                 .layouts
                 .get(&context.root_function)
                 .ok_or_else(|| lowering_diagnostic(node.span, "missing island root layout"))?;
-            constants.push(ValueConstant {
+            let root_slot = root_layout.constant_slot(constant, node.span)?;
+            let pending = PendingValueConstant {
                 node: constant,
-                slot: root_layout.constant_slot(constant, node.span)?,
-                schema: SchemaId::named("vix.String.v1"),
+                root_slot,
+                owner_slot: dst_slot,
+                store_schema: SchemaId::named("vix.String.v1"),
                 bytes: value.as_bytes().to_vec(),
-            });
+                span: node.span,
+            };
+            if let Some(previous) = constants.insert(constant, pending) {
+                if previous.root_slot != root_slot
+                    || previous.owner_slot != dst_slot
+                    || previous.store_schema != SchemaId::named("vix.String.v1")
+                    || previous.bytes != value.as_bytes()
+                {
+                    return Err(lowering_diagnostic(
+                        node.span,
+                        "constant NodeRef was lowered with conflicting metadata",
+                    ));
+                }
+            }
             (Vec::new(), ValueRepresentation::RealizedHandle)
         }
         Op::Parameter(parameter_id) => {

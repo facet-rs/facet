@@ -725,12 +725,15 @@ fn rung_003_lexical_bindings_and_strings_run_through_vir_and_weavy() {
     let lowered = lowering_cache
         .get_or_lower(&partitioned.islands[0])
         .expect("rung 003 lowers to Weavy");
-    assert!(
-        lowered
-            .constants
-            .iter()
-            .any(|constant| constant.bytes.as_slice() == b"hello")
-    );
+    assert!(lowered.constants.iter().any(|constant| {
+        constant.bytes.as_slice() == b"hello"
+            && constant.root.function.0 == 0
+            && constant.owner.function.0 == 0
+            && constant.root.entry == 0
+            && constant.owner.entry == 0
+            && constant.root.slot == constant.owner.slot
+            && constant.root.schema == constant.owner.schema
+    }));
     assert!(lowered.render().contains("EqI64"));
 
     let report = run_source(RUNG_003).expect("rung 003 compiles and runs");
