@@ -113,8 +113,6 @@ impl Machine {
         modules: BTreeMap<String, String>,
         lane: Lane,
     ) -> Result<Machine, String> {
-        let mut modules = modules;
-        inject_std_modules(&mut modules);
         let lower_options = LowerOptions::from_env();
         let c = compile_module_set(root, &modules, RefSource::Fresh, lower_options)?;
 
@@ -168,8 +166,6 @@ impl Machine {
         root: &str,
         modules: BTreeMap<String, String>,
     ) -> Result<ReloadDiff, String> {
-        let mut modules = modules;
-        inject_std_modules(&mut modules);
         let before = self.fn_hashes();
         let c = compile_module_set(
             root,
@@ -765,41 +761,6 @@ fn assert_literal_handles(driver: &mut Driver, schema: &str, handles: &HashMap<S
             "{schema} handle assignment is deterministic"
         );
     }
-}
-
-/// Pull the bundled vix standard library into a program's module set — but only
-/// when the program actually references it, so programs that never touch
-/// `Version` don't pay for its source (interned literals, lowered fns). Applied
-/// on load and reload alike, keyed on the same source, so the module set is
-/// identical across warm reloads. `use vix::X` then resolves to std via the
-/// binder's real-module lookup, with host primitives as the fallback.
-///
-/// The reference test is a heuristic word scan pending proper import-driven
-/// inclusion; a false positive merely includes std unnecessarily.
-fn inject_std_modules(modules: &mut BTreeMap<String, String>) {
-    if modules.contains_key("vix") || !references_vix_std(modules) {
-        return;
-    }
-    modules.insert(
-        "vix".to_string(),
-        include_str!("../../std/version.vix").to_string(),
-    );
-}
-
-fn references_vix_std(modules: &BTreeMap<String, String>) -> bool {
-    const STD_NAMES: &[&str] = &["Version", "parse_version", "version_lte", "Ordering"];
-    modules
-        .values()
-        .any(|source| STD_NAMES.iter().any(|name| contains_word(source, name)))
-}
-
-/// Whole-word substring test — so `Version` does not match inside `VersionSet`.
-fn contains_word(haystack: &str, word: &str) -> bool {
-    let is_boundary = |ch: Option<char>| ch.is_none_or(|c| !c.is_alphanumeric() && c != '_');
-    haystack.match_indices(word).any(|(start, _)| {
-        is_boundary(haystack[..start].chars().next_back())
-            && is_boundary(haystack[start + word.len()..].chars().next())
-    })
 }
 
 fn module_set_hash(root: &str, modules: &BTreeMap<String, String>) -> Vec<u8> {
