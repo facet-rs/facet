@@ -40,6 +40,7 @@ supports-color.workspace = true
 
 [dev-dependencies]
 facet-format = { path = "../facet-format", features = ["tracing"] }
+facet-default = { path = "../facet-default" }
 facet-json = { path = "../facet-json", features = ["tracing"] }
 facet-reflect = { path = "../facet-reflect", features = ["tracing"] }
 facet = { path = "../facet", features = ["all-impls"] }

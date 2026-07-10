@@ -1270,8 +1270,11 @@ pub(crate) fn gen_field_from_pfield(
                         fn __shape_of_val<'a, T: #facet_crate::Facet<'a>>(_: &T) -> &'static #facet_crate::Shape {
                             T::SHAPE
                         }
-                        // Create the source value
-                        let __src_value = #expr;
+                        // Convert the expression the same way the generated Default impl does.
+                        // This keeps Field.default callbacks type-correct for floating-point defaults.
+                        let __src_value: #field_type = (#expr)
+                            .try_into()
+                            .expect("facet-default: failed to convert default value to field type");
                         // Get shapes for source and destination types
                         let __src_shape = __shape_of_val(&__src_value);
                         let __dst_shape = <#field_type as #facet_crate::Facet>::SHAPE;

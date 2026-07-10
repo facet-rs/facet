@@ -3000,6 +3000,7 @@ dependencies = [
  "camino",
  "facet",
  "facet-core",
+ "facet-default",
  "facet-error",
  "facet-format",
  "facet-json",
