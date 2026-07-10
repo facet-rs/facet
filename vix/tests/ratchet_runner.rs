@@ -1,4 +1,5 @@
 use vix::compiler::Compiler;
+use vix::diagnostic::DiagnosticPayload;
 use vix::lowering::{LoweringCache, source_map_for};
 use vix::ratchet::run_source;
 use vix::runtime::{DemandState, EventKind, MemoVerdict, TaskState};
@@ -17,6 +18,7 @@ const RUNG_009: &str = include_str!("ratchet/009-structural-equality.vix");
 const RUNG_010: &str = include_str!("ratchet/010-spaceship.vix");
 const RUNG_011: &str = include_str!("ratchet/011-derived-comparisons.vix");
 const RUNG_012: &str = include_str!("ratchet/012-total-order.vix");
+const RUNG_013: &str = include_str!("ratchet/013-expression-statement.reject.vix");
 
 /// The first rung is an architectural certificate, not just a boolean test.
 ///
@@ -881,6 +883,54 @@ fn rung_012_record_order_is_total_structural_and_declaration_ordered() {
     assert_eq!(report.chaos.counters.pure_host_calls, 0);
     assert_eq!(report.plain.receipt_count, 0);
     assert_eq!(report.chaos.receipt_count, 0);
+}
+
+#[test]
+fn rung_013_expression_statement_is_rejected_with_declared_message_and_line() {
+    let (expected_message, expected_line) = reject_header(RUNG_013);
+    let diagnostics = Compiler::new()
+        .compile(RUNG_013)
+        .expect_err("rung 013 must be rejected");
+    assert_eq!(diagnostics.entries.len(), 1);
+    let diagnostic = &diagnostics.entries[0];
+    let detail = match &diagnostic.payload {
+        DiagnosticPayload::Parse { detail } => detail.as_str(),
+        _ => "",
+    };
+    assert!(
+        detail.contains(expected_message),
+        "diagnostic {diagnostic:?} does not contain declared message {expected_message:?}"
+    );
+    assert_eq!(
+        source_line(RUNG_013, diagnostic.primary.start),
+        expected_line
+    );
+}
+
+fn reject_header(source: &str) -> (&str, usize) {
+    let mut message = None;
+    let mut line = None;
+    for header in source.lines().take_while(|line| line.starts_with("//!")) {
+        if let Some(value) = header.strip_prefix("//! reject: ") {
+            message = Some(value);
+        }
+        if let Some(value) = header.strip_prefix("//! at: ") {
+            line = Some(value.parse::<usize>().expect("reject line is an integer"));
+        }
+    }
+    (
+        message.expect("reject rung declares a message"),
+        line.expect("reject rung declares a line"),
+    )
+}
+
+fn source_line(source: &str, byte: u32) -> usize {
+    let byte = usize::try_from(byte).expect("source byte offset fits usize");
+    source.as_bytes()[..byte]
+        .iter()
+        .filter(|&&byte| byte == b'\n')
+        .count()
+        + 1
 }
 
 fn assert_contiguous_sequences(events: &[vix::runtime::Event]) {
