@@ -827,7 +827,7 @@ fn weavy_jit_plan_uses_native_for_root_scalar_struct_when_available() {
         assert!(!report.is_empty(), "{report:?}");
         assert_eq!(report.records[0].path, "$");
         let expected_reason = if !cfg!(facet_json_jit_active) {
-            "facet-json was built without its jit feature"
+            "Weavy's native JIT is inactive for this build"
         } else {
             "native JIT is not enabled for this build target"
         };
@@ -848,7 +848,7 @@ fn weavy_jit_plan_reports_fallback_for_unsupported_root_shape() {
     assert!(!report.is_empty(), "{report:?}");
     assert_eq!(report.records[0].path, "$");
     let expected_reason = if !cfg!(facet_json_jit_active) {
-        "facet-json was built without its jit feature"
+        "Weavy's native JIT is inactive for this build"
     } else if !native_jit_expected() {
         "native JIT is not enabled for this build target"
     } else {
@@ -870,7 +870,7 @@ fn weavy_jit_plan_reports_fallback_for_defaulted_scalar_struct() {
     assert!(!report.is_empty(), "{report:?}");
     assert_eq!(report.records[0].path, "$");
     let expected_reason = if !cfg!(facet_json_jit_active) {
-        "facet-json was built without its jit feature"
+        "Weavy's native JIT is inactive for this build"
     } else if !native_jit_expected() {
         "native JIT is not enabled for this build target"
     } else {

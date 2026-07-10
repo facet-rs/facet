@@ -1616,7 +1616,7 @@ fn json_weavy_native_jit_available() -> bool {
 
 #[cfg(not(facet_json_jit_active))]
 fn json_weavy_jit_fallback_reason() -> &'static str {
-    "facet-json was built without its jit feature"
+    "Weavy's native JIT is inactive for this build"
 }
 
 #[cfg(all(

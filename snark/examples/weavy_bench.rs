@@ -92,7 +92,7 @@ impl BenchMode {
         )
     )))]
     fn hostcalls_report_mode() -> Self {
-        panic!("hostcalls benchmark mode requires the snark jit feature on a supported target")
+        panic!("hostcalls benchmark mode requires Weavy JIT on a supported target")
     }
 
     const fn runs_strict_tree_fresh(self) -> bool {

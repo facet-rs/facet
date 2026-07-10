@@ -15295,7 +15295,7 @@ mod tests {
     }
 
     #[test]
-    fn copy_patch_jit_availability_follows_snark_feature_gate() {
+    fn copy_patch_jit_availability_follows_weavy_build_gate() {
         #[cfg(snark_jit_active)]
         assert_eq!(
             copy_patch_jit_available(),
