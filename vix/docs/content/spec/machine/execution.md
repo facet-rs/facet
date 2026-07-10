@@ -92,6 +92,14 @@ artifacts and never second-guesses the substrate.
 > constants must represent its environment explicitly before it can satisfy
 > that signature; hidden extra indirect-call entries are forbidden.
 >
+> Every declared entry binding is initialized exactly once through the typed
+> accessor for its declared machine kind before the first instruction may run.
+> Zero-filled frame storage is not an initialized scalar, handle, callable, or
+> constant. A missing binding, duplicate write, or wrong-kind accessor is a
+> typed pre-entry fault and does not mutate the frame. The entry surface closes
+> permanently when the first drive is attempted; a parked, yielded, completed,
+> or faulted task cannot have its initial frame rewritten.
+>
 > Declared frame regions do not overlap. Several mutually exclusive control-flow
 > arms may write the same declared result region; that is one region with
 > several verified writers, not an overlay. Verification checks each op's
