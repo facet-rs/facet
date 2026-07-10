@@ -7,8 +7,8 @@ use crate::support::Span;
 use crate::surface::{SurfaceParser, ast};
 use crate::vir::{
     EffectFacts, EnumType, EnumVariant, Function, FunctionId, MatchArm as VirMatchArm, Module,
-    Node, NodeId, Op, Parameter, ParameterId, ParameterKind, RecordField, RecordType, Test, Type,
-    VariantPayload,
+    Node, NodeId, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, Parameter, ParameterId,
+    ParameterKind, RecordField, RecordType, Test, Type, VariantPayload,
 };
 
 pub struct Compiler {
@@ -1602,6 +1602,30 @@ fn lower_binary(
             }
             (Type::ordering(), Op::Compare)
         }
+        "<" => {
+            return lower_derived_relation(nodes, binary, left, right, DerivedRelation::Less);
+        }
+        "<=" => {
+            return lower_derived_relation(
+                nodes,
+                binary,
+                left,
+                right,
+                DerivedRelation::LessOrEqual,
+            );
+        }
+        ">" => {
+            return lower_derived_relation(nodes, binary, left, right, DerivedRelation::Greater);
+        }
+        ">=" => {
+            return lower_derived_relation(
+                nodes,
+                binary,
+                left,
+                right,
+                DerivedRelation::GreaterOrEqual,
+            );
+        }
         _ => {
             return Err(Diagnostics::one(Diagnostic::unsupported(
                 binary.op.span,
@@ -1619,6 +1643,65 @@ fn lower_binary(
             op,
         ),
         ty,
+    })
+}
+
+#[derive(Clone, Copy)]
+enum DerivedRelation {
+    Less,
+    LessOrEqual,
+    Greater,
+    GreaterOrEqual,
+}
+
+fn lower_derived_relation(
+    nodes: &mut Vec<Node>,
+    binary: &ast::Binary,
+    left: LoweredValue,
+    right: LoweredValue,
+    relation: DerivedRelation,
+) -> Result<LoweredValue, Diagnostics> {
+    require_same_type(&left, &right, binary.span)?;
+    if !left.ty.structural_order_is_defined() {
+        return Err(type_mismatch(
+            binary.span,
+            "structurally ordered value",
+            left.ty.name(),
+        ));
+    }
+    let (variant, relation) = match relation {
+        DerivedRelation::Less => (ORDERING_LESS_VARIANT, Op::Eq),
+        DerivedRelation::LessOrEqual => (ORDERING_GREATER_VARIANT, Op::Ne),
+        DerivedRelation::Greater => (ORDERING_GREATER_VARIANT, Op::Eq),
+        DerivedRelation::GreaterOrEqual => (ORDERING_LESS_VARIANT, Op::Ne),
+    };
+    let ordering = Type::ordering();
+    let compared = push_node(
+        nodes,
+        binary.span,
+        ordering.clone(),
+        EffectFacts::PURE,
+        vec![left.node, right.node],
+        Op::Compare,
+    );
+    let expected = push_node(
+        nodes,
+        binary.op.span,
+        ordering,
+        EffectFacts::PURE,
+        Vec::new(),
+        Op::Variant { variant },
+    );
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            binary.span,
+            Type::Bool,
+            EffectFacts::PURE,
+            vec![compared, expected],
+            relation,
+        ),
+        ty: Type::Bool,
     })
 }
 
