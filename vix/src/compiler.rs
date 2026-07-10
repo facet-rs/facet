@@ -3,12 +3,13 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics};
-use crate::support::Span;
+use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
 use crate::vir::{
     ControlRegion, EffectFacts, EnumType, EnumVariant, Function, FunctionId,
     MatchArm as VirMatchArm, Module, Node, NodeId, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT,
-    Op, Parameter, ParameterId, ParameterKind, RecordField, RecordType, Test, Type, VariantPayload,
+    Op, OrderedMatchArm, Parameter, ParameterId, ParameterKind, RecordField, RecordType, Test,
+    Type, VariantPayload,
 };
 
 pub struct Compiler {
@@ -1303,20 +1304,38 @@ fn lower_match(
     expression: &ast::MatchExpr,
 ) -> Result<LoweredValue, Diagnostics> {
     let scrutinee = lower_value(nodes, bindings, context, &expression.scrutinee)?;
-    let Type::Enum(enumeration) = &scrutinee.ty else {
-        return Err(type_mismatch(
-            expr_span(&expression.scrutinee),
-            "enum",
-            scrutinee.ty.name(),
-        ));
+    let enumeration = match &scrutinee.ty {
+        Type::Enum(enumeration)
+            if expression.arms.arms.iter().all(|arm| {
+                matches!(arm.pattern, ast::Pattern::Variant(_)) && arm.guard.is_none()
+            }) =>
+        {
+            Some(enumeration.clone())
+        }
+        _ => None,
     };
-    let enumeration = enumeration.clone();
+    if let Some(enumeration) = enumeration {
+        return lower_enum_match(nodes, bindings, context, expression, scrutinee, enumeration);
+    }
+    lower_ordered_match(nodes, bindings, context, expression, scrutinee)
+}
+
+fn lower_enum_match(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    expression: &ast::MatchExpr,
+    scrutinee: LoweredValue,
+    enumeration: EnumType,
+) -> Result<LoweredValue, Diagnostics> {
     let mut seen = BTreeSet::new();
     let mut arms = Vec::with_capacity(expression.arms.arms.len());
     let mut result_type = None;
 
     for arm in &expression.arms.arms {
-        let ast::Pattern::Variant(pattern) = &arm.pattern;
+        let ast::Pattern::Variant(pattern) = &arm.pattern else {
+            unreachable!("enum match shape was checked by lower_match")
+        };
         let (variant_index, variant) = find_variant(&enumeration, &pattern.path)?;
         if !seen.insert(variant_index) {
             return Err(variant_diagnostic(
@@ -1403,6 +1422,181 @@ fn lower_match(
             Op::Match { arms },
         ),
         ty,
+    })
+}
+
+fn lower_ordered_match(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    expression: &ast::MatchExpr,
+    scrutinee: LoweredValue,
+) -> Result<LoweredValue, Diagnostics> {
+    let mut arms = Vec::new();
+    let mut fallback = None;
+    let mut result_type = None;
+
+    for arm in &expression.arms.arms {
+        if fallback.is_some() {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                arm.span,
+                "match arm after an irrefutable pattern",
+            )));
+        }
+
+        let mut arm_bindings = bindings.clone();
+        let condition_start = nodes.len();
+        let pattern_condition =
+            lower_ordered_pattern(nodes, &mut arm_bindings, &scrutinee, &arm.pattern)?;
+        let condition = match (pattern_condition, &arm.guard) {
+            (Some(pattern), Some(guard)) => Some(lower_pattern_guard(
+                nodes,
+                &arm_bindings,
+                context,
+                pattern,
+                guard,
+            )?),
+            (Some(pattern), None) => Some(pattern),
+            (None, Some(guard)) => {
+                let guard_span = expr_span(guard);
+                let guard = lower_value(nodes, &arm_bindings, context, guard)?;
+                require_type(&guard, &Type::Bool, guard_span)?;
+                Some(guard)
+            }
+            (None, None) => None,
+        }
+        .map(|condition| control_region(nodes, condition_start, condition.node));
+
+        let body_start = nodes.len();
+        let output = lower_value(nodes, &arm_bindings, context, &arm.body)?;
+        if let Some(expected) = &result_type {
+            require_type(&output, expected, expr_span(&arm.body))?;
+        } else {
+            result_type = Some(output.ty.clone());
+        }
+        let body = control_region(nodes, body_start, output.node);
+
+        if let Some(condition) = condition {
+            arms.push(OrderedMatchArm { condition, body });
+        } else {
+            fallback = Some(body);
+        }
+    }
+
+    let fallback = fallback.ok_or_else(|| {
+        Diagnostics::one(Diagnostic {
+            code: DiagnosticCode::NonExhaustiveMatch,
+            primary: expression.arms.span,
+            labels: Vec::new(),
+            payload: DiagnosticPayload::Match {
+                missing: vec!["_".to_owned()],
+            },
+        })
+    })?;
+    let ty = result_type.ok_or_else(|| {
+        Diagnostics::one(Diagnostic {
+            code: DiagnosticCode::NonExhaustiveMatch,
+            primary: expression.arms.span,
+            labels: Vec::new(),
+            payload: DiagnosticPayload::Match {
+                missing: vec!["_".to_owned()],
+            },
+        })
+    })?;
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            expression.span,
+            ty.clone(),
+            EffectFacts::PURE,
+            vec![scrutinee.node],
+            Op::OrderedMatch { arms, fallback },
+        ),
+        ty,
+    })
+}
+
+fn lower_ordered_pattern(
+    nodes: &mut Vec<Node>,
+    bindings: &mut BTreeMap<String, LoweredValue>,
+    scrutinee: &LoweredValue,
+    pattern: &ast::Pattern,
+) -> Result<Option<LoweredValue>, Diagnostics> {
+    match pattern {
+        ast::Pattern::Binding(pattern) => {
+            bind_ordered_match_name(bindings, scrutinee, &pattern.binding)?;
+            Ok(None)
+        }
+        ast::Pattern::Number(pattern) => {
+            require_type(scrutinee, &Type::Int, pattern.span)?;
+            let literal = lower_integer_literal(nodes, pattern.span, &pattern.value.value)?;
+            Ok(Some(LoweredValue {
+                node: push_node(
+                    nodes,
+                    pattern.span,
+                    Type::Bool,
+                    EffectFacts::PURE,
+                    vec![scrutinee.node, literal.node],
+                    Op::Eq,
+                ),
+                ty: Type::Bool,
+            }))
+        }
+        ast::Pattern::Wildcard(_) => Ok(None),
+        ast::Pattern::Variant(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
+            pattern.span,
+            "guarded enum pattern",
+        ))),
+    }
+}
+
+fn bind_ordered_match_name(
+    bindings: &mut BTreeMap<String, LoweredValue>,
+    scrutinee: &LoweredValue,
+    binding: &Spanned<String>,
+) -> Result<(), Diagnostics> {
+    if bindings.contains_key(&binding.value) {
+        return Err(Diagnostics::one(Diagnostic {
+            code: DiagnosticCode::DuplicateBinding,
+            primary: binding.span,
+            labels: Vec::new(),
+            payload: DiagnosticPayload::Name {
+                name: binding.value.clone(),
+            },
+        }));
+    }
+    bindings.insert(binding.value.clone(), scrutinee.clone());
+    Ok(())
+}
+
+fn lower_pattern_guard(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    pattern: LoweredValue,
+    guard: &ast::Expr,
+) -> Result<LoweredValue, Diagnostics> {
+    let guard_span = expr_span(guard);
+    let consequent_start = nodes.len();
+    let guard_value = lower_value(nodes, bindings, context, guard)?;
+    require_type(&guard_value, &Type::Bool, guard_span)?;
+    let consequent = control_region(nodes, consequent_start, guard_value.node);
+    let alternative_start = nodes.len();
+    let otherwise = lower_bool_constant(nodes, guard_span, false);
+    let alternative = control_region(nodes, alternative_start, otherwise.node);
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            guard_span,
+            Type::Bool,
+            EffectFacts::PURE,
+            vec![pattern.node],
+            Op::If {
+                consequent,
+                alternative,
+            },
+        ),
+        ty: Type::Bool,
     })
 }
 

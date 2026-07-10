@@ -134,6 +134,12 @@ pub struct ControlRegion {
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct OrderedMatchArm {
+    pub condition: ControlRegion,
+    pub body: ControlRegion,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Type {
     Bool,
@@ -305,6 +311,10 @@ pub enum Op {
     If {
         consequent: ControlRegion,
         alternative: ControlRegion,
+    },
+    OrderedMatch {
+        arms: Vec<OrderedMatchArm>,
+        fallback: ControlRegion,
     },
 }
 
@@ -551,6 +561,13 @@ fn prune_control_regions(nodes: &mut [Node], needed: &BTreeSet<NodeId>) {
                 consequent.nodes.retain(|node| needed.contains(node));
                 alternative.nodes.retain(|node| needed.contains(node));
             }
+            Op::OrderedMatch { arms, fallback } => {
+                for arm in arms {
+                    arm.condition.nodes.retain(|node| needed.contains(node));
+                    arm.body.nodes.retain(|node| needed.contains(node));
+                }
+                fallback.nodes.retain(|node| needed.contains(node));
+            }
             _ => {}
         }
     }
@@ -576,6 +593,13 @@ fn collect_dependencies(function: &Function, node: NodeId, needed: &mut BTreeSet
         } => {
             collect_dependencies(function, consequent.output, needed);
             collect_dependencies(function, alternative.output, needed);
+        }
+        Op::OrderedMatch { arms, fallback } => {
+            for arm in arms {
+                collect_dependencies(function, arm.condition.output, needed);
+                collect_dependencies(function, arm.body.output, needed);
+            }
+            collect_dependencies(function, fallback.output, needed);
         }
         _ => {}
     }
@@ -746,14 +770,19 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         } => {
             op.push(19);
             for region in [consequent, alternative] {
+                frame(&mut op, &canonical_control_region(region));
+            }
+        }
+        Op::OrderedMatch { arms, fallback } => {
+            op.push(20);
+            frame(&mut op, &(arms.len() as u64).to_le_bytes());
+            for arm in arms {
                 let mut encoded = Vec::new();
-                frame(&mut encoded, &(region.nodes.len() as u64).to_le_bytes());
-                for node in &region.nodes {
-                    frame(&mut encoded, &node.0.to_le_bytes());
-                }
-                frame(&mut encoded, &region.output.0.to_le_bytes());
+                frame(&mut encoded, &canonical_control_region(&arm.condition));
+                frame(&mut encoded, &canonical_control_region(&arm.body));
                 frame(&mut op, &encoded);
             }
+            frame(&mut op, &canonical_control_region(fallback));
         }
     }
     frame(&mut bytes, &op);
@@ -762,6 +791,16 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         frame(&mut bytes, &input.0.to_le_bytes());
     }
     bytes
+}
+
+fn canonical_control_region(region: &ControlRegion) -> Vec<u8> {
+    let mut encoded = Vec::new();
+    frame(&mut encoded, &(region.nodes.len() as u64).to_le_bytes());
+    for node in &region.nodes {
+        frame(&mut encoded, &node.0.to_le_bytes());
+    }
+    frame(&mut encoded, &region.output.0.to_le_bytes());
+    encoded
 }
 
 fn canonical_type(ty: &Type) -> Vec<u8> {

@@ -203,18 +203,34 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
             )
         })
         .collect::<BTreeMap<_, _>>();
+    let constant_closures = constant_closures(island);
     let mut layouts = BTreeMap::new();
     layouts.insert(
         island.function,
-        FunctionLayout::build(&island.nodes, output.span)?,
+        FunctionLayout::build(
+            island.function,
+            &island.nodes,
+            constant_closures.get(&island.function).ok_or_else(|| {
+                lowering_diagnostic(output.span, "island function has no constant closure")
+            })?,
+            output.span,
+        )?,
     );
     for function in &island.callees {
         layouts.insert(
             function.id,
-            FunctionLayout::build(&function.nodes, function.span)?,
+            FunctionLayout::build(
+                function.id,
+                &function.nodes,
+                constant_closures.get(&function.id).ok_or_else(|| {
+                    lowering_diagnostic(function.span, "called function has no constant closure")
+                })?,
+                function.span,
+            )?,
         );
     }
     let context = LoweringContext {
+        root_function: island.function,
         function_ids: &function_ids,
         functions: &functions,
         trace_ids: &trace_ids,
@@ -228,7 +244,6 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
         &island.nodes,
         &[],
         island.output,
-        true,
         &context,
         &mut constants,
     )?);
@@ -241,7 +256,6 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
             &function.nodes,
             &function.parameters,
             output,
-            false,
             &context,
             &mut constants,
         )?);
@@ -260,7 +274,62 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
     })
 }
 
+fn constant_closures(island: &Island) -> BTreeMap<FunctionId, BTreeSet<NodeRef>> {
+    let mut closures = BTreeMap::new();
+    let mut calls = BTreeMap::new();
+    let mut register = |function: FunctionId, nodes: &[Node]| {
+        closures.insert(
+            function,
+            nodes
+                .iter()
+                .filter(|node| matches!(node.op, Op::String(_)))
+                .map(|node| NodeRef {
+                    function,
+                    node: node.id,
+                })
+                .collect::<BTreeSet<_>>(),
+        );
+        calls.insert(
+            function,
+            nodes
+                .iter()
+                .filter_map(|node| match &node.op {
+                    Op::Call(callee) => Some(*callee),
+                    _ => None,
+                })
+                .collect::<BTreeSet<_>>(),
+        );
+    };
+    register(island.function, &island.nodes);
+    for function in &island.callees {
+        register(function.id, &function.nodes);
+    }
+
+    loop {
+        let previous = closures.clone();
+        let mut changed = false;
+        for (&function, callees) in &calls {
+            let inherited = callees
+                .iter()
+                .filter_map(|callee| previous.get(callee))
+                .flat_map(|constants| constants.iter().copied())
+                .collect::<Vec<_>>();
+            let constants = closures
+                .get_mut(&function)
+                .expect("every call-graph function has a closure");
+            let before = constants.len();
+            constants.extend(inherited);
+            changed |= constants.len() != before;
+        }
+        if !changed {
+            break;
+        }
+    }
+    closures
+}
+
 struct LoweringContext<'a> {
+    root_function: FunctionId,
     function_ids: &'a BTreeMap<FunctionId, u32>,
     functions: &'a BTreeMap<FunctionId, &'a Function>,
     trace_ids: &'a BTreeMap<NodeRef, u32>,
@@ -269,6 +338,7 @@ struct LoweringContext<'a> {
 
 struct FunctionLayout {
     regions: BTreeMap<NodeId, FrameRegion>,
+    constant_slots: BTreeMap<NodeRef, FrameSlot>,
     scratch: Option<FrameSlot>,
     control_scratch: Option<ControlScratch>,
     frame_size: usize,
@@ -281,7 +351,12 @@ struct ControlScratch {
 }
 
 impl FunctionLayout {
-    fn build(nodes: &[Node], span: Span) -> Result<Self, Diagnostics> {
+    fn build(
+        function: FunctionId,
+        nodes: &[Node],
+        constants: &BTreeSet<NodeRef>,
+        span: Span,
+    ) -> Result<Self, Diagnostics> {
         let mut regions = BTreeMap::new();
         let mut next_word = 0usize;
         for node in nodes {
@@ -340,10 +415,43 @@ impl FunctionLayout {
         } else {
             None
         };
+        let mut constant_slots = BTreeMap::new();
+        for &constant in constants {
+            let slot = if constant.function == function {
+                let node = nodes
+                    .iter()
+                    .find(|node| node.id == constant.node)
+                    .ok_or_else(|| {
+                        lowering_diagnostic(span, "closure names a missing local constant")
+                    })?;
+                if !matches!(node.op, Op::String(_)) {
+                    return Err(lowering_diagnostic(
+                        node.span,
+                        "closure constant is not a String node",
+                    ));
+                }
+                regions
+                    .get(&constant.node)
+                    .copied()
+                    .ok_or_else(|| {
+                        lowering_diagnostic(node.span, "String constant has no frame region")
+                    })?
+                    .start()
+            } else {
+                let slot = FrameSlot::for_word(next_word)
+                    .ok_or_else(|| lowering_diagnostic(span, "closure constant offset overflow"))?;
+                next_word = next_word
+                    .checked_add(1)
+                    .ok_or_else(|| lowering_diagnostic(span, "function frame size overflow"))?;
+                slot
+            };
+            constant_slots.insert(constant, slot);
+        }
         let frame_size = FrameSlot::frame_size(next_word)
             .ok_or_else(|| lowering_diagnostic(span, "function frame size overflow"))?;
         Ok(Self {
             regions,
+            constant_slots,
             scratch,
             control_scratch,
             frame_size,
@@ -355,6 +463,13 @@ impl FunctionLayout {
             .get(&node)
             .copied()
             .ok_or_else(|| lowering_diagnostic(span, "VIR node has no frame region"))
+    }
+
+    fn constant_slot(&self, constant: NodeRef, span: Span) -> Result<FrameSlot, Diagnostics> {
+        self.constant_slots
+            .get(&constant)
+            .copied()
+            .ok_or_else(|| lowering_diagnostic(span, "function closure is missing a constant"))
     }
 }
 
@@ -448,7 +563,6 @@ fn lower_vir_function(
     nodes: &[Node],
     parameters: &[crate::vir::Parameter],
     output: NodeId,
-    allow_constants: bool,
     context: &LoweringContext<'_>,
     constants: &mut Vec<ValueConstant>,
 ) -> Result<WeavyFn, Diagnostics> {
@@ -459,7 +573,6 @@ fn lower_vir_function(
     let function_context = FunctionLoweringContext {
         id: function,
         parameters,
-        allow_constants,
         layout,
     };
     let output_node = nodes
@@ -546,6 +659,13 @@ fn lower_node_sequence(
                 controlled.extend(consequent.nodes.iter().copied());
                 controlled.extend(alternative.nodes.iter().copied());
             }
+            Op::OrderedMatch { arms, fallback } => {
+                for arm in arms {
+                    controlled.extend(arm.condition.nodes.iter().copied());
+                    controlled.extend(arm.body.nodes.iter().copied());
+                }
+                controlled.extend(fallback.nodes.iter().copied());
+            }
             _ => {}
         }
     }
@@ -575,6 +695,9 @@ fn lower_node_sequence(
         let representation = match &node.op {
             Op::Match { .. } => lower_match_node(node, dst, values, sequence, outputs)?,
             Op::If { .. } => lower_if_node(node, dst, values, sequence, outputs, active_variant)?,
+            Op::OrderedMatch { .. } => {
+                lower_ordered_match_node(node, dst, values, sequence, outputs, active_variant)?
+            }
             Op::Compare => lower_compare_node(node, dst, values, sequence, outputs)?,
             _ => {
                 let lowered = lower_node(
@@ -600,6 +723,78 @@ fn lower_node_sequence(
         );
     }
     Ok(())
+}
+
+fn lower_ordered_match_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+    active_variant: Option<u32>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    let Op::OrderedMatch { arms, fallback } = &node.op else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "non-OrderedMatch node reached structured ordered-match lowering",
+        ));
+    };
+    require_input_count(node, 1)?;
+    let _ = input_value(node, values, 0)?;
+    let result_representation = representation_for_type(&node.ty, node.span)?;
+    let end = outputs.code.label();
+
+    for arm in arms {
+        let mut condition_values = values.clone();
+        lower_node_sequence(
+            &arm.condition.nodes,
+            &mut condition_values,
+            sequence,
+            outputs,
+            active_variant,
+        )?;
+        let condition = condition_values.get(&arm.condition.output).ok_or_else(|| {
+            lowering_diagnostic(node.span, "ordered-match condition has no lowered value")
+        })?;
+        require_value(node, condition, &Type::Bool, ValueRepresentation::Word)?;
+        let next = outputs.code.label();
+        outputs.code.jump_if_zero(condition.region.start(), next);
+
+        let mut body_values = condition_values;
+        lower_node_sequence(
+            &arm.body.nodes,
+            &mut body_values,
+            sequence,
+            outputs,
+            active_variant,
+        )?;
+        let body = body_values.get(&arm.body.output).ok_or_else(|| {
+            lowering_diagnostic(node.span, "ordered-match body has no lowered value")
+        })?;
+        require_value(node, body, &node.ty, result_representation)?;
+        outputs.code.extend(copy_region(node, body.region, dst)?);
+        outputs.code.jump(end);
+        outputs.code.bind(next, node.span)?;
+    }
+
+    let mut fallback_values = values.clone();
+    lower_node_sequence(
+        &fallback.nodes,
+        &mut fallback_values,
+        sequence,
+        outputs,
+        active_variant,
+    )?;
+    let fallback = fallback_values.get(&fallback.output).ok_or_else(|| {
+        lowering_diagnostic(node.span, "ordered-match fallback has no lowered value")
+    })?;
+    require_value(node, fallback, &node.ty, result_representation)?;
+    outputs
+        .code
+        .extend(copy_region(node, fallback.region, dst)?);
+    outputs.code.bind(end, node.span)?;
+
+    Ok(result_representation)
 }
 
 fn lower_if_node(
@@ -1009,7 +1204,6 @@ struct LoweredNode {
 struct FunctionLoweringContext<'a> {
     id: FunctionId,
     parameters: &'a [crate::vir::Parameter],
-    allow_constants: bool,
     layout: &'a FunctionLayout,
 }
 
@@ -1048,18 +1242,23 @@ fn lower_node(
         Op::String(value) => {
             require_input_count(node, 0)?;
             require_node_type(node, Type::String)?;
-            if !function.allow_constants {
+            let constant = NodeRef {
+                function: function.id,
+                node: node.id,
+            };
+            if function.layout.constant_slot(constant, node.span)? != dst_slot {
                 return Err(lowering_diagnostic(
                     node.span,
-                    "callee String constant requires a closure constant slot",
+                    "String node does not occupy its local closure slot",
                 ));
             }
+            let root_layout = context
+                .layouts
+                .get(&context.root_function)
+                .ok_or_else(|| lowering_diagnostic(node.span, "missing island root layout"))?;
             constants.push(ValueConstant {
-                node: NodeRef {
-                    function: function.id,
-                    node: node.id,
-                },
-                slot: dst_slot,
+                node: constant,
+                slot: root_layout.constant_slot(constant, node.span)?,
                 schema: SchemaId::named("vix.String.v1"),
                 bytes: value.as_bytes().to_vec(),
             });
@@ -1083,7 +1282,7 @@ fn lower_node(
             (Vec::new(), representation_for_type(&node.ty, node.span)?)
         }
         Op::Call(callee) => {
-            let op = lower_call_node(node, dst_region, values, *callee, context)?;
+            let op = lower_call_node(node, dst_region, values, *callee, function.layout, context)?;
             (vec![op], representation_for_type(&node.ty, node.span)?)
         }
         Op::Add | Op::Sub | Op::Mul => {
@@ -1134,6 +1333,12 @@ fn lower_node(
             return Err(lowering_diagnostic(
                 node.span,
                 "structured If reached scalar node lowering",
+            ));
+        }
+        Op::OrderedMatch { .. } => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "structured OrderedMatch reached scalar node lowering",
             ));
         }
         Op::Compare => {
@@ -1203,6 +1408,7 @@ fn lower_call_node(
     dst: FrameRegion,
     values: &BTreeMap<NodeId, LoweredSlot>,
     callee: FunctionId,
+    caller_layout: &FunctionLayout,
     context: &LoweringContext<'_>,
 ) -> Result<WeavyOp, Diagnostics> {
     let target = context.functions.get(&callee).copied().ok_or_else(|| {
@@ -1232,7 +1438,12 @@ fn lower_call_node(
         ));
     }
 
-    let mut args = Vec::with_capacity(target.parameters.len());
+    let mut args = Vec::with_capacity(
+        target
+            .parameters
+            .len()
+            .saturating_add(target_layout.constant_slots.len()),
+    );
     for (index, parameter) in target.parameters.iter().enumerate() {
         let source = input_value(node, values, index)?;
         require_value(
@@ -1255,6 +1466,14 @@ fn lower_call_node(
                 .region
                 .byte_size()
                 .ok_or_else(|| lowering_diagnostic(node.span, "argument size overflow"))?,
+        });
+    }
+    for (&constant, &target_slot) in &target_layout.constant_slots {
+        let source_slot = caller_layout.constant_slot(constant, node.span)?;
+        args.push(ArgCopy {
+            src: source_slot.byte_offset(),
+            dst: target_slot.byte_offset(),
+            size: FrameSlot::word_size(),
         });
     }
 
