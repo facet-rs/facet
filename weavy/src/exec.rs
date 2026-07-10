@@ -116,6 +116,11 @@ pub enum TaskFault {
         index: usize,
         region: RegionId,
     },
+    InvalidEntryIndex {
+        entry: FnId,
+        index: usize,
+        entry_count: usize,
+    },
     EntryKindMismatch {
         entry: FnId,
         index: usize,
@@ -518,10 +523,10 @@ impl ExecTask<'_> {
     fn entry_info(&self, index: usize) -> Result<EntryInfo, TaskFault> {
         let function = self.executable.function(self.entry)?;
         let Some(region) = function.entries.get(index).copied() else {
-            return Err(TaskFault::InvalidEntryShape {
+            return Err(TaskFault::InvalidEntryIndex {
                 entry: self.entry,
                 index,
-                region: RegionId(u32::MAX),
+                entry_count: function.entries.len(),
             });
         };
         let region_contract = &function.frame.regions[region.0 as usize];
@@ -540,19 +545,13 @@ impl ExecTask<'_> {
     }
 
     #[cfg(test)]
-    fn adversarial_initialize_entry_word_for_test(
-        &mut self,
-        index: usize,
-        value: i64,
-    ) -> Result<(), TaskFault> {
-        self.check_not_poisoned()?;
-        let entry = self.entry_info(index)?;
+    fn adversarial_write_word_at_offset_for_test(&mut self, offset: u32, value: i64) {
+        self.check_not_poisoned()
+            .expect("adversarial write before poison");
         match &mut self.lane {
-            Lane::Interpreter(task) => task.write_i64(entry.offset, value),
-            Lane::Native(task) => task.write_i64(entry.offset, value),
+            Lane::Interpreter(task) => task.write_i64(offset, value),
+            Lane::Native(task) => task.write_i64(offset, value),
         }
-        self.entries_initialized[index] = true;
-        Ok(())
     }
 
     fn check_result_available(&self) -> Result<(), TaskFault> {
@@ -619,8 +618,8 @@ fn entry_word_kind(region: &FrameRegion) -> Option<WordKind> {
         return None;
     };
     match kind {
-        WordKind::Scalar | WordKind::Callable(_) | WordKind::Handle(_) => Some(*kind),
-        WordKind::Status | WordKind::Opaque => None,
+        WordKind::Scalar | WordKind::Handle(_) => Some(*kind),
+        WordKind::Status | WordKind::Opaque | WordKind::Callable(_) => None,
     }
 }
 
@@ -882,7 +881,7 @@ mod tests {
             },
             ProgramContract {
                 functions: vec![
-                    function_contract(3, callable_regions(CallContractId(0)), &[0, 1], 2, None),
+                    function_contract(3, callable_regions(CallContractId(0)), &[1], 2, None),
                     function_contract(
                         2,
                         vec![
@@ -978,6 +977,29 @@ mod tests {
                     entries: vec![],
                     result: word_region(0, WordKind::Scalar),
                 }],
+                schemas: vec![],
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    fn callable_entry_program() -> (Program, ProgramContract) {
+        (
+            Program {
+                fns: vec![function(2, vec![Op::Ret { src: 8, size: 8 }])],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    2,
+                    vec![
+                        word_region(0, WordKind::Callable(CallContractId(0))),
+                        word_region(8, WordKind::Scalar),
+                    ],
+                    &[0],
+                    1,
+                    None,
+                )],
+                calls: vec![scalar_call_contract()],
                 schemas: vec![],
                 value_shapes: vec![],
             },
@@ -1108,6 +1130,40 @@ mod tests {
                 region: RegionId(0),
             })
         ));
+    }
+
+    #[test]
+    fn public_spawn_rejects_callable_entry_until_typed_writer_exists() {
+        let executable = Executable::new(verify(callable_entry_program()));
+        let Err(fault) = executable.spawn(FnId(0)) else {
+            panic!("callable entry must be rejected until it has a typed writer");
+        };
+        assert_eq!(
+            fault,
+            TaskFault::InvalidEntryShape {
+                entry: FnId(0),
+                index: 0,
+                region: RegionId(0),
+            }
+        );
+    }
+
+    #[test]
+    fn public_entry_writer_reports_out_of_range_index_without_fake_region() {
+        let executable = Executable::new(verify(scalar_identity_program()));
+        let mut task = executable.spawn(FnId(0)).unwrap();
+
+        assert_eq!(
+            task.write_entry_i64(1, 7),
+            Err(TaskFault::InvalidEntryIndex {
+                entry: FnId(0),
+                index: 1,
+                entry_count: 1,
+            })
+        );
+        task.write_entry_i64(0, 7).unwrap();
+        assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
+        assert_eq!(task.result_i64(), Ok(7));
     }
 
     #[test]
@@ -1426,9 +1482,8 @@ mod tests {
         for (callee, name, matches_expected) in cases {
             let executable = Executable::new(verify(indirect_program()));
             let mut task = executable.spawn(FnId(0)).unwrap();
-            task.adversarial_initialize_entry_word_for_test(0, callee)
-                .unwrap();
-            task.write_entry_i64(1, 21).unwrap();
+            task.adversarial_write_word_at_offset_for_test(0, callee);
+            task.write_entry_i64(0, 21).unwrap();
             let fault = task.drive(&mut [], &[]).expect_err(name);
             assert!(matches_expected(&fault), "{name}: {fault:?}");
             assert!(matches!(
