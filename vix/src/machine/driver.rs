@@ -10379,6 +10379,12 @@ fn program_op_set(program: &Program) -> String {
 
 fn op_name(op: &Op) -> &'static str {
     match op {
+        Op::ProductConstruct { .. } => "ProductConstruct",
+        Op::ProductProject { .. } => "ProductProject",
+        Op::CopyValue { .. } => "CopyValue",
+        Op::EnumConstruct { .. } => "EnumConstruct",
+        Op::EnumIsVariant { .. } => "EnumIsVariant",
+        Op::EnumProjectChecked { .. } => "EnumProjectChecked",
         Op::ConstI64 { .. } => "ConstI64",
         Op::AddI64 { .. } => "AddI64",
         Op::SubI64 { .. } => "SubI64",
