@@ -1336,8 +1336,66 @@ fn rung_021_closure_parameters_destructure_callable_values() {
     assert_eq!(report.chaos.receipt_count, 0);
 }
 
+// r[verify lang.pattern.record]
 #[test]
 fn rung_022_nested_record_patterns_project_named_fields() {
+    let module = Compiler::new()
+        .compile(RUNG_022)
+        .expect("rung 022 compiles");
+    assert_eq!(
+        module
+            .records
+            .iter()
+            .map(|record| record.name.as_str())
+            .collect::<Vec<_>>(),
+        ["Point", "Line"]
+    );
+    let is_vertical = module
+        .functions
+        .iter()
+        .find(|function| function.name == "is_vertical")
+        .expect("rung 022 contains is_vertical");
+    let projections = is_vertical
+        .nodes
+        .iter()
+        .filter_map(|node| match node.op {
+            VirOp::Project { index } => Some(index),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(projections, [0, 0, 1, 0]);
+    let (arms, fallback) = is_vertical
+        .nodes
+        .iter()
+        .find_map(|node| match &node.op {
+            VirOp::OrderedMatch { arms, fallback } => Some((arms, fallback)),
+            _ => None,
+        })
+        .expect("record pattern lowers to an ordered match region");
+    assert!(arms.is_empty());
+    assert!(fallback.nodes.contains(&fallback.output));
+
+    let without_rest = RUNG_022.replace(", ..", "");
+    let diagnostics = Compiler::new()
+        .compile(&without_rest)
+        .expect_err("omitting record fields requires an explicit rest pattern");
+    assert_eq!(diagnostics.entries[0].code, DiagnosticCode::MissingField);
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    assert_eq!(partitioned.islands.len(), 1);
+    assert_eq!(partitioned.islands[0].callees.len(), 1);
+    let mut lowering_cache = LoweringCache::default();
+    let lowered = lowering_cache
+        .get_or_lower(&partitioned.islands[0])
+        .expect("rung 022 lowers to Weavy");
+    assert_eq!(lowered.program.fns.len(), 2);
+    assert!(lowered.program.fns.iter().all(|function| {
+        function
+            .code
+            .iter()
+            .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+    }));
+
     let report = run_source(RUNG_022).expect("rung 022 compiles and runs");
     assert!(report.passed());
     assert!(report.agrees());

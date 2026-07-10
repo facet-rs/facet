@@ -9,7 +9,6 @@ ast({
   _type: { enum: "Type" },
   _pattern: { enum: "Pattern" },
   _variant_type_payload: { enum: "VariantTypePayload" },
-  _variant_pattern_payload: { enum: "VariantPatternPayload" },
 
   fn_item: { as: "Fn" },
   struct_item: { as: "Struct" },

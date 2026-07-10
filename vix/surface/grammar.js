@@ -255,6 +255,7 @@ module.exports = grammar({
       ),
     _pattern: ($) =>
       choice(
+        $.record_pattern,
         $.variant_pattern,
         $.binding_pattern,
         $.number_pattern,
@@ -267,15 +268,35 @@ module.exports = grammar({
     variant_pattern: ($) =>
       seq(
         field("path", $.variant_path),
-        optional(field("payload", $._variant_pattern_payload)),
+        optional(field("tuple_payload", $.tuple_pattern)),
       ),
-    _variant_pattern_payload: ($) => choice($.tuple_pattern, $.record_pattern),
     tuple_pattern: ($) => seq("(", sepBy(",", field("elem", $._pattern)), ")"),
-    record_pattern: ($) => seq("{", sepBy(",", field("field", $.pattern_field)), "}"),
+    record_pattern: ($) =>
+      seq(
+        field("type", $.type_path),
+        field("fields", $.record_pattern_fields),
+      ),
+    record_pattern_fields: ($) =>
+      seq(
+        "{",
+        optional(
+          choice(
+            field("rest", $.record_pattern_rest),
+            seq(
+              field("field", $.pattern_field),
+              repeat(seq(",", field("field", $.pattern_field))),
+              optional(seq(",", field("rest", $.record_pattern_rest))),
+              optional(","),
+            ),
+          ),
+        ),
+        "}",
+      ),
+    record_pattern_rest: () => "..",
     pattern_field: ($) =>
       seq(
         field("name", $.identifier),
-        optional(seq(":", field("binding", $.identifier))),
+        optional(seq(":", field("pattern", $._pattern))),
       ),
 
     identifier: () => /[A-Za-z_][A-Za-z0-9_]*/,

@@ -120,6 +120,18 @@ Enums have unit, tuple, and record variants. Multi-field payloads SHOULD use a
 record payload so roles remain named; tuple variants remain legal when the
 payload is intrinsically positional.
 
+> r[lang.pattern.record]
+>
+> A record-shaped pattern is one type path followed by named field patterns.
+> The checker resolves that path against the scrutinee: it names either a
+> nominal record type or a record enum variant. This distinction is semantic,
+> not parser precedence, so qualified record names cannot be mistaken for enum
+> variants. Field patterns recurse through the ordinary pattern algebra and
+> source field order is irrelevant; projections follow declaration order.
+> Omitted declared fields are accepted only when the pattern contains an
+> explicit `..`. Without `..`, missing, unknown, and duplicate fields are
+> diagnostics.
+
 ## Modules and methods
 
 > r[lang.module.use]

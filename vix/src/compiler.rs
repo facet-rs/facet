@@ -780,6 +780,33 @@ fn bind_irrefutable_pattern(
 ) -> Result<(), Diagnostics> {
     match pattern {
         ast::Pattern::Binding(pattern) => bind_name(bindings, value, &pattern.binding),
+        ast::Pattern::Record(pattern) => {
+            let Type::Record(record) = &value.ty else {
+                return Err(type_mismatch(
+                    pattern.span,
+                    path_name(&pattern.ty),
+                    value.ty.name(),
+                ));
+            };
+            require_record_pattern_owner(pattern, record)?;
+            for (index, declared, field) in
+                select_record_pattern_fields(&pattern.fields, &record.fields, &record.name)?
+            {
+                let projected = project_record_field(
+                    nodes,
+                    value,
+                    index,
+                    &declared.ty,
+                    pattern_field_span(field),
+                )?;
+                if let Some(field_pattern) = &field.pattern {
+                    bind_irrefutable_pattern(nodes, bindings, field_pattern, &projected)?;
+                } else {
+                    bind_name(bindings, &projected, &field.name)?;
+                }
+            }
+            Ok(())
+        }
         ast::Pattern::Tuple(pattern) => {
             let Type::Tuple(elements) = &value.ty else {
                 return Err(type_mismatch(pattern.span, "tuple", value.ty.name()));
@@ -1610,9 +1637,11 @@ fn lower_match(
     let scrutinee = lower_value(nodes, bindings, context, &expression.scrutinee)?;
     let enumeration = match &scrutinee.ty {
         Type::Enum(enumeration)
-            if expression.arms.arms.iter().all(|arm| {
-                matches!(arm.pattern, ast::Pattern::Variant(_)) && arm.guard.is_none()
-            }) =>
+            if expression
+                .arms
+                .arms
+                .iter()
+                .all(|arm| enum_pattern(&arm.pattern).is_some() && arm.guard.is_none()) =>
         {
             Some(enumeration.clone())
         }
@@ -1637,21 +1666,21 @@ fn lower_enum_match(
     let mut result_type = None;
 
     for arm in &expression.arms.arms {
-        let ast::Pattern::Variant(pattern) = &arm.pattern else {
-            unreachable!("enum match shape was checked by lower_match")
-        };
-        let (variant_index, variant) = find_variant(&enumeration, &pattern.path)?;
+        let pattern =
+            enum_pattern(&arm.pattern).expect("enum match shape was checked by lower_match");
+        let (variant_index, variant, variant_span) =
+            find_enum_pattern_variant(&enumeration, pattern)?;
         if !seen.insert(variant_index) {
             return Err(variant_diagnostic(
                 DiagnosticCode::DuplicateVariant,
-                pattern.path.variant.span,
+                variant_span,
                 &enumeration.name,
                 &variant.name,
             ));
         }
         let first_arm_node = nodes.len();
         let mut arm_bindings = bindings.clone();
-        bind_variant_pattern(
+        bind_enum_pattern(
             nodes,
             &mut arm_bindings,
             &scrutinee,
@@ -1677,7 +1706,7 @@ fn lower_enum_match(
             variant: u32::try_from(variant_index).map_err(|_| {
                 variant_diagnostic(
                     DiagnosticCode::VariantPayloadMismatch,
-                    pattern.span,
+                    enum_pattern_span(pattern),
                     &enumeration.name,
                     &variant.name,
                 )
@@ -1832,6 +1861,46 @@ fn lower_ordered_pattern(
             bind_name(bindings, scrutinee, &pattern.binding)?;
             Ok(None)
         }
+        ast::Pattern::Record(pattern) => {
+            let Type::Record(record) = &scrutinee.ty else {
+                return Err(type_mismatch(
+                    pattern.span,
+                    path_name(&pattern.ty),
+                    scrutinee.ty.name(),
+                ));
+            };
+            require_record_pattern_owner(pattern, record)?;
+            let selected =
+                select_record_pattern_fields(&pattern.fields, &record.fields, &record.name)?;
+            let mut condition = None;
+            for (index, declared, field) in selected {
+                if matches!(field.pattern, Some(ast::Pattern::Wildcard(_))) {
+                    continue;
+                }
+                let fragment_start = nodes.len();
+                let projected = project_record_field(
+                    nodes,
+                    scrutinee,
+                    index,
+                    &declared.ty,
+                    pattern_field_span(field),
+                )?;
+                let fragment = if let Some(field_pattern) = &field.pattern {
+                    lower_ordered_pattern(nodes, bindings, &projected, field_pattern)?
+                } else {
+                    bind_name(bindings, &projected, &field.name)?;
+                    None
+                };
+                condition = append_pattern_condition(
+                    nodes,
+                    pattern_field_span(field),
+                    condition,
+                    fragment_start,
+                    fragment,
+                );
+            }
+            Ok(condition)
+        }
         ast::Pattern::Number(pattern) => {
             require_type(scrutinee, &Type::Int, pattern.span)?;
             let literal = lower_integer_literal(nodes, pattern.span, &pattern.value.value)?;
@@ -1936,12 +2005,101 @@ fn append_pattern_condition(
 
 fn pattern_span(pattern: &ast::Pattern) -> Span {
     match pattern {
+        ast::Pattern::Record(pattern) => pattern.span,
         ast::Pattern::Variant(pattern) => pattern.span,
         ast::Pattern::Binding(pattern) => pattern.span,
         ast::Pattern::Number(pattern) => pattern.span,
         ast::Pattern::Wildcard(span) => *span,
         ast::Pattern::Tuple(pattern) => pattern.span,
     }
+}
+
+// r[impl lang.pattern.record]
+fn require_record_pattern_owner(
+    pattern: &ast::RecordPattern,
+    record: &RecordType,
+) -> Result<(), Diagnostics> {
+    let supplied = path_name(&pattern.ty);
+    if supplied == record.name {
+        Ok(())
+    } else {
+        Err(type_mismatch(
+            pattern.ty.span,
+            record.name.clone(),
+            supplied,
+        ))
+    }
+}
+
+fn select_record_pattern_fields<'pattern, 'declared>(
+    pattern: &'pattern ast::RecordPatternFields,
+    declared: &'declared [RecordField],
+    owner: &str,
+) -> Result<Vec<(usize, &'declared RecordField, &'pattern ast::PatternField)>, Diagnostics> {
+    let mut supplied = BTreeMap::new();
+    for field in &pattern.fields {
+        if supplied.insert(field.name.value.clone(), field).is_some() {
+            return Err(field_diagnostic(
+                DiagnosticCode::DuplicateField,
+                field.name.span,
+                owner,
+                &field.name.value,
+            ));
+        }
+    }
+
+    let mut selected = Vec::with_capacity(supplied.len());
+    for (index, field) in declared.iter().enumerate() {
+        if let Some(pattern) = supplied.remove(&field.name) {
+            selected.push((index, field, pattern));
+        } else if pattern.rest.is_none() {
+            return Err(field_diagnostic(
+                DiagnosticCode::MissingField,
+                pattern.span,
+                owner,
+                &field.name,
+            ));
+        }
+    }
+    if let Some((name, field)) = supplied.into_iter().next() {
+        return Err(field_diagnostic(
+            DiagnosticCode::UnknownField,
+            field.name.span,
+            owner,
+            &name,
+        ));
+    }
+    Ok(selected)
+}
+
+fn pattern_field_span(field: &ast::PatternField) -> Span {
+    field
+        .pattern
+        .as_ref()
+        .map(pattern_span)
+        .unwrap_or(field.name.span)
+}
+
+fn project_record_field(
+    nodes: &mut Vec<Node>,
+    scrutinee: &LoweredValue,
+    field: usize,
+    ty: &Type,
+    span: Span,
+) -> Result<LoweredValue, Diagnostics> {
+    let field = u32::try_from(field)
+        .map_err(|_| type_mismatch(span, "record field index", field.to_string()))?;
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            span,
+            ty.clone(),
+            EffectFacts::PURE,
+            vec![scrutinee.node],
+            Op::Project { index: field },
+        ),
+        ty: ty.clone(),
+    })
 }
 
 fn bind_name(
@@ -2020,18 +2178,98 @@ fn find_variant<'a>(
         })
 }
 
-fn bind_variant_pattern(
+#[derive(Clone, Copy)]
+enum EnumPattern<'a> {
+    Variant(&'a ast::VariantPattern),
+    Record(&'a ast::RecordPattern),
+}
+
+fn enum_pattern(pattern: &ast::Pattern) -> Option<EnumPattern<'_>> {
+    match pattern {
+        ast::Pattern::Variant(pattern) => Some(EnumPattern::Variant(pattern)),
+        ast::Pattern::Record(pattern) => Some(EnumPattern::Record(pattern)),
+        _ => None,
+    }
+}
+
+fn enum_pattern_span(pattern: EnumPattern<'_>) -> Span {
+    match pattern {
+        EnumPattern::Variant(pattern) => pattern.span,
+        EnumPattern::Record(pattern) => pattern.span,
+    }
+}
+
+fn find_enum_pattern_variant<'a>(
+    enumeration: &'a EnumType,
+    pattern: EnumPattern<'_>,
+) -> Result<(usize, &'a EnumVariant, Span), Diagnostics> {
+    match pattern {
+        EnumPattern::Variant(pattern) => {
+            let (index, variant) = find_variant(enumeration, &pattern.path)?;
+            Ok((index, variant, pattern.path.variant.span))
+        }
+        EnumPattern::Record(pattern) => {
+            let Some((variant_name, owner)) = pattern.ty.segments.split_last() else {
+                return Err(type_mismatch(
+                    pattern.ty.span,
+                    enumeration.name.clone(),
+                    path_name(&pattern.ty),
+                ));
+            };
+            let owner = owner
+                .iter()
+                .map(|segment| segment.value.as_str())
+                .collect::<Vec<_>>()
+                .join("::");
+            if owner != enumeration.name {
+                return Err(type_mismatch(
+                    pattern.ty.span,
+                    enumeration.name.clone(),
+                    path_name(&pattern.ty),
+                ));
+            }
+            enumeration
+                .variants
+                .iter()
+                .enumerate()
+                .find(|(_, variant)| variant.name == variant_name.value)
+                .map(|(index, variant)| (index, variant, variant_name.span))
+                .ok_or_else(|| {
+                    variant_diagnostic(
+                        DiagnosticCode::UnknownVariant,
+                        variant_name.span,
+                        &enumeration.name,
+                        &variant_name.value,
+                    )
+                })
+        }
+    }
+}
+
+fn bind_enum_pattern(
     nodes: &mut Vec<Node>,
     bindings: &mut BTreeMap<String, LoweredValue>,
     scrutinee: &LoweredValue,
     enumeration: &EnumType,
     variant_index: usize,
     variant: &EnumVariant,
-    pattern: &ast::VariantPattern,
+    pattern: EnumPattern<'_>,
 ) -> Result<(), Diagnostics> {
-    match (&variant.payload, &pattern.payload) {
-        (VariantPayload::Unit, None) => Ok(()),
-        (VariantPayload::Tuple(types), Some(ast::VariantPatternPayload::Tuple(tuple))) => {
+    match (pattern, &variant.payload) {
+        (EnumPattern::Variant(pattern), VariantPayload::Unit)
+            if pattern.tuple_payload.is_none() =>
+        {
+            Ok(())
+        }
+        (EnumPattern::Variant(pattern), VariantPayload::Tuple(types)) => {
+            let Some(tuple) = &pattern.tuple_payload else {
+                return Err(variant_diagnostic(
+                    DiagnosticCode::VariantPayloadMismatch,
+                    pattern.span,
+                    &enumeration.name,
+                    &variant.name,
+                ));
+            };
             if types.len() != tuple.elems.len() {
                 return Err(invalid_arity(tuple.span, types.len(), tuple.elems.len()));
             }
@@ -2048,51 +2286,30 @@ fn bind_variant_pattern(
             }
             Ok(())
         }
-        (VariantPayload::Record(fields), Some(ast::VariantPatternPayload::Record(record))) => {
-            let mut supplied = BTreeMap::new();
-            for field in &record.fields {
-                if supplied.insert(field.name.value.clone(), field).is_some() {
-                    return Err(field_diagnostic(
-                        DiagnosticCode::DuplicateField,
-                        field.name.span,
-                        &format!("{}::{}", enumeration.name, variant.name),
-                        &field.name.value,
-                    ));
-                }
-            }
-            for (field_index, declared) in fields.iter().enumerate() {
-                let field = supplied.remove(&declared.name).ok_or_else(|| {
-                    field_diagnostic(
-                        DiagnosticCode::MissingField,
-                        record.span,
-                        &format!("{}::{}", enumeration.name, variant.name),
-                        &declared.name,
-                    )
-                })?;
-                let binding = field.binding.as_ref().unwrap_or(&field.name);
+        (EnumPattern::Record(pattern), VariantPayload::Record(fields)) => {
+            let owner = format!("{}::{}", enumeration.name, variant.name);
+            for (field_index, declared, field) in
+                select_record_pattern_fields(&pattern.fields, fields, &owner)?
+            {
                 let projected = project_variant_field(
                     nodes,
                     scrutinee,
                     variant_index,
                     field_index,
                     &declared.ty,
-                    binding.span,
+                    pattern_field_span(field),
                 )?;
-                bind_name(bindings, &projected, binding)?;
-            }
-            if let Some((name, field)) = supplied.into_iter().next() {
-                return Err(field_diagnostic(
-                    DiagnosticCode::UnknownField,
-                    field.name.span,
-                    &format!("{}::{}", enumeration.name, variant.name),
-                    &name,
-                ));
+                if let Some(field_pattern) = &field.pattern {
+                    bind_irrefutable_pattern(nodes, bindings, field_pattern, &projected)?;
+                } else {
+                    bind_name(bindings, &projected, &field.name)?;
+                }
             }
             Ok(())
         }
         _ => Err(variant_diagnostic(
             DiagnosticCode::VariantPayloadMismatch,
-            pattern.span,
+            enum_pattern_span(pattern),
             &enumeration.name,
             &variant.name,
         )),
