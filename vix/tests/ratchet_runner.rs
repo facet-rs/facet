@@ -572,11 +572,10 @@ fn tuple_boundary() -> Stream<Check> {
             .program
             .clone()
             .verify(lowered.contract.clone())
-            .expect_err("raw CopyI64 tuple construction is still outside structural verification");
+            .expect_err("raw tuple construction is still outside structural verification");
         assert!(matches!(
             err.defect,
-            ProgramDefect::StructuralTransferMismatch { .. }
-                | ProgramDefect::StructuralPartialCopy { .. }
+            ProgramDefect::RawStructuralWordAccess { .. }
         ));
     });
 }
