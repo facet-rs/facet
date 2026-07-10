@@ -2,7 +2,7 @@ use vix::compiler::Compiler;
 use vix::lowering::{LoweringCache, source_map_for};
 use vix::ratchet::run_source;
 use vix::runtime::{DemandState, EventKind, MemoVerdict, TaskState};
-use vix::vir::Op as VirOp;
+use vix::vir::{Op as VirOp, Type as VirType, VariantPayload};
 use weavy::task::Op as WeavyOp;
 
 const RUNG_001: &str = include_str!("ratchet/001-harness.vix");
@@ -344,6 +344,99 @@ fn rung_006_records_and_named_projection_run_through_vir_and_weavy() {
 
 #[test]
 fn rung_007_enums_payloads_and_match_run_through_vir_and_weavy() {
+    let module = Compiler::new()
+        .compile(RUNG_007)
+        .expect("rung 007 compiles");
+    assert_eq!(module.enums.len(), 1);
+    let shape = &module.enums[0];
+    assert_eq!(shape.name, "Shape");
+    assert_eq!(shape.variants.len(), 2);
+    assert!(matches!(
+        &shape.variants[0].payload,
+        VariantPayload::Tuple(elements) if elements == &[VirType::Int]
+    ));
+    assert!(matches!(
+        &shape.variants[1].payload,
+        VariantPayload::Record(fields)
+            if fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>() == ["w", "h"]
+    ));
+    let enum_words = VirType::Enum(shape.clone())
+        .word_width()
+        .expect("Shape has a finite inline layout");
+    assert_eq!(enum_words, 3);
+    assert!(module.functions.iter().any(|function| {
+        function
+            .nodes
+            .iter()
+            .any(|node| matches!(&node.op, VirOp::Match { arms } if arms.len() == 2))
+    }));
+    assert!(module.functions.iter().any(|function| {
+        function
+            .nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::VariantProject { .. }))
+    }));
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    assert_eq!(partitioned.islands.len(), 2);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let source_map = source_map_for(island);
+        let variant_node = island
+            .nodes
+            .iter()
+            .find(|node| matches!(node.op, VirOp::Variant { .. }))
+            .expect("each check constructs one Shape variant");
+        let VirOp::Variant { variant } = &variant_node.op else {
+            unreachable!("variant node was selected above")
+        };
+        let trace_id = source_map
+            .iter()
+            .find(|entry| entry.function == island.function && entry.node == variant_node.id)
+            .expect("variant node has source attribution")
+            .trace_id;
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 007 lowers to Weavy");
+        let entry = &lowered.program.fns[0].code;
+        let trace_pc = entry
+            .iter()
+            .position(|op| matches!(op, WeavyOp::Trace { id } if *id == trace_id))
+            .expect("variant construction has a Weavy trace mark");
+        assert!(
+            entry[trace_pc + 1..trace_pc + 1 + enum_words]
+                .iter()
+                .all(|op| matches!(op, WeavyOp::ConstI64 { value: 0, .. }))
+        );
+        assert!(matches!(
+            &entry[trace_pc + 1 + enum_words],
+            WeavyOp::ConstI64 { value, .. } if *value == i64::from(*variant)
+        ));
+        assert!(lowered.program.fns.iter().any(|function| {
+            function.code.iter().any(
+                |op| matches!(op, WeavyOp::Call { args, .. } if args.len() == 1 && args[0].size == 24),
+            )
+        }));
+        assert!(lowered.program.fns.iter().any(|function| {
+            function
+                .code
+                .iter()
+                .any(|op| matches!(op, WeavyOp::JumpIfZero { .. }))
+        }));
+        assert!(lowered.program.fns.iter().any(|function| {
+            function
+                .code
+                .iter()
+                .any(|op| matches!(op, WeavyOp::Jump { .. }))
+        }));
+        assert!(lowered.program.fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+    }
+
     let report = run_source(RUNG_007).expect("rung 007 compiles and runs");
     assert!(report.passed());
     assert!(report.agrees());
@@ -353,6 +446,66 @@ fn rung_007_enums_payloads_and_match_run_through_vir_and_weavy() {
     assert_eq!(report.chaos.counters.pure_host_calls, 0);
     assert_eq!(report.plain.receipt_count, 0);
     assert_eq!(report.chaos.receipt_count, 0);
+
+    let area = module
+        .functions
+        .iter()
+        .find(|function| function.name == "area")
+        .expect("rung 007 contains area");
+    let arms = area
+        .nodes
+        .iter()
+        .find_map(|node| match &node.op {
+            VirOp::Match { arms } => Some(arms),
+            _ => None,
+        })
+        .expect("area contains a structured Match");
+    let expected_variants = partitioned
+        .islands
+        .iter()
+        .map(|island| {
+            island
+                .nodes
+                .iter()
+                .find_map(|node| match &node.op {
+                    VirOp::Variant { variant } => Some(*variant),
+                    _ => None,
+                })
+                .expect("each rung 007 island constructs one variant")
+        })
+        .collect::<Vec<_>>();
+    let mut selected_arm_marks = vec![0usize; partitioned.islands.len()];
+    for event in &report.plain.events {
+        let EventKind::WeavyMark {
+            task,
+            function,
+            node,
+        } = &event.kind
+        else {
+            continue;
+        };
+        if *function != area.id {
+            continue;
+        }
+        let Some(arm_index) = arms.iter().position(|arm| arm.nodes.contains(node)) else {
+            continue;
+        };
+        let island_index = report
+            .plain
+            .events
+            .iter()
+            .find_map(|event| match &event.kind {
+                EventKind::IslandEntered {
+                    task: entered,
+                    island,
+                } if entered == task => Some(island.0 as usize),
+                _ => None,
+            })
+            .expect("every marked task entered an island");
+        assert_eq!(arms[arm_index].variant, expected_variants[island_index]);
+        selected_arm_marks[island_index] += 1;
+    }
+    assert!(selected_arm_marks.into_iter().all(|marks| marks > 0));
 }
 
 fn assert_contiguous_sequences(events: &[vix::runtime::Event]) {

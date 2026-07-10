@@ -6,8 +6,9 @@ use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnosti
 use crate::support::Span;
 use crate::surface::{SurfaceParser, ast};
 use crate::vir::{
-    EffectFacts, Function, FunctionId, Module, Node, NodeId, Op, Parameter, ParameterId,
-    ParameterKind, RecordField, RecordType, Test, Type,
+    EffectFacts, EnumType, EnumVariant, Function, FunctionId, MatchArm as VirMatchArm, Module,
+    Node, NodeId, Op, Parameter, ParameterId, ParameterKind, RecordField, RecordType, Test, Type,
+    VariantPayload,
 };
 
 pub struct Compiler {
@@ -54,33 +55,53 @@ struct ParameterSignature {
 
 struct ModuleContext<'a> {
     signatures: &'a BTreeMap<String, FunctionSignature>,
-    records: &'a BTreeMap<String, RecordType>,
+    types: &'a BTreeMap<String, Type>,
+}
+
+#[derive(Clone, Copy)]
+enum TypeDeclaration<'a> {
+    Record(&'a ast::StructItem),
+    Enum(&'a ast::EnumItem),
+}
+
+impl TypeDeclaration<'_> {
+    fn span(self) -> Span {
+        match self {
+            Self::Record(record) => record.span,
+            Self::Enum(enumeration) => enumeration.span,
+        }
+    }
 }
 
 struct TypeResolver<'a> {
-    declarations: BTreeMap<String, &'a ast::StructItem>,
+    declarations: BTreeMap<String, TypeDeclaration<'a>>,
     resolving: BTreeSet<String>,
-    resolved: BTreeMap<String, RecordType>,
+    resolved: BTreeMap<String, Type>,
 }
 
 impl<'a> TypeResolver<'a> {
     fn new(source: &'a ast::SourceFile) -> Result<Self, Diagnostics> {
         let mut declarations = BTreeMap::new();
         for item in &source.items {
-            let ast::Item::Struct(record) = item else {
-                continue;
+            let (name, span, declaration) = match item {
+                ast::Item::Struct(record) => (
+                    &record.name.value,
+                    record.name.span,
+                    TypeDeclaration::Record(record),
+                ),
+                ast::Item::Enum(enumeration) => (
+                    &enumeration.name.value,
+                    enumeration.name.span,
+                    TypeDeclaration::Enum(enumeration),
+                ),
+                ast::Item::Fn(_) => continue,
             };
-            if declarations
-                .insert(record.name.value.clone(), record.as_ref())
-                .is_some()
-            {
+            if declarations.insert(name.clone(), declaration).is_some() {
                 return Err(Diagnostics::one(Diagnostic {
                     code: DiagnosticCode::DuplicateDefinition,
-                    primary: record.name.span,
+                    primary: span,
                     labels: Vec::new(),
-                    payload: DiagnosticPayload::Name {
-                        name: record.name.value.clone(),
-                    },
+                    payload: DiagnosticPayload::Name { name: name.clone() },
                 }));
             }
         }
@@ -91,17 +112,17 @@ impl<'a> TypeResolver<'a> {
         })
     }
 
-    fn resolve_all(mut self) -> Result<BTreeMap<String, RecordType>, Diagnostics> {
+    fn resolve_all(mut self) -> Result<BTreeMap<String, Type>, Diagnostics> {
         let names = self.declarations.keys().cloned().collect::<Vec<_>>();
         for name in names {
-            self.resolve_record(&name)?;
+            self.resolve_nominal(&name)?;
         }
         Ok(self.resolved)
     }
 
-    fn resolve_record(&mut self, name: &str) -> Result<RecordType, Diagnostics> {
-        if let Some(record) = self.resolved.get(name) {
-            return Ok(record.clone());
+    fn resolve_nominal(&mut self, name: &str) -> Result<Type, Diagnostics> {
+        if let Some(ty) = self.resolved.get(name) {
+            return Ok(ty.clone());
         }
         let declaration = *self
             .declarations
@@ -109,19 +130,73 @@ impl<'a> TypeResolver<'a> {
             .ok_or_else(|| unknown_name(Span { start: 0, end: 0 }, name))?;
         if !self.resolving.insert(name.to_owned()) {
             return Err(Diagnostics::one(Diagnostic::unsupported(
-                declaration.span,
-                format!("recursive inline record `{name}`"),
+                declaration.span(),
+                format!("recursive inline nominal type `{name}`"),
             )));
         }
 
+        let ty = match declaration {
+            TypeDeclaration::Record(record) => Type::Record(RecordType {
+                name: name.to_owned(),
+                fields: self.resolve_record_fields(name, &record.fields.fields)?,
+            }),
+            TypeDeclaration::Enum(enumeration) => {
+                let mut variant_names = BTreeSet::new();
+                let mut variants = Vec::with_capacity(enumeration.variants.variants.len());
+                for variant in &enumeration.variants.variants {
+                    if !variant_names.insert(variant.name.value.clone()) {
+                        return Err(variant_diagnostic(
+                            DiagnosticCode::DuplicateVariant,
+                            variant.name.span,
+                            name,
+                            &variant.name.value,
+                        ));
+                    }
+                    let payload = match &variant.payload {
+                        None => VariantPayload::Unit,
+                        Some(ast::VariantTypePayload::Tuple(tuple)) => VariantPayload::Tuple(
+                            tuple
+                                .elems
+                                .iter()
+                                .map(|element| self.resolve_type(element))
+                                .collect::<Result<Vec<_>, _>>()?,
+                        ),
+                        Some(ast::VariantTypePayload::Record(record)) => {
+                            VariantPayload::Record(self.resolve_record_fields(
+                                &format!("{name}::{}", variant.name.value),
+                                &record.fields,
+                            )?)
+                        }
+                    };
+                    variants.push(EnumVariant {
+                        name: variant.name.value.clone(),
+                        payload,
+                    });
+                }
+                Type::Enum(EnumType {
+                    name: name.to_owned(),
+                    variants,
+                })
+            }
+        };
+        self.resolving.remove(name);
+        self.resolved.insert(name.to_owned(), ty.clone());
+        Ok(ty)
+    }
+
+    fn resolve_record_fields(
+        &mut self,
+        owner: &str,
+        declared_fields: &[ast::RecordField],
+    ) -> Result<Vec<RecordField>, Diagnostics> {
         let mut field_names = BTreeSet::new();
-        let mut fields = Vec::with_capacity(declaration.fields.fields.len());
-        for field in &declaration.fields.fields {
+        let mut fields = Vec::with_capacity(declared_fields.len());
+        for field in declared_fields {
             if !field_names.insert(field.name.value.clone()) {
                 return Err(field_diagnostic(
                     DiagnosticCode::DuplicateField,
                     field.name.span,
-                    name,
+                    owner,
                     &field.name.value,
                 ));
             }
@@ -130,13 +205,7 @@ impl<'a> TypeResolver<'a> {
                 ty: self.resolve_type(&field.ty)?,
             });
         }
-        self.resolving.remove(name);
-        let record = RecordType {
-            name: name.to_owned(),
-            fields,
-        };
-        self.resolved.insert(name.to_owned(), record.clone());
-        Ok(record)
+        Ok(fields)
     }
 
     fn resolve_type(&mut self, ty: &ast::Type) -> Result<Type, Diagnostics> {
@@ -151,7 +220,7 @@ impl<'a> TypeResolver<'a> {
                 if !self.declarations.contains_key(&name) {
                     return Err(unknown_name(path.span, name));
                 }
-                self.resolve_record(&name).map(Type::Record)
+                self.resolve_nominal(&name)
             }
             ast::Type::Generic(generic) => Err(Diagnostics::one(Diagnostic::unsupported(
                 generic.span,
@@ -168,7 +237,7 @@ impl<'a> TypeResolver<'a> {
 }
 
 fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
-    let records = TypeResolver::new(source)?.resolve_all()?;
+    let types = TypeResolver::new(source)?.resolve_all()?;
     let mut signatures = BTreeMap::new();
     let mut ordered_signatures = Vec::new();
 
@@ -176,8 +245,7 @@ fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
         let ast::Item::Fn(function) = item else {
             continue;
         };
-        if records.contains_key(&function.name.value)
-            || signatures.contains_key(&function.name.value)
+        if types.contains_key(&function.name.value) || signatures.contains_key(&function.name.value)
         {
             return Err(Diagnostics::one(Diagnostic {
                 code: DiagnosticCode::DuplicateDefinition,
@@ -191,22 +259,36 @@ fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
         let id = FunctionId(
             u32::try_from(ordered_signatures.len()).expect("module function count fits u32"),
         );
-        let signature = declare_function(id, function, &records)?;
+        let signature = declare_function(id, function, &types)?;
         signatures.insert(function.name.value.clone(), signature.clone());
         ordered_signatures.push(signature);
     }
 
     let context = ModuleContext {
         signatures: &signatures,
-        records: &records,
+        types: &types,
     };
     let mut module = Module {
         records: source
             .items
             .iter()
             .filter_map(|item| match item {
-                ast::Item::Struct(record) => records.get(&record.name.value).cloned(),
-                ast::Item::Fn(_) => None,
+                ast::Item::Struct(record) => match types.get(&record.name.value) {
+                    Some(Type::Record(record)) => Some(record.clone()),
+                    _ => None,
+                },
+                ast::Item::Enum(_) | ast::Item::Fn(_) => None,
+            })
+            .collect(),
+        enums: source
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ast::Item::Enum(enumeration) => match types.get(&enumeration.name.value) {
+                    Some(Type::Enum(enumeration)) => Some(enumeration.clone()),
+                    _ => None,
+                },
+                ast::Item::Struct(_) | ast::Item::Fn(_) => None,
             })
             .collect(),
         ..Module::default()
@@ -235,7 +317,7 @@ fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
 fn declare_function(
     id: FunctionId,
     function: &ast::FnItem,
-    records: &BTreeMap<String, RecordType>,
+    types: &BTreeMap<String, Type>,
 ) -> Result<FunctionSignature, Diagnostics> {
     let is_test = function
         .attributes
@@ -274,7 +356,7 @@ fn declare_function(
             parameter.name.span,
             &parameter.ty,
             ParameterKind::Positional,
-            records,
+            types,
         )?;
     }
     if let Some(where_params) = &function.where_params {
@@ -299,7 +381,7 @@ fn declare_function(
                     parameter.name.span,
                     &parameter.ty,
                     ParameterKind::Named,
-                    records,
+                    types,
                 )?;
             }
         }
@@ -313,7 +395,7 @@ fn declare_function(
                 "function without a return type",
             ))
         })
-        .and_then(|ty| lower_declared_type(ty, records))?;
+        .and_then(|ty| lower_declared_type(ty, types))?;
     Ok(FunctionSignature {
         id,
         is_test,
@@ -329,7 +411,7 @@ fn declare_parameter(
     span: Span,
     ty: &ast::Type,
     kind: ParameterKind,
-    records: &BTreeMap<String, RecordType>,
+    types: &BTreeMap<String, Type>,
 ) -> Result<(), Diagnostics> {
     if !names.insert(name.to_owned()) {
         return Err(Diagnostics::one(Diagnostic {
@@ -345,7 +427,7 @@ fn declare_parameter(
         id: ParameterId(u32::try_from(parameters.len()).expect("parameter count fits u32")),
         name: name.to_owned(),
         span,
-        ty: lower_declared_type(ty, records)?,
+        ty: lower_declared_type(ty, types)?,
         kind,
     });
     Ok(())
@@ -416,9 +498,26 @@ fn field_diagnostic(code: DiagnosticCode, span: Span, record: &str, field: &str)
     })
 }
 
+fn variant_diagnostic(
+    code: DiagnosticCode,
+    span: Span,
+    enumeration: &str,
+    variant: &str,
+) -> Diagnostics {
+    Diagnostics::one(Diagnostic {
+        code,
+        primary: span,
+        labels: Vec::new(),
+        payload: DiagnosticPayload::Variant {
+            enumeration: enumeration.to_owned(),
+            variant: variant.to_owned(),
+        },
+    })
+}
+
 fn lower_declared_type(
     ty: &ast::Type,
-    records: &BTreeMap<String, RecordType>,
+    types: &BTreeMap<String, Type>,
 ) -> Result<Type, Diagnostics> {
     match ty {
         ast::Type::Path(path) if path_is(path, "Bool") => Ok(Type::Bool),
@@ -426,10 +525,9 @@ fn lower_declared_type(
         ast::Type::Path(path) if path_is(path, "String") => Ok(Type::String),
         ast::Type::Path(path) if path_is(path, "Check") => Ok(Type::Check),
         ast::Type::Generic(_) if is_stream_check_type(ty) => Ok(Type::StreamCheck),
-        ast::Type::Path(path) => records
+        ast::Type::Path(path) => types
             .get(&path_name(path))
             .cloned()
-            .map(Type::Record)
             .ok_or_else(|| unknown_name(path.span, path_name(path))),
         ast::Type::Generic(generic) => Err(Diagnostics::one(Diagnostic::unsupported(
             generic.span,
@@ -438,7 +536,7 @@ fn lower_declared_type(
         ast::Type::Tuple(tuple) => tuple
             .elems
             .iter()
-            .map(|element| lower_declared_type(element, records))
+            .map(|element| lower_declared_type(element, types))
             .collect::<Result<Vec<_>, _>>()
             .map(Type::Tuple),
     }
@@ -512,7 +610,7 @@ fn lower_function(
                 }
                 let value = lower_value(&mut nodes, &bindings, context, &statement.value)?;
                 if let Some(annotation) = &statement.ty {
-                    let expected = lower_declared_type(annotation, context.records)?;
+                    let expected = lower_declared_type(annotation, context.types)?;
                     require_type(&value, &expected, type_span(annotation))?;
                 }
                 bindings.insert(statement.name.value.clone(), value);
@@ -682,6 +780,8 @@ fn lower_value(
         }
         ast::Expr::Call(call) => lower_call(nodes, bindings, context, call),
         ast::Expr::Binary(binary) => lower_binary(nodes, bindings, context, binary),
+        ast::Expr::Variant(variant) => lower_variant(nodes, bindings, context, variant),
+        ast::Expr::Match(match_expr) => lower_match(nodes, bindings, context, match_expr),
         ast::Expr::Tuple(tuple) => {
             let values = tuple
                 .elems
@@ -701,64 +801,7 @@ fn lower_value(
                 ty,
             })
         }
-        ast::Expr::Record(record) => {
-            let record_name = path_name(&record.ty);
-            let record_type = context
-                .records
-                .get(&record_name)
-                .ok_or_else(|| unknown_name(record.ty.span, &record_name))?;
-            let mut provided = BTreeMap::new();
-            for field in &record.fields.fields {
-                if provided.insert(field.name.value.clone(), field).is_some() {
-                    return Err(field_diagnostic(
-                        DiagnosticCode::DuplicateField,
-                        field.name.span,
-                        &record_name,
-                        &field.name.value,
-                    ));
-                }
-            }
-
-            let mut inputs = Vec::with_capacity(record_type.fields.len());
-            for declared in &record_type.fields {
-                let field = provided.remove(&declared.name).ok_or_else(|| {
-                    field_diagnostic(
-                        DiagnosticCode::MissingField,
-                        record.span,
-                        &record_name,
-                        &declared.name,
-                    )
-                })?;
-                let value = if let Some(expression) = &field.value {
-                    lower_value(nodes, bindings, context, expression)?
-                } else {
-                    lookup_binding(bindings, &field.name.value, field.name.span)?
-                };
-                require_type(&value, &declared.ty, field.span)?;
-                inputs.push(value.node);
-            }
-            if let Some((name, field)) = provided.into_iter().next() {
-                return Err(field_diagnostic(
-                    DiagnosticCode::UnknownField,
-                    field.name.span,
-                    &record_name,
-                    &name,
-                ));
-            }
-
-            let ty = Type::Record(record_type.clone());
-            Ok(LoweredValue {
-                node: push_node(
-                    nodes,
-                    record.span,
-                    ty.clone(),
-                    EffectFacts::PURE,
-                    inputs,
-                    Op::Record,
-                ),
-                ty,
-            })
-        }
+        ast::Expr::Record(record) => lower_named_constructor(nodes, bindings, context, record),
         ast::Expr::Field(field) => {
             let receiver = lower_value(nodes, bindings, context, &field.receiver)?;
             let (index_value, ty) = match &field.name {
@@ -831,6 +874,488 @@ fn lower_value(
             "unary value expression",
         ))),
     }
+}
+
+fn lower_named_record_values(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    owner: &str,
+    declared_fields: &[RecordField],
+    supplied_fields: &[ast::NamedValue],
+    span: Span,
+) -> Result<Vec<NodeId>, Diagnostics> {
+    let mut provided = BTreeMap::new();
+    for field in supplied_fields {
+        if provided.insert(field.name.value.clone(), field).is_some() {
+            return Err(field_diagnostic(
+                DiagnosticCode::DuplicateField,
+                field.name.span,
+                owner,
+                &field.name.value,
+            ));
+        }
+    }
+
+    let mut inputs = Vec::with_capacity(declared_fields.len());
+    for declared in declared_fields {
+        let field = provided.remove(&declared.name).ok_or_else(|| {
+            field_diagnostic(DiagnosticCode::MissingField, span, owner, &declared.name)
+        })?;
+        let value = if let Some(expression) = &field.value {
+            lower_value(nodes, bindings, context, expression)?
+        } else {
+            lookup_binding(bindings, &field.name.value, field.name.span)?
+        };
+        require_type(&value, &declared.ty, field.span)?;
+        inputs.push(value.node);
+    }
+    if let Some((name, field)) = provided.into_iter().next() {
+        return Err(field_diagnostic(
+            DiagnosticCode::UnknownField,
+            field.name.span,
+            owner,
+            &name,
+        ));
+    }
+    Ok(inputs)
+}
+
+fn lower_named_constructor(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    expression: &ast::RecordExpr,
+) -> Result<LoweredValue, Diagnostics> {
+    let qualified_name = path_name(&expression.ty);
+    if let Some(ty) = context.types.get(&qualified_name) {
+        let Type::Record(record) = ty else {
+            return Err(type_mismatch(expression.ty.span, "record type", ty.name()));
+        };
+        let inputs = lower_named_record_values(
+            nodes,
+            bindings,
+            context,
+            &qualified_name,
+            &record.fields,
+            &expression.fields.fields,
+            expression.span,
+        )?;
+        let ty = Type::Record(record.clone());
+        return Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                expression.span,
+                ty.clone(),
+                EffectFacts::PURE,
+                inputs,
+                Op::Record,
+            ),
+            ty,
+        });
+    }
+
+    let Some((variant_name, owner_segments)) = expression.ty.segments.split_last() else {
+        return Err(unknown_name(expression.ty.span, qualified_name));
+    };
+    if owner_segments.is_empty() {
+        return Err(unknown_name(expression.ty.span, qualified_name));
+    }
+    let enumeration_name = owner_segments
+        .iter()
+        .map(|segment| segment.value.as_str())
+        .collect::<Vec<_>>()
+        .join("::");
+    let enumeration = context
+        .types
+        .get(&enumeration_name)
+        .ok_or_else(|| unknown_name(expression.ty.span, &qualified_name))?;
+    let Type::Enum(enumeration) = enumeration else {
+        return Err(type_mismatch(
+            expression.ty.span,
+            "enum type",
+            enumeration.name(),
+        ));
+    };
+    let (variant_index, variant) = enumeration
+        .variants
+        .iter()
+        .enumerate()
+        .find(|(_, variant)| variant.name == variant_name.value)
+        .ok_or_else(|| {
+            variant_diagnostic(
+                DiagnosticCode::UnknownVariant,
+                variant_name.span,
+                &enumeration.name,
+                &variant_name.value,
+            )
+        })?;
+    let VariantPayload::Record(fields) = &variant.payload else {
+        return Err(variant_diagnostic(
+            DiagnosticCode::VariantPayloadMismatch,
+            expression.span,
+            &enumeration.name,
+            &variant.name,
+        ));
+    };
+    let inputs = lower_named_record_values(
+        nodes,
+        bindings,
+        context,
+        &format!("{}::{}", enumeration.name, variant.name),
+        fields,
+        &expression.fields.fields,
+        expression.span,
+    )?;
+    let variant_index = u32::try_from(variant_index).map_err(|_| {
+        variant_diagnostic(
+            DiagnosticCode::VariantPayloadMismatch,
+            expression.span,
+            &enumeration.name,
+            &variant.name,
+        )
+    })?;
+    let ty = Type::Enum(enumeration.clone());
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            expression.span,
+            ty.clone(),
+            EffectFacts::PURE,
+            inputs,
+            Op::Variant {
+                variant: variant_index,
+            },
+        ),
+        ty,
+    })
+}
+
+fn lower_variant(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    expression: &ast::VariantExpr,
+) -> Result<LoweredValue, Diagnostics> {
+    let enumeration = context
+        .types
+        .get(&expression.path.type_name.value)
+        .ok_or_else(|| {
+            unknown_name(
+                expression.path.type_name.span,
+                &expression.path.type_name.value,
+            )
+        })?;
+    let Type::Enum(enumeration) = enumeration else {
+        return Err(type_mismatch(
+            expression.path.type_name.span,
+            "enum type",
+            enumeration.name(),
+        ));
+    };
+    let (variant_index, variant) = find_variant(enumeration, &expression.path)?;
+    let inputs = match (&variant.payload, &expression.tuple_payload) {
+        (VariantPayload::Unit, None) => Vec::new(),
+        (VariantPayload::Tuple(types), Some(arguments)) => {
+            if types.len() != arguments.args.len() {
+                return Err(invalid_arity(
+                    arguments.span,
+                    types.len(),
+                    arguments.args.len(),
+                ));
+            }
+            let mut inputs = Vec::with_capacity(types.len());
+            for (expected, argument) in types.iter().zip(&arguments.args) {
+                let value = lower_value(nodes, bindings, context, argument)?;
+                require_type(&value, expected, expr_span(argument))?;
+                inputs.push(value.node);
+            }
+            inputs
+        }
+        _ => {
+            return Err(variant_diagnostic(
+                DiagnosticCode::VariantPayloadMismatch,
+                expression.span,
+                &enumeration.name,
+                &variant.name,
+            ));
+        }
+    };
+    let variant_index = u32::try_from(variant_index).map_err(|_| {
+        variant_diagnostic(
+            DiagnosticCode::VariantPayloadMismatch,
+            expression.span,
+            &enumeration.name,
+            &variant.name,
+        )
+    })?;
+    let ty = Type::Enum(enumeration.clone());
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            expression.span,
+            ty.clone(),
+            EffectFacts::PURE,
+            inputs,
+            Op::Variant {
+                variant: variant_index,
+            },
+        ),
+        ty,
+    })
+}
+
+fn lower_match(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    expression: &ast::MatchExpr,
+) -> Result<LoweredValue, Diagnostics> {
+    let scrutinee = lower_value(nodes, bindings, context, &expression.scrutinee)?;
+    let Type::Enum(enumeration) = &scrutinee.ty else {
+        return Err(type_mismatch(
+            expr_span(&expression.scrutinee),
+            "enum",
+            scrutinee.ty.name(),
+        ));
+    };
+    let enumeration = enumeration.clone();
+    let mut seen = BTreeSet::new();
+    let mut arms = Vec::with_capacity(expression.arms.arms.len());
+    let mut result_type = None;
+
+    for arm in &expression.arms.arms {
+        let ast::Pattern::Variant(pattern) = &arm.pattern;
+        let (variant_index, variant) = find_variant(&enumeration, &pattern.path)?;
+        if !seen.insert(variant_index) {
+            return Err(variant_diagnostic(
+                DiagnosticCode::DuplicateVariant,
+                pattern.path.variant.span,
+                &enumeration.name,
+                &variant.name,
+            ));
+        }
+        let first_arm_node = nodes.len();
+        let mut arm_bindings = bindings.clone();
+        bind_variant_pattern(
+            nodes,
+            &mut arm_bindings,
+            &scrutinee,
+            &enumeration,
+            variant_index,
+            variant,
+            pattern,
+        )?;
+        let output = lower_value(nodes, &arm_bindings, context, &arm.body)?;
+        if let Some(expected) = &result_type {
+            require_type(&output, expected, expr_span(&arm.body))?;
+        } else {
+            result_type = Some(output.ty.clone());
+        }
+        let arm_nodes = (first_arm_node..nodes.len())
+            .map(|index| {
+                u32::try_from(index)
+                    .map(NodeId)
+                    .map_err(|_| type_mismatch(arm.span, "VIR node index", index.to_string()))
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        arms.push(VirMatchArm {
+            variant: u32::try_from(variant_index).map_err(|_| {
+                variant_diagnostic(
+                    DiagnosticCode::VariantPayloadMismatch,
+                    pattern.span,
+                    &enumeration.name,
+                    &variant.name,
+                )
+            })?,
+            nodes: arm_nodes,
+            output: output.node,
+        });
+    }
+
+    let missing = enumeration
+        .variants
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !seen.contains(index))
+        .map(|(_, variant)| variant.name.clone())
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(Diagnostics::one(Diagnostic {
+            code: DiagnosticCode::NonExhaustiveMatch,
+            primary: expression.arms.span,
+            labels: Vec::new(),
+            payload: DiagnosticPayload::Match { missing },
+        }));
+    }
+    let ty = result_type.ok_or_else(|| {
+        Diagnostics::one(Diagnostic {
+            code: DiagnosticCode::NonExhaustiveMatch,
+            primary: expression.arms.span,
+            labels: Vec::new(),
+            payload: DiagnosticPayload::Match {
+                missing: enumeration
+                    .variants
+                    .iter()
+                    .map(|variant| variant.name.clone())
+                    .collect(),
+            },
+        })
+    })?;
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            expression.span,
+            ty.clone(),
+            EffectFacts::PURE,
+            vec![scrutinee.node],
+            Op::Match { arms },
+        ),
+        ty,
+    })
+}
+
+fn find_variant<'a>(
+    enumeration: &'a EnumType,
+    path: &ast::VariantPath,
+) -> Result<(usize, &'a EnumVariant), Diagnostics> {
+    if path.type_name.value != enumeration.name {
+        return Err(type_mismatch(
+            path.type_name.span,
+            &enumeration.name,
+            &path.type_name.value,
+        ));
+    }
+    enumeration
+        .variants
+        .iter()
+        .enumerate()
+        .find(|(_, variant)| variant.name == path.variant.value)
+        .ok_or_else(|| {
+            variant_diagnostic(
+                DiagnosticCode::UnknownVariant,
+                path.variant.span,
+                &enumeration.name,
+                &path.variant.value,
+            )
+        })
+}
+
+fn bind_variant_pattern(
+    nodes: &mut Vec<Node>,
+    bindings: &mut BTreeMap<String, LoweredValue>,
+    scrutinee: &LoweredValue,
+    enumeration: &EnumType,
+    variant_index: usize,
+    variant: &EnumVariant,
+    pattern: &ast::VariantPattern,
+) -> Result<(), Diagnostics> {
+    match (&variant.payload, &pattern.payload) {
+        (VariantPayload::Unit, None) => Ok(()),
+        (VariantPayload::Tuple(types), Some(ast::VariantPatternPayload::Tuple(tuple))) => {
+            if types.len() != tuple.bindings.len() {
+                return Err(invalid_arity(tuple.span, types.len(), tuple.bindings.len()));
+            }
+            for (field, (ty, binding)) in types.iter().zip(&tuple.bindings).enumerate() {
+                bind_variant_field(
+                    nodes,
+                    bindings,
+                    scrutinee,
+                    variant_index,
+                    field,
+                    ty,
+                    binding,
+                )?;
+            }
+            Ok(())
+        }
+        (VariantPayload::Record(fields), Some(ast::VariantPatternPayload::Record(record))) => {
+            let mut supplied = BTreeMap::new();
+            for field in &record.fields {
+                if supplied.insert(field.name.value.clone(), field).is_some() {
+                    return Err(field_diagnostic(
+                        DiagnosticCode::DuplicateField,
+                        field.name.span,
+                        &format!("{}::{}", enumeration.name, variant.name),
+                        &field.name.value,
+                    ));
+                }
+            }
+            for (field_index, declared) in fields.iter().enumerate() {
+                let field = supplied.remove(&declared.name).ok_or_else(|| {
+                    field_diagnostic(
+                        DiagnosticCode::MissingField,
+                        record.span,
+                        &format!("{}::{}", enumeration.name, variant.name),
+                        &declared.name,
+                    )
+                })?;
+                let binding = field.binding.as_ref().unwrap_or(&field.name);
+                bind_variant_field(
+                    nodes,
+                    bindings,
+                    scrutinee,
+                    variant_index,
+                    field_index,
+                    &declared.ty,
+                    binding,
+                )?;
+            }
+            if let Some((name, field)) = supplied.into_iter().next() {
+                return Err(field_diagnostic(
+                    DiagnosticCode::UnknownField,
+                    field.name.span,
+                    &format!("{}::{}", enumeration.name, variant.name),
+                    &name,
+                ));
+            }
+            Ok(())
+        }
+        _ => Err(variant_diagnostic(
+            DiagnosticCode::VariantPayloadMismatch,
+            pattern.span,
+            &enumeration.name,
+            &variant.name,
+        )),
+    }
+}
+
+fn bind_variant_field(
+    nodes: &mut Vec<Node>,
+    bindings: &mut BTreeMap<String, LoweredValue>,
+    scrutinee: &LoweredValue,
+    variant: usize,
+    field: usize,
+    ty: &Type,
+    binding: &crate::support::Spanned<String>,
+) -> Result<(), Diagnostics> {
+    if bindings.contains_key(&binding.value) {
+        return Err(Diagnostics::one(Diagnostic {
+            code: DiagnosticCode::DuplicateBinding,
+            primary: binding.span,
+            labels: Vec::new(),
+            payload: DiagnosticPayload::Name {
+                name: binding.value.clone(),
+            },
+        }));
+    }
+    let variant = u32::try_from(variant)
+        .map_err(|_| type_mismatch(binding.span, "variant index", variant.to_string()))?;
+    let field = u32::try_from(field)
+        .map_err(|_| type_mismatch(binding.span, "variant field index", field.to_string()))?;
+    let value = LoweredValue {
+        node: push_node(
+            nodes,
+            binding.span,
+            ty.clone(),
+            EffectFacts::PURE,
+            vec![scrutinee.node],
+            Op::VariantProject { variant, field },
+        ),
+        ty: ty.clone(),
+    };
+    bindings.insert(binding.value.clone(), value);
+    Ok(())
 }
 
 fn lower_call(
@@ -1079,10 +1604,12 @@ fn push_node(
 
 fn expr_span(expression: &ast::Expr) -> Span {
     match expression {
+        ast::Expr::Match(value) => value.span,
         ast::Expr::Binary(value) => value.span,
         ast::Expr::Unary(value) => value.span,
         ast::Expr::Call(value) => value.span,
         ast::Expr::Field(value) => value.span,
+        ast::Expr::Variant(value) => value.span,
         ast::Expr::Record(value) => value.span,
         ast::Expr::Tuple(value) => value.span,
         ast::Expr::Paren(value) => value.span,

@@ -37,6 +37,78 @@ pub struct RecordType {
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
+pub enum VariantPayload {
+    Unit,
+    Tuple(Vec<Type>),
+    Record(Vec<RecordField>),
+}
+
+impl VariantPayload {
+    #[must_use]
+    pub fn len(&self) -> usize {
+        match self {
+            Self::Unit => 0,
+            Self::Tuple(elements) => elements.len(),
+            Self::Record(fields) => fields.len(),
+        }
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    #[must_use]
+    pub fn field_type(&self, index: usize) -> Option<&Type> {
+        match self {
+            Self::Unit => None,
+            Self::Tuple(elements) => elements.get(index),
+            Self::Record(fields) => fields.get(index).map(|field| &field.ty),
+        }
+    }
+
+    fn word_width(&self) -> Option<usize> {
+        match self {
+            Self::Unit => Some(0),
+            Self::Tuple(elements) => elements.iter().try_fold(0usize, |width, element| {
+                width.checked_add(element.word_width()?)
+            }),
+            Self::Record(fields) => fields.iter().try_fold(0usize, |width, field| {
+                width.checked_add(field.ty.word_width()?)
+            }),
+        }
+    }
+
+    fn equality_is_structural(&self) -> bool {
+        match self {
+            Self::Unit => true,
+            Self::Tuple(elements) => elements.iter().all(Type::equality_is_structural),
+            Self::Record(fields) => fields.iter().all(|field| field.ty.equality_is_structural()),
+        }
+    }
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct EnumVariant {
+    pub name: String,
+    pub payload: VariantPayload,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct EnumType {
+    pub name: String,
+    pub variants: Vec<EnumVariant>,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct MatchArm {
+    pub variant: u32,
+    pub nodes: Vec<NodeId>,
+    pub output: NodeId,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
 pub enum Type {
     Bool,
     Int,
@@ -45,6 +117,7 @@ pub enum Type {
     String,
     Tuple(Vec<Type>),
     Record(RecordType),
+    Enum(EnumType),
 }
 
 impl Type {
@@ -66,6 +139,7 @@ impl Type {
                 format!("({elements}{trailing_comma})")
             }
             Self::Record(record) => record.name.clone(),
+            Self::Enum(enumeration) => enumeration.name.clone(),
         }
     }
 
@@ -82,6 +156,13 @@ impl Type {
             Self::Record(record) => record.fields.iter().try_fold(0usize, |width, field| {
                 width.checked_add(field.ty.word_width()?)
             }),
+            Self::Enum(enumeration) => enumeration
+                .variants
+                .iter()
+                .try_fold(0usize, |widest, variant| {
+                    Some(widest.max(variant.payload.word_width()?))
+                })?
+                .checked_add(1),
         }
     }
 
@@ -94,6 +175,10 @@ impl Type {
                 .fields
                 .iter()
                 .all(|field| field.ty.equality_is_structural()),
+            Self::Enum(enumeration) => enumeration
+                .variants
+                .iter()
+                .all(|variant| variant.payload.equality_is_structural()),
             Self::Check | Self::StreamCheck => false,
         }
     }
@@ -145,6 +230,9 @@ pub enum Op {
     Tuple,
     Record,
     Project { index: u32 },
+    Variant { variant: u32 },
+    VariantProject { variant: u32, field: u32 },
+    Match { arms: Vec<MatchArm> },
 }
 
 /// One SSA-like operation. Dependencies are explicit node ids; no Rust
@@ -198,6 +286,7 @@ pub struct Test {
 #[derive(facet::Facet, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Module {
     pub records: Vec<RecordType>,
+    pub enums: Vec<EnumType>,
     pub functions: Vec<Function>,
     pub tests: Vec<Test>,
 }
@@ -234,6 +323,35 @@ impl Module {
                 .collect::<Vec<_>>()
                 .join(", ");
             let _ = writeln!(out, "struct {} {{ {fields} }}", record.name);
+        }
+        for enumeration in &self.enums {
+            let variants = enumeration
+                .variants
+                .iter()
+                .map(|variant| match &variant.payload {
+                    VariantPayload::Unit => variant.name.clone(),
+                    VariantPayload::Tuple(elements) => format!(
+                        "{}({})",
+                        variant.name,
+                        elements
+                            .iter()
+                            .map(Type::name)
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                    VariantPayload::Record(fields) => format!(
+                        "{} {{ {} }}",
+                        variant.name,
+                        fields
+                            .iter()
+                            .map(|field| format!("{}: {}", field.name, field.ty.name()))
+                            .collect::<Vec<_>>()
+                            .join(", ")
+                    ),
+                })
+                .collect::<Vec<_>>()
+                .join(", ");
+            let _ = writeln!(out, "enum {} {{ {variants} }}", enumeration.name);
         }
         for function in &self.functions {
             let _ = writeln!(
@@ -287,12 +405,13 @@ impl Module {
             .map(|(index, &output)| {
                 let mut needed = BTreeSet::new();
                 collect_dependencies(function, output, &mut needed);
-                let nodes = function
+                let mut nodes = function
                     .nodes
                     .iter()
                     .filter(|node| needed.contains(&node.id))
                     .cloned()
                     .collect::<Vec<_>>();
+                prune_control_regions(&mut nodes, &needed);
                 let mut seen = BTreeSet::from([function.id]);
                 let mut callees = Vec::new();
                 collect_callees(self, &nodes, &mut seen, &mut callees);
@@ -338,8 +457,19 @@ fn collect_callees(
         }
         let mut sliced = function.clone();
         sliced.nodes.retain(|node| needed.contains(&node.id));
+        prune_control_regions(&mut sliced.nodes, &needed);
         order.push(sliced.clone());
         collect_callees(module, &sliced.nodes, seen, order);
+    }
+}
+
+fn prune_control_regions(nodes: &mut [Node], needed: &BTreeSet<NodeId>) {
+    for node in nodes {
+        if let Op::Match { arms } = &mut node.op {
+            for arm in arms {
+                arm.nodes.retain(|node| needed.contains(node));
+            }
+        }
     }
 }
 
@@ -350,6 +480,11 @@ fn collect_dependencies(function: &Function, node: NodeId, needed: &mut BTreeSet
     let node = &function.nodes[node.0 as usize];
     for &input in &node.inputs {
         collect_dependencies(function, input, needed);
+    }
+    if let Op::Match { arms } = &node.op {
+        for arm in arms {
+            collect_dependencies(function, arm.output, needed);
+        }
     }
 }
 
@@ -488,6 +623,29 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             op.extend_from_slice(&index.to_le_bytes());
         }
         Op::Record => op.push(14),
+        Op::Variant { variant } => {
+            op.push(15);
+            op.extend_from_slice(&variant.to_le_bytes());
+        }
+        Op::VariantProject { variant, field } => {
+            op.push(16);
+            op.extend_from_slice(&variant.to_le_bytes());
+            op.extend_from_slice(&field.to_le_bytes());
+        }
+        Op::Match { arms } => {
+            op.push(17);
+            frame(&mut op, &(arms.len() as u64).to_le_bytes());
+            for arm in arms {
+                let mut encoded = Vec::new();
+                frame(&mut encoded, &arm.variant.to_le_bytes());
+                frame(&mut encoded, &(arm.nodes.len() as u64).to_le_bytes());
+                for node in &arm.nodes {
+                    frame(&mut encoded, &node.0.to_le_bytes());
+                }
+                frame(&mut encoded, &arm.output.0.to_le_bytes());
+                frame(&mut op, &encoded);
+            }
+        }
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());
@@ -520,6 +678,40 @@ fn canonical_type(ty: &Type) -> Vec<u8> {
                 let mut encoded = Vec::new();
                 frame(&mut encoded, field.name.as_bytes());
                 frame(&mut encoded, &canonical_type(&field.ty));
+                frame(&mut bytes, &encoded);
+            }
+            bytes
+        }
+        Type::Enum(enumeration) => {
+            let mut bytes = b"nominal-enum".to_vec();
+            frame(&mut bytes, enumeration.name.as_bytes());
+            frame(
+                &mut bytes,
+                &(enumeration.variants.len() as u64).to_le_bytes(),
+            );
+            for variant in &enumeration.variants {
+                let mut encoded = Vec::new();
+                frame(&mut encoded, variant.name.as_bytes());
+                match &variant.payload {
+                    VariantPayload::Unit => frame(&mut encoded, b"unit"),
+                    VariantPayload::Tuple(elements) => {
+                        frame(&mut encoded, b"tuple");
+                        frame(&mut encoded, &(elements.len() as u64).to_le_bytes());
+                        for element in elements {
+                            frame(&mut encoded, &canonical_type(element));
+                        }
+                    }
+                    VariantPayload::Record(fields) => {
+                        frame(&mut encoded, b"record");
+                        frame(&mut encoded, &(fields.len() as u64).to_le_bytes());
+                        for field in fields {
+                            let mut field_bytes = Vec::new();
+                            frame(&mut field_bytes, field.name.as_bytes());
+                            frame(&mut field_bytes, &canonical_type(&field.ty));
+                            frame(&mut encoded, &field_bytes);
+                        }
+                    }
+                }
                 frame(&mut bytes, &encoded);
             }
             bytes

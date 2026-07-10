@@ -20,6 +20,10 @@ pub enum DiagnosticCode {
     UnknownField,
     MissingField,
     DuplicateField,
+    UnknownVariant,
+    DuplicateVariant,
+    VariantPayloadMismatch,
+    NonExhaustiveMatch,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -31,13 +35,37 @@ pub struct Label {
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum DiagnosticPayload {
-    Parse { detail: String },
-    Name { name: String },
-    Type { expected: String, found: String },
-    Arity { expected: u32, found: u32 },
-    Unsupported { construct: String },
-    Invariant { detail: String },
-    Field { record: String, field: String },
+    Parse {
+        detail: String,
+    },
+    Name {
+        name: String,
+    },
+    Type {
+        expected: String,
+        found: String,
+    },
+    Arity {
+        expected: u32,
+        found: u32,
+    },
+    Unsupported {
+        construct: String,
+    },
+    Invariant {
+        detail: String,
+    },
+    Field {
+        record: String,
+        field: String,
+    },
+    Variant {
+        enumeration: String,
+        variant: String,
+    },
+    Match {
+        missing: Vec<String>,
+    },
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]

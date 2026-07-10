@@ -1,6 +1,6 @@
 //! VIR island lowering to architecture-neutral Weavy bytecode.
 
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
 use weavy::mem::Layout;
@@ -13,7 +13,9 @@ use crate::runtime::{
     DemandKey, DemandPreimage, FrameRegion, FrameSlot, FrameWords, RecipeId, SchemaId,
 };
 use crate::support::Span;
-use crate::vir::{Function, FunctionId, Island, Node, NodeId, NodeRef, Op, Type};
+use crate::vir::{
+    EnumType, Function, FunctionId, Island, Node, NodeId, NodeRef, Op, Type, VariantPayload,
+};
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct SourceMapEntry {
@@ -267,7 +269,14 @@ struct LoweringContext<'a> {
 struct FunctionLayout {
     regions: BTreeMap<NodeId, FrameRegion>,
     scratch: Option<FrameSlot>,
+    control_scratch: Option<ControlScratch>,
     frame_size: usize,
+}
+
+#[derive(Clone, Copy)]
+struct ControlScratch {
+    expected: FrameSlot,
+    condition: FrameSlot,
 }
 
 impl FunctionLayout {
@@ -311,11 +320,30 @@ impl FunctionLayout {
         } else {
             None
         };
+        let control_scratch = if nodes.iter().any(|node| matches!(node.op, Op::Match { .. })) {
+            let expected = FrameSlot::for_word(next_word)
+                .ok_or_else(|| lowering_diagnostic(span, "Weavy control offset overflow"))?;
+            next_word = next_word
+                .checked_add(FrameWords::ONE.as_usize())
+                .ok_or_else(|| lowering_diagnostic(span, "function frame size overflow"))?;
+            let condition = FrameSlot::for_word(next_word)
+                .ok_or_else(|| lowering_diagnostic(span, "Weavy control offset overflow"))?;
+            next_word = next_word
+                .checked_add(FrameWords::ONE.as_usize())
+                .ok_or_else(|| lowering_diagnostic(span, "function frame size overflow"))?;
+            Some(ControlScratch {
+                expected,
+                condition,
+            })
+        } else {
+            None
+        };
         let frame_size = FrameSlot::frame_size(next_word)
             .ok_or_else(|| lowering_diagnostic(span, "function frame size overflow"))?;
         Ok(Self {
             regions,
             scratch,
+            control_scratch,
             frame_size,
         })
     }
@@ -325,6 +353,91 @@ impl FunctionLayout {
             .get(&node)
             .copied()
             .ok_or_else(|| lowering_diagnostic(span, "VIR node has no frame region"))
+    }
+}
+
+#[derive(Clone, Copy)]
+struct CodeLabel(usize);
+
+enum PendingOp {
+    Concrete(WeavyOp),
+    Jump(CodeLabel),
+    JumpIfZero { value: u32, target: CodeLabel },
+}
+
+struct CodeBuilder {
+    ops: Vec<PendingOp>,
+    labels: Vec<Option<usize>>,
+}
+
+impl CodeBuilder {
+    fn with_capacity(capacity: usize) -> Self {
+        Self {
+            ops: Vec::with_capacity(capacity),
+            labels: Vec::new(),
+        }
+    }
+
+    fn push(&mut self, op: WeavyOp) {
+        self.ops.push(PendingOp::Concrete(op));
+    }
+
+    fn extend(&mut self, ops: impl IntoIterator<Item = WeavyOp>) {
+        self.ops.extend(ops.into_iter().map(PendingOp::Concrete));
+    }
+
+    fn label(&mut self) -> CodeLabel {
+        let label = CodeLabel(self.labels.len());
+        self.labels.push(None);
+        label
+    }
+
+    fn bind(&mut self, label: CodeLabel, span: Span) -> Result<(), Diagnostics> {
+        let instruction = self.ops.len();
+        let target = self
+            .labels
+            .get_mut(label.0)
+            .ok_or_else(|| lowering_diagnostic(span, "unknown Weavy code label"))?;
+        if target.replace(instruction).is_some() {
+            return Err(lowering_diagnostic(span, "duplicate Weavy code label"));
+        }
+        Ok(())
+    }
+
+    fn jump(&mut self, target: CodeLabel) {
+        self.ops.push(PendingOp::Jump(target));
+    }
+
+    fn jump_if_zero(&mut self, value: FrameSlot, target: CodeLabel) {
+        self.ops.push(PendingOp::JumpIfZero {
+            value: value.byte_offset(),
+            target,
+        });
+    }
+
+    fn finish(self, span: Span) -> Result<Vec<WeavyOp>, Diagnostics> {
+        let labels = self.labels;
+        self.ops
+            .into_iter()
+            .map(|op| match op {
+                PendingOp::Concrete(op) => Ok(op),
+                PendingOp::Jump(label) => Ok(WeavyOp::Jump {
+                    target: Self::resolve(&labels, label, span)?,
+                }),
+                PendingOp::JumpIfZero { value, target } => Ok(WeavyOp::JumpIfZero {
+                    value,
+                    target: Self::resolve(&labels, target, span)?,
+                }),
+            })
+            .collect()
+    }
+
+    fn resolve(labels: &[Option<usize>], label: CodeLabel, span: Span) -> Result<u32, Diagnostics> {
+        let target = labels
+            .get(label.0)
+            .and_then(|target| *target)
+            .ok_or_else(|| lowering_diagnostic(span, "unbound Weavy code label"))?;
+        u32::try_from(target).map_err(|_| lowering_diagnostic(span, "Weavy jump target overflow"))
     }
 }
 
@@ -351,32 +464,24 @@ fn lower_vir_function(
         .iter()
         .find(|node| node.id == output)
         .ok_or_else(|| lowering_diagnostic(Span { start: 0, end: 0 }, "missing function output"))?;
+    let nodes_by_id = nodes
+        .iter()
+        .map(|node| (node.id, node))
+        .collect::<BTreeMap<_, _>>();
+    let node_ids = nodes.iter().map(|node| node.id).collect::<Vec<_>>();
     let mut values = BTreeMap::new();
-    let mut code = Vec::with_capacity(nodes.len().saturating_mul(2) + 1);
-    for node in nodes {
-        if values.contains_key(&node.id) {
-            return Err(lowering_diagnostic(node.span, "duplicate VIR node id"));
-        }
-        let dst = layout.region(node.id, node.span)?;
-        let trace_id = context
-            .trace_ids
-            .get(&NodeRef {
-                function,
-                node: node.id,
-            })
-            .copied()
-            .ok_or_else(|| lowering_diagnostic(node.span, "VIR node has no trace attribution"))?;
-        code.push(WeavyOp::Trace { id: trace_id });
-        let lowered = lower_node(node, dst, &values, &function_context, context, constants)?;
-        code.extend(lowered.ops);
-        values.insert(
-            node.id,
-            LoweredSlot {
-                region: dst,
-                ty: node.ty.clone(),
-                representation: lowered.representation,
-            },
-        );
+    let mut code = CodeBuilder::with_capacity(nodes.len().saturating_mul(2) + 1);
+    {
+        let sequence = SequenceContext {
+            nodes: &nodes_by_id,
+            function: &function_context,
+            lowering: context,
+        };
+        let mut outputs = SequenceOutputs {
+            constants,
+            code: &mut code,
+        };
+        lower_node_sequence(&node_ids, &mut values, &sequence, &mut outputs, None)?;
     }
     let output_region = values
         .get(&output)
@@ -390,6 +495,7 @@ fn lower_vir_function(
             .byte_size()
             .ok_or_else(|| lowering_diagnostic(output_node.span, "return size overflow"))?,
     });
+    let code = code.finish(output_node.span)?;
     Ok(WeavyFn {
         frame: Layout {
             size: layout.frame_size,
@@ -397,6 +503,187 @@ fn lower_vir_function(
         },
         code,
     })
+}
+
+struct SequenceContext<'nodes, 'function, 'lowering> {
+    nodes: &'nodes BTreeMap<NodeId, &'nodes Node>,
+    function: &'function FunctionLoweringContext<'function>,
+    lowering: &'lowering LoweringContext<'lowering>,
+}
+
+struct SequenceOutputs<'constants, 'code> {
+    constants: &'constants mut Vec<ValueConstant>,
+    code: &'code mut CodeBuilder,
+}
+
+fn lower_node_sequence(
+    node_ids: &[NodeId],
+    values: &mut BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+    active_variant: Option<u32>,
+) -> Result<(), Diagnostics> {
+    let mut controlled = BTreeSet::new();
+    for node_id in node_ids {
+        let node = sequence.nodes.get(node_id).copied().ok_or_else(|| {
+            lowering_diagnostic(
+                Span { start: 0, end: 0 },
+                "control region names a missing node",
+            )
+        })?;
+        if let Op::Match { arms } = &node.op {
+            for arm in arms {
+                controlled.extend(arm.nodes.iter().copied());
+            }
+        }
+    }
+
+    for node_id in node_ids {
+        if controlled.contains(node_id) {
+            continue;
+        }
+        let node =
+            sequence.nodes.get(node_id).copied().ok_or_else(|| {
+                lowering_diagnostic(Span { start: 0, end: 0 }, "missing VIR node")
+            })?;
+        if values.contains_key(&node.id) {
+            return Err(lowering_diagnostic(node.span, "duplicate VIR node id"));
+        }
+        let dst = sequence.function.layout.region(node.id, node.span)?;
+        let trace_id = sequence
+            .lowering
+            .trace_ids
+            .get(&NodeRef {
+                function: sequence.function.id,
+                node: node.id,
+            })
+            .copied()
+            .ok_or_else(|| lowering_diagnostic(node.span, "VIR node has no trace attribution"))?;
+        outputs.code.push(WeavyOp::Trace { id: trace_id });
+        let representation = if matches!(node.op, Op::Match { .. }) {
+            lower_match_node(node, dst, values, sequence, outputs)?
+        } else {
+            let lowered = lower_node(
+                node,
+                dst,
+                values,
+                sequence.function,
+                sequence.lowering,
+                outputs.constants,
+                active_variant,
+            )?;
+            outputs.code.extend(lowered.ops);
+            lowered.representation
+        };
+        values.insert(
+            node.id,
+            LoweredSlot {
+                region: dst,
+                ty: node.ty.clone(),
+                representation,
+            },
+        );
+    }
+    Ok(())
+}
+
+fn lower_match_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    let Op::Match { arms } = &node.op else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "non-Match node reached structured match lowering",
+        ));
+    };
+    require_input_count(node, 1)?;
+    let scrutinee = input_value(node, values, 0)?;
+    require_value(
+        node,
+        &scrutinee,
+        &scrutinee.ty,
+        ValueRepresentation::InlineComposite,
+    )?;
+    let enum_layout = EnumLayout::for_type(&scrutinee.ty, node.span)?;
+    if enum_layout.words != scrutinee.region.words() {
+        return Err(lowering_diagnostic(
+            node.span,
+            "match scrutinee has the wrong enum frame width",
+        ));
+    }
+    if arms.is_empty() {
+        return Err(lowering_diagnostic(node.span, "Match has no arms"));
+    }
+    let mut seen = BTreeSet::new();
+    for arm in arms {
+        enum_layout.variant(arm.variant, node.span)?;
+        if !seen.insert(arm.variant) {
+            return Err(lowering_diagnostic(
+                node.span,
+                "Match repeats an enum variant",
+            ));
+        }
+    }
+    if seen.len() != enum_layout.enumeration.variants.len() {
+        return Err(lowering_diagnostic(
+            node.span,
+            "Match is not exhaustive over its enum type",
+        ));
+    }
+
+    let result_representation = representation_for_type(&node.ty, node.span)?;
+    let tag = scrutinee
+        .region
+        .word(0)
+        .ok_or_else(|| lowering_diagnostic(node.span, "enum tag lies outside its frame"))?;
+    let end = outputs.code.label();
+    for (arm_index, arm) in arms.iter().enumerate() {
+        let is_last = arm_index + 1 == arms.len();
+        let next = if is_last {
+            None
+        } else {
+            let scratch = sequence.function.layout.control_scratch.ok_or_else(|| {
+                lowering_diagnostic(node.span, "Match has no control scratch region")
+            })?;
+            outputs.code.push(WeavyOp::ConstI64 {
+                dst: scratch.expected.byte_offset(),
+                value: i64::from(arm.variant),
+            });
+            outputs.code.push(WeavyOp::EqI64 {
+                dst: scratch.condition.byte_offset(),
+                a: tag.byte_offset(),
+                b: scratch.expected.byte_offset(),
+            });
+            let next = outputs.code.label();
+            outputs.code.jump_if_zero(scratch.condition, next);
+            Some(next)
+        };
+
+        let mut arm_values = values.clone();
+        lower_node_sequence(
+            &arm.nodes,
+            &mut arm_values,
+            sequence,
+            outputs,
+            Some(arm.variant),
+        )?;
+        let output = arm_values.get(&arm.output).ok_or_else(|| {
+            lowering_diagnostic(node.span, "match arm output has no lowered value")
+        })?;
+        require_value(node, output, &node.ty, result_representation)?;
+        outputs.code.extend(copy_region(node, output.region, dst)?);
+
+        if let Some(next) = next {
+            outputs.code.jump(end);
+            outputs.code.bind(next, node.span)?;
+        }
+    }
+    outputs.code.bind(end, node.span)?;
+    Ok(result_representation)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -432,6 +719,7 @@ fn lower_node(
     function: &FunctionLoweringContext<'_>,
     context: &LoweringContext<'_>,
     constants: &mut Vec<ValueConstant>,
+    active_variant: Option<u32>,
 ) -> Result<LoweredNode, Diagnostics> {
     let dst_region = dst;
     let dst_slot = dst.start();
@@ -525,6 +813,22 @@ fn lower_node(
         Op::Tuple => lower_aggregate_node(node, dst_region, values, AggregateKind::Tuple)?,
         Op::Record => lower_aggregate_node(node, dst_region, values, AggregateKind::Record)?,
         Op::Project { index } => lower_project_node(node, dst_region, values, *index)?,
+        Op::Variant { variant } => lower_variant_node(node, dst_region, values, *variant)?,
+        Op::VariantProject { variant, field } => {
+            if active_variant != Some(*variant) {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "variant payload projection lies outside its matching arm",
+                ));
+            }
+            lower_variant_project_node(node, dst_region, values, *variant, *field)?
+        }
+        Op::Match { .. } => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "structured Match reached scalar node lowering",
+            ));
+        }
         Op::Eq | Op::Ne => {
             require_node_type(node, Type::Bool)?;
             let (a, b) = binary_values(node, values)?;
@@ -708,6 +1012,184 @@ impl<'a> AggregateLayout<'a> {
             words,
         })
     }
+}
+
+struct EnumVariantLayout<'a> {
+    elements: Vec<AggregateElementLayout<'a>>,
+    words: FrameWords,
+}
+
+struct EnumLayout<'a> {
+    enumeration: &'a EnumType,
+    variants: Vec<EnumVariantLayout<'a>>,
+    words: FrameWords,
+}
+
+impl<'a> EnumLayout<'a> {
+    fn for_type(ty: &'a Type, span: Span) -> Result<Self, Diagnostics> {
+        let Type::Enum(enumeration) = ty else {
+            return Err(lowering_diagnostic(
+                span,
+                &format!("{} is not an enum type", ty.name()),
+            ));
+        };
+        let mut widest_payload = 0usize;
+        let mut variants = Vec::with_capacity(enumeration.variants.len());
+        for variant in &enumeration.variants {
+            let element_types = match &variant.payload {
+                VariantPayload::Unit => Vec::new(),
+                VariantPayload::Tuple(elements) => elements.iter().collect(),
+                VariantPayload::Record(fields) => fields.iter().map(|field| &field.ty).collect(),
+            };
+            let mut offset_words = 0usize;
+            let mut elements = Vec::with_capacity(element_types.len());
+            for element_type in element_types {
+                let words = type_words(element_type, span)?;
+                elements.push(AggregateElementLayout {
+                    ty: element_type,
+                    offset_words,
+                    words,
+                });
+                offset_words = offset_words.checked_add(words.as_usize()).ok_or_else(|| {
+                    lowering_diagnostic(span, "enum payload layout width overflow")
+                })?;
+            }
+            widest_payload = widest_payload.max(offset_words);
+            variants.push(EnumVariantLayout {
+                elements,
+                words: FrameWords::from_usize(offset_words).ok_or_else(|| {
+                    lowering_diagnostic(span, "enum payload layout width overflow")
+                })?,
+            });
+        }
+        let total_words = widest_payload
+            .checked_add(1)
+            .ok_or_else(|| lowering_diagnostic(span, "enum layout width overflow"))?;
+        Ok(Self {
+            enumeration,
+            variants,
+            words: FrameWords::from_usize(total_words)
+                .ok_or_else(|| lowering_diagnostic(span, "enum layout width overflow"))?,
+        })
+    }
+
+    fn variant(&self, index: u32, span: Span) -> Result<&EnumVariantLayout<'a>, Diagnostics> {
+        let index = usize::try_from(index)
+            .map_err(|_| lowering_diagnostic(span, "enum variant index overflow"))?;
+        self.variants
+            .get(index)
+            .ok_or_else(|| lowering_diagnostic(span, "enum variant index is out of bounds"))
+    }
+}
+
+fn lower_variant_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    variant: u32,
+) -> Result<(Vec<WeavyOp>, ValueRepresentation), Diagnostics> {
+    let layout = EnumLayout::for_type(&node.ty, node.span)?;
+    let variant_layout = layout.variant(variant, node.span)?;
+    require_input_count(node, variant_layout.elements.len())?;
+    if layout.words != dst.words() {
+        return Err(lowering_diagnostic(
+            node.span,
+            "enum construction destination has the wrong frame width",
+        ));
+    }
+    if variant_layout
+        .words
+        .as_usize()
+        .checked_add(1)
+        .is_none_or(|occupied| occupied > layout.words.as_usize())
+    {
+        return Err(lowering_diagnostic(
+            node.span,
+            "enum variant payload exceeds its frame layout",
+        ));
+    }
+
+    let mut ops = Vec::new();
+    for word in 0..dst.words().as_usize() {
+        let slot = dst
+            .word(word)
+            .ok_or_else(|| lowering_diagnostic(node.span, "enum zeroing offset overflow"))?;
+        ops.push(WeavyOp::ConstI64 {
+            dst: slot.byte_offset(),
+            value: 0,
+        });
+    }
+    ops.push(WeavyOp::ConstI64 {
+        dst: dst.start().byte_offset(),
+        value: i64::from(variant),
+    });
+    for (index, element) in variant_layout.elements.iter().enumerate() {
+        let value = input_value(node, values, index)?;
+        require_value(
+            node,
+            &value,
+            element.ty,
+            representation_for_type(element.ty, node.span)?,
+        )?;
+        let payload_offset = element
+            .offset_words
+            .checked_add(1)
+            .ok_or_else(|| lowering_diagnostic(node.span, "enum payload offset overflow"))?;
+        let target = dst
+            .subregion(payload_offset, element.words)
+            .ok_or_else(|| lowering_diagnostic(node.span, "enum payload lies outside its frame"))?;
+        ops.extend(copy_region(node, value.region, target)?);
+    }
+    Ok((ops, ValueRepresentation::InlineComposite))
+}
+
+fn lower_variant_project_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    variant: u32,
+    field: u32,
+) -> Result<(Vec<WeavyOp>, ValueRepresentation), Diagnostics> {
+    require_input_count(node, 1)?;
+    let receiver = input_value(node, values, 0)?;
+    require_value(
+        node,
+        &receiver,
+        &receiver.ty,
+        ValueRepresentation::InlineComposite,
+    )?;
+    let layout = EnumLayout::for_type(&receiver.ty, node.span)?;
+    let variant_layout = layout.variant(variant, node.span)?;
+    let field = usize::try_from(field)
+        .map_err(|_| lowering_diagnostic(node.span, "variant field index overflow"))?;
+    let element = variant_layout
+        .elements
+        .get(field)
+        .ok_or_else(|| lowering_diagnostic(node.span, "variant field index is out of bounds"))?;
+    if &node.ty != element.ty {
+        return Err(lowering_diagnostic(
+            node.span,
+            "variant projection result has the wrong VIR type",
+        ));
+    }
+    let payload_offset = element
+        .offset_words
+        .checked_add(1)
+        .ok_or_else(|| lowering_diagnostic(node.span, "enum payload offset overflow"))?;
+    let source = receiver
+        .region
+        .subregion(payload_offset, element.words)
+        .ok_or_else(|| lowering_diagnostic(node.span, "enum payload lies outside its frame"))?;
+    if source.words() != dst.words() {
+        return Err(lowering_diagnostic(
+            node.span,
+            "variant projection destination has the wrong frame width",
+        ));
+    }
+    Ok((
+        copy_region(node, source, dst)?,
+        representation_for_type(element.ty, node.span)?,
+    ))
 }
 
 fn lower_aggregate_node(
@@ -906,7 +1388,9 @@ fn representation_for_type(ty: &Type, span: Span) -> Result<ValueRepresentation,
     match ty {
         Type::Bool | Type::Int | Type::Check => Ok(ValueRepresentation::Word),
         Type::String => Ok(ValueRepresentation::RealizedHandle),
-        Type::Tuple(_) | Type::Record(_) => Ok(ValueRepresentation::InlineComposite),
+        Type::Tuple(_) | Type::Record(_) | Type::Enum(_) => {
+            Ok(ValueRepresentation::InlineComposite)
+        }
         Type::StreamCheck => Err(lowering_diagnostic(
             span,
             "Stream<Check> has no island-interior word representation",

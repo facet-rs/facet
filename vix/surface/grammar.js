@@ -23,7 +23,7 @@ module.exports = grammar({
   rules: {
     source_file: ($) => repeat(field("item", $._item)),
 
-    _item: ($) => choice($.struct_item, $.fn_item),
+    _item: ($) => choice($.enum_item, $.struct_item, $.fn_item),
 
     attribute: ($) =>
       seq(
@@ -58,6 +58,23 @@ module.exports = grammar({
       ),
     record_field_list: ($) => seq("{", sepBy(",", field("field", $.record_field)), "}"),
     record_field: ($) => seq(field("name", $.identifier), ":", field("type", $._type)),
+    enum_item: ($) =>
+      seq(
+        repeat(field("attribute", $.attribute)),
+        optional(field("vis", "pub")),
+        "enum",
+        field("name", $.identifier),
+        field("variants", $.enum_variant_list),
+      ),
+    enum_variant_list: ($) => seq("{", sepBy(",", field("variant", $.enum_variant)), "}"),
+    enum_variant: ($) =>
+      seq(
+        repeat(field("attribute", $.attribute)),
+        field("name", $.identifier),
+        optional(field("payload", $._variant_type_payload)),
+      ),
+    _variant_type_payload: ($) => choice($.variant_tuple_type, $.record_field_list),
+    variant_tuple_type: ($) => seq("(", sepBy(",", field("elem", $._type)), ")"),
 
     generic_params: ($) => seq("<", sepBy(",", field("param", $.identifier)), ">"),
     param_list: ($) => seq("(", sepBy(",", field("param", $.param)), ")"),
@@ -100,10 +117,12 @@ module.exports = grammar({
 
     _expr: ($) =>
       choice(
+        $.match_expr,
         $.binary,
         $.unary,
         $.call,
         $.field_access,
+        $.variant_expr,
         $.record_expr,
         $.tuple_expr,
         $.paren,
@@ -145,6 +164,16 @@ module.exports = grammar({
       ),
     arg_list: ($) => seq("(", sepBy(",", field("arg", $._expr)), ")"),
     where_args: ($) => seq("where", "{", sepBy(",", field("field", $.named_value)), "}"),
+    variant_path: ($) =>
+      seq(field("type_name", $.identifier), "::", field("variant", $.identifier)),
+    variant_expr: ($) =>
+      prec(
+        PREC.postfix,
+        seq(
+          field("path", $.variant_path),
+          optional(field("tuple_payload", $.arg_list)),
+        ),
+      ),
     record_expr: ($) =>
       prec(PREC.postfix, seq(field("type", $.type_path), field("fields", $.record_value_list))),
     record_value_list: ($) => seq("{", sepBy(",", field("field", $.named_value)), "}"),
@@ -156,6 +185,26 @@ module.exports = grammar({
     tuple_expr: ($) =>
       seq("(", field("elem", $._expr), ",", sepBy(",", field("elem", $._expr)), ")"),
     paren: ($) => seq("(", field("inner", $._expr), ")"),
+
+    match_expr: ($) =>
+      seq("match", field("scrutinee", $._expr), field("arms", $.match_arm_list)),
+    match_arm_list: ($) => seq("{", sepBy(",", field("arm", $.match_arm)), "}"),
+    match_arm: ($) =>
+      seq(field("pattern", $._pattern), "=>", field("body", $._expr)),
+    _pattern: ($) => choice($.variant_pattern),
+    variant_pattern: ($) =>
+      seq(
+        field("path", $.variant_path),
+        optional(field("payload", $._variant_pattern_payload)),
+      ),
+    _variant_pattern_payload: ($) => choice($.tuple_pattern, $.record_pattern),
+    tuple_pattern: ($) => seq("(", sepBy(",", field("binding", $.identifier)), ")"),
+    record_pattern: ($) => seq("{", sepBy(",", field("field", $.pattern_field)), "}"),
+    pattern_field: ($) =>
+      seq(
+        field("name", $.identifier),
+        optional(seq(":", field("binding", $.identifier))),
+      ),
 
     identifier: () => /[A-Za-z_][A-Za-z0-9_]*/,
     string: () => /"([^"\\]|\\.)*"/,
