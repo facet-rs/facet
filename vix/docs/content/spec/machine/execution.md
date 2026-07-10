@@ -68,9 +68,11 @@ artifacts and never second-guesses the substrate.
 > arithmetic; argument and return copies against the frame contract; declared
 > inline regions; host and await requirements; and vocabulary/ABI support for
 > the selected platform. For an indirect callee, verification proves the slot's
-> machine kind and call contract, not the runtime function id's range. The
-> dynamic function id/range is checked through the typed access/execution
-> membrane and faults identically in every lane.
+> machine kind and call contract, not the runtime function id or concrete
+> target. The typed access/execution membrane checks both that the dynamic id is
+> in range and that the selected function's declared call-contract identity
+> equals the contract verified at the call site; either mismatch faults
+> identically in every lane.
 >
 > Host and await table lengths supplied at drive time are checked against the
 > verified program requirements before native code can enter. Weavy reports
@@ -101,6 +103,15 @@ artifacts and never second-guesses the substrate.
 > aggregate contents or handle provenance. Fast native stencils therefore keep
 > using the access membrane for dynamic aggregate, value, and indirect function
 > checks even when their frame/op checks were statically discharged.
+>
+> Access statuses and task faults occupy two distinct planes. An op with a
+> declared status slot writes the closed access status into the program's
+> language-outcome plane; only a status whose lowering explicitly defines a
+> language outcome may become a Vix `Failure`. A dynamic invariant violation on
+> an op with no status slot terminates the task through the machine-fault plane
+> as a typed `TaskFault`. In particular, residency for `CompareValueBytes` is a
+> dynamic provenance fact: an unresident handle faults through the membrane and
+> is never an `expect`, panic, zero value, or comparison result.
 >
 > Borrowed value-memory descriptors retain their borrow lifetime in Weavy's safe
 > public API. Raw pointer/length descriptors exist only inside the private native

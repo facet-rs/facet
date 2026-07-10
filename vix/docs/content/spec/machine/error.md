@@ -62,14 +62,15 @@ the string `"unwrap on None"` and no location, no subject, no demand chain.
 > indexing source site (`machine.error.failure-source-site-identity`). The
 > machine's checked array-read vocabulary reports access through a closed typed
 > status that distinguishes success, out-of-range, invalid handle, malformed
-> payload, width mismatch, schema mismatch, arithmetic overflow, and allocation
-> failure. Only the out-of-range status becomes the language
-> `IndexOutOfBounds` failure; malformed, invalid, schema/width, overflow,
-> allocation, and impossible machine conditions remain typed `MachineError`s or
-> execution faults with attribution. A lowering or substrate path that folds the
-> miss into a zero element, a wrapped index, an `Option`, a single `present`
-> witness, or any other default/absence collapse has erased the failure's
-> address. Unlike `machine.error.structural-impossibility`, an out-of-bounds
+> payload, uninitialized element, width mismatch, schema mismatch, arithmetic
+> overflow, and allocation failure. Only the out-of-range status becomes the
+> language `IndexOutOfBounds` failure; malformed, invalid, schema/width,
+> overflow, allocation, uninitialized, and impossible machine conditions remain
+> typed `MachineError`s or execution faults with attribution. A lowering or
+> substrate path that folds the miss into a zero element, a wrapped index, an
+> `Option`, a single `present` witness, or any other default/absence collapse
+> has erased the failure's address. Unlike
+> `machine.error.structural-impossibility`, an out-of-bounds
 > index is a legitimate program outcome, not an invariant break.
 >
 > A malformed array payload is a typed machine invariant error, never an

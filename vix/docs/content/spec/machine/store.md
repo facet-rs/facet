@@ -97,8 +97,20 @@ memory, freeze/publish, snapshots, and reload semantics.
 
 > r[machine.store.construction-services]
 >
-> [DESIGN] Store and molten construction is part of the scheduler-service
-> surface (census class C): alloc, read, tag, record-update, freeze,
-> molten-dup, collect. Each is witness-typed where it reads
-> (`machine.receipt.witness-reads`) and none is reachable through a
-> non-recording path.
+> [DESIGN] Value construction has two disjoint planes. Conflating them was the
+> previous engine's mistake.
+>
+> **Interior molten construction** — alloc, read, element-update, molten-dup —
+> is task-private execution vocabulary owned by Weavy. It performs no scheduler
+> request, store intern, identity publication, or host call
+> (`machine.execution.no-pure-hostcalls`); the interpreter and JIT share one
+> arena semantics, and discarding a task drops its arena
+> (`machine.island.molten-private`). An aggregate whose result is consumed
+> before the island edge is never hashed or interned.
+>
+> **Edge publication** — freeze/publish, tag, collect — is the
+> scheduler-service surface (census class C). It runs exactly once when a value
+> actually crosses an island edge and computes identity by the canonical framed
+> walk (`machine.identity.framed-encoding`), never over ABI payload bytes. Each
+> service is witness-typed where it reads (`machine.receipt.witness-reads`) and
+> none is reachable through a non-recording path.
