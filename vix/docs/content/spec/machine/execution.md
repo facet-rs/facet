@@ -79,12 +79,15 @@ artifacts and never second-guesses the substrate.
 > union read. Static dominance analysis may later discharge that check, but the
 > unchecked lowering pattern is not itself proof.
 >
-> `EqI64` and `NeI64` have one narrower representation-bit admission rule:
-> operands with the same selector-correlated structural shape may compare a
-> matching union word as bits. This permits canonical compact-value equality;
-> it does not admit arithmetic, branch conditions, calls, handle access, or
-> narrowing copies on that union. Calls, returns, arrays, and whole-value copies
-> preserve the same structural shape identity recursively.
+> A selector-correlated payload is not semantically compared as a raw frame
+> word. Equality first proves equal valid selectors, dispatches to that variant,
+> and compares only its declared fields using each field type's semantic
+> equality. Raw `EqI64` and `NeI64` apply only to scalar leaves and selectors;
+> handle-backed leaves compare through the checked referent-identity or
+> byte-comparison operation (`machine.identity.handle-by-referent`). Calls,
+> returns, arrays, and whole-value copies preserve the same structural shape
+> identity recursively. Canonical inactive payload bytes serve representation
+> and identity invariants only; they do not authorize handle-integer equality.
 >
 > Verification proves all static safety obligations before any lane executes:
 > statically named function, call, and jump targets; function fallthrough;
