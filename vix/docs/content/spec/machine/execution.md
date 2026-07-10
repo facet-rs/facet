@@ -69,6 +69,23 @@ artifacts and never second-guesses the substrate.
 > rule. A future slot-coalescing allocator must introduce and prove an explicit
 > alias contract before its programs are admissible.
 >
+> Compact discriminated values add selector-correlated shape facts to that
+> manifest. The contract names the enum shape, its compact width and selector
+> word, every valid variant, and each variant field's shape and shared-payload
+> offset. A verified `EnumConstruct` zeroes the complete compact region, writes
+> one statically valid selector, and copies exactly the fields declared for that
+> variant. A verified `EnumProjectChecked` validates the live selector before
+> copying the declared field; a mismatch is a typed `TaskFault`, never a raw
+> union read. Static dominance analysis may later discharge that check, but the
+> unchecked lowering pattern is not itself proof.
+>
+> `EqI64` and `NeI64` have one narrower representation-bit admission rule:
+> operands with the same selector-correlated structural shape may compare a
+> matching union word as bits. This permits canonical compact-value equality;
+> it does not admit arithmetic, branch conditions, calls, handle access, or
+> narrowing copies on that union. Calls, returns, arrays, and whole-value copies
+> preserve the same structural shape identity recursively.
+>
 > Verification proves all static safety obligations before any lane executes:
 > statically named function, call, and jump targets; function fallthrough;
 > immediate and opcode shape; frame offset, width, and alignment using checked

@@ -21,6 +21,11 @@ The value model: how values are typed, constructed, read, and discriminated.
 > [SETTLED] Value discrimination is by descriptor/tag. Comparing an enum's
 > name or variant's name as a string is banned. (The old driver compared
 > `"Option"`/`"None"` strings on a hot path.)
+>
+> A compact discriminated frame is one structural value, not independent words:
+> its selector determines the machine shapes permitted in the shared payload
+> region. A payload word may therefore be `Scalar` in one variant and a typed
+> handle in another without becoming an untyped scalar-or-handle escape hatch.
 
 > r[machine.value.access-strategy]
 >
@@ -29,6 +34,12 @@ The value model: how values are typed, constructed, read, and discriminated.
 > call sites are forbidden — a layout dependency the compiler cannot check is
 > hand-rolled ABI. Descriptors and stores are not all-`pub` field bags; the
 > invariant-preserving path is the only path.
+>
+> The same rule applies inside Weavy. A verified discriminated constructor
+> establishes the selector-correlated payload shape and canonical inactive
+> bytes. A verified discriminated projection checks the selector before it
+> extracts a field. Ordinary word copies may preserve a complete structural
+> shape, but may not narrow a selector-dependent union to one of its leaves.
 
 > r[machine.value.proof-carrying-force]
 >

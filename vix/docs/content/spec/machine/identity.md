@@ -61,7 +61,10 @@ driver.
 > [SETTLED] Padding in weavy-declared layouts is canonically zero — write
 > paths zero-initialize, mutations preserve it, copies preserve it. Inactive
 > enum payload bytes are zeroed; variant switch is atomic with payload
-> zeroing. A release-profile canary verifies the invariant continuously (the
+> zeroing. The verified discriminated constructor performs that whole-region
+> initialization itself; a sequence of unrelated raw word writes is not an
+> equivalent construction proof. A release-profile canary verifies the
+> invariant continuously (the
 > padding law is enforced, not asserted). Facet-discovered values canonicalize
 > at the bridge. `is_padding_range` proofs demote to canary/verification machinery.
 >
