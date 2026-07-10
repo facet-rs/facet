@@ -1,5 +1,5 @@
 use crate::diagnostic::DiagnosticCode;
-use crate::vir::{IslandId, NodeId};
+use crate::vir::{FunctionId, IslandId, NodeId};
 
 use super::identity::{DemandKey, LocationId, ValueId};
 use super::model::{DemandState, MemoVerdict, TaskId, TaskState};
@@ -67,11 +67,11 @@ pub enum EventKind {
     },
     WeavyFrameEntered {
         task: TaskId,
-        function: u32,
+        function: FunctionId,
     },
     WeavyFrameExited {
         task: TaskId,
-        function: u32,
+        function: FunctionId,
     },
     WeavyParked {
         task: TaskId,
@@ -82,6 +82,7 @@ pub enum EventKind {
     },
     WeavyMark {
         task: TaskId,
+        function: FunctionId,
         node: NodeId,
     },
     StoreAlloc {

@@ -6,6 +6,7 @@ use vix::runtime::{DemandState, EventKind, MemoVerdict, TaskState};
 const RUNG_001: &str = include_str!("ratchet/001-harness.vix");
 const RUNG_002: &str = include_str!("ratchet/002-arithmetic.vix");
 const RUNG_003: &str = include_str!("ratchet/003-bindings.vix");
+const RUNG_004: &str = include_str!("ratchet/004-functions.vix");
 
 /// The first rung is an architectural certificate, not just a boolean test.
 ///
@@ -167,6 +168,44 @@ fn rung_003_lexical_bindings_and_strings_run_through_vir_and_weavy() {
     assert_eq!(report.plain.checks, report.chaos.checks);
     assert_eq!(report.plain.receipt_count, 0);
     assert_eq!(report.chaos.receipt_count, 0);
+}
+
+#[test]
+fn rung_004_functions_and_application_run_through_vir_and_weavy() {
+    let module = Compiler::new()
+        .compile(RUNG_004)
+        .expect("rung 004 compiles");
+    let rendered_vir = module.render();
+    assert!(rendered_vir.contains("Parameter"));
+    assert!(rendered_vir.contains("Call(FunctionId"));
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    assert_eq!(partitioned.islands.len(), 2);
+    let mut lowering_cache = LoweringCache::default();
+    for (index, island) in partitioned.islands.iter().enumerate() {
+        assert_eq!(island.callees.len(), index + 1);
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 004 lowers to Weavy");
+        assert_eq!(lowered.program.fns.len(), index + 2);
+        assert!(lowered.render().contains("Call {"));
+    }
+
+    let report = run_source(RUNG_004).expect("rung 004 compiles and runs");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    assert_eq!(report.plain.receipt_count, 0);
+    assert_eq!(report.chaos.receipt_count, 0);
+    assert!(report.plain.events.iter().any(|event| matches!(
+        event.kind,
+        EventKind::WeavyFrameEntered { function, .. } if function.0 == 0
+    )));
+    assert!(report.plain.events.iter().any(|event| matches!(
+        event.kind,
+        EventKind::WeavyFrameEntered { function, .. } if function.0 == 1
+    )));
 }
 
 fn assert_contiguous_sequences(events: &[vix::runtime::Event]) {

@@ -9,6 +9,14 @@ pub struct FrameSlot(u32);
 impl FrameSlot {
     const WORD_BYTES: usize = size_of::<i64>();
 
+    pub(crate) const fn word_size() -> u32 {
+        Self::WORD_BYTES as u32
+    }
+
+    pub(crate) const fn word_align() -> usize {
+        align_of::<i64>()
+    }
+
     pub(crate) fn for_word(index: usize) -> Option<Self> {
         index
             .checked_mul(Self::WORD_BYTES)

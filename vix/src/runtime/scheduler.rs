@@ -3,9 +3,9 @@ use std::collections::BTreeMap;
 use weavy::task::{FnId, Task, TaskEvent as WeavyTaskEvent, TaskStep};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics};
-use crate::lowering::LoweringArtifact;
+use crate::lowering::{LoweringArtifact, LoweringAttribution};
 use crate::support::Span;
-use crate::vir::{IslandId, NodeId};
+use crate::vir::IslandId;
 
 use super::FrameSlot;
 use super::identity::{DemandKey, DemandPreimage, Location, LocationId, SchemaId, ValueId};
@@ -74,6 +74,7 @@ impl<S: EventSink> Runtime<S> {
         island: IslandId,
         location: &Location,
         lowered: &LoweringArtifact,
+        attribution: &LoweringAttribution,
         chaos: ChaosPolicy,
     ) -> Result<Evaluation, Diagnostics> {
         self.emit(EventKind::Demanded {
@@ -184,7 +185,7 @@ impl<S: EventSink> Runtime<S> {
                 }
             }
             for event in &task.trace {
-                self.emit_weavy(task_id, *event);
+                self.emit_weavy(task_id, *event, attribution)?;
             }
             let passed = task.result_i64() != 0;
             let interned = self
@@ -286,24 +287,40 @@ impl<S: EventSink> Runtime<S> {
         Ok(())
     }
 
-    fn emit_weavy(&mut self, task: TaskId, event: WeavyTaskEvent) {
+    fn emit_weavy(
+        &mut self,
+        task: TaskId,
+        event: WeavyTaskEvent,
+        attribution: &LoweringAttribution,
+    ) -> Result<(), Diagnostics> {
         let kind = match event {
             WeavyTaskEvent::FrameEntered(function) => EventKind::WeavyFrameEntered {
                 task,
-                function: function.0,
+                function: attribution
+                    .function_for_frame(function.0)
+                    .ok_or_else(|| runtime_invariant("Weavy frame has no Vix attribution"))?,
             },
             WeavyTaskEvent::FrameExited(function) => EventKind::WeavyFrameExited {
                 task,
-                function: function.0,
+                function: attribution
+                    .function_for_frame(function.0)
+                    .ok_or_else(|| runtime_invariant("Weavy frame has no Vix attribution"))?,
             },
             WeavyTaskEvent::Parked { input } => EventKind::WeavyParked { task, input },
             WeavyTaskEvent::Resumed => EventKind::WeavyResumed { task },
-            WeavyTaskEvent::Mark(id) => EventKind::WeavyMark {
-                task,
-                node: NodeId(id),
-            },
+            WeavyTaskEvent::Mark(id) => {
+                let source = attribution
+                    .source_for_trace(id)
+                    .ok_or_else(|| runtime_invariant("Weavy trace has no Vix attribution"))?;
+                EventKind::WeavyMark {
+                    task,
+                    function: source.function,
+                    node: source.node,
+                }
+            }
         };
         self.emit(kind);
+        Ok(())
     }
 
     fn emit(&mut self, kind: EventKind) {

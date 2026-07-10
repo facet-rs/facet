@@ -4,23 +4,46 @@ use std::collections::BTreeMap;
 use std::fmt::Write;
 
 use weavy::mem::Layout;
-use weavy::task::{Fn as WeavyFn, Op as WeavyOp, Program as WeavyProgram};
+use weavy::task::{
+    ArgCopy, Fn as WeavyFn, FnId as WeavyFnId, Op as WeavyOp, Program as WeavyProgram,
+};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics};
 use crate::runtime::{DemandKey, DemandPreimage, FrameSlot, RecipeId, SchemaId};
 use crate::support::Span;
-use crate::vir::{Island, Node, NodeId, Op, Type};
+use crate::vir::{Function, FunctionId, Island, Node, NodeId, NodeRef, Op, Type};
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct SourceMapEntry {
     pub trace_id: u32,
+    pub function: FunctionId,
     pub node: NodeId,
     pub span: Span,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct LoweringAttribution {
+    pub functions: Vec<FunctionId>,
+    pub source_map: Vec<SourceMapEntry>,
+}
+
+impl LoweringAttribution {
+    #[must_use]
+    pub fn function_for_frame(&self, frame: u32) -> Option<FunctionId> {
+        self.functions.get(frame as usize).copied()
+    }
+
+    #[must_use]
+    pub fn source_for_trace(&self, trace_id: u32) -> Option<&SourceMapEntry> {
+        self.source_map
+            .get(trace_id as usize)
+            .filter(|entry| entry.trace_id == trace_id)
+    }
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct ValueConstant {
-    pub node: NodeId,
+    pub node: NodeRef,
     pub slot: FrameSlot,
     pub schema: SchemaId,
     pub bytes: Vec<u8>,
@@ -44,7 +67,7 @@ impl LoweringArtifact {
             let _ = writeln!(
                 out,
                 "constant n{} frame[{}] schema={} bytes={}",
-                constant.node.0,
+                constant.node.node.0,
                 constant.slot.byte_offset(),
                 constant.schema.0.hex(),
                 constant.bytes.len()
@@ -108,16 +131,38 @@ impl LoweringCache {
 /// source map.
 #[must_use]
 pub fn source_map_for(island: &Island) -> Vec<SourceMapEntry> {
-    island
-        .nodes
-        .iter()
-        .filter(|node| node.op != Op::Yield)
-        .map(|node| SourceMapEntry {
-            trace_id: node.id.0,
+    attribution_for(island).source_map
+}
+
+/// Build per-compilation frame and trace attribution separately from cached
+/// bytecode. Closure-local Weavy ids remain stable while source spans and
+/// module-local function ids may change between compilations.
+#[must_use]
+pub fn attribution_for(island: &Island) -> LoweringAttribution {
+    let mut functions = Vec::with_capacity(1 + island.callees.len());
+    functions.push(island.function);
+    functions.extend(island.callees.iter().map(|function| function.id));
+
+    let mut source_map = Vec::new();
+    push_source_entries(&mut source_map, island.function, &island.nodes);
+    for function in &island.callees {
+        push_source_entries(&mut source_map, function.id, &function.nodes);
+    }
+    LoweringAttribution {
+        functions,
+        source_map,
+    }
+}
+
+fn push_source_entries(entries: &mut Vec<SourceMapEntry>, function: FunctionId, nodes: &[Node]) {
+    for node in nodes.iter().filter(|node| node.op != Op::Yield) {
+        entries.push(SourceMapEntry {
+            trace_id: u32::try_from(entries.len()).expect("trace count fits u32"),
+            function,
             node: node.id,
             span: node.span,
-        })
-        .collect()
+        });
+    }
 }
 
 fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, Diagnostics> {
@@ -132,19 +177,116 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
             "island output is not a Check",
         ));
     }
-    let frame_size = FrameSlot::frame_size(island.nodes.len())
-        .ok_or_else(|| lowering_diagnostic(output.span, "island frame size overflow"))?;
-    let mut values = BTreeMap::new();
+
+    let function_ids = island.local_function_ids();
+    let functions = island
+        .callees
+        .iter()
+        .map(|function| (function.id, function))
+        .collect::<BTreeMap<_, _>>();
+    let attribution = attribution_for(island);
+    let trace_ids = attribution
+        .source_map
+        .iter()
+        .map(|entry| {
+            (
+                NodeRef {
+                    function: entry.function,
+                    node: entry.node,
+                },
+                entry.trace_id,
+            )
+        })
+        .collect::<BTreeMap<_, _>>();
+    let context = LoweringContext {
+        function_ids: &function_ids,
+        functions: &functions,
+        trace_ids: &trace_ids,
+    };
+
     let mut constants = Vec::new();
-    let mut code = Vec::with_capacity(island.nodes.len().saturating_mul(2) + 1);
-    for (index, node) in island.nodes.iter().enumerate() {
+    let mut functions_out = Vec::with_capacity(1 + island.callees.len());
+    functions_out.push(lower_vir_function(
+        island.function,
+        &island.nodes,
+        &[],
+        island.output,
+        true,
+        &context,
+        &mut constants,
+    )?);
+    for function in &island.callees {
+        let output = function.output.ok_or_else(|| {
+            lowering_diagnostic(function.span, "called VIR function has no return node")
+        })?;
+        functions_out.push(lower_vir_function(
+            function.id,
+            &function.nodes,
+            &function.parameters,
+            output,
+            false,
+            &context,
+            &mut constants,
+        )?);
+    }
+    let program = WeavyProgram { fns: functions_out };
+    let demand_preimage = DemandPreimage {
+        closure: recipe,
+        arguments: Vec::new(),
+    };
+    Ok(LoweringArtifact {
+        recipe,
+        demand_key: DemandKey::from_preimage(&demand_preimage),
+        demand_preimage,
+        program,
+        constants,
+    })
+}
+
+struct LoweringContext<'a> {
+    function_ids: &'a BTreeMap<FunctionId, u32>,
+    functions: &'a BTreeMap<FunctionId, &'a Function>,
+    trace_ids: &'a BTreeMap<NodeRef, u32>,
+}
+
+fn lower_vir_function(
+    function: FunctionId,
+    nodes: &[Node],
+    parameters: &[crate::vir::Parameter],
+    output: NodeId,
+    allow_constants: bool,
+    context: &LoweringContext<'_>,
+    constants: &mut Vec<ValueConstant>,
+) -> Result<WeavyFn, Diagnostics> {
+    let function_context = FunctionLoweringContext {
+        id: function,
+        parameters,
+        allow_constants,
+    };
+    let output_node = nodes
+        .iter()
+        .find(|node| node.id == output)
+        .ok_or_else(|| lowering_diagnostic(Span { start: 0, end: 0 }, "missing function output"))?;
+    let frame_size = FrameSlot::frame_size(nodes.len())
+        .ok_or_else(|| lowering_diagnostic(output_node.span, "function frame size overflow"))?;
+    let mut values = BTreeMap::new();
+    let mut code = Vec::with_capacity(nodes.len().saturating_mul(2) + 1);
+    for (index, node) in nodes.iter().enumerate() {
         if values.contains_key(&node.id) {
             return Err(lowering_diagnostic(node.span, "duplicate VIR node id"));
         }
         let dst = FrameSlot::for_word(index)
             .ok_or_else(|| lowering_diagnostic(node.span, "Weavy frame offset overflow"))?;
-        code.push(WeavyOp::Trace { id: node.id.0 });
-        let lowered = lower_node(node, dst, &values, &mut constants)?;
+        let trace_id = context
+            .trace_ids
+            .get(&NodeRef {
+                function,
+                node: node.id,
+            })
+            .copied()
+            .ok_or_else(|| lowering_diagnostic(node.span, "VIR node has no trace attribution"))?;
+        code.push(WeavyOp::Trace { id: trace_id });
+        let lowered = lower_node(node, dst, &values, &function_context, context, constants)?;
         if let Some(op) = lowered.op {
             code.push(op);
         }
@@ -158,32 +300,21 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
         );
     }
     let output_slot = values
-        .get(&island.output)
+        .get(&output)
         .map(|value| value.slot.byte_offset())
-        .ok_or_else(|| lowering_diagnostic(output.span, "island output has no frame slot"))?;
+        .ok_or_else(|| {
+            lowering_diagnostic(output_node.span, "function output has no frame slot")
+        })?;
     code.push(WeavyOp::Ret {
         src: output_slot,
-        size: 8,
+        size: FrameSlot::word_size(),
     });
-    let program = WeavyProgram {
-        fns: vec![WeavyFn {
-            frame: Layout {
-                size: frame_size,
-                align: 8,
-            },
-            code,
-        }],
-    };
-    let demand_preimage = DemandPreimage {
-        closure: recipe,
-        arguments: Vec::new(),
-    };
-    Ok(LoweringArtifact {
-        recipe,
-        demand_key: DemandKey::from_preimage(&demand_preimage),
-        demand_preimage,
-        program,
-        constants,
+    Ok(WeavyFn {
+        frame: Layout {
+            size: frame_size,
+            align: FrameSlot::word_align(),
+        },
+        code,
     })
 }
 
@@ -205,10 +336,18 @@ struct LoweredNode {
     representation: ValueRepresentation,
 }
 
+struct FunctionLoweringContext<'a> {
+    id: FunctionId,
+    parameters: &'a [crate::vir::Parameter],
+    allow_constants: bool,
+}
+
 fn lower_node(
     node: &Node,
     dst: FrameSlot,
     values: &BTreeMap<NodeId, LoweredSlot>,
+    function: &FunctionLoweringContext<'_>,
+    context: &LoweringContext<'_>,
     constants: &mut Vec<ValueConstant>,
 ) -> Result<LoweredNode, Diagnostics> {
     let dst_slot = dst;
@@ -236,13 +375,43 @@ fn lower_node(
         Op::String(value) => {
             require_input_count(node, 0)?;
             require_node_type(node, Type::String)?;
+            if !function.allow_constants {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "callee String constant requires a closure constant slot",
+                ));
+            }
             constants.push(ValueConstant {
-                node: node.id,
+                node: NodeRef {
+                    function: function.id,
+                    node: node.id,
+                },
                 slot: dst_slot,
                 schema: SchemaId::named("vix.String.v1"),
                 bytes: value.as_bytes().to_vec(),
             });
             (None, ValueRepresentation::RealizedHandle)
+        }
+        Op::Parameter(parameter_id) => {
+            require_input_count(node, 0)?;
+            let parameter = function
+                .parameters
+                .iter()
+                .find(|parameter| parameter.id == *parameter_id)
+                .ok_or_else(|| {
+                    lowering_diagnostic(node.span, "VIR parameter node has no declaration")
+                })?;
+            if parameter.node != node.id || parameter.ty != node.ty {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "VIR parameter declaration does not match its node",
+                ));
+            }
+            (None, representation_for_type(node.ty, node.span)?)
+        }
+        Op::Call(callee) => {
+            let op = lower_call_node(node, dst_slot, values, *callee, context)?;
+            (Some(op), representation_for_type(node.ty, node.span)?)
         }
         Op::Add | Op::Sub | Op::Mul => {
             require_node_type(node, Type::Int)?;
@@ -326,6 +495,74 @@ fn lower_node(
         }
     };
     Ok(LoweredNode { op, representation })
+}
+
+fn lower_call_node(
+    node: &Node,
+    dst: FrameSlot,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    callee: FunctionId,
+    context: &LoweringContext<'_>,
+) -> Result<WeavyOp, Diagnostics> {
+    let target = context.functions.get(&callee).copied().ok_or_else(|| {
+        lowering_diagnostic(
+            node.span,
+            "called function is absent from the island closure",
+        )
+    })?;
+    if target.return_type != node.ty || target.output.is_none() {
+        return Err(lowering_diagnostic(
+            node.span,
+            "call result does not match the called function",
+        ));
+    }
+    require_input_count(node, target.parameters.len())?;
+
+    let mut args = Vec::with_capacity(target.parameters.len());
+    for (index, parameter) in target.parameters.iter().enumerate() {
+        let source = input_value(node, values, index)?;
+        require_value(
+            node,
+            source,
+            parameter.ty,
+            representation_for_type(parameter.ty, node.span)?,
+        )?;
+        let parameter_index = target
+            .nodes
+            .iter()
+            .position(|candidate| candidate.id == parameter.node)
+            .ok_or_else(|| lowering_diagnostic(node.span, "called parameter has no frame node"))?;
+        let parameter_slot = FrameSlot::for_word(parameter_index).ok_or_else(|| {
+            lowering_diagnostic(node.span, "called parameter frame offset overflow")
+        })?;
+        args.push(ArgCopy {
+            src: source.slot.byte_offset(),
+            dst: parameter_slot.byte_offset(),
+            size: FrameSlot::word_size(),
+        });
+    }
+
+    let callee = context
+        .function_ids
+        .get(&callee)
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(node.span, "called function has no local ABI id"))?;
+    Ok(WeavyOp::Call {
+        callee: WeavyFnId(callee),
+        args,
+        ret: dst.byte_offset(),
+    })
+}
+
+fn representation_for_type(ty: Type, span: Span) -> Result<ValueRepresentation, Diagnostics> {
+    match ty {
+        Type::Bool | Type::Int | Type::Check => Ok(ValueRepresentation::Word),
+        Type::String => Ok(ValueRepresentation::RealizedHandle),
+        Type::StreamCheck => Err(lowering_diagnostic(
+            span,
+            "Stream<Check> has no island-interior word representation",
+        )),
+    }
 }
 
 fn binary_values(

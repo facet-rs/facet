@@ -2,7 +2,7 @@
 
 use crate::compiler::Compiler;
 use crate::diagnostic::Diagnostics;
-use crate::lowering::{LoweringCache, LoweringCacheCounters};
+use crate::lowering::{LoweringCache, LoweringCacheCounters, attribution_for};
 use crate::runtime::{
     ChaosPolicy, Counters, DemandState, Evaluation, Event, EventLog, Location, Runtime, TaskState,
     ValueId,
@@ -86,11 +86,13 @@ fn run_lane(
         let partitioned = module.partition_test(test);
         for island in &partitioned.islands {
             let lowered = cache.get_or_lower(island)?;
+            let attribution = attribution_for(island);
             let location = Location::for_test_island(&partitioned.name, island.id.0);
             let evaluation: Evaluation = runtime.evaluate(
                 island.id,
                 &location,
                 lowered,
+                &attribution,
                 ChaosPolicy {
                     kill_first_running_task: kill_available,
                 },
