@@ -1437,6 +1437,33 @@ struct PendingWork {
     next_fetch_run_id: u64,
 }
 
+#[derive(Default)]
+struct RunnableExecutions {
+    stack: Vec<usize>,
+    present: BTreeSet<usize>,
+}
+
+impl RunnableExecutions {
+    fn push(&mut self, execution: usize) {
+        if self.present.insert(execution) {
+            self.stack.push(execution);
+        }
+    }
+
+    fn pop(&mut self) -> Option<usize> {
+        let execution = self.stack.pop()?;
+        let removed = self.present.remove(&execution);
+        debug_assert!(removed, "runnable stack and membership diverged");
+        Some(execution)
+    }
+
+    fn extend(&mut self, executions: impl IntoIterator<Item = usize>) {
+        for execution in executions {
+            self.push(execution);
+        }
+    }
+}
+
 #[derive(Clone, Debug)]
 enum ExecMount {
     Concrete(crate::exec::Mount),
@@ -3028,7 +3055,7 @@ impl Driver {
             IdentityHashMap::default();
         let mut pending_work = PendingWork::default();
         let mut in_flight = InFlightInvocations::default();
-        let mut runnable: Vec<usize> = Vec::new();
+        let mut runnable = RunnableExecutions::default();
 
         let root = self.spawn(&mut executions, fn_ref, key.clone(), &args)?;
         let inserted = in_flight.started(key.clone());
@@ -3419,7 +3446,7 @@ impl Driver {
         &mut self,
         block: bool,
         executions: &mut [Option<Execution>],
-        runnable: &mut Vec<usize>,
+        runnable: &mut RunnableExecutions,
         pending_work: &mut PendingWork,
     ) -> Result<(), String> {
         let (ready_runs, ready_fetches) = loop {
