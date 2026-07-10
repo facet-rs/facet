@@ -949,6 +949,12 @@ impl Task {
         write_i64_at(&mut self.arena, base + offset as usize, value);
     }
 
+    pub(crate) fn write_bytes(&mut self, offset: u32, bytes: &[u8]) {
+        let base = self.frames.last().expect("live frame").base;
+        self.arena[base + offset as usize..base + offset as usize + bytes.len()]
+            .copy_from_slice(bytes);
+    }
+
     /// Read an i64 from the task result (root return bytes).
     #[must_use]
     pub fn result_i64(&self) -> i64 {
@@ -1474,7 +1480,8 @@ impl Task {
             let destination = region(destination);
             let source = region(source);
             arena.copy_within(
-                base + source.offset as usize..base + source.offset as usize + source.shape.words.len() * 8,
+                base + source.offset as usize
+                    ..base + source.offset as usize + source.shape.words.len() * 8,
                 base + destination.offset as usize,
             );
         };
@@ -1524,16 +1531,18 @@ impl Task {
             } => {
                 let destination = region(*dst);
                 let value_shape = destination.value_shape.unwrap();
-                let crate::ValueShapeKind::Enum {
-                    selector,
-                    variants,
-                } = &verified.contract().value_shapes[value_shape.0 as usize].kind
+                let crate::ValueShapeKind::Enum { selector, variants } =
+                    &verified.contract().value_shapes[value_shape.0 as usize].kind
                 else {
                     unreachable!();
                 };
                 let start = base + destination.offset as usize;
                 self.arena[start..start + destination.shape.words.len() * 8].fill(0);
-                write_i64_at(&mut self.arena, start + selector.offset as usize, i64::from(*variant));
+                write_i64_at(
+                    &mut self.arena,
+                    start + selector.offset as usize,
+                    i64::from(*variant),
+                );
                 for source in fields {
                     let field = &variants[*variant as usize].fields[source.field as usize];
                     let source_region = region(source.source);
@@ -1545,8 +1554,13 @@ impl Task {
                     );
                 }
             }
-            Op::EnumIsVariant { dst, value, variant } => {
-                let actual = self.checked_enum_selector(verified, function, pc, base, *value, op)?;
+            Op::EnumIsVariant {
+                dst,
+                value,
+                variant,
+            } => {
+                let actual =
+                    self.checked_enum_selector(verified, function, pc, base, *value, op)?;
                 write_i64_at(
                     &mut self.arena,
                     base + region(*dst).offset as usize,
@@ -1559,7 +1573,8 @@ impl Task {
                 variant,
                 field,
             } => {
-                let actual = self.checked_enum_selector(verified, function, pc, base, *value, op)?;
+                let actual =
+                    self.checked_enum_selector(verified, function, pc, base, *value, op)?;
                 if actual != i64::from(*variant) {
                     let value_shape = region(*value).value_shape.unwrap();
                     return Err(TaskFault::EnumProjectionMismatch {
@@ -1597,14 +1612,19 @@ impl Task {
         value: RegionId,
         op: &Op,
     ) -> Result<i64, TaskFault> {
-        let region = &verified.contract().functions[function.0 as usize].frame.regions[value.0 as usize];
+        let region = &verified.contract().functions[function.0 as usize]
+            .frame
+            .regions[value.0 as usize];
         let value_shape = region.value_shape.unwrap();
         let crate::ValueShapeKind::Enum { selector, variants } =
             &verified.contract().value_shapes[value_shape.0 as usize].kind
         else {
             unreachable!();
         };
-        let actual = read_i64_at(&self.arena, base + region.offset as usize + selector.offset as usize);
+        let actual = read_i64_at(
+            &self.arena,
+            base + region.offset as usize + selector.offset as usize,
+        );
         if usize::try_from(actual).is_err() || actual as usize >= variants.len() {
             return Err(TaskFault::InvalidEnumSelector {
                 site: fault_site(verified, function, pc)?,

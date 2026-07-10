@@ -490,10 +490,8 @@ fn compile_fn(
     for (i, op) in f.code.iter().enumerate() {
         match op {
             Op::ProductConstruct { dst, fields } => {
-                let (function_contract, program_contract) = verified_compile_contracts(
-                    function_contract,
-                    program_contract,
-                );
+                let (function_contract, program_contract) =
+                    verified_compile_contracts(function_contract, program_contract);
                 let destination = &function_contract.frame.regions[dst.0 as usize];
                 let value_shape = destination.value_shape.unwrap();
                 let ValueShapeKind::Product { fields: declared } =
@@ -514,59 +512,131 @@ fn compile_fn(
                     }
                 }
             }
-            Op::ProductProject { dst, product, field } => {
-                let (function_contract, program_contract) = verified_compile_contracts(function_contract, program_contract);
+            Op::ProductProject {
+                dst,
+                product,
+                field,
+            } => {
+                let (function_contract, program_contract) =
+                    verified_compile_contracts(function_contract, program_contract);
                 let destination = &function_contract.frame.regions[dst.0 as usize];
                 let product = &function_contract.frame.regions[product.0 as usize];
                 let value_shape = product.value_shape.unwrap();
-                let ValueShapeKind::Product { fields } = &program_contract.value_shapes[value_shape.0 as usize].kind else { unreachable!() };
+                let ValueShapeKind::Product { fields } =
+                    &program_contract.value_shapes[value_shape.0 as usize].kind
+                else {
+                    unreachable!()
+                };
                 let field = &fields[*field as usize];
-                for value in [u64::from(destination.offset), u64::from(product.offset + field.offset), (field.shape.words.len() * 8) as u64] {
+                for value in [
+                    u64::from(destination.offset),
+                    u64::from(product.offset + field.offset),
+                    (field.shape.words.len() * 8) as u64,
+                ] {
                     layout.push_prog_word(root.prog_index, value);
                 }
             }
             Op::CopyValue { dst, src } => {
-                let (function_contract, _) = verified_compile_contracts(function_contract, program_contract);
+                let (function_contract, _) =
+                    verified_compile_contracts(function_contract, program_contract);
                 let destination = &function_contract.frame.regions[dst.0 as usize];
                 let source = &function_contract.frame.regions[src.0 as usize];
-                for value in [u64::from(destination.offset), u64::from(source.offset), (source.shape.words.len() * 8) as u64] {
+                for value in [
+                    u64::from(destination.offset),
+                    u64::from(source.offset),
+                    (source.shape.words.len() * 8) as u64,
+                ] {
                     layout.push_prog_word(root.prog_index, value);
                 }
             }
-            Op::EnumConstruct { dst, variant, fields } => {
-                let (function_contract, program_contract) = verified_compile_contracts(function_contract, program_contract);
+            Op::EnumConstruct {
+                dst,
+                variant,
+                fields,
+            } => {
+                let (function_contract, program_contract) =
+                    verified_compile_contracts(function_contract, program_contract);
                 let destination = &function_contract.frame.regions[dst.0 as usize];
                 let value_shape = destination.value_shape.unwrap();
-                let ValueShapeKind::Enum { selector, variants } = &program_contract.value_shapes[value_shape.0 as usize].kind else { unreachable!() };
-                for value in [u64::from(destination.offset), (destination.shape.words.len() * 8) as u64, u64::from(selector.offset), u64::from(*variant), fields.len() as u64] {
+                let ValueShapeKind::Enum { selector, variants } =
+                    &program_contract.value_shapes[value_shape.0 as usize].kind
+                else {
+                    unreachable!()
+                };
+                for value in [
+                    u64::from(destination.offset),
+                    (destination.shape.words.len() * 8) as u64,
+                    u64::from(selector.offset),
+                    u64::from(*variant),
+                    fields.len() as u64,
+                ] {
                     layout.push_prog_word(root.prog_index, value);
                 }
                 for source in fields {
                     let field = &variants[*variant as usize].fields[source.field as usize];
                     let source_region = &function_contract.frame.regions[source.source.0 as usize];
-                    for value in [u64::from(destination.offset + field.offset), u64::from(source_region.offset), (field.shape.words.len() * 8) as u64] {
+                    for value in [
+                        u64::from(destination.offset + field.offset),
+                        u64::from(source_region.offset),
+                        (field.shape.words.len() * 8) as u64,
+                    ] {
                         layout.push_prog_word(root.prog_index, value);
                     }
                 }
             }
-            Op::EnumIsVariant { dst, value, variant } => {
-                let (function_contract, program_contract) = verified_compile_contracts(function_contract, program_contract);
+            Op::EnumIsVariant {
+                dst,
+                value,
+                variant,
+            } => {
+                let (function_contract, program_contract) =
+                    verified_compile_contracts(function_contract, program_contract);
                 let destination = &function_contract.frame.regions[dst.0 as usize];
                 let value_region = &function_contract.frame.regions[value.0 as usize];
                 let value_shape = value_region.value_shape.unwrap();
-                let ValueShapeKind::Enum { selector, variants } = &program_contract.value_shapes[value_shape.0 as usize].kind else { unreachable!() };
-                for immediate in [u64::from(destination.offset), u64::from(value_region.offset), u64::from(selector.offset), u64::from(*variant), variants.len() as u64, i as u64] {
+                let ValueShapeKind::Enum { selector, variants } =
+                    &program_contract.value_shapes[value_shape.0 as usize].kind
+                else {
+                    unreachable!()
+                };
+                for immediate in [
+                    u64::from(destination.offset),
+                    u64::from(value_region.offset),
+                    u64::from(selector.offset),
+                    u64::from(*variant),
+                    variants.len() as u64,
+                    i as u64,
+                ] {
                     layout.push_prog_word(root.prog_index, immediate);
                 }
             }
-            Op::EnumProjectChecked { dst, value, variant, field } => {
-                let (function_contract, program_contract) = verified_compile_contracts(function_contract, program_contract);
+            Op::EnumProjectChecked {
+                dst,
+                value,
+                variant,
+                field,
+            } => {
+                let (function_contract, program_contract) =
+                    verified_compile_contracts(function_contract, program_contract);
                 let destination = &function_contract.frame.regions[dst.0 as usize];
                 let value_region = &function_contract.frame.regions[value.0 as usize];
                 let value_shape = value_region.value_shape.unwrap();
-                let ValueShapeKind::Enum { selector, variants } = &program_contract.value_shapes[value_shape.0 as usize].kind else { unreachable!() };
+                let ValueShapeKind::Enum { selector, variants } =
+                    &program_contract.value_shapes[value_shape.0 as usize].kind
+                else {
+                    unreachable!()
+                };
                 let field = &variants[*variant as usize].fields[*field as usize];
-                for immediate in [u64::from(destination.offset), u64::from(value_region.offset), u64::from(selector.offset), u64::from(*variant), variants.len() as u64, u64::from(field.offset), (field.shape.words.len() * 8) as u64, i as u64] {
+                for immediate in [
+                    u64::from(destination.offset),
+                    u64::from(value_region.offset),
+                    u64::from(selector.offset),
+                    u64::from(*variant),
+                    variants.len() as u64,
+                    u64::from(field.offset),
+                    (field.shape.words.len() * 8) as u64,
+                    i as u64,
+                ] {
                     layout.push_prog_word(root.prog_index, immediate);
                 }
             }
@@ -894,6 +964,12 @@ impl JitTask {
         let base = self.frames.last().expect("live frame").base;
         let at = base + offset as usize;
         self.arena[at..at + 8].copy_from_slice(&value.to_le_bytes());
+    }
+
+    pub(crate) fn write_bytes(&mut self, offset: u32, bytes: &[u8]) {
+        let base = self.frames.last().expect("live frame").base;
+        self.arena[base + offset as usize..base + offset as usize + bytes.len()]
+            .copy_from_slice(bytes);
     }
 
     fn alloc_frame(&mut self, f: &CompiledFn) -> usize {

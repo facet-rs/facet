@@ -144,6 +144,14 @@ pub enum TaskFault {
         index: usize,
         region: RegionId,
     },
+    EntryValueSize {
+        entry: FnId,
+        index: usize,
+        region: RegionId,
+        value_shape: ValueShapeRef,
+        expected: usize,
+        actual: usize,
+    },
     InvalidResultShape {
         entry: FnId,
         region: RegionId,
@@ -297,7 +305,7 @@ impl Executable {
         let function = self.function(entry)?;
         for (index, region) in function.entries.iter().copied().enumerate() {
             let region_contract = &function.frame.regions[region.0 as usize];
-            if entry_word_kind(region_contract).is_none() {
+            if region_contract.value_shape.is_none() && entry_word_kind(region_contract).is_none() {
                 return Err(TaskFault::InvalidEntryShape {
                     entry,
                     index,
@@ -356,6 +364,60 @@ enum Lane {
 }
 
 impl ExecTask<'_> {
+    pub fn write_entry_value(&mut self, index: usize, bytes: &[u8]) -> Result<(), TaskFault> {
+        self.check_not_poisoned()?;
+        let function = self.executable.function(self.entry)?;
+        let Some(region) = function.entries.get(index).copied() else {
+            return Err(TaskFault::InvalidEntryIndex {
+                entry: self.entry,
+                index,
+                entry_count: function.entries.len(),
+            });
+        };
+        let region_contract = &function.frame.regions[region.0 as usize];
+        let Some(value_shape) = region_contract.value_shape else {
+            return Err(TaskFault::InvalidEntryShape {
+                entry: self.entry,
+                index,
+                region,
+            });
+        };
+        if self.entries_closed {
+            return Err(TaskFault::EntryWriteAfterDrive {
+                entry: self.entry,
+                index,
+                region,
+            });
+        }
+        if self.entries_initialized[index] {
+            return Err(TaskFault::EntryAlreadyInitialized {
+                entry: self.entry,
+                index,
+                region,
+            });
+        }
+        let expected = region_contract
+            .shape
+            .checked_byte_len()
+            .unwrap_or(usize::MAX);
+        if bytes.len() != expected {
+            return Err(TaskFault::EntryValueSize {
+                entry: self.entry,
+                index,
+                region,
+                value_shape,
+                expected,
+                actual: bytes.len(),
+            });
+        }
+        match &mut self.lane {
+            Lane::Interpreter(task) => task.write_bytes(region_contract.offset, bytes),
+            Lane::Native(task) => task.write_bytes(region_contract.offset, bytes),
+        }
+        self.entries_initialized[index] = true;
+        Ok(())
+    }
+
     pub fn write_entry_i64(&mut self, index: usize, value: i64) -> Result<(), TaskFault> {
         self.write_entry_word(index, value, EntryWriteKind::Scalar)
     }
@@ -683,10 +745,11 @@ mod tests {
     use super::*;
     use crate::jit::task_lane;
     use crate::mem::Layout;
-    use crate::task::{ArgCopy, Fn, Program, ValueMemory};
+    use crate::task::{ArgCopy, Fn, Program, StructuralFieldSource, ValueMemory};
     use crate::{
         AllowedKinds, CallContract, FrameContract, FrameRegion, FunctionContract, PayloadKind,
-        ProgramContract, RegionShape, SchemaContract, SchemaRef,
+        ProgramContract, RegionShape, SchemaContract, SchemaRef, ValueFieldUse, ValueSelector,
+        ValueShapeContract, ValueShapeKind, ValueShapeRef, ValueVariant,
     };
 
     static ENV_LOCK: Mutex<()> = Mutex::new(());
@@ -1044,6 +1107,498 @@ mod tests {
 
     fn verify(pair: (Program, ProgramContract)) -> VerifiedProgram {
         pair.0.verify(pair.1).expect("program verifies")
+    }
+
+    fn structural_region(
+        offset: u32,
+        shape: RegionShape,
+        value_shape: ValueShapeRef,
+    ) -> FrameRegion {
+        FrameRegion::new(offset, shape).with_value_shape(value_shape)
+    }
+
+    fn structural_field(
+        offset: u32,
+        shape: RegionShape,
+        value_shape: ValueShapeRef,
+    ) -> ValueFieldUse {
+        ValueFieldUse::new(offset, shape).with_value_shape(value_shape)
+    }
+
+    #[test]
+    fn public_executable_constructs_projects_and_copies_nested_products() {
+        let scalar = RegionShape::word(WordKind::Scalar);
+        let pair_shape = RegionShape::new(vec![
+            AllowedKinds::new(WordKind::Scalar),
+            AllowedKinds::new(WordKind::Scalar),
+        ]);
+        let nested_shape = RegionShape::new(vec![
+            AllowedKinds::new(WordKind::Scalar),
+            AllowedKinds::new(WordKind::Scalar),
+            AllowedKinds::new(WordKind::Scalar),
+        ]);
+        let value_shapes = vec![
+            ValueShapeContract {
+                shape: pair_shape.clone(),
+                kind: ValueShapeKind::Product {
+                    fields: vec![
+                        ValueFieldUse::new(0, scalar.clone()),
+                        ValueFieldUse::new(8, scalar.clone()),
+                    ],
+                },
+            },
+            ValueShapeContract {
+                shape: scalar.clone(),
+                kind: ValueShapeKind::Product {
+                    fields: vec![ValueFieldUse::new(0, scalar.clone())],
+                },
+            },
+            ValueShapeContract {
+                shape: RegionShape::default(),
+                kind: ValueShapeKind::Product { fields: vec![] },
+            },
+            ValueShapeContract {
+                shape: nested_shape.clone(),
+                kind: ValueShapeKind::Product {
+                    fields: vec![
+                        structural_field(0, pair_shape.clone(), ValueShapeRef(0)),
+                        ValueFieldUse::new(16, scalar.clone()),
+                    ],
+                },
+            },
+        ];
+        let regions = vec![
+            word_region(0, WordKind::Scalar),
+            word_region(8, WordKind::Scalar),
+            structural_region(16, pair_shape.clone(), ValueShapeRef(0)),
+            word_region(32, WordKind::Scalar),
+            structural_region(40, pair_shape.clone(), ValueShapeRef(0)),
+            structural_region(56, scalar.clone(), ValueShapeRef(1)),
+            structural_region(64, scalar.clone(), ValueShapeRef(1)),
+            structural_region(72, RegionShape::default(), ValueShapeRef(2)),
+            structural_region(72, RegionShape::default(), ValueShapeRef(2)),
+            structural_region(72, nested_shape.clone(), ValueShapeRef(3)),
+            structural_region(96, nested_shape, ValueShapeRef(3)),
+        ];
+        let code = vec![
+            Op::ConstI64 { dst: 0, value: 11 },
+            Op::ConstI64 { dst: 8, value: 22 },
+            Op::ProductConstruct {
+                dst: RegionId(2),
+                fields: vec![
+                    StructuralFieldSource {
+                        field: 0,
+                        source: RegionId(0),
+                    },
+                    StructuralFieldSource {
+                        field: 1,
+                        source: RegionId(1),
+                    },
+                ],
+            },
+            Op::ProductProject {
+                dst: RegionId(3),
+                product: RegionId(2),
+                field: 0,
+            },
+            Op::CopyValue {
+                dst: RegionId(4),
+                src: RegionId(2),
+            },
+            Op::ProductConstruct {
+                dst: RegionId(5),
+                fields: vec![StructuralFieldSource {
+                    field: 0,
+                    source: RegionId(3),
+                }],
+            },
+            Op::CopyValue {
+                dst: RegionId(6),
+                src: RegionId(5),
+            },
+            Op::ProductConstruct {
+                dst: RegionId(7),
+                fields: vec![],
+            },
+            Op::CopyValue {
+                dst: RegionId(8),
+                src: RegionId(7),
+            },
+            Op::ProductConstruct {
+                dst: RegionId(9),
+                fields: vec![
+                    StructuralFieldSource {
+                        field: 0,
+                        source: RegionId(4),
+                    },
+                    StructuralFieldSource {
+                        field: 1,
+                        source: RegionId(3),
+                    },
+                ],
+            },
+            Op::CopyValue {
+                dst: RegionId(10),
+                src: RegionId(9),
+            },
+            Op::Ret { src: 96, size: 24 },
+        ];
+        let program = Program {
+            fns: vec![function(15, code)],
+        };
+        let contract = ProgramContract {
+            functions: vec![function_contract(15, regions, &[], 10, None)],
+            calls: vec![],
+            schemas: vec![],
+            value_shapes,
+        };
+        let executable = Executable::new(program.verify(contract).unwrap());
+        let mut task = executable.spawn(FnId(0)).unwrap();
+        assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
+        assert_eq!(
+            task.result().unwrap(),
+            [
+                11i64.to_le_bytes(),
+                22i64.to_le_bytes(),
+                11i64.to_le_bytes()
+            ]
+            .concat()
+        );
+    }
+
+    fn enum_program(op: Op) -> (Program, ProgramContract) {
+        let scalar = RegionShape::word(WordKind::Scalar);
+        let enum_shape = RegionShape::new(vec![
+            AllowedKinds::new(WordKind::Scalar),
+            AllowedKinds::new(WordKind::Scalar),
+        ]);
+        let value_shape = ValueShapeContract {
+            shape: enum_shape.clone(),
+            kind: ValueShapeKind::Enum {
+                selector: ValueSelector {
+                    offset: 0,
+                    shape: scalar.clone(),
+                },
+                variants: vec![
+                    ValueVariant {
+                        fields: vec![ValueFieldUse::new(8, scalar.clone())],
+                    },
+                    ValueVariant {
+                        fields: vec![ValueFieldUse::new(8, scalar.clone())],
+                    },
+                ],
+            },
+        };
+        (
+            Program {
+                fns: vec![function(3, vec![op, Op::Ret { src: 16, size: 8 }])],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    3,
+                    vec![
+                        structural_region(0, enum_shape, ValueShapeRef(0)),
+                        word_region(16, WordKind::Scalar),
+                    ],
+                    &[0],
+                    1,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![],
+                value_shapes: vec![value_shape],
+            },
+        )
+    }
+
+    #[test]
+    fn public_executable_constructs_tests_and_projects_compact_enum_variants() {
+        let scalar = RegionShape::word(WordKind::Scalar);
+        let handle = RegionShape::word(WordKind::Handle(SchemaRef(0)));
+        let pair = RegionShape::new(vec![
+            AllowedKinds::new(WordKind::Scalar),
+            AllowedKinds::new(WordKind::Scalar),
+        ]);
+        let nested_enum = pair.clone();
+        let outer = RegionShape::new(vec![
+            AllowedKinds::new(WordKind::Scalar),
+            AllowedKinds::new(WordKind::Scalar).allowing(WordKind::Handle(SchemaRef(0))),
+            AllowedKinds::new(WordKind::Scalar),
+        ]);
+        let value_shapes = vec![
+            ValueShapeContract {
+                shape: pair.clone(),
+                kind: ValueShapeKind::Product {
+                    fields: vec![
+                        ValueFieldUse::new(0, scalar.clone()),
+                        ValueFieldUse::new(8, scalar.clone()),
+                    ],
+                },
+            },
+            ValueShapeContract {
+                shape: nested_enum.clone(),
+                kind: ValueShapeKind::Enum {
+                    selector: ValueSelector {
+                        offset: 0,
+                        shape: scalar.clone(),
+                    },
+                    variants: vec![
+                        ValueVariant {
+                            fields: vec![ValueFieldUse::new(8, scalar.clone())],
+                        },
+                        ValueVariant { fields: vec![] },
+                    ],
+                },
+            },
+            ValueShapeContract {
+                shape: outer.clone(),
+                kind: ValueShapeKind::Enum {
+                    selector: ValueSelector {
+                        offset: 0,
+                        shape: scalar.clone(),
+                    },
+                    variants: vec![
+                        ValueVariant {
+                            fields: vec![ValueFieldUse::new(8, scalar.clone())],
+                        },
+                        ValueVariant {
+                            fields: vec![ValueFieldUse::new(8, handle.clone())],
+                        },
+                        ValueVariant {
+                            fields: vec![structural_field(8, pair.clone(), ValueShapeRef(0))],
+                        },
+                        ValueVariant {
+                            fields: vec![structural_field(
+                                8,
+                                nested_enum.clone(),
+                                ValueShapeRef(1),
+                            )],
+                        },
+                    ],
+                },
+            },
+        ];
+        let regions = vec![
+            word_region(0, WordKind::Scalar),
+            word_region(8, WordKind::Scalar),
+            word_region(16, WordKind::Handle(SchemaRef(0))),
+            structural_region(24, pair.clone(), ValueShapeRef(0)),
+            structural_region(40, nested_enum.clone(), ValueShapeRef(1)),
+            structural_region(56, outer.clone(), ValueShapeRef(2)),
+            word_region(80, WordKind::Scalar),
+            word_region(88, WordKind::Scalar),
+            word_region(96, WordKind::Handle(SchemaRef(0))),
+            structural_region(104, pair, ValueShapeRef(0)),
+            structural_region(120, nested_enum, ValueShapeRef(1)),
+        ];
+        let code = vec![
+            Op::ConstI64 { dst: 0, value: 7 },
+            Op::ConstI64 { dst: 8, value: 9 },
+            Op::ProductConstruct {
+                dst: RegionId(3),
+                fields: vec![
+                    StructuralFieldSource {
+                        field: 0,
+                        source: RegionId(0),
+                    },
+                    StructuralFieldSource {
+                        field: 1,
+                        source: RegionId(1),
+                    },
+                ],
+            },
+            Op::EnumConstruct {
+                dst: RegionId(4),
+                variant: 0,
+                fields: vec![StructuralFieldSource {
+                    field: 0,
+                    source: RegionId(0),
+                }],
+            },
+            Op::EnumConstruct {
+                dst: RegionId(5),
+                variant: 0,
+                fields: vec![StructuralFieldSource {
+                    field: 0,
+                    source: RegionId(0),
+                }],
+            },
+            Op::EnumIsVariant {
+                dst: RegionId(6),
+                value: RegionId(5),
+                variant: 0,
+            },
+            Op::EnumProjectChecked {
+                dst: RegionId(7),
+                value: RegionId(5),
+                variant: 0,
+                field: 0,
+            },
+            Op::EnumConstruct {
+                dst: RegionId(5),
+                variant: 1,
+                fields: vec![StructuralFieldSource {
+                    field: 0,
+                    source: RegionId(2),
+                }],
+            },
+            Op::EnumProjectChecked {
+                dst: RegionId(8),
+                value: RegionId(5),
+                variant: 1,
+                field: 0,
+            },
+            Op::EnumConstruct {
+                dst: RegionId(5),
+                variant: 2,
+                fields: vec![StructuralFieldSource {
+                    field: 0,
+                    source: RegionId(3),
+                }],
+            },
+            Op::EnumProjectChecked {
+                dst: RegionId(9),
+                value: RegionId(5),
+                variant: 2,
+                field: 0,
+            },
+            Op::EnumConstruct {
+                dst: RegionId(5),
+                variant: 3,
+                fields: vec![StructuralFieldSource {
+                    field: 0,
+                    source: RegionId(4),
+                }],
+            },
+            Op::EnumProjectChecked {
+                dst: RegionId(10),
+                value: RegionId(5),
+                variant: 3,
+                field: 0,
+            },
+            Op::EnumConstruct {
+                dst: RegionId(5),
+                variant: 0,
+                fields: vec![StructuralFieldSource {
+                    field: 0,
+                    source: RegionId(0),
+                }],
+            },
+            Op::Ret { src: 56, size: 24 },
+        ];
+        let program = Program {
+            fns: vec![function(17, code)],
+        };
+        let contract = ProgramContract {
+            functions: vec![function_contract(17, regions, &[2], 5, None)],
+            calls: vec![],
+            schemas: vec![SchemaContract {
+                inline: handle,
+                value_shape: None,
+                payload: PayloadKind::OpaqueBytes {
+                    byte_comparable: true,
+                },
+            }],
+            value_shapes,
+        };
+        let executable = Executable::new(program.verify(contract).unwrap());
+        let mut task = executable.spawn(FnId(0)).unwrap();
+        task.write_entry_store_handle(0, SchemaRef(0), StoreHandle::new(3).unwrap())
+            .unwrap();
+        assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
+        assert_eq!(
+            task.result().unwrap(),
+            [0i64.to_le_bytes(), 7i64.to_le_bytes(), 0i64.to_le_bytes()].concat()
+        );
+    }
+
+    fn run_public_fault(
+        verified: VerifiedProgram,
+        bytes: &[u8],
+        force_interpreter: bool,
+    ) -> (TaskFault, Vec<TaskEvent>, TaskFault) {
+        let previous = std::env::var_os("WEAVY_JIT");
+        if force_interpreter {
+            unsafe { std::env::set_var("WEAVY_JIT", "0") };
+        } else {
+            unsafe { std::env::remove_var("WEAVY_JIT") };
+        }
+        let executable = Executable::new(verified);
+        match previous {
+            Some(value) => unsafe { std::env::set_var("WEAVY_JIT", value) },
+            None => unsafe { std::env::remove_var("WEAVY_JIT") },
+        }
+        let mut task = executable.spawn(FnId(0)).unwrap();
+        task.write_entry_value(0, bytes).unwrap();
+        let fault = task.drive(&mut [], &[]).unwrap_err();
+        let trace = task.trace().to_vec();
+        let poison = task.drive(&mut [], &[]).unwrap_err();
+        (fault, trace, poison)
+    }
+
+    #[test]
+    fn invalid_enum_selectors_and_projection_mismatches_fault_equivalently() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        for (name, op, selector, expected_pc) in [
+            (
+                "invalid selector",
+                Op::EnumIsVariant {
+                    dst: RegionId(1),
+                    value: RegionId(0),
+                    variant: 0,
+                },
+                7i64,
+                0usize,
+            ),
+            (
+                "projection mismatch",
+                Op::EnumProjectChecked {
+                    dst: RegionId(1),
+                    value: RegionId(0),
+                    variant: 0,
+                    field: 0,
+                },
+                1i64,
+                0usize,
+            ),
+        ] {
+            let bytes = [selector.to_le_bytes(), 42i64.to_le_bytes()].concat();
+            let interpreter = run_public_fault(verify(enum_program(op.clone())), &bytes, true);
+            let native = run_public_fault(verify(enum_program(op.clone())), &bytes, false);
+            assert_eq!(interpreter, native, "{name}");
+            let site = match &interpreter.0 {
+                TaskFault::InvalidEnumSelector {
+                    site,
+                    value_shape,
+                    expected,
+                    actual,
+                } => {
+                    assert_eq!(*value_shape, ValueShapeRef(0));
+                    assert_eq!(expected, &[0, 1]);
+                    assert_eq!(*actual, selector);
+                    site
+                }
+                TaskFault::EnumProjectionMismatch {
+                    site,
+                    value_shape,
+                    expected,
+                    actual,
+                } => {
+                    assert_eq!(*value_shape, ValueShapeRef(0));
+                    assert_eq!(*expected, 0);
+                    assert_eq!(*actual, selector);
+                    site
+                }
+                fault => panic!("unexpected {name} fault: {fault:?}"),
+            };
+            assert_eq!(site.function, FnId(0));
+            assert_eq!(site.pc, expected_pc);
+            assert_eq!(site.op, op);
+            assert_eq!(interpreter.1, vec![TaskEvent::FrameEntered(FnId(0))]);
+            assert!(matches!(interpreter.2, TaskFault::PoisonedReDrive { .. }));
+        }
     }
 
     fn run_interpreter(

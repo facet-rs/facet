@@ -23,9 +23,9 @@ pub use verified::{
     DriveRequirements, FrameContract, FrameRegion, FunctionContract, FunctionFacts,
     IndirectCallObligation, KindRequirement, PayloadKind, PcFacts, ProgramContract, ProgramDefect,
     ProgramError, ProgramFacts, ProgramTable, ReferenceSite, RegionId, RegionReference,
-    RegionShape, SchemaContract, SchemaRef, ShapeOwner, StructuralKind, UnsupportedOp, ValueFieldSite,
-    ValueFieldUse, ValueSelector, ValueShapeContract, ValueShapeKind, ValueShapeRef,
-    ValueShapeReferenceSite, ValueVariant, VerifiedProgram, WordKind,
+    RegionShape, SchemaContract, SchemaRef, ShapeOwner, StructuralKind, UnsupportedOp,
+    ValueFieldSite, ValueFieldUse, ValueSelector, ValueShapeContract, ValueShapeKind,
+    ValueShapeRef, ValueShapeReferenceSite, ValueVariant, VerifiedProgram, WordKind,
 };
 
 pub mod jit;

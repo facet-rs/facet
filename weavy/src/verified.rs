@@ -1813,7 +1813,8 @@ impl Verifier<'_> {
             } => {
                 let (value_shape, fields) =
                     self.product_region(function_id, pc, function_index, *product)?;
-                let declared = self.structural_field(function_id, pc, value_shape, None, fields, *field)?;
+                let declared =
+                    self.structural_field(function_id, pc, value_shape, None, fields, *field)?;
                 self.validate_structural_destination(
                     function_id,
                     pc,
@@ -1828,7 +1829,9 @@ impl Verifier<'_> {
             Op::CopyValue { dst, src } => {
                 let source = self.structural_region(function_id, pc, function_index, *src)?;
                 let destination = self.structural_region(function_id, pc, function_index, *dst)?;
-                if source.value_shape != destination.value_shape || source.shape != destination.shape {
+                if source.value_shape != destination.value_shape
+                    || source.shape != destination.shape
+                {
                     return Err(self.op(
                         function_id,
                         pc,
@@ -1846,7 +1849,8 @@ impl Verifier<'_> {
             } => {
                 let (value_shape, variants) =
                     self.enum_region(function_id, pc, function_index, *dst)?;
-                let declared = self.enum_variant(function_id, pc, value_shape, variants, *variant)?;
+                let declared =
+                    self.enum_variant(function_id, pc, value_shape, variants, *variant)?;
                 self.validate_structural_fields(
                     function_id,
                     pc,
@@ -1857,7 +1861,11 @@ impl Verifier<'_> {
                     fields,
                 )?;
             }
-            Op::EnumIsVariant { dst, value, variant } => {
+            Op::EnumIsVariant {
+                dst,
+                value,
+                variant,
+            } => {
                 let (value_shape, variants) =
                     self.enum_region(function_id, pc, function_index, *value)?;
                 self.enum_variant(function_id, pc, value_shape, variants, *variant)?;
@@ -1893,7 +1901,14 @@ impl Verifier<'_> {
                 )?;
             }
             Op::ConstI64 { dst, value } => {
-                self.reject_raw_structural_word(function_id, pc, function_index, frame, *dst, AccessRole::Destination)?;
+                self.reject_raw_structural_word(
+                    function_id,
+                    pc,
+                    function_index,
+                    frame,
+                    *dst,
+                    AccessRole::Destination,
+                )?;
                 let kinds =
                     self.word_kinds(function_id, pc, frame, *dst, AccessRole::Destination)?;
                 self.validate_const(function_id, pc, *value, kinds)?;
@@ -1910,16 +1925,51 @@ impl Verifier<'_> {
             | Op::GeI64 { dst, a, b }
             | Op::AddF64 { dst, a, b }
             | Op::MulF64 { dst, a, b } => {
-                self.reject_raw_structural_word(function_id, pc, function_index, frame, *dst, AccessRole::Destination)?;
-                self.reject_raw_structural_word(function_id, pc, function_index, frame, *a, AccessRole::LeftOperand)?;
-                self.reject_raw_structural_word(function_id, pc, function_index, frame, *b, AccessRole::RightOperand)?;
+                self.reject_raw_structural_word(
+                    function_id,
+                    pc,
+                    function_index,
+                    frame,
+                    *dst,
+                    AccessRole::Destination,
+                )?;
+                self.reject_raw_structural_word(
+                    function_id,
+                    pc,
+                    function_index,
+                    frame,
+                    *a,
+                    AccessRole::LeftOperand,
+                )?;
+                self.reject_raw_structural_word(
+                    function_id,
+                    pc,
+                    function_index,
+                    frame,
+                    *b,
+                    AccessRole::RightOperand,
+                )?;
                 self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
                 self.require_scalar_read(function_id, pc, frame, *a, AccessRole::LeftOperand)?;
                 self.require_scalar_read(function_id, pc, frame, *b, AccessRole::RightOperand)?;
             }
             Op::CopyI64 { dst, src } => {
-                self.reject_raw_structural_word(function_id, pc, function_index, frame, *dst, AccessRole::Destination)?;
-                self.reject_raw_structural_word(function_id, pc, function_index, frame, *src, AccessRole::Source)?;
+                self.reject_raw_structural_word(
+                    function_id,
+                    pc,
+                    function_index,
+                    frame,
+                    *dst,
+                    AccessRole::Destination,
+                )?;
+                self.reject_raw_structural_word(
+                    function_id,
+                    pc,
+                    function_index,
+                    frame,
+                    *src,
+                    AccessRole::Source,
+                )?;
                 let (destination_index, destination_word) =
                     self.word_region_index(function_id, pc, frame, *dst, AccessRole::Destination)?;
                 let (source_index, source_word) =
@@ -1969,7 +2019,14 @@ impl Verifier<'_> {
             }
             Op::Jump { target } => self.validate_jump(function_id, pc, *target)?,
             Op::JumpIfZero { value, target } => {
-                self.reject_raw_structural_word(function_id, pc, function_index, frame, *value, AccessRole::Condition)?;
+                self.reject_raw_structural_word(
+                    function_id,
+                    pc,
+                    function_index,
+                    frame,
+                    *value,
+                    AccessRole::Condition,
+                )?;
                 self.require_scalar_read(function_id, pc, frame, *value, AccessRole::Condition)?;
                 self.validate_jump(function_id, pc, *target)?;
             }
@@ -2046,25 +2103,30 @@ impl Verifier<'_> {
                 }));
             }
             Op::Ret { src, size } => {
-                let actual = self.exact_region(
-                    function_id,
-                    pc,
-                    frame,
-                    *src,
-                    usize::try_from(*size).map_err(|_| {
-                        self.access(
-                            function_id,
-                            pc,
-                            AccessRole::ReturnValue,
-                            AccessDefect::RangeOverflow {
-                                offset: *src,
-                                size: usize::MAX,
-                            },
-                        )
-                    })?,
-                    AccessRole::ReturnValue,
-                )?;
-                if actual != frame.result {
+                let result_region =
+                    &self.contract.functions[function_index].frame.regions[frame.result];
+                let result_bounds = frame.regions[frame.result];
+                if *src != result_region.offset
+                    || usize::try_from(*size).ok() != Some(result_bounds.len())
+                {
+                    let actual = self.exact_region(
+                        function_id,
+                        pc,
+                        frame,
+                        *src,
+                        usize::try_from(*size).map_err(|_| {
+                            self.access(
+                                function_id,
+                                pc,
+                                AccessRole::ReturnValue,
+                                AccessDefect::RangeOverflow {
+                                    offset: *src,
+                                    size: usize::MAX,
+                                },
+                            )
+                        })?,
+                        AccessRole::ReturnValue,
+                    )?;
                     return Err(self.op(
                         function_id,
                         pc,
@@ -2416,14 +2478,8 @@ impl Verifier<'_> {
         }
         let mut seen = vec![false; declared.len()];
         for source in sources {
-            let field = self.structural_field(
-                function,
-                pc,
-                value_shape,
-                variant,
-                declared,
-                source.field,
-            )?;
+            let field =
+                self.structural_field(function, pc, value_shape, variant, declared, source.field)?;
             if core::mem::replace(&mut seen[source.field as usize], true) {
                 return Err(self.op(
                     function,
@@ -3337,7 +3393,7 @@ fn shapes_assignable(source: &RegionShape, destination: &RegionShape) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::task::Fn;
+    use crate::task::{Fn, StructuralFieldSource};
 
     struct ValidCase {
         name: &'static str,
@@ -5832,5 +5888,256 @@ mod tests {
                 case.name
             );
         }
+    }
+
+    #[test]
+    fn verifies_typed_structural_ops_and_rejects_raw_structural_access() {
+        let scalar = RegionShape::word(WordKind::Scalar);
+        let pair_shape = RegionShape::new(vec![kinds(WordKind::Scalar), kinds(WordKind::Scalar)]);
+        let value_shapes = || {
+            vec![
+                ValueShapeContract {
+                    shape: pair_shape.clone(),
+                    kind: ValueShapeKind::Product {
+                        fields: vec![field(0, scalar.clone()), field(8, scalar.clone())],
+                    },
+                },
+                ValueShapeContract {
+                    shape: scalar.clone(),
+                    kind: ValueShapeKind::Product {
+                        fields: vec![field(0, scalar.clone())],
+                    },
+                },
+            ]
+        };
+        let make = |code: Vec<Op>| {
+            let (program, mut contract) = single_function(
+                7,
+                code,
+                vec![
+                    word_region(0, WordKind::Scalar),
+                    word_region(8, WordKind::Scalar),
+                    structural_region(16, pair_shape.clone(), ValueShapeRef(0)),
+                    structural_region(32, pair_shape.clone(), ValueShapeRef(0)),
+                    structural_region(48, scalar.clone(), ValueShapeRef(1)),
+                ],
+                2,
+            );
+            contract.value_shapes = value_shapes();
+            (program, contract)
+        };
+        let construct = |fields| Op::ProductConstruct {
+            dst: RegionId(2),
+            fields,
+        };
+        let valid_fields = || {
+            vec![
+                StructuralFieldSource {
+                    field: 0,
+                    source: RegionId(0),
+                },
+                StructuralFieldSource {
+                    field: 1,
+                    source: RegionId(1),
+                },
+            ]
+        };
+        let (program, contract) = make(vec![
+            construct(valid_fields()),
+            Op::Ret { src: 16, size: 16 },
+        ]);
+        program
+            .verify(contract)
+            .expect("complete product construction");
+
+        let cases = vec![
+            (
+                "missing field",
+                construct(vec![StructuralFieldSource {
+                    field: 0,
+                    source: RegionId(0),
+                }]),
+                ProgramDefect::StructuralFieldCount {
+                    value_shape: ValueShapeRef(0),
+                    variant: None,
+                    expected: 2,
+                    actual: 1,
+                },
+            ),
+            (
+                "extra field",
+                construct(vec![
+                    StructuralFieldSource {
+                        field: 0,
+                        source: RegionId(0),
+                    },
+                    StructuralFieldSource {
+                        field: 1,
+                        source: RegionId(1),
+                    },
+                    StructuralFieldSource {
+                        field: 2,
+                        source: RegionId(0),
+                    },
+                ]),
+                ProgramDefect::StructuralFieldCount {
+                    value_shape: ValueShapeRef(0),
+                    variant: None,
+                    expected: 2,
+                    actual: 3,
+                },
+            ),
+            (
+                "duplicate field",
+                construct(vec![
+                    StructuralFieldSource {
+                        field: 0,
+                        source: RegionId(0),
+                    },
+                    StructuralFieldSource {
+                        field: 0,
+                        source: RegionId(1),
+                    },
+                ]),
+                ProgramDefect::DuplicateStructuralField {
+                    value_shape: ValueShapeRef(0),
+                    variant: None,
+                    field: 0,
+                },
+            ),
+            (
+                "wrong field shape",
+                construct(vec![
+                    StructuralFieldSource {
+                        field: 0,
+                        source: RegionId(4),
+                    },
+                    StructuralFieldSource {
+                        field: 1,
+                        source: RegionId(1),
+                    },
+                ]),
+                ProgramDefect::StructuralFieldSourceMismatch {
+                    value_shape: ValueShapeRef(0),
+                    variant: None,
+                    field: 0,
+                    source: RegionId(4),
+                    expected_shape: scalar.clone(),
+                    actual_shape: scalar.clone(),
+                    expected_value_shape: None,
+                    actual_value_shape: Some(ValueShapeRef(1)),
+                },
+            ),
+            (
+                "wrong region ref",
+                Op::CopyValue {
+                    dst: RegionId(99),
+                    src: RegionId(2),
+                },
+                ProgramDefect::StructuralRegionOutOfRange {
+                    region: RegionId(99),
+                    region_count: 5,
+                },
+            ),
+            (
+                "raw const",
+                Op::ConstI64 { dst: 16, value: 0 },
+                ProgramDefect::RawStructuralWordAccess {
+                    role: AccessRole::Destination,
+                    region: RegionId(2),
+                    value_shape: ValueShapeRef(0),
+                },
+            ),
+            (
+                "raw copy",
+                Op::CopyI64 { dst: 0, src: 16 },
+                ProgramDefect::RawStructuralWordAccess {
+                    role: AccessRole::Source,
+                    region: RegionId(2),
+                    value_shape: ValueShapeRef(0),
+                },
+            ),
+            (
+                "raw equality",
+                Op::EqI64 {
+                    dst: 0,
+                    a: 16,
+                    b: 8,
+                },
+                ProgramDefect::RawStructuralWordAccess {
+                    role: AccessRole::LeftOperand,
+                    region: RegionId(2),
+                    value_shape: ValueShapeRef(0),
+                },
+            ),
+            (
+                "raw branch",
+                Op::JumpIfZero {
+                    value: 16,
+                    target: 1,
+                },
+                ProgramDefect::RawStructuralWordAccess {
+                    role: AccessRole::Condition,
+                    region: RegionId(2),
+                    value_shape: ValueShapeRef(0),
+                },
+            ),
+        ];
+        for (name, op, defect) in cases {
+            let (program, contract) = make(vec![op, Op::Ret { src: 16, size: 16 }]);
+            assert_eq!(
+                program.verify(contract).expect_err(name),
+                op_error(0, defect),
+                "{name}"
+            );
+        }
+    }
+
+    #[test]
+    fn zero_word_structural_ops_use_region_and_shape_identity() {
+        let unit = ValueShapeContract {
+            shape: RegionShape::default(),
+            kind: ValueShapeKind::Product { fields: vec![] },
+        };
+        let make = |destination_shape| {
+            let (program, mut contract) = single_function(
+                0,
+                vec![
+                    Op::ProductConstruct {
+                        dst: RegionId(0),
+                        fields: vec![],
+                    },
+                    Op::CopyValue {
+                        dst: RegionId(1),
+                        src: RegionId(0),
+                    },
+                    Op::Ret { src: 0, size: 0 },
+                ],
+                vec![
+                    structural_region(0, RegionShape::default(), ValueShapeRef(0)),
+                    structural_region(0, RegionShape::default(), destination_shape),
+                ],
+                1,
+            );
+            contract.value_shapes = vec![unit.clone(), unit.clone()];
+            (program, contract)
+        };
+        let (program, contract) = make(ValueShapeRef(0));
+        program
+            .verify(contract)
+            .expect("same shape identity at shared zero offset");
+        let (program, contract) = make(ValueShapeRef(1));
+        assert_eq!(
+            program
+                .verify(contract)
+                .expect_err("different zero-width identity"),
+            op_error(
+                1,
+                ProgramDefect::StructuralTransferMismatch {
+                    source: Some(ValueShapeRef(0)),
+                    destination: Some(ValueShapeRef(1)),
+                }
+            )
+        );
     }
 }
