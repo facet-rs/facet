@@ -76,13 +76,10 @@ impl<'a> ValueMemory<'a> {
     }
 
     fn as_slice(&self) -> Result<&'a [u8], ArrayOpStatus> {
-        if self.raw.len == 0 {
-            return Ok(&[]);
-        }
-        if self.raw.ptr.is_null() {
-            return Err(ArrayOpStatus::InvalidHandle);
-        }
-        Ok(unsafe { core::slice::from_raw_parts(self.raw.ptr, self.raw.len) })
+        // SAFETY: the raw pointer/len were captured from a `&'a [u8]` in
+        // `from_slice`, or are the null sentinel from `empty()` (rejected
+        // below before any pointer use).
+        unsafe { self.raw.as_slice() }
     }
 
     #[cfg(feature = "jit")]
@@ -92,11 +89,13 @@ impl<'a> ValueMemory<'a> {
 }
 
 impl RawValueMemory {
-    #[cfg(feature = "jit")]
-    fn as_slice(&self) -> Result<&[u8], ArrayOpStatus> {
-        if self.len == 0 {
-            return Ok(&[]);
-        }
+    /// # Safety
+    ///
+    /// The caller must ensure `'a` does not outlive the borrow the
+    /// pointer/length pair was captured from (or that `self` is the null
+    /// sentinel, in which case no pointer is dereferenced).
+    #[cfg_attr(not(feature = "jit"), allow(dead_code))]
+    unsafe fn as_slice<'a>(&self) -> Result<&'a [u8], ArrayOpStatus> {
         if self.ptr.is_null() {
             return Err(ArrayOpStatus::InvalidHandle);
         }
@@ -154,11 +153,15 @@ impl<'a> MemoryView<'a> {
                 .ok_or(ArrayOpStatus::InvalidHandle)?
                 .as_slice(),
             #[cfg(feature = "jit")]
-            MemoryView::Raw(memories) => memories
-                .store
-                .get(index)
-                .ok_or(ArrayOpStatus::InvalidHandle)?
-                .as_slice(),
+            MemoryView::Raw(memories) => {
+                let raw = memories
+                    .store
+                    .get(index)
+                    .ok_or(ArrayOpStatus::InvalidHandle)?;
+                // SAFETY: raw entries come from the caller-supplied
+                // `RawValueMemories` table, valid for `'a` per its contract.
+                unsafe { raw.as_slice() }
+            }
         }
     }
 
@@ -170,11 +173,15 @@ impl<'a> MemoryView<'a> {
                 .ok_or(ArrayOpStatus::InvalidHandle)?
                 .as_slice(),
             #[cfg(feature = "jit")]
-            MemoryView::Raw(memories) => memories
-                .molten
-                .get(index)
-                .ok_or(ArrayOpStatus::InvalidHandle)?
-                .as_slice(),
+            MemoryView::Raw(memories) => {
+                let raw = memories
+                    .molten
+                    .get(index)
+                    .ok_or(ArrayOpStatus::InvalidHandle)?;
+                // SAFETY: raw entries come from the caller-supplied
+                // `RawValueMemories` table, valid for `'a` per its contract.
+                unsafe { raw.as_slice() }
+            }
         }
     }
 }
@@ -2564,5 +2571,63 @@ mod tests {
 
         assert_eq!(task.run(&program, &mut [], &[]), TaskStep::Done);
         assert_eq!(task.result_i64(), 0);
+    }
+
+    #[test]
+    fn nonresident_sentinel_reads_as_invalid_handle_not_empty_payload() {
+        // `ValueMemory::empty()` is the nonresident/evicted sentinel
+        // (null ptr, len 0). It must never be treated as a valid
+        // zero-length resident payload.
+        let store = [ValueMemory::empty()];
+        let memories = ValueMemories {
+            store: &store,
+            molten: &[],
+        };
+        let molten = MoltenArena::default();
+        let mut dst = [0u8; 8];
+        let status = load_array_region(
+            MemoryView::from(memories),
+            &molten,
+            ArrayRegion {
+                array: 0,
+                index: 0,
+                elem_offset: 0,
+                elem_width: 8,
+                elem_schema_ref: 0,
+            },
+            &mut dst,
+        );
+        assert_eq!(status, ArrayOpStatus::InvalidHandle);
+        assert_eq!(dst, [0u8; 8]);
+    }
+
+    #[test]
+    fn resident_empty_slice_is_not_classified_as_nonresident() {
+        // A resident value built from an empty slice (nonnull ptr, len 0)
+        // is a real, present payload — just not a well-formed array (too
+        // short to hold the array header). It must fail as
+        // MalformedPayload, not as InvalidHandle: the checked-array path
+        // must distinguish "resident but malformed" from "absent".
+        let store = [ValueMemory::from_slice(&[])];
+        let memories = ValueMemories {
+            store: &store,
+            molten: &[],
+        };
+        let molten = MoltenArena::default();
+        let mut dst = [0u8; 8];
+        let status = load_array_region(
+            MemoryView::from(memories),
+            &molten,
+            ArrayRegion {
+                array: 0,
+                index: 0,
+                elem_offset: 0,
+                elem_width: 8,
+                elem_schema_ref: 0,
+            },
+            &mut dst,
+        );
+        assert_eq!(status, ArrayOpStatus::MalformedPayload);
+        assert_eq!(dst, [0u8; 8]);
     }
 }

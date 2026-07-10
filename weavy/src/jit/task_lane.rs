@@ -2004,6 +2004,61 @@ mod tests {
     }
 
     #[test]
+    fn nonresident_sentinel_is_invalid_handle_not_resident_empty_slice() {
+        // `ValueMemory::empty()` (null ptr, len 0) is the nonresident/evicted
+        // sentinel and must read as InvalidHandle through the checked array
+        // path — never as a resident payload. A resident zero-length slice
+        // built with `from_slice(&[])` (nonnull, len 0) IS resident, so it
+        // must be distinguishable: it fails later, as MalformedPayload
+        // (too short to hold even the array header), not InvalidHandle.
+        const SCHEMA: i64 = 0x7777;
+        let program = Program {
+            fns: vec![TaskFn {
+                frame: frame_of_i64s(7),
+                code: vec![
+                    Op::ConstI64 { dst: 0, value: 0 },
+                    Op::ConstI64 { dst: 8, value: 1 },
+                    Op::ConstI64 { dst: 16, value: 0 },
+                    Op::LoadArray {
+                        dst: 24,
+                        status: 32,
+                        array: 0,
+                        index: 16,
+                        elem_offset: 0,
+                        elem_width: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::LoadArray {
+                        dst: 40,
+                        status: 48,
+                        array: 8,
+                        index: 16,
+                        elem_offset: 0,
+                        elem_width: 8,
+                        elem_schema_ref: SCHEMA,
+                    },
+                    Op::Ret { src: 24, size: 32 },
+                ],
+            }],
+        };
+        let store = [ValueMemory::empty(), ValueMemory::from_slice(&[])];
+        let memories = ValueMemories {
+            store: &store,
+            molten: &[],
+        };
+
+        assert_eq!(
+            run_array_program_with_memories(&program, memories),
+            vec![
+                0,
+                ArrayOpStatus::InvalidHandle as i64,
+                0,
+                ArrayOpStatus::MalformedPayload as i64,
+            ]
+        );
+    }
+
+    #[test]
     fn store_backed_array_reads_match_the_interpreter() {
         const SCHEMA: i64 = 0x5eed_1234_abcd_0001u64 as i64;
         // frame: [0]=array handle, [1]=index, [2]=elem, [3]=present,
