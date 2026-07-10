@@ -17,7 +17,14 @@ source {
         {
             name weavy
             root ../weavy
-            include ("build/**/*.rs" "src/**/*.rs")
+            include (
+                "build/**/*.rs"
+                "src/exec.rs"
+                "src/jit/**/*.rs"
+                "src/task.rs"
+                "src/verified.rs"
+                "stencils/task_ops.rs"
+            )
             test_include ("tests/**/*.rs")
         }
     )
