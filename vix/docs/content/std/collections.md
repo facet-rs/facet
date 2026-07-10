@@ -280,9 +280,10 @@ lookup can fail, and the type says so.
 ### `.unwrap()` on an `Option<T>` or a `Result<T, E>`
 
 Takes the value, or **fails the demand** — a typed failure carrying the unwrap's
-source span and the chain of demands that led there, never a bare string. It is not
-a panic and it does not unwind: the demand completes with a failed outcome, and
-everything that asked for it learns why.
+stable source site, reported with the current source span and the chain of
+demands that led there, never a bare string. It is not a panic and it does not
+unwind: the demand completes with a failed outcome, and everything that asked for
+it learns why.
 
 **Coming from Rust**: `.unwrap()` here costs you a *diagnostic*, not a process.
 

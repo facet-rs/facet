@@ -54,8 +54,10 @@ arriving at a subprocess.
 So there isn't one.
 
 A process termination is interpreted by the capability package's termination grammar.
-It becomes either the typed `answer` field or a **failure**: the machine attaches the
-subject, span and demand chain, and the payload carries the raw termination information.
+It becomes either the typed `answer` field or a **failure**: the payload carries
+the raw termination information, the failure identity carries the published
+subject where one exists and the stable source site, and reporting supplies the
+current span and demand chain.
 
 ```vix
 let out = exec cc`-c {src} -o {obj}`;   // a bad compile poisons whatever demanded it
