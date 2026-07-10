@@ -23,6 +23,7 @@ const RUNG_013: &str = include_str!("ratchet/013-expression-statement.reject.vix
 const RUNG_014: &str = include_str!("ratchet/014-if-else.vix");
 const RUNG_015: &str = include_str!("ratchet/015-boolean-operators.vix");
 const RUNG_016: &str = include_str!("ratchet/016-match-expressions.vix");
+const RUNG_017: &str = include_str!("ratchet/017-match-guards.vix");
 
 /// The first rung is an architectural certificate, not just a boolean test.
 ///
@@ -1125,6 +1126,19 @@ fn rung_016_match_is_a_value_selecting_one_control_region() {
     assert!(report.passed());
     assert!(report.agrees());
     assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    assert_eq!(report.plain.counters.pure_host_calls, 0);
+    assert_eq!(report.chaos.counters.pure_host_calls, 0);
+    assert_eq!(report.plain.receipt_count, 0);
+    assert_eq!(report.chaos.receipt_count, 0);
+}
+
+#[test]
+fn rung_017_match_guards_select_the_first_matching_arm() {
+    let report = run_source(RUNG_017).expect("rung 017 compiles and runs");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 4);
     assert_eq!(report.plain.checks, report.chaos.checks);
     assert_eq!(report.plain.counters.pure_host_calls, 0);
     assert_eq!(report.chaos.counters.pure_host_calls, 0);
