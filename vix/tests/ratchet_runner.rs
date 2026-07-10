@@ -24,6 +24,7 @@ const RUNG_014: &str = include_str!("ratchet/014-if-else.vix");
 const RUNG_015: &str = include_str!("ratchet/015-boolean-operators.vix");
 const RUNG_016: &str = include_str!("ratchet/016-match-expressions.vix");
 const RUNG_017: &str = include_str!("ratchet/017-match-guards.vix");
+const RUNG_018: &str = include_str!("ratchet/018-non-exhaustive.reject.vix");
 
 /// The first rung is an architectural certificate, not just a boolean test.
 ///
@@ -1144,6 +1145,22 @@ fn rung_017_match_guards_select_the_first_matching_arm() {
     assert_eq!(report.chaos.counters.pure_host_calls, 0);
     assert_eq!(report.plain.receipt_count, 0);
     assert_eq!(report.chaos.receipt_count, 0);
+}
+
+#[test]
+fn rung_018_non_exhaustive_match_is_rejected_with_declared_message_and_line() {
+    let (expected_message, expected_line) = reject_header(RUNG_018);
+    let diagnostics = Compiler::new()
+        .compile(RUNG_018)
+        .expect_err("rung 018 must be rejected");
+    assert_eq!(diagnostics.entries.len(), 1);
+    let diagnostic = &diagnostics.entries[0];
+    assert_eq!(diagnostic.code, DiagnosticCode::NonExhaustiveMatch);
+    assert_eq!(diagnostic.message(), expected_message);
+    assert_eq!(
+        source_line(RUNG_018, diagnostic.primary.start),
+        expected_line
+    );
 }
 
 fn reject_header(source: &str) -> (&str, usize) {
