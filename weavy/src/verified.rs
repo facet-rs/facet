@@ -1,9 +1,12 @@
 //! Static admission for [`crate::task::Program`].
 //!
-//! Raw task programs remain inert construction data. This module pairs them
-//! with an explicit contract, validates every instruction and frame access,
-//! and returns an opaque [`VerifiedProgram`] carrying the facts later execution
-//! lanes will consume.
+//! This module pairs raw task programs with an explicit contract, validates
+//! every instruction and frame access, and returns an opaque [`VerifiedProgram`]
+//! carrying the facts admitted execution lanes consume.
+//!
+//! The verifier is additive during migration: legacy task/JIT entry points still
+//! accept [`Program`] directly. Until those callers move and the raw entry points
+//! are removed, `machine.execution.verified-admission` is not implemented.
 
 use core::fmt;
 
@@ -628,7 +631,7 @@ struct Verifier<'a> {
 }
 
 impl Program {
-    /// Consume a raw program and its sidecar, returning the only opaque admitted
+    /// Consume a raw program and its sidecar, returning an opaque admitted
     /// representation.
     pub fn verify(self, contract: ProgramContract) -> Result<VerifiedProgram, ProgramError> {
         let (facts, drive_requirements) = Verifier {
