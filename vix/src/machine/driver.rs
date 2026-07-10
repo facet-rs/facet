@@ -10415,6 +10415,11 @@ fn op_name(op: &Op) -> &'static str {
         Op::LoadIndexedI64 { .. } => "LoadIndexedI64",
         Op::StoreIndexedI64 { .. } => "StoreIndexedI64",
         Op::LoadArrayWord { .. } => "LoadArrayWord",
+        Op::ArrayNew { .. } => "ArrayNew",
+        Op::ArrayStoreWord { .. } => "ArrayStoreWord",
+        Op::ArrayStore { .. } => "ArrayStore",
+        Op::LoadArray { .. } => "LoadArray",
+        Op::LoadArrayLen { .. } => "LoadArrayLen",
         Op::CompareValueBytes { .. } => "CompareValueBytes",
         Op::ConstF64 { .. } => "ConstF64",
         Op::AddF64 { .. } => "AddF64",
@@ -10892,7 +10897,7 @@ fn native_array_store_read_handles_at_materialization(
                 return None;
             };
             let memory = store_value_memories.get(store_ix.0)?;
-            (!memory.ptr.is_null()).then_some(store_ix.to_word())
+            memory.is_resident().then_some(store_ix.to_word())
         })
         .collect()
 }

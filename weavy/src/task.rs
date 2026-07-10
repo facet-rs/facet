@@ -75,6 +75,12 @@ impl<'a> ValueMemory<'a> {
         }
     }
 
+    /// Returns whether this memory entry has a resident payload.
+    #[must_use]
+    pub fn is_resident(&self) -> bool {
+        !self.raw.ptr.is_null()
+    }
+
     fn as_slice(&self) -> Result<&'a [u8], ArrayOpStatus> {
         // SAFETY: the raw pointer/len were captured from a `&'a [u8]` in
         // `from_slice`, or are the null sentinel from `empty()` (rejected
