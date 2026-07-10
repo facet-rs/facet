@@ -14,3 +14,13 @@ pub fn parse_version(s: String) -> Version {
 pub fn version_lte(a: Version, b: Version) -> Bool {
     a <= b
 }
+
+pub fn version_cmp(a: Version, b: Version) -> Ordering {
+    match a < b {
+        true => Ordering::Less,
+        false => match a > b {
+            true => Ordering::Greater,
+            false => Ordering::Equal,
+        },
+    }
+}

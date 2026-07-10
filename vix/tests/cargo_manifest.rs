@@ -14,8 +14,7 @@ use vix::machine::{Machine, MachineArg, RenderedValue};
 const SOURCE: &str =
     include_str!("../../playgrounds/snark/src/bundled/vix/samples/cargo_manifest.vix");
 const RODIN_SOURCE: &str = include_str!("../../rodin/rodin.vix");
-const TOKIO_1_52_3_SPARSE_ROW: &str =
-    r#"{"name":"tokio","vers":"1.52.3","deps":[],"features":{"rt-multi-thread":["rt"]},"yanked":false}"#;
+const TOKIO_1_52_3_SPARSE_ROW: &str = r#"{"name":"tokio","vers":"1.52.3","deps":[],"features":{"rt-multi-thread":["rt"]},"yanked":false}"#;
 
 const WORKSPACE_MANIFEST: &str = include_str!(
     "../../playgrounds/snark/src/bundled/vix/samples/fixtures/cargo_manifest_real/Cargo.toml"

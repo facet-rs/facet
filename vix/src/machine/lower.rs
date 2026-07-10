@@ -778,7 +778,13 @@ fn inject_legacy_std_module(modules: &mut BTreeMap<String, String>) {
 }
 
 fn references_legacy_std(modules: &BTreeMap<String, String>) -> bool {
-    const NAMES: &[&str] = &["Version", "parse_version", "version_lte", "Ordering"];
+    const NAMES: &[&str] = &[
+        "Version",
+        "parse_version",
+        "version_lte",
+        "version_cmp",
+        "Ordering",
+    ];
     modules
         .values()
         .any(|source| NAMES.iter().any(|name| contains_word(source, name)))
