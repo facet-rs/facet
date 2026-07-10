@@ -864,6 +864,7 @@ struct FrameRecord {
 #[derive(Clone, Debug)]
 pub struct Task {
     arena: Vec<u8>,
+    molten: MoltenArena,
     frames: Vec<FrameRecord>,
     /// Root return bytes once [`TaskStep::Done`].
     pub result: Vec<u8>,
@@ -886,6 +887,7 @@ impl Task {
     pub fn spawn_with_mode(program: &Program, entry: FnId, mode: TraceMode) -> Self {
         let mut task = Task {
             arena: Vec::new(),
+            molten: MoltenArena::default(),
             frames: Vec::new(),
             result: Vec::new(),
             trace: Vec::new(),
@@ -1259,7 +1261,7 @@ impl Task {
                 Op::CompareValueBytes { dst, a, b } => {
                     let a = read_i64_at(&self.arena, base + a as usize);
                     let b = read_i64_at(&self.arena, base + b as usize);
-                    let ordering = compare_value_bytes(value_memories, a, b);
+                    let ordering = compare_value_bytes(value_memories, &self.molten, a, b);
                     write_i64_at(&mut self.arena, base + dst as usize, ordering);
                     self.frames.last_mut().expect("frame").pc += 1;
                 }

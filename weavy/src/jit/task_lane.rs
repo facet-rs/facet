@@ -380,6 +380,7 @@ fn compile_fn(f: &crate::task::Fn, mode: TraceMode) -> CompiledFn {
             Op::ArrayNew { .. } => 5,
             Op::ArrayStoreWord { .. } | Op::LoadArray { .. } | Op::ArrayStore { .. } => 6,
             Op::LoadArrayWord { .. } => 5,
+            Op::LoadArrayLen { .. } => 4,
             Op::CompareValueBytes { .. } => 3,
             Op::Await { .. } => 3,
             Op::Call { .. } | Op::CallIndirect { .. } => 1,
@@ -653,6 +654,7 @@ struct JitFrame {
 /// [`crate::task::Task`], frames in the same arena discipline.
 pub struct JitTask {
     arena: Vec<u8>,
+    molten: crate::task::MoltenArena,
     frames: Vec<JitFrame>,
     pub result: Vec<u8>,
     pub trace: Vec<TaskEvent>,
@@ -664,6 +666,7 @@ impl JitTask {
     pub fn spawn(program: &JitProgram, entry: FnId) -> Self {
         let mut task = JitTask {
             arena: Vec::new(),
+            molten: crate::task::MoltenArena::default(),
             frames: Vec::new(),
             result: Vec::new(),
             trace: Vec::new(),
