@@ -24,6 +24,18 @@ pub struct NodeRef {
 pub struct IslandId(pub u32);
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct RecordField {
+    pub name: String,
+    pub ty: Type,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct RecordType {
+    pub name: String,
+    pub fields: Vec<RecordField>,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Type {
     Bool,
@@ -32,6 +44,7 @@ pub enum Type {
     StreamCheck,
     String,
     Tuple(Vec<Type>),
+    Record(RecordType),
 }
 
 impl Type {
@@ -52,6 +65,7 @@ impl Type {
                     .join(", ");
                 format!("({elements}{trailing_comma})")
             }
+            Self::Record(record) => record.name.clone(),
         }
     }
 
@@ -65,6 +79,9 @@ impl Type {
             Self::Tuple(elements) => elements.iter().try_fold(0usize, |width, element| {
                 width.checked_add(element.word_width()?)
             }),
+            Self::Record(record) => record.fields.iter().try_fold(0usize, |width, field| {
+                width.checked_add(field.ty.word_width()?)
+            }),
         }
     }
 
@@ -73,6 +90,10 @@ impl Type {
         match self {
             Self::Bool | Self::Int | Self::String => true,
             Self::Tuple(elements) => elements.iter().all(Self::equality_is_structural),
+            Self::Record(record) => record
+                .fields
+                .iter()
+                .all(|field| field.ty.equality_is_structural()),
             Self::Check | Self::StreamCheck => false,
         }
     }
@@ -122,6 +143,7 @@ pub enum Op {
     Parameter(ParameterId),
     Call(FunctionId),
     Tuple,
+    Record,
     Project { index: u32 },
 }
 
@@ -175,6 +197,7 @@ pub struct Test {
 
 #[derive(facet::Facet, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Module {
+    pub records: Vec<RecordType>,
     pub functions: Vec<Function>,
     pub tests: Vec<Test>,
 }
@@ -203,6 +226,15 @@ impl Module {
     #[must_use]
     pub fn render(&self) -> String {
         let mut out = String::new();
+        for record in &self.records {
+            let fields = record
+                .fields
+                .iter()
+                .map(|field| format!("{}: {}", field.name, field.ty.name()))
+                .collect::<Vec<_>>()
+                .join(", ");
+            let _ = writeln!(out, "struct {} {{ {fields} }}", record.name);
+        }
         for function in &self.functions {
             let _ = writeln!(
                 out,
@@ -455,6 +487,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             op.push(13);
             op.extend_from_slice(&index.to_le_bytes());
         }
+        Op::Record => op.push(14),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());
@@ -476,6 +509,18 @@ fn canonical_type(ty: &Type) -> Vec<u8> {
             frame(&mut bytes, &(elements.len() as u64).to_le_bytes());
             for element in elements {
                 frame(&mut bytes, &canonical_type(element));
+            }
+            bytes
+        }
+        Type::Record(record) => {
+            let mut bytes = b"nominal-record".to_vec();
+            frame(&mut bytes, record.name.as_bytes());
+            frame(&mut bytes, &(record.fields.len() as u64).to_le_bytes());
+            for field in &record.fields {
+                let mut encoded = Vec::new();
+                frame(&mut encoded, field.name.as_bytes());
+                frame(&mut encoded, &canonical_type(&field.ty));
+                frame(&mut bytes, &encoded);
             }
             bytes
         }

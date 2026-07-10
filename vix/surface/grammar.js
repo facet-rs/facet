@@ -23,7 +23,7 @@ module.exports = grammar({
   rules: {
     source_file: ($) => repeat(field("item", $._item)),
 
-    _item: ($) => choice($.fn_item),
+    _item: ($) => choice($.struct_item, $.fn_item),
 
     attribute: ($) =>
       seq(
@@ -47,6 +47,17 @@ module.exports = grammar({
         optional(seq("->", field("return_type", $._type))),
         field("body", $.block),
       ),
+
+    struct_item: ($) =>
+      seq(
+        repeat(field("attribute", $.attribute)),
+        optional(field("vis", "pub")),
+        "struct",
+        field("name", $.identifier),
+        field("fields", $.record_field_list),
+      ),
+    record_field_list: ($) => seq("{", sepBy(",", field("field", $.record_field)), "}"),
+    record_field: ($) => seq(field("name", $.identifier), ":", field("type", $._type)),
 
     generic_params: ($) => seq("<", sepBy(",", field("param", $.identifier)), ">"),
     param_list: ($) => seq("(", sepBy(",", field("param", $.param)), ")"),
@@ -93,6 +104,7 @@ module.exports = grammar({
         $.unary,
         $.call,
         $.field_access,
+        $.record_expr,
         $.tuple_expr,
         $.paren,
         $.identifier,
@@ -133,6 +145,9 @@ module.exports = grammar({
       ),
     arg_list: ($) => seq("(", sepBy(",", field("arg", $._expr)), ")"),
     where_args: ($) => seq("where", "{", sepBy(",", field("field", $.named_value)), "}"),
+    record_expr: ($) =>
+      prec(PREC.postfix, seq(field("type", $.type_path), field("fields", $.record_value_list))),
+    record_value_list: ($) => seq("{", sepBy(",", field("field", $.named_value)), "}"),
     named_value: ($) =>
       seq(
         field("name", $.identifier),

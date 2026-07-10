@@ -7,12 +7,14 @@ ast({
   _type: { enum: "Type" },
 
   fn_item: { as: "Fn" },
+  struct_item: { as: "Struct" },
   let_statement: { as: "Let", struct: "LetStmt" },
   yield_statement: { as: "Yield", struct: "YieldStmt" },
   field_access: {
     as: "Field",
     fields: { name: { enum: "Member" } },
   },
+  record_expr: { as: "Record" },
   tuple_expr: { as: "Tuple" },
   generic_type: { as: "Generic" },
   tuple_type: { as: "Tuple" },

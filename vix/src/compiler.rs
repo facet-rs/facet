@@ -7,7 +7,7 @@ use crate::support::Span;
 use crate::surface::{SurfaceParser, ast};
 use crate::vir::{
     EffectFacts, Function, FunctionId, Module, Node, NodeId, Op, Parameter, ParameterId,
-    ParameterKind, Test, Type,
+    ParameterKind, RecordField, RecordType, Test, Type,
 };
 
 pub struct Compiler {
@@ -52,13 +52,133 @@ struct ParameterSignature {
     kind: ParameterKind,
 }
 
-fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
-    let mut signatures = BTreeMap::new();
-    let mut ordered_signatures = Vec::with_capacity(source.items.len());
+struct ModuleContext<'a> {
+    signatures: &'a BTreeMap<String, FunctionSignature>,
+    records: &'a BTreeMap<String, RecordType>,
+}
 
-    for (index, item) in source.items.iter().enumerate() {
-        let ast::Item::Fn(function) = item;
-        if signatures.contains_key(&function.name.value) {
+struct TypeResolver<'a> {
+    declarations: BTreeMap<String, &'a ast::StructItem>,
+    resolving: BTreeSet<String>,
+    resolved: BTreeMap<String, RecordType>,
+}
+
+impl<'a> TypeResolver<'a> {
+    fn new(source: &'a ast::SourceFile) -> Result<Self, Diagnostics> {
+        let mut declarations = BTreeMap::new();
+        for item in &source.items {
+            let ast::Item::Struct(record) = item else {
+                continue;
+            };
+            if declarations
+                .insert(record.name.value.clone(), record.as_ref())
+                .is_some()
+            {
+                return Err(Diagnostics::one(Diagnostic {
+                    code: DiagnosticCode::DuplicateDefinition,
+                    primary: record.name.span,
+                    labels: Vec::new(),
+                    payload: DiagnosticPayload::Name {
+                        name: record.name.value.clone(),
+                    },
+                }));
+            }
+        }
+        Ok(Self {
+            declarations,
+            resolving: BTreeSet::new(),
+            resolved: BTreeMap::new(),
+        })
+    }
+
+    fn resolve_all(mut self) -> Result<BTreeMap<String, RecordType>, Diagnostics> {
+        let names = self.declarations.keys().cloned().collect::<Vec<_>>();
+        for name in names {
+            self.resolve_record(&name)?;
+        }
+        Ok(self.resolved)
+    }
+
+    fn resolve_record(&mut self, name: &str) -> Result<RecordType, Diagnostics> {
+        if let Some(record) = self.resolved.get(name) {
+            return Ok(record.clone());
+        }
+        let declaration = *self
+            .declarations
+            .get(name)
+            .ok_or_else(|| unknown_name(Span { start: 0, end: 0 }, name))?;
+        if !self.resolving.insert(name.to_owned()) {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                declaration.span,
+                format!("recursive inline record `{name}`"),
+            )));
+        }
+
+        let mut field_names = BTreeSet::new();
+        let mut fields = Vec::with_capacity(declaration.fields.fields.len());
+        for field in &declaration.fields.fields {
+            if !field_names.insert(field.name.value.clone()) {
+                return Err(field_diagnostic(
+                    DiagnosticCode::DuplicateField,
+                    field.name.span,
+                    name,
+                    &field.name.value,
+                ));
+            }
+            fields.push(RecordField {
+                name: field.name.value.clone(),
+                ty: self.resolve_type(&field.ty)?,
+            });
+        }
+        self.resolving.remove(name);
+        let record = RecordType {
+            name: name.to_owned(),
+            fields,
+        };
+        self.resolved.insert(name.to_owned(), record.clone());
+        Ok(record)
+    }
+
+    fn resolve_type(&mut self, ty: &ast::Type) -> Result<Type, Diagnostics> {
+        match ty {
+            ast::Type::Path(path) if path_is(path, "Bool") => Ok(Type::Bool),
+            ast::Type::Path(path) if path_is(path, "Int") => Ok(Type::Int),
+            ast::Type::Path(path) if path_is(path, "String") => Ok(Type::String),
+            ast::Type::Path(path) if path_is(path, "Check") => Ok(Type::Check),
+            ast::Type::Generic(_) if is_stream_check_type(ty) => Ok(Type::StreamCheck),
+            ast::Type::Path(path) => {
+                let name = path_name(path);
+                if !self.declarations.contains_key(&name) {
+                    return Err(unknown_name(path.span, name));
+                }
+                self.resolve_record(&name).map(Type::Record)
+            }
+            ast::Type::Generic(generic) => Err(Diagnostics::one(Diagnostic::unsupported(
+                generic.span,
+                "generic type",
+            ))),
+            ast::Type::Tuple(tuple) => tuple
+                .elems
+                .iter()
+                .map(|element| self.resolve_type(element))
+                .collect::<Result<Vec<_>, _>>()
+                .map(Type::Tuple),
+        }
+    }
+}
+
+fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
+    let records = TypeResolver::new(source)?.resolve_all()?;
+    let mut signatures = BTreeMap::new();
+    let mut ordered_signatures = Vec::new();
+
+    for item in &source.items {
+        let ast::Item::Fn(function) = item else {
+            continue;
+        };
+        if records.contains_key(&function.name.value)
+            || signatures.contains_key(&function.name.value)
+        {
             return Err(Diagnostics::one(Diagnostic {
                 code: DiagnosticCode::DuplicateDefinition,
                 primary: function.name.span,
@@ -68,16 +188,38 @@ fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
                 },
             }));
         }
-        let id = FunctionId(u32::try_from(index).expect("module function count fits u32"));
-        let signature = declare_function(id, function)?;
+        let id = FunctionId(
+            u32::try_from(ordered_signatures.len()).expect("module function count fits u32"),
+        );
+        let signature = declare_function(id, function, &records)?;
         signatures.insert(function.name.value.clone(), signature.clone());
         ordered_signatures.push(signature);
     }
 
-    let mut module = Module::default();
-    for (item, signature) in source.items.iter().zip(&ordered_signatures) {
-        let ast::Item::Fn(function) = item;
-        let lowered = lower_function(signature, function, &signatures)?;
+    let context = ModuleContext {
+        signatures: &signatures,
+        records: &records,
+    };
+    let mut module = Module {
+        records: source
+            .items
+            .iter()
+            .filter_map(|item| match item {
+                ast::Item::Struct(record) => records.get(&record.name.value).cloned(),
+                ast::Item::Fn(_) => None,
+            })
+            .collect(),
+        ..Module::default()
+    };
+    let mut ordered_signatures = ordered_signatures.iter();
+    for item in &source.items {
+        let ast::Item::Fn(function) = item else {
+            continue;
+        };
+        let signature = ordered_signatures
+            .next()
+            .expect("every function has a declared signature");
+        let lowered = lower_function(signature, function, &context)?;
         if signature.is_test {
             module.tests.push(Test {
                 name: function.name.value.clone(),
@@ -93,6 +235,7 @@ fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
 fn declare_function(
     id: FunctionId,
     function: &ast::FnItem,
+    records: &BTreeMap<String, RecordType>,
 ) -> Result<FunctionSignature, Diagnostics> {
     let is_test = function
         .attributes
@@ -131,6 +274,7 @@ fn declare_function(
             parameter.name.span,
             &parameter.ty,
             ParameterKind::Positional,
+            records,
         )?;
     }
     if let Some(where_params) = &function.where_params {
@@ -155,6 +299,7 @@ fn declare_function(
                     parameter.name.span,
                     &parameter.ty,
                     ParameterKind::Named,
+                    records,
                 )?;
             }
         }
@@ -168,7 +313,7 @@ fn declare_function(
                 "function without a return type",
             ))
         })
-        .and_then(lower_declared_type)?;
+        .and_then(|ty| lower_declared_type(ty, records))?;
     Ok(FunctionSignature {
         id,
         is_test,
@@ -184,6 +329,7 @@ fn declare_parameter(
     span: Span,
     ty: &ast::Type,
     kind: ParameterKind,
+    records: &BTreeMap<String, RecordType>,
 ) -> Result<(), Diagnostics> {
     if !names.insert(name.to_owned()) {
         return Err(Diagnostics::one(Diagnostic {
@@ -199,7 +345,7 @@ fn declare_parameter(
         id: ParameterId(u32::try_from(parameters.len()).expect("parameter count fits u32")),
         name: name.to_owned(),
         span,
-        ty: lower_declared_type(ty)?,
+        ty: lower_declared_type(ty, records)?,
         kind,
     });
     Ok(())
@@ -241,26 +387,50 @@ fn path_is(path: &ast::TypePath, expected: &str) -> bool {
     path.segments.len() == 1 && path.segments[0].value == expected
 }
 
-fn lower_declared_type(ty: &ast::Type) -> Result<Type, Diagnostics> {
+fn path_name(path: &ast::TypePath) -> String {
+    path.segments
+        .iter()
+        .map(|segment| segment.value.as_str())
+        .collect::<Vec<_>>()
+        .join("::")
+}
+
+fn unknown_name(span: Span, name: impl Into<String>) -> Diagnostics {
+    Diagnostics::one(Diagnostic {
+        code: DiagnosticCode::UnknownName,
+        primary: span,
+        labels: Vec::new(),
+        payload: DiagnosticPayload::Name { name: name.into() },
+    })
+}
+
+fn field_diagnostic(code: DiagnosticCode, span: Span, record: &str, field: &str) -> Diagnostics {
+    Diagnostics::one(Diagnostic {
+        code,
+        primary: span,
+        labels: Vec::new(),
+        payload: DiagnosticPayload::Field {
+            record: record.to_owned(),
+            field: field.to_owned(),
+        },
+    })
+}
+
+fn lower_declared_type(
+    ty: &ast::Type,
+    records: &BTreeMap<String, RecordType>,
+) -> Result<Type, Diagnostics> {
     match ty {
         ast::Type::Path(path) if path_is(path, "Bool") => Ok(Type::Bool),
         ast::Type::Path(path) if path_is(path, "Int") => Ok(Type::Int),
         ast::Type::Path(path) if path_is(path, "String") => Ok(Type::String),
         ast::Type::Path(path) if path_is(path, "Check") => Ok(Type::Check),
         ast::Type::Generic(_) if is_stream_check_type(ty) => Ok(Type::StreamCheck),
-        ast::Type::Path(path) => Err(Diagnostics::one(Diagnostic {
-            code: DiagnosticCode::UnknownName,
-            primary: path.span,
-            labels: Vec::new(),
-            payload: DiagnosticPayload::Name {
-                name: path
-                    .segments
-                    .iter()
-                    .map(|segment| segment.value.as_str())
-                    .collect::<Vec<_>>()
-                    .join("::"),
-            },
-        })),
+        ast::Type::Path(path) => records
+            .get(&path_name(path))
+            .cloned()
+            .map(Type::Record)
+            .ok_or_else(|| unknown_name(path.span, path_name(path))),
         ast::Type::Generic(generic) => Err(Diagnostics::one(Diagnostic::unsupported(
             generic.span,
             "generic type",
@@ -268,7 +438,7 @@ fn lower_declared_type(ty: &ast::Type) -> Result<Type, Diagnostics> {
         ast::Type::Tuple(tuple) => tuple
             .elems
             .iter()
-            .map(lower_declared_type)
+            .map(|element| lower_declared_type(element, records))
             .collect::<Result<Vec<_>, _>>()
             .map(Type::Tuple),
     }
@@ -277,7 +447,7 @@ fn lower_declared_type(ty: &ast::Type) -> Result<Type, Diagnostics> {
 fn lower_function(
     signature: &FunctionSignature,
     function: &ast::FnItem,
-    signatures: &BTreeMap<String, FunctionSignature>,
+    context: &ModuleContext<'_>,
 ) -> Result<Function, Diagnostics> {
     let mut nodes = Vec::new();
     let mut yielded_checks = Vec::new();
@@ -312,7 +482,7 @@ fn lower_function(
     for statement in &function.body.stmts {
         match statement {
             ast::Stmt::Yield(statement) if signature.is_test => {
-                let check = lower_check(&mut nodes, &bindings, signatures, &statement.value)?;
+                let check = lower_check(&mut nodes, &bindings, context, &statement.value)?;
                 yielded_checks.push(check);
                 push_node(
                     &mut nodes,
@@ -340,9 +510,9 @@ fn lower_function(
                         },
                     }));
                 }
-                let value = lower_value(&mut nodes, &bindings, signatures, &statement.value)?;
+                let value = lower_value(&mut nodes, &bindings, context, &statement.value)?;
                 if let Some(annotation) = &statement.ty {
-                    let expected = lower_declared_type(annotation)?;
+                    let expected = lower_declared_type(annotation, context.records)?;
                     require_type(&value, &expected, type_span(annotation))?;
                 }
                 bindings.insert(statement.name.value.clone(), value);
@@ -359,7 +529,7 @@ fn lower_function(
         }
         (None, true) => None,
         (Some(tail), false) => {
-            let value = lower_value(&mut nodes, &bindings, signatures, tail)?;
+            let value = lower_value(&mut nodes, &bindings, context, tail)?;
             require_type(&value, &signature.return_type, expr_span(tail))?;
             Some(value.node)
         }
@@ -386,7 +556,7 @@ fn lower_function(
 fn lower_check(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
-    signatures: &BTreeMap<String, FunctionSignature>,
+    context: &ModuleContext<'_>,
     expression: &ast::Expr,
 ) -> Result<NodeId, Diagnostics> {
     let ast::Expr::Call(call) = expression else {
@@ -409,14 +579,14 @@ fn lower_check(
     let condition = match call.callee.value.as_str() {
         "expect" => {
             check_arity(call, 1)?;
-            let condition = lower_value(nodes, bindings, signatures, &call.args.args[0])?;
+            let condition = lower_value(nodes, bindings, context, &call.args.args[0])?;
             require_type(&condition, &Type::Bool, expr_span(&call.args.args[0]))?;
             condition.node
         }
         "expect_eq" | "expect_ne" => {
             check_arity(call, 2)?;
-            let left = lower_value(nodes, bindings, signatures, &call.args.args[0])?;
-            let right = lower_value(nodes, bindings, signatures, &call.args.args[1])?;
+            let left = lower_value(nodes, bindings, context, &call.args.args[0])?;
+            let right = lower_value(nodes, bindings, context, &call.args.args[1])?;
             require_same_type(&left, &right, call.span)?;
             push_node(
                 nodes,
@@ -461,7 +631,7 @@ struct LoweredValue {
 fn lower_value(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
-    signatures: &BTreeMap<String, FunctionSignature>,
+    context: &ModuleContext<'_>,
     expression: &ast::Expr,
 ) -> Result<LoweredValue, Diagnostics> {
     match expression {
@@ -510,13 +680,13 @@ fn lower_value(
         ast::Expr::Identifier(identifier) => {
             lookup_binding(bindings, &identifier.value, identifier.span)
         }
-        ast::Expr::Call(call) => lower_call(nodes, bindings, signatures, call),
-        ast::Expr::Binary(binary) => lower_binary(nodes, bindings, signatures, binary),
+        ast::Expr::Call(call) => lower_call(nodes, bindings, context, call),
+        ast::Expr::Binary(binary) => lower_binary(nodes, bindings, context, binary),
         ast::Expr::Tuple(tuple) => {
             let values = tuple
                 .elems
                 .iter()
-                .map(|element| lower_value(nodes, bindings, signatures, element))
+                .map(|element| lower_value(nodes, bindings, context, element))
                 .collect::<Result<Vec<_>, _>>()?;
             let ty = Type::Tuple(values.iter().map(|value| value.ty.clone()).collect());
             Ok(LoweredValue {
@@ -531,37 +701,118 @@ fn lower_value(
                 ty,
             })
         }
-        ast::Expr::Field(field) => {
-            let receiver = lower_value(nodes, bindings, signatures, &field.receiver)?;
-            let ast::Member::Index(index) = &field.name else {
-                return Err(Diagnostics::one(Diagnostic::unsupported(
-                    field.span,
-                    "named field projection",
-                )));
-            };
-            let index_value = index.value.parse::<usize>().map_err(|_| {
-                type_mismatch(
-                    index.span,
-                    "tuple index",
-                    format!("index `{}`", index.value),
-                )
-            })?;
-            let Type::Tuple(elements) = &receiver.ty else {
-                return Err(type_mismatch(
-                    expr_span(&field.receiver),
-                    "tuple",
-                    receiver.ty.name(),
+        ast::Expr::Record(record) => {
+            let record_name = path_name(&record.ty);
+            let record_type = context
+                .records
+                .get(&record_name)
+                .ok_or_else(|| unknown_name(record.ty.span, &record_name))?;
+            let mut provided = BTreeMap::new();
+            for field in &record.fields.fields {
+                if provided.insert(field.name.value.clone(), field).is_some() {
+                    return Err(field_diagnostic(
+                        DiagnosticCode::DuplicateField,
+                        field.name.span,
+                        &record_name,
+                        &field.name.value,
+                    ));
+                }
+            }
+
+            let mut inputs = Vec::with_capacity(record_type.fields.len());
+            for declared in &record_type.fields {
+                let field = provided.remove(&declared.name).ok_or_else(|| {
+                    field_diagnostic(
+                        DiagnosticCode::MissingField,
+                        record.span,
+                        &record_name,
+                        &declared.name,
+                    )
+                })?;
+                let value = if let Some(expression) = &field.value {
+                    lower_value(nodes, bindings, context, expression)?
+                } else {
+                    lookup_binding(bindings, &field.name.value, field.name.span)?
+                };
+                require_type(&value, &declared.ty, field.span)?;
+                inputs.push(value.node);
+            }
+            if let Some((name, field)) = provided.into_iter().next() {
+                return Err(field_diagnostic(
+                    DiagnosticCode::UnknownField,
+                    field.name.span,
+                    &record_name,
+                    &name,
                 ));
+            }
+
+            let ty = Type::Record(record_type.clone());
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    record.span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    inputs,
+                    Op::Record,
+                ),
+                ty,
+            })
+        }
+        ast::Expr::Field(field) => {
+            let receiver = lower_value(nodes, bindings, context, &field.receiver)?;
+            let (index_value, ty) = match &field.name {
+                ast::Member::Index(index) => {
+                    let index_value = index.value.parse::<usize>().map_err(|_| {
+                        type_mismatch(
+                            index.span,
+                            "tuple index",
+                            format!("index `{}`", index.value),
+                        )
+                    })?;
+                    let Type::Tuple(elements) = &receiver.ty else {
+                        return Err(type_mismatch(
+                            expr_span(&field.receiver),
+                            "tuple",
+                            receiver.ty.name(),
+                        ));
+                    };
+                    let ty = elements.get(index_value).cloned().ok_or_else(|| {
+                        type_mismatch(
+                            index.span,
+                            format!("tuple index below {}", elements.len()),
+                            index.value.clone(),
+                        )
+                    })?;
+                    (index_value, ty)
+                }
+                ast::Member::Identifier(name) => {
+                    let Type::Record(record) = &receiver.ty else {
+                        return Err(type_mismatch(
+                            expr_span(&field.receiver),
+                            "record",
+                            receiver.ty.name(),
+                        ));
+                    };
+                    let (index, declared) = record
+                        .fields
+                        .iter()
+                        .enumerate()
+                        .find(|(_, declared)| declared.name == name.value)
+                        .ok_or_else(|| {
+                            field_diagnostic(
+                                DiagnosticCode::UnknownField,
+                                name.span,
+                                &record.name,
+                                &name.value,
+                            )
+                        })?;
+                    (index, declared.ty.clone())
+                }
             };
-            let ty = elements.get(index_value).cloned().ok_or_else(|| {
-                type_mismatch(
-                    index.span,
-                    format!("tuple index below {}", elements.len()),
-                    index.value.clone(),
-                )
+            let index_value = u32::try_from(index_value).map_err(|_| {
+                type_mismatch(field.span, "aggregate field index", index_value.to_string())
             })?;
-            let index_value = u32::try_from(index_value)
-                .map_err(|_| type_mismatch(index.span, "tuple index", index.value.clone()))?;
             Ok(LoweredValue {
                 node: push_node(
                     nodes,
@@ -574,10 +825,10 @@ fn lower_value(
                 ty,
             })
         }
-        ast::Expr::Paren(paren) => lower_value(nodes, bindings, signatures, &paren.inner),
-        _ => Err(Diagnostics::one(Diagnostic::unsupported(
+        ast::Expr::Paren(paren) => lower_value(nodes, bindings, context, &paren.inner),
+        ast::Expr::Unary(_) => Err(Diagnostics::one(Diagnostic::unsupported(
             expr_span(expression),
-            "value expression",
+            "unary value expression",
         ))),
     }
 }
@@ -585,10 +836,10 @@ fn lower_value(
 fn lower_call(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
-    signatures: &BTreeMap<String, FunctionSignature>,
+    context: &ModuleContext<'_>,
     call: &ast::Call,
 ) -> Result<LoweredValue, Diagnostics> {
-    let signature = signatures.get(&call.callee.value).ok_or_else(|| {
+    let signature = context.signatures.get(&call.callee.value).ok_or_else(|| {
         Diagnostics::one(Diagnostic {
             code: DiagnosticCode::UnknownName,
             primary: call.callee.span,
@@ -620,7 +871,7 @@ fn lower_call(
 
     let mut inputs = Vec::with_capacity(signature.parameters.len());
     for (parameter, argument) in positional.into_iter().zip(&call.args.args) {
-        let value = lower_value(nodes, bindings, signatures, argument)?;
+        let value = lower_value(nodes, bindings, context, argument)?;
         require_type(&value, &parameter.ty, expr_span(argument))?;
         inputs.push(value.node);
     }
@@ -657,7 +908,7 @@ fn lower_call(
             )
         })?;
         let value = if let Some(expression) = &field.value {
-            lower_value(nodes, bindings, signatures, expression)?
+            lower_value(nodes, bindings, context, expression)?
         } else {
             lookup_binding(bindings, &field.name.value, field.name.span)?
         };
@@ -707,11 +958,11 @@ fn lookup_binding(
 fn lower_binary(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
-    signatures: &BTreeMap<String, FunctionSignature>,
+    context: &ModuleContext<'_>,
     binary: &ast::Binary,
 ) -> Result<LoweredValue, Diagnostics> {
-    let left = lower_value(nodes, bindings, signatures, &binary.left)?;
-    let right = lower_value(nodes, bindings, signatures, &binary.right)?;
+    let left = lower_value(nodes, bindings, context, &binary.left)?;
+    let right = lower_value(nodes, bindings, context, &binary.right)?;
     let (ty, op) = match binary.op.value.as_str() {
         "+" => {
             require_type(&left, &Type::Int, expr_span(&binary.left))?;
@@ -832,6 +1083,7 @@ fn expr_span(expression: &ast::Expr) -> Span {
         ast::Expr::Unary(value) => value.span,
         ast::Expr::Call(value) => value.span,
         ast::Expr::Field(value) => value.span,
+        ast::Expr::Record(value) => value.span,
         ast::Expr::Tuple(value) => value.span,
         ast::Expr::Paren(value) => value.span,
         ast::Expr::Identifier(value) => value.span,

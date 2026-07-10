@@ -522,7 +522,8 @@ fn lower_node(
             };
             (vec![op], ValueRepresentation::Word)
         }
-        Op::Tuple => lower_tuple_node(node, dst_region, values)?,
+        Op::Tuple => lower_aggregate_node(node, dst_region, values, AggregateKind::Tuple)?,
+        Op::Record => lower_aggregate_node(node, dst_region, values, AggregateKind::Record)?,
         Op::Project { index } => lower_project_node(node, dst_region, values, *index)?,
         Op::Eq | Op::Ne => {
             require_node_type(node, Type::Bool)?;
@@ -652,41 +653,97 @@ fn lower_call_node(
     })
 }
 
-fn lower_tuple_node(
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum AggregateKind {
+    Tuple,
+    Record,
+}
+
+struct AggregateElementLayout<'a> {
+    ty: &'a Type,
+    offset_words: usize,
+    words: FrameWords,
+}
+
+struct AggregateLayout<'a> {
+    kind: AggregateKind,
+    elements: Vec<AggregateElementLayout<'a>>,
+    words: FrameWords,
+}
+
+impl<'a> AggregateLayout<'a> {
+    fn for_type(ty: &'a Type, span: Span) -> Result<Self, Diagnostics> {
+        let (kind, element_types): (AggregateKind, Vec<&Type>) = match ty {
+            Type::Tuple(elements) => (AggregateKind::Tuple, elements.iter().collect()),
+            Type::Record(record) => (
+                AggregateKind::Record,
+                record.fields.iter().map(|field| &field.ty).collect(),
+            ),
+            _ => {
+                return Err(lowering_diagnostic(
+                    span,
+                    &format!("{} is not an aggregate type", ty.name()),
+                ));
+            }
+        };
+
+        let mut offset_words = 0usize;
+        let mut elements = Vec::with_capacity(element_types.len());
+        for element_type in element_types {
+            let words = type_words(element_type, span)?;
+            elements.push(AggregateElementLayout {
+                ty: element_type,
+                offset_words,
+                words,
+            });
+            offset_words = offset_words
+                .checked_add(words.as_usize())
+                .ok_or_else(|| lowering_diagnostic(span, "aggregate layout width overflow"))?;
+        }
+        let words = FrameWords::from_usize(offset_words)
+            .ok_or_else(|| lowering_diagnostic(span, "aggregate layout width overflow"))?;
+        Ok(Self {
+            kind,
+            elements,
+            words,
+        })
+    }
+}
+
+fn lower_aggregate_node(
     node: &Node,
     dst: FrameRegion,
     values: &BTreeMap<NodeId, LoweredSlot>,
+    expected_kind: AggregateKind,
 ) -> Result<(Vec<WeavyOp>, ValueRepresentation), Diagnostics> {
-    let Type::Tuple(elements) = &node.ty else {
+    let layout = AggregateLayout::for_type(&node.ty, node.span)?;
+    if layout.kind != expected_kind {
         return Err(lowering_diagnostic(
             node.span,
-            "Tuple op has a non-tuple type",
+            "aggregate construction op does not match its VIR type",
         ));
-    };
-    require_input_count(node, elements.len())?;
+    }
+    require_input_count(node, layout.elements.len())?;
     let mut ops = Vec::new();
-    let mut offset = 0usize;
-    for (index, element) in elements.iter().enumerate() {
+    for (index, element) in layout.elements.iter().enumerate() {
         let value = input_value(node, values, index)?;
         require_value(
             node,
             &value,
-            element,
-            representation_for_type(element, node.span)?,
+            element.ty,
+            representation_for_type(element.ty, node.span)?,
         )?;
-        let words = type_words(element, node.span)?;
-        let target = dst.subregion(offset, words).ok_or_else(|| {
-            lowering_diagnostic(node.span, "tuple element lies outside its frame region")
-        })?;
+        let target = dst
+            .subregion(element.offset_words, element.words)
+            .ok_or_else(|| {
+                lowering_diagnostic(node.span, "aggregate field lies outside its frame region")
+            })?;
         ops.extend(copy_region(node, value.region, target)?);
-        offset = offset
-            .checked_add(words.as_usize())
-            .ok_or_else(|| lowering_diagnostic(node.span, "tuple element offset overflow"))?;
     }
-    if offset != dst.words().as_usize() {
+    if layout.words != dst.words() {
         return Err(lowering_diagnostic(
             node.span,
-            "tuple elements do not fill their frame region",
+            "aggregate fields do not fill their frame region",
         ));
     }
     Ok((ops, ValueRepresentation::InlineComposite))
@@ -700,12 +757,7 @@ fn lower_project_node(
 ) -> Result<(Vec<WeavyOp>, ValueRepresentation), Diagnostics> {
     require_input_count(node, 1)?;
     let receiver = input_value(node, values, 0)?;
-    let Type::Tuple(elements) = &receiver.ty else {
-        return Err(lowering_diagnostic(
-            node.span,
-            "tuple projection receiver has a non-tuple type",
-        ));
-    };
+    let layout = AggregateLayout::for_type(&receiver.ty, node.span)?;
     require_value(
         node,
         &receiver,
@@ -713,34 +765,35 @@ fn lower_project_node(
         ValueRepresentation::InlineComposite,
     )?;
     let index = usize::try_from(index)
-        .map_err(|_| lowering_diagnostic(node.span, "tuple projection index overflow"))?;
-    let element = elements
+        .map_err(|_| lowering_diagnostic(node.span, "aggregate projection index overflow"))?;
+    let element = layout
+        .elements
         .get(index)
-        .ok_or_else(|| lowering_diagnostic(node.span, "tuple projection is out of bounds"))?;
-    if &node.ty != element {
+        .ok_or_else(|| lowering_diagnostic(node.span, "aggregate projection is out of bounds"))?;
+    if &node.ty != element.ty {
         return Err(lowering_diagnostic(
             node.span,
-            "tuple projection result has the wrong VIR type",
+            "aggregate projection result has the wrong VIR type",
         ));
     }
-    let offset = elements[..index].iter().try_fold(0usize, |offset, prior| {
-        offset.checked_add(prior.word_width()?)
-    });
-    let offset =
-        offset.ok_or_else(|| lowering_diagnostic(node.span, "tuple projection offset overflow"))?;
-    let words = type_words(element, node.span)?;
-    let source = receiver.region.subregion(offset, words).ok_or_else(|| {
-        lowering_diagnostic(node.span, "tuple projection lies outside its frame region")
-    })?;
+    let source = receiver
+        .region
+        .subregion(element.offset_words, element.words)
+        .ok_or_else(|| {
+            lowering_diagnostic(
+                node.span,
+                "aggregate projection lies outside its frame region",
+            )
+        })?;
     if source.words() != dst.words() {
         return Err(lowering_diagnostic(
             node.span,
-            "tuple projection destination has the wrong frame width",
+            "aggregate projection destination has the wrong frame width",
         ));
     }
     Ok((
         copy_region(node, source, dst)?,
-        representation_for_type(element, node.span)?,
+        representation_for_type(element.ty, node.span)?,
     ))
 }
 
@@ -853,7 +906,7 @@ fn representation_for_type(ty: &Type, span: Span) -> Result<ValueRepresentation,
     match ty {
         Type::Bool | Type::Int | Type::Check => Ok(ValueRepresentation::Word),
         Type::String => Ok(ValueRepresentation::RealizedHandle),
-        Type::Tuple(_) => Ok(ValueRepresentation::InlineComposite),
+        Type::Tuple(_) | Type::Record(_) => Ok(ValueRepresentation::InlineComposite),
         Type::StreamCheck => Err(lowering_diagnostic(
             span,
             "Stream<Check> has no island-interior word representation",

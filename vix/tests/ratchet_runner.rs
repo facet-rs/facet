@@ -267,6 +267,69 @@ fn rung_005_tuples_and_positional_projection_run_through_vir_and_weavy() {
 
 #[test]
 fn rung_006_records_and_named_projection_run_through_vir_and_weavy() {
+    let module = Compiler::new()
+        .compile(RUNG_006)
+        .expect("rung 006 compiles");
+    assert_eq!(module.records.len(), 1);
+    assert_eq!(module.records[0].name, "Point");
+    assert_eq!(
+        module.records[0]
+            .fields
+            .iter()
+            .map(|field| field.name.as_str())
+            .collect::<Vec<_>>(),
+        ["x", "y"]
+    );
+    assert!(module.functions.iter().any(|function| {
+        function
+            .nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::Record))
+    }));
+    let mut projected_fields = module
+        .functions
+        .iter()
+        .flat_map(|function| &function.nodes)
+        .filter_map(|node| match node.op {
+            VirOp::Project { index } => Some(index),
+            _ => None,
+        })
+        .collect::<Vec<_>>();
+    projected_fields.sort_unstable();
+    assert_eq!(projected_fields, [0, 1]);
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    assert_eq!(partitioned.islands.len(), 2);
+    let renamed_source = RUNG_006.replace("Point", "Pixel");
+    let renamed = Compiler::new()
+        .compile(&renamed_source)
+        .expect("nominally renamed rung 006 compiles");
+    let renamed = renamed.partition_test(&renamed.tests[0]);
+    assert_ne!(
+        partitioned.islands[0].canonical_recipe_bytes(),
+        renamed.islands[0].canonical_recipe_bytes(),
+        "a nominal record rename must change recipe identity"
+    );
+
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 006 lowers to Weavy");
+        assert!(lowered.program.fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+        assert!(lowered.program.fns.iter().any(|function| {
+            function
+                .code
+                .iter()
+                .any(|op| matches!(op, WeavyOp::CopyI64 { .. }))
+        }));
+    }
+
     let report = run_source(RUNG_006).expect("rung 006 compiles and runs");
     assert!(report.passed());
     assert!(report.agrees());

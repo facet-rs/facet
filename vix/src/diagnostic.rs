@@ -17,6 +17,9 @@ pub enum DiagnosticCode {
     LoweringUnsupported,
     RuntimeInvariant,
     DuplicateBinding,
+    UnknownField,
+    MissingField,
+    DuplicateField,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -34,6 +37,7 @@ pub enum DiagnosticPayload {
     Arity { expected: u32, found: u32 },
     Unsupported { construct: String },
     Invariant { detail: String },
+    Field { record: String, field: String },
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
