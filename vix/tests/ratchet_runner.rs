@@ -1210,6 +1210,35 @@ fn rung_019_tuple_let_destructures_one_value_through_vir_and_weavy() {
 
 #[test]
 fn rung_020_tuple_match_patterns_select_and_bind_in_source_order() {
+    let module = Compiler::new()
+        .compile(RUNG_020)
+        .expect("rung 020 compiles");
+    let describe = module
+        .functions
+        .iter()
+        .find(|function| function.name == "describe")
+        .expect("rung 020 contains describe");
+    let (arms, fallback) = describe
+        .nodes
+        .iter()
+        .find_map(|node| match &node.op {
+            VirOp::OrderedMatch { arms, fallback } => Some((arms, fallback)),
+            _ => None,
+        })
+        .expect("describe contains an ordered tuple-pattern match");
+    assert_eq!(arms.len(), 2);
+    assert!(arms.iter().all(|arm| {
+        arm.condition.nodes.contains(&arm.condition.output)
+            && arm.body.nodes.contains(&arm.body.output)
+    }));
+    assert!(fallback.nodes.contains(&fallback.output));
+    assert!(
+        describe
+            .nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::If { .. }))
+    );
+
     let report = run_source(RUNG_020).expect("rung 020 compiles and runs");
     assert!(report.passed());
     assert!(report.agrees());

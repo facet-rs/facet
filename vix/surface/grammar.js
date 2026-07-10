@@ -250,7 +250,7 @@ module.exports = grammar({
         optional(field("payload", $._variant_pattern_payload)),
       ),
     _variant_pattern_payload: ($) => choice($.tuple_pattern, $.record_pattern),
-    tuple_pattern: ($) => seq("(", sepBy(",", field("binding", $.identifier)), ")"),
+    tuple_pattern: ($) => seq("(", sepBy(",", field("elem", $._pattern)), ")"),
     record_pattern: ($) => seq("{", sepBy(",", field("field", $.pattern_field)), "}"),
     pattern_field: ($) =>
       seq(

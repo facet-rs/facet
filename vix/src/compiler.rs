@@ -682,10 +682,10 @@ fn lower_let_statement(
         let expected = lower_declared_type(annotation, context.types)?;
         require_type(&value, &expected, type_span(annotation))?;
     }
-    bind_irrefutable_let_pattern(nodes, bindings, &statement.pattern, &value)
+    bind_irrefutable_pattern(nodes, bindings, &statement.pattern, &value)
 }
 
-fn bind_irrefutable_let_pattern(
+fn bind_irrefutable_pattern(
     nodes: &mut Vec<Node>,
     bindings: &mut BTreeMap<String, LoweredValue>,
     pattern: &ast::Pattern,
@@ -697,22 +697,22 @@ fn bind_irrefutable_let_pattern(
             let Type::Tuple(elements) = &value.ty else {
                 return Err(type_mismatch(pattern.span, "tuple", value.ty.name()));
             };
-            if pattern.bindings.len() != elements.len() {
+            if pattern.elems.len() != elements.len() {
                 return Err(type_mismatch(
                     pattern.span,
                     format!("tuple pattern with {} elements", elements.len()),
-                    format!("tuple pattern with {} elements", pattern.bindings.len()),
+                    format!("tuple pattern with {} elements", pattern.elems.len()),
                 ));
             }
             let elements = elements.clone();
-            for (index, (binding, ty)) in pattern.bindings.iter().zip(elements).enumerate() {
+            for (index, (element, ty)) in pattern.elems.iter().zip(elements).enumerate() {
                 let index = u32::try_from(index).map_err(|_| {
                     type_mismatch(pattern.span, "tuple field index", index.to_string())
                 })?;
                 let projected = LoweredValue {
                     node: push_node(
                         nodes,
-                        binding.span,
+                        pattern_span(element),
                         ty.clone(),
                         EffectFacts::PURE,
                         vec![value.node],
@@ -720,18 +720,18 @@ fn bind_irrefutable_let_pattern(
                     ),
                     ty,
                 };
-                bind_name(bindings, &projected, binding)?;
+                bind_irrefutable_pattern(nodes, bindings, element, &projected)?;
             }
             Ok(())
         }
         ast::Pattern::Wildcard(_) => Ok(()),
         ast::Pattern::Variant(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
             pattern.span,
-            "refutable let pattern",
+            "refutable pattern",
         ))),
         ast::Pattern::Number(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
             pattern.span,
-            "refutable let pattern",
+            "refutable pattern",
         ))),
     }
 }
@@ -1534,12 +1534,13 @@ fn lower_ordered_match(
         } else {
             result_type = Some(output.ty.clone());
         }
-        let body = control_region(nodes, body_start, output.node);
-
         if let Some(condition) = condition {
-            arms.push(OrderedMatchArm { condition, body });
+            arms.push(OrderedMatchArm {
+                condition,
+                body: control_region(nodes, body_start, output.node),
+            });
         } else {
-            fallback = Some(body);
+            fallback = Some(control_region(nodes, condition_start, output.node));
         }
     }
 
@@ -1607,10 +1608,95 @@ fn lower_ordered_pattern(
             pattern.span,
             "guarded enum pattern",
         ))),
-        ast::Pattern::Tuple(pattern) => Err(Diagnostics::one(Diagnostic::unsupported(
-            pattern.span,
-            "tuple match pattern",
-        ))),
+        ast::Pattern::Tuple(pattern) => {
+            let Type::Tuple(elements) = &scrutinee.ty else {
+                return Err(type_mismatch(pattern.span, "tuple", scrutinee.ty.name()));
+            };
+            if pattern.elems.len() != elements.len() {
+                return Err(type_mismatch(
+                    pattern.span,
+                    format!("tuple pattern with {} elements", elements.len()),
+                    format!("tuple pattern with {} elements", pattern.elems.len()),
+                ));
+            }
+
+            let elements = elements.clone();
+            let mut condition = None;
+            for (index, (element, ty)) in pattern.elems.iter().zip(elements).enumerate() {
+                if matches!(element, ast::Pattern::Wildcard(_)) {
+                    continue;
+                }
+                let fragment_start = nodes.len();
+                let index = u32::try_from(index).map_err(|_| {
+                    type_mismatch(pattern.span, "tuple field index", index.to_string())
+                })?;
+                let projected = LoweredValue {
+                    node: push_node(
+                        nodes,
+                        pattern_span(element),
+                        ty.clone(),
+                        EffectFacts::PURE,
+                        vec![scrutinee.node],
+                        Op::Project { index },
+                    ),
+                    ty,
+                };
+                let fragment = lower_ordered_pattern(nodes, bindings, &projected, element)?;
+                condition = append_pattern_condition(
+                    nodes,
+                    pattern_span(element),
+                    condition,
+                    fragment_start,
+                    fragment,
+                );
+            }
+            Ok(condition)
+        }
+    }
+}
+
+fn append_pattern_condition(
+    nodes: &mut Vec<Node>,
+    span: Span,
+    accumulated: Option<LoweredValue>,
+    fragment_start: usize,
+    fragment: Option<LoweredValue>,
+) -> Option<LoweredValue> {
+    let Some(accumulated) = accumulated else {
+        return fragment;
+    };
+    if fragment.is_none() && fragment_start == nodes.len() {
+        return Some(accumulated);
+    }
+
+    let consequent_value = fragment.unwrap_or_else(|| lower_bool_constant(nodes, span, true));
+    let consequent = control_region(nodes, fragment_start, consequent_value.node);
+    let alternative_start = nodes.len();
+    let otherwise = lower_bool_constant(nodes, span, false);
+    let alternative = control_region(nodes, alternative_start, otherwise.node);
+    Some(LoweredValue {
+        node: push_node(
+            nodes,
+            span,
+            Type::Bool,
+            EffectFacts::PURE,
+            vec![accumulated.node],
+            Op::If {
+                consequent,
+                alternative,
+            },
+        ),
+        ty: Type::Bool,
+    })
+}
+
+fn pattern_span(pattern: &ast::Pattern) -> Span {
+    match pattern {
+        ast::Pattern::Variant(pattern) => pattern.span,
+        ast::Pattern::Binding(pattern) => pattern.span,
+        ast::Pattern::Number(pattern) => pattern.span,
+        ast::Pattern::Wildcard(span) => *span,
+        ast::Pattern::Tuple(pattern) => pattern.span,
     }
 }
 
@@ -1702,19 +1788,19 @@ fn bind_variant_pattern(
     match (&variant.payload, &pattern.payload) {
         (VariantPayload::Unit, None) => Ok(()),
         (VariantPayload::Tuple(types), Some(ast::VariantPatternPayload::Tuple(tuple))) => {
-            if types.len() != tuple.bindings.len() {
-                return Err(invalid_arity(tuple.span, types.len(), tuple.bindings.len()));
+            if types.len() != tuple.elems.len() {
+                return Err(invalid_arity(tuple.span, types.len(), tuple.elems.len()));
             }
-            for (field, (ty, binding)) in types.iter().zip(&tuple.bindings).enumerate() {
-                bind_variant_field(
+            for (field, (ty, element)) in types.iter().zip(&tuple.elems).enumerate() {
+                let projected = project_variant_field(
                     nodes,
-                    bindings,
                     scrutinee,
                     variant_index,
                     field,
                     ty,
-                    binding,
+                    pattern_span(element),
                 )?;
+                bind_irrefutable_pattern(nodes, bindings, element, &projected)?;
             }
             Ok(())
         }
@@ -1740,15 +1826,15 @@ fn bind_variant_pattern(
                     )
                 })?;
                 let binding = field.binding.as_ref().unwrap_or(&field.name);
-                bind_variant_field(
+                let projected = project_variant_field(
                     nodes,
-                    bindings,
                     scrutinee,
                     variant_index,
                     field_index,
                     &declared.ty,
-                    binding,
+                    binding.span,
                 )?;
+                bind_name(bindings, &projected, binding)?;
             }
             if let Some((name, field)) = supplied.into_iter().next() {
                 return Err(field_diagnostic(
@@ -1769,42 +1855,29 @@ fn bind_variant_pattern(
     }
 }
 
-fn bind_variant_field(
+fn project_variant_field(
     nodes: &mut Vec<Node>,
-    bindings: &mut BTreeMap<String, LoweredValue>,
     scrutinee: &LoweredValue,
     variant: usize,
     field: usize,
     ty: &Type,
-    binding: &crate::support::Spanned<String>,
-) -> Result<(), Diagnostics> {
-    if bindings.contains_key(&binding.value) {
-        return Err(Diagnostics::one(Diagnostic {
-            code: DiagnosticCode::DuplicateBinding,
-            primary: binding.span,
-            labels: Vec::new(),
-            payload: DiagnosticPayload::Name {
-                name: binding.value.clone(),
-            },
-        }));
-    }
+    span: Span,
+) -> Result<LoweredValue, Diagnostics> {
     let variant = u32::try_from(variant)
-        .map_err(|_| type_mismatch(binding.span, "variant index", variant.to_string()))?;
+        .map_err(|_| type_mismatch(span, "variant index", variant.to_string()))?;
     let field = u32::try_from(field)
-        .map_err(|_| type_mismatch(binding.span, "variant field index", field.to_string()))?;
-    let value = LoweredValue {
+        .map_err(|_| type_mismatch(span, "variant field index", field.to_string()))?;
+    Ok(LoweredValue {
         node: push_node(
             nodes,
-            binding.span,
+            span,
             ty.clone(),
             EffectFacts::PURE,
             vec![scrutinee.node],
             Op::VariantProject { variant, field },
         ),
         ty: ty.clone(),
-    };
-    bindings.insert(binding.value.clone(), value);
-    Ok(())
+    })
 }
 
 fn lower_call(
