@@ -640,6 +640,10 @@ pub enum ProgramDefect {
         first: ValueFieldSite,
         second: ValueFieldSite,
     },
+    ValueShapeProductGap {
+        value_shape: ValueShapeRef,
+        offset: usize,
+    },
     ValueShapeFieldOverlapsSelector {
         value_shape: ValueShapeRef,
         variant: usize,
@@ -909,17 +913,18 @@ impl Verifier<'_> {
             let shape_size = self.validate_shape(&contract.shape, owner, None)?;
             match &contract.kind {
                 ValueShapeKind::Product { fields } => {
-                    self.validate_value_fields(value_shape, shape_size, fields, None)?;
+                    self.validate_product_fields(value_shape, shape_size, fields)?;
                 }
                 ValueShapeKind::Enum { selector, variants } => {
                     let selector =
                         self.validate_value_selector(value_shape, shape_size, selector)?;
                     for (variant_index, variant) in variants.iter().enumerate() {
-                        self.validate_value_fields(
+                        self.validate_enum_variant_fields(
                             value_shape,
                             shape_size,
+                            variant_index,
+                            selector,
                             &variant.fields,
-                            Some((variant_index, selector)),
                         )?;
                     }
                 }
@@ -993,43 +998,129 @@ impl Verifier<'_> {
         Ok(RegionBounds { start, end })
     }
 
-    fn validate_value_fields(
+    fn validate_product_fields(
         &self,
         value_shape: ValueShapeRef,
         shape_size: usize,
         fields: &[ValueFieldUse],
-        variant: Option<(usize, RegionBounds)>,
     ) -> Result<(), ProgramError> {
         let mut ranges: Vec<RegionBounds> = Vec::with_capacity(fields.len());
         for (field_index, field) in fields.iter().enumerate() {
-            let site = match variant {
-                Some((variant, _)) => ValueFieldSite::Variant {
-                    variant,
-                    field: field_index,
-                },
-                None => ValueFieldSite::Product { field: field_index },
+            let site = ValueFieldSite::Product { field: field_index };
+            let owner = ShapeOwner::ValueShapeProductField {
+                value_shape,
+                field: field_index,
             };
-            let owner = match site {
-                ValueFieldSite::Product { field } => {
-                    ShapeOwner::ValueShapeProductField { value_shape, field }
-                }
-                ValueFieldSite::Variant { variant, field } => ShapeOwner::ValueShapeVariantField {
-                    value_shape,
-                    variant,
-                    field,
-                },
+            let nested_site = ValueShapeReferenceSite::ProductField {
+                value_shape,
+                field: field_index,
             };
-            let nested_site = match site {
-                ValueFieldSite::Product { field } => {
-                    ValueShapeReferenceSite::ProductField { value_shape, field }
-                }
-                ValueFieldSite::Variant { variant, field } => {
-                    ValueShapeReferenceSite::VariantField {
+            if !field.offset.is_multiple_of(WORD_SIZE_U32) {
+                return Err(
+                    self.global(ProgramDefect::ValueShapeFieldOffsetNotWordAligned {
                         value_shape,
-                        variant,
-                        field,
-                    }
+                        site,
+                        offset: field.offset,
+                    }),
+                );
+            }
+            let size = self.validate_shape(&field.shape, owner, None)?;
+            let start = usize::try_from(field.offset).map_err(|_| {
+                self.global(ProgramDefect::ValueShapeFieldEndOverflow {
+                    value_shape,
+                    site,
+                    offset: field.offset,
+                    size,
+                })
+            })?;
+            let end = start.checked_add(size).ok_or_else(|| {
+                self.global(ProgramDefect::ValueShapeFieldEndOverflow {
+                    value_shape,
+                    site,
+                    offset: field.offset,
+                    size,
+                })
+            })?;
+            if end > shape_size {
+                return Err(self.global(ProgramDefect::ValueShapeFieldOutOfBounds {
+                    value_shape,
+                    site,
+                    end,
+                    shape_size,
+                }));
+            }
+            let parent = self.shape_slice(
+                &self.contract.value_shapes[value_shape.0 as usize].shape,
+                start,
+                end,
+            );
+            if field.shape != parent {
+                return Err(self.global(ProgramDefect::ValueShapeFieldKinds {
+                    value_shape,
+                    site,
+                    field: field.shape.clone(),
+                    parent,
+                }));
+            }
+            if let Some(nested) = field.value_shape {
+                self.validate_value_shape_ref(nested_site, nested, &field.shape, None)?;
+            }
+            let bounds = RegionBounds { start, end };
+            for (prior_index, prior) in ranges.iter().copied().enumerate() {
+                if prior.start < bounds.end && bounds.start < prior.end {
+                    return Err(self.global(ProgramDefect::ValueShapeFieldOverlap {
+                        value_shape,
+                        first: ValueFieldSite::Product { field: prior_index },
+                        second: site,
+                    }));
                 }
+            }
+            ranges.push(bounds);
+        }
+
+        ranges.sort_by_key(|range| range.start);
+        let mut expected_start = 0usize;
+        for range in ranges {
+            if range.start != expected_start {
+                return Err(self.global(ProgramDefect::ValueShapeProductGap {
+                    value_shape,
+                    offset: expected_start,
+                }));
+            }
+            expected_start = range.end;
+        }
+        if expected_start != shape_size {
+            return Err(self.global(ProgramDefect::ValueShapeProductGap {
+                value_shape,
+                offset: expected_start,
+            }));
+        }
+        Ok(())
+    }
+
+    fn validate_enum_variant_fields(
+        &self,
+        value_shape: ValueShapeRef,
+        shape_size: usize,
+        variant_index: usize,
+        selector: RegionBounds,
+        fields: &[ValueFieldUse],
+    ) -> Result<(), ProgramError> {
+        let mut ranges: Vec<RegionBounds> = Vec::with_capacity(fields.len());
+        for (field_index, field) in fields.iter().enumerate() {
+            let site = ValueFieldSite::Variant {
+                variant: variant_index,
+                field: field_index,
+            };
+            let owner = ShapeOwner::ValueShapeVariantField {
+                value_shape,
+                variant: variant_index,
+                field: field_index,
+            };
+            let nested_site = ValueShapeReferenceSite::VariantField {
+                value_shape,
+                variant: variant_index,
+                field: field_index,
             };
             if !field.offset.is_multiple_of(WORD_SIZE_U32) {
                 return Err(
@@ -1082,10 +1173,7 @@ impl Verifier<'_> {
                 self.validate_value_shape_ref(nested_site, nested, &field.shape, None)?;
             }
             let bounds = RegionBounds { start, end };
-            if let Some((variant_index, selector)) = variant
-                && selector.start < bounds.end
-                && bounds.start < selector.end
-            {
+            if selector.start < bounds.end && bounds.start < selector.end {
                 return Err(self.global(ProgramDefect::ValueShapeFieldOverlapsSelector {
                     value_shape,
                     variant: variant_index,
@@ -1094,12 +1182,9 @@ impl Verifier<'_> {
             }
             for (prior_index, prior) in ranges.iter().copied().enumerate() {
                 if prior.start < bounds.end && bounds.start < prior.end {
-                    let first = match variant {
-                        Some((variant, _)) => ValueFieldSite::Variant {
-                            variant,
-                            field: prior_index,
-                        },
-                        None => ValueFieldSite::Product { field: prior_index },
+                    let first = ValueFieldSite::Variant {
+                        variant: variant_index,
+                        field: prior_index,
                     };
                     return Err(self.global(ProgramDefect::ValueShapeFieldOverlap {
                         value_shape,
@@ -4353,6 +4438,10 @@ mod tests {
                 fields: vec![field(0, scalar.clone())],
             },
         };
+        let unit = ValueShapeContract {
+            shape: RegionShape::default(),
+            kind: ValueShapeKind::Product { fields: vec![] },
+        };
 
         let valid_outcome = (
             Program {
@@ -4493,6 +4582,15 @@ mod tests {
                 value_shapes: vec![pair.clone(), pair],
             },
         );
+        let zero_word_product = (
+            Program::default(),
+            ProgramContract {
+                functions: vec![],
+                calls: vec![],
+                schemas: vec![],
+                value_shapes: vec![unit],
+            },
+        );
 
         for (name, program, contract) in [
             ("compact enum", valid_outcome.0, valid_outcome.1),
@@ -4503,6 +4601,11 @@ mod tests {
                 "distinct nominal shapes",
                 duplicate_nominal_shapes.0,
                 duplicate_nominal_shapes.1,
+            ),
+            (
+                "zero word product",
+                zero_word_product.0,
+                zero_word_product.1,
             ),
         ] {
             program.verify(contract).expect(name);
@@ -4854,6 +4957,9 @@ mod tests {
             shape: pair_shape.clone(),
             kind: ValueShapeKind::Product { fields },
         };
+        let union_shape = RegionShape::new(vec![
+            kinds(WordKind::Scalar).allowing(WordKind::Handle(string)),
+        ]);
         let enum_shape = |selector, variants| ValueShapeContract {
             shape: pair_shape.clone(),
             kind: ValueShapeKind::Enum { selector, variants },
@@ -4881,6 +4987,54 @@ mod tests {
         );
 
         let cases = vec![
+            InvalidCase {
+                name: "product union narrowing",
+                program: Program::default(),
+                contract: ProgramContract {
+                    functions: vec![],
+                    calls: vec![],
+                    schemas: vec![string_schema.clone()],
+                    value_shapes: vec![ValueShapeContract {
+                        shape: union_shape.clone(),
+                        kind: ValueShapeKind::Product {
+                            fields: vec![field(0, scalar.clone())],
+                        },
+                    }],
+                },
+                expected: global_error(ProgramDefect::ValueShapeFieldKinds {
+                    value_shape: ValueShapeRef(0),
+                    site: ValueFieldSite::Product { field: 0 },
+                    field: scalar.clone(),
+                    parent: union_shape,
+                }),
+            },
+            InvalidCase {
+                name: "empty nonunit product",
+                program: Program::default(),
+                contract: table(vec![], vec![product(vec![])]),
+                expected: global_error(ProgramDefect::ValueShapeProductGap {
+                    value_shape: ValueShapeRef(0),
+                    offset: 0,
+                }),
+            },
+            InvalidCase {
+                name: "partial product",
+                program: Program::default(),
+                contract: table(vec![], vec![product(vec![field(0, scalar.clone())])]),
+                expected: global_error(ProgramDefect::ValueShapeProductGap {
+                    value_shape: ValueShapeRef(0),
+                    offset: 8,
+                }),
+            },
+            InvalidCase {
+                name: "gapped product",
+                program: Program::default(),
+                contract: table(vec![], vec![product(vec![field(8, scalar.clone())])]),
+                expected: global_error(ProgramDefect::ValueShapeProductGap {
+                    value_shape: ValueShapeRef(0),
+                    offset: 0,
+                }),
+            },
             InvalidCase {
                 name: "bad selector kind",
                 program: Program::default(),
