@@ -645,6 +645,7 @@ mod tests {
     static ENV_LOCK: Mutex<()> = Mutex::new(());
 
     type LaneRun = Result<(TaskStep, Vec<u8>, Vec<TaskEvent>), TaskFault>;
+    type FaultPredicate = fn(&TaskFault) -> bool;
 
     fn layout(words: usize) -> Layout {
         Layout {
@@ -1223,7 +1224,7 @@ mod tests {
     #[test]
     fn public_executable_reports_indirect_faults_and_poisons() {
         let oversized = i64::from(u32::MAX) + 1;
-        let cases: [(i64, &str, fn(&TaskFault) -> bool); 4] = [
+        let cases: [(i64, &str, FaultPredicate); 4] = [
             (-1, "negative", |fault: &TaskFault| {
                 matches!(
                     fault,
