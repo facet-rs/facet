@@ -43,6 +43,13 @@ The value model: how values are typed, constructed, read, and discriminated.
 > both selector validity and the requested variant before it extracts a field.
 > Ordinary word copies may preserve a complete structural shape, but may not
 > narrow a selector-dependent union to one of its leaves.
+>
+> Products use the same proof-carrying discipline without a dynamic selector:
+> construction names every declared field exactly once, projection names one
+> declared field and materializes its exact shape, and whole-value copies
+> preserve one identical structural-shape identity. A one-word product is not
+> thereby a scalar leaf. Structural branch merges use whole-value copies;
+> field-wise raw copies are not an alternate construction or projection API.
 
 > r[machine.value.proof-carrying-force]
 >

@@ -89,6 +89,18 @@ artifacts and never second-guesses the substrate.
 > rule. A future slot-coalescing allocator must introduce and prove an explicit
 > alias contract before its programs are admissible.
 >
+> Non-discriminated products are structural values too. A verified
+> `ProductConstruct` writes one complete product from exactly one source for
+> every declared field; a verified `ProductProject` copies one declared field
+> into a destination carrying that field's exact shape; and a verified
+> `CopyValue` copies one complete value between regions carrying the same
+> structural-shape identity. This remains true for one-word products. Raw word
+> copies apply only to non-structural scalar leaves: they may not construct a
+> product field by field, project a field out of a structural region, or merge
+> a structural branch result. Record spread elaborates to typed projections
+> followed by one complete product construction; a separate mutation/update
+> primitive is not required for correctness.
+>
 > Compact discriminated values add selector-correlated shape facts to that
 > manifest. The contract names the enum shape, its compact width and selector
 > word, every valid variant, and each variant field's shape and shared-payload
@@ -113,6 +125,16 @@ artifacts and never second-guesses the substrate.
 > returns, arrays, and whole-value copies preserve the same structural shape
 > identity recursively. Canonical inactive payload bytes serve representation
 > and identity invariants only; they do not authorize handle-integer equality.
+>
+> Type-directed equality expansion remains an implementation of the original
+> Vix equality node, not a set of synthetic VIR nodes and not one opaque Weavy
+> `ValueEq` operation. When compact-enum equality needs checked projections,
+> the function layout allocates permanent, non-overlapping typed temporary
+> regions for the projected left and right fields. Each temporary carries the
+> exact field shape in the frame contract, and every generated projection,
+> dispatch, and recursive comparison remains attributed to the original
+> equality node. These lowering-only regions do not enter recipe identity. A
+> shared union-shaped scratch region may not impersonate several field shapes.
 >
 > Verification proves all static safety obligations before any lane executes:
 > statically named function, call, and jump targets; function fallthrough;
