@@ -7,7 +7,7 @@ use weavy::mem::Layout;
 use weavy::task::{Fn as WeavyFn, Op as WeavyOp, Program as WeavyProgram};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics};
-use crate::runtime::{DemandKey, DemandPreimage, RecipeId};
+use crate::runtime::{DemandKey, DemandPreimage, FrameSlot, RecipeId, SchemaId};
 use crate::support::Span;
 use crate::vir::{Island, Node, NodeId, Op, Type};
 
@@ -18,6 +18,14 @@ pub struct SourceMapEntry {
     pub span: Span,
 }
 
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct ValueConstant {
+    pub node: NodeId,
+    pub slot: FrameSlot,
+    pub schema: SchemaId,
+    pub bytes: Vec<u8>,
+}
+
 /// Cached executable bytes for one VIR recipe. Per-compilation source spans
 /// and per-demand memo locations deliberately live outside this artifact.
 pub struct LoweringArtifact {
@@ -25,12 +33,23 @@ pub struct LoweringArtifact {
     pub demand_key: DemandKey,
     pub demand_preimage: DemandPreimage,
     pub program: WeavyProgram,
+    pub constants: Vec<ValueConstant>,
 }
 
 impl LoweringArtifact {
     #[must_use]
     pub fn render(&self) -> String {
         let mut out = String::new();
+        for constant in &self.constants {
+            let _ = writeln!(
+                out,
+                "constant n{} frame[{}] schema={} bytes={}",
+                constant.node.0,
+                constant.slot.byte_offset(),
+                constant.schema.0.hex(),
+                constant.bytes.len()
+            );
+        }
         for (function_index, function) in self.program.fns.iter().enumerate() {
             let _ = writeln!(
                 out,
@@ -113,28 +132,34 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
             "island output is not a Check",
         ));
     }
-    let frame_size = island
-        .nodes
-        .len()
-        .checked_mul(8)
+    let frame_size = FrameSlot::frame_size(island.nodes.len())
         .ok_or_else(|| lowering_diagnostic(output.span, "island frame size overflow"))?;
-    let mut slots = BTreeMap::new();
+    let mut values = BTreeMap::new();
+    let mut constants = Vec::new();
     let mut code = Vec::with_capacity(island.nodes.len().saturating_mul(2) + 1);
     for (index, node) in island.nodes.iter().enumerate() {
-        if slots.contains_key(&node.id) {
+        if values.contains_key(&node.id) {
             return Err(lowering_diagnostic(node.span, "duplicate VIR node id"));
         }
-        let dst = u32::try_from(index)
-            .ok()
-            .and_then(|index| index.checked_mul(8))
+        let dst = FrameSlot::for_word(index)
             .ok_or_else(|| lowering_diagnostic(node.span, "Weavy frame offset overflow"))?;
         code.push(WeavyOp::Trace { id: node.id.0 });
-        code.push(lower_node(node, dst, &slots)?);
-        slots.insert(node.id, dst);
+        let lowered = lower_node(node, dst, &values, &mut constants)?;
+        if let Some(op) = lowered.op {
+            code.push(op);
+        }
+        values.insert(
+            node.id,
+            LoweredSlot {
+                slot: dst,
+                ty: node.ty,
+                representation: lowered.representation,
+            },
+        );
     }
-    let output_slot = slots
+    let output_slot = values
         .get(&island.output)
-        .copied()
+        .map(|value| value.slot.byte_offset())
         .ok_or_else(|| lowering_diagnostic(output.span, "island output has no frame slot"))?;
     code.push(WeavyOp::Ret {
         src: output_slot,
@@ -158,52 +183,140 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
         demand_key: DemandKey::from_preimage(&demand_preimage),
         demand_preimage,
         program,
+        constants,
     })
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum ValueRepresentation {
+    Word,
+    RealizedHandle,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct LoweredSlot {
+    slot: FrameSlot,
+    ty: Type,
+    representation: ValueRepresentation,
+}
+
+struct LoweredNode {
+    op: Option<WeavyOp>,
+    representation: ValueRepresentation,
 }
 
 fn lower_node(
     node: &Node,
-    dst: u32,
-    slots: &BTreeMap<NodeId, u32>,
-) -> Result<WeavyOp, Diagnostics> {
-    let op = match node.op {
+    dst: FrameSlot,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    constants: &mut Vec<ValueConstant>,
+) -> Result<LoweredNode, Diagnostics> {
+    let dst_slot = dst;
+    let dst = dst.byte_offset();
+    let (op, representation) = match &node.op {
         Op::Bool(value) => {
             require_input_count(node, 0)?;
-            WeavyOp::ConstI64 {
-                dst,
-                value: i64::from(value),
-            }
+            require_node_type(node, Type::Bool)?;
+            (
+                Some(WeavyOp::ConstI64 {
+                    dst,
+                    value: i64::from(*value),
+                }),
+                ValueRepresentation::Word,
+            )
         }
         Op::Int(value) => {
             require_input_count(node, 0)?;
-            WeavyOp::ConstI64 { dst, value }
+            require_node_type(node, Type::Int)?;
+            (
+                Some(WeavyOp::ConstI64 { dst, value: *value }),
+                ValueRepresentation::Word,
+            )
         }
-        Op::Add => {
-            let (a, b) = binary_inputs(node, slots)?;
-            WeavyOp::AddI64 { dst, a, b }
+        Op::String(value) => {
+            require_input_count(node, 0)?;
+            require_node_type(node, Type::String)?;
+            constants.push(ValueConstant {
+                node: node.id,
+                slot: dst_slot,
+                schema: SchemaId::named("vix.String.v1"),
+                bytes: value.as_bytes().to_vec(),
+            });
+            (None, ValueRepresentation::RealizedHandle)
         }
-        Op::Sub => {
-            let (a, b) = binary_inputs(node, slots)?;
-            WeavyOp::SubI64 { dst, a, b }
+        Op::Add | Op::Sub | Op::Mul => {
+            require_node_type(node, Type::Int)?;
+            let (a, b) = binary_values(node, values)?;
+            require_value(node, a, Type::Int, ValueRepresentation::Word)?;
+            require_value(node, b, Type::Int, ValueRepresentation::Word)?;
+            let op = match &node.op {
+                Op::Add => WeavyOp::AddI64 {
+                    dst,
+                    a: a.slot.byte_offset(),
+                    b: b.slot.byte_offset(),
+                },
+                Op::Sub => WeavyOp::SubI64 {
+                    dst,
+                    a: a.slot.byte_offset(),
+                    b: b.slot.byte_offset(),
+                },
+                Op::Mul => WeavyOp::MulI64 {
+                    dst,
+                    a: a.slot.byte_offset(),
+                    b: b.slot.byte_offset(),
+                },
+                _ => unreachable!("matched arithmetic VIR op"),
+            };
+            (Some(op), ValueRepresentation::Word)
         }
-        Op::Mul => {
-            let (a, b) = binary_inputs(node, slots)?;
-            WeavyOp::MulI64 { dst, a, b }
-        }
-        Op::Eq => {
-            let (a, b) = binary_inputs(node, slots)?;
-            WeavyOp::EqI64 { dst, a, b }
-        }
-        Op::Ne => {
-            let (a, b) = binary_inputs(node, slots)?;
-            WeavyOp::NeI64 { dst, a, b }
+        Op::Eq | Op::Ne => {
+            require_node_type(node, Type::Bool)?;
+            let (a, b) = binary_values(node, values)?;
+            if a.ty != b.ty {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "equality operands have different VIR types",
+                ));
+            }
+            let operand_representation = match a.ty {
+                Type::Bool | Type::Int => ValueRepresentation::Word,
+                Type::String => ValueRepresentation::RealizedHandle,
+                Type::Check | Type::StreamCheck => {
+                    return Err(lowering_diagnostic(
+                        node.span,
+                        "equality is not defined for this VIR type",
+                    ));
+                }
+            };
+            require_value(node, a, a.ty, operand_representation)?;
+            require_value(node, b, a.ty, operand_representation)?;
+            let op = if matches!(&node.op, Op::Eq) {
+                WeavyOp::EqI64 {
+                    dst,
+                    a: a.slot.byte_offset(),
+                    b: b.slot.byte_offset(),
+                }
+            } else {
+                WeavyOp::NeI64 {
+                    dst,
+                    a: a.slot.byte_offset(),
+                    b: b.slot.byte_offset(),
+                }
+            };
+            (Some(op), ValueRepresentation::Word)
         }
         Op::Expect => {
+            require_node_type(node, Type::Check)?;
             require_input_count(node, 1)?;
-            WeavyOp::CopyI64 {
-                dst,
-                src: input_slot(node, slots, 0)?,
-            }
+            let condition = input_value(node, values, 0)?;
+            require_value(node, condition, Type::Bool, ValueRepresentation::Word)?;
+            (
+                Some(WeavyOp::CopyI64 {
+                    dst,
+                    src: condition.slot.byte_offset(),
+                }),
+                ValueRepresentation::Word,
+            )
         }
         Op::Yield => {
             return Err(lowering_diagnostic(
@@ -212,27 +325,65 @@ fn lower_node(
             ));
         }
     };
-    Ok(op)
+    Ok(LoweredNode { op, representation })
 }
 
-fn binary_inputs(node: &Node, slots: &BTreeMap<NodeId, u32>) -> Result<(u32, u32), Diagnostics> {
-    require_input_count(node, 2)?;
-    Ok((input_slot(node, slots, 0)?, input_slot(node, slots, 1)?))
-}
-
-fn input_slot(
+fn binary_values(
     node: &Node,
-    slots: &BTreeMap<NodeId, u32>,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+) -> Result<(LoweredSlot, LoweredSlot), Diagnostics> {
+    require_input_count(node, 2)?;
+    Ok((input_value(node, values, 0)?, input_value(node, values, 1)?))
+}
+
+fn input_value(
+    node: &Node,
+    values: &BTreeMap<NodeId, LoweredSlot>,
     index: usize,
-) -> Result<u32, Diagnostics> {
+) -> Result<LoweredSlot, Diagnostics> {
     let input = node
         .inputs
         .get(index)
         .ok_or_else(|| lowering_diagnostic(node.span, "missing VIR input"))?;
-    slots
+    values
         .get(input)
         .copied()
         .ok_or_else(|| lowering_diagnostic(node.span, "VIR input is not topologically prior"))
+}
+
+fn require_node_type(node: &Node, expected: Type) -> Result<(), Diagnostics> {
+    if node.ty != expected {
+        return Err(lowering_diagnostic(
+            node.span,
+            &format!(
+                "VIR op produces {}, expected {}",
+                node.ty.name(),
+                expected.name()
+            ),
+        ));
+    }
+    Ok(())
+}
+
+fn require_value(
+    node: &Node,
+    value: LoweredSlot,
+    expected_type: Type,
+    expected_representation: ValueRepresentation,
+) -> Result<(), Diagnostics> {
+    if value.ty != expected_type || value.representation != expected_representation {
+        return Err(lowering_diagnostic(
+            node.span,
+            &format!(
+                "VIR input has {} {:?}, expected {} {:?}",
+                value.ty.name(),
+                value.representation,
+                expected_type.name(),
+                expected_representation
+            ),
+        ));
+    }
+    Ok(())
 }
 
 fn require_input_count(node: &Node, expected: usize) -> Result<(), Diagnostics> {

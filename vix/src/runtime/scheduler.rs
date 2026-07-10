@@ -7,12 +7,13 @@ use crate::lowering::LoweringArtifact;
 use crate::support::Span;
 use crate::vir::{IslandId, NodeId};
 
+use super::FrameSlot;
 use super::identity::{DemandKey, DemandPreimage, Location, LocationId, SchemaId, ValueId};
 use super::model::{
     DemandRecord, DemandState, MemoVerdict, Receipt, TaskId, TaskRecord, TaskState,
 };
 use super::observe::{Counters, Event, EventKind, EventSink, SafePointClass};
-use super::store::{Handle, Store, StoreEntry};
+use super::store::{Handle, Interned, Store, StoreEntry};
 
 #[derive(Clone, Debug)]
 struct MemoEntry {
@@ -129,6 +130,7 @@ impl<S: EventSink> Runtime<S> {
             to: DemandState::Queued,
         });
 
+        let constants = self.materialize_constants(lowered);
         let mut kill_armed = chaos.kill_first_running_task;
         loop {
             self.counters.scheduler_requests += 1;
@@ -153,7 +155,23 @@ impl<S: EventSink> Runtime<S> {
             }
 
             let mut task = Task::spawn(&lowered.program, FnId(0));
-            match task.run(&lowered.program, &mut [], &[]) {
+            for &(slot, handle) in &constants {
+                if !self.store.write_task_handle(&mut task, slot, handle) {
+                    return Err(runtime_invariant(
+                        "constant handle missing while initializing task frame",
+                    ));
+                }
+            }
+            let step = self.store.with_value_memories(|value_memories| {
+                task.run_hosted_with_value_memories(
+                    &lowered.program,
+                    &mut [],
+                    &[],
+                    &mut [],
+                    value_memories,
+                )
+            });
+            match step {
                 TaskStep::Done => {}
                 TaskStep::Yielded => {
                     return Err(runtime_invariant(
@@ -172,16 +190,7 @@ impl<S: EventSink> Runtime<S> {
             let interned = self
                 .store
                 .intern_realized(SchemaId::named("vix.Check.v1"), &[u8::from(passed)]);
-            self.counters.bytes_hashed += interned.bytes_hashed;
-            if interned.deduped {
-                self.counters.store_dedups += 1;
-            } else {
-                self.counters.store_interns += 1;
-            }
-            self.emit(EventKind::StoreAlloc {
-                identity: interned.identity,
-                deduped: interned.deduped,
-            });
+            self.observe_interned(interned);
 
             self.memo.insert(
                 location.id,
@@ -209,6 +218,31 @@ impl<S: EventSink> Runtime<S> {
                 memo: MemoVerdict::Miss,
             });
         }
+    }
+
+    fn materialize_constants(&mut self, lowered: &LoweringArtifact) -> Vec<(FrameSlot, Handle)> {
+        lowered
+            .constants
+            .iter()
+            .map(|constant| {
+                let interned = self.store.intern_realized(constant.schema, &constant.bytes);
+                self.observe_interned(interned);
+                (constant.slot, interned.handle)
+            })
+            .collect()
+    }
+
+    fn observe_interned(&mut self, interned: Interned) {
+        self.counters.bytes_hashed += interned.bytes_hashed;
+        if interned.deduped {
+            self.counters.store_dedups += 1;
+        } else {
+            self.counters.store_interns += 1;
+        }
+        self.emit(EventKind::StoreAlloc {
+            identity: interned.identity,
+            deduped: interned.deduped,
+        });
     }
 
     fn spawn_task(&mut self, demand: DemandKey) -> TaskId {

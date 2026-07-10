@@ -21,6 +21,7 @@ pub enum Type {
     Int,
     Check,
     StreamCheck,
+    String,
 }
 
 impl Type {
@@ -31,6 +32,7 @@ impl Type {
             Self::Int => "Int",
             Self::Check => "Check",
             Self::StreamCheck => "Stream<Check>",
+            Self::String => "String",
         }
     }
 }
@@ -75,6 +77,7 @@ pub enum Op {
     Ne,
     Expect,
     Yield,
+    String(String),
 }
 
 /// One SSA-like operation. Dependencies are explicit node ids; no Rust
@@ -219,10 +222,11 @@ impl Island {
                     Type::Int => b"int",
                     Type::Check => b"check",
                     Type::StreamCheck => b"stream-check",
+                    Type::String => b"string",
                 },
             );
-            match node.op {
-                Op::Bool(value) => frame(&mut bytes, &[0, u8::from(value)]),
+            match &node.op {
+                Op::Bool(value) => frame(&mut bytes, &[0, u8::from(*value)]),
                 Op::Expect => frame(&mut bytes, &[1]),
                 Op::Yield => frame(&mut bytes, &[2]),
                 Op::Int(value) => {
@@ -236,6 +240,12 @@ impl Island {
                 Op::Mul => frame(&mut bytes, &[6]),
                 Op::Eq => frame(&mut bytes, &[7]),
                 Op::Ne => frame(&mut bytes, &[8]),
+                Op::String(value) => {
+                    let mut encoded = Vec::with_capacity(1 + value.len());
+                    encoded.push(9);
+                    encoded.extend_from_slice(value.as_bytes());
+                    frame(&mut bytes, &encoded);
+                }
             }
             for input in &node.inputs {
                 frame(&mut bytes, &input.0.to_le_bytes());

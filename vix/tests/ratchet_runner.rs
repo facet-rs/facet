@@ -5,6 +5,7 @@ use vix::runtime::{DemandState, EventKind, MemoVerdict, TaskState};
 
 const RUNG_001: &str = include_str!("ratchet/001-harness.vix");
 const RUNG_002: &str = include_str!("ratchet/002-arithmetic.vix");
+const RUNG_003: &str = include_str!("ratchet/003-bindings.vix");
 
 /// The first rung is an architectural certificate, not just a boolean test.
 ///
@@ -132,6 +133,37 @@ fn rung_002_integer_arithmetic_runs_through_vir_and_weavy() {
     assert!(report.passed());
     assert!(report.agrees());
     assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    assert_eq!(report.plain.receipt_count, 0);
+    assert_eq!(report.chaos.receipt_count, 0);
+}
+
+#[test]
+fn rung_003_lexical_bindings_and_strings_run_through_vir_and_weavy() {
+    let module = Compiler::new()
+        .compile(RUNG_003)
+        .expect("rung 003 compiles");
+    let rendered_vir = module.render();
+    assert!(rendered_vir.contains("String(\"hello\")"));
+    assert!(rendered_vir.contains("Eq"));
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut lowering_cache = LoweringCache::default();
+    let lowered = lowering_cache
+        .get_or_lower(&partitioned.islands[0])
+        .expect("rung 003 lowers to Weavy");
+    assert!(
+        lowered
+            .constants
+            .iter()
+            .any(|constant| constant.bytes.as_slice() == b"hello")
+    );
+    assert!(lowered.render().contains("EqI64"));
+
+    let report = run_source(RUNG_003).expect("rung 003 compiles and runs");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 2);
     assert_eq!(report.plain.checks, report.chaos.checks);
     assert_eq!(report.plain.receipt_count, 0);
     assert_eq!(report.chaos.receipt_count, 0);

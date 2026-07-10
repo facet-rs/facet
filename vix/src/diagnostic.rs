@@ -16,6 +16,7 @@ pub enum DiagnosticCode {
     InvalidArity,
     LoweringUnsupported,
     RuntimeInvariant,
+    DuplicateBinding,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]

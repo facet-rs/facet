@@ -1,6 +1,6 @@
 //! Surface AST checking and lowering to Vix IR.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics};
 use crate::support::Span;
@@ -114,11 +114,12 @@ fn lower_function(
 ) -> Result<Function, Diagnostics> {
     let mut nodes = Vec::new();
     let mut yielded_checks = Vec::new();
+    let mut bindings = BTreeMap::new();
 
     for statement in &function.body.stmts {
         match statement {
             ast::Stmt::Yield(statement) if is_test => {
-                let check = lower_check(&mut nodes, &statement.value)?;
+                let check = lower_check(&mut nodes, &bindings, &statement.value)?;
                 yielded_checks.push(check);
                 push_node(
                     &mut nodes,
@@ -136,10 +137,24 @@ fn lower_function(
                 )));
             }
             ast::Stmt::Let(statement) => {
-                return Err(Diagnostics::one(Diagnostic::unsupported(
-                    statement.span,
-                    "let bindings are not yet lowered",
-                )));
+                if bindings.contains_key(&statement.name.value) {
+                    return Err(Diagnostics::one(Diagnostic {
+                        code: DiagnosticCode::DuplicateBinding,
+                        primary: statement.name.span,
+                        labels: Vec::new(),
+                        payload: DiagnosticPayload::Name {
+                            name: statement.name.value.clone(),
+                        },
+                    }));
+                }
+                if let Some(annotation) = &statement.ty {
+                    return Err(Diagnostics::one(Diagnostic::unsupported(
+                        type_span(annotation),
+                        "let type annotation",
+                    )));
+                }
+                let value = lower_value(&mut nodes, &bindings, &statement.value)?;
+                bindings.insert(statement.name.value.clone(), value);
             }
         }
     }
@@ -160,7 +175,11 @@ fn lower_function(
     })
 }
 
-fn lower_check(nodes: &mut Vec<Node>, expression: &ast::Expr) -> Result<NodeId, Diagnostics> {
+fn lower_check(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    expression: &ast::Expr,
+) -> Result<NodeId, Diagnostics> {
     let ast::Expr::Call(call) = expression else {
         return Err(Diagnostics::one(Diagnostic {
             code: DiagnosticCode::TypeMismatch,
@@ -181,14 +200,14 @@ fn lower_check(nodes: &mut Vec<Node>, expression: &ast::Expr) -> Result<NodeId, 
     let condition = match call.callee.value.as_str() {
         "expect" => {
             check_arity(call, 1)?;
-            let condition = lower_value(nodes, &call.args.args[0])?;
+            let condition = lower_value(nodes, bindings, &call.args.args[0])?;
             require_type(condition, Type::Bool, expr_span(&call.args.args[0]))?;
             condition.node
         }
         "expect_eq" | "expect_ne" => {
             check_arity(call, 2)?;
-            let left = lower_value(nodes, &call.args.args[0])?;
-            let right = lower_value(nodes, &call.args.args[1])?;
+            let left = lower_value(nodes, bindings, &call.args.args[0])?;
+            let right = lower_value(nodes, bindings, &call.args.args[1])?;
             require_same_type(left, right, call.span)?;
             push_node(
                 nodes,
@@ -230,7 +249,11 @@ struct LoweredValue {
     ty: Type,
 }
 
-fn lower_value(nodes: &mut Vec<Node>, expression: &ast::Expr) -> Result<LoweredValue, Diagnostics> {
+fn lower_value(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    expression: &ast::Expr,
+) -> Result<LoweredValue, Diagnostics> {
     match expression {
         ast::Expr::Bool(value) => Ok(LoweredValue {
             node: push_node(
@@ -263,8 +286,31 @@ fn lower_value(nodes: &mut Vec<Node>, expression: &ast::Expr) -> Result<LoweredV
                 ty: Type::Int,
             })
         }
-        ast::Expr::Binary(binary) => lower_binary(nodes, binary),
-        ast::Expr::Paren(paren) => lower_value(nodes, &paren.inner),
+        ast::Expr::Str(value) => Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                value.span,
+                Type::String,
+                EffectFacts::PURE,
+                Vec::new(),
+                Op::String(value.value.clone()),
+            ),
+            ty: Type::String,
+        }),
+        ast::Expr::Identifier(identifier) => {
+            bindings.get(&identifier.value).copied().ok_or_else(|| {
+                Diagnostics::one(Diagnostic {
+                    code: DiagnosticCode::UnknownName,
+                    primary: identifier.span,
+                    labels: Vec::new(),
+                    payload: DiagnosticPayload::Name {
+                        name: identifier.value.clone(),
+                    },
+                })
+            })
+        }
+        ast::Expr::Binary(binary) => lower_binary(nodes, bindings, binary),
+        ast::Expr::Paren(paren) => lower_value(nodes, bindings, &paren.inner),
         _ => Err(Diagnostics::one(Diagnostic::unsupported(
             expr_span(expression),
             "value expression",
@@ -272,9 +318,13 @@ fn lower_value(nodes: &mut Vec<Node>, expression: &ast::Expr) -> Result<LoweredV
     }
 }
 
-fn lower_binary(nodes: &mut Vec<Node>, binary: &ast::Binary) -> Result<LoweredValue, Diagnostics> {
-    let left = lower_value(nodes, &binary.left)?;
-    let right = lower_value(nodes, &binary.right)?;
+fn lower_binary(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    binary: &ast::Binary,
+) -> Result<LoweredValue, Diagnostics> {
+    let left = lower_value(nodes, bindings, &binary.left)?;
+    let right = lower_value(nodes, bindings, &binary.right)?;
     let (ty, op) = match binary.op.value.as_str() {
         "+" => {
             require_type(left, Type::Int, expr_span(&binary.left))?;
@@ -393,5 +443,13 @@ fn expr_span(expression: &ast::Expr) -> Span {
         ast::Expr::Str(value) => value.span,
         ast::Expr::Number(value) => value.span,
         ast::Expr::Bool(value) => value.span,
+    }
+}
+
+fn type_span(ty: &ast::Type) -> Span {
+    match ty {
+        ast::Type::Generic(value) => value.span,
+        ast::Type::Tuple(value) => value.span,
+        ast::Type::Path(value) => value.span,
     }
 }

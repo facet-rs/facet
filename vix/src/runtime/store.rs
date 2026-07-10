@@ -1,5 +1,8 @@
 use std::collections::BTreeMap;
 
+use weavy::task::{Task, ValueMemories, ValueMemory};
+
+use super::abi::FrameSlot;
 use super::identity::{Digest, SchemaId, ValueId, hash_framed};
 
 /// Store-owned handle. It is valid for one runtime snapshot and is never
@@ -105,6 +108,41 @@ impl Store {
     #[must_use]
     pub fn entry(&self, handle: Handle) -> Option<&StoreEntry> {
         self.entries.get(handle.0 as usize)
+    }
+
+    /// Write a store-owned handle into a compiler-declared task slot without
+    /// exposing the handle's backing integer to the scheduler.
+    pub(crate) fn write_task_handle(
+        &self,
+        task: &mut Task,
+        slot: FrameSlot,
+        handle: Handle,
+    ) -> bool {
+        if self.entry(handle).is_none() {
+            return false;
+        }
+        task.write_i64(slot.byte_offset(), i64::from(handle.0));
+        true
+    }
+
+    /// Lend Weavy a non-owning memory table for the duration of one drive.
+    /// Resident bodies stay borrowed from the store and are never cloned.
+    pub(crate) fn with_value_memories<R>(
+        &self,
+        use_memories: impl FnOnce(ValueMemories<'_>) -> R,
+    ) -> R {
+        let store = self
+            .entries
+            .iter()
+            .map(|entry| match &entry.residence {
+                Residence::Resident(bytes) => ValueMemory::from_slice(bytes),
+                Residence::Evicted { .. } => ValueMemory::empty(),
+            })
+            .collect::<Vec<_>>();
+        use_memories(ValueMemories {
+            store: &store,
+            molten: &[],
+        })
     }
 
     /// Borrowed inspection never clones resident bodies.
