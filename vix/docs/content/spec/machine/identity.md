@@ -63,9 +63,8 @@ driver.
 > enum payload bytes are zeroed; variant switch is atomic with payload
 > zeroing. The verified discriminated constructor performs that whole-region
 > initialization itself; a sequence of unrelated raw word writes is not an
-> equivalent construction proof. A release-profile canary verifies the
-> invariant continuously (the
-> padding law is enforced, not asserted). Facet-discovered values canonicalize
+> equivalent construction proof. A release-profile canary continuously verifies
+> the invariant: the padding law is enforced, not asserted. Facet-discovered values canonicalize
 > at the bridge. `is_padding_range` proofs demote to canary/verification machinery.
 >
 > ROUND-10 CORRECTION: this rule used to conclude "flat-byte hashing is valid
