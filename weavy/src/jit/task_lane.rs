@@ -151,6 +151,8 @@ impl JitExecutable {
         if !available() {
             return None;
         }
+        #[cfg(test)]
+        JIT_PROGRAM_COMPILE_COUNT.fetch_add(1, Ordering::Relaxed);
         let fns = verified
             .program()
             .fns
