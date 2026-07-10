@@ -635,6 +635,11 @@ pub enum ProgramDefect {
         field: RegionShape,
         parent: RegionShape,
     },
+    ValueShapeFieldRequiresRef {
+        value_shape: ValueShapeRef,
+        site: ValueFieldSite,
+        field: RegionShape,
+    },
     ValueShapeFieldOverlap {
         value_shape: ValueShapeRef,
         first: ValueFieldSite,
@@ -1062,9 +1067,7 @@ impl Verifier<'_> {
                     parent,
                 }));
             }
-            if let Some(nested) = field.value_shape {
-                self.validate_value_shape_ref(nested_site, nested, &field.shape, None)?;
-            }
+            self.validate_field_ref_or_leaf(value_shape, site, nested_site, field)?;
             let bounds = RegionBounds { start, end };
             for (prior_index, prior) in ranges.iter().copied().enumerate() {
                 if prior.start < bounds.end && bounds.start < prior.end {
@@ -1169,9 +1172,7 @@ impl Verifier<'_> {
                     parent,
                 }));
             }
-            if let Some(nested) = field.value_shape {
-                self.validate_value_shape_ref(nested_site, nested, &field.shape, None)?;
-            }
+            self.validate_field_ref_or_leaf(value_shape, site, nested_site, field)?;
             let bounds = RegionBounds { start, end };
             if selector.start < bounds.end && bounds.start < selector.end {
                 return Err(self.global(ProgramDefect::ValueShapeFieldOverlapsSelector {
@@ -1194,6 +1195,28 @@ impl Verifier<'_> {
                 }
             }
             ranges.push(bounds);
+        }
+        Ok(())
+    }
+
+    fn validate_field_ref_or_leaf(
+        &self,
+        value_shape: ValueShapeRef,
+        site: ValueFieldSite,
+        nested_site: ValueShapeReferenceSite,
+        field: &ValueFieldUse,
+    ) -> Result<(), ProgramError> {
+        if let Some(nested) = field.value_shape {
+            self.validate_value_shape_ref(nested_site, nested, &field.shape, None)?;
+            return Ok(());
+        }
+        let is_leaf = field.shape.words.len() == 1 && field.shape.words[0].as_slice().len() == 1;
+        if !is_leaf {
+            return Err(self.global(ProgramDefect::ValueShapeFieldRequiresRef {
+                value_shape,
+                site,
+                field: field.shape.clone(),
+            }));
         }
         Ok(())
     }
@@ -4442,6 +4465,16 @@ mod tests {
             shape: RegionShape::default(),
             kind: ValueShapeKind::Product { fields: vec![] },
         };
+        let unit_field = ValueShapeContract {
+            shape: RegionShape::default(),
+            kind: ValueShapeKind::Product {
+                fields: vec![structural_field(
+                    0,
+                    RegionShape::default(),
+                    ValueShapeRef(0),
+                )],
+            },
+        };
 
         let valid_outcome = (
             Program {
@@ -4591,6 +4624,21 @@ mod tests {
                 value_shapes: vec![unit],
             },
         );
+        let explicit_zero_word_field = (
+            Program::default(),
+            ProgramContract {
+                functions: vec![],
+                calls: vec![],
+                schemas: vec![],
+                value_shapes: vec![
+                    ValueShapeContract {
+                        shape: RegionShape::default(),
+                        kind: ValueShapeKind::Product { fields: vec![] },
+                    },
+                    unit_field,
+                ],
+            },
+        );
 
         for (name, program, contract) in [
             ("compact enum", valid_outcome.0, valid_outcome.1),
@@ -4606,6 +4654,11 @@ mod tests {
                 "zero word product",
                 zero_word_product.0,
                 zero_word_product.1,
+            ),
+            (
+                "explicit zero word field",
+                explicit_zero_word_field.0,
+                explicit_zero_word_field.1,
             ),
         ] {
             program.verify(contract).expect(name);
@@ -4964,6 +5017,11 @@ mod tests {
             shape: pair_shape.clone(),
             kind: ValueShapeKind::Enum { selector, variants },
         };
+        let union_enum_shape = RegionShape::new(
+            [scalar.words.clone(), union_shape.words.clone()]
+                .concat()
+                .to_vec(),
+        );
 
         let frame_mismatch = (
             Program {
@@ -4987,6 +5045,82 @@ mod tests {
         );
 
         let cases = vec![
+            InvalidCase {
+                name: "whole product multiword field without nested ref",
+                program: Program::default(),
+                contract: table(
+                    vec![],
+                    vec![ValueShapeContract {
+                        shape: pair_shape.clone(),
+                        kind: ValueShapeKind::Product {
+                            fields: vec![field(0, pair_shape.clone())],
+                        },
+                    }],
+                ),
+                expected: global_error(ProgramDefect::ValueShapeFieldRequiresRef {
+                    value_shape: ValueShapeRef(0),
+                    site: ValueFieldSite::Product { field: 0 },
+                    field: pair_shape.clone(),
+                }),
+            },
+            InvalidCase {
+                name: "exact union word field without nested ref",
+                program: Program::default(),
+                contract: table(
+                    vec![string_schema.clone()],
+                    vec![ValueShapeContract {
+                        shape: union_shape.clone(),
+                        kind: ValueShapeKind::Product {
+                            fields: vec![field(0, union_shape.clone())],
+                        },
+                    }],
+                ),
+                expected: global_error(ProgramDefect::ValueShapeFieldRequiresRef {
+                    value_shape: ValueShapeRef(0),
+                    site: ValueFieldSite::Product { field: 0 },
+                    field: union_shape.clone(),
+                }),
+            },
+            InvalidCase {
+                name: "enum variant union field without nested ref",
+                program: Program::default(),
+                contract: table(
+                    vec![string_schema.clone()],
+                    vec![ValueShapeContract {
+                        shape: union_enum_shape.clone(),
+                        kind: ValueShapeKind::Enum {
+                            selector: selector(0, scalar.clone()),
+                            variants: vec![variant(vec![field(8, union_shape.clone())])],
+                        },
+                    }],
+                ),
+                expected: global_error(ProgramDefect::ValueShapeFieldRequiresRef {
+                    value_shape: ValueShapeRef(0),
+                    site: ValueFieldSite::Variant {
+                        variant: 0,
+                        field: 0,
+                    },
+                    field: union_shape.clone(),
+                }),
+            },
+            InvalidCase {
+                name: "zero word field without nested ref",
+                program: Program::default(),
+                contract: table(
+                    vec![],
+                    vec![ValueShapeContract {
+                        shape: RegionShape::default(),
+                        kind: ValueShapeKind::Product {
+                            fields: vec![field(0, RegionShape::default())],
+                        },
+                    }],
+                ),
+                expected: global_error(ProgramDefect::ValueShapeFieldRequiresRef {
+                    value_shape: ValueShapeRef(0),
+                    site: ValueFieldSite::Product { field: 0 },
+                    field: RegionShape::default(),
+                }),
+            },
             InvalidCase {
                 name: "product union narrowing",
                 program: Program::default(),
