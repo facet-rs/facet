@@ -1,8 +1,9 @@
 use vix::compiler::Compiler;
-use vix::diagnostic::DiagnosticPayload;
+use vix::diagnostic::DiagnosticCode;
 use vix::lowering::{LoweringCache, source_map_for};
 use vix::ratchet::run_source;
 use vix::runtime::{DemandState, EventKind, MemoVerdict, TaskState};
+use vix::surface::{SurfaceParser, ast};
 use vix::vir::{Op as VirOp, Type as VirType, VariantPayload};
 use weavy::task::Op as WeavyOp;
 
@@ -888,19 +889,29 @@ fn rung_012_record_order_is_total_structural_and_declaration_ordered() {
 #[test]
 fn rung_013_expression_statement_is_rejected_with_declared_message_and_line() {
     let (expected_message, expected_line) = reject_header(RUNG_013);
+    let source = SurfaceParser::new()
+        .parse(RUNG_013)
+        .expect("rung 013 diagnostic production parses");
+    let function = source
+        .items
+        .iter()
+        .find_map(|item| match item {
+            ast::Item::Fn(function) if function.name.value == "f" => Some(function),
+            _ => None,
+        })
+        .expect("rung 013 contains f");
+    assert!(matches!(
+        function.body.stmts.as_slice(),
+        [ast::Stmt::Expression(_)]
+    ));
+
     let diagnostics = Compiler::new()
         .compile(RUNG_013)
         .expect_err("rung 013 must be rejected");
     assert_eq!(diagnostics.entries.len(), 1);
     let diagnostic = &diagnostics.entries[0];
-    let detail = match &diagnostic.payload {
-        DiagnosticPayload::Parse { detail } => detail.as_str(),
-        _ => "",
-    };
-    assert!(
-        detail.contains(expected_message),
-        "diagnostic {diagnostic:?} does not contain declared message {expected_message:?}"
-    );
+    assert_eq!(diagnostic.code, DiagnosticCode::ExpressionStatement);
+    assert_eq!(diagnostic.message(), expected_message);
     assert_eq!(
         source_line(RUNG_013, diagnostic.primary.start),
         expected_line

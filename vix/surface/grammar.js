@@ -103,7 +103,7 @@ module.exports = grammar({
 
     block: ($) =>
       seq("{", repeat(field("stmt", $._statement)), optional(field("tail", $._expr)), "}"),
-    _statement: ($) => choice($.let_statement, $.yield_statement),
+    _statement: ($) => choice($.let_statement, $.yield_statement, $.expression_statement),
     let_statement: ($) =>
       seq(
         "let",
@@ -114,6 +114,7 @@ module.exports = grammar({
         ";",
       ),
     yield_statement: ($) => seq("yield", field("value", $._expr), ";"),
+    expression_statement: ($) => seq(field("value", $._expr), ";"),
 
     _expr: ($) =>
       choice(

@@ -24,6 +24,7 @@ pub enum DiagnosticCode {
     DuplicateVariant,
     VariantPayloadMismatch,
     NonExhaustiveMatch,
+    ExpressionStatement,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -66,6 +67,7 @@ pub enum DiagnosticPayload {
     Match {
         missing: Vec<String>,
     },
+    ExpressionStatement,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -86,6 +88,38 @@ impl Diagnostic {
             payload: DiagnosticPayload::Unsupported {
                 construct: construct.into(),
             },
+        }
+    }
+
+    #[must_use]
+    pub fn message(&self) -> String {
+        match &self.payload {
+            DiagnosticPayload::Parse { detail } | DiagnosticPayload::Invariant { detail } => {
+                detail.clone()
+            }
+            DiagnosticPayload::Name { name } => name.clone(),
+            DiagnosticPayload::Type { expected, found } => {
+                format!("expected {expected}, found {found}")
+            }
+            DiagnosticPayload::Arity { expected, found } => {
+                format!("expected {expected} arguments, found {found}")
+            }
+            DiagnosticPayload::Unsupported { construct } => construct.clone(),
+            DiagnosticPayload::Field { field, .. } => match self.code {
+                DiagnosticCode::UnknownField => format!("unknown field {field}"),
+                DiagnosticCode::MissingField => format!("missing field {field}"),
+                DiagnosticCode::DuplicateField => format!("duplicate field {field}"),
+                _ => field.clone(),
+            },
+            DiagnosticPayload::Variant { variant, .. } => match self.code {
+                DiagnosticCode::UnknownVariant => format!("unknown variant {variant}"),
+                DiagnosticCode::DuplicateVariant => format!("duplicate variant {variant}"),
+                _ => variant.clone(),
+            },
+            DiagnosticPayload::Match { missing } => {
+                format!("non-exhaustive match: missing {}", missing.join(", "))
+            }
+            DiagnosticPayload::ExpressionStatement => "expression statement".to_owned(),
         }
     }
 }

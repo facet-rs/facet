@@ -14,6 +14,7 @@ ast({
   enum_item: { as: "Enum" },
   let_statement: { as: "Let", struct: "LetStmt" },
   yield_statement: { as: "Yield", struct: "YieldStmt" },
+  expression_statement: { as: "Expression", struct: "ExpressionStmt" },
   field_access: {
     as: "Field",
     fields: { name: { enum: "Member" } },

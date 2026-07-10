@@ -590,6 +590,14 @@ fn lower_function(
 
     for statement in &function.body.stmts {
         match statement {
+            ast::Stmt::Expression(statement) => {
+                return Err(Diagnostics::one(Diagnostic {
+                    code: DiagnosticCode::ExpressionStatement,
+                    primary: statement.span,
+                    labels: Vec::new(),
+                    payload: DiagnosticPayload::ExpressionStatement,
+                }));
+            }
             ast::Stmt::Yield(statement) if signature.is_test => {
                 let check = lower_check(&mut nodes, &bindings, context, &statement.value)?;
                 yielded_checks.push(check);
