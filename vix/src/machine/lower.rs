@@ -41,8 +41,8 @@ use super::driver::{
     STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_CONTAINS_HOST, STRING_DEFAULT_HOST,
     STRING_IS_NUMERIC_HOST, STRING_LOWER_HOST, STRING_PARSE_INT_HOST, STRING_SPLIT_HOST,
     STRING_UPPER_HOST, SemanticComparator, StepMode, StoreHandle, TARGET_HOST, TREE_PROJECT_HOST,
-    TREE_TEXT_HOST, VALUE_COMPARE_HOST, VERSION_PARSE_HOST, VERSION_SET_OP_HOST,
-    VERSION_SET_PARSE_HOST, ValueBundle,
+    TREE_TEXT_HOST, VALUE_COMPARE_HOST, VERSION_FIELD_HOST, VERSION_PARSE_HOST,
+    VERSION_SET_OP_HOST, VERSION_SET_PARSE_HOST, ValueBundle,
 };
 use crate::ast;
 use crate::fetch::FetchBackend;
@@ -5128,6 +5128,37 @@ impl<'a> FnLowerer<'a> {
                     && name.value == "arch"
                 {
                     return Ok(self.store_read(&receiver, 1, "Arch".into()));
+                }
+                if self.tables.schemas.is_external(&receiver.schema, "Version") {
+                    let field = match name.value.as_str() {
+                        "major" => 0,
+                        "minor" => 1,
+                        "patch" => 2,
+                        _ => return Err(format!("unknown field {} on Version", name.value)),
+                    };
+                    let dst = self.alloc();
+                    let region = self.primitive_region;
+                    self.code.push(Op::ConstI64 {
+                        dst: region,
+                        value: dst.into(),
+                    });
+                    self.code.push(Op::CopyI64 {
+                        dst: region + 8,
+                        src: receiver.slot,
+                    });
+                    self.code.push(Op::ConstI64 {
+                        dst: region + 16,
+                        value: field,
+                    });
+                    self.code.push(Op::HostCall {
+                        host: VERSION_FIELD_HOST,
+                    });
+                    return Ok(ValueSlot {
+                        slot: dst,
+                        schema: "Int".into(),
+                        realization: None,
+                        pending: None,
+                    });
                 }
                 let info = self
                     .tables
