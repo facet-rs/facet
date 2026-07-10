@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics};
+use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics, Label};
 use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
 use crate::vir::{
@@ -313,7 +313,8 @@ fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
         let signature = ordered_signatures
             .next()
             .expect("every function has a declared signature");
-        let lowered = lower_function(signature, function, &context)?;
+        let lowered = lower_function(signature, function, &context)
+            .map_err(|diagnostics| anchor_function_diagnostics(function, diagnostics))?;
         if signature.is_test {
             module.tests.push(Test {
                 name: function.name.value.clone(),
@@ -324,6 +325,25 @@ fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
     }
 
     Ok(module)
+}
+
+/// r[impl lang.diagnostics.non-exhaustive-match]
+fn anchor_function_diagnostics(
+    function: &ast::FnItem,
+    mut diagnostics: Diagnostics,
+) -> Diagnostics {
+    for diagnostic in &mut diagnostics.entries {
+        if diagnostic.code != DiagnosticCode::NonExhaustiveMatch {
+            continue;
+        }
+        let match_span = diagnostic.primary;
+        diagnostic.primary = function.name.span;
+        diagnostic.labels.push(Label {
+            span: match_span,
+            text: "non-exhaustive match occurs here".to_owned(),
+        });
+    }
+    diagnostics
 }
 
 fn declare_function(

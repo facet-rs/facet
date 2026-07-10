@@ -1147,6 +1147,7 @@ fn rung_017_match_guards_select_the_first_matching_arm() {
     assert_eq!(report.chaos.receipt_count, 0);
 }
 
+// r[verify lang.diagnostics.non-exhaustive-match]
 #[test]
 fn rung_018_non_exhaustive_match_is_rejected_with_declared_message_and_line() {
     let (expected_message, expected_line) = reject_header(RUNG_018);
@@ -1157,6 +1158,13 @@ fn rung_018_non_exhaustive_match_is_rejected_with_declared_message_and_line() {
     let diagnostic = &diagnostics.entries[0];
     assert_eq!(diagnostic.code, DiagnosticCode::NonExhaustiveMatch);
     assert_eq!(diagnostic.message(), expected_message);
+    assert!(matches!(
+        &diagnostic.payload,
+        vix::diagnostic::DiagnosticPayload::Match { missing }
+            if missing.iter().map(String::as_str).eq(["Amber"])
+    ));
+    assert_eq!(diagnostic.labels.len(), 1);
+    assert_eq!(source_line(RUNG_018, diagnostic.labels[0].span.start), 7);
     assert_eq!(
         source_line(RUNG_018, diagnostic.primary.start),
         expected_line

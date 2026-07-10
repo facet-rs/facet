@@ -400,6 +400,13 @@ and test function are language syntax.
 > records with a stable code, primary span, labeled related spans, structured
 > payload, and optional fix. Rendered prose is not an API.
 
+> r[lang.diagnostics.non-exhaustive-match]
+>
+> A non-exhaustive match emits `NonExhaustiveMatch`. Its primary span names the
+> enclosing function declaration whose body is incomplete, a related label
+> identifies the match expression, and its structured payload lists the missing
+> unguarded constructors. Guarded arms do not contribute to exhaustiveness.
+
 Lowering a legal program through a conservative path emits a reasoned
 performance diagnostic; silently falling off a fast path is forbidden.
 

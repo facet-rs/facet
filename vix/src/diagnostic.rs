@@ -116,9 +116,7 @@ impl Diagnostic {
                 DiagnosticCode::DuplicateVariant => format!("duplicate variant {variant}"),
                 _ => variant.clone(),
             },
-            DiagnosticPayload::Match { missing } => {
-                format!("non-exhaustive match: missing {}", missing.join(", "))
-            }
+            DiagnosticPayload::Match { .. } => "non-exhaustive match".to_owned(),
             DiagnosticPayload::ExpressionStatement => "expression statement".to_owned(),
         }
     }
