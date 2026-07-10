@@ -7,6 +7,17 @@ use weavy::mem::Layout;
 use weavy::task::{
     ArgCopy, Fn as WeavyFn, FnId as WeavyFnId, Op as WeavyOp, Program as WeavyProgram,
 };
+use weavy::{
+    CallContract as WeavyCallContract, CallContractId as WeavyCallContractId,
+    FrameContract as WeavyFrameContract, FrameRegion as WeavyFrameRegion,
+    FunctionContract as WeavyFunctionContract, PayloadKind as WeavyPayloadKind,
+    ProgramContract as WeavyProgramContract, RegionId as WeavyRegionId,
+    RegionShape as WeavyRegionShape, SchemaContract as WeavySchemaContract,
+    SchemaRef as WeavySchemaRef, ValueFieldUse as WeavyValueFieldUse,
+    ValueSelector as WeavyValueSelector, ValueShapeContract as WeavyValueShapeContract,
+    ValueShapeKind as WeavyValueShapeKind, ValueShapeRef as WeavyValueShapeRef,
+    ValueVariant as WeavyValueVariant, WordKind as WeavyWordKind,
+};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics};
 use crate::runtime::{
@@ -68,6 +79,7 @@ pub struct LoweringArtifact {
     pub demand_key: DemandKey,
     pub demand_preimage: DemandPreimage,
     pub program: WeavyProgram,
+    pub contract: WeavyProgramContract,
     pub pc_nodes: Vec<Vec<NodeRef>>,
     pub constants: Vec<ValueConstant>,
 }
@@ -282,6 +294,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
         pc_nodes.push(lowered.pc_nodes);
     }
     let program = WeavyProgram { fns: functions_out };
+    let contract = ProgramContractBuilder::build(island, &program, &layouts, &constant_closures)?;
     let demand_preimage = DemandPreimage {
         closure: recipe,
         arguments: Vec::new(),
@@ -291,9 +304,489 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
         demand_key: DemandKey::from_preimage(&demand_preimage),
         demand_preimage,
         program,
+        contract,
         pc_nodes,
         constants,
     })
+}
+
+struct ProgramContractBuilder<'a> {
+    layouts: &'a BTreeMap<FunctionId, FunctionLayout>,
+    constant_closures: &'a BTreeMap<FunctionId, BTreeSet<NodeRef>>,
+    function_order: Vec<FunctionContractSource<'a>>,
+    closure_targets: BTreeSet<FunctionId>,
+    calls: Vec<WeavyCallContract>,
+    schemas: Vec<WeavySchemaContract>,
+    schema_keys: Vec<Type>,
+    value_shapes: Vec<WeavyValueShapeContract>,
+    value_shape_keys: Vec<Type>,
+}
+
+#[derive(Clone, Copy)]
+struct FunctionContractSource<'a> {
+    id: FunctionId,
+    span: Span,
+    parameters: &'a [crate::vir::Parameter],
+    nodes: &'a [Node],
+    output: NodeId,
+}
+
+impl<'a> ProgramContractBuilder<'a> {
+    fn build(
+        island: &'a Island,
+        program: &WeavyProgram,
+        layouts: &'a BTreeMap<FunctionId, FunctionLayout>,
+        constant_closures: &'a BTreeMap<FunctionId, BTreeSet<NodeRef>>,
+    ) -> Result<WeavyProgramContract, Diagnostics> {
+        let root_output = island.output;
+        let mut function_order = Vec::with_capacity(1 + island.callees.len());
+        function_order.push(FunctionContractSource {
+            id: island.function,
+            span: Span { start: 0, end: 0 },
+            parameters: &[],
+            nodes: island.nodes.as_slice(),
+            output: root_output,
+        });
+        for function in &island.callees {
+            let output = function.output.ok_or_else(|| {
+                lowering_diagnostic(function.span, "called VIR function has no return node")
+            })?;
+            function_order.push(FunctionContractSource {
+                id: function.id,
+                span: function.span,
+                parameters: function.parameters.as_slice(),
+                nodes: function.nodes.as_slice(),
+                output,
+            });
+        }
+
+        let closure_targets = function_order
+            .iter()
+            .flat_map(|function| function.nodes.iter())
+            .filter_map(|node| match node.op {
+                Op::Closure(callee) => Some(callee),
+                _ => None,
+            })
+            .collect();
+
+        let mut builder = Self {
+            layouts,
+            constant_closures,
+            function_order,
+            closure_targets,
+            calls: Vec::new(),
+            schemas: Vec::new(),
+            schema_keys: Vec::new(),
+            value_shapes: Vec::new(),
+            value_shape_keys: Vec::new(),
+        };
+
+        let mut functions = Vec::with_capacity(program.fns.len());
+        for (function_index, function) in program.fns.iter().enumerate() {
+            let source = builder.function_order[function_index];
+            functions.push(builder.function_contract(source, function)?);
+        }
+        Ok(WeavyProgramContract {
+            functions,
+            calls: builder.calls,
+            schemas: builder.schemas,
+            value_shapes: builder.value_shapes,
+        })
+    }
+
+    fn function_contract(
+        &mut self,
+        function: FunctionContractSource<'_>,
+        lowered: &WeavyFn,
+    ) -> Result<WeavyFunctionContract, Diagnostics> {
+        let layout = self.layouts.get(&function.id).ok_or_else(|| {
+            lowering_diagnostic(function.span, "missing function contract layout")
+        })?;
+        let mut regions = Vec::new();
+        let mut node_region_ids = BTreeMap::new();
+        let mut constant_region_ids = BTreeMap::new();
+        for node in function.nodes {
+            let region = layout.region(node.id, node.span)?;
+            let contract = self.frame_region(region.start(), &node.ty)?;
+            node_region_ids.insert(node.id, WeavyRegionId(regions.len() as u32));
+            regions.push(contract);
+        }
+        if let Some(scratch) = layout.scratch {
+            regions.push(WeavyFrameRegion::new(
+                scratch.byte_offset(),
+                WeavyRegionShape::word(WeavyWordKind::Scalar),
+            ));
+        }
+        if let Some(control) = layout.control_scratch {
+            regions.push(WeavyFrameRegion::new(
+                control.expected.byte_offset(),
+                WeavyRegionShape::word(WeavyWordKind::Scalar),
+            ));
+            regions.push(WeavyFrameRegion::new(
+                control.condition.byte_offset(),
+                WeavyRegionShape::word(WeavyWordKind::Scalar),
+            ));
+        }
+        let local_constants = self
+            .constant_closures
+            .get(&function.id)
+            .ok_or_else(|| lowering_diagnostic(function.span, "missing closure constants"))?;
+        for constant in local_constants {
+            let region_id = if constant.function == function.id {
+                *node_region_ids.get(&constant.node).ok_or_else(|| {
+                    lowering_diagnostic(function.span, "local constant node has no frame region")
+                })?
+            } else {
+                let slot = layout.constant_slot(*constant, function.span)?;
+                let region = WeavyFrameRegion::new(
+                    slot.byte_offset(),
+                    WeavyRegionShape::word(WeavyWordKind::Handle(
+                        self.schema_for_type(&Type::String, function.span)?,
+                    )),
+                );
+                let region_id = WeavyRegionId(regions.len() as u32);
+                regions.push(region);
+                region_id
+            };
+            constant_region_ids.insert(*constant, region_id);
+        }
+        let mut entries = Vec::with_capacity(
+            function
+                .parameters
+                .len()
+                .saturating_add(layout.constant_slots.len()),
+        );
+        for parameter in function.parameters {
+            entries.push(*node_region_ids.get(&parameter.node).ok_or_else(|| {
+                lowering_diagnostic(function.span, "parameter node has no frame region")
+            })?);
+        }
+        for constant in layout.constant_slots.keys() {
+            let entry = constant_region_ids.get(constant).copied().ok_or_else(|| {
+                lowering_diagnostic(function.span, "constant slot has no contract region")
+            })?;
+            entries.push(entry);
+        }
+        let result = *node_region_ids
+            .get(&function.output)
+            .ok_or_else(|| lowering_diagnostic(function.span, "output node has no frame region"))?;
+        let call_contract = if self.closure_targets.contains(&function.id) {
+            let call = self.call_contract_for_function(function, &entries, result, &regions)?;
+            Some(call)
+        } else {
+            None
+        };
+        Ok(WeavyFunctionContract {
+            frame: WeavyFrameContract {
+                layout: lowered.frame,
+                regions,
+            },
+            entries,
+            result,
+            call_contract,
+        })
+    }
+
+    fn call_contract_for_function(
+        &mut self,
+        function: FunctionContractSource<'_>,
+        entries: &[WeavyRegionId],
+        result: WeavyRegionId,
+        regions: &[WeavyFrameRegion],
+    ) -> Result<WeavyCallContractId, Diagnostics> {
+        let parameter_len = function.parameters.len();
+        let call = WeavyCallContract {
+            entries: entries[..parameter_len]
+                .iter()
+                .map(|entry| regions[entry.0 as usize].clone())
+                .collect(),
+            result: regions[result.0 as usize].clone(),
+        };
+        Ok(self.intern_call(call))
+    }
+
+    fn frame_region(
+        &mut self,
+        slot: FrameSlot,
+        ty: &Type,
+    ) -> Result<WeavyFrameRegion, Diagnostics> {
+        let shape = self.shape_for_type(ty, Span { start: 0, end: 0 })?;
+        let mut region = WeavyFrameRegion::new(slot.byte_offset(), shape);
+        if let Some(value_shape) = self.value_shape_for_type(ty, Span { start: 0, end: 0 })? {
+            region = region.with_value_shape(value_shape);
+        }
+        Ok(region)
+    }
+
+    fn shape_for_type(&mut self, ty: &Type, span: Span) -> Result<WeavyRegionShape, Diagnostics> {
+        match ty {
+            Type::Bool | Type::Int | Type::Check => {
+                Ok(WeavyRegionShape::word(WeavyWordKind::Scalar))
+            }
+            Type::String => Ok(WeavyRegionShape::word(WeavyWordKind::Handle(
+                self.schema_for_type(ty, span)?,
+            ))),
+            Type::StreamCheck => Err(lowering_diagnostic(
+                span,
+                "Stream<Check> has no contract frame shape",
+            )),
+            Type::Function { parameter, result } => {
+                let call = self.call_contract_for_signature(parameter, result, span)?;
+                Ok(WeavyRegionShape::new(vec![
+                    WeavyWordKind::Callable(call).into(),
+                    WeavyWordKind::Scalar.into(),
+                ]))
+            }
+            Type::Tuple(elements) => self.product_shape(elements.iter(), span),
+            Type::Record(record) => {
+                self.product_shape(record.fields.iter().map(|field| &field.ty), span)
+            }
+            Type::Enum(enumeration) => self.enum_shape(enumeration, span),
+            Type::Array(_) => Ok(WeavyRegionShape::word(WeavyWordKind::Handle(
+                self.schema_for_type(ty, span)?,
+            ))),
+        }
+    }
+
+    fn product_shape<'t>(
+        &mut self,
+        fields: impl IntoIterator<Item = &'t Type>,
+        span: Span,
+    ) -> Result<WeavyRegionShape, Diagnostics> {
+        let mut words = Vec::new();
+        for field in fields {
+            words.extend(self.shape_for_type(field, span)?.words);
+        }
+        Ok(WeavyRegionShape::new(words))
+    }
+
+    fn enum_shape(
+        &mut self,
+        enumeration: &EnumType,
+        span: Span,
+    ) -> Result<WeavyRegionShape, Diagnostics> {
+        let layout = EnumLayout::for_enum(enumeration, span)?;
+        let mut words: Vec<weavy::AllowedKinds> =
+            vec![WeavyWordKind::Scalar.into(); layout.words.as_usize()];
+        for variant in &layout.variants {
+            for element in &variant.elements {
+                let field_shape = self.shape_for_type(element.ty, span)?;
+                let start = element.offset_words.checked_add(1).ok_or_else(|| {
+                    lowering_diagnostic(span, "enum payload contract offset overflow")
+                })?;
+                for (index, kinds) in field_shape.words.into_iter().enumerate() {
+                    let target = words.get_mut(start + index).ok_or_else(|| {
+                        lowering_diagnostic(span, "enum payload contract lies outside shape")
+                    })?;
+                    for kind in kinds.as_slice() {
+                        *target = target.clone().allowing(*kind);
+                    }
+                }
+            }
+        }
+        Ok(WeavyRegionShape::new(words))
+    }
+
+    fn schema_for_type(&mut self, ty: &Type, span: Span) -> Result<WeavySchemaRef, Diagnostics> {
+        if let Some(index) = self
+            .schema_keys
+            .iter()
+            .position(|candidate| candidate == ty)
+        {
+            return Ok(WeavySchemaRef(index as u32));
+        }
+        let index = self.schemas.len();
+        let schema = WeavySchemaRef(index as u32);
+        self.schema_keys.push(ty.clone());
+        self.schemas.push(WeavySchemaContract {
+            inline: WeavyRegionShape::default(),
+            value_shape: None,
+            payload: WeavyPayloadKind::Inline,
+        });
+        let inline = match ty {
+            Type::String | Type::Array(_) => WeavyRegionShape::word(WeavyWordKind::Handle(schema)),
+            _ => self.shape_for_type(ty, span)?,
+        };
+        let value_shape = self.value_shape_for_type(ty, span)?;
+        let payload = match ty {
+            Type::String => WeavyPayloadKind::OpaqueBytes {
+                byte_comparable: true,
+            },
+            Type::Array(element) => WeavyPayloadKind::DenseArray {
+                element: self.schema_for_type(element, span)?,
+            },
+            _ => WeavyPayloadKind::Inline,
+        };
+        self.schemas[index] = WeavySchemaContract {
+            inline,
+            value_shape,
+            payload,
+        };
+        Ok(schema)
+    }
+
+    fn value_shape_for_type(
+        &mut self,
+        ty: &Type,
+        span: Span,
+    ) -> Result<Option<WeavyValueShapeRef>, Diagnostics> {
+        match ty {
+            Type::Function { .. } | Type::Tuple(_) | Type::Record(_) | Type::Enum(_) => {
+                Ok(Some(self.intern_value_shape_for_type(ty, span)?))
+            }
+            Type::Bool | Type::Int | Type::Check | Type::String | Type::Array(_) => Ok(None),
+            Type::StreamCheck => Err(lowering_diagnostic(
+                span,
+                "Stream<Check> has no contract value shape",
+            )),
+        }
+    }
+
+    fn intern_value_shape_for_type(
+        &mut self,
+        ty: &Type,
+        span: Span,
+    ) -> Result<WeavyValueShapeRef, Diagnostics> {
+        if let Some(index) = self
+            .value_shape_keys
+            .iter()
+            .position(|candidate| candidate == ty)
+        {
+            return Ok(WeavyValueShapeRef(index as u32));
+        }
+        let shape = self.shape_for_type(ty, span)?;
+        let kind = match ty {
+            Type::Function { .. } => {
+                let fields = vec![
+                    WeavyValueFieldUse::new(
+                        0,
+                        WeavyRegionShape::word(shape.words[0].as_slice()[0]),
+                    ),
+                    WeavyValueFieldUse::new(
+                        FrameSlot::word_size(),
+                        WeavyRegionShape::word(WeavyWordKind::Scalar),
+                    ),
+                ];
+                WeavyValueShapeKind::Product { fields }
+            }
+            Type::Tuple(elements) => WeavyValueShapeKind::Product {
+                fields: self.value_fields(elements.iter(), span)?,
+            },
+            Type::Record(record) => WeavyValueShapeKind::Product {
+                fields: self.value_fields(record.fields.iter().map(|field| &field.ty), span)?,
+            },
+            Type::Enum(enumeration) => self.enum_value_shape_kind(enumeration, span)?,
+            _ => {
+                return Err(lowering_diagnostic(
+                    span,
+                    "non-structural type reached value-shape interning",
+                ));
+            }
+        };
+        let value_shape = WeavyValueShapeRef(self.value_shapes.len() as u32);
+        self.value_shape_keys.push(ty.clone());
+        self.value_shapes
+            .push(WeavyValueShapeContract { shape, kind });
+        Ok(value_shape)
+    }
+
+    fn value_fields<'t>(
+        &mut self,
+        fields: impl IntoIterator<Item = &'t Type>,
+        span: Span,
+    ) -> Result<Vec<WeavyValueFieldUse>, Diagnostics> {
+        let mut offset_words = 0usize;
+        let mut out = Vec::new();
+        for ty in fields {
+            let shape = self.shape_for_type(ty, span)?;
+            let mut field = WeavyValueFieldUse::new(
+                FrameSlot::for_word(offset_words)
+                    .ok_or_else(|| lowering_diagnostic(span, "product field offset overflow"))?
+                    .byte_offset(),
+                shape.clone(),
+            );
+            if self.field_requires_nested_ref(&shape) {
+                field = field.with_value_shape(self.intern_value_shape_for_type(ty, span)?);
+            }
+            offset_words = offset_words
+                .checked_add(shape.words.len())
+                .ok_or_else(|| lowering_diagnostic(span, "product shape offset overflow"))?;
+            out.push(field);
+        }
+        Ok(out)
+    }
+
+    fn enum_value_shape_kind(
+        &mut self,
+        enumeration: &EnumType,
+        span: Span,
+    ) -> Result<WeavyValueShapeKind, Diagnostics> {
+        let layout = EnumLayout::for_enum(enumeration, span)?;
+        let mut variants = Vec::with_capacity(layout.variants.len());
+        for variant in &layout.variants {
+            let mut fields = Vec::with_capacity(variant.elements.len());
+            for element in &variant.elements {
+                let shape = self.shape_for_type(element.ty, span)?;
+                let offset_words = element.offset_words.checked_add(1).ok_or_else(|| {
+                    lowering_diagnostic(span, "enum value-shape field offset overflow")
+                })?;
+                let mut field = WeavyValueFieldUse::new(
+                    FrameSlot::for_word(offset_words)
+                        .ok_or_else(|| {
+                            lowering_diagnostic(span, "enum value-shape field offset overflow")
+                        })?
+                        .byte_offset(),
+                    shape.clone(),
+                );
+                if self.field_requires_nested_ref(&shape) {
+                    field =
+                        field.with_value_shape(self.intern_value_shape_for_type(element.ty, span)?);
+                }
+                fields.push(field);
+            }
+            variants.push(WeavyValueVariant { fields });
+        }
+        Ok(WeavyValueShapeKind::Enum {
+            selector: WeavyValueSelector {
+                offset: 0,
+                shape: WeavyRegionShape::word(WeavyWordKind::Scalar),
+            },
+            variants,
+        })
+    }
+
+    fn field_requires_nested_ref(&self, shape: &WeavyRegionShape) -> bool {
+        !(shape.words.len() == 1 && shape.words[0].as_slice().len() == 1)
+    }
+
+    fn call_contract_for_signature(
+        &mut self,
+        parameter: &Type,
+        result: &Type,
+        span: Span,
+    ) -> Result<WeavyCallContractId, Diagnostics> {
+        let mut entry = WeavyFrameRegion::new(0, self.shape_for_type(parameter, span)?);
+        if let Some(value_shape) = self.value_shape_for_type(parameter, span)? {
+            entry = entry.with_value_shape(value_shape);
+        }
+        let mut result_region = WeavyFrameRegion::new(0, self.shape_for_type(result, span)?);
+        if let Some(value_shape) = self.value_shape_for_type(result, span)? {
+            result_region = result_region.with_value_shape(value_shape);
+        }
+        Ok(self.intern_call(WeavyCallContract {
+            entries: vec![entry],
+            result: result_region,
+        }))
+    }
+
+    fn intern_call(&mut self, call: WeavyCallContract) -> WeavyCallContractId {
+        if let Some(index) = self.calls.iter().position(|candidate| candidate == &call) {
+            return WeavyCallContractId(index as u32);
+        }
+        let id = WeavyCallContractId(self.calls.len() as u32);
+        self.calls.push(call);
+        id
+    }
 }
 
 fn constant_closures(island: &Island) -> BTreeMap<FunctionId, BTreeSet<NodeRef>> {
@@ -1820,6 +2313,10 @@ impl<'a> EnumLayout<'a> {
                 &format!("{} is not an enum type", ty.name()),
             ));
         };
+        Self::for_enum(enumeration, span)
+    }
+
+    fn for_enum(enumeration: &'a EnumType, span: Span) -> Result<Self, Diagnostics> {
         let mut widest_payload = 0usize;
         let mut variants = Vec::with_capacity(enumeration.variants.len());
         for variant in &enumeration.variants {
