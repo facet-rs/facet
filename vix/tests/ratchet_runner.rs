@@ -16,6 +16,7 @@ const RUNG_008: &str = include_str!("ratchet/008-spread.vix");
 const RUNG_009: &str = include_str!("ratchet/009-structural-equality.vix");
 const RUNG_010: &str = include_str!("ratchet/010-spaceship.vix");
 const RUNG_011: &str = include_str!("ratchet/011-derived-comparisons.vix");
+const RUNG_012: &str = include_str!("ratchet/012-total-order.vix");
 
 /// The first rung is an architectural certificate, not just a boolean test.
 ///
@@ -798,6 +799,83 @@ fn rung_011_relations_derive_from_spaceship_through_vir_and_weavy() {
     assert!(report.passed());
     assert!(report.agrees());
     assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    assert_eq!(report.plain.counters.pure_host_calls, 0);
+    assert_eq!(report.chaos.counters.pure_host_calls, 0);
+    assert_eq!(report.plain.receipt_count, 0);
+    assert_eq!(report.chaos.receipt_count, 0);
+}
+
+// r[related lang.value.structural-order]
+// r[related machine.value.structural-order]
+#[test]
+fn rung_012_record_order_is_total_structural_and_declaration_ordered() {
+    let module = Compiler::new()
+        .compile(RUNG_012)
+        .expect("rung 012 compiles");
+    let version = module
+        .records
+        .iter()
+        .find(|record| record.name == "V")
+        .expect("rung 012 declares V");
+    assert_eq!(VirType::Record(version.clone()).word_width(), Some(2));
+    let total_order = module
+        .functions
+        .iter()
+        .find(|function| function.name == "total_order")
+        .expect("rung 012 contains total_order");
+    assert_eq!(
+        total_order
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.op, VirOp::Compare))
+            .count(),
+        2
+    );
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    assert_eq!(partitioned.islands.len(), 2);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 012 lowers to Weavy");
+        let entry = &lowered.program.fns[0];
+        let compared_fields = entry
+            .code
+            .iter()
+            .filter_map(|op| match op {
+                WeavyOp::LtI64 { a, b, .. } => Some((*a, *b)),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert_eq!(compared_fields.len(), 2);
+        assert_eq!(compared_fields[1].0, compared_fields[0].0 + 8);
+        assert_eq!(compared_fields[1].1, compared_fields[0].1 + 8);
+        assert!(
+            entry
+                .code
+                .iter()
+                .any(|op| matches!(op, WeavyOp::Jump { .. }))
+        );
+        assert!(
+            entry
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::CompareValueBytes { .. }))
+        );
+        assert!(
+            entry
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        );
+    }
+
+    let report = run_source(RUNG_012).expect("rung 012 compiles and runs");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 2);
     assert_eq!(report.plain.checks, report.chaos.checks);
     assert_eq!(report.plain.counters.pure_host_calls, 0);
     assert_eq!(report.chaos.counters.pure_host_calls, 0);
