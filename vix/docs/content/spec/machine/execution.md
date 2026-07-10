@@ -106,6 +106,18 @@ artifacts and never second-guesses the substrate.
 > it never collapses them to `Option`, a single `present` bit, a zero/default
 > value, or a silently discarded write.
 >
+> Authoritative dense-array construction, store, and load operations transfer
+> exactly one complete element. The op's element-width witness is the complete
+> element width and must equal the well-formed payload header before any bytes
+> are copied; projection into fields happens afterward through ordinary static
+> frame projection. A partial-region width is not an element-width witness.
+> Payload classification first validates the structural envelope — tag,
+> tag-specific header, positive width, checked total size, and exact length —
+> then compares schema and element width. Invalid structure is
+> `MalformedPayload`; only a structurally valid array of another schema is
+> `SchemaMismatch`, and only a structurally valid matching-schema array of
+> another element width is `WidthMismatch`.
+>
 > `VerifiedProgram` proves static program shape; it does not prove dynamic
 > aggregate contents or handle provenance. Fast native stencils therefore keep
 > using the access membrane for dynamic aggregate, value, and indirect function
