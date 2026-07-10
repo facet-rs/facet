@@ -64,20 +64,6 @@ impl<'a> ValueMemory<'a> {
         }
     }
 
-    /// Build a borrowed value-memory descriptor from raw parts.
-    ///
-    /// # Safety
-    /// `ptr` must be non-null and readable for `len` bytes for the entire
-    /// lifetime `'a`, unless `len == 0`. The pointed-to bytes must not be
-    /// mutated for the duration of `'a`.
-    #[must_use]
-    pub unsafe fn from_raw_parts(ptr: *const u8, len: usize) -> Self {
-        Self {
-            raw: RawValueMemory { ptr, len },
-            _borrow: PhantomData,
-        }
-    }
-
     #[must_use]
     pub fn empty() -> Self {
         Self {
@@ -123,9 +109,9 @@ pub struct ValueMemories<'a> {
     pub store: &'a [ValueMemory<'a>],
     /// Molten payloads lent by an external owner, read-only for the task.
     ///
-    /// The task's own [`MoltenArena`] and externally lent molten table occupy
-    /// disjoint handle namespaces. A task-local allocation can never shadow a
-    /// lent payload.
+    /// The task's own private molten arena and externally lent molten table
+    /// occupy disjoint handle namespaces. A task-local allocation can never
+    /// shadow a lent payload.
     pub molten: &'a [ValueMemory<'a>],
 }
 
@@ -231,7 +217,7 @@ pub enum ArrayOpStatus {
 /// in the high negative range, outside the task-local namespace. Nonnegative
 /// handles remain store handles.
 #[derive(Clone, Debug, Default)]
-pub struct MoltenArena {
+pub(crate) struct MoltenArena {
     buffers: Vec<MoltenBuffer>,
 }
 
@@ -245,7 +231,7 @@ impl MoltenArena {
     /// Reserve a zeroed array-elements payload and return its task-local molten
     /// handle. Elements are written afterwards through checked array-store ops;
     /// the payload is well-formed from allocation on.
-    pub fn alloc_array(
+    pub(crate) fn alloc_array(
         &mut self,
         count: i64,
         elem_width: usize,
@@ -289,7 +275,7 @@ impl MoltenArena {
     }
 
     #[must_use]
-    pub fn bytes(&self, handle: i64) -> Option<&[u8]> {
+    fn bytes(&self, handle: i64) -> Option<&[u8]> {
         self.buffers
             .get(task_molten_index(handle)?)
             .map(|buffer| buffer.bytes.as_slice())
@@ -303,17 +289,6 @@ impl MoltenArena {
     fn buffer(&self, handle: i64) -> Option<&MoltenBuffer> {
         let index = task_molten_index(handle)?;
         self.buffers.get(index)
-    }
-
-    /// Number of live molten allocations. Observability only.
-    #[must_use]
-    pub fn len(&self) -> usize {
-        self.buffers.len()
-    }
-
-    #[must_use]
-    pub fn is_empty(&self) -> bool {
-        self.buffers.is_empty()
     }
 }
 
@@ -351,6 +326,14 @@ fn task_molten_index(handle: i64) -> Option<usize> {
     }
 }
 
+fn lent_molten_index(handle: i64) -> Option<usize> {
+    if (LENT_MOLTEN_MIN..0).contains(&handle) {
+        usize::try_from((-1i64).checked_sub(handle)?).ok()
+    } else {
+        None
+    }
+}
+
 fn classify_handle(handle: i64) -> Option<HandleKind> {
     if handle >= 0 {
         return Some(HandleKind::Store(usize::try_from(handle).ok()?));
@@ -358,10 +341,8 @@ fn classify_handle(handle: i64) -> Option<HandleKind> {
     if let Some(index) = task_molten_index(handle) {
         return Some(HandleKind::TaskMolten(index));
     }
-    if handle >= LENT_MOLTEN_MIN {
-        return Some(HandleKind::LentMolten(
-            usize::try_from((-1i64).checked_sub(handle)?).ok()?,
-        ));
+    if let Some(index) = lent_molten_index(handle) {
+        return Some(HandleKind::LentMolten(index));
     }
     None
 }
@@ -372,28 +353,29 @@ fn count_i64(value: usize) -> Result<i64, ArrayOpStatus> {
 
 /// # Safety
 /// `arena` must point to a live [`MoltenArena`] for the duration of the call,
-/// and no other mutable or shared reference may concurrently access that arena.
+/// and no mutable reference may access that arena while the returned pointer is
+/// used.
 /// `out_len` must be non-null and writable for one `usize`. The returned pointer
-/// is valid only until the next mutation of the arena and must not be written
-/// through except by Weavy's own checked array ABI helpers.
+/// is valid only until the next mutation of the arena and must never be written
+/// through.
 #[cfg(feature = "jit")]
 pub(crate) unsafe extern "C" fn molten_bytes_abi(
-    arena: *mut core::ffi::c_void,
+    arena: *const core::ffi::c_void,
     handle: i64,
     out_len: *mut usize,
-) -> *mut u8 {
+) -> *const u8 {
     if arena.is_null() || out_len.is_null() {
-        return core::ptr::null_mut();
+        return core::ptr::null();
     }
-    let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
-    match arena.buffer_mut(handle) {
+    let arena = unsafe { &*arena.cast::<MoltenArena>() };
+    match arena.buffer(handle) {
         Some(buffer) => {
             unsafe { *out_len = buffer.bytes.len() };
-            buffer.bytes.as_mut_ptr()
+            buffer.bytes.as_ptr()
         }
         None => {
             unsafe { *out_len = 0 };
-            core::ptr::null_mut()
+            core::ptr::null()
         }
     }
 }
@@ -1842,7 +1824,13 @@ mod tests {
         assert_eq!(task_molten_index(ARRAY_POISON_HANDLE), None);
         assert_eq!(classify_handle(ARRAY_POISON_HANDLE), None);
         assert_eq!(task_molten_index(ARRAY_POISON_HANDLE + 1), Some(0));
+        assert_eq!(lent_molten_index(ARRAY_POISON_HANDLE), None);
+        assert_eq!(lent_molten_index(ARRAY_POISON_HANDLE + 1), None);
+        assert_eq!(lent_molten_index(LENT_MOLTEN_MIN - 1), None);
+        let old_truncating_u32_index = ((-1i128 - i128::from(LENT_MOLTEN_MIN - 1)) as u32) as usize;
+        assert_eq!(old_truncating_u32_index, 0);
         assert_eq!(classify_handle(-1), Some(HandleKind::LentMolten(0)));
+        assert_eq!(lent_molten_index(-1), Some(0));
 
         let max_index_i64 = LENT_MOLTEN_MIN - TASK_MOLTEN_FIRST - 1;
         if let Ok(max_index) = usize::try_from(max_index_i64) {
@@ -1856,6 +1844,12 @@ mod tests {
             assert!(last < LENT_MOLTEN_MIN);
             assert_eq!(task_molten_index(last), Some(max_index));
         }
+
+        let first_lent_index = (-1i64).checked_sub(LENT_MOLTEN_MIN).unwrap();
+        assert_eq!(
+            lent_molten_index(LENT_MOLTEN_MIN),
+            usize::try_from(first_lent_index).ok()
+        );
     }
 
     /// callee(x, y) at offsets 0,8 -> returns (x*y)+x from slot 16.

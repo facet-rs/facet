@@ -41,7 +41,7 @@ struct Ctx {
     lent_molten_value_memories: *const crate::task::RawValueMemory,
     lent_molten_value_memory_count: usize,
     molten: *mut core::ffi::c_void,
-    molten_bytes: unsafe extern "C" fn(*mut core::ffi::c_void, i64, *mut usize) -> *mut u8,
+    molten_bytes: unsafe extern "C" fn(*const core::ffi::c_void, i64, *mut usize) -> *const u8,
     array_new: unsafe extern "C" fn(*mut core::ffi::c_void, i64, usize, i64, *mut i64) -> i64,
     array_store:
         unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, usize, *const u8, usize, i64) -> i64,
