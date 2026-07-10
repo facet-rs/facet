@@ -332,6 +332,7 @@ pub enum AccessDefect {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum KindRequirement {
     Scalar,
+    Status,
     Callable,
     Handle,
     ConstantWord,
@@ -525,6 +526,10 @@ pub enum ProgramDefect {
     SchemaNotByteComparable {
         schema: SchemaRef,
     },
+    DynamicSchemaInlineMismatch {
+        schema: SchemaRef,
+        inline: RegionShape,
+    },
     ArraySchemaNotDense {
         schema: SchemaRef,
     },
@@ -541,6 +546,10 @@ pub enum ProgramDefect {
         array: SchemaRef,
         expected: SchemaRef,
         actual: SchemaRef,
+    },
+    ArrayElementWitnessOutOfRange {
+        witness: i64,
+        schema_count: usize,
     },
     UnsupportedOp {
         op: UnsupportedOp,
@@ -720,6 +729,16 @@ impl Verifier<'_> {
         for (schema_index, schema) in self.contract.schemas.iter().enumerate() {
             let schema_ref = SchemaRef(schema_index as u32);
             self.validate_shape(&schema.inline, ShapeOwner::SchemaInline(schema_ref), None)?;
+            if matches!(
+                schema.payload,
+                PayloadKind::OpaqueBytes { .. } | PayloadKind::DenseArray { .. }
+            ) && schema.inline != RegionShape::word(WordKind::Handle(schema_ref))
+            {
+                return Err(self.global(ProgramDefect::DynamicSchemaInlineMismatch {
+                    schema: schema_ref,
+                    inline: schema.inline.clone(),
+                }));
+            }
             if let PayloadKind::DenseArray { element } = schema.payload {
                 let Ok(index) = usize::try_from(element.0) else {
                     return Err(self.global(ProgramDefect::SchemaReferenceOutOfRange {
@@ -1401,7 +1420,7 @@ impl Verifier<'_> {
                 pc,
                 ProgramDefect::KindMismatch {
                     role: AccessRole::Destination,
-                    required: KindRequirement::ConstantWord,
+                    required: KindRequirement::Status,
                     allowed: kinds.clone(),
                 },
             ));
@@ -1635,7 +1654,7 @@ impl Verifier<'_> {
                 pc,
                 ProgramDefect::KindMismatch {
                     role,
-                    required: KindRequirement::ConstantWord,
+                    required: KindRequirement::Status,
                     allowed: kinds.clone(),
                 },
             ));
@@ -1663,33 +1682,6 @@ impl Verifier<'_> {
                 },
             )
         })?;
-        let PayloadKind::DenseArray { element: _ } = self.contract.schemas[array_index].payload
-        else {
-            return Err(self.op(
-                function,
-                pc,
-                ProgramDefect::ArraySchemaNotDense {
-                    schema: array_schema,
-                },
-            ));
-        };
-        let witness = u32::try_from(witness)
-            .ok()
-            .map(SchemaRef)
-            .filter(|schema| {
-                usize::try_from(schema.0).is_ok_and(|index| index < self.contract.schemas.len())
-            })
-            .ok_or_else(|| {
-                self.op(
-                    function,
-                    pc,
-                    ProgramDefect::SchemaReferenceOutOfRange {
-                        site: ReferenceSite::ArrayElementWitness,
-                        schema: SchemaRef(u32::try_from(witness).unwrap_or(u32::MAX)),
-                        schema_count: self.contract.schemas.len(),
-                    },
-                )
-            })?;
         let PayloadKind::DenseArray { element: expected } =
             self.contract.schemas[array_index].payload
         else {
@@ -1701,6 +1693,29 @@ impl Verifier<'_> {
                 },
             ));
         };
+        let witness_index = usize::try_from(witness)
+            .ok()
+            .filter(|index| *index < self.contract.schemas.len())
+            .ok_or_else(|| {
+                self.op(
+                    function,
+                    pc,
+                    ProgramDefect::ArrayElementWitnessOutOfRange {
+                        witness,
+                        schema_count: self.contract.schemas.len(),
+                    },
+                )
+            })?;
+        let witness = SchemaRef(u32::try_from(witness_index).map_err(|_| {
+            self.op(
+                function,
+                pc,
+                ProgramDefect::ArrayElementWitnessOutOfRange {
+                    witness,
+                    schema_count: self.contract.schemas.len(),
+                },
+            )
+        })?);
         if witness != expected {
             return Err(self.op(
                 function,
@@ -2437,214 +2452,6 @@ mod tests {
                 ],
             },
         )
-    }
-
-    fn multiword_array_program() -> (Program, ProgramContract) {
-        let array = SchemaRef(0);
-        let element = SchemaRef(1);
-        let nested = SchemaRef(2);
-        let element_shape = RegionShape::new(vec![
-            AllowedKinds::new(WordKind::Scalar),
-            AllowedKinds::new(WordKind::Handle(nested)),
-        ]);
-        (
-            Program {
-                fns: vec![function(
-                    9,
-                    vec![
-                        Op::ConstI64 { dst: 16, value: 1 },
-                        Op::ArrayNew {
-                            dst: 0,
-                            status: 8,
-                            count_slot: 16,
-                            elem_width: 16,
-                            elem_schema_ref: i64::from(element.0),
-                        },
-                        Op::ConstI64 { dst: 24, value: 0 },
-                        Op::ArrayStore {
-                            status: 8,
-                            array: 0,
-                            index: 24,
-                            src: 32,
-                            elem_width: 16,
-                            elem_schema_ref: i64::from(element.0),
-                        },
-                        Op::LoadArray {
-                            dst: 48,
-                            status: 8,
-                            array: 0,
-                            index: 24,
-                            elem_width: 16,
-                            elem_schema_ref: i64::from(element.0),
-                        },
-                        Op::LoadArrayLen {
-                            dst: 64,
-                            status: 8,
-                            array: 0,
-                            elem_schema_ref: i64::from(element.0),
-                        },
-                        Op::Ret { src: 48, size: 16 },
-                    ],
-                )],
-            },
-            ProgramContract {
-                functions: vec![function_contract(
-                    9,
-                    vec![
-                        word_region(0, WordKind::Handle(array)),
-                        word_region(8, WordKind::Status),
-                        word_region(16, WordKind::Scalar),
-                        word_region(24, WordKind::Scalar),
-                        region(32, element_shape.clone()),
-                        region(48, element_shape.clone()),
-                        word_region(64, WordKind::Scalar),
-                    ],
-                    &[],
-                    5,
-                    None,
-                )],
-                calls: vec![],
-                schemas: vec![
-                    SchemaContract {
-                        inline: RegionShape::default(),
-                        payload: PayloadKind::DenseArray { element },
-                    },
-                    SchemaContract {
-                        inline: element_shape,
-                        payload: PayloadKind::Inline,
-                    },
-                    SchemaContract {
-                        inline: RegionShape::default(),
-                        payload: PayloadKind::Inline,
-                    },
-                ],
-            },
-        )
-    }
-
-    #[test]
-    fn checked_array_ops_require_the_whole_multiword_element_contract() {
-        let (program, contract) = multiword_array_program();
-        program
-            .verify(contract)
-            .expect("complete two-word element program is admitted");
-    }
-
-    #[test]
-    fn checked_array_ops_reject_adversarial_contracts() {
-        let (mut witness_program, witness_contract) = multiword_array_program();
-        let Op::ArrayNew {
-            elem_schema_ref, ..
-        } = &mut witness_program.fns[0].code[1]
-        else {
-            unreachable!();
-        };
-        *elem_schema_ref = 2;
-
-        let (mut width_program, width_contract) = multiword_array_program();
-        let Op::ArrayNew { elem_width, .. } = &mut width_program.fns[0].code[1] else {
-            unreachable!();
-        };
-        *elem_width = 8;
-
-        let (source_program, mut source_contract) = multiword_array_program();
-        source_contract.functions[0].frame.regions[4].shape = RegionShape::new(vec![
-            AllowedKinds::new(WordKind::Scalar),
-            AllowedKinds::new(WordKind::Scalar),
-        ]);
-
-        let (destination_program, mut destination_contract) = multiword_array_program();
-        destination_contract.functions[0].frame.regions[5].shape = RegionShape::new(vec![
-            AllowedKinds::new(WordKind::Scalar),
-            AllowedKinds::new(WordKind::Scalar),
-        ]);
-
-        let (mut partial_program, partial_contract) = multiword_array_program();
-        let Op::ArrayStore { src, .. } = &mut partial_program.fns[0].code[3] else {
-            unreachable!();
-        };
-        *src = 40;
-
-        let scalar_pair_shape = RegionShape::new(vec![
-            AllowedKinds::new(WordKind::Scalar),
-            AllowedKinds::new(WordKind::Scalar),
-        ]);
-        let element_shape = RegionShape::new(vec![
-            AllowedKinds::new(WordKind::Scalar),
-            AllowedKinds::new(WordKind::Handle(SchemaRef(2))),
-        ]);
-        let cases = vec![
-            InvalidCase {
-                name: "element witness mismatch",
-                program: witness_program,
-                contract: witness_contract,
-                expected: op_error(
-                    1,
-                    ProgramDefect::ArrayElementSchemaMismatch {
-                        array: SchemaRef(0),
-                        expected: SchemaRef(1),
-                        actual: SchemaRef(2),
-                    },
-                ),
-            },
-            InvalidCase {
-                name: "partial element width",
-                program: width_program,
-                contract: width_contract,
-                expected: op_error(
-                    1,
-                    ProgramDefect::ArrayElementWidth {
-                        schema: SchemaRef(1),
-                        expected: 16,
-                        actual: 8,
-                    },
-                ),
-            },
-            InvalidCase {
-                name: "source shape",
-                program: source_program,
-                contract: source_contract,
-                expected: op_error(
-                    3,
-                    ProgramDefect::ArrayElementShapes {
-                        source: scalar_pair_shape.clone(),
-                        destination: element_shape.clone(),
-                    },
-                ),
-            },
-            InvalidCase {
-                name: "destination shape",
-                program: destination_program,
-                contract: destination_contract,
-                expected: op_error(
-                    4,
-                    ProgramDefect::ArrayElementShapes {
-                        source: element_shape,
-                        destination: scalar_pair_shape,
-                    },
-                ),
-            },
-            InvalidCase {
-                name: "partial source region",
-                program: partial_program,
-                contract: partial_contract,
-                expected: op_error(
-                    3,
-                    ProgramDefect::Access {
-                        role: AccessRole::ArrayElementSource,
-                        defect: AccessDefect::UndeclaredRegion {
-                            offset: 40,
-                            size: 16,
-                        },
-                    },
-                ),
-            },
-        ];
-
-        for case in cases {
-            let error = case.program.verify(case.contract).expect_err(case.name);
-            assert_eq!(error, case.expected, "{}", case.name);
-        }
     }
 
     fn single_function(
@@ -3494,88 +3301,274 @@ mod tests {
     }
 
     #[test]
-    fn verifies_authoritative_multiword_array_ops_and_rejects_array_schema_witness_width_and_word_errors()
-     {
-        let element = RegionShape::new(vec![kinds(WordKind::Scalar), kinds(WordKind::Scalar)]);
-        let (program, contract) = array_fixture(element);
-        program
-            .clone()
-            .verify(contract.clone())
-            .expect("valid multiword array program");
-
-        let mut wrong_handle = contract.clone();
-        wrong_handle.functions[0].frame.regions[0] = word_region(0, WordKind::Handle(SchemaRef(0)));
-        assert!(
-            program.clone().verify(wrong_handle).is_err(),
-            "wrong array handle schema"
-        );
-
-        let mut non_array = contract.clone();
-        non_array.schemas[1].payload = PayloadKind::Inline;
-        assert!(
-            program.clone().verify(non_array).is_err(),
-            "non-array schema"
-        );
-
-        let mut witness = program.clone();
-        if let Op::ArrayNew {
-            elem_schema_ref, ..
-        } = &mut witness.fns[0].code[0]
-        {
-            *elem_schema_ref = 2;
-        }
-        assert!(
-            witness.verify(contract.clone()).is_err(),
-            "element witness mismatch"
-        );
-
-        let mut width = program.clone();
-        if let Op::ArrayNew { elem_width, .. } = &mut width.fns[0].code[0] {
-            *elem_width = 8;
-        }
-        assert!(
-            width.verify(contract.clone()).is_err(),
-            "element width mismatch"
-        );
-
-        let mut bad_status = contract.clone();
-        bad_status.functions[0].frame.regions[1] = word_region(8, WordKind::Scalar);
-        assert!(
-            program.clone().verify(bad_status).is_err(),
-            "status destination kind"
-        );
-
-        let mut bad_scalar = contract.clone();
-        bad_scalar.functions[0].frame.regions[2] = word_region(16, WordKind::Status);
-        assert!(program.verify(bad_scalar).is_err(), "count scalar kind");
-    }
-
-    #[test]
-    fn rejects_directional_array_element_source_and_destination_leaks() {
-        let scalar_pair = RegionShape::new(vec![kinds(WordKind::Scalar), kinds(WordKind::Scalar)]);
-        let (program, contract) = array_fixture(scalar_pair.clone());
-        let mut source_leak = contract.clone();
-        source_leak.functions[0].frame.regions[3] = region(
-            24,
-            RegionShape::new(vec![
-                kinds(WordKind::Scalar).allowing(WordKind::Opaque),
-                kinds(WordKind::Scalar),
-            ]),
-        );
-        assert!(
-            program.clone().verify(source_leak).is_err(),
-            "source union leaks into element"
-        );
-
-        let element_union = RegionShape::new(vec![
+    fn verifies_checked_array_contract_table() {
+        let narrow = RegionShape::new(vec![kinds(WordKind::Scalar), kinds(WordKind::Scalar)]);
+        let wide = RegionShape::new(vec![
             kinds(WordKind::Scalar).allowing(WordKind::Opaque),
             kinds(WordKind::Scalar),
         ]);
-        let (program, mut destination_leak) = array_fixture(element_union);
-        destination_leak.functions[0].frame.regions[5] = region(48, scalar_pair);
-        assert!(
-            program.verify(destination_leak).is_err(),
-            "element union leaks into destination"
+        for (name, program, contract) in [
+            {
+                let (program, contract) = array_fixture(narrow.clone());
+                ("multiword", program, contract)
+            },
+            {
+                let (program, mut contract) = array_fixture(wide.clone());
+                contract.functions[0].frame.regions[3] = region(24, narrow.clone());
+                ("source narrow to wide", program, contract)
+            },
+            {
+                let (program, mut contract) = array_fixture(narrow.clone());
+                contract.functions[0].frame.regions[5] = region(48, wide.clone());
+                ("destination narrow to wide", program, contract)
+            },
+        ] {
+            program.verify(contract).expect(name);
+        }
+
+        let make = || array_fixture(narrow.clone());
+        let mut cases = Vec::new();
+        let (program, mut contract) = make();
+        contract.schemas[1].payload = PayloadKind::Inline;
+        cases.push((
+            "non dense",
+            program,
+            contract,
+            op_error(
+                0,
+                ProgramDefect::ArraySchemaNotDense {
+                    schema: SchemaRef(1),
+                },
+            ),
+        ));
+        let (program, mut contract) = make();
+        contract.functions[0].frame.regions[0] = region(
+            0,
+            RegionShape::new(vec![
+                kinds(WordKind::Handle(SchemaRef(1))).allowing(WordKind::Handle(SchemaRef(0))),
+            ]),
         );
+        cases.push((
+            "non singleton handle",
+            program,
+            contract,
+            op_error(
+                0,
+                ProgramDefect::KindMismatch {
+                    role: AccessRole::ArrayHandle,
+                    required: KindRequirement::Handle,
+                    allowed: kinds(WordKind::Handle(SchemaRef(1)))
+                        .allowing(WordKind::Handle(SchemaRef(0))),
+                },
+            ),
+        ));
+        let (program, mut contract) = make();
+        contract.functions[0].frame.regions[0] = word_region(0, WordKind::Scalar);
+        cases.push((
+            "wrong handle kind",
+            program,
+            contract,
+            op_error(
+                0,
+                ProgramDefect::KindMismatch {
+                    role: AccessRole::ArrayHandle,
+                    required: KindRequirement::Handle,
+                    allowed: kinds(WordKind::Scalar),
+                },
+            ),
+        ));
+        for (name, witness) in [("negative witness", -1), ("positive witness", 3)] {
+            let (mut program, contract) = make();
+            let Op::ArrayNew {
+                elem_schema_ref, ..
+            } = &mut program.fns[0].code[0]
+            else {
+                unreachable!()
+            };
+            *elem_schema_ref = witness;
+            cases.push((
+                name,
+                program,
+                contract,
+                op_error(
+                    0,
+                    ProgramDefect::ArrayElementWitnessOutOfRange {
+                        witness,
+                        schema_count: 3,
+                    },
+                ),
+            ));
+        }
+        let (mut program, contract) = make();
+        let Op::ArrayNew {
+            elem_schema_ref, ..
+        } = &mut program.fns[0].code[0]
+        else {
+            unreachable!()
+        };
+        *elem_schema_ref = 2;
+        cases.push((
+            "witness mismatch",
+            program,
+            contract,
+            op_error(
+                0,
+                ProgramDefect::ArrayElementSchemaMismatch {
+                    array: SchemaRef(1),
+                    expected: SchemaRef(0),
+                    actual: SchemaRef(2),
+                },
+            ),
+        ));
+        for (name, width) in [("zero width", 0), ("wrong width", 8)] {
+            let (mut program, contract) = make();
+            let Op::ArrayNew { elem_width, .. } = &mut program.fns[0].code[0] else {
+                unreachable!()
+            };
+            *elem_width = width;
+            cases.push((
+                name,
+                program,
+                contract,
+                op_error(
+                    0,
+                    ProgramDefect::ArrayElementWidth {
+                        schema: SchemaRef(0),
+                        expected: 16,
+                        actual: width,
+                    },
+                ),
+            ));
+        }
+        let (program, mut contract) = make();
+        contract.functions[0].frame.regions[1] = word_region(8, WordKind::Scalar);
+        cases.push((
+            "status",
+            program,
+            contract,
+            op_error(
+                0,
+                ProgramDefect::KindMismatch {
+                    role: AccessRole::ArrayStatus,
+                    required: KindRequirement::Status,
+                    allowed: kinds(WordKind::Scalar),
+                },
+            ),
+        ));
+        for (name, region_index, pc, role) in [
+            ("count", 2, 0, AccessRole::ArrayCount),
+            ("index", 4, 1, AccessRole::ArrayIndex),
+        ] {
+            let (program, mut contract) = make();
+            contract.functions[0].frame.regions[region_index].shape =
+                RegionShape::word(WordKind::Status);
+            cases.push((
+                name,
+                program,
+                contract,
+                op_error(
+                    pc,
+                    ProgramDefect::KindMismatch {
+                        role,
+                        required: KindRequirement::Scalar,
+                        allowed: kinds(WordKind::Status),
+                    },
+                ),
+            ));
+        }
+        let (mut program, contract) = make();
+        let Op::ArrayStore { src, .. } = &mut program.fns[0].code[1] else {
+            unreachable!()
+        };
+        *src = 32;
+        cases.push((
+            "partial region",
+            program,
+            contract,
+            op_error(
+                1,
+                ProgramDefect::Access {
+                    role: AccessRole::ArrayElementSource,
+                    defect: AccessDefect::UndeclaredRegion {
+                        offset: 32,
+                        size: 16,
+                    },
+                },
+            ),
+        ));
+        let (program, mut contract) = make();
+        contract.functions[0].frame.regions[3] = region(24, wide.clone());
+        cases.push((
+            "source union",
+            program,
+            contract,
+            op_error(
+                1,
+                ProgramDefect::ArrayElementShapes {
+                    source: wide.clone(),
+                    destination: narrow.clone(),
+                },
+            ),
+        ));
+        let (program, mut contract) = array_fixture(wide.clone());
+        contract.functions[0].frame.regions[5] = region(48, narrow.clone());
+        cases.push((
+            "destination narrow",
+            program,
+            contract,
+            op_error(
+                2,
+                ProgramDefect::ArrayElementShapes {
+                    source: wide,
+                    destination: narrow.clone(),
+                },
+            ),
+        ));
+        for (name, inline) in [
+            ("empty dynamic inline", RegionShape::default()),
+            ("scalar dynamic inline", RegionShape::word(WordKind::Scalar)),
+            (
+                "other handle dynamic inline",
+                RegionShape::word(WordKind::Handle(SchemaRef(0))),
+            ),
+            (
+                "union dynamic inline",
+                RegionShape::new(vec![
+                    kinds(WordKind::Handle(SchemaRef(1))).allowing(WordKind::Opaque),
+                ]),
+            ),
+        ] {
+            let (program, mut contract) = make();
+            contract.schemas[1].inline = inline.clone();
+            cases.push((
+                name,
+                program,
+                contract,
+                global_error(ProgramDefect::DynamicSchemaInlineMismatch {
+                    schema: SchemaRef(1),
+                    inline,
+                }),
+            ));
+        }
+        let (program, mut contract) = make();
+        contract.schemas[0].payload = PayloadKind::DenseArray {
+            element: SchemaRef(2),
+        };
+        cases.push((
+            "nested dense element scalar inline",
+            program,
+            contract,
+            global_error(ProgramDefect::DynamicSchemaInlineMismatch {
+                schema: SchemaRef(0),
+                inline: narrow.clone(),
+            }),
+        ));
+        for (name, program, contract, expected) in cases {
+            assert_eq!(
+                program.verify(contract).expect_err(name),
+                expected,
+                "{name}"
+            );
+        }
     }
 }
