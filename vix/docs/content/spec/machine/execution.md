@@ -94,10 +94,15 @@ artifacts and never second-guesses the substrate.
 > word, every valid variant, and each variant field's shape and shared-payload
 > offset. A verified `EnumConstruct` zeroes the complete compact region, writes
 > one statically valid selector, and copies exactly the fields declared for that
-> variant. A verified `EnumProjectChecked` validates the live selector before
-> copying the declared field; a mismatch is a typed `TaskFault`, never a raw
-> union read. Static dominance analysis may later discharge that check, but the
-> unchecked lowering pattern is not itself proof.
+> variant. A verified `EnumIsVariant` validates that the live selector names
+> some declared variant before comparing it with the requested variant; match
+> dispatch and source-level variant tests use this operation rather than reading
+> the selector as an unchecked scalar. A verified `EnumProjectChecked` validates
+> both that the selector is declared and that it selects the requested variant
+> before copying the declared field. An invalid selector or projection mismatch
+> is a typed `TaskFault`, never a raw union read or fallthrough into the final
+> match arm. Static dominance analysis may later discharge a redundant check,
+> but the unchecked lowering pattern is not itself proof.
 >
 > A selector-correlated payload is not semantically compared as a raw frame
 > word. Equality first proves equal valid selectors, dispatches to that variant,

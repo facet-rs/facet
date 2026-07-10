@@ -37,9 +37,12 @@ The value model: how values are typed, constructed, read, and discriminated.
 >
 > The same rule applies inside Weavy. A verified discriminated constructor
 > establishes the selector-correlated payload shape and canonical inactive
-> bytes. A verified discriminated projection checks the selector before it
-> extracts a field. Ordinary word copies may preserve a complete structural
-> shape, but may not narrow a selector-dependent union to one of its leaves.
+> bytes. Verified variant dispatch first validates that the selector is one of
+> the descriptor's declared variants, so an invalid selector faults instead of
+> selecting a catch-all or final arm. A verified discriminated projection checks
+> both selector validity and the requested variant before it extracts a field.
+> Ordinary word copies may preserve a complete structural shape, but may not
+> narrow a selector-dependent union to one of its leaves.
 
 > r[machine.value.proof-carrying-force]
 >
