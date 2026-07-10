@@ -62,6 +62,13 @@ artifacts and never second-guesses the substrate.
 > fast lane; it is proof material cached with the lowering artifact. Frame
 > layout byte bounds alone are insufficient.
 >
+> Declared frame regions do not overlap. Several mutually exclusive control-flow
+> arms may write the same declared result region; that is one region with
+> several verified writers, not an overlay. Verification checks each op's
+> accesses against the declared region rather than imposing a single-writer
+> rule. A future slot-coalescing allocator must introduce and prove an explicit
+> alias contract before its programs are admissible.
+>
 > Verification proves all static safety obligations before any lane executes:
 > statically named function, call, and jump targets; function fallthrough;
 > immediate and opcode shape; frame offset, width, and alignment using checked
@@ -117,6 +124,13 @@ artifacts and never second-guesses the substrate.
 > public API. Raw pointer/length descriptors exist only inside the private native
 > ABI and are materialized for one drive while the borrow is live; safe code
 > cannot construct a dangling value-memory table.
+>
+> A verified host call names its readable and writable frame regions and receives
+> a region-scoped accessor that maintains initialization and kind shadows. It
+> never receives an unrestricted `&mut [u8]` view of the whole frame. Programs
+> using the frozen evaluator's whole-frame host ABI are not verified-admissible;
+> that compatibility surface retires with the frozen evaluator rather than
+> weakening the new execution contract.
 >
 > Weavy owns opt-in checked execution with independent shadow metadata: redzones,
 > poison, generation tags, dynamic kind/schema shadows, and whatever additional
