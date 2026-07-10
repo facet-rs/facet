@@ -63,6 +63,15 @@ pub enum EntryWriteKind {
     StoreHandle(SchemaRef),
 }
 
+/// Public completion state for a verified task.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ExecTaskState {
+    NotStarted,
+    Parked { input: u32 },
+    Yielded,
+    Done,
+}
+
 /// Nonnegative store-backed value handle.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct StoreHandle {
@@ -179,6 +188,10 @@ pub enum TaskFault {
     PoisonedResult {
         original: Box<TaskFault>,
     },
+    ResultBeforeDone {
+        state: ExecTaskState,
+    },
+    DriveAfterDone,
 }
 
 /// A verified program prepared for execution.
@@ -259,6 +272,7 @@ impl Executable {
             poisoned: None,
             entries_initialized: vec![false; entry_count],
             entries_closed: false,
+            state: ExecTaskState::NotStarted,
         })
     }
 
@@ -316,6 +330,7 @@ pub struct ExecTask<'exec> {
     poisoned: Option<TaskFault>,
     entries_initialized: Vec<bool>,
     entries_closed: bool,
+    state: ExecTaskState,
 }
 
 enum Lane {
@@ -397,6 +412,10 @@ impl ExecTask<'_> {
         value_memories: ValueMemories<'_>,
     ) -> Result<TaskStep, TaskFault> {
         self.check_not_poisoned()?;
+        if self.state == ExecTaskState::Done {
+            let fault = TaskFault::DriveAfterDone;
+            return Err(self.poison(fault));
+        }
         self.entries_closed = true;
         check_drive_requirements(
             self.executable.verified.drive_requirements(),
@@ -421,7 +440,22 @@ impl ExecTask<'_> {
             }
             (None, Lane::Native(_)) => unreachable!("native task exists only with native program"),
         };
-        step.map_err(|fault| self.poison(fault))
+        match step {
+            Ok(step) => {
+                self.state = match step {
+                    TaskStep::Done => ExecTaskState::Done,
+                    TaskStep::Parked { input } => ExecTaskState::Parked { input },
+                    TaskStep::Yielded => ExecTaskState::Yielded,
+                };
+                Ok(step)
+            }
+            Err(fault) => Err(self.poison(fault)),
+        }
+    }
+
+    #[must_use]
+    pub fn state(&self) -> ExecTaskState {
+        self.state
     }
 
     #[must_use]
@@ -526,6 +560,9 @@ impl ExecTask<'_> {
             return Err(TaskFault::PoisonedResult {
                 original: Box::new(fault.clone()),
             });
+        }
+        if self.state != ExecTaskState::Done {
+            return Err(TaskFault::ResultBeforeDone { state: self.state });
         }
         Ok(())
     }
@@ -1100,6 +1137,109 @@ mod tests {
                 region: RegionId(0),
                 size: 8,
             })
+        ));
+    }
+
+    #[test]
+    fn result_before_first_drive_faults_typed() {
+        let executable = Executable::new(verify(scalar_identity_program()));
+        let mut task = executable.spawn(FnId(0)).unwrap();
+        task.write_entry_i64(0, 7).unwrap();
+
+        assert_eq!(task.state(), ExecTaskState::NotStarted);
+        assert_eq!(
+            task.result_i64(),
+            Err(TaskFault::ResultBeforeDone {
+                state: ExecTaskState::NotStarted,
+            })
+        );
+        assert!(matches!(
+            task.result(),
+            Err(TaskFault::ResultBeforeDone {
+                state: ExecTaskState::NotStarted,
+            })
+        ));
+    }
+
+    #[test]
+    fn result_after_parked_faults_typed() {
+        let executable = Executable::new(verify(entry_then_await_program()));
+        let mut task = executable.spawn(FnId(0)).unwrap();
+        task.write_entry_i64(0, 5).unwrap();
+
+        assert_eq!(
+            task.drive(&mut [false], &[0]),
+            Ok(TaskStep::Parked { input: 0 })
+        );
+        assert_eq!(task.state(), ExecTaskState::Parked { input: 0 });
+        assert_eq!(
+            task.result_i64(),
+            Err(TaskFault::ResultBeforeDone {
+                state: ExecTaskState::Parked { input: 0 },
+            })
+        );
+    }
+
+    #[test]
+    fn result_after_yielded_faults_typed() {
+        let executable = Executable::new(verify(scalar_identity_program()));
+        let mut task = executable.spawn(FnId(0)).unwrap();
+        task.write_entry_i64(0, 7).unwrap();
+
+        task.entries_closed = true;
+        task.state = ExecTaskState::Yielded;
+
+        assert_eq!(task.state(), ExecTaskState::Yielded);
+        assert_eq!(
+            task.result_i64(),
+            Err(TaskFault::ResultBeforeDone {
+                state: ExecTaskState::Yielded,
+            })
+        );
+    }
+
+    #[test]
+    fn result_after_done_is_available_and_redrive_faults_typed() {
+        let executable = Executable::new(verify(scalar_identity_program()));
+        let mut task = executable.spawn(FnId(0)).unwrap();
+        task.write_entry_i64(0, 7).unwrap();
+
+        assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
+        assert_eq!(task.state(), ExecTaskState::Done);
+        assert_eq!(task.result_i64(), Ok(7));
+        assert_eq!(
+            task.write_entry_i64(0, 9),
+            Err(TaskFault::EntryWriteAfterDrive {
+                entry: FnId(0),
+                index: 0,
+                region: RegionId(0),
+            })
+        );
+
+        assert_eq!(task.drive(&mut [], &[]), Err(TaskFault::DriveAfterDone));
+        assert!(matches!(
+            task.result_i64(),
+            Err(TaskFault::PoisonedResult { .. })
+        ));
+    }
+
+    #[test]
+    fn poisoned_result_precedes_incomplete_state_fault() {
+        let executable = Executable::new(verify(awaiting_program()));
+        let mut task = executable.spawn(FnId(0)).unwrap();
+
+        assert_eq!(
+            task.drive(&mut [false], &[0, 0]),
+            Err(TaskFault::DriveTableLength {
+                table: DriveTable::Ready,
+                expected: 2,
+                actual: 1,
+            })
+        );
+        assert_eq!(task.state(), ExecTaskState::NotStarted);
+        assert!(matches!(
+            task.result_i64(),
+            Err(TaskFault::PoisonedResult { .. })
         ));
     }
 

@@ -14,8 +14,8 @@ pub mod task;
 pub mod verified;
 
 pub use exec::{
-    CompareSide, DriveTable, EntryWriteKind, ExecTask, Executable, FallbackReason, FaultSite,
-    LaneFacts, LaneKind, StoreHandle, TaskFault,
+    CompareSide, DriveTable, EntryWriteKind, ExecTask, ExecTaskState, Executable, FallbackReason,
+    FaultSite, LaneFacts, LaneKind, StoreHandle, TaskFault,
 };
 pub use verified::{
     AccessDefect, AccessRole, AllowedKinds, CallContract, CallContractId, CallSiteFacts,
