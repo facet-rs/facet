@@ -10,6 +10,15 @@ pub mod r#async;
 pub mod ir;
 pub mod mem;
 pub mod task;
+pub mod verified;
+
+pub use verified::{
+    AccessDefect, AccessRole, AllowedKinds, CallContract, CallContractId, CallSiteFacts,
+    CompareOperand, DriveRequirements, FrameContract, FrameRegion, FunctionContract, FunctionFacts,
+    IndirectCallObligation, KindRequirement, PayloadKind, PcFacts, ProgramContract, ProgramDefect,
+    ProgramError, ProgramFacts, ProgramTable, ReferenceSite, RegionId, RegionReference,
+    RegionShape, SchemaContract, SchemaRef, ShapeOwner, UnsupportedOp, VerifiedProgram, WordKind,
+};
 
 #[cfg(feature = "jit")]
 pub mod jit;

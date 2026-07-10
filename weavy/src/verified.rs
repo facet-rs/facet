@@ -1,0 +1,2744 @@
+//! Static admission for [`crate::task::Program`].
+//!
+//! Raw task programs remain inert construction data. This module pairs them
+//! with an explicit contract, validates every instruction and frame access,
+//! and returns an opaque [`VerifiedProgram`] carrying the facts later execution
+//! lanes will consume.
+
+use core::fmt;
+
+use crate::mem::Layout;
+use crate::task::{ArgCopy, FnId, Op, Program};
+
+const WORD_SIZE: usize = size_of::<i64>();
+const WORD_SIZE_U32: u32 = 8;
+
+/// Program-local index into [`ProgramContract::schemas`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct SchemaRef(pub u32);
+
+/// Program-local index into [`ProgramContract::calls`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct CallContractId(pub u32);
+
+/// Program-local index into a [`FrameContract`]'s regions.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct RegionId(pub u32);
+
+/// One machine interpretation allowed for a frame word.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub enum WordKind {
+    Scalar,
+    Status,
+    Handle(SchemaRef),
+    Callable(CallContractId),
+    Opaque,
+}
+
+/// A nonempty, sorted, deduplicated set of allowed word kinds.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct AllowedKinds {
+    kinds: Vec<WordKind>,
+}
+
+impl AllowedKinds {
+    #[must_use]
+    pub fn new(kind: WordKind) -> Self {
+        Self { kinds: vec![kind] }
+    }
+
+    /// Add another allowed kind while preserving canonical ordering.
+    #[must_use]
+    pub fn allowing(mut self, kind: WordKind) -> Self {
+        if let Err(index) = self.kinds.binary_search(&kind) {
+            self.kinds.insert(index, kind);
+        }
+        self
+    }
+
+    #[must_use]
+    pub fn as_slice(&self) -> &[WordKind] {
+        &self.kinds
+    }
+
+    #[must_use]
+    pub fn contains(&self, kind: WordKind) -> bool {
+        self.kinds.binary_search(&kind).is_ok()
+    }
+
+    fn intersects(&self, other: &Self) -> bool {
+        self.kinds.iter().any(|kind| other.contains(*kind))
+    }
+}
+
+impl From<WordKind> for AllowedKinds {
+    fn from(kind: WordKind) -> Self {
+        Self::new(kind)
+    }
+}
+
+/// Allowed kinds for each consecutive word of a region.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct RegionShape {
+    pub words: Vec<AllowedKinds>,
+}
+
+impl RegionShape {
+    #[must_use]
+    pub fn new(words: Vec<AllowedKinds>) -> Self {
+        Self { words }
+    }
+
+    #[must_use]
+    pub fn word(kind: WordKind) -> Self {
+        Self::new(vec![kind.into()])
+    }
+
+    #[must_use]
+    pub fn checked_byte_len(&self) -> Option<usize> {
+        self.words.len().checked_mul(WORD_SIZE)
+    }
+}
+
+/// One nonoverlapping declared region in a function frame.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FrameRegion {
+    pub offset: u32,
+    pub shape: RegionShape,
+}
+
+/// The sidecar declaration for one function frame.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FrameContract {
+    pub layout: Layout,
+    pub regions: Vec<FrameRegion>,
+}
+
+/// The concrete ABI declaration for one function.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FunctionContract {
+    pub frame: FrameContract,
+    pub entries: Vec<RegionId>,
+    pub result: RegionId,
+    pub call_contract: Option<CallContractId>,
+}
+
+/// A function-independent indirect-call ABI.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CallContract {
+    pub entries: Vec<FrameRegion>,
+    pub result: FrameRegion,
+}
+
+/// Dynamic payload representation for a program-local schema.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PayloadKind {
+    Inline,
+    OpaqueBytes { byte_comparable: bool },
+    DenseArray { element: SchemaRef },
+}
+
+/// Static inline and dynamic payload facts for one program-local schema.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SchemaContract {
+    pub inline: RegionShape,
+    pub payload: PayloadKind,
+}
+
+/// Verification sidecar consumed with a raw task program.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProgramContract {
+    pub functions: Vec<FunctionContract>,
+    pub calls: Vec<CallContract>,
+    pub schemas: Vec<SchemaContract>,
+}
+
+/// Drive-time table sizes proven necessary by the verifier.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct DriveRequirements {
+    pub await_inputs: usize,
+    pub hosts: usize,
+}
+
+/// The dynamic check retained at an indirect-call site.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct IndirectCallObligation {
+    pub function_count: usize,
+    pub contract: CallContractId,
+}
+
+/// Cached call facts for one program counter.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CallSiteFacts {
+    Direct {
+        callee: FnId,
+        result_size: usize,
+    },
+    Indirect {
+        result_size: usize,
+        obligation: IndirectCallObligation,
+    },
+}
+
+/// Facts cached for one instruction.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PcFacts {
+    reachable: bool,
+    call: Option<CallSiteFacts>,
+}
+
+impl PcFacts {
+    #[must_use]
+    pub fn is_reachable(&self) -> bool {
+        self.reachable
+    }
+
+    #[must_use]
+    pub fn call(&self) -> Option<CallSiteFacts> {
+        self.call
+    }
+}
+
+/// Facts cached for one function.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct FunctionFacts {
+    call_contract: Option<CallContractId>,
+    pcs: Vec<PcFacts>,
+}
+
+impl FunctionFacts {
+    #[must_use]
+    pub fn call_contract(&self) -> Option<CallContractId> {
+        self.call_contract
+    }
+
+    #[must_use]
+    pub fn pcs(&self) -> &[PcFacts] {
+        &self.pcs
+    }
+
+    #[must_use]
+    pub fn pc(&self, pc: usize) -> Option<&PcFacts> {
+        self.pcs.get(pc)
+    }
+}
+
+/// Static facts computed once during admission.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct ProgramFacts {
+    functions: Vec<FunctionFacts>,
+}
+
+impl ProgramFacts {
+    #[must_use]
+    pub fn functions(&self) -> &[FunctionFacts] {
+        &self.functions
+    }
+
+    #[must_use]
+    pub fn function(&self, function: FnId) -> Option<&FunctionFacts> {
+        let index = usize::try_from(function.0).ok()?;
+        self.functions.get(index)
+    }
+}
+
+/// A verified program and its retained proof material.
+#[derive(Debug)]
+pub struct VerifiedProgram {
+    program: Program,
+    contract: ProgramContract,
+    facts: ProgramFacts,
+    drive_requirements: DriveRequirements,
+}
+
+impl VerifiedProgram {
+    #[must_use]
+    pub fn program(&self) -> &Program {
+        &self.program
+    }
+
+    #[must_use]
+    pub fn contract(&self) -> &ProgramContract {
+        &self.contract
+    }
+
+    #[must_use]
+    pub fn facts(&self) -> &ProgramFacts {
+        &self.facts
+    }
+
+    #[must_use]
+    pub fn drive_requirements(&self) -> DriveRequirements {
+        self.drive_requirements
+    }
+}
+
+/// Which frame access an instruction was validating.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum AccessRole {
+    Destination,
+    LeftOperand,
+    RightOperand,
+    Source,
+    Condition,
+    Callee,
+    ArgumentSource { index: usize },
+    CallResult,
+    ReturnValue,
+    AwaitDestination,
+    CompareLeft,
+    CompareRight,
+}
+
+/// Structural failure for a checked frame range.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum AccessDefect {
+    OffsetNotWordAligned {
+        offset: u32,
+    },
+    SizeNotWordAligned {
+        size: usize,
+    },
+    RangeOverflow {
+        offset: u32,
+        size: usize,
+    },
+    OutOfBounds {
+        offset: u32,
+        size: usize,
+        frame_size: usize,
+    },
+    UndeclaredWord {
+        offset: u32,
+    },
+    UndeclaredRegion {
+        offset: u32,
+        size: usize,
+    },
+}
+
+/// Machine-kind class required by an instruction operand.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum KindRequirement {
+    Scalar,
+    ConstantWord,
+}
+
+/// Operand side of a value-byte comparison.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum CompareOperand {
+    Left,
+    Right,
+}
+
+/// An instruction deliberately outside this admission checkpoint.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum UnsupportedOp {
+    LoadIndexedI64,
+    StoreIndexedI64,
+    LoadArrayWord,
+    HostCall,
+    HostCallYield,
+}
+
+/// The owner of a word shape referenced by a contract table.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ShapeOwner {
+    FrameRegion(RegionId),
+    CallEntry {
+        contract: CallContractId,
+        index: usize,
+    },
+    CallResult(CallContractId),
+    SchemaInline(SchemaRef),
+}
+
+/// Exact contract site containing an invalid program-local reference.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReferenceSite {
+    Word { owner: ShapeOwner, word: usize },
+    DenseArrayElement { schema: SchemaRef },
+}
+
+/// Whether a bad frame-region index was used as an entry or result.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RegionReference {
+    Entry { index: usize },
+    Result,
+}
+
+/// A program-local table whose indices must fit its public identifier type.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ProgramTable {
+    Functions,
+    CallContracts,
+    Schemas,
+    FrameRegions,
+}
+
+/// Typed cause of a verification failure.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ProgramDefect {
+    TableTooLarge {
+        table: ProgramTable,
+        len: usize,
+    },
+    FunctionContractCount {
+        functions: usize,
+        contracts: usize,
+    },
+    DuplicateCallContract {
+        first: CallContractId,
+        duplicate: CallContractId,
+    },
+    FrameLayoutMismatch {
+        program: Layout,
+        contract: Layout,
+    },
+    InvalidFrameAlignment {
+        align: usize,
+        requires_word_alignment: bool,
+    },
+    ShapeSizeOverflow {
+        owner: ShapeOwner,
+    },
+    RegionOffsetNotWordAligned {
+        region: RegionId,
+        offset: u32,
+    },
+    RegionEndOverflow {
+        region: RegionId,
+        offset: u32,
+        size: usize,
+    },
+    RegionOutOfBounds {
+        region: RegionId,
+        end: usize,
+        frame_size: usize,
+    },
+    RegionOverlap {
+        first: RegionId,
+        second: RegionId,
+    },
+    RegionReferenceOutOfRange {
+        reference: RegionReference,
+        region: RegionId,
+        region_count: usize,
+    },
+    DuplicateEntryRegion {
+        first: usize,
+        duplicate: usize,
+        region: RegionId,
+    },
+    CallRegionOffsetNotWordAligned {
+        owner: ShapeOwner,
+        offset: u32,
+    },
+    CallRegionEndOverflow {
+        owner: ShapeOwner,
+        offset: u32,
+        size: usize,
+    },
+    SchemaReferenceOutOfRange {
+        site: ReferenceSite,
+        schema: SchemaRef,
+        schema_count: usize,
+    },
+    CallContractReferenceOutOfRange {
+        site: ReferenceSite,
+        contract: CallContractId,
+        contract_count: usize,
+    },
+    FunctionCallContractOutOfRange {
+        contract: CallContractId,
+        contract_count: usize,
+    },
+    FunctionCallContractMismatch {
+        contract: CallContractId,
+    },
+    Access {
+        role: AccessRole,
+        defect: AccessDefect,
+    },
+    KindMismatch {
+        role: AccessRole,
+        required: KindRequirement,
+        allowed: AllowedKinds,
+    },
+    IncompatibleWordKinds {
+        source: AllowedKinds,
+        destination: AllowedKinds,
+    },
+    CallArgumentCount {
+        expected: usize,
+        actual: usize,
+    },
+    CallArgumentDestination {
+        index: usize,
+        expected_offset: u32,
+        expected_size: usize,
+        actual_offset: u32,
+        actual_size: u32,
+    },
+    CallArgumentKinds {
+        index: usize,
+        source: RegionShape,
+        destination: RegionShape,
+    },
+    CallResultKinds {
+        source: RegionShape,
+        destination: RegionShape,
+    },
+    ConstantCallableTargetOutOfRange {
+        value: i64,
+        function_count: usize,
+    },
+    ConstantCallableContractMismatch {
+        target: FnId,
+        declared: Option<CallContractId>,
+        allowed: Vec<CallContractId>,
+    },
+    JumpTargetOutOfRange {
+        target: u32,
+        code_len: usize,
+    },
+    DirectCalleeOutOfRange {
+        callee: FnId,
+        function_count: usize,
+    },
+    IndirectCallContractCount {
+        contracts: Vec<CallContractId>,
+    },
+    ReturnRegionMismatch {
+        expected: RegionId,
+        actual: RegionId,
+    },
+    CompareHandleContract {
+        operand: CompareOperand,
+        schemas: Vec<SchemaRef>,
+    },
+    CompareSchemaMismatch {
+        left: SchemaRef,
+        right: SchemaRef,
+    },
+    SchemaNotByteComparable {
+        schema: SchemaRef,
+    },
+    UnsupportedOp {
+        op: UnsupportedOp,
+    },
+    AwaitInputCountOverflow {
+        input: u32,
+    },
+    ReachableFallthrough,
+}
+
+/// Structured verifier error. Function and PC are absent only for global
+/// contract-table defects.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ProgramError {
+    pub function: Option<FnId>,
+    pub pc: Option<usize>,
+    pub defect: ProgramDefect,
+}
+
+impl fmt::Display for ProgramError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(
+            formatter,
+            "program verification failed at {:?}:{:?}: {:?}",
+            self.function, self.pc, self.defect
+        )
+    }
+}
+
+impl std::error::Error for ProgramError {}
+
+#[derive(Clone, Copy)]
+struct RegionBounds {
+    start: usize,
+    end: usize,
+}
+
+impl RegionBounds {
+    fn len(self) -> usize {
+        self.end - self.start
+    }
+}
+
+struct ValidatedFrame {
+    regions: Vec<RegionBounds>,
+    entries: Vec<usize>,
+    result: usize,
+}
+
+struct ValidatedCall {
+    entries: Vec<RegionBounds>,
+    result: RegionBounds,
+}
+
+struct ValidatedContracts<'a> {
+    frames: &'a [ValidatedFrame],
+    calls: &'a [ValidatedCall],
+}
+
+struct CallTarget<'a> {
+    entries: Vec<(&'a FrameRegion, RegionBounds)>,
+    result: (&'a FrameRegion, RegionBounds),
+}
+
+struct Verifier<'a> {
+    program: &'a Program,
+    contract: &'a ProgramContract,
+}
+
+impl Program {
+    /// Consume a raw program and its sidecar, returning the only opaque admitted
+    /// representation.
+    pub fn verify(self, contract: ProgramContract) -> Result<VerifiedProgram, ProgramError> {
+        let (facts, drive_requirements) = Verifier {
+            program: &self,
+            contract: &contract,
+        }
+        .verify()?;
+        Ok(VerifiedProgram {
+            program: self,
+            contract,
+            facts,
+            drive_requirements,
+        })
+    }
+}
+
+impl Verifier<'_> {
+    fn verify(&self) -> Result<(ProgramFacts, DriveRequirements), ProgramError> {
+        self.validate_table_len(ProgramTable::Functions, self.program.fns.len(), None)?;
+        self.validate_table_len(ProgramTable::CallContracts, self.contract.calls.len(), None)?;
+        self.validate_table_len(ProgramTable::Schemas, self.contract.schemas.len(), None)?;
+        if self.program.fns.len() != self.contract.functions.len() {
+            return Err(self.global(ProgramDefect::FunctionContractCount {
+                functions: self.program.fns.len(),
+                contracts: self.contract.functions.len(),
+            }));
+        }
+
+        let calls = self.validate_call_contracts()?;
+        self.validate_schema_contracts()?;
+        let frames = self.validate_function_contracts()?;
+        let (mut facts, drive_requirements) = self.validate_ops(&frames, &calls)?;
+        self.validate_control_flow(&mut facts)?;
+        Ok((facts, drive_requirements))
+    }
+
+    fn validate_call_contracts(&self) -> Result<Vec<ValidatedCall>, ProgramError> {
+        for duplicate in 0..self.contract.calls.len() {
+            if let Some(first) = self.contract.calls[..duplicate]
+                .iter()
+                .position(|contract| contract == &self.contract.calls[duplicate])
+            {
+                return Err(self.global(ProgramDefect::DuplicateCallContract {
+                    first: CallContractId(first as u32),
+                    duplicate: CallContractId(duplicate as u32),
+                }));
+            }
+        }
+
+        let mut validated = Vec::with_capacity(self.contract.calls.len());
+        for (contract_index, contract) in self.contract.calls.iter().enumerate() {
+            let contract_id = CallContractId(contract_index as u32);
+            let mut entries = Vec::with_capacity(contract.entries.len());
+            for (entry_index, entry) in contract.entries.iter().enumerate() {
+                let owner = ShapeOwner::CallEntry {
+                    contract: contract_id,
+                    index: entry_index,
+                };
+                entries.push(self.validate_call_region(entry, owner)?);
+            }
+            let result =
+                self.validate_call_region(&contract.result, ShapeOwner::CallResult(contract_id))?;
+            validated.push(ValidatedCall { entries, result });
+        }
+        Ok(validated)
+    }
+
+    fn validate_call_region(
+        &self,
+        region: &FrameRegion,
+        owner: ShapeOwner,
+    ) -> Result<RegionBounds, ProgramError> {
+        if !region.offset.is_multiple_of(WORD_SIZE_U32) {
+            return Err(self.global(ProgramDefect::CallRegionOffsetNotWordAligned {
+                owner,
+                offset: region.offset,
+            }));
+        }
+        let size = self.validate_shape(&region.shape, owner, None)?;
+        let start = usize::try_from(region.offset).map_err(|_| {
+            self.global(ProgramDefect::CallRegionEndOverflow {
+                owner,
+                offset: region.offset,
+                size,
+            })
+        })?;
+        let end = start.checked_add(size).ok_or_else(|| {
+            self.global(ProgramDefect::CallRegionEndOverflow {
+                owner,
+                offset: region.offset,
+                size,
+            })
+        })?;
+        Ok(RegionBounds { start, end })
+    }
+
+    fn validate_schema_contracts(&self) -> Result<(), ProgramError> {
+        for (schema_index, schema) in self.contract.schemas.iter().enumerate() {
+            let schema_ref = SchemaRef(schema_index as u32);
+            self.validate_shape(&schema.inline, ShapeOwner::SchemaInline(schema_ref), None)?;
+            if let PayloadKind::DenseArray { element } = schema.payload {
+                let Ok(index) = usize::try_from(element.0) else {
+                    return Err(self.global(ProgramDefect::SchemaReferenceOutOfRange {
+                        site: ReferenceSite::DenseArrayElement { schema: schema_ref },
+                        schema: element,
+                        schema_count: self.contract.schemas.len(),
+                    }));
+                };
+                if index >= self.contract.schemas.len() {
+                    return Err(self.global(ProgramDefect::SchemaReferenceOutOfRange {
+                        site: ReferenceSite::DenseArrayElement { schema: schema_ref },
+                        schema: element,
+                        schema_count: self.contract.schemas.len(),
+                    }));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn validate_shape(
+        &self,
+        shape: &RegionShape,
+        owner: ShapeOwner,
+        function: Option<FnId>,
+    ) -> Result<usize, ProgramError> {
+        let size = shape.checked_byte_len().ok_or(ProgramError {
+            function,
+            pc: None,
+            defect: ProgramDefect::ShapeSizeOverflow { owner },
+        })?;
+        for (word, kinds) in shape.words.iter().enumerate() {
+            for kind in kinds.as_slice() {
+                match *kind {
+                    WordKind::Handle(schema) => {
+                        let index = usize::try_from(schema.0).map_err(|_| ProgramError {
+                            function,
+                            pc: None,
+                            defect: ProgramDefect::SchemaReferenceOutOfRange {
+                                site: ReferenceSite::Word { owner, word },
+                                schema,
+                                schema_count: self.contract.schemas.len(),
+                            },
+                        })?;
+                        if index >= self.contract.schemas.len() {
+                            return Err(ProgramError {
+                                function,
+                                pc: None,
+                                defect: ProgramDefect::SchemaReferenceOutOfRange {
+                                    site: ReferenceSite::Word { owner, word },
+                                    schema,
+                                    schema_count: self.contract.schemas.len(),
+                                },
+                            });
+                        }
+                    }
+                    WordKind::Callable(contract) => {
+                        let index = usize::try_from(contract.0).map_err(|_| ProgramError {
+                            function,
+                            pc: None,
+                            defect: ProgramDefect::CallContractReferenceOutOfRange {
+                                site: ReferenceSite::Word { owner, word },
+                                contract,
+                                contract_count: self.contract.calls.len(),
+                            },
+                        })?;
+                        if index >= self.contract.calls.len() {
+                            return Err(ProgramError {
+                                function,
+                                pc: None,
+                                defect: ProgramDefect::CallContractReferenceOutOfRange {
+                                    site: ReferenceSite::Word { owner, word },
+                                    contract,
+                                    contract_count: self.contract.calls.len(),
+                                },
+                            });
+                        }
+                    }
+                    WordKind::Scalar | WordKind::Status | WordKind::Opaque => {}
+                }
+            }
+        }
+        Ok(size)
+    }
+
+    fn validate_function_contracts(&self) -> Result<Vec<ValidatedFrame>, ProgramError> {
+        let mut frames = Vec::with_capacity(self.program.fns.len());
+        for (function_index, (function, contract)) in self
+            .program
+            .fns
+            .iter()
+            .zip(&self.contract.functions)
+            .enumerate()
+        {
+            let function_id = FnId(u32::try_from(function_index).map_err(|_| {
+                self.global(ProgramDefect::FunctionContractCount {
+                    functions: self.program.fns.len(),
+                    contracts: self.contract.functions.len(),
+                })
+            })?);
+            if function.frame != contract.frame.layout {
+                return Err(self.function(
+                    function_id,
+                    ProgramDefect::FrameLayoutMismatch {
+                        program: function.frame,
+                        contract: contract.frame.layout,
+                    },
+                ));
+            }
+            self.validate_table_len(
+                ProgramTable::FrameRegions,
+                contract.frame.regions.len(),
+                Some(function_id),
+            )?;
+            let has_words = contract
+                .frame
+                .regions
+                .iter()
+                .any(|region| !region.shape.words.is_empty());
+            let align_valid = function.frame.align.is_power_of_two()
+                && function.frame.align != 0
+                && (!has_words || function.frame.align >= WORD_SIZE);
+            if !align_valid {
+                return Err(self.function(
+                    function_id,
+                    ProgramDefect::InvalidFrameAlignment {
+                        align: function.frame.align,
+                        requires_word_alignment: has_words,
+                    },
+                ));
+            }
+
+            let mut regions = Vec::with_capacity(contract.frame.regions.len());
+            for (region_index, region) in contract.frame.regions.iter().enumerate() {
+                let region_id = RegionId(region_index as u32);
+                if !region.offset.is_multiple_of(WORD_SIZE_U32) {
+                    return Err(self.function(
+                        function_id,
+                        ProgramDefect::RegionOffsetNotWordAligned {
+                            region: region_id,
+                            offset: region.offset,
+                        },
+                    ));
+                }
+                let size = self.validate_shape(
+                    &region.shape,
+                    ShapeOwner::FrameRegion(region_id),
+                    Some(function_id),
+                )?;
+                let start = usize::try_from(region.offset).map_err(|_| {
+                    self.function(
+                        function_id,
+                        ProgramDefect::RegionEndOverflow {
+                            region: region_id,
+                            offset: region.offset,
+                            size,
+                        },
+                    )
+                })?;
+                let end = start.checked_add(size).ok_or_else(|| {
+                    self.function(
+                        function_id,
+                        ProgramDefect::RegionEndOverflow {
+                            region: region_id,
+                            offset: region.offset,
+                            size,
+                        },
+                    )
+                })?;
+                if end > function.frame.size {
+                    return Err(self.function(
+                        function_id,
+                        ProgramDefect::RegionOutOfBounds {
+                            region: region_id,
+                            end,
+                            frame_size: function.frame.size,
+                        },
+                    ));
+                }
+                regions.push(RegionBounds { start, end });
+            }
+
+            for second in 0..regions.len() {
+                for first in 0..second {
+                    if regions[first].start < regions[second].end
+                        && regions[second].start < regions[first].end
+                    {
+                        return Err(self.function(
+                            function_id,
+                            ProgramDefect::RegionOverlap {
+                                first: RegionId(first as u32),
+                                second: RegionId(second as u32),
+                            },
+                        ));
+                    }
+                }
+            }
+
+            let mut entries = Vec::with_capacity(contract.entries.len());
+            for (entry_index, region) in contract.entries.iter().copied().enumerate() {
+                let Some(index) = usize::try_from(region.0)
+                    .ok()
+                    .filter(|index| *index < regions.len())
+                else {
+                    return Err(self.function(
+                        function_id,
+                        ProgramDefect::RegionReferenceOutOfRange {
+                            reference: RegionReference::Entry { index: entry_index },
+                            region,
+                            region_count: regions.len(),
+                        },
+                    ));
+                };
+                if let Some(first) = entries.iter().position(|candidate| *candidate == index) {
+                    return Err(self.function(
+                        function_id,
+                        ProgramDefect::DuplicateEntryRegion {
+                            first,
+                            duplicate: entry_index,
+                            region,
+                        },
+                    ));
+                }
+                entries.push(index);
+            }
+            let Some(result) = usize::try_from(contract.result.0)
+                .ok()
+                .filter(|index| *index < regions.len())
+            else {
+                return Err(self.function(
+                    function_id,
+                    ProgramDefect::RegionReferenceOutOfRange {
+                        reference: RegionReference::Result,
+                        region: contract.result,
+                        region_count: regions.len(),
+                    },
+                ));
+            };
+
+            if let Some(call_contract) = contract.call_contract {
+                let Some(call_index) = usize::try_from(call_contract.0)
+                    .ok()
+                    .filter(|index| *index < self.contract.calls.len())
+                else {
+                    return Err(self.function(
+                        function_id,
+                        ProgramDefect::FunctionCallContractOutOfRange {
+                            contract: call_contract,
+                            contract_count: self.contract.calls.len(),
+                        },
+                    ));
+                };
+                let call = &self.contract.calls[call_index];
+                let entries_match = entries.len() == call.entries.len()
+                    && entries
+                        .iter()
+                        .zip(&call.entries)
+                        .all(|(region, expected)| &contract.frame.regions[*region] == expected);
+                let result_matches = contract.frame.regions[result] == call.result;
+                if !entries_match || !result_matches {
+                    return Err(self.function(
+                        function_id,
+                        ProgramDefect::FunctionCallContractMismatch {
+                            contract: call_contract,
+                        },
+                    ));
+                }
+            }
+
+            frames.push(ValidatedFrame {
+                regions,
+                entries,
+                result,
+            });
+        }
+        Ok(frames)
+    }
+
+    fn validate_ops(
+        &self,
+        frames: &[ValidatedFrame],
+        calls: &[ValidatedCall],
+    ) -> Result<(ProgramFacts, DriveRequirements), ProgramError> {
+        let mut facts = ProgramFacts {
+            functions: self
+                .program
+                .fns
+                .iter()
+                .zip(&self.contract.functions)
+                .map(|(function, contract)| FunctionFacts {
+                    call_contract: contract.call_contract,
+                    pcs: vec![PcFacts::default(); function.code.len()],
+                })
+                .collect(),
+        };
+        let mut requirements = DriveRequirements::default();
+        let validated = ValidatedContracts { frames, calls };
+
+        for (function_index, function) in self.program.fns.iter().enumerate() {
+            for (pc, op) in function.code.iter().enumerate() {
+                let call =
+                    self.validate_op(function_index, pc, op, &validated, &mut requirements)?;
+                facts.functions[function_index].pcs[pc].call = call;
+            }
+        }
+        Ok((facts, requirements))
+    }
+
+    fn validate_op(
+        &self,
+        function_index: usize,
+        pc: usize,
+        op: &Op,
+        validated: &ValidatedContracts<'_>,
+        requirements: &mut DriveRequirements,
+    ) -> Result<Option<CallSiteFacts>, ProgramError> {
+        let function_id = FnId(function_index as u32);
+        let frame = &validated.frames[function_index];
+        match op {
+            Op::ConstI64 { dst, value } => {
+                let kinds =
+                    self.word_kinds(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                self.validate_const(function_id, pc, *value, kinds)?;
+            }
+            Op::AddI64 { dst, a, b }
+            | Op::SubI64 { dst, a, b }
+            | Op::MulI64 { dst, a, b }
+            | Op::DivI64 { dst, a, b }
+            | Op::EqI64 { dst, a, b }
+            | Op::NeI64 { dst, a, b }
+            | Op::LtI64 { dst, a, b }
+            | Op::LeI64 { dst, a, b }
+            | Op::GtI64 { dst, a, b }
+            | Op::GeI64 { dst, a, b }
+            | Op::AddF64 { dst, a, b }
+            | Op::MulF64 { dst, a, b } => {
+                self.require_scalar(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                self.require_scalar(function_id, pc, frame, *a, AccessRole::LeftOperand)?;
+                self.require_scalar(function_id, pc, frame, *b, AccessRole::RightOperand)?;
+            }
+            Op::CopyI64 { dst, src } => {
+                let destination =
+                    self.word_kinds(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                let source = self.word_kinds(function_id, pc, frame, *src, AccessRole::Source)?;
+                if !source.intersects(destination) {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::IncompatibleWordKinds {
+                            source: source.clone(),
+                            destination: destination.clone(),
+                        },
+                    ));
+                }
+            }
+            Op::Jump { target } => self.validate_jump(function_id, pc, *target)?,
+            Op::JumpIfZero { value, target } => {
+                self.require_scalar(function_id, pc, frame, *value, AccessRole::Condition)?;
+                self.validate_jump(function_id, pc, *target)?;
+            }
+            Op::Call { callee, args, ret } => {
+                let Some(callee_index) = usize::try_from(callee.0)
+                    .ok()
+                    .filter(|index| *index < self.program.fns.len())
+                else {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::DirectCalleeOutOfRange {
+                            callee: *callee,
+                            function_count: self.program.fns.len(),
+                        },
+                    ));
+                };
+                let callee_frame = &validated.frames[callee_index];
+                let callee_contract = &self.contract.functions[callee_index];
+                let entries: Vec<_> = callee_frame
+                    .entries
+                    .iter()
+                    .map(|index| {
+                        (
+                            &callee_contract.frame.regions[*index],
+                            callee_frame.regions[*index],
+                        )
+                    })
+                    .collect();
+                let result_region = &callee_contract.frame.regions[callee_frame.result];
+                let result_bounds = callee_frame.regions[callee_frame.result];
+                let target = CallTarget {
+                    entries,
+                    result: (result_region, result_bounds),
+                };
+                self.validate_call_shape(function_id, pc, frame, args, *ret, &target)?;
+                return Ok(Some(CallSiteFacts::Direct {
+                    callee: *callee,
+                    result_size: result_bounds.len(),
+                }));
+            }
+            Op::CallIndirect { callee, args, ret } => {
+                let kinds = self.word_kinds(function_id, pc, frame, *callee, AccessRole::Callee)?;
+                let contracts: Vec<_> = kinds
+                    .as_slice()
+                    .iter()
+                    .filter_map(|kind| match kind {
+                        WordKind::Callable(contract) => Some(*contract),
+                        WordKind::Scalar
+                        | WordKind::Status
+                        | WordKind::Handle(_)
+                        | WordKind::Opaque => None,
+                    })
+                    .collect();
+                let [call_contract] = contracts.as_slice() else {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::IndirectCallContractCount { contracts },
+                    ));
+                };
+                let call_index = usize::try_from(call_contract.0).map_err(|_| {
+                    self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::IndirectCallContractCount {
+                            contracts: vec![*call_contract],
+                        },
+                    )
+                })?;
+                let call = &self.contract.calls[call_index];
+                let validated_call = &validated.calls[call_index];
+                let entries: Vec<_> = call
+                    .entries
+                    .iter()
+                    .zip(validated_call.entries.iter().copied())
+                    .collect();
+                let target = CallTarget {
+                    entries,
+                    result: (&call.result, validated_call.result),
+                };
+                self.validate_call_shape(function_id, pc, frame, args, *ret, &target)?;
+                let obligation = IndirectCallObligation {
+                    function_count: self.program.fns.len(),
+                    contract: *call_contract,
+                };
+                return Ok(Some(CallSiteFacts::Indirect {
+                    result_size: validated_call.result.len(),
+                    obligation,
+                }));
+            }
+            Op::Ret { src, size } => {
+                let actual = self.exact_region(
+                    function_id,
+                    pc,
+                    frame,
+                    *src,
+                    usize::try_from(*size).map_err(|_| {
+                        self.access(
+                            function_id,
+                            pc,
+                            AccessRole::ReturnValue,
+                            AccessDefect::RangeOverflow {
+                                offset: *src,
+                                size: usize::MAX,
+                            },
+                        )
+                    })?,
+                    AccessRole::ReturnValue,
+                )?;
+                if actual != frame.result {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::ReturnRegionMismatch {
+                            expected: self.contract.functions[function_index].result,
+                            actual: RegionId(actual as u32),
+                        },
+                    ));
+                }
+            }
+            Op::Await { dst, input } => {
+                self.require_scalar(function_id, pc, frame, *dst, AccessRole::AwaitDestination)?;
+                let input_count = usize::try_from(*input)
+                    .ok()
+                    .and_then(|input| input.checked_add(1))
+                    .ok_or_else(|| {
+                        self.op(
+                            function_id,
+                            pc,
+                            ProgramDefect::AwaitInputCountOverflow { input: *input },
+                        )
+                    })?;
+                requirements.await_inputs = requirements.await_inputs.max(input_count);
+            }
+            Op::CompareValueBytes { dst, a, b } => {
+                self.require_scalar(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                let left = self.word_kinds(function_id, pc, frame, *a, AccessRole::CompareLeft)?;
+                let right =
+                    self.word_kinds(function_id, pc, frame, *b, AccessRole::CompareRight)?;
+                let left_schema =
+                    self.unique_handle_schema(function_id, pc, left, CompareOperand::Left)?;
+                let right_schema =
+                    self.unique_handle_schema(function_id, pc, right, CompareOperand::Right)?;
+                if left_schema != right_schema {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::CompareSchemaMismatch {
+                            left: left_schema,
+                            right: right_schema,
+                        },
+                    ));
+                }
+                let schema_index = usize::try_from(left_schema.0).map_err(|_| {
+                    self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::SchemaNotByteComparable {
+                            schema: left_schema,
+                        },
+                    )
+                })?;
+                if !matches!(
+                    self.contract.schemas[schema_index].payload,
+                    PayloadKind::OpaqueBytes {
+                        byte_comparable: true
+                    }
+                ) {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::SchemaNotByteComparable {
+                            schema: left_schema,
+                        },
+                    ));
+                }
+            }
+            Op::ConstF64 { dst, bits: _ } => {
+                self.require_scalar(function_id, pc, frame, *dst, AccessRole::Destination)?;
+            }
+            Op::Trace { id: _ } => {}
+            Op::LoadIndexedI64 { .. } => {
+                return Err(self.unsupported(function_id, pc, UnsupportedOp::LoadIndexedI64));
+            }
+            Op::StoreIndexedI64 { .. } => {
+                return Err(self.unsupported(function_id, pc, UnsupportedOp::StoreIndexedI64));
+            }
+            Op::LoadArrayWord { .. } => {
+                return Err(self.unsupported(function_id, pc, UnsupportedOp::LoadArrayWord));
+            }
+            Op::HostCall { .. } => {
+                return Err(self.unsupported(function_id, pc, UnsupportedOp::HostCall));
+            }
+            Op::HostCallYield { .. } => {
+                return Err(self.unsupported(function_id, pc, UnsupportedOp::HostCallYield));
+            }
+        }
+        Ok(None)
+    }
+
+    fn validate_const(
+        &self,
+        function: FnId,
+        pc: usize,
+        value: i64,
+        kinds: &AllowedKinds,
+    ) -> Result<(), ProgramError> {
+        if kinds.contains(WordKind::Scalar) || kinds.contains(WordKind::Opaque) {
+            return Ok(());
+        }
+        let allowed: Vec<_> = kinds
+            .as_slice()
+            .iter()
+            .filter_map(|kind| match kind {
+                WordKind::Callable(contract) => Some(*contract),
+                WordKind::Scalar | WordKind::Status | WordKind::Handle(_) | WordKind::Opaque => {
+                    None
+                }
+            })
+            .collect();
+        if allowed.is_empty() {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::KindMismatch {
+                    role: AccessRole::Destination,
+                    required: KindRequirement::ConstantWord,
+                    allowed: kinds.clone(),
+                },
+            ));
+        }
+        let Some(target_index) = u32::try_from(value)
+            .ok()
+            .and_then(|target| usize::try_from(target).ok())
+            .filter(|target| *target < self.program.fns.len())
+        else {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::ConstantCallableTargetOutOfRange {
+                    value,
+                    function_count: self.program.fns.len(),
+                },
+            ));
+        };
+        let target = FnId(target_index as u32);
+        let declared = self.contract.functions[target_index].call_contract;
+        if !declared.is_some_and(|contract| allowed.contains(&contract)) {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::ConstantCallableContractMismatch {
+                    target,
+                    declared,
+                    allowed,
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_call_shape(
+        &self,
+        function: FnId,
+        pc: usize,
+        caller: &ValidatedFrame,
+        args: &[ArgCopy],
+        ret: u32,
+        target: &CallTarget<'_>,
+    ) -> Result<(), ProgramError> {
+        if args.len() != target.entries.len() {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::CallArgumentCount {
+                    expected: target.entries.len(),
+                    actual: args.len(),
+                },
+            ));
+        }
+        for (index, (argument, (destination, destination_bounds))) in
+            args.iter().zip(&target.entries).enumerate()
+        {
+            if argument.dst != destination.offset
+                || usize::try_from(argument.size).ok() != Some(destination_bounds.len())
+            {
+                return Err(self.op(
+                    function,
+                    pc,
+                    ProgramDefect::CallArgumentDestination {
+                        index,
+                        expected_offset: destination.offset,
+                        expected_size: destination_bounds.len(),
+                        actual_offset: argument.dst,
+                        actual_size: argument.size,
+                    },
+                ));
+            }
+            let source_index = self.exact_region(
+                function,
+                pc,
+                caller,
+                argument.src,
+                destination_bounds.len(),
+                AccessRole::ArgumentSource { index },
+            )?;
+            let source = &self.contract.functions[function.0 as usize].frame.regions[source_index];
+            if !shapes_compatible(&source.shape, &destination.shape) {
+                return Err(self.op(
+                    function,
+                    pc,
+                    ProgramDefect::CallArgumentKinds {
+                        index,
+                        source: source.shape.clone(),
+                        destination: destination.shape.clone(),
+                    },
+                ));
+            }
+        }
+        let result_index = self.exact_region(
+            function,
+            pc,
+            caller,
+            ret,
+            target.result.1.len(),
+            AccessRole::CallResult,
+        )?;
+        let destination = &self.contract.functions[function.0 as usize].frame.regions[result_index];
+        if !shapes_compatible(&target.result.0.shape, &destination.shape) {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::CallResultKinds {
+                    source: target.result.0.shape.clone(),
+                    destination: destination.shape.clone(),
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    fn validate_jump(&self, function: FnId, pc: usize, target: u32) -> Result<(), ProgramError> {
+        let code_len = self.program.fns[function.0 as usize].code.len();
+        let in_range = usize::try_from(target).is_ok_and(|target| target < code_len);
+        if !in_range {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::JumpTargetOutOfRange { target, code_len },
+            ));
+        }
+        Ok(())
+    }
+
+    fn unique_handle_schema(
+        &self,
+        function: FnId,
+        pc: usize,
+        kinds: &AllowedKinds,
+        operand: CompareOperand,
+    ) -> Result<SchemaRef, ProgramError> {
+        let schemas: Vec<_> = kinds
+            .as_slice()
+            .iter()
+            .filter_map(|kind| match kind {
+                WordKind::Handle(schema) => Some(*schema),
+                WordKind::Scalar | WordKind::Status | WordKind::Callable(_) | WordKind::Opaque => {
+                    None
+                }
+            })
+            .collect();
+        let [schema] = schemas.as_slice() else {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::CompareHandleContract { operand, schemas },
+            ));
+        };
+        Ok(*schema)
+    }
+
+    fn require_scalar(
+        &self,
+        function: FnId,
+        pc: usize,
+        frame: &ValidatedFrame,
+        offset: u32,
+        role: AccessRole,
+    ) -> Result<(), ProgramError> {
+        let kinds = self.word_kinds(function, pc, frame, offset, role)?;
+        if !kinds.contains(WordKind::Scalar) {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::KindMismatch {
+                    role,
+                    required: KindRequirement::Scalar,
+                    allowed: kinds.clone(),
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    fn word_kinds(
+        &self,
+        function: FnId,
+        pc: usize,
+        frame: &ValidatedFrame,
+        offset: u32,
+        role: AccessRole,
+    ) -> Result<&AllowedKinds, ProgramError> {
+        if !offset.is_multiple_of(WORD_SIZE_U32) {
+            return Err(self.access(
+                function,
+                pc,
+                role,
+                AccessDefect::OffsetNotWordAligned { offset },
+            ));
+        }
+        let start = usize::try_from(offset).map_err(|_| {
+            self.access(
+                function,
+                pc,
+                role,
+                AccessDefect::RangeOverflow {
+                    offset,
+                    size: WORD_SIZE,
+                },
+            )
+        })?;
+        let end = start.checked_add(WORD_SIZE).ok_or_else(|| {
+            self.access(
+                function,
+                pc,
+                role,
+                AccessDefect::RangeOverflow {
+                    offset,
+                    size: WORD_SIZE,
+                },
+            )
+        })?;
+        let frame_size = self.program.fns[function.0 as usize].frame.size;
+        if end > frame_size {
+            return Err(self.access(
+                function,
+                pc,
+                role,
+                AccessDefect::OutOfBounds {
+                    offset,
+                    size: WORD_SIZE,
+                    frame_size,
+                },
+            ));
+        }
+        for (region_index, bounds) in frame.regions.iter().copied().enumerate() {
+            if bounds.start <= start && end <= bounds.end {
+                let word = (start - bounds.start) / WORD_SIZE;
+                return Ok(&self.contract.functions[function.0 as usize].frame.regions
+                    [region_index]
+                    .shape
+                    .words[word]);
+            }
+        }
+        Err(self.access(function, pc, role, AccessDefect::UndeclaredWord { offset }))
+    }
+
+    fn exact_region(
+        &self,
+        function: FnId,
+        pc: usize,
+        frame: &ValidatedFrame,
+        offset: u32,
+        size: usize,
+        role: AccessRole,
+    ) -> Result<usize, ProgramError> {
+        if !offset.is_multiple_of(WORD_SIZE_U32) {
+            return Err(self.access(
+                function,
+                pc,
+                role,
+                AccessDefect::OffsetNotWordAligned { offset },
+            ));
+        }
+        if !size.is_multiple_of(WORD_SIZE) {
+            return Err(self.access(
+                function,
+                pc,
+                role,
+                AccessDefect::SizeNotWordAligned { size },
+            ));
+        }
+        let start = usize::try_from(offset).map_err(|_| {
+            self.access(
+                function,
+                pc,
+                role,
+                AccessDefect::RangeOverflow { offset, size },
+            )
+        })?;
+        let end = start.checked_add(size).ok_or_else(|| {
+            self.access(
+                function,
+                pc,
+                role,
+                AccessDefect::RangeOverflow { offset, size },
+            )
+        })?;
+        let frame_size = self.program.fns[function.0 as usize].frame.size;
+        if end > frame_size {
+            return Err(self.access(
+                function,
+                pc,
+                role,
+                AccessDefect::OutOfBounds {
+                    offset,
+                    size,
+                    frame_size,
+                },
+            ));
+        }
+        frame
+            .regions
+            .iter()
+            .position(|bounds| bounds.start == start && bounds.end == end)
+            .ok_or_else(|| {
+                self.access(
+                    function,
+                    pc,
+                    role,
+                    AccessDefect::UndeclaredRegion { offset, size },
+                )
+            })
+    }
+
+    fn validate_control_flow(&self, facts: &mut ProgramFacts) -> Result<(), ProgramError> {
+        for (function_index, function) in self.program.fns.iter().enumerate() {
+            let function_id = FnId(function_index as u32);
+            let mut pending = vec![0usize];
+            while let Some(pc) = pending.pop() {
+                if pc == function.code.len() {
+                    return Err(self.op(function_id, pc, ProgramDefect::ReachableFallthrough));
+                }
+                if facts.functions[function_index].pcs[pc].reachable {
+                    continue;
+                }
+                facts.functions[function_index].pcs[pc].reachable = true;
+                match &function.code[pc] {
+                    Op::Ret { .. } => {}
+                    Op::Jump { target } => pending.push(*target as usize),
+                    Op::JumpIfZero { target, .. } => {
+                        pending.push(*target as usize);
+                        pending.push(pc + 1);
+                    }
+                    Op::ConstI64 { .. }
+                    | Op::AddI64 { .. }
+                    | Op::SubI64 { .. }
+                    | Op::MulI64 { .. }
+                    | Op::DivI64 { .. }
+                    | Op::CopyI64 { .. }
+                    | Op::EqI64 { .. }
+                    | Op::NeI64 { .. }
+                    | Op::LtI64 { .. }
+                    | Op::LeI64 { .. }
+                    | Op::GtI64 { .. }
+                    | Op::GeI64 { .. }
+                    | Op::Call { .. }
+                    | Op::CallIndirect { .. }
+                    | Op::Await { .. }
+                    | Op::CompareValueBytes { .. }
+                    | Op::ConstF64 { .. }
+                    | Op::AddF64 { .. }
+                    | Op::MulF64 { .. }
+                    | Op::Trace { .. } => pending.push(pc + 1),
+                    Op::LoadIndexedI64 { .. } => {
+                        return Err(self.unsupported(
+                            function_id,
+                            pc,
+                            UnsupportedOp::LoadIndexedI64,
+                        ));
+                    }
+                    Op::StoreIndexedI64 { .. } => {
+                        return Err(self.unsupported(
+                            function_id,
+                            pc,
+                            UnsupportedOp::StoreIndexedI64,
+                        ));
+                    }
+                    Op::LoadArrayWord { .. } => {
+                        return Err(self.unsupported(
+                            function_id,
+                            pc,
+                            UnsupportedOp::LoadArrayWord,
+                        ));
+                    }
+                    Op::HostCall { .. } => {
+                        return Err(self.unsupported(function_id, pc, UnsupportedOp::HostCall));
+                    }
+                    Op::HostCallYield { .. } => {
+                        return Err(self.unsupported(
+                            function_id,
+                            pc,
+                            UnsupportedOp::HostCallYield,
+                        ));
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    fn global(&self, defect: ProgramDefect) -> ProgramError {
+        ProgramError {
+            function: None,
+            pc: None,
+            defect,
+        }
+    }
+
+    fn function(&self, function: FnId, defect: ProgramDefect) -> ProgramError {
+        ProgramError {
+            function: Some(function),
+            pc: None,
+            defect,
+        }
+    }
+
+    fn op(&self, function: FnId, pc: usize, defect: ProgramDefect) -> ProgramError {
+        ProgramError {
+            function: Some(function),
+            pc: Some(pc),
+            defect,
+        }
+    }
+
+    fn access(
+        &self,
+        function: FnId,
+        pc: usize,
+        role: AccessRole,
+        defect: AccessDefect,
+    ) -> ProgramError {
+        self.op(function, pc, ProgramDefect::Access { role, defect })
+    }
+
+    fn unsupported(&self, function: FnId, pc: usize, op: UnsupportedOp) -> ProgramError {
+        self.op(function, pc, ProgramDefect::UnsupportedOp { op })
+    }
+
+    fn validate_table_len(
+        &self,
+        table: ProgramTable,
+        len: usize,
+        function: Option<FnId>,
+    ) -> Result<(), ProgramError> {
+        if len != 0 && u32::try_from(len - 1).is_err() {
+            return Err(ProgramError {
+                function,
+                pc: None,
+                defect: ProgramDefect::TableTooLarge { table, len },
+            });
+        }
+        Ok(())
+    }
+}
+
+fn shapes_compatible(source: &RegionShape, destination: &RegionShape) -> bool {
+    source.words.len() == destination.words.len()
+        && source
+            .words
+            .iter()
+            .zip(&destination.words)
+            .all(|(source, destination)| source.intersects(destination))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::task::Fn;
+
+    struct ValidCase {
+        name: &'static str,
+        program: Program,
+        contract: ProgramContract,
+        requirements: DriveRequirements,
+        call: Option<(FnId, usize, CallSiteFacts)>,
+    }
+
+    struct InvalidCase {
+        name: &'static str,
+        program: Program,
+        contract: ProgramContract,
+        expected: ProgramError,
+    }
+
+    fn layout(words: usize) -> Layout {
+        Layout {
+            size: words * WORD_SIZE,
+            align: WORD_SIZE,
+        }
+    }
+
+    fn kinds(kind: WordKind) -> AllowedKinds {
+        AllowedKinds::new(kind)
+    }
+
+    fn region(offset: u32, shape: RegionShape) -> FrameRegion {
+        FrameRegion { offset, shape }
+    }
+
+    fn word_region(offset: u32, kind: WordKind) -> FrameRegion {
+        region(offset, RegionShape::word(kind))
+    }
+
+    fn function(words: usize, code: Vec<Op>) -> Fn {
+        Fn {
+            frame: layout(words),
+            code,
+        }
+    }
+
+    fn function_contract(
+        words: usize,
+        regions: Vec<FrameRegion>,
+        entries: &[u32],
+        result: u32,
+        call_contract: Option<u32>,
+    ) -> FunctionContract {
+        FunctionContract {
+            frame: FrameContract {
+                layout: layout(words),
+                regions,
+            },
+            entries: entries.iter().copied().map(RegionId).collect(),
+            result: RegionId(result),
+            call_contract: call_contract.map(CallContractId),
+        }
+    }
+
+    fn scalar_program() -> (Program, ProgramContract) {
+        let code = vec![
+            Op::ConstI64 { dst: 0, value: 7 },
+            Op::ConstI64 { dst: 8, value: 3 },
+            Op::AddI64 {
+                dst: 16,
+                a: 0,
+                b: 8,
+            },
+            Op::SubI64 {
+                dst: 16,
+                a: 0,
+                b: 8,
+            },
+            Op::MulI64 {
+                dst: 16,
+                a: 0,
+                b: 8,
+            },
+            Op::DivI64 {
+                dst: 16,
+                a: 0,
+                b: 8,
+            },
+            Op::CopyI64 { dst: 0, src: 16 },
+            Op::EqI64 {
+                dst: 16,
+                a: 0,
+                b: 8,
+            },
+            Op::NeI64 {
+                dst: 16,
+                a: 0,
+                b: 8,
+            },
+            Op::LtI64 {
+                dst: 16,
+                a: 0,
+                b: 8,
+            },
+            Op::LeI64 {
+                dst: 16,
+                a: 0,
+                b: 8,
+            },
+            Op::GtI64 {
+                dst: 16,
+                a: 0,
+                b: 8,
+            },
+            Op::GeI64 {
+                dst: 16,
+                a: 0,
+                b: 8,
+            },
+            Op::ConstF64 { dst: 0, bits: 1 },
+            Op::ConstF64 { dst: 8, bits: 2 },
+            Op::AddF64 {
+                dst: 16,
+                a: 0,
+                b: 8,
+            },
+            Op::MulF64 {
+                dst: 16,
+                a: 0,
+                b: 8,
+            },
+            Op::Trace { id: 9 },
+            Op::Await { dst: 16, input: 4 },
+            Op::Ret { src: 16, size: 8 },
+        ];
+        let regions = vec![
+            word_region(0, WordKind::Scalar),
+            word_region(8, WordKind::Scalar),
+            word_region(16, WordKind::Scalar),
+        ];
+        (
+            Program {
+                fns: vec![function(3, code)],
+            },
+            ProgramContract {
+                functions: vec![function_contract(3, regions, &[0, 1], 2, None)],
+                calls: vec![],
+                schemas: vec![],
+            },
+        )
+    }
+
+    fn direct_program(args: Vec<ArgCopy>) -> (Program, ProgramContract) {
+        let caller = function(
+            3,
+            vec![
+                Op::Call {
+                    callee: FnId(1),
+                    args,
+                    ret: 16,
+                },
+                Op::Ret { src: 16, size: 8 },
+            ],
+        );
+        let callee = function(
+            3,
+            vec![
+                Op::AddI64 {
+                    dst: 16,
+                    a: 0,
+                    b: 8,
+                },
+                Op::Ret { src: 16, size: 8 },
+            ],
+        );
+        let regions = || {
+            vec![
+                word_region(0, WordKind::Scalar),
+                word_region(8, WordKind::Scalar),
+                word_region(16, WordKind::Scalar),
+            ]
+        };
+        (
+            Program {
+                fns: vec![caller, callee],
+            },
+            ProgramContract {
+                functions: vec![
+                    function_contract(3, regions(), &[0, 1], 2, None),
+                    function_contract(3, regions(), &[0, 1], 2, None),
+                ],
+                calls: vec![],
+                schemas: vec![],
+            },
+        )
+    }
+
+    fn valid_direct_program() -> (Program, ProgramContract) {
+        direct_program(vec![
+            ArgCopy {
+                src: 0,
+                dst: 0,
+                size: 8,
+            },
+            ArgCopy {
+                src: 8,
+                dst: 8,
+                size: 8,
+            },
+        ])
+    }
+
+    fn scalar_call_contract() -> CallContract {
+        CallContract {
+            entries: vec![
+                word_region(0, WordKind::Scalar),
+                word_region(8, WordKind::Scalar),
+            ],
+            result: word_region(16, WordKind::Scalar),
+        }
+    }
+
+    fn indirect_program() -> (Program, ProgramContract) {
+        let caller_regions = vec![
+            word_region(0, WordKind::Callable(CallContractId(0))),
+            word_region(8, WordKind::Scalar),
+            word_region(16, WordKind::Scalar),
+            word_region(24, WordKind::Scalar),
+        ];
+        let callee_regions = vec![
+            word_region(0, WordKind::Scalar),
+            word_region(8, WordKind::Scalar),
+            word_region(16, WordKind::Scalar),
+        ];
+        (
+            Program {
+                fns: vec![
+                    function(
+                        4,
+                        vec![
+                            Op::ConstI64 { dst: 0, value: 1 },
+                            Op::CallIndirect {
+                                callee: 0,
+                                args: vec![
+                                    ArgCopy {
+                                        src: 8,
+                                        dst: 0,
+                                        size: 8,
+                                    },
+                                    ArgCopy {
+                                        src: 16,
+                                        dst: 8,
+                                        size: 8,
+                                    },
+                                ],
+                                ret: 24,
+                            },
+                            Op::Ret { src: 24, size: 8 },
+                        ],
+                    ),
+                    function(
+                        3,
+                        vec![
+                            Op::AddI64 {
+                                dst: 16,
+                                a: 0,
+                                b: 8,
+                            },
+                            Op::Ret { src: 16, size: 8 },
+                        ],
+                    ),
+                ],
+            },
+            ProgramContract {
+                functions: vec![
+                    function_contract(4, caller_regions, &[1, 2], 3, None),
+                    function_contract(3, callee_regions, &[0, 1], 2, Some(0)),
+                ],
+                calls: vec![scalar_call_contract()],
+                schemas: vec![],
+            },
+        )
+    }
+
+    fn compare_program(byte_comparable: bool) -> (Program, ProgramContract) {
+        let schema = SchemaRef(0);
+        (
+            Program {
+                fns: vec![function(
+                    3,
+                    vec![
+                        Op::CompareValueBytes {
+                            dst: 16,
+                            a: 0,
+                            b: 8,
+                        },
+                        Op::Ret { src: 16, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    3,
+                    vec![
+                        word_region(0, WordKind::Handle(schema)),
+                        word_region(8, WordKind::Handle(schema)),
+                        word_region(16, WordKind::Scalar),
+                    ],
+                    &[0, 1],
+                    2,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![SchemaContract {
+                    inline: RegionShape::word(WordKind::Handle(schema)),
+                    payload: PayloadKind::OpaqueBytes { byte_comparable },
+                }],
+            },
+        )
+    }
+
+    fn gapped_union_and_schema_program() -> (Program, ProgramContract) {
+        let union = kinds(WordKind::Opaque).allowing(WordKind::Scalar);
+        (
+            Program {
+                fns: vec![function(
+                    3,
+                    vec![
+                        Op::ConstI64 { dst: 0, value: 11 },
+                        Op::CopyI64 { dst: 16, src: 0 },
+                        Op::Ret { src: 16, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    3,
+                    vec![
+                        word_region(0, WordKind::Opaque),
+                        region(16, RegionShape::new(vec![union])),
+                    ],
+                    &[],
+                    1,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![
+                    SchemaContract {
+                        inline: RegionShape::default(),
+                        payload: PayloadKind::Inline,
+                    },
+                    SchemaContract {
+                        inline: RegionShape::word(WordKind::Handle(SchemaRef(1))),
+                        payload: PayloadKind::OpaqueBytes {
+                            byte_comparable: true,
+                        },
+                    },
+                    SchemaContract {
+                        inline: RegionShape::word(WordKind::Handle(SchemaRef(2))),
+                        payload: PayloadKind::DenseArray {
+                            element: SchemaRef(0),
+                        },
+                    },
+                ],
+            },
+        )
+    }
+
+    fn single_function(
+        words: usize,
+        code: Vec<Op>,
+        regions: Vec<FrameRegion>,
+        result: u32,
+    ) -> (Program, ProgramContract) {
+        (
+            Program {
+                fns: vec![function(words, code)],
+            },
+            ProgramContract {
+                functions: vec![function_contract(words, regions, &[], result, None)],
+                calls: vec![],
+                schemas: vec![],
+            },
+        )
+    }
+
+    fn op_error(pc: usize, defect: ProgramDefect) -> ProgramError {
+        ProgramError {
+            function: Some(FnId(0)),
+            pc: Some(pc),
+            defect,
+        }
+    }
+
+    fn function_error(defect: ProgramDefect) -> ProgramError {
+        ProgramError {
+            function: Some(FnId(0)),
+            pc: None,
+            defect,
+        }
+    }
+
+    fn global_error(defect: ProgramDefect) -> ProgramError {
+        ProgramError {
+            function: None,
+            pc: None,
+            defect,
+        }
+    }
+
+    #[test]
+    fn valid_scalar_direct_indirect_and_compare_programs() {
+        let (scalar_program, scalar_contract) = scalar_program();
+        let (direct_program, direct_contract) = valid_direct_program();
+        let (indirect_program, indirect_contract) = indirect_program();
+        let (compare_program, compare_contract) = compare_program(true);
+        let (gapped_program, gapped_contract) = gapped_union_and_schema_program();
+        let cases = vec![
+            ValidCase {
+                name: "scalar",
+                program: scalar_program,
+                contract: scalar_contract,
+                requirements: DriveRequirements {
+                    await_inputs: 5,
+                    hosts: 0,
+                },
+                call: None,
+            },
+            ValidCase {
+                name: "direct",
+                program: direct_program,
+                contract: direct_contract,
+                requirements: DriveRequirements::default(),
+                call: Some((
+                    FnId(0),
+                    0,
+                    CallSiteFacts::Direct {
+                        callee: FnId(1),
+                        result_size: 8,
+                    },
+                )),
+            },
+            ValidCase {
+                name: "indirect",
+                program: indirect_program,
+                contract: indirect_contract,
+                requirements: DriveRequirements::default(),
+                call: Some((
+                    FnId(0),
+                    1,
+                    CallSiteFacts::Indirect {
+                        result_size: 8,
+                        obligation: IndirectCallObligation {
+                            function_count: 2,
+                            contract: CallContractId(0),
+                        },
+                    },
+                )),
+            },
+            ValidCase {
+                name: "compare",
+                program: compare_program,
+                contract: compare_contract,
+                requirements: DriveRequirements::default(),
+                call: None,
+            },
+            ValidCase {
+                name: "gapped union and schema table",
+                program: gapped_program,
+                contract: gapped_contract,
+                requirements: DriveRequirements::default(),
+                call: None,
+            },
+        ];
+
+        for case in cases {
+            let verified = case.program.verify(case.contract).expect(case.name);
+            assert_eq!(
+                verified.drive_requirements(),
+                case.requirements,
+                "{}",
+                case.name
+            );
+            if let Some((function, pc, expected)) = case.call {
+                let actual = verified
+                    .facts()
+                    .function(function)
+                    .and_then(|facts| facts.pc(pc))
+                    .and_then(PcFacts::call);
+                assert_eq!(actual, Some(expected), "{}", case.name);
+            }
+            assert!(
+                verified
+                    .facts()
+                    .functions()
+                    .iter()
+                    .flat_map(FunctionFacts::pcs)
+                    .all(PcFacts::is_reachable),
+                "{}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_structural_and_instruction_defects() {
+        let overlap = single_function(
+            2,
+            vec![Op::Ret { src: 0, size: 16 }],
+            vec![
+                region(
+                    0,
+                    RegionShape::new(vec![kinds(WordKind::Scalar), kinds(WordKind::Scalar)]),
+                ),
+                word_region(8, WordKind::Scalar),
+            ],
+            0,
+        );
+        let bounds = single_function(
+            1,
+            vec![Op::Ret { src: 8, size: 8 }],
+            vec![word_region(8, WordKind::Scalar)],
+            0,
+        );
+        let unaligned = single_function(
+            2,
+            vec![Op::Ret { src: 4, size: 8 }],
+            vec![word_region(4, WordKind::Scalar)],
+            0,
+        );
+        let op_bounds = single_function(
+            1,
+            vec![
+                Op::ConstI64 { dst: 8, value: 0 },
+                Op::Ret { src: 0, size: 8 },
+            ],
+            vec![word_region(0, WordKind::Scalar)],
+            0,
+        );
+        let schema = SchemaRef(0);
+        let kinds_program = Program {
+            fns: vec![function(
+                3,
+                vec![
+                    Op::AddI64 {
+                        dst: 16,
+                        a: 0,
+                        b: 8,
+                    },
+                    Op::Ret { src: 16, size: 8 },
+                ],
+            )],
+        };
+        let kinds_contract = ProgramContract {
+            functions: vec![function_contract(
+                3,
+                vec![
+                    word_region(0, WordKind::Handle(schema)),
+                    word_region(8, WordKind::Scalar),
+                    word_region(16, WordKind::Scalar),
+                ],
+                &[],
+                2,
+                None,
+            )],
+            calls: vec![],
+            schemas: vec![SchemaContract {
+                inline: RegionShape::default(),
+                payload: PayloadKind::Inline,
+            }],
+        };
+        let jump = single_function(
+            1,
+            vec![Op::Jump { target: 1 }],
+            vec![word_region(0, WordKind::Scalar)],
+            0,
+        );
+        let fallthrough = single_function(
+            1,
+            vec![Op::ConstI64 { dst: 0, value: 0 }],
+            vec![word_region(0, WordKind::Scalar)],
+            0,
+        );
+        let args = direct_program(vec![ArgCopy {
+            src: 0,
+            dst: 0,
+            size: 8,
+        }]);
+        let argument_destination = direct_program(vec![
+            ArgCopy {
+                src: 0,
+                dst: 0,
+                size: 8,
+            },
+            ArgCopy {
+                src: 8,
+                dst: 0,
+                size: 8,
+            },
+        ]);
+        let ret = single_function(
+            2,
+            vec![Op::Ret { src: 0, size: 8 }],
+            vec![
+                word_region(0, WordKind::Scalar),
+                word_region(8, WordKind::Scalar),
+            ],
+            1,
+        );
+        let copy = single_function(
+            2,
+            vec![Op::CopyI64 { dst: 8, src: 0 }, Op::Ret { src: 8, size: 8 }],
+            vec![
+                word_region(0, WordKind::Scalar),
+                word_region(8, WordKind::Opaque),
+            ],
+            1,
+        );
+        let await_kind = single_function(
+            1,
+            vec![Op::Await { dst: 0, input: 3 }, Op::Ret { src: 0, size: 8 }],
+            vec![word_region(0, WordKind::Status)],
+            0,
+        );
+        let (compare_program, compare_contract) = compare_program(false);
+
+        let cases = vec![
+            InvalidCase {
+                name: "overlap",
+                program: overlap.0,
+                contract: overlap.1,
+                expected: function_error(ProgramDefect::RegionOverlap {
+                    first: RegionId(0),
+                    second: RegionId(1),
+                }),
+            },
+            InvalidCase {
+                name: "bounds",
+                program: bounds.0,
+                contract: bounds.1,
+                expected: function_error(ProgramDefect::RegionOutOfBounds {
+                    region: RegionId(0),
+                    end: 16,
+                    frame_size: 8,
+                }),
+            },
+            InvalidCase {
+                name: "alignment",
+                program: unaligned.0,
+                contract: unaligned.1,
+                expected: function_error(ProgramDefect::RegionOffsetNotWordAligned {
+                    region: RegionId(0),
+                    offset: 4,
+                }),
+            },
+            InvalidCase {
+                name: "op bounds",
+                program: op_bounds.0,
+                contract: op_bounds.1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::Access {
+                        role: AccessRole::Destination,
+                        defect: AccessDefect::OutOfBounds {
+                            offset: 8,
+                            size: 8,
+                            frame_size: 8,
+                        },
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "scalar kind",
+                program: kinds_program,
+                contract: kinds_contract,
+                expected: op_error(
+                    0,
+                    ProgramDefect::KindMismatch {
+                        role: AccessRole::LeftOperand,
+                        required: KindRequirement::Scalar,
+                        allowed: kinds(WordKind::Handle(schema)),
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "jump",
+                program: jump.0,
+                contract: jump.1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::JumpTargetOutOfRange {
+                        target: 1,
+                        code_len: 1,
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "fallthrough",
+                program: fallthrough.0,
+                contract: fallthrough.1,
+                expected: op_error(1, ProgramDefect::ReachableFallthrough),
+            },
+            InvalidCase {
+                name: "args",
+                program: args.0,
+                contract: args.1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::CallArgumentCount {
+                        expected: 2,
+                        actual: 1,
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "argument destination",
+                program: argument_destination.0,
+                contract: argument_destination.1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::CallArgumentDestination {
+                        index: 1,
+                        expected_offset: 8,
+                        expected_size: 8,
+                        actual_offset: 0,
+                        actual_size: 8,
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "ret",
+                program: ret.0,
+                contract: ret.1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::ReturnRegionMismatch {
+                        expected: RegionId(1),
+                        actual: RegionId(0),
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "copy kind intersection",
+                program: copy.0,
+                contract: copy.1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::IncompatibleWordKinds {
+                        source: kinds(WordKind::Scalar),
+                        destination: kinds(WordKind::Opaque),
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "compare",
+                program: compare_program,
+                contract: compare_contract,
+                expected: op_error(0, ProgramDefect::SchemaNotByteComparable { schema }),
+            },
+            InvalidCase {
+                name: "await kind",
+                program: await_kind.0,
+                contract: await_kind.1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::KindMismatch {
+                        role: AccessRole::AwaitDestination,
+                        required: KindRequirement::Scalar,
+                        allowed: kinds(WordKind::Status),
+                    },
+                ),
+            },
+        ];
+
+        for case in cases {
+            let error = case.program.verify(case.contract).expect_err(case.name);
+            assert_eq!(error, case.expected, "{}", case.name);
+        }
+    }
+
+    #[test]
+    fn rejects_ambiguous_indirect_and_mismatched_function_contracts() {
+        let call_zero = CallContract {
+            entries: vec![],
+            result: word_region(0, WordKind::Scalar),
+        };
+        let call_one = CallContract {
+            entries: vec![],
+            result: word_region(8, WordKind::Scalar),
+        };
+        let callable_kinds = kinds(WordKind::Callable(CallContractId(0)))
+            .allowing(WordKind::Callable(CallContractId(1)));
+        let ambiguous = (
+            Program {
+                fns: vec![function(
+                    2,
+                    vec![
+                        Op::CallIndirect {
+                            callee: 0,
+                            args: vec![],
+                            ret: 8,
+                        },
+                        Op::Ret { src: 8, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    2,
+                    vec![
+                        region(0, RegionShape::new(vec![callable_kinds])),
+                        word_region(8, WordKind::Scalar),
+                    ],
+                    &[],
+                    1,
+                    None,
+                )],
+                calls: vec![call_zero.clone(), call_one],
+                schemas: vec![],
+            },
+        );
+        let mismatched = (
+            Program {
+                fns: vec![function(1, vec![Op::Ret { src: 0, size: 8 }])],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    1,
+                    vec![word_region(0, WordKind::Scalar)],
+                    &[],
+                    0,
+                    Some(0),
+                )],
+                calls: vec![CallContract {
+                    entries: vec![],
+                    result: word_region(8, WordKind::Scalar),
+                }],
+                schemas: vec![],
+            },
+        );
+        let duplicate_calls = (
+            Program::default(),
+            ProgramContract {
+                functions: vec![],
+                calls: vec![call_zero.clone(), call_zero],
+                schemas: vec![],
+            },
+        );
+        let constant_contract = (
+            Program {
+                fns: vec![
+                    function(
+                        2,
+                        vec![
+                            Op::ConstI64 { dst: 0, value: 1 },
+                            Op::Ret { src: 8, size: 8 },
+                        ],
+                    ),
+                    function(2, vec![Op::Ret { src: 8, size: 8 }]),
+                ],
+            },
+            ProgramContract {
+                functions: vec![
+                    function_contract(
+                        2,
+                        vec![
+                            word_region(0, WordKind::Callable(CallContractId(0))),
+                            word_region(8, WordKind::Scalar),
+                        ],
+                        &[],
+                        1,
+                        None,
+                    ),
+                    function_contract(2, vec![word_region(8, WordKind::Scalar)], &[], 0, Some(1)),
+                ],
+                calls: vec![
+                    CallContract {
+                        entries: vec![],
+                        result: word_region(0, WordKind::Scalar),
+                    },
+                    CallContract {
+                        entries: vec![],
+                        result: word_region(8, WordKind::Scalar),
+                    },
+                ],
+                schemas: vec![],
+            },
+        );
+
+        let cases = vec![
+            InvalidCase {
+                name: "ambiguous indirect",
+                program: ambiguous.0,
+                contract: ambiguous.1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::IndirectCallContractCount {
+                        contracts: vec![CallContractId(0), CallContractId(1)],
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "function contract",
+                program: mismatched.0,
+                contract: mismatched.1,
+                expected: function_error(ProgramDefect::FunctionCallContractMismatch {
+                    contract: CallContractId(0),
+                }),
+            },
+            InvalidCase {
+                name: "deduplicated call table",
+                program: duplicate_calls.0,
+                contract: duplicate_calls.1,
+                expected: global_error(ProgramDefect::DuplicateCallContract {
+                    first: CallContractId(0),
+                    duplicate: CallContractId(1),
+                }),
+            },
+            InvalidCase {
+                name: "constant callable contract",
+                program: constant_contract.0,
+                contract: constant_contract.1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::ConstantCallableContractMismatch {
+                        target: FnId(1),
+                        declared: Some(CallContractId(1)),
+                        allowed: vec![CallContractId(0)],
+                    },
+                ),
+            },
+        ];
+
+        for case in cases {
+            let error = case.program.verify(case.contract).expect_err(case.name);
+            assert_eq!(error, case.expected, "{}", case.name);
+        }
+    }
+
+    #[test]
+    fn rejects_every_deferred_opcode_even_when_unreachable() {
+        let unsupported = vec![
+            (
+                UnsupportedOp::LoadIndexedI64,
+                Op::LoadIndexedI64 {
+                    dst: 0,
+                    base: 0,
+                    index: 0,
+                    stride: 8,
+                },
+            ),
+            (
+                UnsupportedOp::StoreIndexedI64,
+                Op::StoreIndexedI64 {
+                    base: 0,
+                    index: 0,
+                    stride: 8,
+                    src: 0,
+                },
+            ),
+            (
+                UnsupportedOp::LoadArrayWord,
+                Op::LoadArrayWord {
+                    dst: 0,
+                    present: 0,
+                    array: 0,
+                    index: 0,
+                    elem_schema_ref: 0,
+                },
+            ),
+            (UnsupportedOp::HostCall, Op::HostCall { host: 0 }),
+            (UnsupportedOp::HostCallYield, Op::HostCallYield { host: 0 }),
+        ];
+
+        for (expected, op) in unsupported {
+            let (program, contract) = single_function(
+                1,
+                vec![Op::Jump { target: 2 }, op, Op::Ret { src: 0, size: 8 }],
+                vec![word_region(0, WordKind::Scalar)],
+                0,
+            );
+            let error = program.verify(contract).expect_err("unsupported opcode");
+            assert_eq!(
+                error,
+                op_error(1, ProgramDefect::UnsupportedOp { op: expected })
+            );
+        }
+    }
+
+    #[test]
+    fn unreachable_await_is_validated_cached_and_counted() {
+        let (program, contract) = single_function(
+            1,
+            vec![
+                Op::Jump { target: 2 },
+                Op::Await { dst: 0, input: 7 },
+                Op::Ret { src: 0, size: 8 },
+            ],
+            vec![word_region(0, WordKind::Scalar)],
+            0,
+        );
+        let verified = program.verify(contract).expect("valid program");
+        assert_eq!(
+            verified.drive_requirements(),
+            DriveRequirements {
+                await_inputs: 8,
+                hosts: 0,
+            }
+        );
+        let facts = verified.facts().function(FnId(0)).expect("function facts");
+        assert!(facts.pc(0).is_some_and(PcFacts::is_reachable));
+        assert!(facts.pc(1).is_some_and(|facts| !facts.is_reachable()));
+        assert!(facts.pc(2).is_some_and(PcFacts::is_reachable));
+    }
+}
