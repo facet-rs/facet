@@ -35,8 +35,13 @@ const RUNG_024: &str = include_str!("ratchet/024-user-result.vix");
 const RUNG_025: &str = include_str!("ratchet/025-ordering-enum.vix");
 const RUNG_026: &str = include_str!("ratchet/026-arrays.vix");
 const RUNG_032: &str = include_str!("ratchet/032-pop.reject.vix");
+const RUNG_041: &str = include_str!("ratchet/041-maps.vix");
+const RUNG_042: &str = include_str!("ratchet/042-map-overwrite.vix");
+const RUNG_043: &str = include_str!("ratchet/043-map-keys-canonical.vix");
+const RUNG_044: &str = include_str!("ratchet/044-sets.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
 const RUNG_145: &str = include_str!("ratchet/145-push.reject.vix");
+const RUNG_146: &str = include_str!("ratchet/146-insert.reject.vix");
 
 fn frame_index(functions: &[FunctionId], function: FunctionId) -> usize {
     functions
@@ -2733,8 +2738,152 @@ fn unused_collection_result_is_a_typed_warning() {
 }
 
 #[test]
-fn mutation_shaped_array_methods_are_unknown() {
-    for source in [RUNG_032, RUNG_145] {
+fn map_and_set_surface_has_distinct_typed_vir_grains() {
+    let map_compilation = Compiler::new()
+        .compile(RUNG_041)
+        .expect("map surface compiles to VIR");
+    assert!(map_compilation.warnings.entries.is_empty());
+    let maps = map_compilation
+        .functions
+        .iter()
+        .find(|function| function.name == "maps")
+        .expect("rung 041 contains maps");
+    assert_eq!(
+        maps.nodes
+            .iter()
+            .filter(|node| matches!(node.op, VirOp::Map))
+            .count(),
+        1
+    );
+    assert_eq!(
+        maps.nodes
+            .iter()
+            .filter(|node| matches!(node.op, VirOp::MapAdd))
+            .count(),
+        2
+    );
+    assert_eq!(
+        maps.nodes
+            .iter()
+            .filter(|node| matches!(node.op, VirOp::MapGet))
+            .count(),
+        1
+    );
+    assert_eq!(
+        maps.nodes
+            .iter()
+            .filter(|node| matches!(node.op, VirOp::MapHas))
+            .count(),
+        2
+    );
+    for node in maps
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.op, VirOp::Map | VirOp::MapAdd))
+    {
+        assert_eq!(node.ty, VirType::map(VirType::String, VirType::Int));
+    }
+    assert!(
+        maps.nodes
+            .iter()
+            .filter(|node| matches!(node.op, VirOp::MapAdd | VirOp::MapGet))
+            .all(|node| node.effect.fallible)
+    );
+    assert!(
+        maps.nodes
+            .iter()
+            .filter(|node| matches!(node.op, VirOp::MapHas | VirOp::MapLen))
+            .all(|node| !node.effect.fallible && node.effect.kind == EffectKind::Pure)
+    );
+
+    let overwrite = Compiler::new()
+        .compile(RUNG_042)
+        .expect("map with compiles to VIR");
+    let overwrite = overwrite
+        .functions
+        .iter()
+        .find(|function| function.name == "map_overwrite")
+        .expect("rung 042 contains map_overwrite");
+    let with = overwrite
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::MapWith))
+        .expect("with has its own VIR grain");
+    assert_eq!(with.inputs.len(), 3);
+    assert!(!with.effect.fallible);
+    assert_eq!(
+        &RUNG_042[with.span.start as usize..with.span.end as usize],
+        "m.with (\"k\", 2)"
+    );
+
+    let keys = Compiler::new()
+        .compile(RUNG_043)
+        .expect("map concatenation and keys compile to VIR");
+    let keys = keys
+        .functions
+        .iter()
+        .find(|function| function.name == "map_keys_canonical")
+        .expect("rung 043 contains map_keys_canonical");
+    assert!(
+        keys.nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::MapConcat) && node.effect.fallible)
+    );
+    assert!(keys.nodes.iter().any(|node| {
+        matches!(node.op, VirOp::MapKeys)
+            && node.ty == VirType::array(VirType::String)
+            && !node.effect.fallible
+    }));
+
+    let sets = Compiler::new()
+        .compile(RUNG_044)
+        .expect("set surface compiles to VIR");
+    let sets = sets
+        .functions
+        .iter()
+        .find(|function| function.name == "sets")
+        .expect("rung 044 contains sets");
+    for expected in [
+        VirOp::Set,
+        VirOp::SetAdd,
+        VirOp::SetConcat,
+        VirOp::SetHas,
+        VirOp::SetLen,
+        VirOp::SetValues,
+    ] {
+        assert!(
+            sets.nodes
+                .iter()
+                .any(|node| core::mem::discriminant(&node.op) == core::mem::discriminant(&expected)),
+            "set surface emits {expected:?}",
+        );
+    }
+    assert!(sets.nodes.iter().any(|node| {
+        matches!(node.op, VirOp::SetValues)
+            && node.ty == VirType::array(VirType::Int)
+            && !node.effect.fallible
+    }));
+
+    let partitioned = map_compilation.partition_test(&map_compilation.tests[0]);
+    let mut lowering_cache = LoweringCache::default();
+    let error = match lowering_cache.get_or_lower(&partitioned.islands[0]) {
+        Ok(_) => panic!("map lowering remains the next runtime boundary"),
+        Err(vix::lowering::LoweringError::Diagnostics(diagnostics)) => diagnostics,
+        Err(vix::lowering::LoweringError::Machine(error)) => {
+            panic!("unexpected verifier failure: {error:?}")
+        }
+    };
+    assert_eq!(error.entries.len(), 1);
+    assert_eq!(error.entries[0].code, DiagnosticCode::LoweringUnsupported);
+    assert_eq!(
+        error.entries[0].message(),
+        "map/set lowering is not implemented"
+    );
+}
+
+#[test]
+fn mutation_shaped_collection_methods_are_unknown() {
+    for source in [RUNG_032, RUNG_145, RUNG_146] {
         let (expected_message, expected_line) = reject_header(source);
         let diagnostics = Compiler::new()
             .compile(source)

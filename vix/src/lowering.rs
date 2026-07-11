@@ -745,6 +745,13 @@ fn collect_schema_types(ty: &Type, out: &mut Vec<Type>) {
             }
         }
         Type::Array(element) => collect_schema_types(element, out),
+        Type::Map { key, value } => {
+            collect_schema_types(
+                &Type::Tuple(vec![key.as_ref().clone(), value.as_ref().clone()]),
+                out,
+            );
+        }
+        Type::Set(element) => collect_schema_types(element, out),
         Type::Bool | Type::Int | Type::Check | Type::StreamCheck | Type::String => {}
     }
 }
@@ -965,7 +972,11 @@ impl SemanticEqualityEmitter<'_, '_, '_> {
                     self.code.bind(next, node.span)?;
                 }
             }
-            Type::Array(_) | Type::Function { .. } | Type::StreamCheck => {
+            Type::Array(_)
+            | Type::Map { .. }
+            | Type::Set(_)
+            | Type::Function { .. }
+            | Type::StreamCheck => {
                 return Err(lowering_diagnostic(
                     node.span,
                     "equality lowering is not implemented for this VIR type",
@@ -1367,9 +1378,9 @@ impl<'a> ProgramContractBuilder<'a> {
                 self.product_shape(record.fields.iter().map(|field| &field.ty), span)
             }
             Type::Enum(enumeration) => self.enum_shape(enumeration, span),
-            Type::Array(_) => Ok(WeavyRegionShape::word(WeavyWordKind::Handle(
-                self.schema_for_type(ty, span)?,
-            ))),
+            Type::Array(_) | Type::Map { .. } | Type::Set(_) => Ok(WeavyRegionShape::word(
+                WeavyWordKind::Handle(self.schema_for_type(ty, span)?),
+            )),
         }
     }
 
@@ -1420,7 +1431,9 @@ impl<'a> ProgramContractBuilder<'a> {
         }
         self.schema_ready[index] = true;
         let inline = match ty {
-            Type::String | Type::Array(_) => WeavyRegionShape::word(WeavyWordKind::Handle(schema)),
+            Type::String | Type::Array(_) | Type::Map { .. } | Type::Set(_) => {
+                WeavyRegionShape::word(WeavyWordKind::Handle(schema))
+            }
             _ => self.shape_for_type(ty, span)?,
         };
         let value_shape = self.value_shape_for_type(ty, span)?;
@@ -1429,6 +1442,15 @@ impl<'a> ProgramContractBuilder<'a> {
                 byte_comparable: true,
             },
             Type::Array(element) => WeavyPayloadKind::DenseArray {
+                element: self.schema_for_type(element, span)?,
+            },
+            Type::Map { key, value } => WeavyPayloadKind::DenseArray {
+                element: self.schema_for_type(
+                    &Type::Tuple(vec![key.as_ref().clone(), value.as_ref().clone()]),
+                    span,
+                )?,
+            },
+            Type::Set(element) => WeavyPayloadKind::DenseArray {
                 element: self.schema_for_type(element, span)?,
             },
             _ => WeavyPayloadKind::Inline,
@@ -1450,7 +1472,13 @@ impl<'a> ProgramContractBuilder<'a> {
             Type::Function { .. } | Type::Tuple(_) | Type::Record(_) | Type::Enum(_) => {
                 Ok(Some(self.intern_value_shape_for_type(ty, span)?))
             }
-            Type::Bool | Type::Int | Type::Check | Type::String | Type::Array(_) => Ok(None),
+            Type::Bool
+            | Type::Int
+            | Type::Check
+            | Type::String
+            | Type::Array(_)
+            | Type::Map { .. }
+            | Type::Set(_) => Ok(None),
             Type::StreamCheck => Err(lowering_diagnostic(
                 span,
                 "Stream<Check> has no contract value shape",
@@ -2267,6 +2295,8 @@ fn comparison_temporary_types(ty: &Type, out: &mut Vec<Type>) {
         | Type::Check
         | Type::String
         | Type::Array(_)
+        | Type::Map { .. }
+        | Type::Set(_)
         | Type::Function { .. }
         | Type::StreamCheck => {}
     }
@@ -3104,6 +3134,12 @@ fn collect_typed_compare_leaves(
                 "array comparison lowering is not implemented",
             ));
         }
+        Type::Map { .. } | Type::Set(_) => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "map/set comparison lowering is not implemented",
+            ));
+        }
         Type::Function { .. } => {
             return Err(lowering_diagnostic(
                 node.span,
@@ -3478,6 +3514,25 @@ fn lower_node(
             return Err(lowering_diagnostic(
                 node.span,
                 "collection addition lowering is not implemented",
+            ));
+        }
+        Op::Map
+        | Op::Set
+        | Op::MapAdd
+        | Op::MapConcat
+        | Op::MapWith
+        | Op::MapGet
+        | Op::MapHas
+        | Op::MapLen
+        | Op::MapKeys
+        | Op::SetAdd
+        | Op::SetConcat
+        | Op::SetHas
+        | Op::SetLen
+        | Op::SetValues => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "map/set lowering is not implemented",
             ));
         }
         Op::Variant { variant } => {
@@ -4903,7 +4958,7 @@ fn representation_for_type(ty: &Type, span: Span) -> Result<ValueRepresentation,
         Type::Function { .. } | Type::Tuple(_) | Type::Record(_) | Type::Enum(_) => {
             Ok(ValueRepresentation::InlineComposite)
         }
-        Type::Array(_) => Ok(ValueRepresentation::RealizedHandle),
+        Type::Array(_) | Type::Map { .. } | Type::Set(_) => Ok(ValueRepresentation::RealizedHandle),
         Type::StreamCheck => Err(lowering_diagnostic(
             span,
             "Stream<Check> has no island-interior word representation",

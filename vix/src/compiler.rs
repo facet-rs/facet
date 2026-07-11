@@ -67,6 +67,9 @@ fn lint_module(module: &Module) -> Diagnostics {
             let operation = match node.op {
                 Op::ArrayAppend => "+",
                 Op::ArrayConcat => "++",
+                Op::MapAdd | Op::SetAdd => "+",
+                Op::MapConcat | Op::SetConcat => "++",
+                Op::MapWith => "with",
                 _ if node.ty == Type::Check => "Check",
                 _ => continue,
             };
@@ -343,12 +346,26 @@ impl<'a> TypeResolver<'a> {
                 for argument in &expression.args.args {
                     self.resolve_expr_types(argument)?;
                 }
+                if let Some(named) = &expression.named_args {
+                    self.resolve_named_value_types(&named.fields)?;
+                }
             }
             ast::Expr::Index(expression) => {
                 self.resolve_expr_types(&expression.receiver)?;
                 self.resolve_expr_types(&expression.index)?;
             }
             ast::Expr::Array(expression) => {
+                for element in &expression.elems {
+                    self.resolve_expr_types(element)?;
+                }
+            }
+            ast::Expr::Map(expression) => {
+                for row in &expression.rows {
+                    self.resolve_expr_types(&row.key)?;
+                    self.resolve_expr_types(&row.value)?;
+                }
+            }
+            ast::Expr::Set(expression) => {
                 for element in &expression.elems {
                     self.resolve_expr_types(element)?;
                 }
@@ -1468,12 +1485,16 @@ struct LoweredValue {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PreludeReceiverType {
     Array,
+    Map,
+    Set,
 }
 
 impl PreludeReceiverType {
     fn from_vir_type(ty: &Type) -> Option<Self> {
         match ty {
             Type::Array(_) => Some(Self::Array),
+            Type::Map { .. } => Some(Self::Map),
+            Type::Set(_) => Some(Self::Set),
             _ => None,
         }
     }
@@ -1482,6 +1503,14 @@ impl PreludeReceiverType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PreludeMethod {
     ArrayLen,
+    MapGet,
+    MapHas,
+    MapLen,
+    MapKeys,
+    MapWith,
+    SetHas,
+    SetLen,
+    SetValues,
 }
 
 #[derive(Clone, Copy)]
@@ -1498,12 +1527,62 @@ struct PreludeMethodRegistry {
 
 impl PreludeMethodRegistry {
     const STANDARD: Self = Self {
-        entries: &[PreludeMethodEntry {
-            receiver: PreludeReceiverType::Array,
-            name: "len",
-            arity: 0,
-            method: PreludeMethod::ArrayLen,
-        }],
+        entries: &[
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Array,
+                name: "len",
+                arity: 0,
+                method: PreludeMethod::ArrayLen,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Map,
+                name: "get",
+                arity: 1,
+                method: PreludeMethod::MapGet,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Map,
+                name: "has",
+                arity: 1,
+                method: PreludeMethod::MapHas,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Map,
+                name: "len",
+                arity: 0,
+                method: PreludeMethod::MapLen,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Map,
+                name: "keys",
+                arity: 0,
+                method: PreludeMethod::MapKeys,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Map,
+                name: "with",
+                arity: 2,
+                method: PreludeMethod::MapWith,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Set,
+                name: "has",
+                arity: 1,
+                method: PreludeMethod::SetHas,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Set,
+                name: "len",
+                arity: 0,
+                method: PreludeMethod::SetLen,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Set,
+                name: "values",
+                arity: 0,
+                method: PreludeMethod::SetValues,
+            },
+        ],
     };
 
     fn resolve(&self, receiver: &Type, name: &str) -> Option<PreludeMethodEntry> {
@@ -1672,6 +1751,8 @@ fn lower_value_expected(
             })
         }
         ast::Expr::Array(array) => lower_array(nodes, bindings, context, array, expected),
+        ast::Expr::Map(map) => lower_map(nodes, bindings, context, map, expected),
+        ast::Expr::Set(set) => lower_set(nodes, bindings, context, set, expected),
         ast::Expr::Index(index) => lower_array_index(nodes, bindings, context, index),
         ast::Expr::MethodCall(call) => lower_method_call(nodes, bindings, context, call),
         ast::Expr::Paren(paren) => {
@@ -1720,6 +1801,130 @@ fn lower_array(
             EffectFacts::PURE,
             values.iter().map(|value| value.node).collect(),
             Op::Array,
+        ),
+        ty,
+    })
+}
+
+fn lower_map(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    map: &ast::MapExpr,
+    expected: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    let expected_types = match expected {
+        Some(Type::Map { key, value }) => Some((key.as_ref(), value.as_ref())),
+        Some(expected) => return Err(type_mismatch(map.span, expected.name(), "map")),
+        None => None,
+    };
+    let rows = map
+        .rows
+        .iter()
+        .map(|row| {
+            let key = lower_value_expected(
+                nodes,
+                bindings,
+                context,
+                &row.key,
+                expected_types.map(|(key, _)| key),
+            )?;
+            let value = lower_value_expected(
+                nodes,
+                bindings,
+                context,
+                &row.value,
+                expected_types.map(|(_, value)| value),
+            )?;
+            Ok((key, value))
+        })
+        .collect::<Result<Vec<_>, Diagnostics>>()?;
+    let (key, value) = match (rows.first(), expected_types) {
+        (Some((key, value)), _) => (key.ty.clone(), value.ty.clone()),
+        (None, Some((key, value))) => (key.clone(), value.clone()),
+        (None, None) => {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                map.span,
+                "an empty map literal needs an expected key and value type",
+            )));
+        }
+    };
+    if !key.structural_order_is_defined() {
+        return Err(type_mismatch(
+            map.span,
+            "structurally ordered map key",
+            key.name(),
+        ));
+    }
+    for (row, (lowered_key, lowered_value)) in map.rows.iter().zip(&rows) {
+        require_type(lowered_key, &key, expr_span(&row.key))?;
+        require_type(lowered_value, &value, expr_span(&row.value))?;
+    }
+    let ty = Type::map(key, value);
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            map.span,
+            ty.clone(),
+            EffectFacts {
+                fallible: true,
+                ..EffectFacts::PURE
+            },
+            rows.iter()
+                .flat_map(|(key, value)| [key.node, value.node])
+                .collect(),
+            Op::Map,
+        ),
+        ty,
+    })
+}
+
+fn lower_set(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    set: &ast::SetExpr,
+    expected: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    let expected_element = match expected {
+        Some(Type::Set(element)) => Some(element.as_ref()),
+        Some(expected) => return Err(type_mismatch(set.span, expected.name(), "set")),
+        None => None,
+    };
+    let values = set
+        .elems
+        .iter()
+        .map(|element| lower_value_expected(nodes, bindings, context, element, expected_element))
+        .collect::<Result<Vec<_>, _>>()?;
+    let element = match (values.first(), expected_element) {
+        (Some(first), _) => first.ty.clone(),
+        (None, Some(expected)) => expected.clone(),
+        (None, None) => {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                set.span,
+                "an empty set literal needs an expected element type",
+            )));
+        }
+    };
+    if !element.structural_order_is_defined() {
+        return Err(type_mismatch(
+            set.span,
+            "structurally ordered set element",
+            element.name(),
+        ));
+    }
+    for (value, expression) in values.iter().zip(&set.elems) {
+        require_type(value, &element, expr_span(expression))?;
+    }
+    let ty = Type::set(element);
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            set.span,
+            ty.clone(),
+            EffectFacts::PURE,
+            values.iter().map(|value| value.node).collect(),
+            Op::Set,
         ),
         ty,
     })
@@ -1779,6 +1984,12 @@ fn lower_method_call(
     if call.args.args.len() != entry.arity {
         return Err(invalid_arity(call.span, entry.arity, call.args.args.len()));
     }
+    if let Some(named) = &call.named_args {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            named.span,
+            "named method arguments",
+        )));
+    }
     match entry.method {
         PreludeMethod::ArrayLen => Ok(LoweredValue {
             node: push_node(
@@ -1791,6 +2002,126 @@ fn lower_method_call(
             ),
             ty: Type::Int,
         }),
+        PreludeMethod::MapGet | PreludeMethod::MapHas | PreludeMethod::MapWith => {
+            let (key, value) = receiver
+                .ty
+                .map_types()
+                .map(|(key, value)| (key.clone(), value.clone()))
+                .ok_or_else(|| type_mismatch(call.span, "Map<K, V>", receiver.ty.name()))?;
+            let lowered_key = lower_value(nodes, bindings, context, &call.args.args[0])?;
+            require_type(&lowered_key, &key, expr_span(&call.args.args[0]))?;
+            let (ty, effect, inputs, op) = match entry.method {
+                PreludeMethod::MapGet => (
+                    value,
+                    EffectFacts {
+                        fallible: true,
+                        ..EffectFacts::PURE
+                    },
+                    vec![receiver.node, lowered_key.node],
+                    Op::MapGet,
+                ),
+                PreludeMethod::MapHas => (
+                    Type::Bool,
+                    EffectFacts::PURE,
+                    vec![receiver.node, lowered_key.node],
+                    Op::MapHas,
+                ),
+                PreludeMethod::MapWith => {
+                    let lowered_value = lower_value(nodes, bindings, context, &call.args.args[1])?;
+                    require_type(&lowered_value, &value, expr_span(&call.args.args[1]))?;
+                    (
+                        receiver.ty.clone(),
+                        EffectFacts::PURE,
+                        vec![receiver.node, lowered_key.node, lowered_value.node],
+                        Op::MapWith,
+                    )
+                }
+                _ => unreachable!("map method dispatch is closed"),
+            };
+            Ok(LoweredValue {
+                node: push_node(nodes, call.span, ty.clone(), effect, inputs, op),
+                ty,
+            })
+        }
+        PreludeMethod::MapLen => Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                Type::Int,
+                EffectFacts::PURE,
+                vec![receiver.node],
+                Op::MapLen,
+            ),
+            ty: Type::Int,
+        }),
+        PreludeMethod::MapKeys => {
+            let (key, _) = receiver
+                .ty
+                .map_types()
+                .ok_or_else(|| type_mismatch(call.span, "Map<K, V>", receiver.ty.name()))?;
+            let ty = Type::array(key.clone());
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    vec![receiver.node],
+                    Op::MapKeys,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::SetHas => {
+            let element = receiver
+                .ty
+                .set_element()
+                .cloned()
+                .ok_or_else(|| type_mismatch(call.span, "Set<T>", receiver.ty.name()))?;
+            let candidate = lower_value(nodes, bindings, context, &call.args.args[0])?;
+            require_type(&candidate, &element, expr_span(&call.args.args[0]))?;
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    Type::Bool,
+                    EffectFacts::PURE,
+                    vec![receiver.node, candidate.node],
+                    Op::SetHas,
+                ),
+                ty: Type::Bool,
+            })
+        }
+        PreludeMethod::SetLen => Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                Type::Int,
+                EffectFacts::PURE,
+                vec![receiver.node],
+                Op::SetLen,
+            ),
+            ty: Type::Int,
+        }),
+        PreludeMethod::SetValues => {
+            let element = receiver
+                .ty
+                .set_element()
+                .cloned()
+                .ok_or_else(|| type_mismatch(call.span, "Set<T>", receiver.ty.name()))?;
+            let ty = Type::array(element);
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    vec![receiver.node],
+                    Op::SetValues,
+                ),
+                ty,
+            })
+        }
     }
 }
 
@@ -3461,29 +3792,47 @@ fn lower_binary(
                 require_type(&right, element, expr_span(&binary.right))?;
                 (left.ty.clone(), Op::ArrayAppend)
             }
+            Type::Map { key, value } => {
+                require_type(
+                    &right,
+                    &Type::Tuple(vec![key.as_ref().clone(), value.as_ref().clone()]),
+                    expr_span(&binary.right),
+                )?;
+                (left.ty.clone(), Op::MapAdd)
+            }
+            Type::Set(element) => {
+                require_type(&right, element, expr_span(&binary.right))?;
+                (left.ty.clone(), Op::SetAdd)
+            }
             _ => {
                 return Err(type_mismatch(
                     expr_span(&binary.left),
-                    "Int or [T]",
+                    "Int or collection value",
                     left.ty.name(),
                 ));
             }
         },
-        "++" => {
-            let Type::Array(element) = &left.ty else {
+        "++" => match &left.ty {
+            Type::Array(_) => {
+                require_type(&right, &left.ty, expr_span(&binary.right))?;
+                (left.ty.clone(), Op::ArrayConcat)
+            }
+            Type::Map { .. } => {
+                require_type(&right, &left.ty, expr_span(&binary.right))?;
+                (left.ty.clone(), Op::MapConcat)
+            }
+            Type::Set(_) => {
+                require_type(&right, &left.ty, expr_span(&binary.right))?;
+                (left.ty.clone(), Op::SetConcat)
+            }
+            _ => {
                 return Err(type_mismatch(
                     expr_span(&binary.left),
-                    "[T]",
+                    "collection value",
                     left.ty.name(),
                 ));
-            };
-            require_type(
-                &right,
-                &Type::Array(element.clone()),
-                expr_span(&binary.right),
-            )?;
-            (left.ty.clone(), Op::ArrayConcat)
-        }
+            }
+        },
         "-" => {
             require_type(&left, &Type::Int, expr_span(&binary.left))?;
             require_type(&right, &Type::Int, expr_span(&binary.right))?;
@@ -3549,12 +3898,20 @@ fn lower_binary(
             )));
         }
     };
+    let effect = if matches!(op, Op::MapAdd | Op::MapConcat) {
+        EffectFacts {
+            fallible: true,
+            ..EffectFacts::PURE
+        }
+    } else {
+        EffectFacts::PURE
+    };
     Ok(LoweredValue {
         node: push_node(
             nodes,
             binary.span,
             ty.clone(),
-            EffectFacts::PURE,
+            effect,
             vec![left.node, right.node],
             op,
         ),
@@ -3771,6 +4128,8 @@ fn expr_span(expression: &ast::Expr) -> Span {
         ast::Expr::Field(value) => value.span,
         ast::Expr::Index(value) => value.span,
         ast::Expr::Array(value) => value.span,
+        ast::Expr::Map(value) => value.span,
+        ast::Expr::Set(value) => value.span,
         ast::Expr::Variant(value) => value.span,
         ast::Expr::Record(value) => value.span,
         ast::Expr::Tuple(value) => value.span,
