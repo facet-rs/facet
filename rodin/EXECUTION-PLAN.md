@@ -188,6 +188,14 @@ mid-drive interning, or constant-fold conditional yields. Weavy owns interior
 molten construction; the Vix scheduler remains the only edge-publication and
 identity authority when later dynamic key values cross an island boundary.
 
+Before any composite dynamic key or completed aggregate crosses that boundary,
+the runtime Store must intern it through the canonical framed value walk:
+embedded handles contribute their referents' content identities, never their
+process-local integer values. The proven recursive walk currently living in the
+retiring machine driver is the migration source. Raw realized-byte hashing is
+valid only for contracts whose identity shape is entirely scalar/opaque; a
+generic Weavy serializer or second identity authority is forbidden.
+
 The rung-138 scale certificate is production-shaped only when all of these are
 measured together:
 
