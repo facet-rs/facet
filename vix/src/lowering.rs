@@ -8817,8 +8817,8 @@ fn lower_checked_array_node(
 /// Typed temporaries for a structural array sort: two element registers to
 /// hold the pair under comparison, five integer registers (length, the two
 /// loop indices, the three-way ordering word, and the loop stride), followed
-/// by whatever nested registers the element type's structural comparison
-/// needs. The sequence must match `lower_array_sorted_node`'s `take` order.
+/// by the exact recursive temporary contract of `SemanticOrderingEmitter`.
+/// The sequence must match `lower_array_sorted_node`'s `take` order.
 fn array_sorted_temporary_types(node: &Node) -> Result<Vec<Type>, Diagnostics> {
     let Type::Array(element) = &node.ty else {
         return Err(lowering_diagnostic(
@@ -8836,7 +8836,7 @@ fn array_sorted_temporary_types(node: &Node) -> Result<Vec<Type>, Diagnostics> {
         Type::Int,
         Type::Int,
     ];
-    comparison_temporary_types(&element, &mut types);
+    ordering_temporary_types(&element, &mut types);
     Ok(types)
 }
 
@@ -9045,20 +9045,24 @@ fn lower_array_sorted_node(
         outputs.code,
     )?;
 
-    // Structural three-way order of out[i] against out[j].
+    // Structural three-way order of out[i] against out[j]. This is the same
+    // variant- and array-directed emitter that lowers ordinary `<=>`; the
+    // sort owns the checked array-access context required by nested arrays.
     temps.rewind(comparison_checkpoint, node.span)?;
-    emit_structural_order(
+    SemanticOrderingEmitter {
         node,
-        element,
-        &ei,
-        &ej,
-        StructuralOrderOutput {
-            ordering: ordering_slot,
-            condition: scratch.condition,
-        },
-        &mut temps,
-        outputs.code,
-    )?;
+        temps: &mut temps,
+        code: outputs.code,
+        array: Some(ArrayEqualityContext {
+            schemas: sequence.lowering.schemas,
+            scratch,
+            assigned,
+            outcome,
+            return_label,
+            site,
+        }),
+    }
+    .emit(element, &ei, &ej, ordering_slot)?;
 
     // Swap when out[i] is structurally greater than out[j].
     let no_swap = outputs.code.label();
