@@ -265,7 +265,10 @@ Rung 051 lands through these forward checkpoints:
    `Store::intern_tree`. Stable Vix `SchemaId`s come from canonical `Type`
    encoding; program-local Weavy schema ordinals, ABI offsets, padding, and
    handle integers never enter identity. The new digest is not claimed to be
-   bit-compatible with the retiring flat/raw encoding.
+   bit-compatible with the retiring flat/raw encoding. Inline sequences have a
+   compact canonical-byte representation that the writer streams element by
+   element; a million-element `[Int]` never becomes a million heap-allocated
+   scalar tree nodes.
 2. `range where { from, to }` allocates one dense array and fills it in-frame.
    Range and fold loop bodies contain the same cheap interior-pollpoint
    vocabulary as rung 050 and emit no per-iteration trace marks, scheduler
