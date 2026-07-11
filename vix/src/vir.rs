@@ -697,6 +697,12 @@ pub enum Op {
     /// Keep rows whose values satisfy a typed predicate without renumbering
     /// their stable keys.
     StreamFilter,
+    /// Map each row through a typed `V -> Option<W>`, keeping the source key for
+    /// every `Some` output and dropping every `None` without renumbering.
+    StreamFilterMap,
+    /// Expand each row through a typed `V -> Stream<K2, W>`, composing the outer
+    /// key with each inner key into a deterministic tuple key.
+    StreamFlatMap,
     /// Materialize a keyed codata recipe as its canonical Map value.
     StreamCollect,
     /// Concatenate two immutable strings.
@@ -1310,6 +1316,8 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::ArrayAny => op.push(53),
         Op::ArrayContains => op.push(54),
         Op::ArraySorted => op.push(55),
+        Op::StreamFilterMap => op.push(56),
+        Op::StreamFlatMap => op.push(57),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());

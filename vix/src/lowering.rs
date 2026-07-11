@@ -4538,6 +4538,18 @@ fn lower_node(
             )?;
             (Vec::new(), ValueRepresentation::CodataRecipe)
         }
+        Op::StreamFilterMap => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "stream filter_map lowering is not implemented",
+            ));
+        }
+        Op::StreamFlatMap => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "stream flat_map lowering is not implemented",
+            ));
+        }
         Op::StreamCollect => {
             return Err(lowering_diagnostic(
                 node.span,
