@@ -664,6 +664,12 @@ pub enum Op {
     /// Permute a dense array into ascending structural-semantic order,
     /// preserving every duplicate element.
     ArraySorted,
+    /// Publish one taken generator yield site to the task's append-only codata
+    /// log. This is a control-only construction effect: it emits the site's
+    /// stable provenance selector and never lowers or evaluates the site's
+    /// `Op::Expect` check operands. It is synthesised only by the generator-task
+    /// builder, never by source lowering.
+    PublishSite(YieldSiteId),
     /// Add one element to a dense array, producing a fresh value.
     ArrayAppend,
     /// Concatenate two dense arrays, producing a fresh value.
@@ -924,6 +930,170 @@ impl Module {
         PartitionedTest {
             name: test.name.clone(),
             islands,
+        }
+    }
+
+    /// Build the verified-lowering island for a test's generator task: one
+    /// program that runs only the generator's real `Match`/`If` control over its
+    /// scrutinees and publishes the taken yield sites through the append-only
+    /// codata log. It never lowers a site's `Op::Expect` check operands; those
+    /// stay ordinary pure demand work drained through the check islands. This is
+    /// the zero-dynamic-key base case of the general provenance-keyed protocol:
+    /// control chooses which sites publish, and each published descriptor is the
+    /// site's stable [`YieldSiteId`] selector.
+    ///
+    /// r[impl machine.test.generator-runtime]
+    #[must_use]
+    pub fn generator_task_island(&self, test: &Test) -> Island {
+        let source = &self.functions[test.function.0 as usize];
+        let mut builder = GeneratorTaskBuilder {
+            source,
+            nodes: Vec::new(),
+        };
+        let output = builder.lower_body(&test.generator, source.span);
+        let nodes = builder.nodes;
+        let array_map_partitions = collect_array_map_partitions(test.function, &nodes, output);
+        Island {
+            id: IslandId(0),
+            function: test.function,
+            function_name: format!("{}$generator", test.name),
+            nodes,
+            output,
+            callees: Vec::new(),
+            array_map_partitions,
+        }
+    }
+}
+
+/// Assembles the synthetic VIR function that backs a test's generator task. It
+/// copies each scrutinee/condition value's transitive closure from the source
+/// test function and threads the generator's `Match`/`If` control, emitting an
+/// [`Op::PublishSite`] for every yield site in control order. Check operands are
+/// never reached — only scrutinee/condition closures are copied.
+struct GeneratorTaskBuilder<'a> {
+    source: &'a Function,
+    nodes: Vec<Node>,
+}
+
+impl GeneratorTaskBuilder<'_> {
+    fn push(&mut self, span: Span, ty: Type, effect: EffectFacts, inputs: Vec<NodeId>, op: Op) -> NodeId {
+        let id = NodeId(u32::try_from(self.nodes.len()).expect("generator node index fits u32"));
+        self.nodes.push(Node {
+            id,
+            span,
+            ty,
+            effect,
+            inputs,
+            op,
+        });
+        id
+    }
+
+    fn scalar_zero(&mut self, span: Span) -> NodeId {
+        self.push(span, Type::Int, EffectFacts::PURE, Vec::new(), Op::Int(0))
+    }
+
+    fn range_from(&self, start: usize) -> Vec<NodeId> {
+        (start..self.nodes.len())
+            .map(|index| NodeId(u32::try_from(index).expect("generator node index fits u32")))
+            .collect()
+    }
+
+    /// Copy a scrutinee/condition value's transitive closure into the generator
+    /// function, returning its remapped id. Values are copied fresh each time so
+    /// the generator frame is a self-contained, verifier-admitted program; the
+    /// runtime memo/dedup collapses any repeated pure computation by identity.
+    fn copy_value(&mut self, id: NodeId) -> NodeId {
+        let node = &self.source.nodes[id.0 as usize];
+        assert!(
+            !matches!(
+                node.op,
+                Op::If { .. } | Op::Match { .. } | Op::OrderedMatch { .. }
+            ),
+            "zero-dynamic-key generator scrutinees do not embed VIR control regions",
+        );
+        let inputs = node
+            .inputs
+            .iter()
+            .map(|&input| self.copy_value(input))
+            .collect::<Vec<_>>();
+        self.push(node.span, node.ty.clone(), node.effect, inputs, node.op.clone())
+    }
+
+    fn lower_body(&mut self, body: &GeneratorBody, span: Span) -> NodeId {
+        for step in &body.steps {
+            self.lower_step(step);
+        }
+        self.scalar_zero(span)
+    }
+
+    fn lower_step(&mut self, step: &GeneratorStep) {
+        match step {
+            GeneratorStep::Yield(site) => {
+                self.push(
+                    site.span,
+                    Type::Int,
+                    EffectFacts::PURE,
+                    Vec::new(),
+                    Op::PublishSite(site.id),
+                );
+            }
+            GeneratorStep::Match { scrutinee, arms } => {
+                let span = self.source.nodes[scrutinee.0 as usize].span;
+                let scrutinee = self.copy_value(*scrutinee);
+                let mut match_arms = Vec::with_capacity(arms.len());
+                for arm in arms {
+                    let start = self.nodes.len();
+                    for step in &arm.body.steps {
+                        self.lower_step(step);
+                    }
+                    let output = self.scalar_zero(span);
+                    match_arms.push(MatchArm {
+                        variant: arm.variant,
+                        nodes: self.range_from(start),
+                        output,
+                    });
+                }
+                self.push(
+                    span,
+                    Type::Int,
+                    EffectFacts::PURE,
+                    vec![scrutinee],
+                    Op::Match { arms: match_arms },
+                );
+            }
+            GeneratorStep::If {
+                condition,
+                consequent,
+                alternative,
+            } => {
+                let span = self.source.nodes[condition.0 as usize].span;
+                let condition = self.copy_value(*condition);
+                let consequent = self.lower_control_region(consequent, span);
+                let alternative = self.lower_control_region(alternative, span);
+                self.push(
+                    span,
+                    Type::Int,
+                    EffectFacts::PURE,
+                    vec![condition],
+                    Op::If {
+                        consequent,
+                        alternative,
+                    },
+                );
+            }
+        }
+    }
+
+    fn lower_control_region(&mut self, body: &GeneratorBody, span: Span) -> ControlRegion {
+        let start = self.nodes.len();
+        for step in &body.steps {
+            self.lower_step(step);
+        }
+        let output = self.scalar_zero(span);
+        ControlRegion {
+            nodes: self.range_from(start),
+            output,
         }
     }
 }
@@ -1310,6 +1480,10 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::ArrayAny => op.push(53),
         Op::ArrayContains => op.push(54),
         Op::ArraySorted => op.push(55),
+        Op::PublishSite(site) => {
+            op.push(56);
+            op.extend_from_slice(&site.0.to_le_bytes());
+        }
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());

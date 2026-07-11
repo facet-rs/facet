@@ -1055,6 +1055,80 @@ fn rung_031_split_last_compiles_to_generator_codata() {
 // check demands. The taken `Some` arm publishes sites 0,1,2; the later
 // unconditional site 4 always publishes; the untaken `None` arm (site 3,
 // `expect(false)`) publishes nothing, so there is no phantom failing check.
+// The generator task is one verified Weavy program that runs only the real
+// `split_last` match control and publishes the taken sites. It never lowers a
+// site's `Op::Expect` check operands, and it uses no host/legacy path.
+#[test]
+fn rung_031_generator_task_is_verified_control_and_publish_only() {
+    let module = Compiler::new()
+        .compile(RUNG_031)
+        .expect("rung 031 compiles into generator/codata VIR");
+    let island = module.generator_task_island(&module.tests[0]);
+
+    // VIR certificate: the generator island carries real control (Match) over the
+    // real scrutinee (ArraySplitLast) and publishes sites, but lowers no check
+    // operand (no Expect/Eq/Ne/IsVariant).
+    assert!(
+        island
+            .nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::Match { .. })),
+        "generator runs real match control",
+    );
+    assert!(
+        island
+            .nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::ArraySplitLast)),
+        "generator computes the real split_last scrutinee",
+    );
+    assert_eq!(
+        island
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.op, VirOp::PublishSite(_)))
+            .count(),
+        5,
+        "one PublishSite per static yield site (0,1,2 Some; 3 None; 4 unconditional)",
+    );
+    assert!(
+        island.nodes.iter().all(|node| !matches!(
+            node.op,
+            VirOp::Expect | VirOp::Eq | VirOp::Ne | VirOp::IsVariant { .. }
+        )),
+        "generator lowers no check operand",
+    );
+
+    // The island lowers to a verified Executable whose program publishes and runs
+    // real variant control, with no host call.
+    let mut cache = LoweringCache::default();
+    let artifact = cache
+        .get_or_lower(&island)
+        .expect("generator task lowers to a verified executable");
+    let ops = artifact
+        .program()
+        .fns
+        .iter()
+        .flat_map(|function| function.code.iter())
+        .collect::<Vec<_>>();
+    assert!(
+        ops.iter().any(|op| matches!(op, WeavyOp::Publish { .. })),
+        "generator program publishes taken sites",
+    );
+    assert!(
+        ops.iter()
+            .any(|op| matches!(op, WeavyOp::EnumIsVariant { .. })),
+        "generator program runs real variant control",
+    );
+    assert!(
+        !ops.iter().any(|op| matches!(
+            op,
+            WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }
+        )),
+        "generator program uses no host/legacy path",
+    );
+}
+
 #[test]
 fn rung_031_conditional_generator_executes_taken_sites() {
     let report = run_source(RUNG_031)

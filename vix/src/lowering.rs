@@ -32,7 +32,7 @@ use crate::support::Span;
 use crate::vir::{
     ArrayMapExecutionShape, ArrayMapPartition, EnumType, EnumVariant, Function, FunctionId, Island,
     Node, NodeId, NodeRef, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, ORDERING_EQUAL_VARIANT,
-    ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, Type, VariantPayload,
+    ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, Type, VariantPayload, YieldSiteId,
 };
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -337,7 +337,22 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
         .iter()
         .find(|node| node.id == island.output)
         .ok_or_else(|| lowering_diagnostic(Span { start: 0, end: 0 }, "missing island output"))?;
-    if output.ty != Type::Check {
+    // A check island outputs a `Check`; a generator-task island runs control and
+    // publishes sites, returning a placeholder scalar whose value is unused (the
+    // taken sites are read from the publication log).
+    let publishes = island
+        .nodes
+        .iter()
+        .any(|node| matches!(node.op, Op::PublishSite(_)));
+    if publishes {
+        if output.ty != Type::Int {
+            return Err(lowering_diagnostic(
+                output.span,
+                "generator-task island output is not the placeholder scalar",
+            )
+            .into());
+        }
+    } else if output.ty != Type::Check {
         return Err(lowering_diagnostic(output.span, "island output is not a Check").into());
     }
     let array_outcome = island_contains_checked_collection_ops(island)
@@ -742,11 +757,26 @@ fn empty_schema() -> WeavySchemaContract {
     }
 }
 
+/// The single scalar publication-record schema used by every generator-task
+/// `Op::Publish`: a one-word scalar run carrying the taken site's stable
+/// selector, with no value shape and no handle word (no handle leakage).
+fn publication_record_schema() -> WeavySchemaContract {
+    WeavySchemaContract {
+        inline: WeavyRegionShape::word(WeavyWordKind::Scalar),
+        value_shape: None,
+        payload: WeavyPayloadKind::PublicationRecord,
+    }
+}
+
 /// Closed program-local schema order. It is sorted by Vix's canonical semantic
 /// type encoding, so source spans and lowering traversal cannot affect a
 /// Weavy `SchemaRef` witness.
 struct SchemaAssignments {
     types: Vec<Type>,
+    /// Whether this island publishes generator yield sites and therefore needs
+    /// a single trailing scalar `PublicationRecord` schema after the closed type
+    /// schemas.
+    publications: bool,
 }
 
 impl SchemaAssignments {
@@ -788,7 +818,35 @@ impl SchemaAssignments {
                 "Stream<Check> cannot be a dynamic program payload schema",
             ));
         }
-        Ok(Self { types })
+        let publications = island
+            .nodes
+            .iter()
+            .any(|node| matches!(node.op, Op::PublishSite(_)));
+        Ok(Self {
+            types,
+            publications,
+        })
+    }
+
+    /// Total closed schema slots: the canonical type schemas plus one trailing
+    /// scalar publication-record schema when the island publishes sites.
+    fn schema_count(&self) -> usize {
+        self.types.len() + usize::from(self.publications)
+    }
+
+    /// The `SchemaRef` of the trailing scalar publication-record schema. It rides
+    /// immediately after the closed type schemas, so its witness is stable and
+    /// span-insensitive.
+    fn publication_record(&self, span: Span) -> Result<WeavySchemaRef, Diagnostics> {
+        if !self.publications {
+            return Err(lowering_diagnostic(
+                span,
+                "publication-record schema requested by a non-publishing island",
+            ));
+        }
+        u32::try_from(self.types.len())
+            .map(WeavySchemaRef)
+            .map_err(|_| lowering_diagnostic(span, "publication-record schema index overflow"))
     }
 
     fn schema_for(&self, ty: &Type, span: Span) -> Result<WeavySchemaRef, Diagnostics> {
@@ -1321,13 +1379,17 @@ impl<'a> ProgramContractBuilder<'a> {
                 .values()
                 .any(|layout| layout.array_outcome.is_some()),
             calls: Vec::new(),
-            schemas: vec![empty_schema(); schemas_preassigned.types.len()],
+            schemas: vec![empty_schema(); schemas_preassigned.schema_count()],
             schema_ready: vec![false; schemas_preassigned.types.len()],
             value_shapes: Vec::new(),
             value_shape_types: Vec::new(),
         };
         for ty in builder.schemas_preassigned.types.clone() {
             builder.schema_for_type(&ty, Span { start: 0, end: 0 })?;
+        }
+        if builder.schemas_preassigned.publications {
+            let index = builder.schemas_preassigned.types.len();
+            builder.schemas[index] = publication_record_schema();
         }
 
         let mut functions = Vec::with_capacity(program.fns.len());
@@ -3476,6 +3538,9 @@ fn lower_node_sequence(
             )?,
             Op::Compare => lower_compare_node(node, dst, dst_region_id, values, sequence, outputs)?,
             Op::Eq | Op::Ne => lower_equality_node(node, dst, values, sequence, outputs)?,
+            Op::PublishSite(site) => {
+                lower_publish_site_node(node, dst, *site, sequence, outputs)?
+            }
             _ => {
                 let mut lowering = NodeLoweringContext {
                     function: sequence.function,
@@ -3739,6 +3804,34 @@ fn lower_match_node(
     }
     outputs.code.bind(end, node.span)?;
     Ok(result_representation)
+}
+
+/// Lower an [`Op::PublishSite`] to a scalar `Op::Publish`: write the taken site's
+/// stable selector into the node's own scalar region and append it to the task's
+/// append-only codata log under that selector as the opaque provenance key. No
+/// check operand is lowered here — publication is a pure control-flow effect on
+/// the taken path, with no host observer.
+fn lower_publish_site_node(
+    node: &Node,
+    dst: FrameRegion,
+    site: YieldSiteId,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_input_count(node, 0)?;
+    let schema = sequence.lowering.schemas.publication_record(node.span)?;
+    let record = dst.start().byte_offset();
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: record,
+        value: i64::from(site.0),
+    });
+    outputs.code.push(WeavyOp::Publish {
+        site: u64::from(site.0),
+        record,
+        record_width: 8,
+        record_schema_ref: i64::from(schema.0),
+    });
+    Ok(ValueRepresentation::Word)
 }
 
 #[derive(Clone, Copy)]
@@ -4223,6 +4316,12 @@ fn lower_node(
     let dst_slot = dst.start();
     let dst = dst_slot.byte_offset();
     let (ops, representation) = match &node.op {
+        Op::PublishSite(_) => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "PublishSite is lowered by the generator-task control dispatch, not the value path",
+            ));
+        }
         Op::Bool(value) => {
             require_input_count(node, 0)?;
             require_node_type(node, Type::Bool)?;
