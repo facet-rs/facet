@@ -2738,17 +2738,19 @@ fn unused_collection_result_is_a_typed_warning() {
     assert_eq!(compilation.module.functions.len(), 1);
 
     const ALL_MARKERS: &str = r#"
-fn unused_collection_results(
+struct Inputs {
     xs: [Int],
     map: Map<String, Int>,
     set: Set<Int>,
-) -> Int {
-    let array_all = xs ++ xs;
-    let map_one = map + ("x", 1);
-    let map_all = map ++ map;
-    let rebound = map.with ("x", 1);
-    let set_one = set + 1;
-    let set_all = set ++ set;
+}
+
+fn unused_collection_results(inputs: Inputs) -> Int {
+    let array_all = inputs.xs ++ inputs.xs;
+    let map_one = inputs.map + ("x", 1);
+    let map_all = inputs.map ++ inputs.map;
+    let rebound = inputs.map.with ("x", 1);
+    let set_one = inputs.set + 1;
+    let set_all = inputs.set ++ inputs.set;
     0
 }
 "#;
