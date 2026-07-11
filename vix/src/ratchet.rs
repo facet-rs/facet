@@ -38,7 +38,7 @@ pub enum RunError {
     /// source context; it is never reclassified as a machine invariant.
     GeneratorLanguageFailure {
         test: String,
-        failure: FailureValue,
+        failure: Box<FailureValue>,
         context: Option<FailureContext>,
     },
 }
@@ -210,7 +210,7 @@ fn run_lane(
                 GeneratorOutcome::LanguageFailure { failure, context } => {
                     return Err(RunError::GeneratorLanguageFailure {
                         test: test.name.clone(),
-                        failure: *failure,
+                        failure,
                         context,
                     });
                 }

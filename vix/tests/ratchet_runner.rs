@@ -1433,7 +1433,7 @@ fn faulting_scrutinee() -> Stream<Check> {
         }) => {
             assert_eq!(test, "faulting_scrutinee");
             assert!(
-                matches!(failure, FailureValue::IndexOutOfBounds { .. }),
+                matches!(failure.as_ref(), FailureValue::IndexOutOfBounds { .. }),
                 "the scrutinee's out-of-bounds index is preserved as a typed failure: {failure:?}",
             );
             assert!(
