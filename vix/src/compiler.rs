@@ -398,6 +398,7 @@ impl<'a> TypeResolver<'a> {
             }
             ast::Expr::Paren(expression) => self.resolve_expr_types(&expression.inner)?,
             ast::Expr::Identifier(_)
+            | ast::Expr::Path(_)
             | ast::Expr::Str(_)
             | ast::Expr::Number(_)
             | ast::Expr::Bool(_) => {}
@@ -653,6 +654,7 @@ impl<'a> TypeResolver<'a> {
             ast::Type::Path(path) if path_is(path, "Bool") => Ok(Type::Bool),
             ast::Type::Path(path) if path_is(path, "Int") => Ok(Type::Int),
             ast::Type::Path(path) if path_is(path, "String") => Ok(Type::String),
+            ast::Type::Path(path) if path_is(path, "Path") => Ok(Type::Path),
             ast::Type::Path(path) if path_is(path, "Check") => Ok(Type::Check),
             ast::Type::Generic(_) if is_stream_check_type(ty) => Ok(Type::StreamCheck),
             ast::Type::Generic(generic) if path_is(&generic.base, "Option") => {
@@ -1096,6 +1098,7 @@ fn lower_declared_type(
         ast::Type::Path(path) if path_is(path, "Bool") => Ok(Type::Bool),
         ast::Type::Path(path) if path_is(path, "Int") => Ok(Type::Int),
         ast::Type::Path(path) if path_is(path, "String") => Ok(Type::String),
+        ast::Type::Path(path) if path_is(path, "Path") => Ok(Type::Path),
         ast::Type::Path(path) if path_is(path, "Check") => Ok(Type::Check),
         ast::Type::Generic(_) if is_stream_check_type(ty) => Ok(Type::StreamCheck),
         ast::Type::Generic(generic) if path_is(&generic.base, "Option") => {
@@ -1803,6 +1806,7 @@ enum PreludeReceiverType {
     Set,
     Stream,
     Int,
+    Path,
 }
 
 impl PreludeReceiverType {
@@ -1813,6 +1817,7 @@ impl PreludeReceiverType {
             Type::Set(_) => Some(Self::Set),
             Type::Stream { .. } => Some(Self::Stream),
             Type::Int => Some(Self::Int),
+            Type::Path => Some(Self::Path),
             _ => None,
         }
     }
@@ -1843,6 +1848,7 @@ enum PreludeMethod {
     StreamFilterMap,
     StreamFlatMap,
     StreamCollect,
+    PathToString,
 }
 
 #[derive(Clone, Copy)]
@@ -1998,6 +2004,12 @@ impl PreludeMethodRegistry {
                 arity: 0,
                 method: PreludeMethod::StreamCollect,
             },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Path,
+                name: "to_string",
+                arity: 0,
+                method: PreludeMethod::PathToString,
+            },
         ],
     };
 
@@ -2017,6 +2029,34 @@ fn lower_value(
     expression: &ast::Expr,
 ) -> Result<LoweredValue, Diagnostics> {
     lower_value_expected(nodes, bindings, context, expression, None)
+}
+
+fn validate_path_literal(value: &str, span: Span) -> Result<(), Diagnostics> {
+    if value.is_empty() || value.starts_with('/') || value.contains('\\') || value.contains('\0') {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            span,
+            "Path literal must be a nonempty relative path",
+        )));
+    }
+    for segment in value.split('/') {
+        validate_path_segment(segment, span)?;
+    }
+    Ok(())
+}
+
+fn validate_path_segment(value: &str, span: Span) -> Result<(), Diagnostics> {
+    if value.is_empty()
+        || matches!(value, "." | "..")
+        || value.contains('/')
+        || value.contains('\\')
+        || value.contains('\0')
+    {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            span,
+            "Path join requires one nonempty segment without separators, dot segments, or NUL",
+        )));
+    }
+    Ok(())
 }
 
 fn lower_value_expected(
@@ -2042,6 +2082,20 @@ fn lower_value_expected(
             ),
             ty: Type::String,
         }),
+        ast::Expr::Path(value) => {
+            validate_path_literal(value.value.value.as_str(), value.span)?;
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    value.span,
+                    Type::Path,
+                    EffectFacts::PURE,
+                    Vec::new(),
+                    Op::Path(value.value.value.clone()),
+                ),
+                ty: Type::Path,
+            })
+        }
         ast::Expr::Identifier(identifier) if identifier.value == "None" => {
             lower_none(nodes, identifier.span, expected)
         }
@@ -2979,6 +3033,17 @@ fn lower_method_call(
                 ty,
             })
         }
+        PreludeMethod::PathToString => Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                Type::String,
+                EffectFacts::PURE,
+                vec![receiver.node],
+                Op::PathToString,
+            ),
+            ty: Type::String,
+        }),
     }
 }
 
@@ -5220,6 +5285,36 @@ fn lower_binary(
             require_type(&right, &Type::Int, expr_span(&binary.right))?;
             (Type::Int, Op::Mul)
         }
+        "/" if left.ty == Type::Path => {
+            let ast::Expr::Str(segment) = &binary.right else {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    expr_span(&binary.right),
+                    "dynamic Path segments",
+                )));
+            };
+            require_type(&right, &Type::String, segment.span)?;
+            validate_path_segment(segment.value.as_str(), segment.span)?;
+            let suffix = push_node(
+                nodes,
+                segment.span,
+                Type::Path,
+                EffectFacts::PURE,
+                Vec::new(),
+                Op::Path(format!("/{}", segment.value)),
+            );
+            let joined = push_node(
+                nodes,
+                binary.span,
+                Type::Path,
+                EffectFacts::PURE,
+                vec![left.node, suffix],
+                Op::PathJoin,
+            );
+            return Ok(LoweredValue {
+                node: joined,
+                ty: Type::Path,
+            });
+        }
         "/" => {
             require_type(&left, &Type::Int, expr_span(&binary.left))?;
             require_type(&right, &Type::Int, expr_span(&binary.right))?;
@@ -5607,6 +5702,7 @@ fn expr_span(expression: &ast::Expr) -> Span {
         ast::Expr::Tuple(value) => value.span,
         ast::Expr::Paren(value) => value.span,
         ast::Expr::Identifier(value) => value.span,
+        ast::Expr::Path(value) => value.span,
         ast::Expr::Str(value) => value.span,
         ast::Expr::Number(value) => value.span,
         ast::Expr::Bool(value) => value.span,

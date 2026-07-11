@@ -350,6 +350,7 @@ pub enum Type {
     Check,
     StreamCheck,
     String,
+    Path,
     Function {
         parameter: Box<Type>,
         result: Box<Type>,
@@ -480,6 +481,7 @@ impl Type {
             Self::Check => "Check".to_owned(),
             Self::StreamCheck => "Stream<Check>".to_owned(),
             Self::String => "String".to_owned(),
+            Self::Path => "Path".to_owned(),
             Self::Function { parameter, result } => {
                 format!("fn({}) -> {}", parameter.name(), result.name())
             }
@@ -513,6 +515,7 @@ impl Type {
             | Self::Int
             | Self::Check
             | Self::String
+            | Self::Path
             | Self::Array(_)
             | Self::Map { .. }
             | Self::Set(_) => Some(1),
@@ -541,7 +544,7 @@ impl Type {
     #[must_use]
     pub fn equality_is_structural(&self) -> bool {
         match self {
-            Self::Bool | Self::Int | Self::String => true,
+            Self::Bool | Self::Int | Self::String | Self::Path => true,
             Self::Array(element) => element.equality_is_structural(),
             Self::Map { .. } | Self::Set(_) => false,
             Self::Function { .. } => false,
@@ -562,7 +565,7 @@ impl Type {
     #[must_use]
     pub fn structural_order_is_defined(&self) -> bool {
         match self {
-            Self::Bool | Self::Int | Self::String => true,
+            Self::Bool | Self::Int | Self::String | Self::Path => true,
             Self::Array(_) | Self::Map { .. } | Self::Set(_) => false,
             Self::Function { .. } => false,
             Self::Tuple(elements) => elements.iter().all(Self::structural_order_is_defined),
@@ -630,6 +633,7 @@ pub enum Op {
     Expect,
     Yield,
     String(String),
+    Path(String),
     Parameter(ParameterId),
     Call(FunctionId),
     Closure(FunctionId),
@@ -731,6 +735,10 @@ pub enum Op {
     StreamCollect,
     /// Concatenate two immutable strings.
     StringConcat,
+    /// Join a compiler-validated segment suffix onto a relative Path.
+    PathJoin,
+    /// Render a relative Path as its String spelling.
+    PathToString,
 }
 
 /// One SSA-like operation. Dependencies are explicit node ids; no Rust
@@ -1223,6 +1231,10 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             op.push(9);
             op.extend_from_slice(value.as_bytes());
         }
+        Op::Path(value) => {
+            op.push(80);
+            op.extend_from_slice(value.as_bytes());
+        }
         Op::Parameter(parameter) => {
             op.push(10);
             op.extend_from_slice(&parameter.0.to_le_bytes());
@@ -1342,6 +1354,8 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::ArraySorted => op.push(55),
         Op::StreamFilterMap => op.push(56),
         Op::StreamFlatMap => op.push(57),
+        Op::PathJoin => op.push(81),
+        Op::PathToString => op.push(82),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());
@@ -1444,6 +1458,7 @@ pub(crate) fn canonical_type(ty: &Type) -> Vec<u8> {
         Type::Check => b"check".to_vec(),
         Type::StreamCheck => b"stream-check".to_vec(),
         Type::String => b"string".to_vec(),
+        Type::Path => b"path".to_vec(),
         Type::Function { parameter, result } => {
             let mut bytes = b"function".to_vec();
             frame(&mut bytes, &canonical_type(parameter));

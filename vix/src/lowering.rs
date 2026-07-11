@@ -551,7 +551,12 @@ fn type_contains_array(ty: &Type) -> bool {
         Type::Stream { key, value } => type_contains_array(key) || type_contains_array(value),
         // An `Order<T>` is never a realized frame value.
         Type::Order(_) => false,
-        Type::Bool | Type::Int | Type::Check | Type::StreamCheck | Type::String => false,
+        Type::Bool
+        | Type::Int
+        | Type::Check
+        | Type::StreamCheck
+        | Type::String
+        | Type::Path => false,
     }
 }
 
@@ -855,7 +860,12 @@ fn collect_schema_types(ty: &Type, out: &mut Vec<Type>) {
         Type::Set(element) => collect_schema_types(element, out),
         Type::Stream { .. } => unreachable!("stream schemas return before insertion"),
         Type::Order(_) => unreachable!("order recipes return before insertion"),
-        Type::Bool | Type::Int | Type::Check | Type::StreamCheck | Type::String => {}
+        Type::Bool
+        | Type::Int
+        | Type::Check
+        | Type::StreamCheck
+        | Type::String
+        | Type::Path => {}
     }
 }
 
@@ -998,7 +1008,7 @@ impl SemanticEqualityEmitter<'_, '_, '_> {
                     b: work.byte_offset(),
                 });
             }
-            Type::String => {
+            Type::String | Type::Path => {
                 self.code.push(WeavyOp::CompareValueBytes {
                     dst: work.byte_offset(),
                     a: a.region.start().byte_offset(),
@@ -1694,7 +1704,7 @@ impl<'a> ProgramContractBuilder<'a> {
             Type::Bool | Type::Int | Type::Check => {
                 Ok(WeavyRegionShape::word(WeavyWordKind::Scalar))
             }
-            Type::String => Ok(WeavyRegionShape::word(WeavyWordKind::Handle(
+            Type::String | Type::Path => Ok(WeavyRegionShape::word(WeavyWordKind::Handle(
                 self.schema_for_type(ty, span)?,
             ))),
             Type::StreamCheck => Err(lowering_diagnostic(
@@ -1771,14 +1781,14 @@ impl<'a> ProgramContractBuilder<'a> {
         }
         self.schema_ready[index] = true;
         let inline = match ty {
-            Type::String | Type::Array(_) | Type::Map { .. } | Type::Set(_) => {
+            Type::String | Type::Path | Type::Array(_) | Type::Map { .. } | Type::Set(_) => {
                 WeavyRegionShape::word(WeavyWordKind::Handle(schema))
             }
             _ => self.shape_for_type(ty, span)?,
         };
         let value_shape = self.value_shape_for_type(ty, span)?;
         let payload = match ty {
-            Type::String => WeavyPayloadKind::OpaqueBytes {
+            Type::String | Type::Path => WeavyPayloadKind::OpaqueBytes {
                 byte_comparable: true,
             },
             Type::Array(element) => WeavyPayloadKind::DenseArray {
@@ -1828,6 +1838,7 @@ impl<'a> ProgramContractBuilder<'a> {
             | Type::Int
             | Type::Check
             | Type::String
+            | Type::Path
             | Type::Array(_)
             | Type::Map { .. }
             | Type::Set(_) => Ok(None),
@@ -2055,7 +2066,7 @@ fn constant_closures(island: &Island) -> BTreeMap<FunctionId, BTreeSet<NodeRef>>
             function,
             nodes
                 .iter()
-                .filter(|node| matches!(node.op, Op::String(_)))
+                .filter(|node| matches!(node.op, Op::String(_) | Op::Path(_)))
                 .map(|node| NodeRef {
                     function,
                     node: node.id,
@@ -2751,17 +2762,17 @@ impl FunctionLayout {
                     .ok_or_else(|| {
                         lowering_diagnostic(span, "closure names a missing local constant")
                     })?;
-                if !matches!(node.op, Op::String(_)) {
+                if !matches!(node.op, Op::String(_) | Op::Path(_)) {
                     return Err(lowering_diagnostic(
                         node.span,
-                        "closure constant is not a String node",
+                        "closure constant is not a realized byte-value node",
                     ));
                 }
                 regions
                     .get(&constant.node)
                     .copied()
                     .ok_or_else(|| {
-                        lowering_diagnostic(node.span, "String constant has no frame region")
+                        lowering_diagnostic(node.span, "byte-value constant has no frame region")
                     })?
                     .start()
             } else {
@@ -3202,6 +3213,7 @@ fn comparison_temporary_types(ty: &Type, out: &mut Vec<Type>) {
         | Type::Int
         | Type::Check
         | Type::String
+        | Type::Path
         | Type::Map { .. }
         | Type::Set(_)
         | Type::Function { .. }
@@ -4035,7 +4047,7 @@ fn collect_typed_compare_leaves(
             a: a.region.start(),
             b: b.region.start(),
         }),
-        Type::String => leaves.push(CompareLeaf {
+        Type::String | Type::Path => leaves.push(CompareLeaf {
             kind: CompareLeafKind::ValueBytes,
             a: a.region.start(),
             b: b.region.start(),
@@ -4383,6 +4395,52 @@ fn lower_node(
                 && (previous.root_slot != root_slot
                     || previous.owner_slot != dst_slot
                     || previous.store_schema != SchemaId::named("vix.String.v1")
+                    || previous.bytes != value.as_bytes())
+            {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "constant NodeRef was lowered with conflicting metadata",
+                ));
+            }
+            (Vec::new(), ValueRepresentation::RealizedHandle)
+        }
+        Op::Path(value) => {
+            require_input_count(node, 0)?;
+            require_node_type(node, Type::Path)?;
+            let constant = NodeRef {
+                function: lowering.function.id,
+                node: node.id,
+            };
+            if lowering
+                .function
+                .layout
+                .constant_slot(constant, node.span)?
+                != dst_slot
+            {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "Path node does not occupy its local closure slot",
+                ));
+            }
+            let root_layout = lowering
+                .context
+                .layouts
+                .get(&lowering.context.root_function)
+                .ok_or_else(|| lowering_diagnostic(node.span, "missing island root layout"))?;
+            let root_slot = root_layout.constant_slot(constant, node.span)?;
+            let store_schema = SchemaId::named("vix.Path.v1");
+            let pending = PendingValueConstant {
+                node: constant,
+                root_slot,
+                owner_slot: dst_slot,
+                store_schema,
+                bytes: value.as_bytes().to_vec(),
+                span: node.span,
+            };
+            if let Some(previous) = lowering.constants.insert(constant, pending)
+                && (previous.root_slot != root_slot
+                    || previous.owner_slot != dst_slot
+                    || previous.store_schema != store_schema
                     || previous.bytes != value.as_bytes())
             {
                 return Err(lowering_diagnostic(
@@ -4768,6 +4826,31 @@ fn lower_node(
                 }],
                 ValueRepresentation::RealizedHandle,
             )
+        }
+        Op::PathJoin => {
+            require_node_type(node, Type::Path)?;
+            let (base, suffix) = binary_values(node, values)?;
+            require_value(node, &base, &Type::Path, ValueRepresentation::RealizedHandle)?;
+            require_value(
+                node,
+                &suffix,
+                &Type::Path,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            (
+                vec![WeavyOp::StringConcat {
+                    dst,
+                    a: base.region.start().byte_offset(),
+                    b: suffix.region.start().byte_offset(),
+                }],
+                ValueRepresentation::RealizedHandle,
+            )
+        }
+        Op::PathToString => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "Path to String rendering lowering is not implemented",
+            ));
         }
         Op::Variant { variant } => {
             lower_variant_node(node, dst_region, dst_region_id, values, *variant)?
@@ -9524,7 +9607,7 @@ fn type_words(ty: &Type, span: Span) -> Result<FrameWords, Diagnostics> {
 fn representation_for_type(ty: &Type, span: Span) -> Result<ValueRepresentation, Diagnostics> {
     match ty {
         Type::Bool | Type::Int | Type::Check => Ok(ValueRepresentation::Word),
-        Type::String => Ok(ValueRepresentation::RealizedHandle),
+        Type::String | Type::Path => Ok(ValueRepresentation::RealizedHandle),
         Type::Function { .. } | Type::Tuple(_) | Type::Record(_) | Type::Enum(_) => {
             Ok(ValueRepresentation::InlineComposite)
         }
