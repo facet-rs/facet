@@ -44,6 +44,7 @@ const RUNG_030: &str = include_str!("ratchet/030-array-predicates.vix");
 const RUNG_032: &str = include_str!("ratchet/032-pop.reject.vix");
 const RUNG_033: &str = include_str!("ratchet/033-multiset-conversion.vix");
 const RUNG_034: &str = include_str!("ratchet/034-multiset-filter.vix");
+const RUNG_035: &str = include_str!("ratchet/035-canonical-order.vix");
 const RUNG_041: &str = include_str!("ratchet/041-maps.vix");
 const RUNG_042: &str = include_str!("ratchet/042-map-overwrite.vix");
 const RUNG_043: &str = include_str!("ratchet/043-map-keys-canonical.vix");
@@ -892,6 +893,67 @@ fn split_last_values() -> Stream<Check> {
     assert!(report.agrees());
     assert_eq!(report.plain.checks.len(), 2);
     assert_eq!(report.plain.checks, report.chaos.checks);
+}
+
+#[test]
+fn rung_035_sorted_observes_values_in_canonical_order() {
+    let compilation = Compiler::new()
+        .compile(RUNG_035)
+        .expect("rung 035 compiles to a typed sorting recipe");
+    let function = compilation
+        .functions
+        .iter()
+        .find(|function| function.name == "canonical_order")
+        .expect("rung 035 test function exists");
+    let sorted = function
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.op, VirOp::ArraySorted))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        sorted.len(),
+        2,
+        "each canonical-order check sorts one projected array"
+    );
+    assert!(
+        sorted
+            .iter()
+            .any(|node| node.ty == VirType::array(VirType::Int)),
+        "integers sort in structural order"
+    );
+    assert!(
+        sorted
+            .iter()
+            .any(|node| node.ty == VirType::array(VirType::String)),
+        "strings sort in structural order"
+    );
+
+    let partitioned = compilation.partition_test(&compilation.tests[0]);
+    let mut cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = cache
+            .get_or_lower(island)
+            .expect("rung 035 verifies before production execution");
+        assert!(
+            lowered
+                .program()
+                .fns
+                .iter()
+                .flat_map(|function| &function.code)
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. })),
+            "sorting never leaves the verified machine"
+        );
+    }
+    let report = run_source(RUNG_035).expect("rung 035 executes through verified production path");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
 }
 
 #[test]
