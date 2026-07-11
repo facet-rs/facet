@@ -139,6 +139,36 @@ struct Ctx {
         i64,
         *mut i64,
     ) -> i64,
+    string_contains: unsafe extern "C" fn(
+        *const crate::task::RawValueMemory,
+        usize,
+        *const crate::task::RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        *mut i64,
+    ) -> i64,
+    string_split_once: unsafe extern "C" fn(
+        *const crate::task::RawValueMemory,
+        usize,
+        *const crate::task::RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        *mut i64,
+        *mut i64,
+    ) -> i64,
+    string_parse_int: unsafe extern "C" fn(
+        *const crate::task::RawValueMemory,
+        usize,
+        *const crate::task::RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        *mut i64,
+    ) -> i64,
     publications: *mut core::ffi::c_void,
     publish: unsafe extern "C" fn(*mut core::ffi::c_void, u64, i64, *const u8, usize) -> i64,
 }
@@ -495,6 +525,22 @@ fn compile_fn(
                 task_stencils::STRING_CONCAT,
                 Continuations::Fallthrough(task_stencils::STRING_CONCAT_CONT),
             ),
+            Op::StringContains { .. } => (
+                task_stencils::STRING_CONTAINS,
+                Continuations::Fallthrough(task_stencils::STRING_CONTAINS_CONT),
+            ),
+            Op::StringSplitOnce { .. } => (
+                task_stencils::STRING_SPLIT_ONCE,
+                Continuations::Fallthrough(task_stencils::STRING_SPLIT_ONCE_CONT),
+            ),
+            Op::StringParseInt { .. } => (
+                task_stencils::STRING_PARSE_INT,
+                Continuations::Fallthrough(task_stencils::STRING_PARSE_INT_CONT),
+            ),
+            Op::StringStatusIs { .. } => (
+                task_stencils::STRING_STATUS_IS,
+                Continuations::Fallthrough(task_stencils::STRING_STATUS_IS_CONT),
+            ),
             Op::Publish { .. } => (
                 task_stencils::PUBLISH,
                 Continuations::Fallthrough(task_stencils::PUBLISH_CONT),
@@ -631,6 +677,8 @@ fn compile_fn(
             Op::ArrayStatusIs { .. } => 4,
             Op::CompareValueBytes { .. } => 4,
             Op::StringConcat { .. } => 4,
+            Op::StringContains { .. } | Op::StringParseInt { .. } | Op::StringStatusIs { .. } => 3,
+            Op::StringSplitOnce { .. } => 5,
             Op::Publish { .. } => 5,
             Op::Await { .. } => 3,
             Op::Call { .. } | Op::CallIndirect { .. } => 1,
@@ -1174,6 +1222,36 @@ fn compile_fn(
                 }
                 layout.push_prog_word(root.prog_index, i as u64);
             }
+            Op::StringContains { dst, text, needle } => {
+                for value in [dst, text, needle] {
+                    layout.push_prog_word(root.prog_index, u64::from(*value));
+                }
+            }
+            Op::StringSplitOnce {
+                left,
+                right,
+                status,
+                text,
+                delimiter,
+            } => {
+                for value in [left, right, status, text, delimiter] {
+                    layout.push_prog_word(root.prog_index, u64::from(*value));
+                }
+            }
+            Op::StringParseInt { dst, status, text } => {
+                for value in [dst, status, text] {
+                    layout.push_prog_word(root.prog_index, u64::from(*value));
+                }
+            }
+            Op::StringStatusIs {
+                dst,
+                status,
+                expected,
+            } => {
+                for value in [u64::from(*dst), u64::from(*status), *expected as i64 as u64] {
+                    layout.push_prog_word(root.prog_index, value);
+                }
+            }
             Op::Publish {
                 site,
                 record,
@@ -1484,6 +1562,9 @@ impl JitTask {
                 ordered_iterate_row: crate::task::ordered_iterate_row_abi,
                 ordered_len: crate::task::ordered_len_abi,
                 string_concat: crate::task::string_concat_abi,
+                string_contains: crate::task::string_contains_abi,
+                string_split_once: crate::task::string_split_once_abi,
+                string_parse_int: crate::task::string_parse_int_abi,
                 publications: (&raw mut self.publications).cast::<core::ffi::c_void>(),
                 publish: crate::task::publish_abi,
             };

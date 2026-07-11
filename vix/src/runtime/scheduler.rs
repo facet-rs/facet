@@ -391,6 +391,42 @@ impl<S: EventSink> Runtime<S> {
                         failure,
                     );
                 }
+                Ok(DecodedResult::MissingDelimiter { site }) => {
+                    return self.complete_language_failure(
+                        task_id,
+                        location,
+                        lowered,
+                        attribution,
+                        FailureValue::MissingDelimiter {
+                            recipe: lowered.recipe,
+                            site,
+                        },
+                    );
+                }
+                Ok(DecodedResult::InvalidInteger { site }) => {
+                    return self.complete_language_failure(
+                        task_id,
+                        location,
+                        lowered,
+                        attribution,
+                        FailureValue::InvalidInteger {
+                            recipe: lowered.recipe,
+                            site,
+                        },
+                    );
+                }
+                Ok(DecodedResult::IntegerOverflow { site }) => {
+                    return self.complete_language_failure(
+                        task_id,
+                        location,
+                        lowered,
+                        attribution,
+                        FailureValue::IntegerOverflow {
+                            recipe: lowered.recipe,
+                            site,
+                        },
+                    );
+                }
                 Err(fault) => {
                     let fallback = result_shape_attribution(
                         &fault,
@@ -746,6 +782,9 @@ fn failure_context(
         FailureValue::IndexOutOfBounds { recipe, site, .. }
         | FailureValue::MissingKey { recipe, site }
         | FailureValue::DuplicateKey { recipe, site }
+        | FailureValue::MissingDelimiter { recipe, site }
+        | FailureValue::InvalidInteger { recipe, site }
+        | FailureValue::IntegerOverflow { recipe, site }
             if *recipe == lowered.recipe =>
         {
             let source = attribution.source_for_trace(*site)?;
@@ -758,7 +797,10 @@ fn failure_context(
         }
         FailureValue::IndexOutOfBounds { .. }
         | FailureValue::MissingKey { .. }
-        | FailureValue::DuplicateKey { .. } => None,
+        | FailureValue::DuplicateKey { .. }
+        | FailureValue::MissingDelimiter { .. }
+        | FailureValue::InvalidInteger { .. }
+        | FailureValue::IntegerOverflow { .. } => None,
     }
 }
 
@@ -773,6 +815,15 @@ enum DecodedResult {
         site: u32,
     },
     DuplicateKey {
+        site: u32,
+    },
+    MissingDelimiter {
+        site: u32,
+    },
+    InvalidInteger {
+        site: u32,
+    },
+    IntegerOverflow {
         site: u32,
     },
     ArrayMachine {
@@ -870,6 +921,25 @@ fn decode_result(
             DecodedResult::MissingKey { site }
         } else {
             DecodedResult::DuplicateKey { site }
+        });
+    }
+    if selector == abi.string_missing_delimiter_variant
+        || selector == abi.string_invalid_integer_variant
+        || selector == abi.string_integer_overflow_variant
+    {
+        let site = u32::try_from(result.enum_scalar_field(selector, 0)?).map_err(|_| {
+            Box::new(TaskFault::InvalidResultShape {
+                entry: FnId(0),
+                region: lowered.executable().program().contract().functions[0].result,
+                size: 0,
+            })
+        })?;
+        return Ok(if selector == abi.string_missing_delimiter_variant {
+            DecodedResult::MissingDelimiter { site }
+        } else if selector == abi.string_invalid_integer_variant {
+            DecodedResult::InvalidInteger { site }
+        } else {
+            DecodedResult::IntegerOverflow { site }
         });
     }
     Err(Box::new(TaskFault::InvalidResultShape {

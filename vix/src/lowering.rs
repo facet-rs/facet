@@ -98,6 +98,9 @@ pub struct ArrayOutcomeAbi {
     pub missing_key_variant: u32,
     pub duplicate_key_variant: u32,
     pub ordered_machine_variant: u32,
+    pub string_missing_delimiter_variant: u32,
+    pub string_invalid_integer_variant: u32,
+    pub string_integer_overflow_variant: u32,
 }
 
 impl ArrayOutcomeAbi {
@@ -131,6 +134,18 @@ impl ArrayOutcomeAbi {
                         name: "OrderedMachine".to_owned(),
                         payload: VariantPayload::Tuple(vec![Type::Int, Type::Int]),
                     },
+                    EnumVariant {
+                        name: "StringMissingDelimiter".to_owned(),
+                        payload: VariantPayload::Tuple(vec![Type::Int]),
+                    },
+                    EnumVariant {
+                        name: "StringInvalidInteger".to_owned(),
+                        payload: VariantPayload::Tuple(vec![Type::Int]),
+                    },
+                    EnumVariant {
+                        name: "StringIntegerOverflow".to_owned(),
+                        payload: VariantPayload::Tuple(vec![Type::Int]),
+                    },
                 ],
             }),
             ok_variant: 0,
@@ -139,6 +154,9 @@ impl ArrayOutcomeAbi {
             missing_key_variant: 3,
             duplicate_key_variant: 4,
             ordered_machine_variant: 5,
+            string_missing_delimiter_variant: 6,
+            string_invalid_integer_variant: 7,
+            string_integer_overflow_variant: 8,
         }
     }
 }
@@ -512,6 +530,8 @@ fn nodes_contain_checked_collection_ops(nodes: &[Node]) -> bool {
                 | Op::SetHas
                 | Op::SetLen
                 | Op::SetValues
+                | Op::StringSplitOnce
+                | Op::StringParseInt
                 | Op::StreamCollect
         ) || matches!(node.op, Op::Eq | Op::Ne)
             && node.inputs.iter().any(|input| {
@@ -3540,6 +3560,10 @@ fn lower_node_sequence(
                 sequence,
                 outputs,
             )?,
+            Op::StringContains => lower_string_contains_node(node, dst, values, outputs)?,
+            Op::StringSplitOnce | Op::StringParseInt => {
+                lower_checked_string_node(node, dst, values, sequence, outputs)?
+            }
             Op::Map
             | Op::MapAdd
             | Op::MapConcat
@@ -3604,6 +3628,204 @@ fn lower_node_sequence(
         );
     }
     Ok(())
+}
+
+fn lower_string_contains_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_node_type(node, Type::Bool)?;
+    let (text, needle) = binary_values(node, values)?;
+    require_value(
+        node,
+        &text,
+        &Type::String,
+        ValueRepresentation::RealizedHandle,
+    )?;
+    require_value(
+        node,
+        &needle,
+        &Type::String,
+        ValueRepresentation::RealizedHandle,
+    )?;
+    outputs.code.push(WeavyOp::StringContains {
+        dst: dst.start().byte_offset(),
+        text: text.region.start().byte_offset(),
+        needle: needle.region.start().byte_offset(),
+    });
+    Ok(ValueRepresentation::Word)
+}
+
+fn lower_checked_string_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(
+            node.span,
+            "fallible string operation has no outcome scratch",
+        )
+    })?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(node.span, "fallible string operation has no outcome return")
+    })?;
+    let site = *sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .ok_or_else(|| {
+            lowering_diagnostic(node.span, "string operation has no trace attribution")
+        })?;
+    match node.op {
+        Op::StringSplitOnce => {
+            let (text, delimiter) = binary_values(node, values)?;
+            require_node_type(node, Type::Tuple(vec![Type::String, Type::String]))?;
+            require_value(
+                node,
+                &text,
+                &Type::String,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            require_value(
+                node,
+                &delimiter,
+                &Type::String,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            outputs.code.push(WeavyOp::StringSplitOnce {
+                left: dst.start().byte_offset(),
+                right: dst.start().byte_offset() + FrameSlot::word_size(),
+                status: scratch.status.byte_offset(),
+                text: text.region.start().byte_offset(),
+                delimiter: delimiter.region.start().byte_offset(),
+            });
+            emit_string_status_checks(
+                node,
+                StringFailureKind::MissingDelimiter,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            Ok(ValueRepresentation::InlineComposite)
+        }
+        Op::StringParseInt => {
+            require_node_type(node, Type::Int)?;
+            require_input_count(node, 1)?;
+            let text = input_value(node, values, 0)?;
+            require_value(
+                node,
+                &text,
+                &Type::String,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            outputs.code.push(WeavyOp::StringParseInt {
+                dst: dst.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                text: text.region.start().byte_offset(),
+            });
+            emit_string_status_checks(
+                node,
+                StringFailureKind::Integer,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            Ok(ValueRepresentation::Word)
+        }
+        _ => unreachable!("only checked string nodes reach this lowering"),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum StringFailureKind {
+    MissingDelimiter,
+    Integer,
+}
+
+fn emit_string_status_checks(
+    node: &Node,
+    kind: StringFailureKind,
+    site: u32,
+    scratch: OutcomeScratch,
+    assigned: AssignedOutcomeScratch,
+    outcome: WeavyRegionId,
+    return_label: CodeLabel,
+    code: &mut CodeBuilder,
+) -> Result<(), Diagnostics> {
+    let success = code.label();
+    for status in [
+        weavy::task::StringOpStatus::Ok,
+        weavy::task::StringOpStatus::MissingDelimiter,
+        weavy::task::StringOpStatus::InvalidInteger,
+        weavy::task::StringOpStatus::IntegerOverflow,
+    ] {
+        let next = code.label();
+        code.push(WeavyOp::StringStatusIs {
+            dst: scratch.condition.byte_offset(),
+            status: scratch.status.byte_offset(),
+            expected: status,
+        });
+        code.jump_if_zero(scratch.condition, next);
+        if status == weavy::task::StringOpStatus::Ok {
+            code.jump(success);
+        } else {
+            let variant = match (kind, status) {
+                (
+                    StringFailureKind::MissingDelimiter,
+                    weavy::task::StringOpStatus::MissingDelimiter,
+                ) => ArrayOutcomeAbi::for_value(node.ty.clone()).string_missing_delimiter_variant,
+                (StringFailureKind::Integer, weavy::task::StringOpStatus::InvalidInteger) => {
+                    ArrayOutcomeAbi::for_value(node.ty.clone()).string_invalid_integer_variant
+                }
+                (StringFailureKind::Integer, weavy::task::StringOpStatus::IntegerOverflow) => {
+                    ArrayOutcomeAbi::for_value(node.ty.clone()).string_integer_overflow_variant
+                }
+                _ => {
+                    return Err(lowering_diagnostic(
+                        node.span,
+                        "invalid string operation status",
+                    ));
+                }
+            };
+            code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[0].byte_offset(),
+                value: i64::from(site),
+            });
+            code.push(WeavyOp::EnumConstruct {
+                dst: outcome,
+                variant,
+                fields: vec![StructuralFieldSource {
+                    field: 0,
+                    source: assigned.fields[0],
+                }],
+            });
+            code.jump(return_label);
+        }
+        code.bind(next, node.span)?;
+    }
+    code.bind(success, node.span)
 }
 
 fn lower_ordered_match_node(
@@ -4768,6 +4990,12 @@ fn lower_node(
                 }],
                 ValueRepresentation::RealizedHandle,
             )
+        }
+        Op::StringContains | Op::StringSplitOnce | Op::StringParseInt => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "string operation did not reach checked lowering",
+            ));
         }
         Op::Variant { variant } => {
             lower_variant_node(node, dst_region, dst_region_id, values, *variant)?

@@ -2616,6 +2616,84 @@ impl Verifier<'_> {
                     ));
                 }
             }
+            Op::StringContains { dst, text, needle } => {
+                self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                let text_schema =
+                    self.read_handle(function_id, pc, frame, *text, AccessRole::CompareLeft)?;
+                let needle_schema =
+                    self.read_handle(function_id, pc, frame, *needle, AccessRole::CompareRight)?;
+                if text_schema != needle_schema {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::CompareSchemaMismatch {
+                            left: text_schema,
+                            right: needle_schema,
+                        },
+                    ));
+                }
+            }
+            Op::StringSplitOnce {
+                left,
+                right,
+                status,
+                text,
+                delimiter,
+            } => {
+                let left_schema =
+                    self.read_handle(function_id, pc, frame, *left, AccessRole::Destination)?;
+                let right_schema =
+                    self.read_handle(function_id, pc, frame, *right, AccessRole::Destination)?;
+                let text_schema =
+                    self.read_handle(function_id, pc, frame, *text, AccessRole::CompareLeft)?;
+                let delimiter_schema =
+                    self.read_handle(function_id, pc, frame, *delimiter, AccessRole::CompareRight)?;
+                if left_schema != text_schema
+                    || right_schema != text_schema
+                    || delimiter_schema != text_schema
+                {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::CompareSchemaMismatch {
+                            left: text_schema,
+                            right: delimiter_schema,
+                        },
+                    ));
+                }
+                self.require_scalar_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::ArrayStatus,
+                )?;
+            }
+            Op::StringParseInt { dst, status, text } => {
+                self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                self.read_handle(function_id, pc, frame, *text, AccessRole::CompareLeft)?;
+                self.require_scalar_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::ArrayStatus,
+                )?;
+            }
+            Op::StringStatusIs {
+                dst,
+                status,
+                expected: _,
+            } => {
+                self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                self.require_scalar_read(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::ArrayStatusSource,
+                )?;
+            }
             Op::Publish {
                 site: _,
                 record,
@@ -4437,6 +4515,10 @@ impl Verifier<'_> {
                     | Op::Await { .. }
                     | Op::CompareValueBytes { .. }
                     | Op::StringConcat { .. }
+                    | Op::StringContains { .. }
+                    | Op::StringSplitOnce { .. }
+                    | Op::StringParseInt { .. }
+                    | Op::StringStatusIs { .. }
                     | Op::Publish { .. }
                     | Op::ConstF64 { .. }
                     | Op::AddF64 { .. }
