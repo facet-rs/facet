@@ -191,15 +191,15 @@ pub fn run_under_budget(child_exe: &Path, budget: &Budget, workload: &Workload) 
             }
         }
 
-        if let Some(wall) = budget.wall() {
-            if elapsed > wall {
-                let _ = child.kill();
-                let _ = child.wait();
-                return BudgetOutcome::OverWall {
-                    budget_ns: saturating_nanos(wall),
-                    elapsed_ns: saturating_nanos(elapsed),
-                };
-            }
+        if let Some(wall) = budget.wall()
+            && elapsed > wall
+        {
+            let _ = child.kill();
+            let _ = child.wait();
+            return BudgetOutcome::OverWall {
+                budget_ns: saturating_nanos(wall),
+                elapsed_ns: saturating_nanos(elapsed),
+            };
         }
 
         if let Some(limit) = budget.rss_bytes {
