@@ -272,6 +272,14 @@ pub enum TaskFault {
         side: CompareSide,
         handle: i64,
     },
+    UnresidentStringConcatOperand {
+        site: FaultSite,
+        side: CompareSide,
+        handle: i64,
+    },
+    StringConcatAllocationFailed {
+        site: FaultSite,
+    },
     InvalidEnumSelector {
         site: FaultSite,
         value_shape: ValueShapeRef,
@@ -1104,6 +1112,64 @@ mod tests {
                     ],
                     &[0, 1],
                     2,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![SchemaContract {
+                    inline: RegionShape::word(WordKind::Handle(schema)),
+                    value_shape: None,
+                    payload: PayloadKind::OpaqueBytes {
+                        byte_comparable: true,
+                    },
+                }],
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    /// `compare((a ++ b) ++ c, expected)` — a StringConcat result feeds a second
+    /// StringConcat, whose result feeds a CompareValueBytes. Entries `0..=3` are
+    /// the four operand handles; the returned scalar is the three-way ordinal.
+    fn string_concat_program() -> (Program, ProgramContract) {
+        let schema = SchemaRef(0);
+        (
+            Program {
+                fns: vec![function(
+                    7,
+                    vec![
+                        Op::StringConcat {
+                            dst: 32,
+                            a: 0,
+                            b: 8,
+                        },
+                        Op::StringConcat {
+                            dst: 40,
+                            a: 32,
+                            b: 16,
+                        },
+                        Op::CompareValueBytes {
+                            dst: 48,
+                            a: 40,
+                            b: 24,
+                        },
+                        Op::Ret { src: 48, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    7,
+                    vec![
+                        word_region(0, WordKind::Handle(schema)),
+                        word_region(8, WordKind::Handle(schema)),
+                        word_region(16, WordKind::Handle(schema)),
+                        word_region(24, WordKind::Handle(schema)),
+                        word_region(32, WordKind::Handle(schema)),
+                        word_region(40, WordKind::Handle(schema)),
+                        word_region(48, WordKind::Scalar),
+                    ],
+                    &[0, 1, 2, 3],
+                    6,
                     None,
                 )],
                 calls: vec![],
@@ -3006,6 +3072,88 @@ mod tests {
             memories,
         ) {
             assert_eq!(native.expect_err("equal unresident compare"), interp);
+        }
+    }
+
+    #[test]
+    fn string_concat_result_feeds_concat_and_compare_across_lanes() {
+        let verified = Arc::new(verify(string_concat_program()));
+        let store = [
+            ValueMemory::from_slice(b"a"),
+            ValueMemory::from_slice(b"b"),
+            ValueMemory::from_slice(b"c"),
+            ValueMemory::from_slice(b"abc"),
+        ];
+        let memories = ValueMemories {
+            store: &store,
+            molten: &[],
+        };
+        let seed = |task: &mut Task| {
+            task.write_i64(0, 0);
+            task.write_i64(8, 1);
+            task.write_i64(16, 2);
+            task.write_i64(24, 3);
+        };
+        let interp = run_interpreter(&verified, seed, memories).expect("string concat runs");
+        // The nested concatenation equals the interned "abc": ordinal 1 = equal.
+        assert_eq!(interp.1, 1i64.to_le_bytes().to_vec());
+        if let Some(native) = run_native(
+            Arc::clone(&verified),
+            |task: &mut JitTask| {
+                task.write_i64(0, 0);
+                task.write_i64(8, 1);
+                task.write_i64(16, 2);
+                task.write_i64(24, 3);
+            },
+            memories,
+        ) {
+            assert_eq!(native.expect("string concat runs on native"), interp);
+        }
+
+        // A non-resident operand faults with the precise side on both lanes.
+        let store = [
+            ValueMemory::from_slice(b"a"),
+            ValueMemory::empty(),
+            ValueMemory::from_slice(b"c"),
+            ValueMemory::from_slice(b"abc"),
+        ];
+        let memories = ValueMemories {
+            store: &store,
+            molten: &[],
+        };
+        let interp = run_interpreter(
+            &verified,
+            |task: &mut Task| {
+                task.write_i64(0, 0);
+                task.write_i64(8, 1);
+                task.write_i64(16, 2);
+                task.write_i64(24, 3);
+            },
+            memories,
+        )
+        .expect_err("unresident string concat operand");
+        assert!(matches!(
+            interp,
+            TaskFault::UnresidentStringConcatOperand {
+                side: CompareSide::Right,
+                handle: 1,
+                ..
+            }
+        ));
+        if let Some(native) = run_native(
+            Arc::clone(&verified),
+            |task: &mut JitTask| {
+                task.write_i64(0, 0);
+                task.write_i64(8, 1);
+                task.write_i64(16, 2);
+                task.write_i64(24, 3);
+            },
+            memories,
+        ) {
+            assert_eq!(
+                native.expect_err("unresident string concat operand"),
+                interp
+            );
         }
     }
 

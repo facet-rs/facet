@@ -903,6 +903,8 @@ fn task_fault_site(fault: &TaskFault) -> Option<&FaultSite> {
         | TaskFault::IndirectCalleeContractMismatch { site, .. }
         | TaskFault::MissingIndirectCallFacts { site }
         | TaskFault::UnresidentCompareValueBytes { site, .. }
+        | TaskFault::UnresidentStringConcatOperand { site, .. }
+        | TaskFault::StringConcatAllocationFailed { site }
         | TaskFault::InvalidEnumSelector { site, .. }
         | TaskFault::EnumProjectionMismatch { site, .. }
         | TaskFault::InvalidArrayStatus { site, .. }
@@ -949,6 +951,8 @@ fn result_shape_attribution(
         | TaskFault::IndirectCalleeContractMismatch { .. }
         | TaskFault::MissingIndirectCallFacts { .. }
         | TaskFault::UnresidentCompareValueBytes { .. }
+        | TaskFault::UnresidentStringConcatOperand { .. }
+        | TaskFault::StringConcatAllocationFailed { .. }
         | TaskFault::InvalidEnumSelector { .. }
         | TaskFault::EnumProjectionMismatch { .. }
         | TaskFault::InvalidArrayStatus { .. }

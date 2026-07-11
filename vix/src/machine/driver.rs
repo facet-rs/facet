@@ -10425,6 +10425,7 @@ fn op_name(op: &Op) -> &'static str {
         Op::OrderedLen { .. } => "OrderedLen",
         Op::OrderedStatusIs { .. } => "OrderedStatusIs",
         Op::CompareValueBytes { .. } => "CompareValueBytes",
+        Op::StringConcat { .. } => "StringConcat",
         Op::ConstF64 { .. } => "ConstF64",
         Op::AddF64 { .. } => "AddF64",
         Op::MulF64 { .. } => "MulF64",

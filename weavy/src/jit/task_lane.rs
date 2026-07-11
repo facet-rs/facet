@@ -129,6 +129,16 @@ struct Ctx {
         *mut u8,
     ) -> i64,
     ordered_len: unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *mut i64) -> i64,
+    string_concat: unsafe extern "C" fn(
+        *const crate::task::RawValueMemory,
+        usize,
+        *const crate::task::RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        *mut i64,
+    ) -> i64,
 }
 
 const EXIT_AWAIT_PARKED: i64 = 1;
@@ -143,6 +153,9 @@ const EXIT_INVALID_ENUM_SELECTOR: i64 = 9;
 const EXIT_ENUM_PROJECTION_MISMATCH: i64 = 10;
 const EXIT_INVALID_ARRAY_STATUS: i64 = 11;
 const EXIT_INVALID_ORDERED_STATUS: i64 = 12;
+const EXIT_STRING_CONCAT_LEFT_UNRESIDENT: i64 = 13;
+const EXIT_STRING_CONCAT_RIGHT_UNRESIDENT: i64 = 14;
+const EXIT_STRING_CONCAT_ALLOCATION: i64 = 15;
 
 /// Whether the task JIT lane is usable on this target.
 pub fn available() -> bool {
@@ -475,6 +488,10 @@ fn compile_fn(
                 task_stencils::COMPARE_VALUE_BYTES,
                 Continuations::Fallthrough(task_stencils::COMPARE_VALUE_BYTES_CONT),
             ),
+            Op::StringConcat { .. } => (
+                task_stencils::STRING_CONCAT,
+                Continuations::Fallthrough(task_stencils::STRING_CONCAT_CONT),
+            ),
             Op::Await { .. } => (
                 task_stencils::AWAIT,
                 Continuations::Fallthrough(task_stencils::AWAIT_CONT),
@@ -606,6 +623,7 @@ fn compile_fn(
             Op::LoadArrayLen { .. } => 4,
             Op::ArrayStatusIs { .. } => 4,
             Op::CompareValueBytes { .. } => 4,
+            Op::StringConcat { .. } => 4,
             Op::Await { .. } => 3,
             Op::Call { .. } | Op::CallIndirect { .. } => 1,
             Op::Ret { .. } => 2,
@@ -1142,6 +1160,12 @@ fn compile_fn(
                 }
                 layout.push_prog_word(root.prog_index, i as u64);
             }
+            Op::StringConcat { dst, a, b } => {
+                for v in [dst, a, b] {
+                    layout.push_prog_word(root.prog_index, u64::from(*v));
+                }
+                layout.push_prog_word(root.prog_index, i as u64);
+            }
             Op::Await { dst, input } => {
                 // [resume_off = own start, index, dst] — idempotent
                 // suspend point, the proven protocol. Awaits are never
@@ -1429,6 +1453,7 @@ impl JitTask {
                 ordered_begin_iterate: crate::task::ordered_begin_iterate_abi,
                 ordered_iterate_row: crate::task::ordered_iterate_row_abi,
                 ordered_len: crate::task::ordered_len_abi,
+                string_concat: crate::task::string_concat_abi,
             };
             // SAFETY: `frame.resume` is a chain offset of this compiled
             // function; the copied code uses the extern "C" fn(*mut Ctx)
@@ -1587,6 +1612,30 @@ impl JitTask {
                             CompareSide::Right
                         },
                         handle: resume_scratch as i64,
+                    });
+                }
+                EXIT_STRING_CONCAT_LEFT_UNRESIDENT | EXIT_STRING_CONCAT_RIGHT_UNRESIDENT => {
+                    let Some(verified) = verified else {
+                        panic!("legacy raw StringConcat operand is not resident");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("pc");
+                    return Err(TaskFault::UnresidentStringConcatOperand {
+                        site: fault_site(verified, frame.fn_id, pc)?,
+                        side: if exit_scratch == EXIT_STRING_CONCAT_LEFT_UNRESIDENT {
+                            CompareSide::Left
+                        } else {
+                            CompareSide::Right
+                        },
+                        handle: resume_scratch as i64,
+                    });
+                }
+                EXIT_STRING_CONCAT_ALLOCATION => {
+                    let Some(verified) = verified else {
+                        panic!("legacy raw StringConcat allocation failed");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("pc");
+                    return Err(TaskFault::StringConcatAllocationFailed {
+                        site: fault_site(verified, frame.fn_id, pc)?,
                     });
                 }
                 EXIT_INVALID_ENUM_SELECTOR | EXIT_ENUM_PROJECTION_MISMATCH => {

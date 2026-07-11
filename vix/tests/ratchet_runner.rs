@@ -685,6 +685,36 @@ fn rung_028_array_stream_collects_position_keyed_rows() {
 
 #[test]
 fn rung_029_array_fold_runs_in_authored_position_order() {
+    let compilation = Compiler::new()
+        .compile(RUNG_029)
+        .expect("rung 029 compiles to VIR");
+    let partitioned = compilation.partition_test(&compilation.tests[0]);
+    let mut cache = LoweringCache::default();
+    let mut string_concats = 0usize;
+    for island in &partitioned.islands {
+        let lowered = cache
+            .get_or_lower(island)
+            .expect("rung 029 verifies before production execution");
+        for op in lowered
+            .program()
+            .fns
+            .iter()
+            .flat_map(|function| &function.code)
+        {
+            match op {
+                WeavyOp::StringConcat { .. } => string_concats += 1,
+                WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. } => {
+                    panic!("rung 029 must not lower through a host call: {op:?}")
+                }
+                _ => {}
+            }
+        }
+    }
+    assert!(
+        string_concats >= 2,
+        "the two string folds must each lower a verifier-admitted StringConcat op, saw {string_concats}"
+    );
+
     let report = run_source(RUNG_029).expect("rung 029 executes through verified production path");
     assert!(report.passed());
     assert!(report.agrees());
@@ -708,6 +738,39 @@ fn concat() -> Stream<Check> {
 
 #[test]
 fn pure_string_concatenation_runs_through_verified_path() {
+    let compilation = Compiler::new()
+        .compile(PURE_STRING_CONCAT)
+        .expect("string concatenation compiles to VIR");
+    let partitioned = compilation.partition_test(&compilation.tests[0]);
+    let mut cache = LoweringCache::default();
+    // Nested, result-feeding, and equality-fed concatenations lower to
+    // verifier-admitted StringConcat ops, and none of them escapes to a host
+    // call.
+    let mut string_concats = 0usize;
+    for island in &partitioned.islands {
+        let lowered = cache
+            .get_or_lower(island)
+            .expect("string concatenation verifies before production execution");
+        for op in lowered
+            .program()
+            .fns
+            .iter()
+            .flat_map(|function| &function.code)
+        {
+            match op {
+                WeavyOp::StringConcat { .. } => string_concats += 1,
+                WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. } => {
+                    panic!("string concatenation must not lower through a host call: {op:?}")
+                }
+                _ => {}
+            }
+        }
+    }
+    assert!(
+        string_concats >= 3,
+        "each concatenating `+` lowers to a StringConcat op, saw {string_concats}"
+    );
+
     let report =
         run_source(PURE_STRING_CONCAT).expect("string concatenation executes through Weavy");
     assert!(report.passed());

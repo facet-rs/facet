@@ -4517,10 +4517,18 @@ fn lower_node(
             ));
         }
         Op::StringConcat => {
-            return Err(lowering_diagnostic(
-                node.span,
-                "string concatenation lowering is not implemented",
-            ));
+            require_node_type(node, Type::String)?;
+            let (a, b) = binary_values(node, values)?;
+            require_value(node, &a, &Type::String, ValueRepresentation::RealizedHandle)?;
+            require_value(node, &b, &Type::String, ValueRepresentation::RealizedHandle)?;
+            (
+                vec![WeavyOp::StringConcat {
+                    dst,
+                    a: a.region.start().byte_offset(),
+                    b: b.region.start().byte_offset(),
+                }],
+                ValueRepresentation::RealizedHandle,
+            )
         }
         Op::Variant { variant } => {
             lower_variant_node(node, dst_region, dst_region_id, values, *variant)?

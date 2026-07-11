@@ -154,6 +154,16 @@ pub struct Ctx {
     ) -> i64,
     ordered_len:
         unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *mut i64) -> i64,
+    string_concat: unsafe extern "C" fn(
+        *const RawValueMemory,
+        usize,
+        *const RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        *mut i64,
+    ) -> i64,
 }
 
 /// Raw ABI descriptor; MUST match `crate::task::RawValueMemory`.
@@ -176,6 +186,9 @@ const EXIT_INVALID_ENUM_SELECTOR: i64 = 9;
 const EXIT_ENUM_PROJECTION_MISMATCH: i64 = 10;
 const EXIT_INVALID_ARRAY_STATUS: i64 = 11;
 const EXIT_INVALID_ORDERED_STATUS: i64 = 12;
+const EXIT_STRING_CONCAT_LEFT_UNRESIDENT: i64 = 13;
+const EXIT_STRING_CONCAT_RIGHT_UNRESIDENT: i64 = 14;
+const EXIT_STRING_CONCAT_ALLOCATION: i64 = 15;
 
 const LENT_MOLTEN_MIN: i64 = i64::MIN / 2;
 
@@ -1061,6 +1074,53 @@ pub unsafe extern "C" fn weavy_task_compare_value_bytes(cx: *mut Ctx) {
     {
         write_i64(c.frame, dst, ordering);
         cont!(cx);
+    }
+}
+
+/// Join two resident value-byte runs into a fresh molten string — immediates:
+/// [dst, a, b, pc]. Writes the result handle to `frame[dst]` on success; a
+/// non-resident operand or an unsatisfiable allocation exits to the driver with
+/// the precise fault code and the offending handle in `resume`.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_string_concat(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let a = *c.prog.add(1);
+    let b = *c.prog.add(2);
+    let pc = *c.prog.add(3);
+    c.prog = c.prog.add(4);
+    let a_handle = read_i64(c.frame, a);
+    let b_handle = read_i64(c.frame, b);
+    let mut handle = i64::MIN;
+    let status = (c.string_concat)(
+        c.store_value_memories,
+        c.store_value_memory_count,
+        c.lent_molten_value_memories,
+        c.lent_molten_value_memory_count,
+        c.molten,
+        a_handle,
+        b_handle,
+        &raw mut handle,
+    );
+    match status {
+        0 => {
+            write_i64(c.frame, dst, handle);
+            cont!(cx);
+        }
+        1 => {
+            *c.await_index = pc;
+            *c.resume = a_handle as u64;
+            *c.exit = EXIT_STRING_CONCAT_LEFT_UNRESIDENT;
+        }
+        2 => {
+            *c.await_index = pc;
+            *c.resume = b_handle as u64;
+            *c.exit = EXIT_STRING_CONCAT_RIGHT_UNRESIDENT;
+        }
+        _ => {
+            *c.await_index = pc;
+            *c.exit = EXIT_STRING_CONCAT_ALLOCATION;
+        }
     }
 }
 

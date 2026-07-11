@@ -36,7 +36,7 @@ use core::pin::Pin;
 use core::task::{Context, Poll};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
-use crate::exec::{CompareSide, TaskFault, fault_site};
+use crate::exec::{CompareSide, FaultSite, TaskFault, fault_site};
 use crate::mem::Layout;
 use crate::{CallSiteFacts, RegionId, VerifiedProgram};
 
@@ -229,6 +229,43 @@ impl ArrayOpStatus {
             8 => Some(Self::AllocationFailed),
             9 => Some(Self::Uninitialized),
             _ => None,
+        }
+    }
+}
+
+/// Why a [`Op::StringConcat`] could not produce a resident result value.
+///
+/// Residency of both operands is a task-admission obligation; the two unresident
+/// variants name the offending side. Allocation exhaustion is a runtime resource
+/// condition. Every variant maps to a typed [`crate::exec::TaskFault`], never to
+/// a fabricated handle or silent empty string.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum StringConcatFault {
+    /// The left operand handle did not name a resident value.
+    LeftUnresident(i64),
+    /// The right operand handle did not name a resident value.
+    RightUnresident(i64),
+    /// Checked length arithmetic or the arena allocation could not be satisfied.
+    AllocationFailed,
+}
+
+impl StringConcatFault {
+    /// The closed i64 status the JIT ABI helper reports to its stencil.
+    #[cfg_attr(not(feature = "jit"), allow(dead_code))]
+    const OK_STATUS: i64 = 0;
+    #[cfg_attr(not(feature = "jit"), allow(dead_code))]
+    const LEFT_STATUS: i64 = 1;
+    #[cfg_attr(not(feature = "jit"), allow(dead_code))]
+    const RIGHT_STATUS: i64 = 2;
+    #[cfg_attr(not(feature = "jit"), allow(dead_code))]
+    const ALLOCATION_STATUS: i64 = 3;
+
+    #[cfg_attr(not(feature = "jit"), allow(dead_code))]
+    fn status(self) -> i64 {
+        match self {
+            StringConcatFault::LeftUnresident(_) => Self::LEFT_STATUS,
+            StringConcatFault::RightUnresident(_) => Self::RIGHT_STATUS,
+            StringConcatFault::AllocationFailed => Self::ALLOCATION_STATUS,
         }
     }
 }
@@ -1077,6 +1114,52 @@ impl MoltenArena {
         let index = task_molten_index(handle)?;
         self.buffers.get(index)
     }
+
+    /// Join two resident value-memory byte runs into one fresh task-local value.
+    ///
+    /// Both operands are resolved through the shared [`handle_bytes`] contract:
+    /// store handles, lent molten handles, and this task's own molten handles all
+    /// contribute their exact payload bytes. The joined bytes are copied into a
+    /// new molten buffer whose handle occupies the same task-local namespace as
+    /// [`Op::ArrayNew`] results, so it can never collide with a store or lent
+    /// handle. The buffer carries no per-element initialization vector: a string
+    /// value is one opaque byte run, addressed only by the byte-run contract.
+    fn concat_value_bytes(
+        &mut self,
+        memories: MemoryView<'_>,
+        a: i64,
+        b: i64,
+    ) -> Result<i64, StringConcatFault> {
+        let left = handle_bytes(memories, self, a)
+            .map_err(|_| StringConcatFault::LeftUnresident(a))?
+            .to_vec();
+        let right = handle_bytes(memories, self, b)
+            .map_err(|_| StringConcatFault::RightUnresident(b))?
+            .to_vec();
+        let total = left
+            .len()
+            .checked_add(right.len())
+            .ok_or(StringConcatFault::AllocationFailed)?;
+        if total > isize::MAX as usize {
+            return Err(StringConcatFault::AllocationFailed);
+        }
+        let handle =
+            task_molten_handle(self.buffers.len()).ok_or(StringConcatFault::AllocationFailed)?;
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(total)
+            .map_err(|_| StringConcatFault::AllocationFailed)?;
+        bytes.extend_from_slice(&left);
+        bytes.extend_from_slice(&right);
+        self.buffers
+            .try_reserve_exact(1)
+            .map_err(|_| StringConcatFault::AllocationFailed)?;
+        self.buffers.push(MoltenBuffer {
+            bytes,
+            initialized: Vec::new(),
+        });
+        Ok(handle)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1728,6 +1811,59 @@ pub(crate) unsafe extern "C" fn array_len_abi(
     status as i64
 }
 
+/// # Safety
+/// `store_value_memories` and `lent_molten_value_memories` must each be null only
+/// when their count is zero; otherwise they must point to arrays of
+/// [`RawValueMemory`] entries valid for the duration of the call. Every raw entry
+/// selected by `a` or `b` must point to bytes readable for the call. `arena` must
+/// point to a live [`MoltenArena`] and must not be otherwise aliased. `out_handle`
+/// must be non-null, writable for one `i64`, and must not alias `arena`. This
+/// function writes [`ARRAY_POISON_HANDLE`] before it attempts allocation and
+/// overwrites it only on success.
+#[cfg_attr(not(feature = "jit"), allow(dead_code))]
+pub(crate) unsafe extern "C" fn string_concat_abi(
+    store_value_memories: *const RawValueMemory,
+    store_value_memory_count: usize,
+    lent_molten_value_memories: *const RawValueMemory,
+    lent_molten_value_memory_count: usize,
+    arena: *mut core::ffi::c_void,
+    a: i64,
+    b: i64,
+    out_handle: *mut i64,
+) -> i64 {
+    if out_handle.is_null() {
+        return StringConcatFault::AllocationFailed.status();
+    }
+    unsafe { *out_handle = ARRAY_POISON_HANDLE };
+    if arena.is_null()
+        || (store_value_memories.is_null() && store_value_memory_count != 0)
+        || (lent_molten_value_memories.is_null() && lent_molten_value_memory_count != 0)
+    {
+        return StringConcatFault::AllocationFailed.status();
+    }
+    let store = if store_value_memory_count == 0 {
+        &[]
+    } else {
+        unsafe { core::slice::from_raw_parts(store_value_memories, store_value_memory_count) }
+    };
+    let molten = if lent_molten_value_memory_count == 0 {
+        &[]
+    } else {
+        unsafe {
+            core::slice::from_raw_parts(lent_molten_value_memories, lent_molten_value_memory_count)
+        }
+    };
+    let memories = MemoryView::Raw(RawValueMemories { store, molten });
+    let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
+    match arena.concat_value_bytes(memories, a, b) {
+        Ok(handle) => {
+            unsafe { *out_handle = handle };
+            StringConcatFault::OK_STATUS
+        }
+        Err(fault) => fault.status(),
+    }
+}
+
 /// Identifies a function in a [`Program`]'s function table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FnId(pub u32);
@@ -1974,6 +2110,17 @@ pub enum Op {
     /// table; even equal handle integers fault if the shared handle is not
     /// resident.
     CompareValueBytes { dst: u32, a: u32, b: u32 },
+    /// Concatenate two resident value-memory byte runs into one fresh string.
+    ///
+    /// `frame[a]` and `frame[b]` are string value handles. Their exact byte runs
+    /// are joined, in operand order, into a new task-local molten value whose
+    /// handle is written to `frame[dst]`. The result is itself a resident value
+    /// handle: it feeds further [`Op::StringConcat`] and [`Op::CompareValueBytes`]
+    /// with identical byte semantics to an interned literal. Task admission must
+    /// have made every operand handle resident; a non-resident operand faults
+    /// with the precise side, and an allocation the arena cannot satisfy faults
+    /// rather than fabricating a handle.
+    StringConcat { dst: u32, a: u32, b: u32 },
     /// `frame[dst] = f64::from_bits(bits)` — the immediate carries the
     /// BIT PATTERN (keeps `Op: Eq`; the machine is type-blind about a
     /// 64-bit store anyway — the op exists so lowerings and readers
@@ -2706,6 +2853,28 @@ impl Task {
                         }
                     };
                     write_i64_at(&mut self.arena, base + dst as usize, ordering);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::StringConcat { dst, a, b } => {
+                    let a_handle = read_i64_at(&self.arena, base + a as usize);
+                    let b_handle = read_i64_at(&self.arena, base + b as usize);
+                    let handle = match self.molten.concat_value_bytes(
+                        MemoryView::from(value_memories),
+                        a_handle,
+                        b_handle,
+                    ) {
+                        Ok(handle) => handle,
+                        Err(fault) => {
+                            let Some(verified) = verified else {
+                                panic!("legacy raw StringConcat operand is not resident");
+                            };
+                            return Err(string_concat_fault(
+                                fault_site(verified, fn_id, pc)?,
+                                fault,
+                            ));
+                        }
+                    };
+                    write_i64_at(&mut self.arena, base + dst as usize, handle);
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
                 Op::Trace { id } => {
@@ -3736,6 +3905,23 @@ fn compare_value_bytes(
         core::cmp::Ordering::Equal => 1,
         core::cmp::Ordering::Greater => 2,
     })
+}
+
+/// Lift a [`StringConcatFault`] to the typed task fault carried at `site`.
+fn string_concat_fault(site: FaultSite, fault: StringConcatFault) -> TaskFault {
+    match fault {
+        StringConcatFault::LeftUnresident(handle) => TaskFault::UnresidentStringConcatOperand {
+            site,
+            side: CompareSide::Left,
+            handle,
+        },
+        StringConcatFault::RightUnresident(handle) => TaskFault::UnresidentStringConcatOperand {
+            site,
+            side: CompareSide::Right,
+            handle,
+        },
+        StringConcatFault::AllocationFailed => TaskFault::StringConcatAllocationFailed { site },
+    }
 }
 
 #[cfg(test)]

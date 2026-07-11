@@ -2507,6 +2507,47 @@ impl Verifier<'_> {
                     ));
                 }
             }
+            Op::StringConcat { dst, a, b } => {
+                let dst_schema =
+                    self.read_handle(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                let left_schema =
+                    self.read_handle(function_id, pc, frame, *a, AccessRole::CompareLeft)?;
+                let right_schema =
+                    self.read_handle(function_id, pc, frame, *b, AccessRole::CompareRight)?;
+                if left_schema != right_schema || dst_schema != left_schema {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::CompareSchemaMismatch {
+                            left: dst_schema,
+                            right: if dst_schema == left_schema {
+                                right_schema
+                            } else {
+                                left_schema
+                            },
+                        },
+                    ));
+                }
+                let schema_index = usize::try_from(dst_schema.0).map_err(|_| {
+                    self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::SchemaNotByteComparable { schema: dst_schema },
+                    )
+                })?;
+                if !matches!(
+                    self.contract.schemas[schema_index].payload,
+                    PayloadKind::OpaqueBytes {
+                        byte_comparable: true
+                    }
+                ) {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::SchemaNotByteComparable { schema: dst_schema },
+                    ));
+                }
+            }
             Op::ConstF64 { dst, bits: _ } => {
                 self.reject_raw_structural_word(
                     function_id,
@@ -4228,6 +4269,7 @@ impl Verifier<'_> {
                     | Op::CallIndirect { .. }
                     | Op::Await { .. }
                     | Op::CompareValueBytes { .. }
+                    | Op::StringConcat { .. }
                     | Op::ConstF64 { .. }
                     | Op::AddF64 { .. }
                     | Op::MulF64 { .. }
