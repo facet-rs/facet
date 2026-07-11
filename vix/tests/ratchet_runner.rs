@@ -48,6 +48,7 @@ const RUNG_033: &str = include_str!("ratchet/033-multiset-conversion.vix");
 const RUNG_034: &str = include_str!("ratchet/034-multiset-filter.vix");
 const RUNG_035: &str = include_str!("ratchet/035-canonical-order.vix");
 const RUNG_036: &str = include_str!("ratchet/036-multiset-fold.vix");
+const RUNG_037: &str = include_str!("ratchet/037-filter-map-flat-map.vix");
 const RUNG_038: &str = include_str!("ratchet/038-find-split-min-max.vix");
 const RUNG_041: &str = include_str!("ratchet/041-maps.vix");
 const RUNG_042: &str = include_str!("ratchet/042-map-overwrite.vix");
@@ -868,7 +869,7 @@ fn rung_034_stream_filter_preserves_survivor_keys() {
 // Rung 038 — deterministic selection (`find_min`/`find_max`) and decomposition
 // (`split_min`). `find_min`/`find_max` retain the stream and return `Option<V>`,
 // invoking the predicate through the verified callable ABI; `split_min` removes
-// exactly one selected element and returns `Option<(V, Stream<K, V>)>`. Values
+// exactly one selected element and returns `Option<(V, [V])>`. Values
 // are compared in structural-semantic order with the stable stream key as the
 // tie-breaker, so a duplicate equal value remains in the rest.
 #[test]
@@ -898,7 +899,7 @@ fn rung_038_selection_and_decomposition_compiles() {
     assert_eq!(find_max.ty, VirType::option(VirType::Int));
 
     // `split_min` decomposes the stream into the selected value and the ordered
-    // rest, keeping duplicate equal values: `Option<(Int, Stream<Int, Int>)>`.
+    // dense remainder, keeping duplicate equal values: `Option<(Int, [Int])>`.
     let split_min = function
         .nodes
         .iter()
@@ -908,9 +909,9 @@ fn rung_038_selection_and_decomposition_compiles() {
         split_min.ty,
         VirType::option(VirType::Tuple(vec![
             VirType::Int,
-            VirType::stream(VirType::Int, VirType::Int),
+            VirType::array(VirType::Int),
         ])),
-        "split_min returns the selected value paired with the ordered stream rest"
+        "split_min returns the selected value paired with the ordered dense remainder"
     );
 
     // The `match` over `split_min` makes the generator branch-dependent: the
@@ -918,26 +919,25 @@ fn rung_038_selection_and_decomposition_compiles() {
     assert!(test.generator.has_conditional_sites());
 }
 
-// The whole rung 038 test is one branch-dependent generator (its `match` over
-// `split_min` owns the Some/None yield sites), so — exactly like rung 031 — the
-// static runner reaches the explicit typed generator seam rather than silently
-// dropping the checks the untaken arm would never publish. When the parallel
-// provenance-keyed codata bridge lands, the unchanged rung executes with three
-// passing Some-arm checks and no None-arm phantom.
+// The whole rung 038 fixture is a branch-dependent generator (its `match` over
+// `split_min` owns the Some/None yield sites). The checked lowering executes the
+// taken Some arm and does not publish the untaken None-arm check.
 #[test]
-fn rung_038_reaches_explicit_runtime_seam() {
-    match run_source(RUNG_038) {
-        Err(RunError::UnsupportedGenerator { test }) => assert_eq!(test, "find_split_min_max"),
-        other => panic!("expected explicit generator runtime seam, got {other:?}"),
+fn rung_038_executes_on_verified_path() {
+    let report = run_source(RUNG_038).expect("rung 038 executes through verified production path");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 5);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
     }
 }
 
-// The selection primitives and the stream cardinality/membership queries execute
-// end-to-end through the verified production path, independent of the still-open
-// generator seam that gates `split_min`'s decomposition. A flat generator (no
-// branch-dependent yield site) exercises `find_min`/`find_max` invoking the
-// predicate through the callable ABI, plus `len`/`contains` over the retained
-// keyed codata.
+// `find_min`/`find_max` execute through the verified callable ABI without
+// consuming their keyed-codata source. Stream completion is explicit through
+// `split_min`'s `[V]` result, whose Array methods own cardinality and membership.
 #[test]
 fn rung_038_selection_executes_on_verified_path() {
     const SOURCE: &str = r#"
@@ -948,16 +948,13 @@ fn selection() -> Stream<Check> {
     yield expect_eq(ms.find_min(|_| true), Some(3));
     yield expect_eq(ms.find_max(|_| true), Some(9));
     yield expect_none(ms.find_min(|n| n > 100));
-    yield expect_eq(ms.len(), 4);
-    yield expect(ms.contains(3));
-    yield expect(!ms.contains(7));
 }
 "#;
     let report =
         run_source(SOURCE).expect("stream selection executes through verified production path");
     assert!(report.passed());
     assert!(report.agrees());
-    assert_eq!(report.plain.checks.len(), 7);
+    assert_eq!(report.plain.checks.len(), 4);
     assert_eq!(report.plain.checks, report.chaos.checks);
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.pure_host_calls, 0);
@@ -965,21 +962,22 @@ fn selection() -> Stream<Check> {
     }
 }
 
-// `split_min` compiles to a typed decomposition, but a stream has no runtime
-// value representation yet: it is `CodataRecipe`, resolved structurally at
-// `collect`/`find`/`len`/`contains`, never a runtime value. So a `Stream`-valued
-// rest cannot be built as an `Option` payload. Driven flat (variant-only, no
-// generator `match`), the decomposition reaches an explicit typed lowering seam
-// rather than silently substituting a dense array or inventing a second codata
-// protocol. The provenance-keyed codata bridge introduces the keyed rest value
-// this needs.
+// `split_min` realizes a dense remainder at completion, so the selected key is
+// omitted once while an equal duplicate at another key remains. This is driven
+// through the production path independently of the canonical fixture.
 #[test]
-fn rung_038_split_min_reaches_explicit_lowering_seam() {
+fn rung_038_split_min_executes_on_verified_path() {
     const SOURCE: &str = r#"
 #[test]
 fn decompose() -> Stream<Check> {
     let ms = [5, 3, 9, 3].stream();
-    yield expect_some(ms.split_min());
+    yield match ms.split_min() {
+        Some((least, rest)) => {
+            yield expect_eq(least, 3);
+            yield expect_eq(rest, [5, 9, 3]);
+        },
+        None => expect(false),
+    };
     let empty: [Int] = [];
     yield expect_none(empty.stream().split_min());
 }
@@ -996,27 +994,18 @@ fn decompose() -> Stream<Check> {
         split_min.ty,
         VirType::option(VirType::Tuple(vec![
             VirType::Int,
-            VirType::stream(VirType::Int, VirType::Int),
+            VirType::array(VirType::Int),
         ]))
     );
 
-    match run_source(SOURCE) {
-        Err(RunError::Diagnostics(diagnostics)) => {
-            let seam = diagnostics
-                .entries
-                .iter()
-                .find(|entry| entry.code == DiagnosticCode::LoweringUnsupported)
-                .expect("split_min decomposition reaches an explicit lowering seam");
-            let vix::diagnostic::DiagnosticPayload::Unsupported { construct } = &seam.payload
-            else {
-                panic!("unexpected lowering seam payload: {:?}", seam.payload);
-            };
-            assert!(
-                construct.contains("split_min"),
-                "the lowering seam names split_min: {construct}"
-            );
-        }
-        other => panic!("expected explicit split_min lowering seam, got {other:?}"),
+    let report = run_source(SOURCE).expect("split_min executes through verified production path");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
     }
 }
 
@@ -1325,6 +1314,82 @@ fn rung_036_multiset_fold_runs_through_verified_execution_without_host_calls() {
                     ))
             );
         }
+    }
+}
+
+// Rung 037 — filter_map preserves source keys for `Some` rows; flat_map composes
+// outer/inner keys deterministically. Both remain codata recipes until an explicit
+// collect materializes an ordered Map through the verified production path, with no
+// host call and no dense-array substitute for the keyed collection.
+#[test]
+fn rung_037_filter_map_and_flat_map_run_through_verified_production_path() {
+    let module = Compiler::new()
+        .compile(RUNG_037)
+        .expect("rung 037 compiles through the canonical surface");
+    let function = module
+        .functions
+        .iter()
+        .find(|function| function.name == "filter_map_flat_map")
+        .expect("rung 037 test function exists");
+
+    // filter_map is a distinct key-preserving codata recipe: Stream<Int, Int>.
+    let filter_map = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamFilterMap))
+        .expect("filter_map is a distinct codata recipe");
+    assert_eq!(filter_map.ty, VirType::stream(VirType::Int, VirType::Int));
+    assert_eq!(filter_map.effect.kind, EffectKind::Codata);
+
+    // flat_map composes the outer position key with the inner position key into a
+    // tuple key: Stream<(Int, Int), Int>.
+    let flat_map = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamFlatMap))
+        .expect("flat_map is a distinct codata recipe");
+    assert_eq!(
+        flat_map.ty,
+        VirType::stream(
+            VirType::Tuple(vec![VirType::Int, VirType::Int]),
+            VirType::Int,
+        ),
+    );
+    assert_eq!(flat_map.effect.kind, EffectKind::Codata);
+
+    // Every lowered frame stays inside the verified machine: no host calls.
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 037 lowers through verified Weavy execution");
+        assert!(lowered.program().fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+        assert!(
+            lowered
+                .program()
+                .fns
+                .iter()
+                .flat_map(|function| &function.code)
+                .any(|op| matches!(op, WeavyOp::OrderedInsertCommit { .. })),
+            "collect materializes rows through the ordered collection substrate",
+        );
+    }
+
+    let report = run_source(RUNG_037).expect("rung 037 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
     }
 }
 

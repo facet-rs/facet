@@ -7,6 +7,7 @@ use crate::runtime::{
     ChaosPolicy, Counters, DemandState, Evaluation, Event, EventLog, FailureContext, FailureValue,
     Location, MachineError, Runtime, TaskState, ValueId,
 };
+use crate::vir::{GeneratorBody, GeneratorStep, IslandId, Test};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunError {
@@ -101,22 +102,6 @@ impl RatchetReport {
 pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
     let compilation = Compiler::new().compile(source)?;
 
-    // The static runner partitions a flat list of unconditional top-level
-    // yields. A generator whose sites are owned by a taken control arm cannot be
-    // faithfully executed that way yet: publishing a taken arm's checks (and
-    // suppressing the untaken arm's) is the deferred runtime fold. Refuse
-    // explicitly rather than silently dropping branch-dependent checks.
-    if let Some(test) = compilation
-        .module
-        .tests
-        .iter()
-        .find(|test| test.generator.has_conditional_sites())
-    {
-        return Err(RunError::UnsupportedGenerator {
-            test: test.name.clone(),
-        });
-    }
-
     let mut cache = LoweringCache::default();
 
     let plain = run_lane(&compilation.module, &mut cache, ChaosPolicy::default())?;
@@ -145,28 +130,16 @@ fn run_lane(
     let mut kill_available = chaos.kill_first_running_task;
 
     for test in &module.tests {
-        let partitioned = module.partition_test(test);
-        for island in &partitioned.islands {
-            let lowered = cache.get_or_lower(island)?;
-            let attribution = attribution_for(island);
-            let location = Location::for_test_island(&partitioned.name, island.id.0);
-            let evaluation: Evaluation = runtime.evaluate(
-                island.id,
-                &location,
-                lowered,
-                &attribution,
-                ChaosPolicy {
-                    kill_first_running_task: kill_available,
-                },
-            )?;
-            kill_available = false;
-            checks.push(CheckRun {
-                identity: evaluation.identity,
-                passed: evaluation.passed,
-                failure: evaluation.failure,
-                failure_context: evaluation.failure_context,
-            });
-        }
+        run_generator_body(
+            module,
+            test,
+            &test.generator,
+            cache,
+            &mut runtime,
+            &mut checks,
+            &mut kill_available,
+            &mut 0,
+        )?;
     }
 
     let counters = runtime.counters();
@@ -186,4 +159,124 @@ fn run_lane(
         all_demands_ready,
         all_tasks_terminal,
     })
+}
+
+fn run_generator_body(
+    module: &crate::vir::Module,
+    test: &Test,
+    body: &GeneratorBody,
+    cache: &mut LoweringCache,
+    runtime: &mut Runtime<EventLog>,
+    checks: &mut Vec<CheckRun>,
+    kill_available: &mut bool,
+    next_island: &mut u32,
+) -> Result<(), RunError> {
+    for step in &body.steps {
+        match step {
+            GeneratorStep::Yield(site) => {
+                let island = module.partition_test_output(test, site.check, IslandId(*next_island));
+                *next_island += 1;
+                let evaluation =
+                    evaluate_generator_island(&island, test, cache, runtime, kill_available)?;
+                checks.push(CheckRun {
+                    identity: evaluation.identity,
+                    passed: evaluation.passed,
+                    failure: evaluation.failure,
+                    failure_context: evaluation.failure_context,
+                });
+            }
+            GeneratorStep::Match { arms, .. } => {
+                let mut selected = None;
+                for arm in arms {
+                    let island =
+                        module.partition_test_output(test, arm.condition, IslandId(*next_island));
+                    *next_island += 1;
+                    let evaluation =
+                        evaluate_generator_island(&island, test, cache, runtime, kill_available)?;
+                    if evaluation.passed {
+                        if selected.replace(&arm.body).is_some() {
+                            return Err(RunError::Diagnostics(
+                                crate::diagnostic::Diagnostics::one(
+                                    crate::diagnostic::Diagnostic::unsupported(
+                                        test.generator.steps.first().map_or(
+                                            crate::support::Span { start: 0, end: 0 },
+                                            |_| crate::support::Span { start: 0, end: 0 },
+                                        ),
+                                        "generator match selected more than one arm",
+                                    ),
+                                ),
+                            ));
+                        }
+                    }
+                }
+                let selected = selected.ok_or_else(|| {
+                    RunError::Diagnostics(crate::diagnostic::Diagnostics::one(
+                        crate::diagnostic::Diagnostic::unsupported(
+                            crate::support::Span { start: 0, end: 0 },
+                            "generator match selected no arm",
+                        ),
+                    ))
+                })?;
+                run_generator_body(
+                    module,
+                    test,
+                    selected,
+                    cache,
+                    runtime,
+                    checks,
+                    kill_available,
+                    next_island,
+                )?;
+            }
+            GeneratorStep::If {
+                condition,
+                consequent,
+                alternative,
+            } => {
+                let island = module.partition_test_output(test, *condition, IslandId(*next_island));
+                *next_island += 1;
+                let evaluation =
+                    evaluate_generator_island(&island, test, cache, runtime, kill_available)?;
+                let selected = if evaluation.passed {
+                    consequent
+                } else {
+                    alternative
+                };
+                run_generator_body(
+                    module,
+                    test,
+                    selected,
+                    cache,
+                    runtime,
+                    checks,
+                    kill_available,
+                    next_island,
+                )?;
+            }
+        }
+    }
+    Ok(())
+}
+
+fn evaluate_generator_island(
+    island: &crate::vir::Island,
+    test: &Test,
+    cache: &mut LoweringCache,
+    runtime: &mut Runtime<EventLog>,
+    kill_available: &mut bool,
+) -> Result<Evaluation, RunError> {
+    let lowered = cache.get_or_lower(island)?;
+    let attribution = attribution_for(island);
+    let location = Location::for_test_island(&test.name, island.id.0);
+    let evaluation = runtime.evaluate(
+        island.id,
+        &location,
+        lowered,
+        &attribution,
+        ChaosPolicy {
+            kill_first_running_task: *kill_available,
+        },
+    )?;
+    *kill_available = false;
+    Ok(evaluation)
 }

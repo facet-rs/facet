@@ -1493,6 +1493,7 @@ fn lower_generator_match(
                     &variant.name,
                 )
             })?,
+            condition: NodeId(u32::MAX),
             bindings: binding_nodes,
             body,
         });
@@ -1512,6 +1513,35 @@ fn lower_generator_match(
             labels: Vec::new(),
             payload: DiagnosticPayload::Match { missing },
         }));
+    }
+
+    for arm in &mut arms {
+        let mut condition_arms = Vec::with_capacity(enumeration.variants.len());
+        for variant in 0..enumeration.variants.len() {
+            let literal = push_node(
+                nodes,
+                expression.span,
+                Type::Bool,
+                EffectFacts::PURE,
+                Vec::new(),
+                Op::Bool(variant == arm.variant as usize),
+            );
+            condition_arms.push(VirMatchArm {
+                variant: u32::try_from(variant).expect("enum variant index fits u32"),
+                nodes: vec![literal],
+                output: literal,
+            });
+        }
+        arm.condition = push_node(
+            nodes,
+            expression.span,
+            Type::Bool,
+            EffectFacts::PURE,
+            vec![scrutinee.node],
+            Op::Match {
+                arms: condition_arms,
+            },
+        );
     }
 
     Ok(GeneratorStep::Match {
@@ -1845,12 +1875,12 @@ enum PreludeMethod {
     SetLen,
     SetValues,
     StreamFilter,
+    StreamFilterMap,
+    StreamFlatMap,
     StreamCollect,
     StreamFindMin,
     StreamFindMax,
     StreamSplitMin,
-    StreamLen,
-    StreamContains,
 }
 
 #[derive(Clone, Copy)]
@@ -1990,6 +2020,18 @@ impl PreludeMethodRegistry {
             },
             PreludeMethodEntry {
                 receiver: PreludeReceiverType::Stream,
+                name: "filter_map",
+                arity: 1,
+                method: PreludeMethod::StreamFilterMap,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Stream,
+                name: "flat_map",
+                arity: 1,
+                method: PreludeMethod::StreamFlatMap,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Stream,
                 name: "collect",
                 arity: 0,
                 method: PreludeMethod::StreamCollect,
@@ -2011,18 +2053,6 @@ impl PreludeMethodRegistry {
                 name: "split_min",
                 arity: 0,
                 method: PreludeMethod::StreamSplitMin,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Stream,
-                name: "len",
-                arity: 0,
-                method: PreludeMethod::StreamLen,
-            },
-            PreludeMethodEntry {
-                receiver: PreludeReceiverType::Stream,
-                name: "contains",
-                arity: 1,
-                method: PreludeMethod::StreamContains,
             },
         ],
     };
@@ -2072,7 +2102,11 @@ fn lower_value_expected(
             lower_none(nodes, identifier.span, expected)
         }
         ast::Expr::Identifier(identifier) => {
-            lookup_binding(bindings, &identifier.value, identifier.span)
+            if let Some(value) = bindings.get(&identifier.value) {
+                Ok(value.clone())
+            } else {
+                lower_function_reference(nodes, context, identifier)
+            }
         }
         ast::Expr::Call(call) if call.callee.value == "Some" => {
             lower_some(nodes, bindings, context, call, expected)
@@ -2859,6 +2893,104 @@ fn lower_method_call(
                 ty,
             })
         }
+        PreludeMethod::StreamFilterMap => {
+            let (key, value) = receiver
+                .ty
+                .stream_types()
+                .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
+            let key = key.clone();
+            let value = value.clone();
+            let transform = match &call.args.args[0] {
+                ast::Expr::Closure(closure) => {
+                    lower_closure_with_parameter(nodes, bindings, context, closure, &value)?
+                }
+                expression => lower_value_expected(nodes, bindings, context, expression, None)?,
+            };
+            let Type::Function { parameter, result } = &transform.ty else {
+                return Err(type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    format!("fn({}) -> Option<_>", value.name()),
+                    transform.ty.name(),
+                ));
+            };
+            if parameter.as_ref() != &value {
+                return Err(type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    format!("fn({}) -> Option<_>", value.name()),
+                    transform.ty.name(),
+                ));
+            }
+            let output = result.option_inner().ok_or_else(|| {
+                type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    format!("fn({}) -> Option<_>", value.name()),
+                    transform.ty.name(),
+                )
+            })?;
+            let ty = Type::stream(key, output.clone());
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::CODATA,
+                    vec![receiver.node, transform.node],
+                    Op::StreamFilterMap,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::StreamFlatMap => {
+            let (key, value) = receiver
+                .ty
+                .stream_types()
+                .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
+            let key = key.clone();
+            let value = value.clone();
+            let ast::Expr::Closure(closure) = &call.args.args[0] else {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    expr_span(&call.args.args[0]),
+                    "flat_map expects a closure returning an array stream",
+                )));
+            };
+            // The closure is lowered as an array-returning frame `fn(V) -> [W]`;
+            // its inner stream keys are the dense positions of that array.
+            let transform = lower_array_stream_closure(nodes, bindings, context, closure, &value)?;
+            let Type::Function { parameter, result } = &transform.ty else {
+                return Err(type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    format!("fn({}) -> Stream<_, _>", value.name()),
+                    transform.ty.name(),
+                ));
+            };
+            if parameter.as_ref() != &value {
+                return Err(type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    format!("fn({}) -> Stream<_, _>", value.name()),
+                    transform.ty.name(),
+                ));
+            }
+            let inner_value = result.array_element().ok_or_else(|| {
+                type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    format!("fn({}) -> Stream<_, _>", value.name()),
+                    transform.ty.name(),
+                )
+            })?;
+            let composed_key = Type::Tuple(vec![key, Type::Int]);
+            let ty = Type::stream(composed_key, inner_value.clone());
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::CODATA,
+                    vec![receiver.node, transform.node],
+                    Op::StreamFlatMap,
+                ),
+                ty,
+            })
+        }
         PreludeMethod::StreamCollect => {
             let (key, value) = receiver
                 .ty
@@ -2932,7 +3064,7 @@ fn lower_method_call(
             })
         }
         PreludeMethod::StreamSplitMin => {
-            let (key, value) = receiver
+            let (_, value) = receiver
                 .ty
                 .stream_types()
                 .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
@@ -2943,7 +3075,10 @@ fn lower_method_call(
                     receiver.ty.name(),
                 ));
             }
-            let rest_ty = Type::stream(key.clone(), value.clone());
+            // The remainder is realized as a dense array of the surviving values
+            // in canonical key order: realization is explicit in the type, and
+            // no stream recipe is placed inside the Option.
+            let rest_ty = Type::array(value.clone());
             let payload = Type::Tuple(vec![value.clone(), rest_ty]);
             let ty = Type::option(payload);
             Ok(LoweredValue {
@@ -2956,37 +3091,6 @@ fn lower_method_call(
                     Op::StreamSplitMin,
                 ),
                 ty,
-            })
-        }
-        PreludeMethod::StreamLen => Ok(LoweredValue {
-            node: push_node(
-                nodes,
-                call.span,
-                Type::Int,
-                EffectFacts::PURE,
-                vec![receiver.node],
-                Op::StreamLen,
-            ),
-            ty: Type::Int,
-        }),
-        PreludeMethod::StreamContains => {
-            let (_, value) = receiver
-                .ty
-                .stream_types()
-                .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
-            let value = value.clone();
-            let candidate = lower_value(nodes, bindings, context, &call.args.args[0])?;
-            require_type(&candidate, &value, expr_span(&call.args.args[0]))?;
-            Ok(LoweredValue {
-                node: push_node(
-                    nodes,
-                    call.span,
-                    Type::Bool,
-                    EffectFacts::PURE,
-                    vec![receiver.node, candidate.node],
-                    Op::StreamContains,
-                ),
-                ty: Type::Bool,
             })
         }
     }
@@ -3139,6 +3243,41 @@ fn lower_closure_with_parameter(
     lower_closure_typed(nodes, context, closure, parameter_ty, None)
 }
 
+/// Lower a `flat_map` closure `|v| <array>.stream()` to an array-returning
+/// callable value of type `fn(V) -> [W]`. The terminal `.stream()` is a codata
+/// view that `flat_map` re-derives with fresh position keys at collection time,
+/// so the frame itself returns the dense array.
+fn lower_array_stream_closure(
+    nodes: &mut Vec<Node>,
+    _outer_bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    closure: &ast::ClosureExpr,
+    parameter: &Type,
+) -> Result<LoweredValue, Diagnostics> {
+    let parameter_ty = match &closure.ty {
+        Some(declared) => {
+            let declared = lower_declared_type(declared, context.types)?;
+            if &declared != parameter {
+                return Err(type_mismatch(
+                    type_span(declared_type_ref(closure)),
+                    parameter.name(),
+                    declared.name(),
+                ));
+            }
+            declared
+        }
+        None => parameter.clone(),
+    };
+    lower_closure_typed_with_body_kind(
+        nodes,
+        context,
+        closure,
+        parameter_ty,
+        None,
+        ClosureBodyKind::ArrayStreamSource,
+    )
+}
+
 fn declared_type_ref(closure: &ast::ClosureExpr) -> &ast::Type {
     closure.ty.as_ref().expect("declared closure type")
 }
@@ -3149,6 +3288,36 @@ fn lower_closure_typed(
     closure: &ast::ClosureExpr,
     parameter_ty: Type,
     expected_result: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    lower_closure_typed_with_body_kind(
+        nodes,
+        context,
+        closure,
+        parameter_ty,
+        expected_result,
+        ClosureBodyKind::Value,
+    )
+}
+
+/// How a closure body's result value is finalized into the closure frame's
+/// return.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClosureBodyKind {
+    /// The body value is the closure's return.
+    Value,
+    /// The body is `<array>.stream()`; the closure returns the underlying dense
+    /// array so it lowers as an ordinary array-returning frame. `flat_map`
+    /// streams that array with fresh position keys at collection time.
+    ArrayStreamSource,
+}
+
+fn lower_closure_typed_with_body_kind(
+    nodes: &mut Vec<Node>,
+    context: &ModuleContext<'_>,
+    closure: &ast::ClosureExpr,
+    parameter_ty: Type,
+    expected_result: Option<&Type>,
+    body_kind: ClosureBodyKind,
 ) -> Result<LoweredValue, Diagnostics> {
     let (id, name) = context.allocate_closure();
     context.enter_function(name.clone());
@@ -3194,9 +3363,32 @@ fn lower_closure_typed(
         if let Some(expected_result) = expected_result {
             require_type(&output, expected_result, closure.span)?;
         }
+        // For an array-stream-producing closure, redirect the frame's return to
+        // the dense array underneath the terminal `.stream()`, so the closure is
+        // an ordinary array-returning frame.
+        let (output_node, return_type) = match body_kind {
+            ClosureBodyKind::Value => (output.node, output.ty.clone()),
+            ClosureBodyKind::ArrayStreamSource => {
+                let terminal = &closure_nodes[output.node.0 as usize];
+                if !matches!(terminal.op, Op::ArrayStream) {
+                    return Err(Diagnostics::one(Diagnostic::unsupported(
+                        closure.span,
+                        "flat_map closure body must be an array stream",
+                    )));
+                }
+                let array_node = *terminal.inputs.first().ok_or_else(|| {
+                    Diagnostics::one(Diagnostic::unsupported(
+                        closure.span,
+                        "array stream closure has no source array",
+                    ))
+                })?;
+                let array_ty = closure_nodes[array_node.0 as usize].ty.clone();
+                (array_node, array_ty)
+            }
+        };
         let ty = Type::Function {
             parameter: Box::new(parameter_ty.clone()),
-            result: Box::new(output.ty.clone()),
+            result: Box::new(return_type.clone()),
         };
         Ok::<_, Diagnostics>((
             Function {
@@ -3210,9 +3402,9 @@ fn lower_closure_typed(
                     ty: parameter_ty,
                     kind: ParameterKind::Positional,
                 }],
-                return_type: output.ty,
+                return_type,
                 nodes: closure_nodes,
-                output: Some(output.node),
+                output: Some(output_node),
                 yielded_checks: Vec::new(),
             },
             ty,
@@ -4718,6 +4910,53 @@ fn lower_value_call(
             Op::CallValue,
         ),
         ty: result,
+    })
+}
+
+/// Resolve a bare identifier that names a top-level function to a first-class
+/// callable value. A function reference is only well-typed as `fn(T) -> U` when
+/// the function declares exactly one positional parameter and no named ones.
+fn lower_function_reference(
+    nodes: &mut Vec<Node>,
+    context: &ModuleContext<'_>,
+    identifier: &crate::support::Spanned<String>,
+) -> Result<LoweredValue, Diagnostics> {
+    let signature = context
+        .signatures
+        .get(&identifier.value)
+        .ok_or_else(|| unknown_name(identifier.span, &identifier.value))?;
+    if signature.is_test {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            identifier.span,
+            "referencing a test function as a value",
+        )));
+    }
+    let [parameter] = signature.parameters.as_slice() else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            identifier.span,
+            "referencing a function with other than one parameter as a value",
+        )));
+    };
+    if parameter.kind != ParameterKind::Positional {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            identifier.span,
+            "referencing a function with a named parameter as a value",
+        )));
+    }
+    let ty = Type::Function {
+        parameter: Box::new(parameter.ty.clone()),
+        result: Box::new(signature.return_type.clone()),
+    };
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            identifier.span,
+            ty.clone(),
+            EffectFacts::PURE,
+            Vec::new(),
+            Op::Closure(signature.id),
+        ),
+        ty,
     })
 }
 

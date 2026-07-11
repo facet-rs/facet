@@ -204,6 +204,8 @@ pub struct YieldSite {
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct GeneratorArm {
     pub variant: u32,
+    /// A pure Bool node that is true exactly when this arm is selected.
+    pub condition: NodeId,
     /// Nodes binding the arm pattern's payload projections.
     pub bindings: Vec<NodeId>,
     pub body: GeneratorBody,
@@ -697,6 +699,12 @@ pub enum Op {
     /// Keep rows whose values satisfy a typed predicate without renumbering
     /// their stable keys.
     StreamFilter,
+    /// Map each row through a typed `V -> Option<W>`, keeping the source key for
+    /// every `Some` output and dropping every `None` without renumbering.
+    StreamFilterMap,
+    /// Expand each row through a typed `V -> Stream<K2, W>`, composing the outer
+    /// key with each inner key into a deterministic tuple key.
+    StreamFlatMap,
     /// Materialize a keyed codata recipe as its canonical Map value.
     StreamCollect,
     /// Select the structurally-least value whose row satisfies a typed
@@ -706,13 +714,9 @@ pub enum Op {
     /// predicate, breaking ties by the stable stream key, retaining the stream.
     StreamFindMax,
     /// Remove exactly the structurally-least row (stable key tie-break) from a
-    /// keyed codata recipe, yielding the selected value and the ordered rest.
+    /// keyed codata recipe, realizing the remaining values as a fresh dense
+    /// array in canonical structural key order with the selected row omitted.
     StreamSplitMin,
-    /// Count the rows a keyed codata recipe would realize.
-    StreamLen,
-    /// Test whether a keyed codata recipe holds a row whose value is
-    /// structurally equal to a given value.
-    StreamContains,
     /// Concatenate two immutable strings.
     StringConcat,
 }
@@ -901,43 +905,59 @@ impl Module {
             .iter()
             .enumerate()
             .map(|(index, &output)| {
-                let mut needed = BTreeSet::new();
-                collect_dependencies(function, output, &mut needed);
-                let mut nodes = function
-                    .nodes
-                    .iter()
-                    .filter(|node| needed.contains(&node.id))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                prune_control_regions(&mut nodes, &needed);
-                let mut seen = BTreeSet::from([function.id]);
-                let mut callees = Vec::new();
-                collect_callees(self, &nodes, &mut seen, &mut callees);
-                let mut array_map_partitions =
-                    collect_array_map_partitions(function.id, &nodes, output);
-                for callee in &callees {
-                    if let Some(output) = callee.output {
-                        array_map_partitions.extend(collect_array_map_partitions(
-                            callee.id,
-                            &callee.nodes,
-                            output,
-                        ));
-                    }
-                }
-                Island {
-                    id: IslandId(index as u32),
-                    function: function.id,
-                    function_name: function.name.clone(),
-                    nodes,
-                    output,
-                    callees,
-                    array_map_partitions,
-                }
+                self.partition_function_output(function, output, IslandId(index as u32))
             })
             .collect();
         PartitionedTest {
             name: test.name.clone(),
             islands,
+        }
+    }
+
+    /// Partition one pure output from a test function. Generator control uses
+    /// this to evaluate only its discriminator before publishing its selected
+    /// arm's checks.
+    #[must_use]
+    pub fn partition_test_output(&self, test: &Test, output: NodeId, id: IslandId) -> Island {
+        self.partition_function_output(&self.functions[test.function.0 as usize], output, id)
+    }
+
+    fn partition_function_output(
+        &self,
+        function: &Function,
+        output: NodeId,
+        id: IslandId,
+    ) -> Island {
+        let mut needed = BTreeSet::new();
+        collect_dependencies(function, output, &mut needed);
+        let mut nodes = function
+            .nodes
+            .iter()
+            .filter(|node| needed.contains(&node.id))
+            .cloned()
+            .collect::<Vec<_>>();
+        prune_control_regions(&mut nodes, &needed);
+        let mut seen = BTreeSet::from([function.id]);
+        let mut callees = Vec::new();
+        collect_callees(self, &nodes, &mut seen, &mut callees);
+        let mut array_map_partitions = collect_array_map_partitions(function.id, &nodes, output);
+        for callee in &callees {
+            if let Some(output) = callee.output {
+                array_map_partitions.extend(collect_array_map_partitions(
+                    callee.id,
+                    &callee.nodes,
+                    output,
+                ));
+            }
+        }
+        Island {
+            id,
+            function: function.id,
+            function_name: function.name.clone(),
+            nodes,
+            output,
+            callees,
+            array_map_partitions,
         }
     }
 }
@@ -1324,11 +1344,11 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::ArrayAny => op.push(53),
         Op::ArrayContains => op.push(54),
         Op::ArraySorted => op.push(55),
-        Op::StreamFindMin => op.push(56),
-        Op::StreamFindMax => op.push(57),
-        Op::StreamSplitMin => op.push(58),
-        Op::StreamLen => op.push(59),
-        Op::StreamContains => op.push(60),
+        Op::StreamFilterMap => op.push(56),
+        Op::StreamFlatMap => op.push(57),
+        Op::StreamFindMin => op.push(58),
+        Op::StreamFindMax => op.push(59),
+        Op::StreamSplitMin => op.push(60),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());
