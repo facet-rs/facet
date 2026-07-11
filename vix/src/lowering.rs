@@ -28,8 +28,9 @@ use crate::runtime::{
 };
 use crate::support::Span;
 use crate::vir::{
-    EnumType, Function, FunctionId, Island, Node, NodeId, NodeRef, ORDERING_EQUAL_VARIANT,
-    ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, Type, VariantPayload,
+    EnumType, EnumVariant, Function, FunctionId, Island, Node, NodeId, NodeRef,
+    ORDERING_EQUAL_VARIANT, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, Type,
+    VariantPayload,
 };
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -84,6 +85,44 @@ pub struct ValueConstant {
     pub bytes: Vec<u8>,
 }
 
+/// The internal result ABI carried by every function in an array-bearing
+/// island. It is metadata for the verified artifact, not a source-level type.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct ArrayOutcomeAbi {
+    pub ty: Type,
+    pub ok_variant: u32,
+    pub index_out_of_bounds_variant: u32,
+    pub array_machine_variant: u32,
+}
+
+impl ArrayOutcomeAbi {
+    #[must_use]
+    pub fn for_value(value: Type) -> Self {
+        Self {
+            ty: Type::Enum(EnumType {
+                name: format!("$array_outcome<{}>", value.name()),
+                variants: vec![
+                    EnumVariant {
+                        name: "Ok".to_owned(),
+                        payload: VariantPayload::Tuple(vec![value]),
+                    },
+                    EnumVariant {
+                        name: "IndexOutOfBounds".to_owned(),
+                        payload: VariantPayload::Tuple(vec![Type::Int, Type::Int, Type::Int]),
+                    },
+                    EnumVariant {
+                        name: "ArrayMachine".to_owned(),
+                        payload: VariantPayload::Tuple(vec![Type::Int, Type::Int]),
+                    },
+                ],
+            }),
+            ok_variant: 0,
+            index_out_of_bounds_variant: 1,
+            array_machine_variant: 2,
+        }
+    }
+}
+
 struct PendingValueConstant {
     node: NodeRef,
     root_slot: FrameSlot,
@@ -100,6 +139,7 @@ pub struct LoweringArtifact {
     pub demand_key: DemandKey,
     pub demand_preimage: DemandPreimage,
     executable: Executable,
+    pub array_outcome: Option<ArrayOutcomeAbi>,
     pub pc_nodes: Vec<Vec<NodeRef>>,
     pub constants: Vec<ValueConstant>,
 }
@@ -267,6 +307,8 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
     if output.ty != Type::Check {
         return Err(lowering_diagnostic(output.span, "island output is not a Check").into());
     }
+    let array_outcome =
+        island_contains_array_ops(island).then(|| ArrayOutcomeAbi::for_value(output.ty.clone()));
 
     let function_ids = island.local_function_ids();
     let functions = island
@@ -381,9 +423,18 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
         demand_key,
         demand_preimage,
         executable: Executable::new(verified),
+        array_outcome,
         pc_nodes,
         constants,
     })
+}
+
+fn island_contains_array_ops(island: &Island) -> bool {
+    island
+        .nodes
+        .iter()
+        .chain(island.callees.iter().flat_map(|function| &function.nodes))
+        .any(|node| matches!(node.op, Op::Array | Op::ArrayIndex | Op::ArrayLen))
 }
 
 fn program_error_attribution(
