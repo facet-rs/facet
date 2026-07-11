@@ -106,7 +106,7 @@ fn parse_sparse_jsonl_into(text: String) where { out: [SparseIndexRow] } -> [Spa
     } else if text.contains("\n") {
         parse_sparse_jsonl_line (text.before("\n")) where { rest: text.after("\n"), out }
     } else {
-        out.push(parse_sparse_row text)
+        out + parse_sparse_row text
     }
 }
 
@@ -114,7 +114,7 @@ fn parse_sparse_jsonl_line(line: String) where { rest: String, out: [SparseIndex
     let next = if line == "" {
         out
     } else {
-        out.push(parse_sparse_row line)
+        out + parse_sparse_row line
     };
     parse_sparse_jsonl_into rest where { out: next }
 }
@@ -210,15 +210,16 @@ fn empty_bridge_state() -> SparseBridgeState {
 }
 
 fn register_package(state: SparseBridgeState) where { name: String } -> SparseBridgeState {
-    match state.package_ids.get(name) {
-        Some(_) => state,
-        None => SparseBridgeState {
-            packages: state.packages.push(state.next_pkg),
-            package_ids: state.package_ids.insert(name, state.next_pkg),
-            names: state.names.insert(state.next_pkg, name),
+    if state.package_ids.has(name) {
+        state
+    } else {
+        SparseBridgeState {
+            packages: state.packages + state.next_pkg,
+            package_ids: state.package_ids + (name, state.next_pkg),
+            names: state.names + (state.next_pkg, name),
             next_pkg: state.next_pkg + 1,
             ..state
-        },
+        }
     }
 }
 
@@ -227,12 +228,12 @@ fn bridge_row(state: SparseBridgeState) where { row: SparseIndexRow } -> SparseB
 }
 
 fn bridge_live_row(state: SparseBridgeState) where { row: SparseIndexRow } -> SparseBridgeState {
-    let pkg = state.package_ids.get(row.name).unwrap();
+    let pkg = state.package_ids.get(row.name);
     let version_id = state.next_version;
     SparseBridgeState {
-        version_ids: state.version_ids.push(version_id),
-        version_pkgs: state.version_pkgs.insert(version_id, pkg),
-        version_values: state.version_values.insert(version_id, row.vers),
+        version_ids: state.version_ids + version_id,
+        version_pkgs: state.version_pkgs + (version_id, pkg),
+        version_values: state.version_values + (version_id, row.vers),
         next_version: version_id + 1,
         ..state
     }
@@ -261,14 +262,11 @@ fn bridge_required_dep(state: SparseBridgeState) where { parent_pkg: Int, parent
 }
 
 fn package_known(state: SparseBridgeState) where { name: String } -> Bool {
-    match state.package_ids.get(name) {
-        Some(_) => true,
-        None => false,
-    }
+    state.package_ids.has(name)
 }
 
 fn package_id(state: SparseBridgeState) where { name: String } -> Int {
-    state.package_ids.get(name).unwrap()
+    state.package_ids.get(name)
 }
 
 fn add_required_dep_clauses(state: SparseBridgeState) where { parent_pkg: Int, parent_version: String, dep_pkg: Int, req: String, kind: String } -> SparseBridgeState {
@@ -305,19 +303,19 @@ fn add_selected_guard_clause(state: SparseBridgeState) where { clause: SelectedG
     let clause_id = state.next_clause;
     let guard_id = state.next_guard;
     SparseBridgeState {
-        clause_ids: state.clause_ids.push(clause_id),
-        guard_ids: state.guard_ids.push(guard_id),
-        guard_clause_ids: state.guard_clause_ids.insert(guard_id, clause_id),
-        guard_tags: state.guard_tags.insert(guard_id, "selected"),
-        guard_kinds: state.guard_kinds.insert(guard_id, 0),
-        guard_pkgs: state.guard_pkgs.insert(guard_id, clause.parent_pkg),
-        guard_version_values: state.guard_version_values.insert(guard_id, clause.parent_version),
-        guard_features: state.guard_features.insert(guard_id, 0),
-        consequent_tags: state.consequent_tags.insert(clause_id, clause.consequent_tag),
-        consequent_pkgs: state.consequent_pkgs.insert(clause_id, clause.dep_pkg),
-        consequent_version_sets: state.consequent_version_sets.insert(clause_id, clause.req),
-        consequent_features: state.consequent_features.insert(clause_id, 0),
-        gate_kinds: state.gate_kinds.insert(clause_id, clause.kind),
+        clause_ids: state.clause_ids + clause_id,
+        guard_ids: state.guard_ids + guard_id,
+        guard_clause_ids: state.guard_clause_ids + (guard_id, clause_id),
+        guard_tags: state.guard_tags + (guard_id, "selected"),
+        guard_kinds: state.guard_kinds + (guard_id, 0),
+        guard_pkgs: state.guard_pkgs + (guard_id, clause.parent_pkg),
+        guard_version_values: state.guard_version_values + (guard_id, clause.parent_version),
+        guard_features: state.guard_features + (guard_id, 0),
+        consequent_tags: state.consequent_tags + (clause_id, clause.consequent_tag),
+        consequent_pkgs: state.consequent_pkgs + (clause_id, clause.dep_pkg),
+        consequent_version_sets: state.consequent_version_sets + (clause_id, clause.req),
+        consequent_features: state.consequent_features + (clause_id, 0),
+        gate_kinds: state.gate_kinds + (clause_id, clause.kind),
         next_clause: clause_id + 1,
         next_guard: guard_id + 1,
         ..state
@@ -349,7 +347,7 @@ fn index_from_bridge_state(state: SparseBridgeState) -> Index {
 }
 
 fn problem_from_bridge_state(state: SparseBridgeState) where { root_name: String, req: String } -> Problem {
-    problem_from_root_pkg (state.package_ids.get(root_name).unwrap()) where { req }
+    problem_from_root_pkg (state.package_ids.get(root_name)) where { req }
 }
 
 fn problem_from_root_pkg(root_pkg: Int) where { req: String } -> Problem {
@@ -364,7 +362,7 @@ fn problem_from_root_pkg(root_pkg: Int) where { req: String } -> Problem {
 
 pub fn sparse_solve_selected_versions_text(rows: [SparseIndexRow]) where { root_name: String, req: String, target: Target } -> String {
     let state = sparse_bridge_state rows;
-    let root_pkg = state.package_ids.get(root_name).unwrap();
+    let root_pkg = state.package_ids.get(root_name);
     solve_selected_versions_text (index_from_bridge_state state) where { problem: problem_from_root_pkg root_pkg where { req }, target }
 }
 

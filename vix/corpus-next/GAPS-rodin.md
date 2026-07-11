@@ -17,7 +17,7 @@ not expected to parse or run today. Correctness means preserving the meaning of
 - `where { ... }` helps at small arities but buries control flow at scale. Count: 316 `where` sites across the two port files, with 11 signatures still wide enough that I would rather have records. PROPOSAL: records should be the style guide for 4+ named inputs, not just legal syntax.
 - At-most-one-positional is painful in branch search: `try_candidate` at `vix/corpus-next/rodin.vix:1054` and its call at `:1050` carry `state`, `target`, `pkg`, `version`, and `rest`; this reads like a continuation record. PROPOSAL: introduce `CandidateAttempt`.
 - At-most-one-positional is also painful in the sparse bridge: `add_required_dep_clauses` at `vix/corpus-next/index.vix:274` still has five named fields. PROPOSAL: introduce `RequiredDepClause` beside `SelectedGuardClause`.
-- The absence of `Multiset` does not hurt the Rodin meaning. `features`, `learned`, `Region.packages`, and `Region.features` were uniqueness-maintained sets; `Set.insert` at `vix/corpus-next/rodin.vix:369`, `:686`, `:862`, and `:871` is clearer than sorted-array round trips.
+- The absence of `Multiset` does not hurt the Rodin meaning. `features`, `learned`, `Region.packages`, and `Region.features` were uniqueness-maintained sets; `Set` addition (`set + x`) at `vix/corpus-next/rodin.vix:369`, `:686`, `:862`, and `:871` is clearer than sorted-array round trips.
 - ~~Stdout has no home~~ **RESOLVED, round 12.** `exec` returns `ExecOutcome { tree, stdout: Stream<Int,String>, stderr }` (`r[machine.primitive.exec-outcome]`); `stdout` is a codata field, not a file. The proposal to "define an exec stdout projection or a typed captured-output field" is **answered by the returned struct**, not owed. **Still owed:** `vix/corpus-next/rodin.vix:497` keeps `--stdout {p"cfg.stdout"}` and must be re-ported onto `out.stdout` — a mechanical change, blocked on nothing.
 
 ## Gaps And Awkwardness
@@ -46,7 +46,7 @@ not expected to parse or run today. Correctness means preserving the meaning of
 
 - Deleted `namespace Version { fn <=> }`; `Version` now gets precedence from its std declaration.
 - Replaced all Rodin `Multiset<T>` storage with `Set<T>`.
-- Replaced the three sorted-array uniqueness round trips with `Set.insert`.
+- Replaced the three sorted-array uniqueness round trips with `Set` addition (`set + x`).
 - Removed `Target::host()` and threaded a supplied `Target` through the resolver entry points.
 - Converted local free-function calls to the v2 subject plus `where { ... }` convention.
 - Introduced `SelectedGuardClause` for the worst sparse-index wide call.

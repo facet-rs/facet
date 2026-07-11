@@ -16,8 +16,10 @@
 //      the old v1 `Multiset` workaround is gone.
 //   2. [CLOSED] `Option` now has user-facing construction (`Some`/`None`) and
 //      matching, backed by the machine's existing content-addressed Option
-//      store entry (the one `map.get`/`.unwrap()` already use) — one Option
-//      representation, generic over any payload via the `Option<T>` schema.
+//      store entry (the one `Domain.selected` and `split_last` already use) —
+//      one Option representation, generic over any payload via the `Option<T>`
+//      schema. Map access is addressed now (`map.has` then `map.get`); absence
+//      is a typed `MissingKey`, not an `Option` the caller unwraps.
 //   3. [CLOSED] `Version` host value now has `.major/.minor/.patch` accessors
 //      (VERSION_FIELD host op over version::parse_bytes).
 //
@@ -284,26 +286,27 @@ fn default_domain() -> Domain {
 }
 
 fn region_versions_for(region: Region) where { pkg: Int } -> VersionSet {
-    region.versions.get(pkg).unwrap()
+    region.versions.get(pkg)
 }
 
 fn consequent_version_set_for(index: Index) where { clause_id: Int } -> VersionSet {
-    index.consequent_version_sets.get(clause_id).unwrap()
+    index.consequent_version_sets.get(clause_id)
 }
 
 fn domain_for(state: State) where { pkg: Int } -> Domain {
-    match state.domains.get(pkg) {
-        Some(domain) => domain,
-        None => default_domain(),
+    if state.domains.has(pkg) {
+        state.domains.get(pkg)
+    } else {
+        default_domain()
     }
 }
 
 fn put_domain(state: State) where { pkg: Int, domain: Domain } -> State {
-    State { domains: state.domains.insert(pkg, domain), ..state }
+    State { domains: state.domains.with(pkg, domain), ..state }
 }
 
 fn feature_enabled(state: State) where { feature: Int } -> Bool {
-    state.features.contains(feature)
+    state.features.has(feature)
 }
 
 fn selected_allowed(selected: Option<Version>) where { allowed: VersionSet } -> Bool {
@@ -366,7 +369,7 @@ fn enable_feature(state: State) where { feature: Int } -> Step {
     if feature_enabled state where { feature } {
         Step::Pass { state: state, changed: false }
     } else {
-        Step::Pass { state: State { features: state.features.insert(feature), ..state }, changed: true }
+        Step::Pass { state: State { features: state.features + feature, ..state }, changed: true }
     }
 }
 
@@ -377,15 +380,15 @@ fn select_version(state: State) where { pkg: Int, version: Version } -> State {
 
 fn hypothesize_version(state: State) where { pkg: Int, version: Version } -> State {
     let selected = select_version state where { pkg, version };
-    State { hypotheses: selected.hypotheses.push(Hypothesis { pkg: pkg, version: version }), ..selected }
+    State { hypotheses: selected.hypotheses + Hypothesis { pkg: pkg, version: version }, ..selected }
 }
 
 fn candidate_row_version(index: Index) where { version_id: Int } -> Version {
-    rodin_version (index.version_values.get(version_id).unwrap())
+    rodin_version (index.version_values.get(version_id))
 }
 
 fn candidate_row_allowed(index: Index) where { pkg: Int, allowed: VersionSet, version_id: Int } -> Bool {
-    let row_pkg = index.version_pkgs.get(version_id).unwrap();
+    let row_pkg = index.version_pkgs.get(version_id);
     let version = candidate_row_version index where { version_id };
     row_pkg == pkg && allowed.contains(version)
 }
@@ -393,7 +396,7 @@ fn candidate_row_allowed(index: Index) where { pkg: Int, allowed: VersionSet, ve
 fn candidates_for(index: Index) where { pkg: Int, allowed: VersionSet } -> [Version] {
     index.version_ids.fold([], |out, version_id| {
         if candidate_row_allowed index where { pkg, allowed, version_id } {
-            out.push(candidate_row_version index where { version_id })
+            out + candidate_row_version index where { version_id }
         } else {
             out
         }
@@ -402,9 +405,10 @@ fn candidates_for(index: Index) where { pkg: Int, allowed: VersionSet } -> [Vers
 
 fn package_has_selected_guard(index: Index) where { pkg: Int } -> Bool {
     index.guard_ids.any(|guard_id| {
-        match index.guard_version_values.get(guard_id) {
-            Some(_) => index.guard_pkgs.get(guard_id).unwrap() == pkg,
-            None => false,
+        if index.guard_version_values.has(guard_id) {
+            index.guard_pkgs.get(guard_id) == pkg
+        } else {
+            false
         }
     })
 }
@@ -487,7 +491,7 @@ fn cfg_facts_insert_lines(lines: Doc) where { facts: Map<String, Bool> } -> Map<
         facts
     } else {
         let line = doc_string lines where { key: "head" };
-        cfg_facts_insert_lines (doc_field lines where { key: "tail" }) where { facts: facts.insert(cfg_fact_line_key line, true) }
+        cfg_facts_insert_lines (doc_field lines where { key: "tail" }) where { facts: facts.with(cfg_fact_line_key line, true) }
     }
 }
 
@@ -527,10 +531,7 @@ fn cfg_exprs_eval_any(exprs: Doc) where { facts: Map<String, Bool>, target: Targ
 }
 
 fn cfg_fact_contains(facts: Map<String, Bool>) where { key: String } -> Bool {
-    match facts.get(key) {
-        Some(_) => true,
-        None => false,
-    }
+    facts.has(key)
 }
 
 fn cfg_expr_eval(expr: Doc) where { facts: Map<String, Bool>, target: Target } -> Bool {
@@ -630,16 +631,17 @@ fn apply_clause_id(index: Index) where { state: State, target: Target, clause_id
 }
 
 fn gate_active_id(index: Index) where { clause_id: Int, target: Target } -> Bool {
-    let kind = index.gate_kinds.get(clause_id).unwrap();
-    gate_kind_active kind && match index.gate_targets.get(clause_id) {
-        Some(expr) => target_matches expr where { target },
-        None => true,
+    let kind = index.gate_kinds.get(clause_id);
+    gate_kind_active kind && if index.gate_targets.has(clause_id) {
+        target_matches (index.gate_targets.get(clause_id)) where { target }
+    } else {
+        true
     }
 }
 
 fn guard_ids_hold_for_clause(index: Index) where { state: State, clause_id: Int } -> Bool {
     index.guard_ids.all(|guard_id| {
-        if index.guard_clause_ids.get(guard_id).unwrap() == clause_id {
+        if index.guard_clause_ids.get(guard_id) == clause_id {
             guard_id_holds index where { state, guard_id }
         } else {
             true
@@ -648,28 +650,27 @@ fn guard_ids_hold_for_clause(index: Index) where { state: State, clause_id: Int 
 }
 
 fn guard_id_holds(index: Index) where { state: State, guard_id: Int } -> Bool {
-    let pkg = index.guard_pkgs.get(guard_id).unwrap();
-    match index.guard_version_values.get(guard_id) {
-        Some(version) => selected_matches_version_text state where { pkg, version },
-        None => {
-            if index.guard_kinds.get(guard_id).unwrap() == 2 {
-                feature_enabled state where { feature: index.guard_features.get(guard_id).unwrap() }
-            } else {
-                domain_for state where { pkg }.active
-            }
-        },
+    let pkg = index.guard_pkgs.get(guard_id);
+    if index.guard_version_values.has(guard_id) {
+        selected_matches_version_text state where { pkg, version: index.guard_version_values.get(guard_id) }
+    } else {
+        if index.guard_kinds.get(guard_id) == 2 {
+            feature_enabled state where { feature: index.guard_features.get(guard_id) }
+        } else {
+            domain_for state where { pkg }.active
+        }
     }
 }
 
 fn apply_consequent_id(index: Index) where { state: State, clause_id: Int } -> Step {
-    let tag = index.consequent_tags.get(clause_id).unwrap();
-    let pkg = index.consequent_pkgs.get(clause_id).unwrap();
+    let tag = index.consequent_tags.get(clause_id);
+    let pkg = index.consequent_pkgs.get(clause_id);
     if tag == "in_graph" {
         activate index where { state, pkg }
     } else if tag == "version_set" {
         narrow_for_clause index where { state, pkg, allowed: consequent_version_set_for index where { clause_id }, clause_id }
     } else {
-        enable_feature state where { feature: index.consequent_features.get(clause_id).unwrap() }
+        enable_feature state where { feature: index.consequent_features.get(clause_id) }
     }
 }
 
@@ -679,12 +680,12 @@ fn empty_region() -> Region {
 }
 
 fn region_with_versions(region: Region) where { pkg: Int, versions: VersionSet } -> Region {
-    let packages = if region.packages.contains(pkg) {
+    let packages = if region.packages.has(pkg) {
         region.packages
     } else {
-        region.packages.insert(pkg)
+        region.packages + pkg
     };
-    Region { packages: packages, versions: region.versions.insert(pkg, versions), features: region.features }
+    Region { packages: packages, versions: region.versions.with(pkg, versions), features: region.features }
 }
 
 fn empty_version_set() -> VersionSet {
@@ -696,8 +697,8 @@ fn exact_version_set(index: Index) where { pkg: Int, version: Version } -> Versi
         match current {
             Some(_) => current,
             None => {
-                let row_text = index.version_values.get(version_id).unwrap();
-                if index.version_pkgs.get(version_id).unwrap() == pkg
+                let row_text = index.version_values.get(version_id);
+                if index.version_pkgs.get(version_id) == pkg
                     && VersionSet::from_req(`=${row_text}`).contains(version) {
                     Some(VersionSet::from_req(`=${row_text}`))
                 } else {
@@ -739,10 +740,11 @@ fn last_hypothesis(state: State) -> Option<Hypothesis> {
 
 fn selected_guard_for_clause(index: Index) where { clause_id: Int } -> Option<Int> {
     index.guard_ids.fold(None, |selected, guard_id| {
-        if index.guard_clause_ids.get(guard_id).unwrap() == clause_id {
-            match index.guard_version_values.get(guard_id) {
-                Some(_) => Some(guard_id),
-                None => selected,
+        if index.guard_clause_ids.get(guard_id) == clause_id {
+            if index.guard_version_values.has(guard_id) {
+                Some(guard_id)
+            } else {
+                selected
             }
         } else {
             selected
@@ -752,7 +754,7 @@ fn selected_guard_for_clause(index: Index) where { clause_id: Int } -> Option<In
 
 fn conflict_support(index: Index) where { pkg: Int, clause_id: Int } -> [Int] {
     match selected_guard_for_clause index where { clause_id } {
-        Some(guard_id) => [pkg, index.guard_pkgs.get(guard_id).unwrap()],
+        Some(guard_id) => [pkg, index.guard_pkgs.get(guard_id)],
         None => [pkg],
     }
 }
@@ -762,7 +764,7 @@ fn point_region_for_conflict(index: Index) where { state: State, pkg: Int, claus
     let region = region_from_support index where { state, packages: conflict_support index where { pkg, clause_id }, region: empty_region() };
     match last_hypothesis state {
         Some(hypothesis) => {
-            if region.packages.contains(hypothesis.pkg) {
+            if region.packages.has(hypothesis.pkg) {
                 region
             } else {
                 region_with_versions region where { pkg: hypothesis.pkg, versions: exact_version_set index where { pkg: hypothesis.pkg, version: hypothesis.version } }
@@ -776,8 +778,8 @@ fn matching_selected_clause_exists(index: Index) where { reference_clause: Int, 
     index.clause_ids.any(|clause_id| {
         match selected_guard_for_clause index where { clause_id } {
             Some(guard_id) =>
-                index.guard_pkgs.get(guard_id).unwrap() == parent_pkg
-                    && index.guard_version_values.get(guard_id).unwrap() == version
+                index.guard_pkgs.get(guard_id) == parent_pkg
+                    && index.guard_version_values.get(guard_id) == version
                     && clause_same_effect index where { left: reference_clause, right: clause_id },
             None => false,
         }
@@ -785,28 +787,28 @@ fn matching_selected_clause_exists(index: Index) where { reference_clause: Int, 
 }
 
 fn clause_same_effect(index: Index) where { left: Int, right: Int } -> Bool {
-    index.consequent_tags.get(left).unwrap() == index.consequent_tags.get(right).unwrap()
-        && index.consequent_pkgs.get(left).unwrap() == index.consequent_pkgs.get(right).unwrap()
+    index.consequent_tags.get(left) == index.consequent_tags.get(right)
+        && index.consequent_pkgs.get(left) == index.consequent_pkgs.get(right)
         && consequent_version_set_for index where { clause_id: left } == consequent_version_set_for index where { clause_id: right }
-        && index.consequent_features.get(left).unwrap() == index.consequent_features.get(right).unwrap()
-        && index.gate_kinds.get(left).unwrap() == index.gate_kinds.get(right).unwrap()
+        && index.consequent_features.get(left) == index.consequent_features.get(right)
+        && index.gate_kinds.get(left) == index.gate_kinds.get(right)
         && gate_target_same index where { left, right }
 }
 
 fn gate_target_same(index: Index) where { left: Int, right: Int } -> Bool {
-    match index.gate_targets.get(left) {
-        Some(_) => false,
-        None => match index.gate_targets.get(right) {
-            Some(_) => false,
-            None => true,
-        },
+    if index.gate_targets.has(left) {
+        false
+    } else if index.gate_targets.has(right) {
+        false
+    } else {
+        true
     }
 }
 
 fn widen_versions_for_clause(index: Index) where { reference_clause: Int, parent_pkg: Int } -> VersionSet {
     index.version_ids.fold(empty_version_set(), |out, version_id| {
-        let row_text = index.version_values.get(version_id).unwrap();
-        if index.version_pkgs.get(version_id).unwrap() == parent_pkg
+        let row_text = index.version_values.get(version_id);
+        if index.version_pkgs.get(version_id) == parent_pkg
             && matching_selected_clause_exists index where { reference_clause, parent_pkg, version: row_text } {
             out.union(VersionSet::from_req(`=${row_text}`))
         } else {
@@ -819,7 +821,7 @@ fn widen_versions_for_clause(index: Index) where { reference_clause: Int, parent
 // read-set widening awaits read-set exposure (rodin/docs/90, Phase-2 gap).
 fn widen_region(index: Index) where { clause_id: Int, region: Region } -> Region {
     match selected_guard_for_clause index where { clause_id } {
-        Some(guard_id) => widen_region_for_parent index where { clause_id, region, parent_pkg: index.guard_pkgs.get(guard_id).unwrap() },
+        Some(guard_id) => widen_region_for_parent index where { clause_id, region, parent_pkg: index.guard_pkgs.get(guard_id) },
         None => region,
     }
 }
@@ -836,9 +838,10 @@ fn widen_region_for_parent(index: Index) where { clause_id: Int, region: Region,
 // r[impl solver.learning.region] — containment; region-level subtract not yet needed/implemented
 fn region_contains_region(outer: Region) where { inner: Region } -> Bool {
     outer.packages.map(|pkg| {
-        match inner.versions.get(pkg) {
-            Some(inner_versions) => inner_versions.subset(region_versions_for outer where { pkg }),
-            None => false,
+        if inner.versions.has(pkg) {
+            inner.versions.get(pkg).subset(region_versions_for outer where { pkg })
+        } else {
+            false
         }
     }).values().fold(true, |ok, contains_pkg| ok && contains_pkg)
 }
@@ -858,7 +861,7 @@ fn deactivate_contained(learned: Set<LearnedNoGood>) where { region: Region } ->
             }
         })
         .values()
-        .fold(%[], |facts, fact| facts.insert(fact))
+        .fold(%[], |facts, fact| facts + fact)
 }
 
 // r[impl solver.learning.frontier]
@@ -867,7 +870,7 @@ fn install_learned_fact(state: State) where { fact: LearnedNoGood } -> State {
         state
     } else {
         State {
-            learned: deactivate_contained state.learned where { region: fact.region }.insert(fact),
+            learned: (deactivate_contained state.learned where { region: fact.region }) + fact,
             ..state
         }
     }
@@ -1129,7 +1132,7 @@ fn selected_from_state(packages: [Int]) where { state: State, selected: Map<Int,
     packages.fold(selected, |out, pkg| {
         if domain_for state where { pkg }.active {
             match domain_for state where { pkg }.selected {
-                Some(version) => out.insert(pkg, version),
+                Some(version) => out + (pkg, version),
                 None => out,
             }
         } else {
@@ -1143,17 +1146,17 @@ fn enabled_feature_ids_from_index(index: Index) where { state: State } -> [Int] 
 }
 
 fn enabled_feature_ids_from_clause(index: Index) where { state: State, clause_id: Int, out: [Int] } -> [Int] {
-    let tag = index.consequent_tags.get(clause_id).unwrap();
+    let tag = index.consequent_tags.get(clause_id);
     if tag == "in_graph" || tag == "version_set" {
         out
     } else {
-        enabled_feature_ids_insert state where { feature: index.consequent_features.get(clause_id).unwrap(), out }
+        enabled_feature_ids_insert state where { feature: index.consequent_features.get(clause_id), out }
     }
 }
 
 fn enabled_feature_ids_insert(state: State) where { feature: Int, out: [Int] } -> [Int] {
     if feature_enabled state where { feature } && !out.contains(feature) {
-        out.push(feature)
+        out + feature
     } else {
         out
     }
@@ -1207,9 +1210,10 @@ fn retry_with_learned(index: Index) where { seeded: State, failed: State, target
 fn selected_names_from(index: Index) where { packages: [Int], selected: Map<Int, Version>, out: [String] } -> [String] {
     packages.fold([], |reversed, pkg| [pkg, ..reversed])
         .fold(out, |next, pkg| {
-            match selected.get(pkg) {
-                Some(_) => next.push(index.names.get(pkg).unwrap()),
-                None => next,
+            if selected.has(pkg) {
+                next + index.names.get(pkg)
+            } else {
+                next
             }
         })
 }
@@ -1230,9 +1234,10 @@ fn append_selected_name(out: String) where { name: String } -> String {
 fn selected_names_text_from(index: Index) where { packages: [Int], selected: Map<Int, Version>, out: String } -> String {
     packages.fold([], |reversed, pkg| [pkg, ..reversed])
         .fold(out, |next, pkg| {
-            match selected.get(pkg) {
-                Some(_) => append_selected_name next where { name: index.names.get(pkg).unwrap() },
-                None => next,
+            if selected.has(pkg) {
+                append_selected_name next where { name: index.names.get(pkg) }
+            } else {
+                next
             }
         })
 }
@@ -1249,9 +1254,11 @@ fn append_selected_version(out: String) where { name: String, version: String } 
 fn selected_versions_text_from(index: Index) where { packages: [Int], selected: Map<Int, Version>, out: String } -> String {
     packages.fold([], |reversed, pkg| [pkg, ..reversed])
         .fold(out, |next, pkg| {
-            match selected.get(pkg) {
-                Some(version) => append_selected_version next where { name: index.names.get(pkg).unwrap(), version: selected_version_text index where { pkg, version } },
-                None => next,
+            if selected.has(pkg) {
+                let version = selected.get(pkg);
+                append_selected_version next where { name: index.names.get(pkg), version: selected_version_text index where { pkg, version } }
+            } else {
+                next
             }
         })
 }
@@ -1261,8 +1268,8 @@ fn selected_version_text(index: Index) where { pkg: Int, version: Version } -> S
         match current {
             Some(_) => current,
             None => {
-                let row_pkg = index.version_pkgs.get(version_id).unwrap();
-                let row_text = index.version_values.get(version_id).unwrap();
+                let row_pkg = index.version_pkgs.get(version_id);
+                let row_text = index.version_values.get(version_id);
                 if row_pkg == pkg && rodin_version row_text == version {
                     Some(row_text)
                 } else {
@@ -1288,7 +1295,7 @@ pub fn root_candidate_count(index: Index) where { problem: Problem } -> Int {
 
 pub fn root_version_count(index: Index) where { problem: Problem } -> Int {
     index.version_ids.fold(0, |count, version_id| {
-        if index.version_pkgs.get(version_id).unwrap() == problem.root_pkg {
+        if index.version_pkgs.get(version_id) == problem.root_pkg {
             count + 1
         } else {
             count
