@@ -521,6 +521,7 @@ pub enum Op {
     MapHas,
     MapLen,
     MapKeys,
+    MapValues,
     /// Add one element to a set.
     SetAdd,
     /// Combine two sets.
@@ -1138,6 +1139,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::StreamCollect => op.push(47),
         Op::ArrayFold => op.push(48),
         Op::StreamFilter => op.push(49),
+        Op::MapValues => op.push(50),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());

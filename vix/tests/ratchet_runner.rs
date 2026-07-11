@@ -3571,6 +3571,35 @@ fn overlapping_maps_check() -> Stream<Check> {
 }
 
 #[test]
+fn map_values_follow_canonical_key_order() {
+    const SOURCE: &str = r#"
+#[test]
+fn map_values() -> Stream<Check> {
+    let m = %{"b" => 2, "a" => 1, "c" => 3};
+    yield expect_eq(m.values(), [1, 2, 3]);
+}
+"#;
+    let compilation = Compiler::new()
+        .compile(SOURCE)
+        .expect("Map.values source compiles");
+    assert!(
+        compilation.functions[0]
+            .nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::MapValues))
+    );
+
+    let report = run_source(SOURCE).expect("Map.values runs through verified production path");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+#[test]
 fn string_plus_remains_distinct_from_collection_addition() {
     const SOURCE: &str = r#"
 fn suffixed(value: String) -> String {

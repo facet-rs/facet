@@ -500,6 +500,7 @@ fn nodes_contain_checked_collection_ops(nodes: &[Node]) -> bool {
                 | Op::MapHas
                 | Op::MapLen
                 | Op::MapKeys
+                | Op::MapValues
                 | Op::Set
                 | Op::SetAdd
                 | Op::SetConcat
@@ -2509,6 +2510,7 @@ impl FunctionLayout {
                     | Op::MapGet
                     | Op::MapHas
                     | Op::MapKeys
+                    | Op::MapValues
                     | Op::Set
                     | Op::SetAdd
                     | Op::SetConcat
@@ -2568,6 +2570,7 @@ impl FunctionLayout {
                     | Op::MapGet
                     | Op::MapHas
                     | Op::MapKeys
+                    | Op::MapValues
                     | Op::Set
                     | Op::SetAdd
                     | Op::SetConcat
@@ -2868,7 +2871,13 @@ fn collection_temporary_types(
 ) -> Result<Option<Vec<Type>>, Diagnostics> {
     let collection = match node.op {
         Op::Map | Op::StreamCollect => node.ty.clone(),
-        Op::MapAdd | Op::MapConcat | Op::MapWith | Op::MapGet | Op::MapHas | Op::MapKeys => node
+        Op::MapAdd
+        | Op::MapConcat
+        | Op::MapWith
+        | Op::MapGet
+        | Op::MapHas
+        | Op::MapKeys
+        | Op::MapValues => node
             .inputs
             .first()
             .and_then(|input| nodes.iter().find(|candidate| candidate.id == *input))
@@ -3283,6 +3292,7 @@ fn lower_node_sequence(
             | Op::MapHas
             | Op::MapLen
             | Op::MapKeys
+            | Op::MapValues
             | Op::Set
             | Op::SetAdd
             | Op::SetConcat
@@ -4372,6 +4382,7 @@ fn lower_node(
         | Op::MapHas
         | Op::MapLen
         | Op::MapKeys
+        | Op::MapValues
         | Op::SetAdd
         | Op::SetConcat
         | Op::SetHas
@@ -6719,7 +6730,7 @@ fn lower_checked_collection_node(
             })?;
             Ok(ValueRepresentation::Word)
         }
-        Op::MapKeys | Op::SetValues => {
+        Op::MapKeys | Op::MapValues | Op::SetValues => {
             require_input_count(node, 1)?;
             let collection = input_value(node, values, 0)?;
             require_value(
@@ -6819,15 +6830,25 @@ fn lower_checked_collection_node(
             outputs
                 .code
                 .jump_if_zero(temps.present.region.start(), done);
-            let source = if matches!(node.op, Op::MapKeys) {
-                outputs.code.push(WeavyOp::ProductProject {
-                    dst: temps.projected_key.region_id,
-                    product: temps.row.region_id,
-                    field: 0,
-                });
-                &temps.projected_key
-            } else {
-                &temps.row
+            let source = match node.op {
+                Op::MapKeys => {
+                    outputs.code.push(WeavyOp::ProductProject {
+                        dst: temps.projected_key.region_id,
+                        product: temps.row.region_id,
+                        field: 0,
+                    });
+                    &temps.projected_key
+                }
+                Op::MapValues => {
+                    outputs.code.push(WeavyOp::ProductProject {
+                        dst: temps.projected_value.region_id,
+                        product: temps.row.region_id,
+                        field: 1,
+                    });
+                    &temps.projected_value
+                }
+                Op::SetValues => &temps.row,
+                _ => unreachable!("collection projection operation is closed"),
             };
             outputs.code.push(WeavyOp::ArrayStore {
                 status: scratch.status.byte_offset(),

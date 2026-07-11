@@ -1518,6 +1518,7 @@ enum PreludeMethod {
     MapHas,
     MapLen,
     MapKeys,
+    MapValues,
     MapWith,
     SetHas,
     SetLen,
@@ -1588,6 +1589,12 @@ impl PreludeMethodRegistry {
                 name: "keys",
                 arity: 0,
                 method: PreludeMethod::MapKeys,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Map,
+                name: "values",
+                arity: 0,
+                method: PreludeMethod::MapValues,
             },
             PreludeMethodEntry {
                 receiver: PreludeReceiverType::Map,
@@ -2213,6 +2220,24 @@ fn lower_method_call(
                     EffectFacts::PURE,
                     vec![receiver.node],
                     Op::MapKeys,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::MapValues => {
+            let (_, value) = receiver
+                .ty
+                .map_types()
+                .ok_or_else(|| type_mismatch(call.span, "Map<K, V>", receiver.ty.name()))?;
+            let ty = Type::array(value.clone());
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    vec![receiver.node],
+                    Op::MapValues,
                 ),
                 ty,
             })
