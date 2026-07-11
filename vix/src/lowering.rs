@@ -6,6 +6,7 @@ use std::fmt::Write;
 use weavy::mem::Layout;
 use weavy::task::{
     ArgCopy, Fn as WeavyFn, FnId as WeavyFnId, Op as WeavyOp, Program as WeavyProgram,
+    StructuralFieldSource,
 };
 use weavy::{
     CallContract as WeavyCallContract, CallContractId as WeavyCallContractId,
@@ -282,12 +283,14 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
             )?,
         );
     }
+    let regions = RegionAssignments::build(island, &layouts)?;
     let context = LoweringContext {
         root_function: island.function,
         function_ids: &function_ids,
         functions: &functions,
         trace_ids: &trace_ids,
         layouts: &layouts,
+        regions: &regions,
     };
 
     let mut pending_constants = BTreeMap::new();
@@ -319,7 +322,8 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
         pc_nodes.push(lowered.pc_nodes);
     }
     let program = WeavyProgram { fns: functions_out };
-    let contract = ProgramContractBuilder::build(island, &program, &layouts, &constant_closures)?;
+    let contract =
+        ProgramContractBuilder::build(island, &program, &layouts, &constant_closures, &regions)?;
     let constants = bind_constants(
         pending_constants,
         &contract,
@@ -491,6 +495,7 @@ fn validate_constant_entry(
 struct ProgramContractBuilder<'a> {
     layouts: &'a BTreeMap<FunctionId, FunctionLayout>,
     constant_closures: &'a BTreeMap<FunctionId, BTreeSet<NodeRef>>,
+    regions: &'a RegionAssignments,
     function_order: Vec<FunctionContractSource<'a>>,
     closure_targets: BTreeSet<FunctionId>,
     calls: Vec<WeavyCallContract>,
@@ -515,6 +520,7 @@ impl<'a> ProgramContractBuilder<'a> {
         program: &WeavyProgram,
         layouts: &'a BTreeMap<FunctionId, FunctionLayout>,
         constant_closures: &'a BTreeMap<FunctionId, BTreeSet<NodeRef>>,
+        regions: &'a RegionAssignments,
     ) -> Result<WeavyProgramContract, Diagnostics> {
         let root_output = island.output;
         let mut function_order = Vec::with_capacity(1 + island.callees.len());
@@ -550,6 +556,7 @@ impl<'a> ProgramContractBuilder<'a> {
         let mut builder = Self {
             layouts,
             constant_closures,
+            regions,
             function_order,
             closure_targets,
             calls: Vec::new(),
@@ -586,7 +593,14 @@ impl<'a> ProgramContractBuilder<'a> {
         for node in function.nodes {
             let region = layout.region(node.id, node.span)?;
             let contract = self.frame_region(region.start(), &node.ty)?;
-            node_region_ids.insert(node.id, WeavyRegionId(regions.len() as u32));
+            let region_id = self.regions.node(function.id, node.id, node.span)?;
+            if region_id.0 as usize != regions.len() {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "contract region assignment is not in canonical node order",
+                ));
+            }
+            node_region_ids.insert(node.id, region_id);
             regions.push(contract);
         }
         if let Some(scratch) = layout.scratch {
@@ -1028,6 +1042,61 @@ struct LoweringContext<'a> {
     functions: &'a BTreeMap<FunctionId, &'a Function>,
     trace_ids: &'a BTreeMap<NodeRef, u32>,
     layouts: &'a BTreeMap<FunctionId, FunctionLayout>,
+    regions: &'a RegionAssignments,
+}
+
+/// The contract and the instruction stream share this canonical region order.
+/// Nodes are retained even for zero-width values, so later regions cannot shift
+/// when a product has no fields.
+struct RegionAssignments {
+    nodes: BTreeMap<FunctionId, BTreeMap<NodeId, WeavyRegionId>>,
+}
+
+impl RegionAssignments {
+    fn build(
+        island: &Island,
+        layouts: &BTreeMap<FunctionId, FunctionLayout>,
+    ) -> Result<Self, Diagnostics> {
+        let mut nodes = BTreeMap::new();
+        let mut insert = |function: FunctionId, body: &[Node], span: Span| {
+            let layout = layouts.get(&function).ok_or_else(|| {
+                lowering_diagnostic(span, "missing function layout for region assignment")
+            })?;
+            let mut assigned = BTreeMap::new();
+            for (index, node) in body.iter().enumerate() {
+                layout.region(node.id, node.span)?;
+                let id = WeavyRegionId(u32::try_from(index).map_err(|_| {
+                    lowering_diagnostic(node.span, "region assignment exceeds u32")
+                })?);
+                if assigned.insert(node.id, id).is_some() {
+                    return Err(lowering_diagnostic(
+                        node.span,
+                        "duplicate region assignment",
+                    ));
+                }
+            }
+            nodes.insert(function, assigned);
+            Ok(())
+        };
+        insert(island.function, &island.nodes, Span { start: 0, end: 0 })?;
+        for function in &island.callees {
+            insert(function.id, &function.nodes, function.span)?;
+        }
+        Ok(Self { nodes })
+    }
+
+    fn node(
+        &self,
+        function: FunctionId,
+        node: NodeId,
+        span: Span,
+    ) -> Result<WeavyRegionId, Diagnostics> {
+        self.nodes
+            .get(&function)
+            .and_then(|nodes| nodes.get(&node))
+            .copied()
+            .ok_or_else(|| lowering_diagnostic(span, "VIR node has no assigned contract region"))
+    }
 }
 
 struct FunctionLayout {
@@ -1420,6 +1489,11 @@ fn lower_node_sequence(
             return Err(lowering_diagnostic(node.span, "duplicate VIR node id"));
         }
         let dst = sequence.function.layout.region(node.id, node.span)?;
+        let dst_region_id =
+            sequence
+                .lowering
+                .regions
+                .node(sequence.function.id, node.id, node.span)?;
         let node_ref = NodeRef {
             function: sequence.function.id,
             node: node.id,
@@ -1433,16 +1507,33 @@ fn lower_node_sequence(
         let previous_source = outputs.code.swap_source(Some(node_ref));
         outputs.code.push(WeavyOp::Trace { id: trace_id });
         let representation = match &node.op {
-            Op::Match { .. } => lower_match_node(node, dst, values, sequence, outputs)?,
-            Op::If { .. } => lower_if_node(node, dst, values, sequence, outputs, active_variant)?,
-            Op::OrderedMatch { .. } => {
-                lower_ordered_match_node(node, dst, values, sequence, outputs, active_variant)?
+            Op::Match { .. } => {
+                lower_match_node(node, dst, dst_region_id, values, sequence, outputs)?
             }
+            Op::If { .. } => lower_if_node(
+                node,
+                dst,
+                dst_region_id,
+                values,
+                sequence,
+                outputs,
+                active_variant,
+            )?,
+            Op::OrderedMatch { .. } => lower_ordered_match_node(
+                node,
+                dst,
+                dst_region_id,
+                values,
+                sequence,
+                outputs,
+                active_variant,
+            )?,
             Op::Compare => lower_compare_node(node, dst, values, sequence, outputs)?,
             _ => {
                 let lowered = lower_node(
                     node,
                     dst,
+                    dst_region_id,
                     values,
                     sequence.function,
                     sequence.lowering,
@@ -1458,6 +1549,7 @@ fn lower_node_sequence(
             node.id,
             LoweredSlot {
                 region: dst,
+                region_id: dst_region_id,
                 ty: node.ty.clone(),
                 representation,
             },
@@ -1469,6 +1561,7 @@ fn lower_node_sequence(
 fn lower_ordered_match_node(
     node: &Node,
     dst: FrameRegion,
+    _dst_region: WeavyRegionId,
     values: &BTreeMap<NodeId, LoweredSlot>,
     sequence: &SequenceContext<'_, '_, '_>,
     outputs: &mut SequenceOutputs<'_, '_>,
@@ -1541,6 +1634,7 @@ fn lower_ordered_match_node(
 fn lower_if_node(
     node: &Node,
     dst: FrameRegion,
+    _dst_region: WeavyRegionId,
     values: &BTreeMap<NodeId, LoweredSlot>,
     sequence: &SequenceContext<'_, '_, '_>,
     outputs: &mut SequenceOutputs<'_, '_>,
@@ -1608,6 +1702,7 @@ fn lower_if_node(
 fn lower_match_node(
     node: &Node,
     dst: FrameRegion,
+    _dst_region: WeavyRegionId,
     values: &BTreeMap<NodeId, LoweredSlot>,
     sequence: &SequenceContext<'_, '_, '_>,
     outputs: &mut SequenceOutputs<'_, '_>,
@@ -1945,6 +2040,7 @@ enum ValueRepresentation {
 #[derive(Clone, Debug, PartialEq, Eq)]
 struct LoweredSlot {
     region: FrameRegion,
+    region_id: WeavyRegionId,
     ty: Type,
     representation: ValueRepresentation,
 }
@@ -1963,6 +2059,7 @@ struct FunctionLoweringContext<'a> {
 fn lower_node(
     node: &Node,
     dst: FrameRegion,
+    dst_region_id: WeavyRegionId,
     values: &BTreeMap<NodeId, LoweredSlot>,
     function: &FunctionLoweringContext<'_>,
     context: &LoweringContext<'_>,
@@ -2147,9 +2244,23 @@ fn lower_node(
             };
             (vec![op], ValueRepresentation::Word)
         }
-        Op::Tuple => lower_aggregate_node(node, dst_region, values, AggregateKind::Tuple)?,
-        Op::Record => lower_aggregate_node(node, dst_region, values, AggregateKind::Record)?,
-        Op::Project { index } => lower_project_node(node, dst_region, values, *index)?,
+        Op::Tuple => lower_aggregate_node(
+            node,
+            dst_region,
+            dst_region_id,
+            values,
+            AggregateKind::Tuple,
+        )?,
+        Op::Record => lower_aggregate_node(
+            node,
+            dst_region,
+            dst_region_id,
+            values,
+            AggregateKind::Record,
+        )?,
+        Op::Project { index } => {
+            lower_project_node(node, dst_region, dst_region_id, values, *index)?
+        }
         Op::Array => {
             return Err(lowering_diagnostic(
                 node.span,
@@ -2168,7 +2279,9 @@ fn lower_node(
                 "array length lowering is not implemented",
             ));
         }
-        Op::Variant { variant } => lower_variant_node(node, dst_region, values, *variant)?,
+        Op::Variant { variant } => {
+            lower_variant_node(node, dst_region, dst_region_id, values, *variant)?
+        }
         Op::VariantProject { variant, field } => {
             if active_variant != Some(*variant) {
                 return Err(lowering_diagnostic(
@@ -2176,7 +2289,7 @@ fn lower_node(
                     "variant payload projection lies outside its matching arm",
                 ));
             }
-            lower_variant_project_node(node, dst_region, values, *variant, *field)?
+            lower_variant_project_node(node, dst_region, dst_region_id, values, *variant, *field)?
         }
         Op::IsVariant { variant } => {
             require_node_type(node, Type::Bool)?;
@@ -2204,17 +2317,11 @@ fn lower_node(
                 ValueRepresentation::InlineComposite,
             )?;
             (
-                vec![
-                    WeavyOp::ConstI64 {
-                        dst,
-                        value: i64::from(*variant),
-                    },
-                    WeavyOp::EqI64 {
-                        dst,
-                        a: value.region.start().byte_offset(),
-                        b: dst,
-                    },
-                ],
+                vec![WeavyOp::EnumIsVariant {
+                    dst: dst_region_id,
+                    value: value.region_id,
+                    variant: *variant,
+                }],
                 ValueRepresentation::Word,
             )
         }
@@ -2562,6 +2669,7 @@ impl<'a> EnumLayout<'a> {
 fn lower_variant_node(
     node: &Node,
     dst: FrameRegion,
+    dst_region: WeavyRegionId,
     values: &BTreeMap<NodeId, LoweredSlot>,
     variant: u32,
 ) -> Result<(Vec<WeavyOp>, ValueRepresentation), Diagnostics> {
@@ -2586,20 +2694,7 @@ fn lower_variant_node(
         ));
     }
 
-    let mut ops = Vec::new();
-    for word in 0..dst.words().as_usize() {
-        let slot = dst
-            .word(word)
-            .ok_or_else(|| lowering_diagnostic(node.span, "enum zeroing offset overflow"))?;
-        ops.push(WeavyOp::ConstI64 {
-            dst: slot.byte_offset(),
-            value: 0,
-        });
-    }
-    ops.push(WeavyOp::ConstI64 {
-        dst: dst.start().byte_offset(),
-        value: i64::from(variant),
-    });
+    let mut fields = Vec::new();
     for (index, element) in variant_layout.elements.iter().enumerate() {
         let value = input_value(node, values, index)?;
         require_value(
@@ -2608,21 +2703,26 @@ fn lower_variant_node(
             element.ty,
             representation_for_type(element.ty, node.span)?,
         )?;
-        let payload_offset = element
-            .offset_words
-            .checked_add(1)
-            .ok_or_else(|| lowering_diagnostic(node.span, "enum payload offset overflow"))?;
-        let target = dst
-            .subregion(payload_offset, element.words)
-            .ok_or_else(|| lowering_diagnostic(node.span, "enum payload lies outside its frame"))?;
-        ops.extend(copy_region(node, value.region, target)?);
+        fields.push(StructuralFieldSource {
+            field: u32::try_from(index)
+                .map_err(|_| lowering_diagnostic(node.span, "enum field index overflow"))?,
+            source: value.region_id,
+        });
     }
-    Ok((ops, ValueRepresentation::InlineComposite))
+    Ok((
+        vec![WeavyOp::EnumConstruct {
+            dst: dst_region,
+            variant,
+            fields,
+        }],
+        ValueRepresentation::InlineComposite,
+    ))
 }
 
 fn lower_variant_project_node(
     node: &Node,
     dst: FrameRegion,
+    dst_region: WeavyRegionId,
     values: &BTreeMap<NodeId, LoweredSlot>,
     variant: u32,
     field: u32,
@@ -2649,22 +2749,20 @@ fn lower_variant_project_node(
             "variant projection result has the wrong VIR type",
         ));
     }
-    let payload_offset = element
-        .offset_words
-        .checked_add(1)
-        .ok_or_else(|| lowering_diagnostic(node.span, "enum payload offset overflow"))?;
-    let source = receiver
-        .region
-        .subregion(payload_offset, element.words)
-        .ok_or_else(|| lowering_diagnostic(node.span, "enum payload lies outside its frame"))?;
-    if source.words() != dst.words() {
+    if element.words != dst.words() {
         return Err(lowering_diagnostic(
             node.span,
             "variant projection destination has the wrong frame width",
         ));
     }
     Ok((
-        copy_region(node, source, dst)?,
+        vec![WeavyOp::EnumProjectChecked {
+            dst: dst_region,
+            value: receiver.region_id,
+            variant,
+            field: u32::try_from(field)
+                .map_err(|_| lowering_diagnostic(node.span, "enum field index overflow"))?,
+        }],
         representation_for_type(element.ty, node.span)?,
     ))
 }
@@ -2672,6 +2770,7 @@ fn lower_variant_project_node(
 fn lower_aggregate_node(
     node: &Node,
     dst: FrameRegion,
+    dst_region: WeavyRegionId,
     values: &BTreeMap<NodeId, LoweredSlot>,
     expected_kind: AggregateKind,
 ) -> Result<(Vec<WeavyOp>, ValueRepresentation), Diagnostics> {
@@ -2683,7 +2782,7 @@ fn lower_aggregate_node(
         ));
     }
     require_input_count(node, layout.elements.len())?;
-    let mut ops = Vec::new();
+    let mut fields = Vec::new();
     for (index, element) in layout.elements.iter().enumerate() {
         let value = input_value(node, values, index)?;
         require_value(
@@ -2692,12 +2791,11 @@ fn lower_aggregate_node(
             element.ty,
             representation_for_type(element.ty, node.span)?,
         )?;
-        let target = dst
-            .subregion(element.offset_words, element.words)
-            .ok_or_else(|| {
-                lowering_diagnostic(node.span, "aggregate field lies outside its frame region")
-            })?;
-        ops.extend(copy_region(node, value.region, target)?);
+        fields.push(StructuralFieldSource {
+            field: u32::try_from(index)
+                .map_err(|_| lowering_diagnostic(node.span, "product field index overflow"))?,
+            source: value.region_id,
+        });
     }
     if layout.words != dst.words() {
         return Err(lowering_diagnostic(
@@ -2705,12 +2803,19 @@ fn lower_aggregate_node(
             "aggregate fields do not fill their frame region",
         ));
     }
-    Ok((ops, ValueRepresentation::InlineComposite))
+    Ok((
+        vec![WeavyOp::ProductConstruct {
+            dst: dst_region,
+            fields,
+        }],
+        ValueRepresentation::InlineComposite,
+    ))
 }
 
 fn lower_project_node(
     node: &Node,
     dst: FrameRegion,
+    dst_region: WeavyRegionId,
     values: &BTreeMap<NodeId, LoweredSlot>,
     index: u32,
 ) -> Result<(Vec<WeavyOp>, ValueRepresentation), Diagnostics> {
@@ -2735,23 +2840,19 @@ fn lower_project_node(
             "aggregate projection result has the wrong VIR type",
         ));
     }
-    let source = receiver
-        .region
-        .subregion(element.offset_words, element.words)
-        .ok_or_else(|| {
-            lowering_diagnostic(
-                node.span,
-                "aggregate projection lies outside its frame region",
-            )
-        })?;
-    if source.words() != dst.words() {
+    if element.words != dst.words() {
         return Err(lowering_diagnostic(
             node.span,
             "aggregate projection destination has the wrong frame width",
         ));
     }
     Ok((
-        copy_region(node, source, dst)?,
+        vec![WeavyOp::ProductProject {
+            dst: dst_region,
+            product: receiver.region_id,
+            field: u32::try_from(index)
+                .map_err(|_| lowering_diagnostic(node.span, "product field index overflow"))?,
+        }],
         representation_for_type(element.ty, node.span)?,
     ))
 }
