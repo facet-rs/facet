@@ -1519,6 +1519,7 @@ enum PreludeMethod {
     ArrayAll,
     ArrayAny,
     ArrayContains,
+    ArraySorted,
     ArrayStream,
     IntRem,
     MapGet,
@@ -1590,6 +1591,12 @@ impl PreludeMethodRegistry {
                 name: "contains",
                 arity: 1,
                 method: PreludeMethod::ArrayContains,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Array,
+                name: "sorted",
+                arity: 0,
+                method: PreludeMethod::ArraySorted,
             },
             PreludeMethodEntry {
                 receiver: PreludeReceiverType::Array,
@@ -2191,6 +2198,30 @@ fn lower_method_call(
                     EffectFacts::PURE,
                     vec![receiver.node],
                     Op::ArraySplitLast,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::ArraySorted => {
+            let Type::Array(element) = &receiver.ty else {
+                unreachable!("array sorted registry entry has an array receiver")
+            };
+            if !element.structural_order_is_defined() {
+                return Err(type_mismatch(
+                    call.span,
+                    "Array<T: Ord>",
+                    receiver.ty.name(),
+                ));
+            }
+            let ty = receiver.ty.clone();
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    vec![receiver.node],
+                    Op::ArraySorted,
                 ),
                 ty,
             })

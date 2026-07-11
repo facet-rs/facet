@@ -494,6 +494,7 @@ fn nodes_contain_checked_collection_ops(nodes: &[Node]) -> bool {
                 | Op::ArrayAll
                 | Op::ArrayAny
                 | Op::ArrayContains
+                | Op::ArraySorted
                 | Op::ArrayAppend
                 | Op::ArrayConcat
                 | Op::Map
@@ -2512,6 +2513,7 @@ impl FunctionLayout {
                     | Op::ArrayAll
                     | Op::ArrayAny
                     | Op::ArrayContains
+                    | Op::ArraySorted
                     | Op::Map
                     | Op::MapAdd
                     | Op::MapConcat
@@ -2540,6 +2542,8 @@ impl FunctionLayout {
                 array_predicate_temporary_types(node, nodes)?
             } else if matches!(node.op, Op::ArrayContains) {
                 array_contains_temporary_types(node, nodes)?
+            } else if matches!(node.op, Op::ArraySorted) {
+                array_sorted_temporary_types(node)?
             } else if let Some(types) = collection_temporary_types(node, nodes)? {
                 types
             } else if let Type::Array(element) = &node.ty {
@@ -3368,6 +3372,7 @@ fn lower_node_sequence(
             Op::ArrayAppend | Op::ArrayConcat => {
                 lower_checked_array_node(node, dst, values, sequence, outputs)?
             }
+            Op::ArraySorted => lower_array_sorted_node(node, dst, values, sequence, outputs)?,
             Op::ArrayFold => {
                 lower_checked_array_fold_node(node, dst, dst_region_id, values, sequence, outputs)?
             }
@@ -4503,6 +4508,12 @@ fn lower_node(
             return Err(lowering_diagnostic(
                 node.span,
                 "collection addition lowering is not implemented",
+            ));
+        }
+        Op::ArraySorted => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "array sorting did not reach checked lowering",
             ));
         }
         Op::Map
@@ -6566,6 +6577,321 @@ fn lower_checked_array_node(
         }
         _ => unreachable!("array lowering dispatched only array operations"),
     }
+}
+
+/// Typed temporaries for a structural array sort: two element registers to
+/// hold the pair under comparison, five integer registers (length, the two
+/// loop indices, the three-way ordering word, and the loop stride), followed
+/// by whatever nested registers the element type's structural comparison
+/// needs. The sequence must match `lower_array_sorted_node`'s `take` order.
+fn array_sorted_temporary_types(node: &Node) -> Result<Vec<Type>, Diagnostics> {
+    let Type::Array(element) = &node.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array sorting result is not an array",
+        ));
+    };
+    let element = element.as_ref().clone();
+    let mut types = vec![
+        element.clone(),
+        element.clone(),
+        Type::Int,
+        Type::Int,
+        Type::Int,
+        Type::Int,
+        Type::Int,
+    ];
+    comparison_temporary_types(&element, &mut types);
+    Ok(types)
+}
+
+/// Lower `Array.sorted()` as a structural-order permutation of a fresh copy.
+///
+/// The receiver is copied element-for-element into a new molten array, then
+/// selection-sorted in place using the element type's structural three-way
+/// order. Every comparison and swap runs through the same verified machine
+/// ops that array equality and array concatenation already use, so the
+/// interpreter and JIT agree by construction and no host call is reached.
+/// Duplicates survive because the sort only ever permutes the copied
+/// elements.
+fn lower_array_sorted_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_input_count(node, 1)?;
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(node.span, "array sorting has no typed outcome scratch")
+    })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(node.span, "array sorting has no typed outcome return")
+    })?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(node.span, "array sorting has no stable trace site"))?;
+
+    let Type::Array(element) = &node.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array sorting result is not an array",
+        ));
+    };
+    let element = element.as_ref();
+    let source = input_value(node, values, 0)?;
+    require_value(node, &source, &node.ty, ValueRepresentation::RealizedHandle)?;
+    let element_schema = sequence.lowering.schemas.schema_for(element, node.span)?;
+    let width = element_byte_width(element, node.span)?;
+
+    let mut temps = TemporaryCursor::new(
+        sequence.function.layout,
+        sequence.lowering.regions,
+        sequence.function.id,
+        node,
+    )?;
+    let ei = temps.take(element, node.span)?;
+    let ej = temps.take(element, node.span)?;
+    let len = temps.take(&Type::Int, node.span)?;
+    let i = temps.take(&Type::Int, node.span)?;
+    let j = temps.take(&Type::Int, node.span)?;
+    let ordering = temps.take(&Type::Int, node.span)?;
+    let one = temps.take(&Type::Int, node.span)?;
+    let comparison_checkpoint = temps.checkpoint();
+
+    let len_slot = len.region.start();
+    let i_slot = i.region.start();
+    let j_slot = j.region.start();
+    let ordering_slot = ordering.region.start();
+    let one_slot = one.region.start();
+
+    // Length of the source array.
+    outputs.code.push(WeavyOp::LoadArrayLen {
+        dst: len_slot.byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+
+    // Fresh destination array of the same length.
+    outputs.code.push(WeavyOp::ArrayNew {
+        dst: dst.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        count_slot: len_slot.byte_offset(),
+        elem_width: width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+
+    // Copy the source into the destination, preserving every element.
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: i_slot.byte_offset(),
+        value: 0,
+    });
+    emit_array_copy_loop(ArrayCopyLoopContext {
+        node,
+        site,
+        source: &source,
+        destination: dst,
+        source_index: i_slot,
+        source_index_region: i.region_id,
+        destination_index: i_slot,
+        length: len_slot,
+        length_region: len.region_id,
+        temp: &ei,
+        elem_width: width,
+        elem_schema_ref: element_schema,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code: outputs.code,
+    })?;
+
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: one_slot.byte_offset(),
+        value: 1,
+    });
+
+    // Ascending structural selection: for each position i, sink every later
+    // element that is structurally smaller, so the least survivor settles in.
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: i_slot.byte_offset(),
+        value: 0,
+    });
+    let outer = outputs.code.label();
+    let outer_done = outputs.code.label();
+    outputs.code.bind(outer, node.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: i_slot.byte_offset(),
+        b: len_slot.byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, outer_done);
+
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: j_slot.byte_offset(),
+        a: i_slot.byte_offset(),
+        b: one_slot.byte_offset(),
+    });
+    let inner = outputs.code.label();
+    let inner_done = outputs.code.label();
+    outputs.code.bind(inner, node.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: j_slot.byte_offset(),
+        b: len_slot.byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, inner_done);
+
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: ei.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: dst.start().byte_offset(),
+        index: i_slot.byte_offset(),
+        elem_width: width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: ej.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: dst.start().byte_offset(),
+        index: j_slot.byte_offset(),
+        elem_width: width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+
+    // Structural three-way order of out[i] against out[j].
+    temps.rewind(comparison_checkpoint, node.span)?;
+    emit_structural_order(
+        node,
+        element,
+        &ei,
+        &ej,
+        StructuralOrderOutput {
+            ordering: ordering_slot,
+            condition: scratch.condition,
+        },
+        &mut temps,
+        outputs.code,
+    )?;
+
+    // Swap when out[i] is structurally greater than out[j].
+    let no_swap = outputs.code.label();
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: i64::from(ORDERING_GREATER_VARIANT),
+    });
+    outputs.code.push(WeavyOp::EqI64 {
+        dst: scratch.condition.byte_offset(),
+        a: ordering_slot.byte_offset(),
+        b: scratch.fields[0].byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, no_swap);
+    outputs.code.push(WeavyOp::ArrayStore {
+        status: scratch.status.byte_offset(),
+        array: dst.start().byte_offset(),
+        index: i_slot.byte_offset(),
+        src: ej.region.start().byte_offset(),
+        elem_width: width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ArrayStore {
+        status: scratch.status.byte_offset(),
+        array: dst.start().byte_offset(),
+        index: j_slot.byte_offset(),
+        src: ei.region.start().byte_offset(),
+        elem_width: width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.bind(no_swap, node.span)?;
+
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: j_slot.byte_offset(),
+        a: j_slot.byte_offset(),
+        b: one_slot.byte_offset(),
+    });
+    outputs.code.jump(inner);
+    outputs.code.bind(inner_done, node.span)?;
+
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: i_slot.byte_offset(),
+        a: i_slot.byte_offset(),
+        b: one_slot.byte_offset(),
+    });
+    outputs.code.jump(outer);
+    outputs.code.bind(outer_done, node.span)?;
+
+    temps.drain(node.span)?;
+    temps.finish(node.span)?;
+    Ok(ValueRepresentation::RealizedHandle)
 }
 
 fn lower_array_stream_collect_node(

@@ -509,6 +509,9 @@ pub enum Op {
     ArrayAny,
     /// Test whether an array holds an element structurally equal to a given value.
     ArrayContains,
+    /// Permute a dense array into ascending structural-semantic order,
+    /// preserving every duplicate element.
+    ArraySorted,
     /// Add one element to a dense array, producing a fresh value.
     ArrayAppend,
     /// Concatenate two dense arrays, producing a fresh value.
@@ -1152,6 +1155,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::ArrayAll => op.push(52),
         Op::ArrayAny => op.push(53),
         Op::ArrayContains => op.push(54),
+        Op::ArraySorted => op.push(55),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());
