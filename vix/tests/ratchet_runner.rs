@@ -457,10 +457,22 @@ fn direct_string_call() -> Stream<Check> {
         let callee = &lowered.contract().functions[1];
         assert_eq!(lowered.constants.len(), 2, "one publication per NodeRef");
         let root_function = lowered.constants[0].root.function;
+        let string_schema = lowered.constants[0].root.schema;
+        let declared_string = &lowered.contract().schemas[string_schema.0 as usize];
+        assert_eq!(
+            declared_string.inline,
+            RegionShape::word(WordKind::Handle(string_schema))
+        );
+        assert!(matches!(
+            declared_string.payload,
+            PayloadKind::OpaqueBytes {
+                byte_comparable: true
+            }
+        ));
         for (root_entry, constant) in lowered.constants.iter().enumerate() {
             assert_eq!(constant.root.function, root_function);
-            assert_eq!(constant.root.schema, weavy::SchemaRef(0));
-            assert_eq!(constant.owner.schema, weavy::SchemaRef(0));
+            assert_eq!(constant.root.schema, string_schema);
+            assert_eq!(constant.owner.schema, string_schema);
             assert_eq!(constant.root.schema, constant.owner.schema);
             if constant.owner.function == root_function {
                 assert_eq!(constant.owner.function, constant.node.function);
