@@ -748,6 +748,12 @@ pub enum Op {
     /// Permute a dense array into ascending structural-semantic order,
     /// preserving every duplicate element.
     ArraySorted,
+    /// Build the dense half-open `[from, to)` integer array in one in-frame
+    /// fill. Inputs are `[from, to]`. Empty (`from == to`) is the empty array;
+    /// reversed bounds (`from > to`) and a width that overflows the element
+    /// count are a typed machine fault — the deliberately unspecified edge is a
+    /// red seam, never a silent clamp.
+    Range,
     /// Publish one taken generator yield site to the task's append-only codata
     /// log. This is a control-only construction effect: it emits the site's
     /// stable provenance selector and never lowers or evaluates the site's
@@ -1741,6 +1747,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::StringParseInt => op.push(64),
         Op::PathJoin => op.push(81),
         Op::PathToString => op.push(82),
+        Op::Range => op.push(83),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());

@@ -48,13 +48,15 @@
 //! never asserted impossible. An unrecognized Cargo source scheme is a typed
 //! parse error, never a silent registry.
 //!
-//! A future Vix resolver kernel emits a typed [`SolveResult`]; the harness
-//! compares it against both oracles and turns every divergence into a structured
-//! [`Discrepancy`] value suitable for minimization (serialized to JSON via
-//! `facet-json`, never hand-written). The kernel does not exist yet, so nothing
-//! in-tree produces a real `SolveResult`; the comparator is exercised with
-//! candidates constructed from cargo's own oracle output (a trivially-matching
-//! twin) and deliberately-perturbed variants — the Cargo side itself carries
+//! A future Vix resolver kernel emits its own typed result with a typed `Version`;
+//! a harness adapter projects that value into the Cargo-facing [`SolveResult`]
+//! below, whose version spelling deliberately matches `cargo metadata`. The
+//! comparator then turns every divergence into a structured [`Discrepancy`]
+//! suitable for minimization (serialized to JSON via `facet-json`, never
+//! hand-written). The kernel does not exist yet, so neither that typed result nor
+//! its adapter exists in-tree. The comparator is exercised with candidates
+//! constructed from cargo's own oracle output (a trivially-matching twin) and
+//! deliberately-perturbed variants — the Cargo side itself carries
 //! production-shaped coverage against real offline workspaces.
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -1546,9 +1548,11 @@ struct GraphOracle {
     edges: BTreeSet<GraphEdge>,
 }
 
-/// What a future Vix resolver kernel emits: a per-package selection plus the
-/// per-target enabled graph. The harness accepts this typed value and compares it
-/// against the two cargo oracles. Nothing in-tree builds a real one yet.
+/// The Cargo-facing projection of a future Vix kernel result: a per-package
+/// selection plus the per-target enabled graph. The pure kernel keeps `Version`
+/// typed; the external harness adapter renders its exact Cargo spelling while
+/// constructing this value. Neither the kernel result nor that adapter exists
+/// in-tree yet.
 #[derive(Facet, Clone, Debug, Default)]
 struct SolveResult {
     selected: BTreeSet<CargoPackageId>,

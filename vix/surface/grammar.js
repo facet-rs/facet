@@ -137,6 +137,7 @@ module.exports = grammar({
         $.binary,
         $.unary,
         $.call,
+        $.where_call,
         $.method_call,
         $.index_expr,
         $.array_expr,
@@ -204,6 +205,15 @@ module.exports = grammar({
           field("args", $.arg_list),
           optional(field("named_args", $.where_args)),
         ),
+      ),
+    // A subject-less named call: the callee names both its bounds through
+    // `where`, with no positional subject and no parentheses. `range where
+    // { from, to }` is the canonical instance (calling.md: "range acts on
+    // nothing, so it names both its bounds").
+    where_call: ($) =>
+      prec(
+        PREC.postfix,
+        seq(field("callee", $.identifier), field("named_args", $.where_args)),
       ),
     field_access: ($) =>
       prec(

@@ -17,6 +17,18 @@ use crate::vir::{
 
 pub struct Compiler {
     parser: SurfaceParser,
+    config: CompilerConfig,
+}
+
+/// Compile-time knobs that select between observationally identical execution
+/// shapes. The molten one-item-append fold is admitted under the as-if law; the
+/// forced-copy differential compiles the same source with the molten shape
+/// disabled so the two value sets can be proven identical.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct CompilerConfig {
+    /// When set, every `Array.fold` keeps the semantic copy path even where the
+    /// strict one-item-append shape would otherwise be admitted molten.
+    pub force_molten_copy: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -38,13 +50,23 @@ impl Compiler {
     pub fn new() -> Self {
         Self {
             parser: SurfaceParser::new(),
+            config: CompilerConfig::default(),
+        }
+    }
+
+    /// A compiler that carries explicit shape-selection configuration.
+    #[must_use]
+    pub fn with_config(config: CompilerConfig) -> Self {
+        Self {
+            parser: SurfaceParser::new(),
+            config,
         }
     }
 
     /// Parse, check, and lower to architecture-neutral VIR.
     pub fn compile(&self, source: &str) -> Result<Compilation, Diagnostics> {
         let ast = self.parser.parse(source)?;
-        let module = lower_module(&ast)?;
+        let module = lower_module(&ast, self.config)?;
         let warnings = lint_module(&module);
         Ok(Compilation { module, warnings })
     }
@@ -115,6 +137,7 @@ struct ModuleContext<'a> {
     signatures: &'a BTreeMap<String, FunctionSignature>,
     types: &'a BTreeMap<String, Type>,
     closures: RefCell<ClosureState>,
+    config: CompilerConfig,
 }
 
 struct ClosureState {
@@ -359,6 +382,9 @@ impl<'a> TypeResolver<'a> {
                 if let Some(named) = &expression.named_args {
                     self.resolve_named_value_types(&named.fields)?;
                 }
+            }
+            ast::Expr::WhereCall(expression) => {
+                self.resolve_named_value_types(&expression.named_args.fields)?;
             }
             ast::Expr::Index(expression) => {
                 self.resolve_expr_types(&expression.receiver)?;
@@ -735,7 +761,7 @@ impl<'a> TypeResolver<'a> {
     }
 }
 
-fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
+fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Module, Diagnostics> {
     let types = TypeResolver::new(source)?.resolve_all(source)?;
     let declared_type_names = source
         .items
@@ -782,6 +808,7 @@ fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
             functions: BTreeMap::new(),
             scopes: Vec::new(),
         }),
+        config,
     };
     let mut module = Module {
         records: source
@@ -2386,6 +2413,7 @@ fn lower_value_expected(
             lower_some(nodes, bindings, context, call, expected)
         }
         ast::Expr::Call(call) => lower_call(nodes, bindings, context, call),
+        ast::Expr::WhereCall(call) => lower_where_call(nodes, bindings, context, call),
         ast::Expr::Binary(binary) => lower_binary(nodes, bindings, context, binary),
         ast::Expr::Variant(variant) => lower_variant(nodes, bindings, context, variant, expected),
         ast::Expr::Match(match_expr) => lower_match(nodes, bindings, context, match_expr, expected),
@@ -2811,8 +2839,46 @@ fn lower_method_call(
             let Type::Array(element) = &receiver.ty else {
                 unreachable!("array fold registry entry has an array receiver")
             };
-            let initial = lower_value(nodes, bindings, context, &positional[0])?;
-            let parameter_ty = Type::Tuple(vec![initial.ty.clone(), element.as_ref().clone()]);
+            let element = element.as_ref().clone();
+            // Checkpoint 4: the strict one-item-append fold over `[]` denotes a
+            // per-element map under the as-if law. Selecting the molten map
+            // shape builds one dense array in-frame and interns it once, exactly
+            // as the copy fold's value but without the O(n²) rebuild. The
+            // forced-copy differential disables this and keeps the semantic copy
+            // path, so the two value sets can be proven identical.
+            if !context.config.force_molten_copy
+                && let Some(mapper) = try_build_molten_append_mapper(
+                    nodes,
+                    bindings,
+                    context,
+                    &positional[0],
+                    &positional[1],
+                    &element,
+                )?
+            {
+                let ty = Type::array(element);
+                return Ok(LoweredValue {
+                    node: push_node(
+                        nodes,
+                        call.span,
+                        ty.clone(),
+                        EffectFacts {
+                            fallible: true,
+                            ..EffectFacts::PURE
+                        },
+                        vec![receiver.node, mapper.node],
+                        Op::ArrayMap {
+                            grain: ArrayMapGrain {
+                                key: ArrayMapGrainKey::InputPosition,
+                                origin: ArrayMapGrainKey::InputPosition,
+                            },
+                        },
+                    ),
+                    ty,
+                });
+            }
+            let initial = lower_fold_initial(nodes, bindings, context, &positional[0], &element)?;
+            let parameter_ty = Type::Tuple(vec![initial.ty.clone(), element.clone()]);
             let folder = match &positional[1] {
                 ast::Expr::Closure(closure) => {
                     lower_closure_with_parameter(nodes, bindings, context, closure, &parameter_ty)?
@@ -3871,6 +3937,333 @@ fn build_pair_second_closure(
         ),
         ty,
     })
+}
+
+/// Lower a fold's initial accumulator. An empty array literal `[]` cannot infer
+/// its element type in isolation; a fold that builds an array over `[element]`
+/// starts from `[element]`, so the empty literal is typed against that element.
+/// Every other initial keeps ordinary inference (scalar and string folds).
+fn lower_fold_initial(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    initial: &ast::Expr,
+    element: &Type,
+) -> Result<LoweredValue, Diagnostics> {
+    if let ast::Expr::Array(array) = initial
+        && array.elems.is_empty()
+    {
+        return lower_value_expected(
+            nodes,
+            bindings,
+            context,
+            initial,
+            Some(&Type::array(element.clone())),
+        );
+    }
+    lower_value(nodes, bindings, context, initial)
+}
+
+/// Recognise the exact strict one-item-append fold shape and, when it holds,
+/// synthesise the per-element mapper `|elem| EXPR : element -> element`.
+///
+/// The shape is: an empty `[]` initial and a closure `|acc, elem| acc + EXPR`
+/// where `acc` is consumed exactly once as the append base — it does not appear
+/// anywhere in `EXPR` — and `EXPR` captures nothing from the enclosing scope. A
+/// fold that fails any of these keeps the semantic copy path.
+fn try_build_molten_append_mapper(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    initial: &ast::Expr,
+    folder: &ast::Expr,
+    element: &Type,
+) -> Result<Option<LoweredValue>, Diagnostics> {
+    // The accumulator base must start empty for the fold to denote a pure map.
+    let ast::Expr::Array(array) = initial else {
+        return Ok(None);
+    };
+    if !array.elems.is_empty() {
+        return Ok(None);
+    }
+    let ast::Expr::Closure(closure) = folder else {
+        return Ok(None);
+    };
+    // Exactly two simple bindings, no type annotation to reconcile.
+    if closure.ty.is_some() {
+        return Ok(None);
+    }
+    let [acc_pattern, elem_pattern] = closure.patterns.as_slice() else {
+        return Ok(None);
+    };
+    let (Some(acc_name), Some(elem_name)) = (binding_name(acc_pattern), binding_name(elem_pattern))
+    else {
+        return Ok(None);
+    };
+    // The body is `acc + EXPR`: a `+` whose left operand is exactly the
+    // accumulator binding.
+    let ast::ClosureBody::Expr(body) = &closure.body else {
+        return Ok(None);
+    };
+    let ast::Expr::Binary(binary) = unwrap_paren(body) else {
+        return Ok(None);
+    };
+    if binary.op.value != "+" {
+        return Ok(None);
+    }
+    let ast::Expr::Identifier(left) = unwrap_paren(&binary.left) else {
+        return Ok(None);
+    };
+    if left.value != acc_name {
+        return Ok(None);
+    }
+    let appended = &binary.right;
+    // The accumulator is consumed once as the append base and nowhere else.
+    if expr_references_name(appended, acc_name) {
+        return Ok(None);
+    }
+    // The appended expression captures nothing from the enclosing scope; its
+    // only free binding is the element parameter.
+    if bindings
+        .keys()
+        .any(|name| name != elem_name && expr_references_name(appended, name))
+    {
+        return Ok(None);
+    }
+    let mapper =
+        build_unary_element_closure(nodes, context, element, elem_name, appended, closure.span)?;
+    // The append is well typed only when the element expression has the
+    // element type; otherwise this is not a same-type append fold and the copy
+    // path owns the proper diagnostic.
+    let Type::Function { result, .. } = &mapper.ty else {
+        return Ok(None);
+    };
+    if result.as_ref() != element {
+        return Ok(None);
+    }
+    Ok(Some(mapper))
+}
+
+/// The bound name of a simple binding pattern, or `None` for any richer pattern.
+fn binding_name(pattern: &ast::Pattern) -> Option<&str> {
+    match pattern {
+        ast::Pattern::Binding(binding) => Some(binding.binding.value.as_str()),
+        _ => None,
+    }
+}
+
+fn unwrap_paren(expression: &ast::Expr) -> &ast::Expr {
+    match expression {
+        ast::Expr::Paren(paren) => unwrap_paren(&paren.inner),
+        other => other,
+    }
+}
+
+/// Build the synthetic closure `|elem| EXPR` of type `fn(element) -> _` by
+/// lowering the real appended sub-expression with `elem` bound to the parameter.
+/// It carries no captures; the caller has proven `EXPR`'s only free binding is
+/// the element parameter.
+fn build_unary_element_closure(
+    nodes: &mut Vec<Node>,
+    context: &ModuleContext<'_>,
+    element: &Type,
+    elem_name: &str,
+    body: &ast::Expr,
+    span: Span,
+) -> Result<LoweredValue, Diagnostics> {
+    let (id, name) = context.allocate_closure();
+    context.enter_function(name.clone());
+    let lowered = (|| {
+        let mut closure_nodes = Vec::new();
+        let parameter_id = ParameterId(0);
+        let parameter_node = push_node(
+            &mut closure_nodes,
+            span,
+            element.clone(),
+            EffectFacts::PURE,
+            Vec::new(),
+            Op::Parameter(parameter_id),
+        );
+        let mut closure_bindings = BTreeMap::new();
+        closure_bindings.insert(
+            elem_name.to_owned(),
+            LoweredValue {
+                node: parameter_node,
+                ty: element.clone(),
+            },
+        );
+        let output =
+            lower_value_expected(&mut closure_nodes, &closure_bindings, context, body, None)?;
+        let return_type = output.ty.clone();
+        let ty = Type::Function {
+            parameter: Box::new(element.clone()),
+            result: Box::new(return_type.clone()),
+        };
+        Ok::<_, Diagnostics>((
+            Function {
+                id,
+                name: name.clone(),
+                span,
+                parameters: vec![Parameter {
+                    id: parameter_id,
+                    node: parameter_node,
+                    name: "$argument".to_owned(),
+                    ty: element.clone(),
+                    kind: ParameterKind::Positional,
+                }],
+                return_type,
+                nodes: closure_nodes,
+                output: Some(output.node),
+                yielded_checks: Vec::new(),
+            },
+            ty,
+        ))
+    })();
+    context.leave_function();
+    let (function, ty) = lowered?;
+    context.insert_closure(function);
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            span,
+            ty.clone(),
+            EffectFacts::PURE,
+            Vec::new(),
+            Op::Closure(id),
+        ),
+        ty,
+    })
+}
+
+/// Whether `expression` mentions the identifier `name` anywhere in its subtree.
+/// A conservative over-approximation: it descends every sub-expression, so a
+/// name used as a field, method receiver, or nested closure body still counts.
+fn expr_references_name(expression: &ast::Expr, name: &str) -> bool {
+    match expression {
+        ast::Expr::Identifier(identifier) => identifier.value == name,
+        ast::Expr::Path(_)
+        | ast::Expr::Str(_)
+        | ast::Expr::Number(_)
+        | ast::Expr::Quantity(_)
+        | ast::Expr::Bool(_) => false,
+        ast::Expr::Paren(paren) => expr_references_name(&paren.inner, name),
+        ast::Expr::Unary(unary) => expr_references_name(&unary.value, name),
+        ast::Expr::Binary(binary) => {
+            expr_references_name(&binary.left, name) || expr_references_name(&binary.right, name)
+        }
+        ast::Expr::Index(index) => {
+            expr_references_name(&index.receiver, name) || expr_references_name(&index.index, name)
+        }
+        ast::Expr::Field(field) => expr_references_name(&field.receiver, name),
+        ast::Expr::Call(call) => {
+            call.args
+                .args
+                .iter()
+                .any(|arg| expr_references_name(arg, name))
+                || named_args_reference_name(call.named_args.as_ref(), name)
+        }
+        ast::Expr::WhereCall(call) => named_args_reference_name(Some(&call.named_args), name),
+        ast::Expr::MethodCall(call) => {
+            expr_references_name(&call.receiver, name)
+                || call
+                    .args
+                    .as_ref()
+                    .is_some_and(|args| args.args.iter().any(|arg| expr_references_name(arg, name)))
+                || named_args_reference_name(call.named_args.as_ref(), name)
+        }
+        ast::Expr::Array(array) => array.elems.iter().any(|e| expr_references_name(e, name)),
+        ast::Expr::Set(set) => set.elems.iter().any(|e| expr_references_name(e, name)),
+        ast::Expr::Tuple(tuple) => tuple.elems.iter().any(|e| expr_references_name(e, name)),
+        ast::Expr::Map(map) => map.rows.iter().any(|row| {
+            expr_references_name(&row.key, name) || expr_references_name(&row.value, name)
+        }),
+        ast::Expr::Variant(variant) => variant.tuple_payload.as_ref().is_some_and(|payload| {
+            payload
+                .args
+                .iter()
+                .any(|arg| expr_references_name(arg, name))
+        }),
+        ast::Expr::Record(record) => {
+            record
+                .fields
+                .spread
+                .as_ref()
+                .is_some_and(|spread| expr_references_name(&spread.base, name))
+                || record
+                    .fields
+                    .fields
+                    .iter()
+                    .any(|field| named_value_references_name(field, name))
+        }
+        ast::Expr::If(expression) => {
+            expr_references_name(&expression.condition, name)
+                || block_references_name(&expression.consequent, name)
+                || if_branch_references_name(&expression.alternative, name)
+        }
+        ast::Expr::Match(expression) => {
+            expr_references_name(&expression.scrutinee, name)
+                || expression
+                    .arms
+                    .arms
+                    .iter()
+                    .any(|arm| match_arm_references_name(arm, name))
+        }
+        ast::Expr::Closure(closure) => match &closure.body {
+            ast::ClosureBody::Expr(body) => expr_references_name(body, name),
+            ast::ClosureBody::Block(block) => block_references_name(block, name),
+        },
+    }
+}
+
+fn named_args_reference_name(named: Option<&ast::WhereArgs>, name: &str) -> bool {
+    named.is_some_and(|named| {
+        named
+            .fields
+            .iter()
+            .any(|field| named_value_references_name(field, name))
+    })
+}
+
+fn named_value_references_name(field: &ast::NamedValue, name: &str) -> bool {
+    match &field.value {
+        Some(value) => expr_references_name(value, name),
+        // Field punning `{ x }` references the in-scope binding `x`.
+        None => field.name.value == name,
+    }
+}
+
+fn block_references_name(block: &ast::Block, name: &str) -> bool {
+    block.stmts.iter().any(|stmt| match stmt {
+        ast::Stmt::Let(statement) => expr_references_name(&statement.value, name),
+        ast::Stmt::Yield(statement) => expr_references_name(&statement.value, name),
+        ast::Stmt::Expression(statement) => expr_references_name(&statement.value, name),
+    }) || block
+        .tail
+        .as_ref()
+        .is_some_and(|tail| expr_references_name(tail, name))
+}
+
+fn if_branch_references_name(branch: &ast::IfBranch, name: &str) -> bool {
+    match branch {
+        ast::IfBranch::Block(block) => block_references_name(block, name),
+        ast::IfBranch::If(expression) => {
+            expr_references_name(&expression.condition, name)
+                || block_references_name(&expression.consequent, name)
+                || if_branch_references_name(&expression.alternative, name)
+        }
+    }
+}
+
+fn match_arm_references_name(arm: &ast::MatchArm, name: &str) -> bool {
+    let guard = arm
+        .guard
+        .as_ref()
+        .is_some_and(|guard| expr_references_name(guard, name));
+    guard
+        || match &arm.body {
+            ast::MatchArmBody::Block(block) => block_references_name(block, name),
+            ast::MatchArmBody::Expr(body) => expr_references_name(body, name),
+        }
 }
 
 fn lower_closure_typed(
@@ -5451,6 +5844,86 @@ fn project_variant_field(
     })
 }
 
+/// Lower a subject-less named call `callee where { ... }`. The only such
+/// builtin today is `range where { from, to } -> [Int]`, the dense half-open
+/// integer array construct.
+fn lower_where_call(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::WhereCall,
+) -> Result<LoweredValue, Diagnostics> {
+    if call.callee.value != "range" {
+        return Err(unknown_name(call.callee.span, &call.callee.value));
+    }
+    let from = named_field_value(&call.named_args, "from")?;
+    let to = named_field_value(&call.named_args, "to")?;
+    if call.named_args.fields.len() != 2 {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.named_args.span,
+            "range accepts exactly the named bounds `from` and `to`",
+        )));
+    }
+    let from = lower_value_expected(nodes, bindings, context, from, Some(&Type::Int))?;
+    require_type(
+        &from,
+        &Type::Int,
+        expr_span_of_named(&call.named_args, "from"),
+    )?;
+    let to = lower_value_expected(nodes, bindings, context, to, Some(&Type::Int))?;
+    require_type(&to, &Type::Int, expr_span_of_named(&call.named_args, "to"))?;
+    let ty = Type::array(Type::Int);
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            call.span,
+            ty.clone(),
+            EffectFacts {
+                fallible: true,
+                ..EffectFacts::PURE
+            },
+            vec![from.node, to.node],
+            Op::Range,
+        ),
+        ty,
+    })
+}
+
+/// The value expression of one named argument, resolving field punning
+/// (`{ from }`) to the identifier of the same name.
+fn named_field_value<'a>(
+    named: &'a ast::WhereArgs,
+    name: &str,
+) -> Result<&'a ast::Expr, Diagnostics> {
+    let field = named
+        .fields
+        .iter()
+        .find(|field| field.name.value == name)
+        .ok_or_else(|| {
+            Diagnostics::one(Diagnostic::unsupported(
+                named.span,
+                format!("range requires the named bound `{name}`"),
+            ))
+        })?;
+    match &field.value {
+        Some(value) => Ok(value),
+        // Field punning `{ from }` denotes the in-scope binding `from`.
+        None => Err(Diagnostics::one(Diagnostic::unsupported(
+            field.span,
+            "range bounds must be explicit `name: value` arguments",
+        ))),
+    }
+}
+
+fn expr_span_of_named(named: &ast::WhereArgs, name: &str) -> Span {
+    named
+        .fields
+        .iter()
+        .find(|field| field.name.value == name)
+        .and_then(|field| field.value.as_ref())
+        .map_or(named.span, expr_span)
+}
+
 fn lower_call(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
@@ -6178,6 +6651,7 @@ fn expr_span(expression: &ast::Expr) -> Span {
         ast::Expr::Binary(value) => value.span,
         ast::Expr::Unary(value) => value.span,
         ast::Expr::Call(value) => value.span,
+        ast::Expr::WhereCall(value) => value.span,
         ast::Expr::MethodCall(value) => value.span,
         ast::Expr::Field(value) => value.span,
         ast::Expr::Index(value) => value.span,

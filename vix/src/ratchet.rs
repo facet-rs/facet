@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::compiler::Compiler;
+use crate::compiler::{Compiler, CompilerConfig};
 use crate::diagnostic::Diagnostics;
 use crate::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
 use crate::runtime::{
@@ -219,13 +219,39 @@ pub struct PreparedRun {
     cache: LoweringCache,
 }
 
+/// r[impl machine.scheduler.chaos-kill-oracle]
+/// r[impl machine.scheduler.replay-is-semantics]
+pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
+    run_source_with_config(source, CompilerConfig::default())
+}
+
+/// Run every declared test twice under explicit shape-selection configuration.
+/// The forced-copy molten differential compiles the same source with
+/// `force_molten_copy` set and proves the produced value identities match the
+/// default molten run.
+pub fn run_source_with_config(
+    source: &str,
+    config: CompilerConfig,
+) -> Result<RatchetReport, RunError> {
+    prepare_source_with_config(source, config)?.execute()
+}
+
 /// Parse, check, lower, verify, and natively compile `source` without running
 /// any test. When this returns `Ok`, all compilation is complete and the
 /// returned [`PreparedRun`] is ready to execute with no further compilation.
 ///
 /// r[impl machine.scheduler.replay-is-semantics]
 pub fn prepare_source(source: &str) -> Result<PreparedRun, RunError> {
-    let compilation = Compiler::new().compile(source)?;
+    prepare_source_with_config(source, CompilerConfig::default())
+}
+
+/// The configurable form of [`prepare_source`]. This keeps shape-selection
+/// experiments on the same readiness boundary as the ordinary production path.
+pub fn prepare_source_with_config(
+    source: &str,
+    config: CompilerConfig,
+) -> Result<PreparedRun, RunError> {
+    let compilation = Compiler::with_config(config).compile(source)?;
     let mut cache = LoweringCache::default();
 
     // Lower every island the lanes will demand so its native code is compiled
