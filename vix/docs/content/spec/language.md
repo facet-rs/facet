@@ -63,10 +63,10 @@ field / method > juxtaposition > postfix ? > unary > binary > where { ... }
 
 ```vix
 fn range where { from: Int, to: Int } -> [Int]
-fn insert(map: Map<K, V>) where { key: K, value: V } -> Map<K, V>
+fn render(value: T) where { style: Style } -> String
 
 let xs = range where { from: 0, to: 10 };
-let next = insert current where { key, value };
+let text = render value where { style };
 ```
 
 At-most-one positional parameter is a source rule, not merely an API guideline.
@@ -231,19 +231,50 @@ artifact collection defined below.
 > r[lang.collection.map-canonical]
 >
 > Map construction order does not affect value identity. Rows are sorted by
-> the structural order of `K`; equal keys overwrite only through the explicit
-> `insert` operation. A map literal containing duplicate keys is rejected.
+> the structural order of `K`. A map literal containing duplicate keys is
+> rejected. Dynamic field addition through `+` and map composition through
+> `++` fail with a typed `DuplicateKey` when the key already exists in the left
+> operand. Only `map.with (key, value)` deliberately inserts or replaces a row.
+
+> r[lang.collection.field-addition]
+>
+> `+` adds one field to a materialized collection and `++` adds every field of
+> another collection. Their exact types are `[T] + T -> [T]`,
+> `[T] ++ [T] -> [T]`, `Set<T> + T -> Set<T>`,
+> `Set<T> ++ Set<T> -> Set<T>`, `Map<K,V> + (K,V) -> Map<K,V>`, and
+> `Map<K,V> ++ Map<K,V> -> Map<K,V>`. Array `+` appends and array `++`
+> concatenates. Set addition and union are idempotent. Map addition rejects an
+> existing key and map `++` requires disjoint key sets. Neither operator mutates
+> either operand. Their results are `must_use`.
+
+> r[lang.collection.map-with]
+>
+> `map.with (key, value)` returns a map containing that binding, replacing the
+> previous value when the key was present. The original map is unchanged. The
+> tuple is the method's one explicit positional argument. The result is
+> `must_use`.
+
+> r[lang.collection.map-get]
+>
+> `map.get(key)` has type `V`. A missing key ends the current demand with a typed
+> `MissingKey { key }` failure at the get expression's stable source site. It is
+> never `None`, a default value, or a machine invariant. `map.get(key)?`
+> observes any failure of the projection as `Result<V, Failure>`.
+> `map.has(key)` returns whether the key exists without demanding its value.
+> `Set.has(value)` tests set membership.
 
 `Map.keys()` and `Map.values()` return dense arrays in canonical key order.
 `Map.stream()` returns `Stream<K,V>` with the map keys preserved. `Set.values()`
 returns a dense array in structural element order; `Set.stream()` is keyed by
 the elements. `Set.map` returns a set and therefore deduplicates equal images.
 
-Array transformations preserve authored position. `filter` and `filter_map`
-compact while retaining relative source order. `reversed` returns the reverse.
-`find_map` searches left-to-right; `find_last_map` searches right-to-left.
-`try_fold` is the early-exit fold. There is no mutation-shaped `push` or `pop`;
-use array spread or `appended` / `split_last`.
+Array transformations preserve authored position. `map` transforms fields at
+the same positions; `reversed` returns the reverse. Filtering belongs to streams,
+where keys survive, and `.values()` is the explicit compaction back to a dense
+array. `find_map` searches authored arrays left-to-right and `find_last_map`
+searches right-to-left. `fold_until` is the explicit early-exit fold. There is
+no mutation-shaped `push`, `pop`, or `insert`; use collection `+` / `++`,
+`map.with`, array spread, or the `split_*` deconstructors.
 
 A stream has no arrival order, so it has no `first`, `last`, or arrival-sensitive
 fold. Deterministic stream selection names an `Order` and completes enough of the
@@ -335,7 +366,9 @@ expression of type `T`, `expression?` has `Result<T,Failure>`. It does not force
 the expression and does not turn failure into `Option`. `Option.unwrap()` fails
 with a typed `UnwrapOnNone` payload at the call site. Indexing outside an
 array's positions fails with a typed `IndexOutOfBounds` payload at the indexing
-site (`lang.collection.array-index`). `Result<T,E>` remains an ordinary domain
+site (`lang.collection.array-index`). A missing map key fails with `MissingKey`
+at the get site, and dynamic map addition with a duplicate key fails with
+`DuplicateKey` at the operator site. `Result<T,E>` remains an ordinary domain
 value for answers a caller is expected to branch on.
 
 ## Typed decoding
@@ -433,11 +466,18 @@ fn arithmetic() -> Stream<Check> {
 }
 ```
 
-`Check` is `must_use`. Value checks are demanded during execution; trace checks
-are interpreted after the run completes. A trace check receives a described
-expression wire and does not consume its result. Trace-check constructors are
-harness intrinsics; there is no user-visible `Demand<T>` or promise wrapper. The
-harness, not the scheduler, partitions the phases.
+> r[lang.diagnostic.must-use]
+>
+> `must_use` is a warning contract. When a value or operation marked `must_use`
+> produces a result that is not consumed, the compiler warns; the program
+> remains valid. Drivers and harnesses MAY promote that warning to an error.
+> Collection `+`, collection `++`, `map.with`, and `Check` carry this marker.
+
+Value checks are demanded during execution; trace checks are interpreted after
+the run completes. A trace check receives a described expression wire and does
+not consume its result. Trace-check constructors are harness intrinsics; there
+is no user-visible `Demand<T>` or promise wrapper. The harness, not the
+scheduler, partitions the phases.
 
 Compile-fail expectations, fixture selection, second-source variants, rerun
 mutations, chaos mode, and resource budgets are external harness metadata. The

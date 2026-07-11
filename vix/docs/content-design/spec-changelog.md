@@ -1258,3 +1258,47 @@ absent from the semantic receipt. An earlier draft collapsed (2) into (3).
 block. It says nothing about **results**: a placed block's derived value is computed remotely,
 acquires its identity there, and crosses back. A placed block consuming `out.stdout` and
 returning a diagnostic violates nothing.
+
+### Round 13 — collection algebra names values; map access preserves failure addresses
+
+The collection surface had kept Rust-shaped mutation verbs even though the value
+model had eliminated mutation. `push` and `insert` purported to return fresh
+values while `pop` was rejected because mutation-shaped names had no referent.
+The mismatch was lexical, but it taught the wrong aliasing, sequencing, and cost
+model at every accumulator.
+
+The replacement is one field algebra:
+
+```vix
+array + item
+array ++ other_array
+set + item
+set ++ other_set
+map + (key, value)
+map ++ other_map
+map.with (key, value)
+```
+
+`+` adds one field and `++` adds all fields. They never mutate. Arrays append or
+concatenate; sets add or union idempotently. Map `+` and `++` reject a duplicate
+key with a typed, source-attributed failure. `with` is the deliberate
+insert-or-replace operation. The duplicate distinction is the bug-catching
+boundary: ordinary addition never overwrites silently.
+
+Array spread remains the literal form for assembling several authored pieces.
+`+` and `++` are not overloaded as both one-item and whole-collection operations,
+so nested arrays retain an unambiguous distinction between appending an inner
+array and concatenating outer arrays.
+
+Map access now follows the array-index rule. `map.get(key)` has type `V`; a
+missing key ends the demand with `MissingKey { key }` at the get site's stable
+source identity. `map.get(key)?` observes the projection as
+`Result<V, Failure>`. `map.has(key)` tests only membership and does not demand the
+value. The old `Option<V>` get contract and `get(...).unwrap()` idiom are retired:
+they erased or reconstructed a failure address that the access operation already
+owned.
+
+`must_use` is a warning contract, not language validity. Collection addition and
+`with` carry it so discarding their results explains that the left operand was
+not changed. Drivers and harnesses may promote that warning to an error; the
+language does not impose Go-style hard rejection.

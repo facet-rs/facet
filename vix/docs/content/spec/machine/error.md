@@ -79,6 +79,30 @@ the string `"unwrap on None"` and no location, no subject, no demand chain.
 > identity to attach; the failure identity uses no subject slot, and the
 > payload's `index` and `length` are the stable subject detail.
 
+> r[machine.error.missing-key]
+>
+> [SETTLED] `Map.get(key)` is an addressed read whose success type is the map's
+> value type. When the key is absent, the demand completes with a typed
+> `MissingKey { key }` language failure carrying the get operation's stable
+> source-site identity. The map's value identity is the subject when it has
+> crossed a publication boundary. A miss is never `None`, a default value, an
+> `UnwrapOnNone`, a machine invariant, or a process panic. `map.has(key)` is the
+> separate membership query and does not demand the stored value.
+>
+> Postfix `?` on the get expression observes the outcome edge as
+> `Result<V, Failure>`. It catches any failure of that projection, not only
+> `MissingKey`; it does not modify or replace the producer's memoized outcome.
+
+> r[machine.error.duplicate-key]
+>
+> [SETTLED] Extending a map with `+` fails with `DuplicateKey { key }` when the
+> left map already contains the key. Combining maps with `++` fails when their
+> key sets overlap. The failure carries the operator's stable source-site
+> identity and chooses conflicting keys deterministically in structural key
+> order. Authored duplicate keys within one map literal remain a compile-time
+> source diagnostic. `map.with (key, value)` is the distinct overwrite
+> operation and never reports `DuplicateKey` merely because the key existed.
+
 > r[machine.error.failure-is-a-value]
 >
 > [DESIGN, round 11] A failure **is a value**. It has a schema and a content hash

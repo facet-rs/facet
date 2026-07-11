@@ -84,8 +84,10 @@ every value is serializable; you never write a `Debug` impl to earn diagnostics.
 A failure carries the check's stable source site and reports the current source
 span.
 
-`Check` is `must_use`. Constructing one and forgetting to yield it is a compile
-error, not a test that silently passes.
+`Check` is `must_use`. Constructing one and forgetting to yield it produces a
+compiler warning rather than a test that silently passes. The ratchet harness
+denies that warning; ordinary users choose whether warnings are promoted to
+errors.
 
 **Coming from Rust/JS**: assertions don't throw or panic — a `Check` is a value
 (pass, or failure-with-context). Every check in a test is evaluated; you get every
@@ -195,7 +197,7 @@ A language's rejections are half its meaning. A test file whose name ends in
 //! at: 4
 
 fn f(state: State) -> State {
-    state.domains.insert(k, v);   // value goes nowhere — not a sentence
+    state.domains.with (k, v);   // value goes nowhere — not a sentence
     state
 }
 ```

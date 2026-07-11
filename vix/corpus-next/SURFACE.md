@@ -1,6 +1,6 @@
-# The ratified surface — v2 (rounds 7–10)
+# The ratified surface — v2 (rounds 7–13)
 
-**This supersedes v1 entirely. v1 described a different language.** Rounds 7–10
+**This supersedes v1 entirely. v1 described a different language.** Rounds 7–13
 changed the calling convention, the collection kinds, the ordering model, the
 type system, and the effect surface. If you are holding a v1 port, most of it is
 now wrong.
@@ -8,7 +8,7 @@ now wrong.
 When the surface below doesn't cover something, **DO NOT INVENT** — keep the old
 shape and log it in your GAPS file. The gap list is the point of the exercise.
 
-Reasoning: `/vix-design/spec-changelog` rounds 7–9,
+Reasoning: `/vix-design/spec-changelog` rounds 7–13,
 `/vix-design/maps-all-the-way-down`, `/vix-design/where-a-build-runs`.
 
 ---
@@ -86,6 +86,8 @@ that `{ }` was overloaded, and it no longer is.) `;` terminates `let` bindings; 
 block's value is its final expression; **expression statements do not exist**.
 
 - Unary minus. Array spread `[..a, ..b]`. Record spread `..base`.
+- Collection `+` adds one field; collection `++` adds all fields. Both return a
+  new value and never mutate either operand.
 - **Strings, bash lineage**: `"…"` **interpolates** with `${expr}`; `'…'` is
   **always literal**; `+` concatenation stays legal.
 - **Backticks are COMMANDS**, not strings: a tagged template whose tag is a
@@ -162,7 +164,7 @@ ordinary function.
 | name | keys | literal | is |
 |---|---|---|---|
 | `[T]` | positions, dense from `0` | `[a, b, c]` | a real type (density is an invariant) |
-| `Set<T>` | the elements | `%[a, b]` | alias for `Map<T, ()>` |
+| `Set<T>` | the elements | `%[a, b]` | distinct view over canonical map machinery |
 | `Tree` | one path SEGMENT | `out.tree` from `exec` | recursive `Map<Name, TreeEntry>` — NOT `Map<Path,Blob>` |
 | `Map<K,V>` | whatever you say | `%{k => v}` | itself |
 
@@ -175,6 +177,44 @@ with a hand-maintained uniqueness invariant. If you truly want counts, that's
 
 **`enumerate` and `Indexed<T>` do not exist.** The keys were always there.
 **`fold_ascending` does not exist**: `stream.collect().values().fold(init, f)`.
+
+Collection addition is field addition, not mutation:
+
+```vix
+array + item                 // [T] + T -> [T]
+left_array ++ right_array    // [T] ++ [T] -> [T]
+
+set + item                   // Set<T> + T -> Set<T>
+left_set ++ right_set        // Set<T> ++ Set<T> -> Set<T>
+
+map + (key, value)           // Map<K,V> + (K,V) -> Map<K,V>
+left_map ++ right_map        // Map<K,V> ++ Map<K,V> -> Map<K,V>
+map.with (key, value)        // deliberate insert-or-replace
+```
+
+`+` adds one field. `++` adds every field of the right collection. Array
+addition appends and array `++` concatenates. Set addition and `++` are
+idempotent. Map `+` fails on an existing key and map `++` fails when the maps
+overlap; `with` is the explicit overwrite spelling. Dynamic duplicate-key
+failures retain the key and operator source site. Array spread remains the
+literal form for composing authored pieces, especially when more than two
+pieces are involved.
+
+The results of `+`, `++`, and `with` are `must_use`. Discarding one is a warning
+explaining that the original collection was not changed. Warnings do not alter
+language validity; a driver or harness may promote them to errors.
+
+Map access is addressed, not optional:
+
+```vix
+map.get(key)     // V; missing key -> Failed(MissingKey { key })
+map.get(key)?    // Result<V, Failure>; catches any failure of the projection
+map.has(key)     // Bool; tests the key without demanding its value
+```
+
+`Set.has(item)` tests element membership. `contains` remains value/content
+search on arrays, strings, and other value collections. A caller that
+deliberately wants to erase a lookup failure writes `map.get(key)?.ok()`.
 
 **Arrays are not the default reflex.** An array is either **authored** (you wrote
 the order, and the order is data — library link order, include search paths) or
@@ -332,8 +372,9 @@ ledger. Write no code that depends on yield position.
   `memo_hits_at_least`) is a claim about the completed run and is demanded after
   it. This is forced, not tidy: yield order is availability order, so there is no
   "last yield" to put a trace check in.
-- `must_use` is a type marker: a bound value of a must-use type that is never used
-  is a compile error.
+- `must_use` is a type or operation marker: an unused result is a compiler
+  warning. A driver or harness may deny that warning; the language does not turn
+  it into an unconditional compile error.
 - **`test NAME { } expecting { }` is DEAD**, and so is the `expecting` grammar.
 - Runner directives are attributes: `#[test { budget_wall: 5s, budget_rss: 1GB }]`.
   `.reject.vix` files keep their `//!` headers (compile-fail can't live in-language).
@@ -364,7 +405,7 @@ When in doubt: old shape + a GAPS entry with a proposed form marked **PROPOSAL**
 | `{}` map literal | `%{}` |
 | `test N { } expecting { }` | `#[test] fn N() -> Stream<Check>` + `yield` |
 | `//! budget: 5s wall` | `#[test { budget_wall: 5s }]` |
-| `[..ms.sorted(), x].values()` | `set.insert(x)` |
+| `[..ms.sorted(), x].values()` | `set + x` |
 | `workspace.glob(p)` → `[String]` | → `Stream<Path, Path>` |
 | `Target::host()` | a `target` parameter, supplied by the demand root |
 | `Rustc::acquire(Target::host())` | `Rustc::acquire(target)` |
