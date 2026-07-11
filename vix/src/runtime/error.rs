@@ -70,6 +70,10 @@ pub enum RuntimeFault {
         index: i64,
         length: i64,
     },
+    /// A generator task returned a non-`Ok` array-outcome result: its scrutinee
+    /// control computation faulted rather than completing cleanly. Descriptors
+    /// are only drained from a generator that reached `Done` without fault.
+    GeneratorResultNotOk,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

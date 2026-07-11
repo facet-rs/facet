@@ -1144,6 +1144,38 @@ fn rung_031_conditional_generator_executes_taken_sites() {
     assert_eq!(report.plain.checks, report.chaos.checks);
 }
 
+// Supplemental production-path certificate for the other taken arm: an empty
+// scrutinee takes the None arm, so only the None-arm site and the later
+// unconditional site publish. The Some arm publishes nothing, so its
+// payload-projecting checks are never demanded — no phantom, no invalid
+// projection of an absent Some payload.
+#[test]
+fn rung_031_taken_none_generator_publishes_only_the_none_arm() {
+    const SOURCE: &str = r#"
+#[test]
+fn taken_none() -> Stream<Check> {
+    let xs: [Int] = [];
+    yield match xs.split_last() {
+        Some((last, rest)) => {
+            yield expect_eq(last, 0);
+            yield expect_eq(rest, xs);
+        },
+        None => expect(true),
+    };
+    yield expect_eq(xs.len(), 0);
+}
+"#;
+    let report = run_source(SOURCE).expect("taken-None generator executes through the runtime");
+    assert!(report.agrees(), "plain and chaos agree: {report:?}");
+    assert!(report.passed(), "the None arm and the unconditional site pass: {report:?}");
+    assert_eq!(
+        report.plain.checks.len(),
+        2,
+        "None-arm site plus the later unconditional site; the Some arm publishes nothing",
+    );
+    assert_eq!(report.plain.checks, report.chaos.checks);
+}
+
 #[test]
 fn rung_035_sorted_observes_values_in_canonical_order() {
     let compilation = Compiler::new()

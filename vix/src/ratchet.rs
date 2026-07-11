@@ -1,5 +1,7 @@
 //! Production-path ratchet runner: source -> generated AST -> VIR -> Weavy.
 
+use std::collections::{BTreeMap, BTreeSet};
+
 use crate::compiler::Compiler;
 use crate::diagnostic::Diagnostics;
 use crate::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
@@ -12,14 +14,37 @@ use crate::runtime::{
 pub enum RunError {
     Diagnostics(Diagnostics),
     Machine(Box<MachineError>),
-    /// A test compiled into a generator whose yield sites are branch-dependent
-    /// (owned by a taken control arm). The static runner can only publish a flat
-    /// list of unconditional top-level checks; folding conditional codata into
-    /// demand-driven descriptors is a later runtime checkpoint. This is the
-    /// explicit typed seam, not a silent partial run.
-    UnsupportedGenerator {
-        test: String,
-    },
+    /// A generator published a provenance selector that is not a representable
+    /// static site index.
+    MalformedSiteKey { test: String, site: u64 },
+    /// A generator published a selector that does not name a static yield site
+    /// of the test.
+    UnknownSiteKey { test: String, site: u64 },
+    /// A generator published the same site more than once. The zero-dynamic-key
+    /// base case admits at most one occurrence per site; repeated multiplicity
+    /// requires the dynamic-key tail (055-059).
+    DuplicateSiteKey { test: String, site: u32 },
+}
+
+/// The stable provenance key of a published check: the yield site's selector
+/// plus its dynamic iteration keys. The dynamic tail is empty in the
+/// zero-dynamic-key base case and is the extension point for keyed dynamic
+/// iteration (055-059). Completed check elements are keyed by this, never by
+/// publication arrival order.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+pub struct ProvenanceKey {
+    pub site: u32,
+    pub dynamic_keys: Vec<i64>,
+}
+
+impl ProvenanceKey {
+    #[must_use]
+    fn site(site: u32) -> Self {
+        Self {
+            site,
+            dynamic_keys: Vec::new(),
+        }
+    }
 }
 
 impl From<Diagnostics> for RunError {
@@ -51,6 +76,9 @@ impl From<Box<MachineError>> for RunError {
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct CheckRun {
+    /// The stable yield-provenance key of this check. Plain/chaos agreement and
+    /// multiplicity are decided by this key, not by publication arrival order.
+    pub provenance: ProvenanceKey,
     pub identity: ValueId,
     pub passed: bool,
     pub failure: Option<FailureValue>,
@@ -75,10 +103,23 @@ pub struct RatchetReport {
     pub lowering_cache: LoweringCacheCounters,
 }
 
+impl SuiteRun {
+    /// The completed check family keyed by provenance. Publication arrival order
+    /// is a live schedule artifact; agreement is decided over this key→outcome
+    /// map, not over the append-order vector.
+    #[must_use]
+    pub fn check_family(&self) -> BTreeMap<ProvenanceKey, &CheckRun> {
+        self.checks
+            .iter()
+            .map(|check| (check.provenance.clone(), check))
+            .collect()
+    }
+}
+
 impl RatchetReport {
     #[must_use]
     pub fn agrees(&self) -> bool {
-        self.plain.checks == self.chaos.checks
+        self.plain.check_family() == self.chaos.check_family()
     }
 
     #[must_use]
@@ -100,22 +141,6 @@ impl RatchetReport {
 /// r[impl machine.scheduler.replay-is-semantics]
 pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
     let compilation = Compiler::new().compile(source)?;
-
-    // The static runner partitions a flat list of unconditional top-level
-    // yields. A generator whose sites are owned by a taken control arm cannot be
-    // faithfully executed that way yet: publishing a taken arm's checks (and
-    // suppressing the untaken arm's) is the deferred runtime fold. Refuse
-    // explicitly rather than silently dropping branch-dependent checks.
-    if let Some(test) = compilation
-        .module
-        .tests
-        .iter()
-        .find(|test| test.generator.has_conditional_sites())
-    {
-        return Err(RunError::UnsupportedGenerator {
-            test: test.name.clone(),
-        });
-    }
 
     let mut cache = LoweringCache::default();
 
@@ -145,13 +170,17 @@ fn run_lane(
     let mut kill_available = chaos.kill_first_running_task;
 
     for test in &module.tests {
-        let partitioned = module.partition_test(test);
-        for island in &partitioned.islands {
-            let lowered = cache.get_or_lower(island)?;
-            let attribution = attribution_for(island);
-            let location = Location::for_test_island(&partitioned.name, island.id.0);
-            let evaluation: Evaluation = runtime.evaluate(
-                island.id,
+        // A branch-dependent generator runs its real Match/If control through one
+        // verified generator task that publishes only the taken sites; each taken
+        // descriptor then becomes an ordinary pure check demand. A flat generator
+        // keeps the historical unconditional path with byte-identical behaviour.
+        let taken = if test.generator.has_conditional_sites() {
+            let generator = module.generator_task_island(test);
+            let lowered = cache.get_or_lower(&generator)?;
+            let attribution = attribution_for(&generator);
+            let location = Location::for_generator(&test.name);
+            let published = runtime.drive_generator(
+                generator.id,
                 &location,
                 lowered,
                 &attribution,
@@ -160,12 +189,83 @@ fn run_lane(
                 },
             )?;
             kill_available = false;
-            checks.push(CheckRun {
-                identity: evaluation.identity,
-                passed: evaluation.passed,
-                failure: evaluation.failure,
-                failure_context: evaluation.failure_context,
-            });
+            let mut seen = BTreeSet::new();
+            let mut sites = Vec::with_capacity(published.len());
+            for raw in published {
+                let site = u32::try_from(raw).map_err(|_| RunError::MalformedSiteKey {
+                    test: test.name.clone(),
+                    site: raw,
+                })?;
+                if !seen.insert(site) {
+                    return Err(RunError::DuplicateSiteKey {
+                        test: test.name.clone(),
+                        site,
+                    });
+                }
+                sites.push((site, raw));
+            }
+            Some(sites)
+        } else {
+            None
+        };
+
+        let partitioned = module.partition_test(test);
+        match taken {
+            // Taken generator sites, in publication order, evaluated as ordinary
+            // pure check demands and keyed by provenance.
+            Some(sites) => {
+                for (site, raw) in sites {
+                    let island = partitioned.islands.get(site as usize).ok_or_else(|| {
+                        RunError::UnknownSiteKey {
+                            test: test.name.clone(),
+                            site: raw,
+                        }
+                    })?;
+                    let lowered = cache.get_or_lower(island)?;
+                    let attribution = attribution_for(island);
+                    let location = Location::for_test_island(&partitioned.name, island.id.0);
+                    let evaluation: Evaluation = runtime.evaluate(
+                        island.id,
+                        &location,
+                        lowered,
+                        &attribution,
+                        ChaosPolicy::default(),
+                    )?;
+                    checks.push(CheckRun {
+                        provenance: ProvenanceKey::site(site),
+                        identity: evaluation.identity,
+                        passed: evaluation.passed,
+                        failure: evaluation.failure,
+                        failure_context: evaluation.failure_context,
+                    });
+                }
+            }
+            // Flat generator: every top-level site publishes unconditionally, so
+            // the island index is its provenance selector.
+            None => {
+                for island in &partitioned.islands {
+                    let lowered = cache.get_or_lower(island)?;
+                    let attribution = attribution_for(island);
+                    let location = Location::for_test_island(&partitioned.name, island.id.0);
+                    let evaluation: Evaluation = runtime.evaluate(
+                        island.id,
+                        &location,
+                        lowered,
+                        &attribution,
+                        ChaosPolicy {
+                            kill_first_running_task: kill_available,
+                        },
+                    )?;
+                    kill_available = false;
+                    checks.push(CheckRun {
+                        provenance: ProvenanceKey::site(island.id.0),
+                        identity: evaluation.identity,
+                        passed: evaluation.passed,
+                        failure: evaluation.failure,
+                        failure_context: evaluation.failure_context,
+                    });
+                }
+            }
         }
     }
 

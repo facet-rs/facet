@@ -90,6 +90,23 @@ impl Location {
             segments,
         }
     }
+
+    /// Location of a test's generator task: the codata construction that runs
+    /// control and publishes taken sites. It is distinct from the per-site check
+    /// locations it selects.
+    #[must_use]
+    pub fn for_generator(test_name: &str) -> Self {
+        let segments = vec![
+            "test".to_owned(),
+            test_name.to_owned(),
+            "generator".to_owned(),
+        ];
+        let fields = segments.iter().map(String::as_bytes).collect::<Vec<_>>();
+        Self {
+            id: LocationId(hash_framed(b"vix.location.v1", &fields)),
+            segments,
+        }
+    }
 }
 
 pub(crate) fn hash_framed(domain: &[u8], fields: &[&[u8]]) -> Digest {
