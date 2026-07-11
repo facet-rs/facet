@@ -1,7 +1,7 @@
 use vix::compiler::Compiler;
 use vix::diagnostic::{DiagnosticCode, DiagnosticSeverity};
 use vix::lowering::{LoweringCache, attribution_for, source_map_for};
-use vix::ratchet::{RunError, run_source};
+use vix::ratchet::run_source;
 use vix::runtime::{DemandState, EventKind, MemoVerdict, SchemaId, TaskState};
 use vix::surface::{SurfaceParser, ast};
 use vix::vir::{
@@ -1049,15 +1049,25 @@ fn rung_031_split_last_compiles_to_generator_codata() {
     assert_ne!(some_recipes[0], some_recipes[2]);
 }
 
-// The static runner still executes flat generators, but a branch-dependent
-// generator hits the explicit typed runtime seam rather than silently dropping
-// the checks its untaken arm would never publish.
+// A branch-dependent generator now executes through the provenance-keyed runtime:
+// one verified Weavy generator task follows the real `split_last` match and
+// publishes only the taken sites, then those descriptors become ordinary pure
+// check demands. The taken `Some` arm publishes sites 0,1,2; the later
+// unconditional site 4 always publishes; the untaken `None` arm (site 3,
+// `expect(false)`) publishes nothing, so there is no phantom failing check.
 #[test]
-fn rung_031_generator_reaches_explicit_runtime_seam() {
-    match run_source(RUNG_031) {
-        Err(RunError::UnsupportedGenerator { test }) => assert_eq!(test, "split_last"),
-        other => panic!("expected explicit generator runtime seam, got {other:?}"),
-    }
+fn rung_031_conditional_generator_executes_taken_sites() {
+    let report = run_source(RUNG_031)
+        .expect("rung 031 conditional generator executes through the provenance-keyed runtime");
+    assert!(report.agrees(), "plain and chaos agree on the check family: {report:?}");
+    assert!(report.passed(), "every taken check passes: {report:?}");
+    assert_eq!(
+        report.plain.checks.len(),
+        4,
+        "taken Some sites 0,1,2 plus unconditional site 4, no None-arm phantom",
+    );
+    assert!(report.plain.checks.iter().all(|check| check.passed));
+    assert_eq!(report.plain.checks, report.chaos.checks);
 }
 
 #[test]
