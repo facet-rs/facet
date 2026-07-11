@@ -4259,6 +4259,53 @@ fn overlapping_maps_check() -> Stream<Check> {
 }
 
 #[test]
+fn string_failures_are_typed_attributed_and_replay_stable() {
+    for (source, operation, expected) in [
+        (
+            r#"#[test]
+fn missing() -> Stream<Check> { let value = "a".split_once("/"); yield expect_eq(value.0, ""); }"#,
+            "\"a\".split_once(\"/\")",
+            "MissingDelimiter",
+        ),
+        (
+            r#"#[test]
+fn invalid() -> Stream<Check> { let value = "nope".parse_int(); yield expect_eq(value, 0); }"#,
+            "\"nope\".parse_int()",
+            "InvalidInteger",
+        ),
+        (
+            r#"#[test]
+fn overflow() -> Stream<Check> { let value = "9223372036854775808".parse_int(); yield expect_eq(value, 0); }"#,
+            "\"9223372036854775808\".parse_int()",
+            "IntegerOverflow",
+        ),
+    ] {
+        let report = run_source(source).expect("string failure becomes a production report");
+        assert_eq!(report.plain.checks, report.chaos.checks);
+        for lane in [&report.plain, &report.chaos] {
+            let [check] = lane.checks.as_slice() else {
+                panic!("one failed check")
+            };
+            assert!(!check.passed);
+            assert!(
+                format!("{:?}", check.failure.as_ref().expect("typed failure"))
+                    .starts_with(expected)
+            );
+            let context = check
+                .failure_context
+                .as_ref()
+                .expect("operation source attribution");
+            assert_eq!(
+                &source[context.span.start as usize..context.span.end as usize],
+                operation
+            );
+            assert_eq!(lane.counters.pure_host_calls, 0);
+            assert_eq!(lane.receipt_count, 0);
+        }
+    }
+}
+
+#[test]
 fn map_values_follow_canonical_key_order() {
     const SOURCE: &str = r#"
 #[test]
