@@ -1,3 +1,6 @@
+use crate::support::Span;
+use crate::vir::{FunctionId, NodeId};
+
 use super::identity::{DemandKey, RecipeId, ValueId};
 use super::store::Handle;
 
@@ -50,6 +53,17 @@ pub enum FailureValue {
         length: i64,
         subject: Option<ValueId>,
     },
+}
+
+/// Context rebuilt while reporting a language failure. It is deliberately not
+/// resident in the store or memo identity: source spans and demand chains are
+/// properties of this compilation and demand, not of the failure value.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct FailureContext {
+    pub function: FunctionId,
+    pub node: NodeId,
+    pub span: Span,
+    pub demand_chain: Vec<DemandKey>,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]

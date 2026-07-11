@@ -8,7 +8,8 @@ use crate::vir::IslandId;
 
 use super::identity::{DemandKey, DemandPreimage, Location, LocationId, SchemaId, ValueId};
 use super::model::{
-    DemandRecord, DemandState, FailureValue, MemoVerdict, Receipt, TaskId, TaskRecord, TaskState,
+    DemandRecord, DemandState, FailureContext, FailureValue, MemoVerdict, Receipt, TaskId,
+    TaskRecord, TaskState,
 };
 use super::observe::{
     Counters, Event, EventKind, EventSink, ExecutionFacts, ExecutionFallbackFact,
@@ -38,6 +39,7 @@ pub struct Evaluation {
     pub passed: bool,
     pub memo: MemoVerdict,
     pub failure: Option<FailureValue>,
+    pub failure_context: Option<FailureContext>,
 }
 
 /// The scheduler owns passive maps and admission bookkeeping; Weavy owns the
@@ -124,6 +126,9 @@ impl<S: EventSink> Runtime<S> {
                 identity,
                 passed,
                 memo: MemoVerdict::Exact,
+                failure_context: failure
+                    .as_ref()
+                    .and_then(|failure| failure_context(failure, lowered, attribution)),
                 failure,
             });
         }
@@ -314,6 +319,7 @@ impl<S: EventSink> Runtime<S> {
                         length,
                         subject: None,
                     };
+                    let report_context = failure_context(&failure, lowered, attribution);
                     let interned = self.store.intern_failure(failure.clone(), &[]);
                     self.observe_interned(interned);
                     self.memo.insert(
@@ -342,6 +348,7 @@ impl<S: EventSink> Runtime<S> {
                         passed: false,
                         memo: MemoVerdict::Miss,
                         failure: Some(failure),
+                        failure_context: report_context,
                     });
                 }
                 Err(fault) => {
@@ -393,6 +400,7 @@ impl<S: EventSink> Runtime<S> {
                 passed,
                 memo: MemoVerdict::Miss,
                 failure: None,
+                failure_context: None,
             });
         }
     }
@@ -644,6 +652,25 @@ impl<S: EventSink> Runtime<S> {
     #[must_use]
     pub fn into_sink(self) -> S {
         self.sink
+    }
+}
+
+fn failure_context(
+    failure: &FailureValue,
+    lowered: &LoweringArtifact,
+    attribution: &LoweringAttribution,
+) -> Option<FailureContext> {
+    match failure {
+        FailureValue::IndexOutOfBounds { recipe, site, .. } if *recipe == lowered.recipe => {
+            let source = attribution.source_for_trace(*site)?;
+            Some(FailureContext {
+                function: source.function,
+                node: source.node,
+                span: source.span,
+                demand_chain: vec![lowered.demand_key],
+            })
+        }
+        FailureValue::IndexOutOfBounds { .. } => None,
     }
 }
 

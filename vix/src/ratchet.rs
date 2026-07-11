@@ -4,8 +4,8 @@ use crate::compiler::Compiler;
 use crate::diagnostic::Diagnostics;
 use crate::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
 use crate::runtime::{
-    ChaosPolicy, Counters, DemandState, Evaluation, Event, EventLog, FailureValue, Location,
-    MachineError, Runtime, TaskState, ValueId,
+    ChaosPolicy, Counters, DemandState, Evaluation, Event, EventLog, FailureContext,
+    FailureValue, Location, MachineError, Runtime, TaskState, ValueId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -46,6 +46,7 @@ pub struct CheckRun {
     pub identity: ValueId,
     pub passed: bool,
     pub failure: Option<FailureValue>,
+    pub failure_context: Option<FailureContext>,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -136,6 +137,7 @@ fn run_lane(
                 identity: evaluation.identity,
                 passed: evaluation.passed,
                 failure: evaluation.failure,
+                failure_context: evaluation.failure_context,
             });
         }
     }
