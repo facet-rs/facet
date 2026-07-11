@@ -40,10 +40,13 @@
 //! The exact Cargo package identity `(source, name, version)` is kept *separate*
 //! from Rodin's [`ResolutionDomain`] `(source, name, compat-class)`: the former
 //! is what Cargo actually locked (never collapsed), the latter the coexistence
-//! bucket a version competes in. Multiple exact packages projecting to one domain
-//! is surfaced as a typed [`Discrepancy::DomainMultiplicity`], never a silent
-//! last-wins collapse. An unrecognized Cargo source scheme is a typed parse
-//! error, never a silent registry.
+//! bucket a version competes in. Rodin's domain is a *model* of cargo's own
+//! version bucketing, not a proven identity with it, so multiple exact packages
+//! projecting to one domain is a valid Cargo case Rodin's single-version-per-
+//! domain model does not represent — surfaced as a typed
+//! [`Discrepancy::DomainMultiplicity`], never a silent last-wins collapse and
+//! never asserted impossible. An unrecognized Cargo source scheme is a typed
+//! parse error, never a silent registry.
 //!
 //! A future Vix resolver kernel emits a typed [`SolveResult`]; the harness
 //! compares it against both oracles and turns every divergence into a structured
@@ -1592,9 +1595,14 @@ enum Discrepancy {
         cargo: String,
         candidate: String,
     },
-    /// Oracle 1: one Rodin domain is covered by >1 exact Cargo package on `side` —
-    /// the projection is not injective. Cargo's coexistence rule forbids this, so
-    /// it is surfaced (never collapsed) as an anomalous/unsupported observation.
+    /// Oracle 1: one Rodin domain is covered by >1 exact Cargo package on `side`.
+    /// Rodin's `(source, name, compat-class)` model represents at most one version
+    /// per domain, so it cannot represent this — an explicit *unsupported* Cargo
+    /// case, not an impossibility. The harness does not assume Rodin's compat-class
+    /// matches cargo's own version bucketing for every input (prerelease/build-
+    /// metadata semantics, alternate registries, or a compat-class bug could
+    /// diverge), so any such domain is surfaced here rather than last-wins
+    /// collapsed or assumed away.
     DomainMultiplicity {
         side: Side,
         domain: ResolutionDomain,
@@ -2432,15 +2440,25 @@ fn malformed_version_is_surfaced() {
     );
 }
 
-/// Proof by executable cargo: two disjoint-but-*compatible* requirements on one
-/// path crate (same compatibility class) are *unified* by cargo to a single locked
-/// package — cargo never coexists two versions in one (source, name, compat-class)
-/// bucket, so no domain multiplicity can arise from a real lockfile. Disjoint
-/// *exact* requirements (`=1.0.0` and `=1.2.0`) would need two registry versions;
-/// a path crate has exactly one version, so cargo cannot satisfy both and this
-/// case is impossible to construct offline (documented, not silently skipped).
+/// Executable cargo certificate: two overlapping *compatible* requirements
+/// (`^1.0.0` and `=1.0.0`) on one path crate unify to a single locked package.
+/// This demonstrates local unification only — it does NOT establish that a real
+/// lockfile can never place two exact versions in one Rodin domain. Rodin's
+/// `(source, name, compat-class)` domain is a *model* of cargo's version
+/// bucketing, not a proven identity with it. Disjoint *exact* requirements across
+/// dependency paths (`=1.0.0` and `=1.2.0`, both compat class 1) need a registry
+/// publishing two versions; measured against live cargo, that specific pair is a
+/// resolution *conflict* (cargo activates one version per compat bucket) rather
+/// than coexistence — but a Rodin/cargo bucketing divergence (prerelease/build-
+/// metadata, alternate registries, or a compat-class bug) is a valid Cargo case
+/// Rodin cannot represent, surfaced as [`Discrepancy::DomainMultiplicity`], never
+/// collapsed and never assumed away. Certifying that boundary against live cargo
+/// needs a two-version registry; no cargo-usable local registry exists in-repo
+/// (the sparse-index snapshot feeds vix's own resolver, not cargo), so the live
+/// differential is a later oracle extension — the constructed
+/// `domain_multiplicity_is_surfaced_not_collapsed` certificate stands in for now.
 #[test]
-fn cargo_unifies_same_compat_class_requirements() {
+fn cargo_unifies_overlapping_compatible_requirements() {
     let fixture = Fixture::new("same-class-unify", "app")
         .krate(FixtureCrate::new("dep").version("1.0.0"))
         .krate(FixtureCrate::new("a").dep(FixtureDep::new("dep").req("^1.0.0")))
@@ -2466,7 +2484,7 @@ fn cargo_unifies_same_compat_class_requirements() {
     let self_check = compare_selection(&oracle.packages, &oracle);
     assert!(
         self_check.is_empty(),
-        "cargo's own selection projects injectively onto domains — no multiplicity: {self_check:?}"
+        "this fixture's cargo selection has one package per domain, so the self-comparison is clean: {self_check:?}"
     );
 }
 

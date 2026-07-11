@@ -61,8 +61,10 @@ The active Rodin track, gates, and stop conditions are specified in
   files for fetch/extract rungs.
 - `fixture_workspace("kitchen-sink")` — 12 packages, diamonds, features. Its
   `cargo_selection()` is cargo's own locked selection (cargo generate-lockfile),
-  the only oracle (rodin/docs/00-oracle.md). There is no recorded reference
-  selection: the Rust reference resolver was deleted and was never an authority.
+  the only oracle (rodin/docs/00-oracle.md), and a value the *test harness*
+  supplies — not a host call the solver makes (the pure solver stays host-free).
+  There is no recorded reference selection: the Rust reference resolver was
+  deleted and was never an authority.
 - Rungs marked for rerun execute twice against one store; variants
   `rerun_with: "<fixture-mutation>"` apply the named mutation between runs.
 

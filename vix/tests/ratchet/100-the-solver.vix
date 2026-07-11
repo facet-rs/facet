@@ -3,6 +3,12 @@
 // chapter, whole, on one page. Domains, propagation, selection,
 // backtracking without a trail, learning as values. When this is green,
 // the language in the book exists. (building-a-solver.md)
+//
+// The solver (`propagate`/`candidates`/`search`/`try_candidates`) is pure Vix
+// and host-free: it reads only `fixture_index()` and the requirement domains,
+// never calls cargo. `ws.cargo_selection()` below is an oracle value the test
+// *harness* supplies (the fixture runs cargo over the workspace); the
+// differential comparison is the test's, not the solver's.
 
 struct State {
     domains: Map<String, VersionSet>,
@@ -85,7 +91,7 @@ fn the_solver() -> Stream<Check> {
     let init = State { domains: ws.requirements(), selected: %{}, learned: %[] };
     yield match search(init) {
         Outcome::Solved(sel) => {
-            let expected = ws.cargo_selection();  // cargo generate-lockfile — the only oracle
+            let expected = ws.cargo_selection();  // harness-supplied cargo oracle value
             yield expect(expected.keys().all(|pkg| sel.has(pkg) && sel.get(pkg) == expected.get(pkg)));
         },
         Outcome::Exhausted(_) => expect(false),
