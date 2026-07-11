@@ -1,5 +1,11 @@
 # CRITIC: reading the book as a reader, against the corpus as ground truth
 
+> [!NOTE]
+> This is a pre-round-13 reader snapshot. Collection examples using optional
+> `Map.get`, `.get(...).unwrap()`, `.push`, or `.insert` document the old
+> contradiction and have been superseded by addressed `get`, `has`, `+`, `++`,
+> and `with` in `SURFACE.md` and the migrated corpus.
+
 *Seat: a competent Rust/Haskell/JS programmer, reading the book in its own weight
 order for the first time, then opening the ported corpus cold. Every claim below
 is grounded in a `file:line` I opened this session. Section 7 says what I did not

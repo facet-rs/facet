@@ -63,7 +63,7 @@ let heavy = rows.values().filter(|r| r.weight > 100);
 | `enumerate()` | `[T] -> [Indexed<T>]` | `Indexed<T> = (Int, T)`, plain std alias (ratified) |
 | `fold(init, f)` | `[T] -> R` | field order (deterministic; it's a struct walk) |
 | `len()`, `any(p)`, `all(p)`, `contains(x)` | | order-free |
-| `split_last()` | `[T] -> (T, [T])` | by-value pop, renamed so the name says which element; fresh values both |
+| `split_last()` | `[T] -> Option<(T, [T])>` | pure partition naming the selected end; fresh values both |
 | `values()` | `[T] -> Multiset<T>` | forget positions |
 
 ### On the unordered collection `Multiset<T>` — canonical order
@@ -75,7 +75,7 @@ let heavy = rows.values().filter(|r| r.weight > 100);
 | `filter_map(f)`, `flat_map(f)` | `-> Multiset<U>` | |
 | `fold(init, f)` | `-> R` | canonical element order — deterministic always |
 | `find_min(p)` / `find_max(p)` | `-> Option<T>` | the deterministic "find": least/greatest satisfying `p` |
-| `take_min()` / `take_max()` | `-> (T, Multiset<T>)` | by-value removal, name says which |
+| `split_min()` / `split_max()` | `-> Option<(T, Multiset<T>)>` | pure partition naming the selected structural extreme |
 | `sorted()` / `sorted_by(cmp)` | `-> [T]` | the bridge to rank; needs `<=>` (which must just work) |
 | `len()`, `any(p)`, `all(p)`, `contains(x)` | | order-free |
 
@@ -98,7 +98,7 @@ let in_original_order: [Indexed<T>] = kept.sorted();
   because no observer can tell. Arrival order as an *optimization*: yes,
   silently. As a *semantic*: never.
 - **Bare `pop()`.** Dies twice: mutation-shaped, and silent about which
-  element. `split_last` / `take_min` / `take_max` say what they do.
+  element. `split_last` / `split_min` / `split_max` say what they do.
 - **Fused-vs-fan-out in names** (`map_fanout`, `par_map`): execution shape
   is the partition's choice, invisible by law. A name that promises an
   execution shape is a knob, and the door stays shut.
@@ -124,6 +124,7 @@ future noted. The dividing line is explicitly undecided.
    canonical-order on multisets — is type-directed meaning enough, or does
    names-carry-semantics demand distinct names (`fold_fields` vs
    `fold_canonical`)?
-4. Which removal variants actually earn v1: `split_last`? `take_min`/`max`?
+4. Which partition variants actually earn v1 beyond the ratified
+   `split_last` and `split_min`?
    (The corpus rewrite will show demand; the lean is: start with none and
    let a real site ask.)

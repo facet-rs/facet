@@ -1,5 +1,13 @@
 # The corpus-first campaign — state and reading order
 
+> [!NOTE]
+> Counts and excerpts below describe the original corpus-first campaign. Round
+> 13 subsequently migrated the live ports to immutable collection algebra:
+> `.push` and mutation-shaped `.insert` are absent, map/set `+` appears 73
+> times, deliberate map `.with` appears 5 times, and `.has` appears 41 times.
+> The only retained `.get(...).unwrap()` sites are two `Doc` reads whose surface
+> remains explicitly unratified.
+
 Everything in this directory serves one directive: port the essential
 corpus to the language-as-designed BEFORE implementation; learn from the
 feel; adjudicate from evidence.

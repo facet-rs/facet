@@ -1,5 +1,12 @@
 # Implementability Critic
 
+> [!NOTE]
+> This is a pre-round-13 review snapshot. Its examples using optional
+> `Map.get`, `.get(...).unwrap()`, mutation-shaped `.push`/`.insert`, and
+> `take_min` record the contradictions that motivated the immutable collection
+> ruling; they are not the current Vix surface. See `SURFACE.md` and the
+> round-13 migration banners in the `ANALYSIS-*` reports for the live contract.
+
 Mission seat: the person who has to build vix, not the person judging whether
 the language is pleasant.
 
