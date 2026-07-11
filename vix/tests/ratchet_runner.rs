@@ -1,3 +1,6 @@
+use std::path::Path;
+
+use vix::budget::{BudgetOutcome, ChildReport, run_source_under_declared_budget};
 use vix::compiler::Compiler;
 use vix::diagnostic::{DiagnosticCode, DiagnosticSeverity};
 use vix::lowering::{LoweringCache, attribution_for, source_map_for};
@@ -4012,11 +4015,17 @@ fn rung_049_plain_recursion_uses_stable_verified_call_abi() {
 }
 
 #[test]
-fn rung_050_remains_red_until_trace_checks_and_outer_budgets_land() {
-    let diagnostics = Compiler::new()
-        .compile(RUNG_050)
-        .expect_err("canonical rung 050 remains blocked by concurrent TraceCheck/budget work");
-    assert!(!diagnostics.entries.is_empty());
+fn rung_050_deep_tail_recursion_runs_under_its_declared_budget() {
+    let outcome = run_source_under_declared_budget(
+        Path::new(env!("CARGO_BIN_EXE_vix-budget-child")),
+        RUNG_050,
+    );
+    assert_eq!(
+        outcome,
+        BudgetOutcome::Within {
+            report: ChildReport::RanSource { passed: true },
+        },
+    );
 }
 
 #[test]
@@ -5106,12 +5115,12 @@ fn assert_contiguous_sequences(events: &[vix::runtime::Event]) {
 // ---------------------------------------------------------------------------
 // Rung 050 — verifier-visible self-tail loop (auxiliary certificates).
 //
-// Canonical rung 050 stays red until the separately-owned TraceCheck/budget
-// syntax lands. These certificates cover the machine slice it depends on: a
-// terminal self-call lowers to an in-place loop backedge (no Weavy Call, no new
-// frame), ordinary and non-self recursion keep the Weavy Call, and the loop runs
-// identically and cheaply in the interpreter and JIT with no per-iteration
-// scheduler/memo/host machinery.
+// The canonical rung above composes these machine certificates with the
+// separately-landed TraceCheck and outer-budget substrate: a terminal self-call
+// lowers to an in-place loop backedge (no Weavy Call, no new frame), ordinary
+// and non-self recursion keep the Weavy Call, and the loop runs identically and
+// cheaply in the interpreter and JIT with no per-iteration scheduler/memo/host
+// machinery.
 //
 // r[impl machine.safepoint.two-classes]
 // ---------------------------------------------------------------------------
