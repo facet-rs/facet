@@ -373,6 +373,13 @@ pub enum Type {
         key: Box<Type>,
         value: Box<Type>,
     },
+    /// A total order over `T` supplied by the caller. Physically an `Order<T>`
+    /// value is its key-extraction recipe — a closure `fn(T) -> (K, T)` that
+    /// pairs the extracted key with the source value so structural comparison of
+    /// the pair sorts by key and breaks ties by the source. The recipe is an
+    /// ordinary Vix closure; a consuming operation (`sorted`) reads it and never
+    /// materializes an `Order<T>` value in a Weavy frame.
+    Order(Box<Type>),
 }
 
 impl Type {
@@ -409,6 +416,19 @@ impl Type {
         Self::Stream {
             key: Box::new(key),
             value: Box::new(value),
+        }
+    }
+
+    #[must_use]
+    pub fn order(subject: Type) -> Self {
+        Self::Order(Box::new(subject))
+    }
+
+    #[must_use]
+    pub fn order_subject(&self) -> Option<&Type> {
+        match self {
+            Self::Order(subject) => Some(subject),
+            _ => None,
         }
     }
 
@@ -480,6 +500,7 @@ impl Type {
             Self::Stream { key, value } => {
                 format!("Stream<{}, {}>", key.name(), value.name())
             }
+            Self::Order(subject) => format!("Order<{}>", subject.name()),
         }
     }
 
@@ -496,6 +517,9 @@ impl Type {
             | Self::Map { .. }
             | Self::Set(_) => Some(1),
             Self::Stream { .. } => Some(0),
+            // An `Order<T>` recipe is never materialized in a Weavy frame; a
+            // consuming operation reads its closure recipe directly.
+            Self::Order(_) => Some(0),
             Self::Function { .. } => Some(2),
             Self::StreamCheck => None,
             Self::Tuple(elements) => elements.iter().try_fold(0usize, |width, element| {
@@ -530,7 +554,7 @@ impl Type {
                 .variants
                 .iter()
                 .all(|variant| variant.payload.equality_is_structural()),
-            Self::Check | Self::StreamCheck | Self::Stream { .. } => false,
+            Self::Check | Self::StreamCheck | Self::Stream { .. } | Self::Order(_) => false,
         }
     }
 
@@ -560,7 +584,7 @@ impl Type {
                             .all(|field| field.ty.structural_order_is_defined()),
                     })
             }
-            Self::Check | Self::StreamCheck | Self::Stream { .. } => false,
+            Self::Check | Self::StreamCheck | Self::Stream { .. } | Self::Order(_) => false,
         }
     }
 }
@@ -1466,6 +1490,11 @@ pub(crate) fn canonical_type(ty: &Type) -> Vec<u8> {
             let mut bytes = b"stream".to_vec();
             frame(&mut bytes, &canonical_type(key));
             frame(&mut bytes, &canonical_type(value));
+            bytes
+        }
+        Type::Order(subject) => {
+            let mut bytes = b"order".to_vec();
+            frame(&mut bytes, &canonical_type(subject));
             bytes
         }
         Type::Enum(enumeration) => {

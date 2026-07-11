@@ -549,6 +549,8 @@ fn type_contains_array(ty: &Type) -> bool {
         Type::Map { key, value } => type_contains_array(key) || type_contains_array(value),
         Type::Set(element) => type_contains_array(element),
         Type::Stream { key, value } => type_contains_array(key) || type_contains_array(value),
+        // An `Order<T>` is never a realized frame value.
+        Type::Order(_) => false,
         Type::Bool | Type::Int | Type::Check | Type::StreamCheck | Type::String => false,
     }
 }
@@ -812,6 +814,11 @@ fn collect_schema_types(ty: &Type, out: &mut Vec<Type>) {
         collect_schema_types(value, out);
         return;
     }
+    // An `Order<T>` recipe never becomes a schema; it is consumed at compile
+    // time and never realized in a frame.
+    if matches!(ty, Type::Order(_)) {
+        return;
+    }
     out.push(ty.clone());
     match ty {
         Type::Function { parameter, result } => {
@@ -847,6 +854,7 @@ fn collect_schema_types(ty: &Type, out: &mut Vec<Type>) {
         }
         Type::Set(element) => collect_schema_types(element, out),
         Type::Stream { .. } => unreachable!("stream schemas return before insertion"),
+        Type::Order(_) => unreachable!("order recipes return before insertion"),
         Type::Bool | Type::Int | Type::Check | Type::StreamCheck | Type::String => {}
     }
 }
@@ -1233,7 +1241,8 @@ impl SemanticEqualityEmitter<'_, '_, '_> {
             | Type::Set(_)
             | Type::Function { .. }
             | Type::StreamCheck
-            | Type::Stream { .. } => {
+            | Type::Stream { .. }
+            | Type::Order(_) => {
                 return Err(lowering_diagnostic(
                     node.span,
                     "equality lowering is not implemented for this VIR type",
@@ -1708,6 +1717,10 @@ impl<'a> ProgramContractBuilder<'a> {
                 WeavyWordKind::Handle(self.schema_for_type(ty, span)?),
             )),
             Type::Stream { .. } => Ok(WeavyRegionShape::default()),
+            Type::Order(_) => Err(lowering_diagnostic(
+                span,
+                "Order<T> has no contract frame shape",
+            )),
         }
     }
 
@@ -1821,6 +1834,10 @@ impl<'a> ProgramContractBuilder<'a> {
             Type::StreamCheck => Err(lowering_diagnostic(
                 span,
                 "Stream<Check> has no contract value shape",
+            )),
+            Type::Order(_) => Err(lowering_diagnostic(
+                span,
+                "Order<T> has no contract value shape",
             )),
         }
     }
@@ -3189,7 +3206,8 @@ fn comparison_temporary_types(ty: &Type, out: &mut Vec<Type>) {
         | Type::Set(_)
         | Type::Function { .. }
         | Type::StreamCheck
-        | Type::Stream { .. } => {}
+        | Type::Stream { .. }
+        | Type::Order(_) => {}
     }
 }
 
@@ -4084,7 +4102,7 @@ fn collect_typed_compare_leaves(
                 "function comparison requires stable closure identity",
             ));
         }
-        Type::Check | Type::StreamCheck | Type::Stream { .. } => {
+        Type::Check | Type::StreamCheck | Type::Stream { .. } | Type::Order(_) => {
             return Err(lowering_diagnostic(
                 node.span,
                 "comparison reached a non-orderable VIR type",
@@ -9515,6 +9533,10 @@ fn representation_for_type(ty: &Type, span: Span) -> Result<ValueRepresentation,
         Type::StreamCheck => Err(lowering_diagnostic(
             span,
             "Stream<Check> has no island-interior word representation",
+        )),
+        Type::Order(_) => Err(lowering_diagnostic(
+            span,
+            "Order<T> has no island-interior word representation",
         )),
     }
 }
