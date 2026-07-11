@@ -138,6 +138,75 @@ Rules for the priority track:
 6. Design errors in a rung are resolved explicitly by Amos and committed as
    specification changes; implementing agents do not silently edit them.
 
+## Parallel execution lanes
+
+Numerical rung order is a specification order, not a requirement that every
+implementation activity wait behind the first red rung. Work proceeds in four
+lanes whose outputs meet at production-path certificates.
+
+### Lane A — canonical machine spine
+
+This lane owns the genuinely serial execution contracts:
+
+- `050`: verifier-visible self-tail loops and an interior pollpoint;
+- `051`: molten accumulation, one shared aggregate publication, and framed
+  semantic identity;
+- `052-059`: higher-order calls, lazy wires, control-selective demand, dynamic
+  check provenance, and memo identity.
+
+These slices share compiler, lowering, scheduler, identity, and trace
+contracts. They are integrated in dependency order even when independent
+sub-checkpoints—such as the framed writer—are developed concurrently.
+
+### Lane B — solver value algebra
+
+This lane advances above the canonical red boundary whenever its real
+dependencies are already present:
+
+- `083-084`: typed `Version` and normalized `VersionSet`;
+- `085-088`: typed package rows, domains, narrowing, and conflict values;
+- `089-093`: propagation, deterministic search, backtracking, exhaustion,
+  learning, and memo reuse;
+- `095-100`: typed results, features, Cargo differential checks, warm restart,
+  and the miniature solver.
+
+It implements the representation-neutral contracts in `rodin/docs/`; it does
+not port either workaround-heavy Vix solver. A missing machine capability is a
+typed red seam handed to Lane A, never grounds for flattened tables, reparsing,
+private caches, or host execution.
+
+### Lane C — live Cargo oracle
+
+This lane is independent of Vix execution progress and starts immediately:
+
+- materialize offline workspaces from `vix/tests/rodin_fixtures.rs`;
+- obtain selected package identities from `cargo generate-lockfile --offline`;
+- obtain target-projected enabled edges from
+  `cargo tree -e normal,build --target ... --offline`;
+- represent every difference as typed data suitable for fixture minimization;
+- remove recorded `expected_selection()` values as an authority in rungs 098
+  and 100 without inventing a substitute SUT.
+
+The solver model is not the speculative part of this program. The banked Rust
+run already reached 853/892 exact FreshLock domain matches (95.63%), and all
+105 remaining rows were classified. That result establishes the algorithm and
+Cargo-model baseline; live Cargo remains the executable oracle for the new
+kernel.
+
+### Lane D — integration and scale proof
+
+The integration lane folds only committed forward checkpoints, reruns the
+cross-lane gates, and attaches each pulled-forward quality gate to the
+substrate it measures:
+
+- `123` belongs to molten array publication;
+- `138` belongs to ordered Map accumulation and freeze;
+- `140` belongs to memo lookup and demand identity.
+
+This lane keeps the canonical-prefix and Rodin-readiness reports distinct. A
+green solver value or Cargo-oracle fixture above a red canonical rung is useful
+readiness evidence, but never masquerades as a larger consecutive prefix.
+
 ## Rodin priority track
 
 The track is grouped by what it proves, not by numerical adjacency.
