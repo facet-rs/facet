@@ -10,5 +10,5 @@ fn domains() -> Stream<Check> {
     let reqs = %{"liba" => parse_req("^1.0"), "libb" => parse_req("^2.0")};
     let s = init_state(reqs);
     yield expect_eq(s.domains.len(), 2);
-    yield expect(s.domains.get("liba").unwrap().contains(parse_version("1.3.0")));
+    yield expect(s.domains.get("liba").contains(parse_version("1.3.0")));
 }

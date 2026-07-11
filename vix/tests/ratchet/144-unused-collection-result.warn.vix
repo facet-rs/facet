@@ -1,0 +1,7 @@
+//! warn: unused result of `+`
+//! at: 5
+
+fn unchanged(xs: [Int]) -> [Int] {
+    let ignored = xs + 4;
+    xs
+}

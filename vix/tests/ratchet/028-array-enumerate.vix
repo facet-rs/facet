@@ -3,6 +3,6 @@
 fn array_enumerate() -> Stream<Check> {
     let xs = ["a", "b", "c"];
     let tagged = xs.stream().collect();
-    yield expect_eq(tagged.get(0), Some("a"));
-    yield expect_eq(tagged.get(2), Some("c"));
+    yield expect_eq(tagged.get(0), "a");
+    yield expect_eq(tagged.get(2), "c");
 }

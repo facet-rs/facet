@@ -3,9 +3,9 @@ struct State { domains: Map<String, VersionSet>, selected: Map<String, Version> 
 enum Step { Pass(State), Conflict(String) }
 
 fn apply_dep(s: State) where { pkg: String, req: VersionSet } -> Step {
-    let narrowed = s.domains.get(pkg).unwrap().intersect(req);
+    let narrowed = s.domains.get(pkg).intersect(req);
     if narrowed.is_empty() { Step::Conflict(pkg) }
-    else { Step::Pass(State { domains: s.domains.insert(pkg) where { value: narrowed }, ..s }) }
+    else { Step::Pass(State { domains: s.domains.with (pkg, narrowed), ..s }) }
 }
 
 #[test]

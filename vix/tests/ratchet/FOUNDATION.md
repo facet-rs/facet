@@ -94,7 +94,7 @@ constant-factor — robust to any machine, unreachable by brute force:
   100+ seconds for anything touching scheduler/memo/identity machinery
   per iteration. Forces interior iteration to be *not demand*.
 - **Rung 051** (1M-element array accumulator, 5s): the molten rung.
-  Without uniqueness-mutation and publish-once, each push either copies
+  Without uniqueness-mutation and publish-once, each one-item `+` either copies
   (O(n²) — ~10¹² word moves, weeks) or interns (forbidden by the
   counter). There is no third way; that is the rung's entire content.
 - **Rungs 098/100** (the solver, 30s): keeps the capstone honest once

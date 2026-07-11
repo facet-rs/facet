@@ -206,6 +206,22 @@ Compile-fail cannot live in-language, so these keep their headers. The runner
 compiles the file, expects failure, and matches the diagnostic. A reject file that
 compiles is a failing test.
 
+Compile-warning contracts use `.warn.vix` files with parallel metadata:
+
+```vix
+//! warn: unused result of `+`
+//! at: 5
+
+fn unchanged(xs: [Int]) -> [Int] {
+    let ignored = xs + 4;
+    xs
+}
+```
+
+The file must compile and emit the declared warning at the declared line. The
+ratchet treats a missing warning as a failed certificate; it does not change the
+language-level diagnostic into an unconditional error.
+
 Fixture selection, rerun mutations, alternate source files, and expected harness
 flags are likewise file-level harness metadata when they describe orchestration
 rather than a Vix value. They remain leading `//!` directives until the ratchet

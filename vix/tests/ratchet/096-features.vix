@@ -5,7 +5,7 @@ fn features() -> Stream<Check> {
     let features = %{"libe" => %["net"]};
     let solution = mini_solve_with_features(fixture_index()) where { requirements: reqs, features };
     yield match solution {
-        Some(sel) => expect_some(sel.get("libnet")),
+        Some(sel) => expect(sel.has("libnet")),
         None => expect(false),
     };
 }

@@ -1,6 +1,6 @@
 # The ratchet
 
-One hundred and forty rungs. Each is a Vix test file that begins red and becomes
+One hundred and forty-six rungs. Each is a Vix test file that begins red and becomes
 permanently green only through the production compiler/runtime path.
 When `vx test --ratchet` reports rung 100 green, the language described in
 the vix book (`/vix`) exists. That is the definition of done.
@@ -19,11 +19,15 @@ the vix book (`/vix`) exists. That is the definition of done.
    its own subject.
 4. **`.reject.vix` rungs must fail to compile** with the diagnostic
    declared in their header. A reject file that compiles is a red rung.
-5. **The foundation contract binds** (FOUNDATION.md, same directory):
+5. **`.warn.vix` rungs must compile and emit** the warning and source line
+   declared in their header. The warning remains a warning in the language;
+   the ratchet fails because an expected diagnostic was absent, not because it
+   globally promotes warnings to errors.
+6. **The foundation contract binds** (FOUNDATION.md, same directory):
    traces + counters + receipts from rung 001, chaos-run agreement, and
    spec-coverage gates at band boundaries. Behavior alone does not
    advance the ratchet.
-6. Test-system semantics (`#[test] fn name() -> Stream<Check>`, yielded
+7. Test-system semantics (`#[test] fn name() -> Stream<Check>`, yielded
    `expect_*` checks, yielded trace-check calls, rerun attributes/headers,
    snapshots) are specified in the book's [Testing](/vix/testing)
    chapter. The harness is itself part of what the ladder demands into
@@ -59,14 +63,14 @@ the vix book (`/vix`) exists. That is the definition of done.
 | 023–025 | option, user enums, Ordering | `Option`, generic enums, `Ordering` is ordinary |
 | 026–031 | arrays | literal/index/len, field-wise map, enumerate, fold, predicates, split_last |
 | 032 | pop (reject) | mutation-shaped names don't exist |
-| 033–040 | streams, maps, order values | array streams, key-preserving filter, explicit value sorting, canonical fold after sort, filter_map/flat_map gaps, find/take min/max gaps, key roundtrip, `sorted where { order }` |
-| 041–044 | maps & sets | by-value insert/get, overwrite, canonical keys, `Set<T>` |
+| 033–040 | streams, maps, order values | array streams, key-preserving filter, explicit value sorting, canonical fold after sort, filter_map/flat_map gaps, find/split min/max, key roundtrip, `sorted where { order }` |
+| 041–044 | maps & sets | `+` one row, addressed `get`, `has`, deliberate `with`, disjoint `++`, canonical keys, `Set<T>` |
 | 045–047 | strings & paths | concat/split/parse, `p""` join-only, string→path (reject) |
 | 048–052 | functions | closures capture, recursion, 100k tail loop, fold at scale, higher-order |
 | 053–059 | demand semantics | args-are-wires, partial dependency, deferred match, undemanded-is-free, element independence, memo within run, distinct demands |
 | 060–061 | snapshots | ambient rendering, canonical-order stability |
 | 062–066 | typed decode | JSON/TOML onto structs, Option fields, string-or-table enums, failure as value |
-| 067–070 | exec | run+capture, failure-as-result, memoized, undeclared capability (reject) |
+| 067–070 | exec | run+capture, arbitrary-expression failure catch, memoized, undeclared capability (reject) |
 | 071–074 | trees | projection (+never_read), glob, subfile argv, declared env |
 | 075–077 | fetch & archives | pinned fetch, memoized fetch, untar+project |
 | 078 | receipts | reads recorded exactly |
@@ -101,3 +105,4 @@ failures), `overlapped` / `finished_before` / `killed` yielded checks
 | 126–130 | parallelism observed | overlapped effects, fan-out parallelism, progressive trees (subfile consumer finishes before producer exits), spawn-and-park, kill-when-satisfied |
 | 131–136 | edge semantics | unary minus; division by zero and overflow as typed failures; float TOTAL order (NaN reflexive, sorts last); string order by codepoints; unwrap-None carries a span |
 | 137–140 | trust & scale | corrupted store caught by reverify; map accumulator (molten twin of 051); identity at 100k depth; memo under 100k-demand load |
+| 141–146 | collection failure & diagnostics | addressed `MissingKey`; duplicate-row and overlapping-map failures; parse failure span; `must_use` warning; old `push`/`insert` spellings rejected |

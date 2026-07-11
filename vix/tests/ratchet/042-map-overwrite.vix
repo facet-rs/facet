@@ -1,9 +1,9 @@
-// Rung 042 — inserting an existing key describes a map with the new value.
+// Rung 042 — with deliberately describes a map with one rebound key.
 #[test]
 fn map_overwrite() -> Stream<Check> {
     let m = %{"k" => 1};
-    let m2 = m.insert("k") where { value: 2 };
-    yield expect_eq(m.get("k"), Some(1));
-    yield expect_eq(m2.get("k"), Some(2));
+    let m2 = m.with ("k", 2);
+    yield expect_eq(m.get("k"), 1);
+    yield expect_eq(m2.get("k"), 2);
     yield expect_eq(m2.len(), 1);
 }

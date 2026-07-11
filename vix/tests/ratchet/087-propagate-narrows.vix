@@ -3,11 +3,11 @@ struct State { domains: Map<String, VersionSet>, selected: Map<String, Version> 
 enum Step { Pass(State), Conflict(String) }
 
 fn apply_dep(s: State) where { pkg: String, req: VersionSet } -> Step {
-    let narrowed = s.domains.get(pkg).unwrap().intersect(req);
+    let narrowed = s.domains.get(pkg).intersect(req);
     if narrowed.is_empty() {
         Step::Conflict(pkg)
     } else {
-        Step::Pass(State { domains: s.domains.insert(pkg) where { value: narrowed }, ..s })
+        Step::Pass(State { domains: s.domains.with (pkg, narrowed), ..s })
     }
 }
 
@@ -17,8 +17,8 @@ fn propagate_narrows() -> Stream<Check> {
     let step = apply_dep(s) where { pkg: "libb", req: parse_req(">=2.1") };
     yield match step {
         Step::Pass(s2) => {
-            yield expect(!s2.domains.get("libb").unwrap().contains(parse_version("2.0.0")));
-            yield expect(s.domains.get("libb").unwrap().contains(parse_version("2.0.0")));
+            yield expect(!s2.domains.get("libb").contains(parse_version("2.0.0")));
+            yield expect(s.domains.get("libb").contains(parse_version("2.0.0")));
         },
         Step::Conflict(_) => expect(false),
     };

@@ -4,7 +4,7 @@ fn features_off() -> Stream<Check> {
     let reqs = %{"libe" => parse_req("^1.0")};
     let solution = mini_solve_with_features(fixture_index()) where { requirements: reqs, features: %{} };
     yield match solution {
-        Some(sel) => expect_none(sel.get("libnet")),
+        Some(sel) => expect(!sel.has("libnet")),
         None => expect(false),
     };
     yield never_read(p"index/libnet");

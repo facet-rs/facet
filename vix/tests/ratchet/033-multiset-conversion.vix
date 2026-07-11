@@ -4,6 +4,6 @@ fn multiset_conversion() -> Stream<Check> {
     let xs = [3, 1, 2];
     let ms = xs.stream().collect();
     yield expect_eq(ms.len(), 3);
-    yield expect_eq(ms.get(0), Some(3));
-    yield expect_eq(ms.get(2), Some(2));
+    yield expect_eq(ms.get(0), 3);
+    yield expect_eq(ms.get(2), 2);
 }

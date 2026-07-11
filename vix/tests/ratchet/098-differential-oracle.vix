@@ -9,7 +9,7 @@ fn differential_oracle() -> Stream<Check> {
         Some(sel) => {
             let expected = ws.expected_selection();  // recorded from the reference resolver
             yield expect_eq(sel.len(), expected.len());
-            yield expect(expected.keys().all(|pkg| sel.get(pkg) == expected.get(pkg)));
+            yield expect(expected.keys().all(|pkg| sel.has(pkg) && sel.get(pkg) == expected.get(pkg)));
         },
         None => expect(false),
     };

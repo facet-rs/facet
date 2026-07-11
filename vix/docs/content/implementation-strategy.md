@@ -282,7 +282,7 @@ preserved and worked around through ownership boundaries and worktrees.
 
 This charter is complete only when all of the following hold:
 
-- the current ratchet through rung 140 passes consecutively through the
+- the current ratchet through rung 146 passes consecutively through the
   production path and satisfies `FOUNDATION.md`;
 - the real-program corpus uses that same compiler/runtime path;
 - the old evaluator and parity scaffolding have no live callers and are
@@ -340,7 +340,7 @@ requires user design authority, preserve and report exact evidence and continue
 any independent in-scope census, observability, documentation-convergence, or
 retirement work that does not bypass the blocker.
 
-The goal is complete only when rungs 001-140 pass consecutively through the
+The goal is complete only when rungs 001-146 pass consecutively through the
 production path under FOUNDATION.md; the real-program corpus uses that same
 path; the frozen evaluator and parity scaffolding have no live callers and are
 deleted; the documentation is collapsed to the authoritative surfaces without

@@ -1,12 +1,12 @@
 
-// Rung 138 — the map twin of rung 051: 200k inserts into an accumulator
-// map, molten with carried rows, published once. Copy-per-insert is
-// O(n²); intern-per-insert is forbidden by the counter.
+// Rung 138 — the map twin of rung 051: add 200k distinct rows to an
+// accumulator map, molten with carried rows, published once. Copy per + is
+// O(n²); intern per + is forbidden by the counter.
 #[test { budget_wall: 5s, budget_rss: 1GB }]
 fn map_accumulator() -> Stream<Check> {
     let n = 200000;
-    let m = (range where { from: 0, to: n }).fold(%{}, |acc, i| acc.insert(i.to_string()) where { value: i });
+    let m = (range where { from: 0, to: n }).fold(%{}, |acc, i| acc + (i.to_string(), i));
     yield expect_eq(m.len(), n);
-    yield expect_eq(m.get("123456"), Some(123456));
+    yield expect_eq(m.get("123456"), 123456);
     yield store_interns_at_most(10);
 }

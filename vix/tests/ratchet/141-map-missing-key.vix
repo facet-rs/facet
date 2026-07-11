@@ -1,0 +1,13 @@
+// Rung 141 — map get is addressed: an absent key is a typed MissingKey
+// demand failure carrying the get expression's source site, never None.
+fn required_value(m: Map<String, Int>) -> Int {
+    m.get("missing")
+}
+
+#[test]
+fn map_missing_key() -> Stream<Check> {
+    let m: Map<String, Int> = %{};
+    let boom = required_value(m);
+    yield failed_with(boom, "missing key");
+    yield failure_span_in(boom, required_value);
+}

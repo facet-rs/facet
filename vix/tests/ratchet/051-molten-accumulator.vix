@@ -1,16 +1,18 @@
 
 // Rung 051 — THE molten rung: build a 1-million-element array by folding
-// pushes. Semantically each push denotes a fresh array; the as-if law
+// one-item +. Semantically each + denotes a fresh array; the as-if law
 // lets a unique accumulator be mutated in place (molten) and interned
-// ONCE at the end. Without that: every push copies — O(n²), ~10¹² word
+// ONCE at the end. Without that: every + copies — O(n²), ~10¹² word
 // moves, weeks past the budget — or interns per push, which the counter
 // forbids. There is no way through this rung except uniqueness-mutation
 // and publish-once.
 #[test { budget_wall: 5s, budget_rss: 1GB }]
 fn molten_accumulator() -> Stream<Check> {
     let n = 1000000;
-    let xs = (range where { from: 0, to: n }).fold([], |acc, i| acc.push(i * 2));
+    let xs = (range where { from: 0, to: n }).fold([], |acc, i| acc + (i * 2));
+    let sample = [0, 1] ++ [2, 3];
     yield expect_eq(xs.len(), n);
+    yield expect_eq(sample, [0, 1, 2, 3]);
     yield expect_eq(xs[0], 0);
     yield expect_eq(xs[999999], 1999998);
     yield store_interns_at_most(10);

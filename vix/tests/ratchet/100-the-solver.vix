@@ -16,19 +16,20 @@ enum Outcome { Solved(Map<String, Version>), Exhausted(NoGood) }
 fn propagate(s: State) where { pkg: String, version: Version } -> Step {
     let row = fixture_index().row(pkg) where { version };
     row.deps.values().fold(
-        Step::Pass(State { selected: s.selected.insert(pkg) where { value: version }, ..s }),
+        Step::Pass(State { selected: s.selected + (pkg, version), ..s }),
         |step, dep| match step {
             Step::Conflict(ng) => Step::Conflict(ng),
             Step::Pass(st) => {
-                let dom = match st.domains.get(dep.name) {
-                    Some(d) => d,
-                    None => parse_req("*"),
+                let dom = if st.domains.has(dep.name) {
+                    st.domains.get(dep.name)
+                } else {
+                    parse_req("*")
                 };
                 let narrowed = dom.intersect(parse_req(dep.req));
                 if narrowed.is_empty() {
                     Step::Conflict(NoGood { pkg: dep.name, region: dom })
                 } else {
-                    Step::Pass(State { domains: st.domains.insert(dep.name) where { value: narrowed }, ..st })
+                    Step::Pass(State { domains: st.domains.with (dep.name, narrowed), ..st })
                 }
             },
         },
@@ -36,14 +37,17 @@ fn propagate(s: State) where { pkg: String, version: Version } -> Step {
 }
 
 fn candidates(s: State) where { pkg: String } -> [Version] {
-    fixture_index().versions(pkg).values()
-        .filter(|v| s.domains.get(pkg).unwrap().contains(v))
+    fixture_index().versions(pkg).values().stream()
+        .filter(|v| s.domains.get(pkg).contains(v))
         .filter(|v| !s.learned.any(|ng| ng.pkg == pkg && ng.region.contains(v)))
+        .collect().values()
         .sorted()
 }
 
 fn pick_undecided(s: State) -> Option<String> {
-    s.domains.keys().filter(|p| s.selected.get(p) == None).sorted().split_last()
+    s.domains.keys().stream()
+        .filter(|p| !s.selected.has(p))
+        .collect().values().split_last()
         .map(|(last, _)| last)
 }
 
@@ -59,16 +63,16 @@ fn search(s: State) -> Outcome {
 
 fn try_candidates(s: State) where { pkg: String, cands: [Version] } -> Outcome {
     match cands.split_last() {
-        None => Outcome::Exhausted(NoGood { pkg: pkg, region: s.domains.get(pkg).unwrap() }),
+        None => Outcome::Exhausted(NoGood { pkg: pkg, region: s.domains.get(pkg) }),
         Some((v, rest)) => {
             let step = propagate(s) where { pkg, version: v };
             match step {
                 Step::Conflict(ng) =>
-                    try_candidates(State { learned: s.learned.insert(ng), ..s }) where { pkg, cands: rest },
+                    try_candidates(State { learned: s.learned + ng, ..s }) where { pkg, cands: rest },
                 Step::Pass(s2) => match search(s2) {
                     Outcome::Solved(sel) => Outcome::Solved(sel),
                     Outcome::Exhausted(ng) =>
-                        try_candidates(State { learned: s.learned.insert(ng), ..s }) where { pkg, cands: rest },
+                        try_candidates(State { learned: s.learned + ng, ..s }) where { pkg, cands: rest },
                 },
             }
         },
@@ -82,7 +86,7 @@ fn the_solver() -> Stream<Check> {
     yield match search(init) {
         Outcome::Solved(sel) => {
             let expected = ws.expected_selection();
-            yield expect(expected.keys().all(|pkg| sel.get(pkg) == expected.get(pkg)));
+            yield expect(expected.keys().all(|pkg| sel.has(pkg) && sel.get(pkg) == expected.get(pkg)));
         },
         Outcome::Exhausted(_) => expect(false),
     };

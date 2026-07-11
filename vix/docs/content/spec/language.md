@@ -479,11 +479,12 @@ not consume its result. Trace-check constructors are harness intrinsics; there
 is no user-visible `Demand<T>` or promise wrapper. The harness, not the
 scheduler, partitions the phases.
 
-Compile-fail expectations, fixture selection, second-source variants, rerun
-mutations, chaos mode, and resource budgets are external harness metadata. The
-ratchet currently carries that metadata in leading `//!` directives; these are
-specified runner input, not hidden language statements. The `#[test]` attribute
-and test function are language syntax.
+Compile-fail and compile-warning expectations, fixture selection, second-source
+variants, rerun mutations, chaos mode, and resource budgets are external harness
+metadata. The ratchet currently carries that metadata in leading `//!`
+directives; these are specified runner input, not hidden language statements.
+An expected warning certificate does not promote that warning to a language
+error. The `#[test]` attribute and test function are language syntax.
 
 ## Diagnostics
 

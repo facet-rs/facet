@@ -1,0 +1,9 @@
+//! reject: unknown method insert
+//! at: 8
+
+// Rung 146 — maps use + for a new row and with for explicit rebinding.
+#[test]
+fn insert_does_not_exist() -> Stream<Check> {
+    let m = %{"k" => 1};
+    yield expect_eq(m.insert("k") where { value: 2 }, %{"k" => 2});
+}

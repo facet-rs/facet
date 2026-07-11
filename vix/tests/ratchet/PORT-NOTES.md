@@ -32,15 +32,13 @@ vix/tests/ratchet/140-memo-at-scale.vix:12 - `demanded_times(f, 100000)` intenti
 vix/tests/ratchet/033-multiset-conversion.vix:5 - Old "positions die" multiset assertion became `xs.stream().collect()` and now asserts keys survive, matching v2 but changing the old rung's vocabulary. PROPOSAL: retitle the rung around stream keys.
 vix/tests/ratchet/036-multiset-fold.vix:6 - Preserving canonical value-order fold requires `collect().values().sorted().fold(...)`, not the shorter table rewrite, because stream key order and value order differ. PROPOSAL: add a named helper for value-order folds if this ceremony is intended.
 vix/tests/ratchet/037-filter-map-flat-map.vix:8 - `filter_map` on streams is used but not listed in SURFACE.md's stream method table. PROPOSAL: either ratify `Stream.filter_map` or spell it as `flat_map` to an Option-derived stream.
-vix/tests/ratchet/038-find-take-min-max.vix:5 - `find_min` on streams is used but not listed in SURFACE.md's stream method table. PROPOSAL: ratify deterministic selection operators or require `collect().values()` first.
-vix/tests/ratchet/038-find-take-min-max.vix:7 - `take_min` on streams is used but not listed in SURFACE.md's stream method table. PROPOSAL: ratify deterministic selection operators or require `collect().values()` first.
-vix/tests/ratchet/044-sets.vix:8 - Set element observation uses `s.keys().sorted()` because Round 9 addenda leave Set streaming/values shape open. PROPOSAL: define `Set<T>.values()` or `Set<T>.stream()` explicitly.
-vix/tests/ratchet/087-propagate-narrows.vix:10 - Dynamic map update uses inferred `.insert(key) where { value }` spelling. PROPOSAL: ratify Map.insert's named parameter.
-vix/tests/ratchet/088-propagate-conflicts.vix:8 - Dynamic map update uses inferred `.insert(key) where { value }` spelling. PROPOSAL: ratify Map.insert's named parameter.
+vix/tests/ratchet/038-find-split-min-max.vix:5 - RESOLVED: deterministic `find_min`/`find_max` selection and `split_min` decomposition are ratified; mutation-shaped `take_min` is retired.
+vix/tests/ratchet/044-sets.vix:10 - RESOLVED: `Set<T>.values()` exposes elements in structural order; `Set.has`, one-item `+`, and whole-set `++` are ratified.
+vix/tests/ratchet/087-propagate-narrows.vix:10 - RESOLVED: `Map.with (key, value)` is the explicit insert-or-replace spelling.
+vix/tests/ratchet/088-propagate-conflicts.vix:8 - RESOLVED: `Map.with (key, value)` is the explicit insert-or-replace spelling.
 vix/tests/ratchet/100-the-solver.vix:17 - Fixture index row lookup uses inferred `.row(pkg) where { version }` spelling. PROPOSAL: ratify fixture/index helper APIs in v2.
-vix/tests/ratchet/100-the-solver.vix:19 - Dynamic selected-map update uses inferred `.insert(key) where { value }` spelling. PROPOSAL: ratify Map.insert's named parameter.
-vix/tests/ratchet/100-the-solver.vix:31 - Dynamic domain-map update uses inferred `.insert(key) where { value }` spelling. PROPOSAL: ratify Map.insert's named parameter.
-vix/tests/ratchet/138-map-accumulator.vix:8 - Dynamic accumulator update uses inferred `.insert(key) where { value }` spelling. PROPOSAL: ratify Map.insert's named parameter.
+vix/tests/ratchet/100-the-solver.vix:19 - RESOLVED: selected rows are known-new and use `+`; existing domain rows are deliberately rebound with `with`.
+vix/tests/ratchet/138-map-accumulator.vix:8 - RESOLVED: the unique-key accumulator uses one-row `+` and remains eligible for molten publish-once lowering.
 vix/tests/ratchet/089-mini-solve-trivial.vix:5 - `mini_solve(fixture_index()) where { requirements: reqs }` uses an inferred helper argument name. PROPOSAL: ratify fixture solver helper signatures.
 vix/tests/ratchet/096-features.vix:6 - `mini_solve_with_features` uses inferred named arguments `requirements` and `features`. PROPOSAL: ratify fixture solver helper signatures.
 vix/tests/ratchet/097-features-off.vix:5 - `mini_solve_with_features` uses inferred named arguments `requirements` and `features`. PROPOSAL: ratify fixture solver helper signatures.

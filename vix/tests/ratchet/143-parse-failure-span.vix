@@ -1,0 +1,13 @@
+// Rung 143 — parsing promises a value. Malformed text produces a typed,
+// source-attributed demand failure rather than None.
+fn required_int(text: String) -> Int {
+    text.parse_int()
+}
+
+#[test]
+fn parse_failure_span() -> Stream<Check> {
+    yield expect_eq(required_int("42"), 42);
+    let boom = required_int("forty-two");
+    yield failed_with(boom, "invalid integer");
+    yield failure_span_in(boom, required_int);
+}

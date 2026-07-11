@@ -1,0 +1,23 @@
+// Rung 142 — map + adds one new row and map ++ combines disjoint maps.
+// Neither silently overwrites; with is the explicit rebinding operation.
+fn duplicate_row(m: Map<String, Int>) -> Map<String, Int> {
+    m + ("k", 2)
+}
+
+fn overlapping_maps() -> Map<String, Int> {
+    %{"a" => 1} ++ %{"a" => 2}
+}
+
+#[test]
+fn map_addition_collisions() -> Stream<Check> {
+    let disjoint = %{"a" => 1} ++ %{"b" => 2};
+    yield expect_eq(disjoint.keys(), ["a", "b"]);
+
+    let row_boom = duplicate_row(%{"k" => 1});
+    yield failed_with(row_boom, "duplicate key");
+    yield failure_span_in(row_boom, duplicate_row);
+
+    let merge_boom = overlapping_maps();
+    yield failed_with(merge_boom, "duplicate key");
+    yield failure_span_in(merge_boom, overlapping_maps);
+}

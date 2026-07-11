@@ -2,6 +2,6 @@
 // never hash order).
 #[test]
 fn map_keys_canonical() -> Stream<Check> {
-    let m = %{"pear" => 1, "apple" => 2, "quince" => 3};
-    yield expect_eq(m.keys().sorted(), ["apple", "pear", "quince"]);
+    let m = %{"pear" => 1} ++ %{"apple" => 2, "quince" => 3};
+    yield expect_eq(m.keys(), ["apple", "pear", "quince"]);
 }

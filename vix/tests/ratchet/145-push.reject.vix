@@ -1,0 +1,9 @@
+//! reject: unknown method push
+//! at: 8
+
+// Rung 145 — collection addition is + / ++; mutation-shaped push has no referent.
+#[test]
+fn push_does_not_exist() -> Stream<Check> {
+    let xs = [1, 2];
+    yield expect_eq(xs.push(3), [1, 2, 3]);
+}
