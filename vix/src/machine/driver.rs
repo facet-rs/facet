@@ -10427,6 +10427,7 @@ fn op_name(op: &Op) -> &'static str {
         Op::CompareValueBytes { .. } => "CompareValueBytes",
         Op::StringConcat { .. } => "StringConcat",
         Op::ByteProject { .. } => "ByteProject",
+        Op::PathJoin { .. } => "PathJoin",
         Op::Publish { .. } => "Publish",
         Op::ConstF64 { .. } => "ConstF64",
         Op::AddF64 { .. } => "AddF64",

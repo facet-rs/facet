@@ -256,6 +256,14 @@ pub(crate) enum ByteProjectFault {
     AllocationFailed,
 }
 
+/// Why an [`Op::PathJoin`] could not produce a resident relative Path.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PathJoinFault {
+    BaseUnresident(i64),
+    SegmentUnresident(i64),
+    AllocationFailed,
+}
+
 impl StringConcatFault {
     /// The closed i64 status the JIT ABI helper reports to its stencil.
     #[cfg_attr(not(feature = "jit"), allow(dead_code))]
@@ -285,6 +293,21 @@ impl ByteProjectFault {
     fn status(self) -> i64 {
         match self {
             Self::SourceUnresident(_) => Self::SOURCE_STATUS,
+            Self::AllocationFailed => Self::ALLOCATION_STATUS,
+        }
+    }
+}
+
+impl PathJoinFault {
+    const OK_STATUS: i64 = 0;
+    const BASE_STATUS: i64 = 1;
+    const SEGMENT_STATUS: i64 = 2;
+    const ALLOCATION_STATUS: i64 = 3;
+
+    fn status(self) -> i64 {
+        match self {
+            Self::BaseUnresident(_) => Self::BASE_STATUS,
+            Self::SegmentUnresident(_) => Self::SEGMENT_STATUS,
             Self::AllocationFailed => Self::ALLOCATION_STATUS,
         }
     }
@@ -1327,6 +1350,46 @@ impl MoltenArena {
         });
         Ok(handle)
     }
+
+    fn join_path_bytes(
+        &mut self,
+        memories: MemoryView<'_>,
+        base: i64,
+        segment: i64,
+    ) -> Result<i64, PathJoinFault> {
+        let base = handle_bytes(memories, self, base)
+            .map_err(|_| PathJoinFault::BaseUnresident(base))?
+            .to_vec();
+        let segment = handle_bytes(memories, self, segment)
+            .map_err(|_| PathJoinFault::SegmentUnresident(segment))?
+            .to_vec();
+        let separator = usize::from(!base.is_empty());
+        let total = base
+            .len()
+            .checked_add(separator)
+            .and_then(|len| len.checked_add(segment.len()))
+            .filter(|len| *len <= isize::MAX as usize)
+            .ok_or(PathJoinFault::AllocationFailed)?;
+        let handle =
+            task_molten_handle(self.buffers.len()).ok_or(PathJoinFault::AllocationFailed)?;
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(total)
+            .map_err(|_| PathJoinFault::AllocationFailed)?;
+        bytes.extend_from_slice(&base);
+        if !base.is_empty() {
+            bytes.push(b'/');
+        }
+        bytes.extend_from_slice(&segment);
+        self.buffers
+            .try_reserve_exact(1)
+            .map_err(|_| PathJoinFault::AllocationFailed)?;
+        self.buffers.push(MoltenBuffer {
+            bytes,
+            initialized: Vec::new(),
+        });
+        Ok(handle)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -2074,6 +2137,50 @@ pub(crate) unsafe extern "C" fn byte_project_abi(
     }
 }
 
+#[cfg_attr(not(feature = "jit"), allow(dead_code))]
+pub(crate) unsafe extern "C" fn path_join_abi(
+    store_value_memories: *const RawValueMemory,
+    store_value_memory_count: usize,
+    lent_molten_value_memories: *const RawValueMemory,
+    lent_molten_value_memory_count: usize,
+    arena: *mut core::ffi::c_void,
+    base: i64,
+    segment: i64,
+    out_handle: *mut i64,
+) -> i64 {
+    if out_handle.is_null() {
+        return PathJoinFault::AllocationFailed.status();
+    }
+    unsafe { *out_handle = ARRAY_POISON_HANDLE };
+    if arena.is_null()
+        || (store_value_memories.is_null() && store_value_memory_count != 0)
+        || (lent_molten_value_memories.is_null() && lent_molten_value_memory_count != 0)
+    {
+        return PathJoinFault::AllocationFailed.status();
+    }
+    let store = if store_value_memory_count == 0 {
+        &[]
+    } else {
+        unsafe { core::slice::from_raw_parts(store_value_memories, store_value_memory_count) }
+    };
+    let molten = if lent_molten_value_memory_count == 0 {
+        &[]
+    } else {
+        unsafe {
+            core::slice::from_raw_parts(lent_molten_value_memories, lent_molten_value_memory_count)
+        }
+    };
+    let memories = MemoryView::Raw(RawValueMemories { store, molten });
+    let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
+    match arena.join_path_bytes(memories, base, segment) {
+        Ok(handle) => {
+            unsafe { *out_handle = handle };
+            PathJoinFault::OK_STATUS
+        }
+        Err(fault) => fault.status(),
+    }
+}
+
 /// # Safety
 /// `log` must point to a live [`PublicationLog`] and must not be otherwise
 /// aliased for the duration of the call. `record` must point to `record_len`
@@ -2365,6 +2472,10 @@ pub enum Op {
     /// Copy one resident opaque byte run into a fresh molten value under a
     /// distinct, verifier-witnessed destination schema.
     ByteProject { dst: u32, source: u32 },
+    /// Join a resident relative Path with one resident validated Path segment.
+    /// The empty Path root contributes no slash; every nonempty base contributes
+    /// exactly one separator before the segment.
+    PathJoin { dst: u32, base: u32, segment: u32 },
     /// Append one descriptor to the task's verified append-only publication log.
     ///
     /// The complete `record_width`-byte value at `frame[record..]` is copied by
@@ -3163,6 +3274,29 @@ impl Task {
                                 fault_site(verified, fn_id, pc)?,
                                 fault,
                             ));
+                        }
+                    };
+                    write_i64_at(&mut self.arena, base + dst as usize, handle);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::PathJoin {
+                    dst,
+                    base: join_base,
+                    segment,
+                } => {
+                    let base_handle = read_i64_at(&self.arena, base + join_base as usize);
+                    let segment_handle = read_i64_at(&self.arena, base + segment as usize);
+                    let handle = match self.molten.join_path_bytes(
+                        MemoryView::from(value_memories),
+                        base_handle,
+                        segment_handle,
+                    ) {
+                        Ok(handle) => handle,
+                        Err(fault) => {
+                            let Some(verified) = verified else {
+                                panic!("legacy raw PathJoin operand is not resident");
+                            };
+                            return Err(path_join_fault(fault_site(verified, fn_id, pc)?, fault));
                         }
                     };
                     write_i64_at(&mut self.arena, base + dst as usize, handle);
@@ -4242,6 +4376,22 @@ fn byte_project_fault(site: FaultSite, fault: ByteProjectFault) -> TaskFault {
             TaskFault::UnresidentByteProjectSource { site, handle }
         }
         ByteProjectFault::AllocationFailed => TaskFault::ByteProjectionAllocationFailed { site },
+    }
+}
+
+fn path_join_fault(site: FaultSite, fault: PathJoinFault) -> TaskFault {
+    match fault {
+        PathJoinFault::BaseUnresident(handle) => TaskFault::UnresidentPathJoinOperand {
+            site,
+            side: CompareSide::Left,
+            handle,
+        },
+        PathJoinFault::SegmentUnresident(handle) => TaskFault::UnresidentPathJoinOperand {
+            site,
+            side: CompareSide::Right,
+            handle,
+        },
+        PathJoinFault::AllocationFailed => TaskFault::PathJoinAllocationFailed { site },
     }
 }
 

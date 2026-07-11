@@ -1405,6 +1405,7 @@ fn rung_046_paths_join_and_render_through_verified_execution() {
         .expect("rung 046 compiles through the canonical Path surface");
     let partitioned = module.partition_test(&module.tests[0]);
     let mut lowering_cache = LoweringCache::default();
+    let mut has_path_join = false;
     for island in &partitioned.islands {
         let lowered = lowering_cache
             .get_or_lower(island)
@@ -1421,12 +1422,22 @@ fn rung_046_paths_join_and_render_through_verified_execution() {
                 .iter()
                 .any(|op| matches!(op, WeavyOp::ByteProject { .. }))
         }));
+        has_path_join |= lowered.program().fns.iter().any(|function| {
+            function
+                .code
+                .iter()
+                .any(|op| matches!(op, WeavyOp::PathJoin { .. }))
+        });
     }
+    assert!(
+        has_path_join,
+        "rung 046 lowers joins through the verified PathJoin op"
+    );
 
     let report = run_source(RUNG_046).expect("rung 046 runs through Executable");
     assert!(report.passed());
     assert!(report.agrees());
-    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.checks.len(), 3);
     assert_eq!(report.plain.checks, report.chaos.checks);
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.pure_host_calls, 0);

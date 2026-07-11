@@ -2643,6 +2643,47 @@ impl Verifier<'_> {
                     }
                 }
             }
+            Op::PathJoin { dst, base, segment } => {
+                let dst_schema =
+                    self.read_handle(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                let base_schema =
+                    self.read_handle(function_id, pc, frame, *base, AccessRole::CompareLeft)?;
+                let segment_schema =
+                    self.read_handle(function_id, pc, frame, *segment, AccessRole::CompareRight)?;
+                if dst_schema != base_schema || dst_schema != segment_schema {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::CompareSchemaMismatch {
+                            left: dst_schema,
+                            right: if dst_schema != base_schema {
+                                base_schema
+                            } else {
+                                segment_schema
+                            },
+                        },
+                    ));
+                }
+                let schema_index = usize::try_from(dst_schema.0).map_err(|_| {
+                    self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::SchemaNotByteComparable { schema: dst_schema },
+                    )
+                })?;
+                if !matches!(
+                    self.contract.schemas[schema_index].payload,
+                    PayloadKind::OpaqueBytes {
+                        byte_comparable: true
+                    }
+                ) {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::SchemaNotByteComparable { schema: dst_schema },
+                    ));
+                }
+            }
             Op::Publish {
                 site: _,
                 record,
@@ -4465,6 +4506,7 @@ impl Verifier<'_> {
                     | Op::CompareValueBytes { .. }
                     | Op::StringConcat { .. }
                     | Op::ByteProject { .. }
+                    | Op::PathJoin { .. }
                     | Op::Publish { .. }
                     | Op::ConstF64 { .. }
                     | Op::AddF64 { .. }

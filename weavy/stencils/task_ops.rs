@@ -173,6 +173,16 @@ pub struct Ctx {
         i64,
         *mut i64,
     ) -> i64,
+    path_join: unsafe extern "C" fn(
+        *const RawValueMemory,
+        usize,
+        *const RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        *mut i64,
+    ) -> i64,
     /// The task's append-only publication log, reached only through the ABI
     /// function below so both lanes share one log semantics.
     publications: *mut core::ffi::c_void,
@@ -205,6 +215,9 @@ const EXIT_STRING_CONCAT_ALLOCATION: i64 = 15;
 const EXIT_PUBLICATION_ALLOCATION: i64 = 16;
 const EXIT_BYTE_PROJECT_SOURCE_UNRESIDENT: i64 = 17;
 const EXIT_BYTE_PROJECT_ALLOCATION: i64 = 18;
+const EXIT_PATH_JOIN_BASE_UNRESIDENT: i64 = 19;
+const EXIT_PATH_JOIN_SEGMENT_UNRESIDENT: i64 = 20;
+const EXIT_PATH_JOIN_ALLOCATION: i64 = 21;
 
 const LENT_MOLTEN_MIN: i64 = i64::MIN / 2;
 
@@ -1175,6 +1188,52 @@ pub unsafe extern "C" fn weavy_task_byte_project(cx: *mut Ctx) {
         _ => {
             *c.await_index = pc;
             *c.exit = EXIT_BYTE_PROJECT_ALLOCATION;
+        }
+    }
+}
+
+/// Join a Path and one validated segment — immediates: [dst, base, segment,
+/// pc]. The verified contract requires all three handles to name the same
+/// byte-comparable Path schema; the helper allocates a by-value result.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_path_join(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let base = *c.prog.add(1);
+    let segment = *c.prog.add(2);
+    let pc = *c.prog.add(3);
+    c.prog = c.prog.add(4);
+    let base_handle = read_i64(c.frame, base);
+    let segment_handle = read_i64(c.frame, segment);
+    let mut handle = i64::MIN;
+    let status = (c.path_join)(
+        c.store_value_memories,
+        c.store_value_memory_count,
+        c.lent_molten_value_memories,
+        c.lent_molten_value_memory_count,
+        c.molten,
+        base_handle,
+        segment_handle,
+        &raw mut handle,
+    );
+    match status {
+        0 => {
+            write_i64(c.frame, dst, handle);
+            cont!(cx);
+        }
+        1 => {
+            *c.await_index = pc;
+            *c.resume = base_handle as u64;
+            *c.exit = EXIT_PATH_JOIN_BASE_UNRESIDENT;
+        }
+        2 => {
+            *c.await_index = pc;
+            *c.resume = segment_handle as u64;
+            *c.exit = EXIT_PATH_JOIN_SEGMENT_UNRESIDENT;
+        }
+        _ => {
+            *c.await_index = pc;
+            *c.exit = EXIT_PATH_JOIN_ALLOCATION;
         }
     }
 }

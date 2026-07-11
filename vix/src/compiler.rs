@@ -2032,10 +2032,13 @@ fn lower_value(
 }
 
 fn validate_path_literal(value: &str, span: Span) -> Result<(), Diagnostics> {
-    if value.is_empty() || value.starts_with('/') || value.contains('\\') || value.contains('\0') {
+    if value.is_empty() {
+        return Ok(());
+    }
+    if value.starts_with('/') || value.contains('\\') || value.contains('\0') {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             span,
-            "Path literal must be a nonempty relative path",
+            "Path literal must be a relative path",
         )));
     }
     for segment in value.split('/') {
@@ -5300,7 +5303,7 @@ fn lower_binary(
                 Type::Path,
                 EffectFacts::PURE,
                 Vec::new(),
-                Op::Path(format!("/{}", segment.value)),
+                Op::Path(segment.value.clone()),
             );
             let joined = push_node(
                 nodes,

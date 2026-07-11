@@ -907,6 +907,8 @@ fn task_fault_site(fault: &TaskFault) -> Option<&FaultSite> {
         | TaskFault::StringConcatAllocationFailed { site }
         | TaskFault::UnresidentByteProjectSource { site, .. }
         | TaskFault::ByteProjectionAllocationFailed { site }
+        | TaskFault::UnresidentPathJoinOperand { site, .. }
+        | TaskFault::PathJoinAllocationFailed { site }
         | TaskFault::PublicationAllocationFailed { site }
         | TaskFault::InvalidEnumSelector { site, .. }
         | TaskFault::EnumProjectionMismatch { site, .. }
@@ -959,6 +961,8 @@ fn result_shape_attribution(
         | TaskFault::StringConcatAllocationFailed { .. }
         | TaskFault::UnresidentByteProjectSource { .. }
         | TaskFault::ByteProjectionAllocationFailed { .. }
+        | TaskFault::UnresidentPathJoinOperand { .. }
+        | TaskFault::PathJoinAllocationFailed { .. }
         | TaskFault::PublicationAllocationFailed { .. }
         | TaskFault::PublicationIndexOutOfRange { .. }
         | TaskFault::InvalidEnumSelector { .. }

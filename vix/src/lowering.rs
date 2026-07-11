@@ -4835,10 +4835,10 @@ fn lower_node(
                 ValueRepresentation::RealizedHandle,
             )?;
             (
-                vec![WeavyOp::StringConcat {
+                vec![WeavyOp::PathJoin {
                     dst,
-                    a: base.region.start().byte_offset(),
-                    b: suffix.region.start().byte_offset(),
+                    base: base.region.start().byte_offset(),
+                    segment: suffix.region.start().byte_offset(),
                 }],
                 ValueRepresentation::RealizedHandle,
             )
