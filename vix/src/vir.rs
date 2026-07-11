@@ -178,6 +178,18 @@ pub struct OrderedMatchArm {
     pub body: ControlRegion,
 }
 
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ArrayMapGrainKey {
+    InputPosition,
+}
+
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ArrayMapGrain {
+    pub key: ArrayMapGrainKey,
+    pub origin: ArrayMapGrainKey,
+}
+
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Type {
@@ -453,6 +465,13 @@ pub enum Op {
     ArrayIndex,
     /// Read the dense array's value-level arity.
     ArrayLen,
+    /// Transform each independently demandable input position through one
+    /// typed callable while preserving that position as the output origin.
+    ///
+    /// r[impl lang.collection.array-map]
+    ArrayMap {
+        grain: ArrayMapGrain,
+    },
     /// Add one element to a dense array, producing a fresh value.
     ArrayAppend,
     /// Concatenate two dense arrays, producing a fresh value.
@@ -985,6 +1004,15 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::SetLen => op.push(42),
         Op::SetValues => op.push(43),
         Op::StringConcat => op.push(44),
+        Op::ArrayMap { grain } => {
+            op.push(45);
+            op.push(match grain.key {
+                ArrayMapGrainKey::InputPosition => 0,
+            });
+            op.push(match grain.origin {
+                ArrayMapGrainKey::InputPosition => 0,
+            });
+        }
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());

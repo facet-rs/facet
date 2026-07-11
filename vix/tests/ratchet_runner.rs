@@ -4,7 +4,10 @@ use vix::lowering::{LoweringCache, attribution_for, source_map_for};
 use vix::ratchet::run_source;
 use vix::runtime::{DemandState, EventKind, MemoVerdict, SchemaId, TaskState};
 use vix::surface::{SurfaceParser, ast};
-use vix::vir::{EffectKind, FunctionId, NodeRef, Op as VirOp, Type as VirType, VariantPayload};
+use vix::vir::{
+    ArrayMapGrainKey, EffectKind, FunctionId, NodeRef, Op as VirOp, Type as VirType,
+    VariantPayload,
+};
 use weavy::task::Op as WeavyOp;
 use weavy::{PayloadKind, RegionShape, ValueShapeKind, WordKind};
 
@@ -2460,6 +2463,68 @@ fn rung_027_array_map_runs_through_verified_execution_without_publication() {
             _ => true,
         }));
     }
+}
+
+#[test]
+// r[verify lang.collection.array-map]
+fn array_map_vir_wiring_infers_both_sides_of_the_callable_signature() {
+    const SOURCE: &str = r#"
+#[test]
+fn typed_map() -> Stream<Check> {
+    let xs = [true, false, true];
+    let ys = xs.map(|selected| if selected { 7 } else { 11 });
+    yield expect_eq(ys[1], 11);
+}
+"#;
+    let module = Compiler::new()
+        .compile(SOURCE)
+        .expect("array map source checks and lowers to VIR");
+    let function = module
+        .functions
+        .iter()
+        .find(|function| function.name == "typed_map")
+        .expect("test function exists");
+    let map = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::ArrayMap { .. }))
+        .expect("method call becomes ArrayMap VIR");
+    let VirOp::ArrayMap { grain } = map.op else {
+        unreachable!("selected ArrayMap node")
+    };
+    assert_eq!(grain.key, ArrayMapGrainKey::InputPosition);
+    assert_eq!(grain.origin, ArrayMapGrainKey::InputPosition);
+    assert_eq!(map.ty, VirType::array(VirType::Int));
+    assert_eq!(map.effect.kind, EffectKind::Pure);
+    assert!(!map.effect.fallible);
+    assert!(!map.effect.placed);
+    let [array_id, closure_id] = map.inputs.as_slice() else {
+        panic!("ArrayMap has array and typed callable inputs")
+    };
+    assert!(matches!(function.nodes[array_id.0 as usize].op, VirOp::Array));
+    let VirOp::Closure(closure_function) = function.nodes[closure_id.0 as usize].op else {
+        panic!("ArrayMap callable input is the generated closure value")
+    };
+    let closure = &module.functions[closure_function.0 as usize];
+    assert_eq!(closure.parameters.len(), 1);
+    assert_eq!(closure.parameters[0].ty, VirType::Bool);
+    assert_eq!(closure.return_type, VirType::Int);
+    assert_eq!(
+        function.nodes[closure_id.0 as usize].ty,
+        (VirType::Function {
+            parameter: Box::new(VirType::Bool),
+            result: Box::new(VirType::Int),
+        })
+    );
+
+    let shifted = Compiler::new()
+        .compile(&format!("\n\n{SOURCE}"))
+        .expect("span-only edit compiles");
+    assert_eq!(
+        module.partition_test(&module.tests[0]).islands[0].canonical_recipe_bytes(),
+        shifted.partition_test(&shifted.tests[0]).islands[0].canonical_recipe_bytes(),
+        "ArrayMap canonical encoding excludes source offsets",
+    );
 }
 
 #[test]

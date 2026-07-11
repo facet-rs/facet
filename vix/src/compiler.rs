@@ -7,7 +7,8 @@ use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnosti
 use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
 use crate::vir::{
-    ControlRegion, EffectFacts, EnumType, EnumVariant, Function, FunctionId,
+    ArrayMapGrain, ArrayMapGrainKey, ControlRegion, EffectFacts, EnumType, EnumVariant, Function,
+    FunctionId,
     MatchArm as VirMatchArm, Module, Node, NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
     ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm, Parameter, ParameterId,
     ParameterKind, RecordField, RecordType, Test, Type, VariantPayload,
@@ -1504,6 +1505,7 @@ impl PreludeReceiverType {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PreludeMethod {
     ArrayLen,
+    ArrayMap,
     MapGet,
     MapHas,
     MapLen,
@@ -1534,6 +1536,12 @@ impl PreludeMethodRegistry {
                 name: "len",
                 arity: 0,
                 method: PreludeMethod::ArrayLen,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Array,
+                name: "map",
+                arity: 1,
+                method: PreludeMethod::ArrayMap,
             },
             PreludeMethodEntry {
                 receiver: PreludeReceiverType::Map,
@@ -2003,6 +2011,51 @@ fn lower_method_call(
             ),
             ty: Type::Int,
         }),
+        PreludeMethod::ArrayMap => {
+            // r[impl lang.collection.array-map]
+            let Type::Array(element) = &receiver.ty else {
+                unreachable!("array map registry entry has an array receiver")
+            };
+            let mapper = match &call.args.args[0] {
+                ast::Expr::Closure(closure) => {
+                    lower_closure_with_parameter(nodes, bindings, context, closure, element)?
+                }
+                expression => {
+                    lower_value_expected(nodes, bindings, context, expression, None)?
+                }
+            };
+            let Type::Function { parameter, result } = &mapper.ty else {
+                return Err(type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    format!("fn({}) -> _", element.name()),
+                    mapper.ty.name(),
+                ));
+            };
+            if parameter.as_ref() != element.as_ref() {
+                return Err(type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    format!("fn({}) -> _", element.name()),
+                    mapper.ty.name(),
+                ));
+            }
+            let ty = Type::array(result.as_ref().clone());
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    vec![receiver.node, mapper.node],
+                    Op::ArrayMap {
+                        grain: ArrayMapGrain {
+                            key: ArrayMapGrainKey::InputPosition,
+                            origin: ArrayMapGrainKey::InputPosition,
+                        },
+                    },
+                ),
+                ty,
+            })
+        }
         PreludeMethod::MapGet | PreludeMethod::MapHas | PreludeMethod::MapWith => {
             let (key, value) = receiver
                 .ty
@@ -2240,6 +2293,51 @@ fn lower_closure(
         }
     };
 
+    lower_closure_typed(
+        nodes,
+        context,
+        closure,
+        parameter_ty,
+        expected_signature.map(|(_, result)| result),
+    )
+}
+
+fn lower_closure_with_parameter(
+    nodes: &mut Vec<Node>,
+    _outer_bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    closure: &ast::ClosureExpr,
+    parameter: &Type,
+) -> Result<LoweredValue, Diagnostics> {
+    let parameter_ty = match &closure.ty {
+        Some(declared) => {
+            let declared = lower_declared_type(declared, context.types)?;
+            if &declared != parameter {
+                return Err(type_mismatch(
+                    type_span(declared_type_ref(closure)),
+                    parameter.name(),
+                    declared.name(),
+                ));
+            }
+            declared
+        }
+        None => parameter.clone(),
+    };
+    lower_closure_typed(nodes, context, closure, parameter_ty, None)
+}
+
+fn declared_type_ref(closure: &ast::ClosureExpr) -> &ast::Type {
+    closure.ty.as_ref().expect("declared closure type")
+}
+
+fn lower_closure_typed(
+    nodes: &mut Vec<Node>,
+    context: &ModuleContext<'_>,
+    closure: &ast::ClosureExpr,
+    parameter_ty: Type,
+    expected_result: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+
     let (id, name) = context.allocate_closure();
     context.enter_function(name.clone());
     let lowered = (|| {
@@ -2265,7 +2363,6 @@ fn lower_closure(
             &parameter_value,
         )?;
 
-        let expected_result = expected_signature.map(|(_, result)| result);
         let output = match &closure.body {
             ast::ClosureBody::Block(block) => lower_value_block(
                 &mut closure_nodes,

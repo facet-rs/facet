@@ -475,6 +475,7 @@ fn island_contains_checked_collection_ops(island: &Island) -> bool {
                 Op::Array
                     | Op::ArrayIndex
                     | Op::ArrayLen
+                    | Op::ArrayMap { .. }
                     | Op::ArrayAppend
                     | Op::ArrayConcat
                     | Op::Map
@@ -3698,6 +3699,12 @@ fn lower_node(
             return Err(lowering_diagnostic(
                 node.span,
                 "array length lowering is not implemented",
+            ));
+        }
+        Op::ArrayMap { .. } => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "array map lowering is not implemented",
             ));
         }
         Op::ArrayAppend | Op::ArrayConcat => {
