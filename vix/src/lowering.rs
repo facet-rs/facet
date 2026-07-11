@@ -1100,6 +1100,16 @@ impl<'a> ProgramContractBuilder<'a> {
         };
         if let Some(scratch) = layout.outcome_scratch {
             let assigned = self.regions.outcome_scratch(function.id, function.span)?;
+            if assigned.status.0 as usize != regions.len() {
+                return Err(lowering_diagnostic(
+                    function.span,
+                    "array status scratch contract order is not canonical",
+                ));
+            }
+            regions.push(WeavyFrameRegion::new(
+                scratch.status.byte_offset(),
+                WeavyRegionShape::word(WeavyWordKind::Status),
+            ));
             for (slot, region_id) in std::iter::once((scratch.condition, assigned.condition))
                 .chain(scratch.fields.into_iter().zip(assigned.fields))
             {
@@ -1561,6 +1571,7 @@ struct AssignedControlRegions {
 
 #[derive(Clone, Copy)]
 struct AssignedOutcomeScratch {
+    status: WeavyRegionId,
     condition: WeavyRegionId,
     fields: [WeavyRegionId; 3],
 }
@@ -1662,6 +1673,10 @@ impl RegionAssignments {
                 })?);
                 outcomes.insert(function, outcome);
                 next += 1;
+                let status = WeavyRegionId(u32::try_from(next).map_err(|_| {
+                    lowering_diagnostic(span, "array outcome scratch assignment exceeds u32")
+                })?);
+                next += 1;
                 let condition = WeavyRegionId(u32::try_from(next).map_err(|_| {
                     lowering_diagnostic(span, "array outcome scratch assignment exceeds u32")
                 })?);
@@ -1673,7 +1688,7 @@ impl RegionAssignments {
                     })?);
                     next += 1;
                 }
-                outcome_scratch.insert(function, AssignedOutcomeScratch { condition, fields });
+                outcome_scratch.insert(function, AssignedOutcomeScratch { status, condition, fields });
                 let mut assigned_calls = BTreeMap::new();
                 for node in layout.call_outcomes.keys() {
                     assigned_calls.insert(
@@ -1822,6 +1837,7 @@ struct ControlScratch {
 
 #[derive(Clone, Copy)]
 struct OutcomeScratch {
+    status: FrameSlot,
     condition: FrameSlot,
     fields: [FrameSlot; 3],
 }
@@ -1991,6 +2007,9 @@ impl FunctionLayout {
             None
         };
         let outcome_scratch = if array_outcome.is_some() {
+            let status = FrameSlot::for_word(next_word)
+                .ok_or_else(|| lowering_diagnostic(span, "array outcome scratch overflow"))?;
+            next_word += 1;
             let condition = FrameSlot::for_word(next_word)
                 .ok_or_else(|| lowering_diagnostic(span, "array outcome scratch overflow"))?;
             next_word += 1;
@@ -2000,7 +2019,7 @@ impl FunctionLayout {
                     .ok_or_else(|| lowering_diagnostic(span, "array outcome scratch overflow"))?;
                 next_word += 1;
             }
-            Some(OutcomeScratch { condition, fields })
+            Some(OutcomeScratch { status, condition, fields })
         } else {
             None
         };
@@ -4081,10 +4100,7 @@ fn representation_for_type(ty: &Type, span: Span) -> Result<ValueRepresentation,
         Type::Function { .. } | Type::Tuple(_) | Type::Record(_) | Type::Enum(_) => {
             Ok(ValueRepresentation::InlineComposite)
         }
-        Type::Array(_) => Err(lowering_diagnostic(
-            span,
-            "array values require array lowering",
-        )),
+        Type::Array(_) => Ok(ValueRepresentation::RealizedHandle),
         Type::StreamCheck => Err(lowering_diagnostic(
             span,
             "Stream<Check> has no island-interior word representation",
