@@ -35,14 +35,15 @@ Cargo fixtures.
 ## Current checkpoint
 
 At the time of the latest authoritative integration checkpoint
-(`a1be1fa6e`):
+(`f00447dec`):
 
-- the canonical rung prefix is green through rung 049. The integrated full Vix
-  run `dc0b8068-858a-4fc7-bce3-9fbad03a020c` passed 339/339 tests, and the
+- the canonical rung prefix is green through rung 050. The earlier integrated
+  full Vix run `dc0b8068-858a-4fc7-bce3-9fbad03a020c` passed 339/339 tests, and the
   integrated full Weavy release run
   `8fce57b6-18d8-41e2-a206-2f1ef4f36a34` passed 228/228. Workspace all-target
   check, strict all-feature/all-target Clippy, formatting, and diff checks are
-  green at the checkpoint;
+  green at that full-suite checkpoint; exact-root rung-050 runs are recorded
+  below;
 - rung 031 executes unchanged through the completed two-stage generator path.
   One verified generator task runs real `Match`/`If` control and publishes only
   taken `YieldSiteId`s; the runner then evaluates those provenance-keyed Value
@@ -85,15 +86,17 @@ At the time of the latest authoritative integration checkpoint
   above the Ready baseline while a hard kill remains active. Exact-root run
   `01024dd2-375d-4868-810c-def3d5611144` passed all 18 focused protocol,
   malformed-child, wall, RSS, and frozen-counter checks;
-- rung 050 is the first canonical red boundary. Its self-tail call now lowers
-  to one verifier-visible frame loop with typed next-argument staging and an
-  attributed interior backedge; the direct verified 10-million-iteration lane
-  is green. Startup is no longer the boundary: exact-root run
-  `b0e99bea-4623-4d9e-9da7-47b0e20e4226` completed within the wall budget but
-  measured `271,941,632` execution-owned RSS bytes above Ready, exceeding the
-  unchanged 256 MiB ceiling. The remaining boundary is retained allocation in
-  the composed execution path, not call-frame recursion or JIT startup.
-  Ordinary recursion remains the rung-049 call-frame path;
+- rung 050 is green unchanged. Its self-tail call lowers to one
+  verifier-visible frame loop with typed next-argument staging and an attributed
+  interior backedge. The retained-RSS cause was production construction through
+  `Executable::new`, which selected Innards tracing and retained `90,000,012`
+  marks—nine per loop iteration. Ordinary ratchet lowering now explicitly uses
+  Production trace mode, stripping only interior marks while preserving
+  frame/park/resume events, attribution, and a separately tested Innards
+  diagnostic lane. Exact-root default run
+  `22096e4f-993e-469d-a34f-8eb7f733e346` and interpreter run
+  `20a90f10-41ef-4345-b50a-4590fcc715ac` each pass the unchanged 10-million-step
+  budgeted rung. Ordinary recursion remains the rung-049 call-frame path;
 - the persistent AVL core has a 200k insertion scaling oracle, but the
   end-to-end rung-138 Map proof is not yet established. The explicit framed
   value-identity epoch, compact inline sequence writer, semantic tree, and
@@ -107,6 +110,15 @@ At the time of the latest authoritative integration checkpoint
   differential preserves identical value identities, duplicates, and order.
   Shared-demand extraction, molten-to-store publication, disjoint live/frozen
   handles, and production aggregate-freeze observability remain explicit seams;
+- the Rodin-readiness track is green through rungs 083 and 084. Ordinary Vix
+  `std/version.vix`, prepended by the readiness harness while the compiler lacks
+  an ambient prelude, defines full SemVer values and normalized interval-union
+  `VersionSet`s with release-line prerelease admission. Structural equality
+  includes build metadata while `version_precedence` ignores it. Exact-root
+  default run `5312e48e-8c9b-4388-88f3-880352cbf0e6` and interpreter run
+  `4e2d7d42-8097-46be-ac41-a378c2aaee7d` each passed all 10 Version, structural
+  order, string, and nested-aggregate call certificates. This advances the
+  readiness track only; it does not renumber the canonical prefix;
 - the live Cargo oracle is folded at `a1be1fa6e`. One shared materialized
   workspace is queried through `cargo metadata --offline`, preserving exact
   source/name/version package identities, target-projected normal/build graph
