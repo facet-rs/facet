@@ -35,7 +35,7 @@ Cargo fixtures.
 ## Current checkpoint
 
 At the time of the latest authoritative integration checkpoint
-(`60863a83b`):
+(`a1be1fa6e`):
 
 - the canonical rung prefix is green through rung 049. The integrated full Vix
   run `dc0b8068-858a-4fc7-bce3-9fbad03a020c` passed 339/339 tests, and the
@@ -95,11 +95,18 @@ At the time of the latest authoritative integration checkpoint
   are folded at `e5e82357b`. Range/fold driving, shared-demand extraction,
   molten-to-store publication, non-colliding live/frozen handles, and
   production arena observability remain explicit seams;
-- the Cargo fixture harness exists in `vix/tests/rodin_fixtures.rs` and its Cargo
-  side is independently runnable;
-- rungs 098 and 100 still use a recorded `expected_selection()` from the deleted
-  reference resolver. That contradicts the Cargo-only oracle doctrine and must
-  be adjudicated before those rungs are claimed.
+- the live Cargo oracle is folded at `a1be1fa6e`. One shared materialized
+  workspace is queried through `cargo metadata --offline`, preserving exact
+  source/name/version package identities, target-projected normal/build graph
+  edges, and typed discrepancies including unsupported
+  `DomainMultiplicity`. Exact-root run
+  `76e6111a-3dd9-4c3b-9670-81402c2b89a2` passed all 24 production-shaped
+  fixture tests;
+- rungs 098 and 100 now receive `cargo_selection()` as a harness-supplied
+  oracle value. Their pure solver code reads only fixture-built typed inputs;
+  no recorded deleted-resolver answer remains an authority. The remaining
+  seam is a native Vix kernel producing the real typed `SolveResult` consumed
+  by the already-executable comparator.
 
 This section is a snapshot, not a durable source of truth. Each implementation
 turn starts by checking the branch, preserved checkpoints, and focused gates.
@@ -180,15 +187,16 @@ private caches, or host execution.
 
 ### Lane C — live Cargo oracle
 
-This lane is independent of Vix execution progress and starts immediately:
+This lane is independent of Vix execution progress and is now executable:
 
 - materialize offline workspaces from `vix/tests/rodin_fixtures.rs`;
-- obtain selected package identities from `cargo generate-lockfile --offline`;
-- obtain target-projected enabled edges from
-  `cargo tree -e normal,build --target ... --offline`;
-- represent every difference as typed data suitable for fixture minimization;
-- remove recorded `expected_selection()` values as an authority in rungs 098
-  and 100 without inventing a substitute SUT.
+- obtain exact selected package identities and dependency edges from
+  `cargo metadata --offline`, with `--filter-platform` for target projection;
+- retain source coordinates and normal/build edge kinds in the oracle values;
+- represent every difference as typed data suitable for fixture minimization,
+  including model-domain multiplicity rather than last-wins collapse;
+- supply `cargo_selection()` to rungs 098 and 100 from the harness, outside the
+  pure machine computation, without inventing a substitute SUT.
 
 The solver model is not the speculative part of this program. The banked Rust
 run already reached 853/892 exact FreshLock domain matches (95.63%), and all
@@ -434,20 +442,21 @@ The implementation follows `rodin/docs/10-identity.md` through
 
 ### R3 — Cargo oracle and production-shaped kernel
 
-Before implementing the full native kernel:
+The oracle half of R3 is complete at `a1be1fa6e`:
 
-1. Correct the oracle contract in rungs 098 and 100 under explicit design
-   authority. `expected_selection()` recorded from the deleted resolver cannot
-   certify Cargo behavior.
-2. Reuse `vix/tests/rodin_fixtures.rs` to materialize real offline Cargo
-   workspaces.
-3. Compare selected `(source, name, version)` identities against
-   `cargo generate-lockfile --offline`.
-4. Compare the target-projected graph and enabled edges against
-   `cargo tree -e normal,build --target ... --offline`.
-5. Minimize every discrepancy into a fixture before changing solver rules.
+1. Rungs 098 and 100 no longer treat `expected_selection()` from the deleted
+   resolver as an authority; `cargo_selection()` is supplied by the harness.
+2. `vix/tests/rodin_fixtures.rs` materializes real offline Cargo workspaces.
+3. `cargo metadata --offline` supplies exact source/name/version selections.
+4. The same metadata graph, filtered by target, supplies exact normal/build
+   edges without parsing display text.
+5. Selection and graph differences are closed typed `Discrepancy` values ready
+   for fixture minimization; a many-package projection into one Rodin domain is
+   surfaced as unsupported `DomainMultiplicity`, never collapsed.
 
-Then implement a new native kernel from `rodin/docs/content/spec.md`.
+The remaining R3 work is a new native kernel from
+`rodin/docs/content/spec.md` whose typed `SolveResult` is fed into that live
+comparator.
 
 The first kernel accepts fixture-built typed `PackageUniverse` values. This is
 not the raw crates.io sparse index and not the old parallel-column `Index`.
