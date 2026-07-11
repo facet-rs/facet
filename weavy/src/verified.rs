@@ -5065,6 +5065,41 @@ mod tests {
         )
     }
 
+    #[test]
+    fn string_byte_operations_reject_non_byte_comparable_schemas() {
+        for operation in [
+            Op::StringContains {
+                dst: 16,
+                text: 0,
+                needle: 8,
+            },
+            Op::StringSplitOnce {
+                left: 0,
+                right: 8,
+                status: 16,
+                text: 0,
+                delimiter: 8,
+            },
+            Op::StringParseInt {
+                dst: 16,
+                status: 16,
+                text: 0,
+            },
+        ] {
+            let (mut program, contract) = compare_program(false);
+            program.fns[0].code[0] = operation;
+            assert_eq!(
+                program.verify(contract),
+                Err(op_error(
+                    0,
+                    ProgramDefect::SchemaNotByteComparable {
+                        schema: SchemaRef(0)
+                    }
+                ))
+            );
+        }
+    }
+
     fn gapped_and_schema_program() -> (Program, ProgramContract) {
         (
             Program {

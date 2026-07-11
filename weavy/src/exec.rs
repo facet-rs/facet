@@ -1920,6 +1920,40 @@ mod tests {
         assert!(matches!(*poison, TaskFault::PoisonedReDrive { .. }));
     }
 
+    #[test]
+    fn string_status_discriminator_matches_across_public_executable_lanes() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let string_program = || {
+            let (mut program, contract) = array_status_program();
+            program.fns[0].code[0] = Op::StringStatusIs {
+                dst: 0,
+                status: 8,
+                expected: crate::task::StringOpStatus::Ok,
+            };
+            verify((program, contract))
+        };
+        let interpreter = run_public_array_status(string_program(), 99, true)
+            .expect_err("invalid StringOpStatus faults in interpreter");
+        let native = run_public_array_status(string_program(), 99, false)
+            .expect_err("invalid StringOpStatus faults in native lane");
+        assert_eq!(interpreter, native);
+        let (fault, trace, poison) = interpreter;
+        let site = match *fault {
+            TaskFault::InvalidStringStatus { site, actual } => {
+                assert_eq!(actual, 99);
+                site
+            }
+            fault => panic!("unexpected string status fault: {fault:?}"),
+        };
+        assert_eq!(site.function, FnId(0));
+        assert_eq!(site.pc, 0);
+        assert!(matches!(site.op.as_ref(), Op::StringStatusIs { .. }));
+        assert_eq!(trace, vec![TaskEvent::FrameEntered(FnId(0))]);
+        assert!(matches!(*poison, TaskFault::PoisonedReDrive { .. }));
+    }
+
     fn ordered_begin_probe_program() -> (Program, ProgramContract) {
         use crate::{OrderedCollectionContract, OrderedCollectionKind};
 
