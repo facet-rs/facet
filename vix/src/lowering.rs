@@ -3750,3 +3750,62 @@ fn lowering_diagnostic(span: Span, construct: &str) -> Diagnostics {
         },
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compiler::Compiler;
+    use weavy::ProgramDefect;
+    use weavy::task::FnId;
+
+    const SOURCE: &str = r#"
+#[test]
+fn attribution() -> Stream<Check> {
+    yield expect_eq(1 + 2, 3);
+}
+"#;
+
+    #[test]
+    fn program_error_keeps_its_typed_cause_and_current_pc_span() {
+        let module = Compiler::new().compile(SOURCE).expect("source compiles");
+        let partitioned = module.partition_test(&module.tests[0]);
+        let island = &partitioned.islands[0];
+        let attribution = attribution_for(island);
+        let mut cache = LoweringCache::default();
+        let lowered = cache.get_or_lower(island).expect("source lowers");
+        let pc = 0;
+        let node = lowered.node_for_pc(0, pc).expect("first pc has a node");
+        let source = attribution
+            .source_for_node(node)
+            .expect("node has current source attribution");
+        let error = weavy::ProgramError {
+            function: Some(FnId(0)),
+            pc: Some(pc as usize),
+            defect: ProgramDefect::ReachableFallthrough,
+        };
+        let machine = MachineError::program(
+            MachineOperation::LoweringVerification,
+            error.clone(),
+            program_error_attribution(&error, &lowered.pc_nodes, &attribution),
+        );
+        assert_eq!(
+            machine.cause,
+            crate::runtime::MachineCause::Program(error.clone())
+        );
+        let mapped = machine.attribution.expect("pc maps to a Vix source node");
+        assert_eq!(mapped.span, source.span);
+        assert_eq!(mapped.weavy_function, Some(FnId(0)));
+        assert_eq!(mapped.weavy_pc, Some(pc as usize));
+
+        let shifted = format!("\n\n{SOURCE}");
+        let shifted_module = Compiler::new()
+            .compile(&shifted)
+            .expect("shifted source compiles");
+        let shifted_partitioned = shifted_module.partition_test(&shifted_module.tests[0]);
+        let shifted_attribution = attribution_for(&shifted_partitioned.islands[0]);
+        let shifted_mapped =
+            program_error_attribution(&error, &lowered.pc_nodes, &shifted_attribution)
+                .expect("cached pc maps against fresh compilation attribution");
+        assert_ne!(mapped.span, shifted_mapped.span);
+    }
+}

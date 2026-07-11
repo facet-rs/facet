@@ -631,3 +631,128 @@ fn task_fault_attribution(
         weavy_pc: Some(site.pc),
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::compiler::Compiler;
+    use crate::lowering::{LoweringCache, attribution_for};
+    use crate::runtime::{EventLog, MachineCause};
+    use weavy::ValueShapeRef;
+    use weavy::exec::TaskFault;
+    use weavy::task::Op;
+
+    const ENUM_SOURCE: &str = r#"
+enum Outcome {
+    Ok(Bool),
+    Err(String),
+}
+
+#[test]
+fn fault_site() -> Stream<Check> {
+    yield expect_eq(Outcome::Ok(true) == Outcome::Ok(true), true);
+}
+"#;
+
+    fn with_lowered(source: &str, inspect: impl FnOnce(&LoweringArtifact, &LoweringAttribution)) {
+        let module = Compiler::new().compile(source).expect("source compiles");
+        let partitioned = module.partition_test(&module.tests[0]);
+        let island = &partitioned.islands[0];
+        let attribution = attribution_for(island);
+        let mut cache = LoweringCache::default();
+        let artifact = cache
+            .get_or_lower(island)
+            .expect("source lowers through verified executable");
+        inspect(artifact, &attribution);
+    }
+
+    #[test]
+    fn poisoned_fault_site_maps_through_cached_pcs_and_fresh_spans() {
+        with_lowered(ENUM_SOURCE, |artifact, attribution| {
+            let pc = artifact.program().fns[0]
+                .code
+                .iter()
+                .position(|op| matches!(op, Op::EnumIsVariant { .. }))
+                .expect("enum equality emits checked selector validation");
+            let site = FaultSite {
+                function: FnId(0),
+                pc,
+                op: artifact.program().fns[0].code[pc].clone(),
+                call: None,
+            };
+            let fault = TaskFault::PoisonedResult {
+                original: Box::new(TaskFault::InvalidEnumSelector {
+                    site,
+                    value_shape: ValueShapeRef(0),
+                    expected: vec![0, 1],
+                    actual: 9,
+                }),
+            };
+            let site = task_fault_site(&fault)
+                .expect("nested poison retains the fault site")
+                .clone();
+            let mapped = task_fault_attribution(&site, artifact, attribution)
+                .expect("fault site maps through lowering pc ownership");
+            let error = MachineError::task(
+                MachineOperation::Drive,
+                fault,
+                Some(mapped.clone()),
+                artifact.demand_key,
+            );
+            assert!(matches!(
+                error.cause,
+                MachineCause::Task(TaskFault::PoisonedResult { .. })
+            ));
+
+            let shifted = format!("\n\n{ENUM_SOURCE}");
+            let shifted_module = Compiler::new()
+                .compile(&shifted)
+                .expect("shifted source compiles");
+            let shifted_partitioned = shifted_module.partition_test(&shifted_module.tests[0]);
+            let shifted_attribution = attribution_for(&shifted_partitioned.islands[0]);
+            let shifted_mapped = task_fault_attribution(&site, artifact, &shifted_attribution)
+                .expect("same cached pc uses fresh source attribution");
+            assert_ne!(mapped.span, shifted_mapped.span);
+        });
+    }
+
+    #[test]
+    fn machine_fault_marks_task_and_demand_failed_without_a_memo() {
+        with_lowered(ENUM_SOURCE, |artifact, _| {
+            let mut runtime = Runtime::new(EventLog::default());
+            runtime.demands.insert(
+                artifact.demand_key,
+                DemandRecord {
+                    key: artifact.demand_key,
+                    state: DemandState::Queued,
+                    result: None,
+                },
+            );
+            let task = runtime.spawn_task(artifact.demand_key);
+            let error = MachineError::runtime(
+                MachineOperation::Drive,
+                RuntimeFault::PureIslandYielded,
+                None,
+                Some(artifact.demand_key),
+            );
+            let returned = runtime
+                .terminate_machine_fault(task, artifact.demand_key, error.clone())
+                .expect("recorded task and demand transition to Failed");
+            assert_eq!(returned, error);
+            assert_eq!(runtime.tasks[&task].state, TaskState::Failed);
+            assert_eq!(
+                runtime.demands[&artifact.demand_key].state,
+                DemandState::Failed
+            );
+            assert!(runtime.memo.is_empty());
+            assert!(runtime.sink.events().iter().any(|event| matches!(
+                event.kind,
+                EventKind::MachineFailed {
+                    task: failed_task,
+                    key,
+                    operation: MachineOperation::Drive,
+                } if failed_task == task && key == artifact.demand_key
+            )));
+        });
+    }
+}

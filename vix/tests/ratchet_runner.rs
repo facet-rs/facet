@@ -2269,6 +2269,37 @@ fn enum_equality() -> Stream<Check> {
     assert_eq!(report.plain.checks, report.chaos.checks);
 }
 
+#[test]
+fn executable_lane_facts_are_observable_after_spawn_and_replay_stable() {
+    let report = run_source(RUNG_001).expect("rung 001 executes through Executable");
+    let facts = |events: &[vix::runtime::Event]| {
+        events
+            .iter()
+            .filter_map(|event| match event.kind {
+                EventKind::ExecutionLane { facts, .. } => Some(facts),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let plain = facts(&report.plain.events);
+    let chaos = facts(&report.chaos.events);
+    assert!(
+        !plain.is_empty(),
+        "a task that reaches Weavy spawn emits lane facts"
+    );
+    assert_eq!(plain, chaos, "discard-before-spawn does not add lane facts");
+    if std::env::var("WEAVY_JIT").as_deref() == Ok("0") {
+        assert!(plain.iter().all(|facts| matches!(
+            facts,
+            vix::runtime::ExecutionFacts {
+                selected: vix::runtime::ExecutionLaneFact::Interpreter,
+                fallback: Some(vix::runtime::ExecutionFallbackFact::DisabledByEnvironment),
+                ..
+            }
+        )));
+    }
+}
+
 // r[verify lang.value.ordering-is-enum]
 #[test]
 fn rung_025_ordering_is_an_ordinary_matchable_enum() {
