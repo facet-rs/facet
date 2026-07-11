@@ -359,12 +359,18 @@ fn tight_rss() -> Stream<Check> {
     match &outcome {
         BudgetOutcome::OverRss {
             budget_bytes,
+            ready_baseline_bytes,
             observed_bytes,
+            execution_peak_bytes,
         } => {
             assert_eq!(*budget_bytes, 128 * 1024 * 1024);
             assert!(
-                *observed_bytes > *budget_bytes,
-                "the child was killed after exceeding the RSS ceiling: {outcome:?}",
+                *execution_peak_bytes > *budget_bytes,
+                "the child was killed after its execution-owned RSS delta exceeded the ceiling: {outcome:?}",
+            );
+            assert!(
+                *observed_bytes >= *ready_baseline_bytes,
+                "the absolute peak is measured relative to the readiness baseline: {outcome:?}",
             );
         }
         BudgetOutcome::RssEnforcementUnsupported { .. } => {
@@ -376,6 +382,68 @@ fn tight_rss() -> Stream<Check> {
         other => panic!("expected an RSS kill or the typed platform seam, got {other:?}"),
     }
     assert!(!outcome.passed(), "an over-RSS run is red: {outcome:?}");
+}
+
+/// The readiness boundary: a workload with a large preparation cost and a
+/// trivial execution passes even under a wall budget far smaller than its
+/// preparation time. Preparation — parsing, checking, lowering, verification,
+/// and native compilation — is fixed compiler/JIT baseline, not the tested
+/// program's work, so the wall clock must not start until it is complete. A
+/// runner that starts timing at spawn charges this preparation and kills the
+/// run over the wall; that regression is exactly what this certificate isolates.
+#[test]
+fn preparation_time_is_excluded_from_the_wall_budget() {
+    const SOURCE: &str = r#"
+#[test { budget_wall: 150ms }]
+fn tight_wall() -> Stream<Check> {
+    yield expect(true);
+}
+"#;
+    let budget = budget_of(SOURCE);
+    let outcome = run_under_budget(
+        Path::new(CHILD_EXE),
+        &budget,
+        // Preparation spends far longer than the 150ms wall budget; execution is
+        // instant. Only a readiness-aware runner keeps this within budget.
+        &Workload::SlowPrepare {
+            prepare_ns: 600_000_000,
+        },
+    );
+    assert!(
+        outcome.passed(),
+        "preparation cost does not consume the wall budget: {outcome:?}",
+    );
+    assert!(
+        matches!(
+            outcome,
+            BudgetOutcome::Within {
+                report: vix::budget::ChildReport::Completed
+            }
+        ),
+        "a slow-to-prepare, fast-to-execute workload completes within budget: {outcome:?}",
+    );
+}
+
+/// A child that exits before readiness, or emits a non-protocol line in place
+/// of readiness, is typed red. Neither shape may be mistaken for a completed
+/// budget certificate.
+#[test]
+fn early_or_malformed_child_protocol_is_typed_red() {
+    const SOURCE: &str = r#"
+#[test { budget_wall: 1s }]
+fn protocol() -> Stream<Check> {
+    yield expect(true);
+}
+"#;
+    let budget = budget_of(SOURCE);
+    for child in [Path::new("/usr/bin/true"), Path::new("/bin/echo")] {
+        let outcome = run_under_budget(child, &budget, &Workload::Immediate);
+        assert!(
+            matches!(outcome, BudgetOutcome::ChildError { .. }),
+            "{child:?} must be a typed protocol failure: {outcome:?}",
+        );
+        assert!(!outcome.passed(), "protocol failure is red: {outcome:?}");
+    }
 }
 
 /// A unit-bearing literal is accepted only inside an attribute value. In an
