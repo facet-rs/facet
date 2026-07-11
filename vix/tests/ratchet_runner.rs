@@ -4020,12 +4020,31 @@ fn rung_050_deep_tail_recursion_runs_under_its_declared_budget() {
         Path::new(env!("CARGO_BIN_EXE_vix-budget-child")),
         RUNG_050,
     );
-    assert_eq!(
+    assert!(matches!(
         outcome,
         BudgetOutcome::Within {
-            report: ChildReport::RanSource { passed: true },
-        },
-    );
+            report: ChildReport::RanSource { passed: true, .. },
+        }
+    ));
+}
+
+/// The ordinary ratchet path is production execution, not an innards
+/// diagnostic capture. The self-tail pollpoint remains in lowered code for
+/// attribution, but must not retain one `WeavyMark` per iteration.
+#[test]
+fn rung_050_ratchet_execution_strips_per_iteration_marks() {
+    let report = run_source(RUNG_050).expect("rung 050 runs through the production ratchet");
+    for lane in [&report.plain, &report.chaos] {
+        let marks = lane
+            .events
+            .iter()
+            .filter(|event| matches!(event.kind, EventKind::WeavyMark { .. }))
+            .count();
+        assert_eq!(
+            marks, 0,
+            "production ratchet retains no per-iteration innards marks: {marks}",
+        );
+    }
 }
 
 #[test]
