@@ -98,7 +98,8 @@ fn rung_083_version_parse_runs_through_production_path() {
 /// runs through the same production source path as rung 083.
 #[test]
 fn rung_084_version_sets_runs_through_production_path() {
-    let report = run_source(&lane_source(RUNG_084)).expect("rung 084 compiles and runs in production");
+    let report =
+        run_source(&lane_source(RUNG_084)).expect("rung 084 compiles and runs in production");
     assert!(
         report.passed(),
         "rung 084 checks pass: {:?}",

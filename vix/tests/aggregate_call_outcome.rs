@@ -14,7 +14,8 @@ fn t() -> Stream<Check> {
 
 #[test]
 fn aggregate_array_call_outcome_retains_its_structural_value_shape() {
-    let report = run_source(SOURCE).expect("aggregate return compiles and runs through the checked ABI");
+    let report =
+        run_source(SOURCE).expect("aggregate return compiles and runs through the checked ABI");
     assert!(report.passed(), "checks pass: {:?}", report.plain.checks);
     assert!(report.agrees(), "plain and chaos lanes agree");
     assert_eq!(report.plain.checks.len(), 1);
