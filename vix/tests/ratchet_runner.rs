@@ -2469,9 +2469,7 @@ fn rung_027_array_map_runs_through_verified_execution_without_publication() {
         ));
         assert!(map_pcs.iter().all(|pc| !matches!(
             lowered.program().fns[0].code[*pc],
-            WeavyOp::ArrayNew { .. }
-                | WeavyOp::ArrayStore { .. }
-                | WeavyOp::CallIndirect { .. }
+            WeavyOp::ArrayNew { .. } | WeavyOp::ArrayStore { .. } | WeavyOp::CallIndirect { .. }
         )));
     }
 
@@ -2549,7 +2547,10 @@ fn typed_map() -> Stream<Check> {
     let [array_id, closure_id] = map.inputs.as_slice() else {
         panic!("ArrayMap has array and typed callable inputs")
     };
-    assert!(matches!(function.nodes[array_id.0 as usize].op, VirOp::Array));
+    assert!(matches!(
+        function.nodes[array_id.0 as usize].op,
+        VirOp::Array
+    ));
     let VirOp::Closure(closure_function) = function.nodes[closure_id.0 as usize].op else {
         panic!("ArrayMap callable input is the generated closure value")
     };
@@ -2574,8 +2575,7 @@ fn typed_map() -> Stream<Check> {
     assert!(partitioned.render().contains("FusedProjection"));
     let recipe = partitioned.islands[0].canonical_recipe_bytes();
     let mut alternative_partition = partitioned.islands[0].clone();
-    alternative_partition.array_map_partitions[0].shape =
-        ArrayMapExecutionShape::MaterializedLoop;
+    alternative_partition.array_map_partitions[0].shape = ArrayMapExecutionShape::MaterializedLoop;
     assert_eq!(
         alternative_partition.canonical_recipe_bytes(),
         recipe,
@@ -2659,11 +2659,31 @@ fn general_array_map() -> Stream<Check> {
     let helper_frame = frame_index(&attribution.functions, helper.id);
     let mapper_frame = frame_index(&attribution.functions, mapper);
     let helper_ops = &lowered.program().fns[helper_frame].code;
-    assert!(helper_ops.iter().any(|op| matches!(op, WeavyOp::LoadArrayLen { .. })));
-    assert!(helper_ops.iter().any(|op| matches!(op, WeavyOp::ArrayNew { .. })));
-    assert!(helper_ops.iter().any(|op| matches!(op, WeavyOp::LoadArray { .. })));
-    assert!(helper_ops.iter().any(|op| matches!(op, WeavyOp::CallIndirect { .. })));
-    assert!(helper_ops.iter().any(|op| matches!(op, WeavyOp::ArrayStore { .. })));
+    assert!(
+        helper_ops
+            .iter()
+            .any(|op| matches!(op, WeavyOp::LoadArrayLen { .. }))
+    );
+    assert!(
+        helper_ops
+            .iter()
+            .any(|op| matches!(op, WeavyOp::ArrayNew { .. }))
+    );
+    assert!(
+        helper_ops
+            .iter()
+            .any(|op| matches!(op, WeavyOp::LoadArray { .. }))
+    );
+    assert!(
+        helper_ops
+            .iter()
+            .any(|op| matches!(op, WeavyOp::CallIndirect { .. }))
+    );
+    assert!(
+        helper_ops
+            .iter()
+            .any(|op| matches!(op, WeavyOp::ArrayStore { .. }))
+    );
     assert!(helper_ops.iter().enumerate().any(|(pc, op)| {
         matches!(op, WeavyOp::Jump { target } if usize::try_from(*target).is_ok_and(|target| target < pc))
     }));
@@ -2734,10 +2754,14 @@ fn array_and_call_value() -> Stream<Check> {
         lowered.contract().calls[callable.0 as usize].result.shape,
         target_contract.frame.regions[target_contract.result.0 as usize].shape,
     );
-    let call_pcs = pcs_for_node(lowered, 0, NodeRef {
-        function: root.id,
-        node: call.id,
-    });
+    let call_pcs = pcs_for_node(
+        lowered,
+        0,
+        NodeRef {
+            function: root.id,
+            node: call.id,
+        },
+    );
     assert!(call_pcs.iter().any(|pc| matches!(
         lowered.program().fns[0].code[*pc],
         WeavyOp::CallIndirect { .. }

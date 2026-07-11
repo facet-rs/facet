@@ -8,10 +8,9 @@ use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
 use crate::vir::{
     ArrayMapGrain, ArrayMapGrainKey, ControlRegion, EffectFacts, EnumType, EnumVariant, Function,
-    FunctionId,
-    MatchArm as VirMatchArm, Module, Node, NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
-    ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm, Parameter, ParameterId,
-    ParameterKind, RecordField, RecordType, Test, Type, VariantPayload,
+    FunctionId, MatchArm as VirMatchArm, Module, Node, NodeId, OPTION_NONE_VARIANT,
+    OPTION_SOME_VARIANT, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm,
+    Parameter, ParameterId, ParameterKind, RecordField, RecordType, Test, Type, VariantPayload,
 };
 
 pub struct Compiler {
@@ -2020,9 +2019,7 @@ fn lower_method_call(
                 ast::Expr::Closure(closure) => {
                     lower_closure_with_parameter(nodes, bindings, context, closure, element)?
                 }
-                expression => {
-                    lower_value_expected(nodes, bindings, context, expression, None)?
-                }
+                expression => lower_value_expected(nodes, bindings, context, expression, None)?,
             };
             let Type::Function { parameter, result } = &mapper.ty else {
                 return Err(type_mismatch(
@@ -2337,7 +2334,6 @@ fn lower_closure_typed(
     parameter_ty: Type,
     expected_result: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
-
     let (id, name) = context.allocate_closure();
     context.enter_function(name.clone());
     let lowered = (|| {

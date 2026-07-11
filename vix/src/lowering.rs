@@ -28,10 +28,9 @@ use crate::runtime::{
 };
 use crate::support::Span;
 use crate::vir::{
-    ArrayMapExecutionShape, ArrayMapPartition, EnumType, EnumVariant, Function, FunctionId,
-    Island, Node, NodeId, NodeRef,
-    ORDERING_EQUAL_VARIANT, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, Type,
-    VariantPayload,
+    ArrayMapExecutionShape, ArrayMapPartition, EnumType, EnumVariant, Function, FunctionId, Island,
+    Node, NodeId, NodeRef, ORDERING_EQUAL_VARIANT, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT,
+    Op, Type, VariantPayload,
 };
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -1094,7 +1093,9 @@ impl<'a> ProgramContractBuilder<'a> {
             schemas_preassigned,
             function_order,
             closure_targets,
-            callable_outcomes: layouts.values().any(|layout| layout.array_outcome.is_some()),
+            callable_outcomes: layouts
+                .values()
+                .any(|layout| layout.array_outcome.is_some()),
             calls: Vec::new(),
             schemas: vec![empty_schema(); schemas_preassigned.types.len()],
             schema_ready: vec![false; schemas_preassigned.types.len()],
@@ -1773,13 +1774,7 @@ impl LoweringContext<'_> {
     ) -> Result<ArrayMapExecutionShape, Diagnostics> {
         self.array_map_partitions
             .iter()
-            .find(|partition| {
-                partition.node
-                    == NodeRef {
-                        function,
-                        node,
-                    }
-            })
+            .find(|partition| partition.node == NodeRef { function, node })
             .map(|partition| partition.shape)
             .ok_or_else(|| lowering_diagnostic(span, "array map has no partition decision"))
     }
@@ -2291,16 +2286,17 @@ impl FunctionLayout {
             let input_region = FrameRegion::for_words(next_word, input_words).ok_or_else(|| {
                 lowering_diagnostic(node.span, "array map input temporary overflow")
             })?;
-            next_word = next_word.checked_add(input_words.as_usize()).ok_or_else(|| {
-                lowering_diagnostic(node.span, "function frame size overflow")
-            })?;
+            next_word = next_word
+                .checked_add(input_words.as_usize())
+                .ok_or_else(|| lowering_diagnostic(node.span, "function frame size overflow"))?;
             let output_words = type_words(output_ty, node.span)?;
-            let output_region = FrameRegion::for_words(next_word, output_words).ok_or_else(|| {
-                lowering_diagnostic(node.span, "array map output temporary overflow")
-            })?;
-            next_word = next_word.checked_add(output_words.as_usize()).ok_or_else(|| {
-                lowering_diagnostic(node.span, "function frame size overflow")
-            })?;
+            let output_region =
+                FrameRegion::for_words(next_word, output_words).ok_or_else(|| {
+                    lowering_diagnostic(node.span, "array map output temporary overflow")
+                })?;
+            next_word = next_word
+                .checked_add(output_words.as_usize())
+                .ok_or_else(|| lowering_diagnostic(node.span, "function frame size overflow"))?;
             array_map_temps.insert(
                 node.id,
                 (
@@ -2383,12 +2379,7 @@ impl FunctionLayout {
         if array_outcome.is_some() {
             for node in nodes
                 .iter()
-                .filter(|node| {
-                    matches!(
-                        node.op,
-                        Op::Call(_) | Op::CallValue | Op::ArrayMap { .. }
-                    )
-                })
+                .filter(|node| matches!(node.op, Op::Call(_) | Op::CallValue | Op::ArrayMap { .. }))
             {
                 let value_ty = match &node.op {
                     Op::ArrayMap { .. } => node
@@ -2857,14 +2848,7 @@ fn lower_node_sequence(
                 lower_array_call_node(node, dst_region_id, values, *callee, sequence, outputs)?
             }
             Op::CallValue if sequence.function.layout.array_outcome.is_some() => {
-                lower_checked_call_value_node(
-                    node,
-                    dst,
-                    dst_region_id,
-                    values,
-                    sequence,
-                    outputs,
-                )?
+                lower_checked_call_value_node(node, dst, dst_region_id, values, sequence, outputs)?
             }
             Op::Array | Op::ArrayIndex | Op::ArrayLen | Op::ArrayMap { .. } => {
                 lower_partitioned_array_node(node, dst, dst_region_id, values, sequence, outputs)?
@@ -4265,19 +4249,20 @@ fn lower_partitioned_array_node(
     outputs: &mut SequenceOutputs<'_, '_>,
 ) -> Result<ValueRepresentation, Diagnostics> {
     match node.op {
-        Op::ArrayMap { .. } => match sequence.lowering.array_map_shape(
-            sequence.function.id,
-            node.id,
-            node.span,
-        )? {
-            ArrayMapExecutionShape::FusedProjection => {
-                validate_array_map(node, values)?;
-                Ok(ValueRepresentation::RealizedHandle)
+        Op::ArrayMap { .. } => {
+            match sequence
+                .lowering
+                .array_map_shape(sequence.function.id, node.id, node.span)?
+            {
+                ArrayMapExecutionShape::FusedProjection => {
+                    validate_array_map(node, values)?;
+                    Ok(ValueRepresentation::RealizedHandle)
+                }
+                ArrayMapExecutionShape::MaterializedLoop => {
+                    lower_materialized_array_map(node, dst, values, sequence, outputs)
+                }
             }
-            ArrayMapExecutionShape::MaterializedLoop => {
-                lower_materialized_array_map(node, dst, values, sequence, outputs)
-            }
-        },
+        }
         Op::ArrayIndex | Op::ArrayLen => {
             let map = node
                 .inputs
@@ -4285,11 +4270,10 @@ fn lower_partitioned_array_node(
                 .and_then(|input| sequence.nodes.get(input).copied())
                 .filter(|input| matches!(input.op, Op::ArrayMap { .. }));
             if let Some(map) = map
-                && sequence.lowering.array_map_shape(
-                    sequence.function.id,
-                    map.id,
-                    map.span,
-                )? == ArrayMapExecutionShape::FusedProjection
+                && sequence
+                    .lowering
+                    .array_map_shape(sequence.function.id, map.id, map.span)?
+                    == ArrayMapExecutionShape::FusedProjection
             {
                 return lower_fused_array_map_projection(
                     node,
@@ -4316,13 +4300,22 @@ fn validate_array_map(
     let source = input_value(map, values, 0)?;
     let mapper = input_value(map, values, 1)?;
     let Type::Array(input) = &source.ty else {
-        return Err(lowering_diagnostic(map.span, "array map source is not an array"));
+        return Err(lowering_diagnostic(
+            map.span,
+            "array map source is not an array",
+        ));
     };
     let Type::Array(output) = &map.ty else {
-        return Err(lowering_diagnostic(map.span, "array map result is not an array"));
+        return Err(lowering_diagnostic(
+            map.span,
+            "array map result is not an array",
+        ));
     };
     let Type::Function { parameter, result } = &mapper.ty else {
-        return Err(lowering_diagnostic(map.span, "array map mapper is not callable"));
+        return Err(lowering_diagnostic(
+            map.span,
+            "array map mapper is not callable",
+        ));
     };
     if parameter.as_ref() != input.as_ref() || result.as_ref() != output.as_ref() {
         return Err(lowering_diagnostic(
@@ -4348,15 +4341,12 @@ fn array_map_temporary_slots(
     map: &Node,
     sequence: &SequenceContext<'_, '_, '_>,
 ) -> Result<(LoweredSlot, LoweredSlot), Diagnostics> {
-    let (input, output) = sequence
-        .function
-        .layout
-        .array_map_temps(map.id, map.span)?;
-    let (input_id, output_id) = sequence.lowering.regions.array_map_temps(
-        sequence.function.id,
-        map.id,
-        map.span,
-    )?;
+    let (input, output) = sequence.function.layout.array_map_temps(map.id, map.span)?;
+    let (input_id, output_id) =
+        sequence
+            .lowering
+            .regions
+            .array_map_temps(sequence.function.id, map.id, map.span)?;
     Ok((
         LoweredSlot {
             region: input.region,
@@ -4382,7 +4372,10 @@ fn emit_checked_call_indirect(
     outputs: &mut SequenceOutputs<'_, '_>,
 ) -> Result<(), Diagnostics> {
     let Type::Function { parameter, result } = &mapper.ty else {
-        return Err(lowering_diagnostic(node.span, "indirect callee is not callable"));
+        return Err(lowering_diagnostic(
+            node.span,
+            "indirect callee is not callable",
+        ));
     };
     require_value(
         node,
@@ -4402,11 +4395,11 @@ fn emit_checked_call_indirect(
         .call_outcomes
         .get(&node.id)
         .ok_or_else(|| lowering_diagnostic(node.span, "indirect call has no outcome layout"))?;
-    let call_outcome_id = sequence.lowering.regions.call_outcome(
-        sequence.function.id,
-        node.id,
-        node.span,
-    )?;
+    let call_outcome_id =
+        sequence
+            .lowering
+            .regions
+            .call_outcome(sequence.function.id, node.id, node.span)?;
     let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
         lowering_diagnostic(node.span, "indirect call has no checked outcome scratch")
     })?;
@@ -4504,14 +4497,7 @@ fn lower_checked_call_value_node(
         ty: node.ty.clone(),
         representation: representation_for_type(&node.ty, node.span)?,
     };
-    emit_checked_call_indirect(
-        node,
-        &callee,
-        &argument,
-        &output,
-        sequence,
-        outputs,
-    )?;
+    emit_checked_call_indirect(node, &callee, &argument, &output, sequence, outputs)?;
     Ok(output.representation)
 }
 
@@ -4561,9 +4547,10 @@ fn lower_materialized_array_map(
     let (source, mapper, _, _, input_schema, output_schema, input_width, output_width) =
         array_map_array_facts(map, values, sequence)?;
     let (input, output) = array_map_temporary_slots(map, sequence)?;
-    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
-        lowering_diagnostic(map.span, "array map has no checked outcome scratch")
-    })?;
+    let scratch =
+        sequence.function.layout.outcome_scratch.ok_or_else(|| {
+            lowering_diagnostic(map.span, "array map has no checked outcome scratch")
+        })?;
     let assigned = sequence
         .lowering
         .regions
@@ -4572,9 +4559,9 @@ fn lower_materialized_array_map(
         .lowering
         .regions
         .array_outcome(sequence.function.id, map.span)?;
-    let return_label = sequence.array_return.ok_or_else(|| {
-        lowering_diagnostic(map.span, "array map has no checked outcome return")
-    })?;
+    let return_label = sequence
+        .array_return
+        .ok_or_else(|| lowering_diagnostic(map.span, "array map has no checked outcome return"))?;
     let site = sequence
         .lowering
         .trace_ids
