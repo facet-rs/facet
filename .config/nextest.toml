@@ -170,3 +170,13 @@ test-group = 'node-subprocess'
 [[profile.default.overrides]]
 filter = 'package(vix) & test(ast_structural_projection_contracts_are_pinned)'
 slow-timeout = { period = "120s", terminate-after = 5 }
+
+# The accepted-rungs certificate compiles, verifies, and executes the whole
+# accepted rung ladder through one executable. It runs ~135s on the native lane
+# and completes in ~134s on the interpreter lane in isolation, but under the full
+# WEAVY_JIT=0 suite's parallel load it can drift past the default 180s cap. It is
+# bounded and always passing; give it the same longer leash as the other heavy
+# vix certificates.
+[[profile.default.overrides]]
+filter = 'package(vix) & test(accepted_rungs_verify_and_execute_through_one_executable)'
+slow-timeout = { period = "120s", terminate-after = 5 }

@@ -404,6 +404,8 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
         FunctionLayout::build(
             island.function,
             &island.nodes,
+            &[],
+            Some(island.output),
             constant_closures.get(&island.function).ok_or_else(|| {
                 lowering_diagnostic(output.span, "island function has no constant closure")
             })?,
@@ -417,6 +419,8 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
             FunctionLayout::build(
                 function.id,
                 &function.nodes,
+                &function.parameters,
+                function.output,
                 constant_closures.get(&function.id).ok_or_else(|| {
                     lowering_diagnostic(function.span, "called function has no constant closure")
                 })?,
@@ -2550,6 +2554,92 @@ impl RegionAssignments {
     }
 }
 
+/// Compute the set of VIR `Op::Call` node ids that are terminal self-calls of
+/// `function`: the call sits in tail position (the function output, or the
+/// output of a nested pure `If`/`Match`/`OrderedMatch` reached from the output)
+/// and its value flows only to the return. Ordinary recursion, mutual recursion,
+/// and non-tail self-calls are excluded and keep the Weavy `Call` path; rung 049
+/// is the control certificate for that boundary.
+///
+/// r[impl machine.safepoint.two-classes]
+fn tail_self_call_nodes(
+    function: FunctionId,
+    nodes: &[Node],
+    parameters: &[crate::vir::Parameter],
+    output: Option<NodeId>,
+) -> BTreeSet<NodeId> {
+    let mut result = BTreeSet::new();
+    let Some(output) = output else {
+        return result;
+    };
+    // A tail self-call re-enters with exactly this function's parameters, each of
+    // which must be a frame value we can stage and copy in place.
+    if !parameters
+        .iter()
+        .all(|parameter| type_is_tail_copyable(&parameter.ty))
+    {
+        return result;
+    }
+    let by_id: BTreeMap<NodeId, &Node> = nodes.iter().map(|node| (node.id, node)).collect();
+    // A call whose result is read by any other node is not purely terminal.
+    let mut consumed = BTreeSet::new();
+    for node in nodes {
+        for input in &node.inputs {
+            consumed.insert(*input);
+        }
+    }
+    let mut pending = vec![output];
+    let mut seen = BTreeSet::new();
+    while let Some(id) = pending.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(node) = by_id.get(&id) else {
+            continue;
+        };
+        match &node.op {
+            Op::Call(callee)
+                if *callee == function
+                    && node.inputs.len() == parameters.len()
+                    && !consumed.contains(&id) =>
+            {
+                result.insert(id);
+            }
+            Op::If {
+                consequent,
+                alternative,
+            } => {
+                pending.push(consequent.output);
+                pending.push(alternative.output);
+            }
+            Op::Match { arms } => {
+                for arm in arms {
+                    pending.push(arm.output);
+                }
+            }
+            Op::OrderedMatch { arms, fallback } => {
+                for arm in arms {
+                    pending.push(arm.body.output);
+                }
+                pending.push(fallback.output);
+            }
+            _ => {}
+        }
+    }
+    result
+}
+
+/// A parameter type can seed a tail loop only when it has an island-interior
+/// frame representation that `copy_lowered_value` can stage and write back.
+fn type_is_tail_copyable(ty: &Type) -> bool {
+    matches!(
+        representation_for_type(ty, Span { start: 0, end: 0 }),
+        Ok(ValueRepresentation::Word
+            | ValueRepresentation::RealizedHandle
+            | ValueRepresentation::InlineComposite)
+    )
+}
+
 struct FunctionLayout {
     regions: BTreeMap<NodeId, FrameRegion>,
     typed_temps: BTreeMap<NodeId, Vec<TemporaryRegion>>,
@@ -2562,6 +2652,15 @@ struct FunctionLayout {
     array_outcome: Option<TemporaryRegion>,
     outcome_scratch: Option<OutcomeScratch>,
     call_outcomes: BTreeMap<NodeId, TemporaryRegion>,
+    /// VIR `Op::Call` node ids that are terminal self-calls: the call is the
+    /// tail value of the function (directly, or through nested pure
+    /// `If`/`Match`/`OrderedMatch` outputs) and its result flows only to the
+    /// return. Each such call lowers to an in-place next-argument copy plus a
+    /// backedge `Jump` to the function's loop entry rather than a Weavy `Call`.
+    /// The staging regions live in `typed_temps` under the same node id.
+    ///
+    /// r[impl machine.safepoint.two-classes]
+    tail_self_calls: BTreeSet<NodeId>,
     frame_size: usize,
 }
 
@@ -2588,10 +2687,19 @@ impl FunctionLayout {
     fn build(
         function: FunctionId,
         nodes: &[Node],
+        parameters: &[crate::vir::Parameter],
+        output: Option<NodeId>,
         constants: &BTreeSet<NodeRef>,
         outcome_value: Option<Type>,
         span: Span,
     ) -> Result<Self, Diagnostics> {
+        // Terminal self-calls become in-place loops; a function that carries an
+        // array outcome ABI takes the checked-call path and is out of scope here.
+        let tail_self_calls = if outcome_value.is_some() {
+            BTreeSet::new()
+        } else {
+            tail_self_call_nodes(function, nodes, parameters, output)
+        };
         let mut regions = BTreeMap::new();
         let mut next_word = 0usize;
         for node in nodes {
@@ -2946,6 +3054,33 @@ impl FunctionLayout {
                 call_outcomes.insert(node.id, TemporaryRegion { region, ty });
             }
         }
+        // Reserve one exact typed next-argument staging region per parameter for
+        // every terminal self-call. Staging through these disjoint regions makes
+        // the write-back to the parameter slots overlap-safe regardless of source
+        // order. The regions ride the `typed_temps` contract machinery so they are
+        // verifier-visible declared frame regions, not raw scratch bytes.
+        for &call in &tail_self_calls {
+            let mut temps = Vec::with_capacity(parameters.len());
+            for parameter in parameters {
+                let words = type_words(&parameter.ty, span)?;
+                let region = FrameRegion::for_words(next_word, words).ok_or_else(|| {
+                    lowering_diagnostic(span, "tail-call next-argument region overflow")
+                })?;
+                next_word = next_word
+                    .checked_add(words.as_usize())
+                    .ok_or_else(|| lowering_diagnostic(span, "function frame size overflow"))?;
+                temps.push(TemporaryRegion {
+                    region,
+                    ty: parameter.ty.clone(),
+                });
+            }
+            if typed_temps.insert(call, temps).is_some() {
+                return Err(lowering_diagnostic(
+                    span,
+                    "tail-call node already carries typed temporaries",
+                ));
+            }
+        }
         let frame_size = FrameSlot::frame_size(next_word)
             .ok_or_else(|| lowering_diagnostic(span, "function frame size overflow"))?;
         Ok(Self {
@@ -2960,6 +3095,7 @@ impl FunctionLayout {
             array_outcome,
             outcome_scratch,
             call_outcomes,
+            tail_self_calls,
             frame_size,
         })
     }
@@ -3622,18 +3758,38 @@ fn lower_vir_function(
     let mut values = BTreeMap::new();
     let mut code = CodeBuilder::with_capacity(nodes.len().saturating_mul(2) + 1);
     let array_return = layout.array_outcome.as_ref().map(|_| code.label());
+    // The loop entry is the first body instruction: a terminal self-call updates
+    // the parameters in place and jumps here, reusing the current frame.
+    let loop_entry = code.label();
+    code.bind(loop_entry, output_node.span)?;
     {
         let sequence = SequenceContext {
             nodes: &nodes_by_id,
             function: &function_context,
             lowering: context,
             array_return,
+            loop_entry,
         };
         let mut outputs = SequenceOutputs {
             constants,
             code: &mut code,
         };
         lower_node_sequence(&node_ids, &mut values, &sequence, &mut outputs, None)?;
+    }
+    // A function whose output is itself a terminal self-call has no return value:
+    // every path leaves through a backedge, so no `Ret` is emitted.
+    if layout.tail_self_calls.contains(&output) {
+        let (code, pc_nodes) = code.finish(output_node.span)?;
+        return Ok(LoweredWeavyFunction {
+            function: WeavyFn {
+                frame: Layout {
+                    size: layout.frame_size,
+                    align: FrameSlot::word_align(),
+                },
+                code,
+            },
+            pc_nodes,
+        });
     }
     let output_value = values.get(&output).cloned().ok_or_else(|| {
         lowering_diagnostic(output_node.span, "function output has no frame region")
@@ -3690,6 +3846,10 @@ struct SequenceContext<'nodes, 'function, 'lowering> {
     function: &'function FunctionLoweringContext<'function>,
     lowering: &'lowering LoweringContext<'lowering>,
     array_return: Option<CodeLabel>,
+    /// The instruction index a terminal self-call jumps back to. Bound at the
+    /// first body instruction so the reused frame re-enters with the updated
+    /// parameters in place.
+    loop_entry: CodeLabel,
 }
 
 struct SequenceOutputs<'constants, 'code> {
@@ -3765,6 +3925,15 @@ fn lower_node_sequence(
             .ok_or_else(|| lowering_diagnostic(node.span, "VIR node has no trace attribution"))?;
         let previous_source = outputs.code.swap_source(Some(node_ref));
         outputs.code.push(WeavyOp::Trace { id: trace_id });
+        // A terminal self-call diverges through a backedge instead of producing a
+        // value: it re-enters the loop rather than writing `dst`. The preceding
+        // `Trace` stays as this pc's attributed interior pollpoint (inert in
+        // Production mode); the backedge inherits the same node source.
+        if sequence.function.layout.tail_self_calls.contains(&node.id) {
+            lower_tail_self_call(node, values, sequence, outputs)?;
+            outputs.code.swap_source(previous_source);
+            continue;
+        }
         let representation = match &node.op {
             Op::Call(callee) if sequence.function.layout.array_outcome.is_some() => {
                 lower_array_call_node(node, dst_region_id, values, *callee, sequence, outputs)?
@@ -4106,14 +4275,21 @@ fn lower_ordered_match_node(
             outputs,
             active_variant,
         )?;
-        let body = body_values.get(&arm.body.output).ok_or_else(|| {
-            lowering_diagnostic(node.span, "ordered-match body has no lowered value")
-        })?;
-        require_value(node, body, &node.ty, result_representation)?;
-        outputs
-            .code
-            .extend(copy_lowered_value(node, body, dst, dst_region)?);
-        outputs.code.jump(end);
+        if !sequence
+            .function
+            .layout
+            .tail_self_calls
+            .contains(&arm.body.output)
+        {
+            let body = body_values.get(&arm.body.output).ok_or_else(|| {
+                lowering_diagnostic(node.span, "ordered-match body has no lowered value")
+            })?;
+            require_value(node, body, &node.ty, result_representation)?;
+            outputs
+                .code
+                .extend(copy_lowered_value(node, body, dst, dst_region)?);
+            outputs.code.jump(end);
+        }
         outputs.code.bind(next, node.span)?;
     }
 
@@ -4125,13 +4301,20 @@ fn lower_ordered_match_node(
         outputs,
         active_variant,
     )?;
-    let fallback = fallback_values.get(&fallback.output).ok_or_else(|| {
-        lowering_diagnostic(node.span, "ordered-match fallback has no lowered value")
-    })?;
-    require_value(node, fallback, &node.ty, result_representation)?;
-    outputs
-        .code
-        .extend(copy_lowered_value(node, fallback, dst, dst_region)?);
+    if !sequence
+        .function
+        .layout
+        .tail_self_calls
+        .contains(&fallback.output)
+    {
+        let fallback = fallback_values.get(&fallback.output).ok_or_else(|| {
+            lowering_diagnostic(node.span, "ordered-match fallback has no lowered value")
+        })?;
+        require_value(node, fallback, &node.ty, result_representation)?;
+        outputs
+            .code
+            .extend(copy_lowered_value(node, fallback, dst, dst_region)?);
+    }
     outputs.code.bind(end, node.span)?;
 
     Ok(result_representation)
@@ -4175,17 +4358,26 @@ fn lower_if_node(
         outputs,
         active_variant,
     )?;
-    let consequent_output = consequent_values.get(&consequent.output).ok_or_else(|| {
-        lowering_diagnostic(node.span, "if consequent output has no lowered value")
-    })?;
-    require_value(node, consequent_output, &node.ty, result_representation)?;
-    outputs.code.extend(copy_lowered_value(
-        node,
-        consequent_output,
-        dst,
-        dst_region,
-    )?);
-    outputs.code.jump(end);
+    // A branch whose output is a terminal self-call has already left through a
+    // backedge; there is no value to merge into `dst` and no jump to the merge.
+    if !sequence
+        .function
+        .layout
+        .tail_self_calls
+        .contains(&consequent.output)
+    {
+        let consequent_output = consequent_values.get(&consequent.output).ok_or_else(|| {
+            lowering_diagnostic(node.span, "if consequent output has no lowered value")
+        })?;
+        require_value(node, consequent_output, &node.ty, result_representation)?;
+        outputs.code.extend(copy_lowered_value(
+            node,
+            consequent_output,
+            dst,
+            dst_region,
+        )?);
+        outputs.code.jump(end);
+    }
 
     outputs.code.bind(alternative_label, node.span)?;
     let mut alternative_values = values.clone();
@@ -4196,16 +4388,23 @@ fn lower_if_node(
         outputs,
         active_variant,
     )?;
-    let alternative_output = alternative_values.get(&alternative.output).ok_or_else(|| {
-        lowering_diagnostic(node.span, "if alternative output has no lowered value")
-    })?;
-    require_value(node, alternative_output, &node.ty, result_representation)?;
-    outputs.code.extend(copy_lowered_value(
-        node,
-        alternative_output,
-        dst,
-        dst_region,
-    )?);
+    if !sequence
+        .function
+        .layout
+        .tail_self_calls
+        .contains(&alternative.output)
+    {
+        let alternative_output = alternative_values.get(&alternative.output).ok_or_else(|| {
+            lowering_diagnostic(node.span, "if alternative output has no lowered value")
+        })?;
+        require_value(node, alternative_output, &node.ty, result_representation)?;
+        outputs.code.extend(copy_lowered_value(
+            node,
+            alternative_output,
+            dst,
+            dst_region,
+        )?);
+    }
     outputs.code.bind(end, node.span)?;
 
     Ok(result_representation)
@@ -4288,14 +4487,21 @@ fn lower_match_node(
             outputs,
             Some(arm.variant),
         )?;
-        let output = arm_values.get(&arm.output).ok_or_else(|| {
-            lowering_diagnostic(node.span, "match arm output has no lowered value")
-        })?;
-        require_value(node, output, &node.ty, result_representation)?;
-        outputs
-            .code
-            .extend(copy_lowered_value(node, output, dst, dst_region)?);
-        outputs.code.jump(end);
+        if !sequence
+            .function
+            .layout
+            .tail_self_calls
+            .contains(&arm.output)
+        {
+            let output = arm_values.get(&arm.output).ok_or_else(|| {
+                lowering_diagnostic(node.span, "match arm output has no lowered value")
+            })?;
+            require_value(node, output, &node.ty, result_representation)?;
+            outputs
+                .code
+                .extend(copy_lowered_value(node, output, dst, dst_region)?);
+            outputs.code.jump(end);
+        }
         outputs.code.bind(next, node.span)?;
     }
     outputs.code.bind(end, node.span)?;
@@ -5567,6 +5773,73 @@ fn lower_call_node(
         args,
         ret: dst.start().byte_offset(),
     })
+}
+
+/// Lower a terminal self-call as an in-place loop backedge. Every next-argument
+/// node is already evaluated in `values`; each is copied into its disjoint
+/// next-argument staging region, then written back to its parameter slot, then a
+/// `Jump` returns to the loop entry. Staging through disjoint regions keeps the
+/// write-back overlap-safe regardless of source order, and reusing the current
+/// frame means the backedge creates no scheduler request, memo cell, store
+/// identity, host call, or new call frame — only typed frame copies and a branch.
+///
+/// r[impl machine.safepoint.two-classes]
+fn lower_tail_self_call(
+    node: &Node,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<(), Diagnostics> {
+    let function = sequence.function;
+    let parameters = function.parameters;
+    require_input_count(node, parameters.len())?;
+    // Stage 1: evaluate ALL next arguments into disjoint staging regions before
+    // any parameter is overwritten.
+    let mut staging = TemporaryCursor::new(
+        function.layout,
+        sequence.lowering.regions,
+        function.id,
+        node,
+    )?;
+    let mut staged = Vec::with_capacity(parameters.len());
+    for (index, parameter) in parameters.iter().enumerate() {
+        let source = input_value(node, values, index)?;
+        require_value(
+            node,
+            &source,
+            &parameter.ty,
+            representation_for_type(&parameter.ty, node.span)?,
+        )?;
+        let next_arg = staging.take(&parameter.ty, node.span)?;
+        outputs.code.extend(copy_lowered_value(
+            node,
+            &source,
+            next_arg.region,
+            next_arg.region_id,
+        )?);
+        staged.push(next_arg);
+    }
+    staging.finish(node.span)?;
+    // Stage 2: overlap-safe write-back from the disjoint staging regions into the
+    // parameter slots.
+    for (parameter, next_arg) in parameters.iter().zip(&staged) {
+        let param_region = function.layout.region(parameter.node, node.span)?;
+        let param_region_id =
+            sequence
+                .lowering
+                .regions
+                .node(function.id, parameter.node, node.span)?;
+        outputs.code.extend(copy_lowered_value(
+            node,
+            next_arg,
+            param_region,
+            param_region_id,
+        )?);
+    }
+    // Backedge to the loop entry; the active source keeps it attributed to the
+    // terminal self-call for the PC/source map.
+    outputs.code.jump(sequence.loop_entry);
+    Ok(())
 }
 
 fn lower_array_call_node(
