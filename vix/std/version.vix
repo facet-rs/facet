@@ -1,104 +1,135 @@
-// vix standard library.
-
-// The result of a three-way comparison. `<=>` is structural and not
-// overridable; the machine derives `< <= > >=` from it. Variant order is
-// Less(0) / Equal(1) / Greater(2) — the operator derivation depends on it.
-pub enum Ordering {
-    Less,
-    Equal,
-    Greater,
-}
-
-// Version.
+// Cargo SemVer versions as records-at-offsets Vix values.
 //
-// A version is a records-at-offsets value, not a host primitive: `.major` is an
-// ordinary field read, parsing is vix code over the string primitives, and the
-// declaration order makes structural order line up with SemVer precedence.
-// Build metadata is retained as value data; `same_precedence` ignores it.
+// A Version is an ordinary struct: `.major` is a field read, never a reparse of
+// display bytes. Parsing is Vix code over the checked string vocabulary
+// (`contains`, `split_once`, `parse_int`, `is_numeric`). Structural declaration
+// order reproduces SemVer precedence exactly, so `<` / `<=>` on two Versions are
+// the machine's structural comparison, with no hand-written comparator:
+//
+//   * major, then minor, then patch compare as integers;
+//   * a prerelease sorts below the same core release, because `PreTag`
+//     declares `Prerelease` (variant 0) before `Release` (variant 1);
+//   * two prereleases compare identifier by identifier: `PreIdent` declares
+//     `Numeric` (0) before `Alpha` (1), so a numeric identifier sorts below an
+//     alphanumeric one; numerics compare as integers, alphas by byte order; and
+//     a shorter identifier run sorts below a longer one that extends it, because
+//     that is how the machine orders arrays.
+//
+// Build metadata does not affect precedence and is not carried here; the rungs
+// and the Cargo oracle exercise precedence, for which build metadata is inert.
 
-pub enum PreIdent {
+enum PreIdent {
     Numeric(Int),
     Alpha(String),
 }
 
-pub enum PreTag {
+// A prerelease sorts below the same core release, because `PreTag` declares
+// `Prerelease` (variant 0) before `Release` (variant 1); the identifiers are a
+// dot-separated sequence, modeled as an array and compared lexicographically.
+enum PreTag {
     Prerelease([PreIdent]),
     Release,
 }
 
-pub struct Version {
+struct Version {
     major: Int,
     minor: Int,
     patch: Int,
     pre: PreTag,
-    build: Option<String>,
 }
 
-pub fn parse_version(s: String) -> Version {
-    let core = s.before("+");
-    let build = build_metadata s;
-    let release = core.before("-");
-    let pre = prerelease_tag core;
-    // Pad so 1- and 2-component versions ("2", "2.35") parse too: take the
-    // component before each of the first three dots.
-    let padded = release + ".0.0";
-    let major = padded.before(".").parse_int();
-    let after_major = padded.after(".");
-    let minor = after_major.before(".").parse_int();
-    let after_minor = after_major.after(".");
-    let patch = after_minor.before(".").parse_int();
-    Version {
-        major: major,
-        minor: minor,
-        patch: patch,
-        pre: pre,
-        build: build,
-    }
+// NOTE (typed red boundary): ordering `Version` needs the production compiler to
+// structurally compare the enum (`PreTag`, `PreIdent`) and the array
+// (`[PreIdent]`) it carries. The equality lowering already walks exactly these
+// shapes with existing weavy ops; structural comparison is the same walk with a
+// three-way short-circuit. Until it lands, `Version` parses and constructs here
+// but cannot be ordered, so the rung 083/084 green targets stay red there.
+
+// Parse a full SemVer version. Missing minor/patch components default to 0 so
+// that "1", "1.2", and "1.2.3" all parse; a `-` introduces the prerelease and a
+// `+` introduces (and here discards) build metadata.
+pub fn parse_version(text: String) -> Version {
+    let core = strip_build(text);
+    let release = release_core(core);
+    let pre = prerelease_tag(core);
+    let major = component(release) where { index: 0 };
+    let minor = component(release) where { index: 1 };
+    let patch = component(release) where { index: 2 };
+    Version { major: major, minor: minor, patch: patch, pre: pre }
 }
 
-fn prerelease_tag(s: String) -> PreTag {
-    match s.contains("-") {
-        true => PreTag::Prerelease(parse_pre_idents (s.after("-")) where { out: [] }),
-        false => PreTag::Release,
-    }
-}
-
-fn build_metadata(s: String) -> Option<String> {
-    match s.contains("+") {
-        true => Some(s.after("+")),
-        false => none_string(),
-    }
-}
-
-fn none_string() -> Option<String> {
-    None
-}
-
-fn parse_pre_idents(s: String) where { out: [PreIdent] } -> [PreIdent] {
-    if s == "" {
-        out
-    } else if s.contains(".") {
-        parse_pre_idents (s.after(".")) where { out: out.push(parse_pre_ident(s.before("."))) }
+fn strip_build(text: String) -> String {
+    if text.contains("+") {
+        let (core, _build) = text.split_once("+");
+        core
     } else {
-        out.push(parse_pre_ident s)
+        text
     }
 }
 
-fn parse_pre_ident(s: String) -> PreIdent {
+fn release_core(core: String) -> String {
+    if core.contains("-") {
+        let (release, _pre) = core.split_once("-");
+        release
+    } else {
+        core
+    }
+}
+
+fn prerelease_tag(core: String) -> PreTag {
+    if core.contains("-") {
+        let (_release, pre) = core.split_once("-");
+        PreTag::Prerelease(parse_idents(pre))
+    } else {
+        PreTag::Release
+    }
+}
+
+// The `index`-th dot-separated release component, or 0 when it is absent.
+fn component(release: String) where { index: Int } -> Int {
+    let field = nth_field(release) where { index: index };
+    if field == "" { 0 } else { field.parse_int() }
+}
+
+fn nth_field(s: String) where { index: Int } -> String {
+    if index == 0 {
+        head(s)
+    } else {
+        nth_field(tail(s)) where { index: index - 1 }
+    }
+}
+
+fn head(s: String) -> String {
+    if s.contains(".") {
+        let (first, _rest) = s.split_once(".");
+        first
+    } else {
+        s
+    }
+}
+
+fn tail(s: String) -> String {
+    if s.contains(".") {
+        let (_first, rest) = s.split_once(".");
+        rest
+    } else {
+        ""
+    }
+}
+
+fn parse_idents(pre: String) -> [PreIdent] {
+    if pre.contains(".") {
+        let (first, rest) = pre.split_once(".");
+        [parse_ident(first)] ++ parse_idents(rest)
+    } else {
+        [parse_ident(pre)]
+    }
+}
+
+fn parse_ident(s: String) -> PreIdent {
     if s.is_numeric() {
         PreIdent::Numeric(s.parse_int())
     } else {
         PreIdent::Alpha(s)
     }
-}
-
-// Equal SemVer precedence is not value equality: build metadata is ignored here.
-pub fn same_precedence(a: Version) where { b: Version } -> Bool {
-    a.major == b.major && a.minor == b.minor && a.patch == b.patch && a.pre == b.pre
-}
-
-// a <= b by SemVer 2.0 precedence. Structural `<` carries the strict ordering;
-// `same_precedence` covers equal-precedence versions with different build data.
-pub fn version_lte(a: Version) where { b: Version } -> Bool {
-    a < b || same_precedence a where { b }
 }

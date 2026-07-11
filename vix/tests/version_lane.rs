@@ -4,28 +4,44 @@
 //! consecutive canonical prefix — it may go green above it — and it does not
 //! renumber or weaken the fixtures: the rung sources are consumed verbatim.
 //!
-//! `Version` and `VersionSet` are already builtin types in the production
-//! binder/module, but the production compiler/runtime has no lowering for the
-//! version substrate (`parse_version`, `parse_req`, and the VersionSet algebra),
-//! and no string-operation vocabulary (rung 045) that any faithful parse needs.
-//! So the rungs currently stop at a precise typed boundary: `parse_version` /
-//! `parse_req` do not resolve. These tests pin that exact boundary so it cannot
-//! silently drift, and the `#[ignore]`d green targets flip to passing — a
-//! one-line change each — the moment the vix-native substrate lands.
+//! The substrate is deliberately NOT the retiring Machine-path representation:
+//! no host/semver call, no raw evaluator, no string/integer kind tags, no
+//! parallel release/prerelease columns, no private interner or cache. `Version`
+//! is a records-at-offsets value whose structural declaration order is intended
+//! to reproduce SemVer precedence; `VersionSet` will be a single normalized union
+//! of half-open intervals over that total order, carrying cargo's
+//! prerelease-admission rule (not a release-only approximation).
 //!
-//! The substrate this lane demands into existence is deliberately NOT the
-//! retiring Machine-path representation: no host/semver call, no raw evaluator,
-//! no string/integer kind tags, no parallel release/prerelease columns, no
-//! private interner or cache. `Version` is a records-at-offsets value whose
-//! structural declaration order reproduces SemVer precedence; `VersionSet` is a
-//! single normalized union of half-open intervals over that total order,
-//! carrying cargo's prerelease-admission rule (not a release-only approximation).
+//! Current typed boundaries (each pinned or ignored below, never silently
+//! drifting):
+//!   * The raw rung sources stop at `parse_version` / `parse_req` being
+//!     unresolved (the production compiler has no ambient prelude), pinned by
+//!     the `*_stops_at_the_*_boundary` tests.
+//!   * With `std/version.vix` presented ahead of it, rung 083 parses and
+//!     constructs `Version` but cannot be *ordered*: `<` on `Version` needs the
+//!     production compiler to structurally compare the enum (`PreTag`,
+//!     `PreIdent`) and array (`[PreIdent]`) it carries. The equality lowering
+//!     already walks these shapes with existing weavy ops; structural comparison
+//!     is the same walk with a three-way short-circuit. That is the single
+//!     primitive the ignored rung-083 green target waits on.
+//!   * Rung 084 additionally needs the vix-native `VersionSet` interval algebra
+//!     (`parse_req`, `contains`/`intersect`/`is_empty`) with method dispatch.
 
 use vix::diagnostic::{DiagnosticCode, DiagnosticPayload};
 use vix::ratchet::{RunError, run_source};
 
+/// The vix-native version substrate, authored in the production surface as
+/// records-at-offsets values over the checked string/array/comparison
+/// vocabulary. The production compiler has no ambient prelude yet, so the lane
+/// presents the substrate ahead of the rung under test; it is ordinary vix
+/// source compiled through the same path, never a host bridge.
+const STD_VERSION: &str = include_str!("../std/version.vix");
 const RUNG_083: &str = include_str!("ratchet/083-version-parse.vix");
 const RUNG_084: &str = include_str!("ratchet/084-version-sets.vix");
+
+fn lane_source(rung: &str) -> String {
+    format!("{STD_VERSION}\n{rung}")
+}
 
 /// The single unresolved free-function name at which a rung currently stops.
 fn unresolved_name(rung: &str) -> String {
@@ -63,12 +79,14 @@ fn rung_084_stops_at_the_parse_req_boundary() {
 }
 
 /// Green target for rung 083: the version value substrate parses and orders
-/// through the production path. Ignored until the substrate lands; drop the
-/// `#[ignore]` to advance the lane.
+/// through the production path, plain and chaos agreeing. Ignored until
+/// structural comparison of enums and arrays lands (the `<` on `Version`);
+/// drop the `#[ignore]` to advance the lane.
 #[test]
-#[ignore = "readiness lane: green once the vix-native version substrate lands"]
+#[ignore = "readiness lane: green once structural comparison of enums/arrays lands"]
 fn rung_083_version_parse_runs_through_production_path() {
-    let report = run_source(RUNG_083).expect("rung 083 compiles and runs in production");
+    let report =
+        run_source(&lane_source(RUNG_083)).expect("rung 083 compiles and runs in production");
     assert!(
         report.passed(),
         "rung 083 checks pass: {:?}",
