@@ -107,7 +107,7 @@ pub struct LoweringArtifact {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum LoweringError {
     Diagnostics(Diagnostics),
-    Machine(MachineError),
+    Machine(Box<MachineError>),
 }
 
 impl From<Diagnostics> for LoweringError {
@@ -118,7 +118,7 @@ impl From<Diagnostics> for LoweringError {
 
 impl From<MachineError> for LoweringError {
     fn from(error: MachineError) -> Self {
-        Self::Machine(error)
+        Self::Machine(Box::new(error))
     }
 }
 
@@ -596,17 +596,15 @@ fn lower_equality_node(
         dst: accumulator.region.start().byte_offset(),
         value: 1,
     });
-    emit_semantic_equality(
+    SemanticEqualityEmitter {
         node,
-        &a.ty,
-        &a,
-        &b,
-        accumulator.region.start(),
-        work.region.start(),
-        equal.region.start(),
-        &mut temps,
-        outputs.code,
-    )?;
+        accumulator: accumulator.region.start(),
+        work: work.region.start(),
+        equal: equal.region.start(),
+        temps: &mut temps,
+        code: outputs.code,
+    }
+    .emit(&a.ty, &a, &b)?;
     if matches!(node.op, Op::Ne) {
         outputs.code.push(WeavyOp::ConstI64 {
             dst: equal.region.start().byte_offset(),
@@ -626,190 +624,169 @@ fn lower_equality_node(
     Ok(ValueRepresentation::Word)
 }
 
-fn emit_semantic_equality(
-    node: &Node,
-    ty: &Type,
-    a: &LoweredSlot,
-    b: &LoweredSlot,
+struct SemanticEqualityEmitter<'node, 'temps, 'code> {
+    node: &'node Node,
     accumulator: FrameSlot,
     work: FrameSlot,
     equal: FrameSlot,
-    temps: &mut TemporaryCursor<'_>,
-    code: &mut CodeBuilder,
-) -> Result<(), Diagnostics> {
-    match ty {
-        Type::Bool | Type::Int | Type::Check => {
-            code.push(WeavyOp::EqI64 {
-                dst: work.byte_offset(),
-                a: a.region.start().byte_offset(),
-                b: b.region.start().byte_offset(),
-            });
-            code.push(WeavyOp::MulI64 {
-                dst: accumulator.byte_offset(),
-                a: accumulator.byte_offset(),
-                b: work.byte_offset(),
-            });
-        }
-        Type::String => {
-            code.push(WeavyOp::CompareValueBytes {
-                dst: work.byte_offset(),
-                a: a.region.start().byte_offset(),
-                b: b.region.start().byte_offset(),
-            });
-            code.push(WeavyOp::ConstI64 {
-                dst: equal.byte_offset(),
-                value: i64::from(ORDERING_EQUAL_VARIANT),
-            });
-            code.push(WeavyOp::EqI64 {
-                dst: work.byte_offset(),
-                a: work.byte_offset(),
-                b: equal.byte_offset(),
-            });
-            code.push(WeavyOp::MulI64 {
-                dst: accumulator.byte_offset(),
-                a: accumulator.byte_offset(),
-                b: work.byte_offset(),
-            });
-        }
-        Type::Tuple(fields) => {
-            for (index, field) in fields.iter().enumerate() {
-                let left = temps.take(field, node.span)?;
-                let right = temps.take(field, node.span)?;
-                let field = u32::try_from(index)
-                    .map_err(|_| lowering_diagnostic(node.span, "product field index overflow"))?;
-                code.push(WeavyOp::ProductProject {
-                    dst: left.region_id,
-                    product: a.region_id,
-                    field,
-                });
-                code.push(WeavyOp::ProductProject {
-                    dst: right.region_id,
-                    product: b.region_id,
-                    field,
-                });
-                emit_semantic_equality(
-                    node,
-                    field_type(fields, index),
-                    &left,
-                    &right,
-                    accumulator,
-                    work,
-                    equal,
-                    temps,
-                    code,
-                )?;
-            }
-        }
-        Type::Record(record) => {
-            for (index, field) in record.fields.iter().enumerate() {
-                let left = temps.take(&field.ty, node.span)?;
-                let right = temps.take(&field.ty, node.span)?;
-                let field_index = u32::try_from(index)
-                    .map_err(|_| lowering_diagnostic(node.span, "record field index overflow"))?;
-                code.push(WeavyOp::ProductProject {
-                    dst: left.region_id,
-                    product: a.region_id,
-                    field: field_index,
-                });
-                code.push(WeavyOp::ProductProject {
-                    dst: right.region_id,
-                    product: b.region_id,
-                    field: field_index,
-                });
-                emit_semantic_equality(
-                    node,
-                    &field.ty,
-                    &left,
-                    &right,
-                    accumulator,
-                    work,
-                    equal,
-                    temps,
-                    code,
-                )?;
-            }
-        }
-        Type::Enum(enumeration) => {
-            for (variant_index, variant) in enumeration.variants.iter().enumerate() {
-                let variant_index = u32::try_from(variant_index)
-                    .map_err(|_| lowering_diagnostic(node.span, "enum variant index overflow"))?;
-                code.push(WeavyOp::EnumIsVariant {
-                    dst: work_region_id(work, temps, node.span)?,
-                    value: a.region_id,
-                    variant: variant_index,
-                });
-                code.push(WeavyOp::EnumIsVariant {
-                    dst: work_region_id(equal, temps, node.span)?,
-                    value: b.region_id,
-                    variant: variant_index,
-                });
-                code.push(WeavyOp::EqI64 {
+    temps: &'node mut TemporaryCursor<'temps>,
+    code: &'code mut CodeBuilder,
+}
+
+impl SemanticEqualityEmitter<'_, '_, '_> {
+    fn emit(&mut self, ty: &Type, a: &LoweredSlot, b: &LoweredSlot) -> Result<(), Diagnostics> {
+        let node = self.node;
+        let accumulator = self.accumulator;
+        let work = self.work;
+        let equal = self.equal;
+        match ty {
+            Type::Bool | Type::Int | Type::Check => {
+                self.code.push(WeavyOp::EqI64 {
                     dst: work.byte_offset(),
-                    a: work.byte_offset(),
-                    b: equal.byte_offset(),
+                    a: a.region.start().byte_offset(),
+                    b: b.region.start().byte_offset(),
                 });
-                code.push(WeavyOp::MulI64 {
+                self.code.push(WeavyOp::MulI64 {
                     dst: accumulator.byte_offset(),
                     a: accumulator.byte_offset(),
                     b: work.byte_offset(),
                 });
-                // `Eq` is also true when both operands are *not* this
-                // variant. Multiplying by `b is variant` leaves one only on
-                // the sole path where both checked selectors name this arm.
-                code.push(WeavyOp::MulI64 {
+            }
+            Type::String => {
+                self.code.push(WeavyOp::CompareValueBytes {
+                    dst: work.byte_offset(),
+                    a: a.region.start().byte_offset(),
+                    b: b.region.start().byte_offset(),
+                });
+                self.code.push(WeavyOp::ConstI64 {
+                    dst: equal.byte_offset(),
+                    value: i64::from(ORDERING_EQUAL_VARIANT),
+                });
+                self.code.push(WeavyOp::EqI64 {
                     dst: work.byte_offset(),
                     a: work.byte_offset(),
                     b: equal.byte_offset(),
                 });
-                let next = code.label();
-                code.jump_if_zero(work, next);
-                let fields: Vec<&Type> = match &variant.payload {
-                    VariantPayload::Unit => Vec::new(),
-                    VariantPayload::Tuple(fields) => fields.iter().collect(),
-                    VariantPayload::Record(fields) => {
-                        fields.iter().map(|field| &field.ty).collect()
-                    }
-                };
-                for (field_index, field) in fields.into_iter().enumerate() {
-                    let left = temps.take(field, node.span)?;
-                    let right = temps.take(field, node.span)?;
-                    let field_index = u32::try_from(field_index)
-                        .map_err(|_| lowering_diagnostic(node.span, "enum field index overflow"))?;
-                    code.push(WeavyOp::EnumProjectChecked {
+                self.code.push(WeavyOp::MulI64 {
+                    dst: accumulator.byte_offset(),
+                    a: accumulator.byte_offset(),
+                    b: work.byte_offset(),
+                });
+            }
+            Type::Tuple(fields) => {
+                for (index, field) in fields.iter().enumerate() {
+                    let left = self.temps.take(field, node.span)?;
+                    let right = self.temps.take(field, node.span)?;
+                    let field = u32::try_from(index).map_err(|_| {
+                        lowering_diagnostic(node.span, "product field index overflow")
+                    })?;
+                    self.code.push(WeavyOp::ProductProject {
                         dst: left.region_id,
+                        product: a.region_id,
+                        field,
+                    });
+                    self.code.push(WeavyOp::ProductProject {
+                        dst: right.region_id,
+                        product: b.region_id,
+                        field,
+                    });
+                    self.emit(field_type(fields, index), &left, &right)?;
+                }
+            }
+            Type::Record(record) => {
+                for (index, field) in record.fields.iter().enumerate() {
+                    let left = self.temps.take(&field.ty, node.span)?;
+                    let right = self.temps.take(&field.ty, node.span)?;
+                    let field_index = u32::try_from(index).map_err(|_| {
+                        lowering_diagnostic(node.span, "record field index overflow")
+                    })?;
+                    self.code.push(WeavyOp::ProductProject {
+                        dst: left.region_id,
+                        product: a.region_id,
+                        field: field_index,
+                    });
+                    self.code.push(WeavyOp::ProductProject {
+                        dst: right.region_id,
+                        product: b.region_id,
+                        field: field_index,
+                    });
+                    self.emit(&field.ty, &left, &right)?;
+                }
+            }
+            Type::Enum(enumeration) => {
+                for (variant_index, variant) in enumeration.variants.iter().enumerate() {
+                    let variant_index = u32::try_from(variant_index).map_err(|_| {
+                        lowering_diagnostic(node.span, "enum variant index overflow")
+                    })?;
+                    self.code.push(WeavyOp::EnumIsVariant {
+                        dst: work_region_id(work, self.temps, node.span)?,
                         value: a.region_id,
                         variant: variant_index,
-                        field: field_index,
                     });
-                    code.push(WeavyOp::EnumProjectChecked {
-                        dst: right.region_id,
+                    self.code.push(WeavyOp::EnumIsVariant {
+                        dst: work_region_id(equal, self.temps, node.span)?,
                         value: b.region_id,
                         variant: variant_index,
-                        field: field_index,
                     });
-                    emit_semantic_equality(
-                        node,
-                        field,
-                        &left,
-                        &right,
-                        accumulator,
-                        work,
-                        equal,
-                        temps,
-                        code,
-                    )?;
+                    self.code.push(WeavyOp::EqI64 {
+                        dst: work.byte_offset(),
+                        a: work.byte_offset(),
+                        b: equal.byte_offset(),
+                    });
+                    self.code.push(WeavyOp::MulI64 {
+                        dst: accumulator.byte_offset(),
+                        a: accumulator.byte_offset(),
+                        b: work.byte_offset(),
+                    });
+                    // `Eq` is also true when both operands are *not* this
+                    // variant. Multiplying by `b is variant` leaves one only on
+                    // the sole path where both checked selectors name this arm.
+                    self.code.push(WeavyOp::MulI64 {
+                        dst: work.byte_offset(),
+                        a: work.byte_offset(),
+                        b: equal.byte_offset(),
+                    });
+                    let next = self.code.label();
+                    self.code.jump_if_zero(work, next);
+                    let fields: Vec<&Type> = match &variant.payload {
+                        VariantPayload::Unit => Vec::new(),
+                        VariantPayload::Tuple(fields) => fields.iter().collect(),
+                        VariantPayload::Record(fields) => {
+                            fields.iter().map(|field| &field.ty).collect()
+                        }
+                    };
+                    for (field_index, field) in fields.into_iter().enumerate() {
+                        let left = self.temps.take(field, node.span)?;
+                        let right = self.temps.take(field, node.span)?;
+                        let field_index = u32::try_from(field_index).map_err(|_| {
+                            lowering_diagnostic(node.span, "enum field index overflow")
+                        })?;
+                        self.code.push(WeavyOp::EnumProjectChecked {
+                            dst: left.region_id,
+                            value: a.region_id,
+                            variant: variant_index,
+                            field: field_index,
+                        });
+                        self.code.push(WeavyOp::EnumProjectChecked {
+                            dst: right.region_id,
+                            value: b.region_id,
+                            variant: variant_index,
+                            field: field_index,
+                        });
+                        self.emit(field, &left, &right)?;
+                    }
+                    self.code.bind(next, node.span)?;
                 }
-                code.bind(next, node.span)?;
+            }
+            Type::Array(_) | Type::Function { .. } | Type::StreamCheck => {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "equality lowering is not implemented for this VIR type",
+                ));
             }
         }
-        Type::Array(_) | Type::Function { .. } | Type::StreamCheck => {
-            return Err(lowering_diagnostic(
-                node.span,
-                "equality lowering is not implemented for this VIR type",
-            ));
-        }
+        Ok(())
     }
-    Ok(())
 }
 
 fn work_region_id(
@@ -825,7 +802,7 @@ fn work_region_id(
         .ok_or_else(|| lowering_diagnostic(span, "comparison work slot has no contract region"))
 }
 
-fn field_type<'a>(fields: &'a [Type], index: usize) -> &'a Type {
+fn field_type(fields: &[Type], index: usize) -> &Type {
     &fields[index]
 }
 
@@ -2196,16 +2173,12 @@ fn lower_node_sequence(
             Op::Compare => lower_compare_node(node, dst, dst_region_id, values, sequence, outputs)?,
             Op::Eq | Op::Ne => lower_equality_node(node, dst, values, sequence, outputs)?,
             _ => {
-                let lowered = lower_node(
-                    node,
-                    dst,
-                    dst_region_id,
-                    values,
-                    sequence.function,
-                    sequence.lowering,
-                    outputs.constants,
-                    active_variant,
-                )?;
+                let mut lowering = NodeLoweringContext {
+                    function: sequence.function,
+                    context: sequence.lowering,
+                    constants: outputs.constants,
+                };
+                let lowered = lower_node(node, dst, dst_region_id, values, &mut lowering)?;
                 outputs.code.extend(lowered.ops);
                 lowered.representation
             }
@@ -2606,7 +2579,7 @@ fn lower_compare_node(
     outputs.code.jump_if_zero(test.region.start(), not_less);
     outputs.code.push(WeavyOp::EnumConstruct {
         dst: dst_region,
-        variant: ORDERING_LESS_VARIANT as u32,
+        variant: ORDERING_LESS_VARIANT,
         fields: Vec::new(),
     });
     outputs.code.jump(done);
@@ -2623,14 +2596,14 @@ fn lower_compare_node(
     outputs.code.jump_if_zero(test.region.start(), not_equal);
     outputs.code.push(WeavyOp::EnumConstruct {
         dst: dst_region,
-        variant: ORDERING_EQUAL_VARIANT as u32,
+        variant: ORDERING_EQUAL_VARIANT,
         fields: Vec::new(),
     });
     outputs.code.jump(done);
     outputs.code.bind(not_equal, node.span)?;
     outputs.code.push(WeavyOp::EnumConstruct {
         dst: dst_region,
-        variant: ORDERING_GREATER_VARIANT as u32,
+        variant: ORDERING_GREATER_VARIANT,
         fields: Vec::new(),
     });
     outputs.code.bind(done, node.span)?;
@@ -2811,15 +2784,18 @@ struct FunctionLoweringContext<'a> {
     layout: &'a FunctionLayout,
 }
 
+struct NodeLoweringContext<'function, 'lowering, 'constants> {
+    function: &'function FunctionLoweringContext<'function>,
+    context: &'lowering LoweringContext<'lowering>,
+    constants: &'constants mut BTreeMap<NodeRef, PendingValueConstant>,
+}
+
 fn lower_node(
     node: &Node,
     dst: FrameRegion,
     dst_region_id: WeavyRegionId,
     values: &BTreeMap<NodeId, LoweredSlot>,
-    function: &FunctionLoweringContext<'_>,
-    context: &LoweringContext<'_>,
-    constants: &mut BTreeMap<NodeRef, PendingValueConstant>,
-    _active_variant: Option<u32>,
+    lowering: &mut NodeLoweringContext<'_, '_, '_>,
 ) -> Result<LoweredNode, Diagnostics> {
     let dst_region = dst;
     let dst_slot = dst.start();
@@ -2848,18 +2824,24 @@ fn lower_node(
             require_input_count(node, 0)?;
             require_node_type(node, Type::String)?;
             let constant = NodeRef {
-                function: function.id,
+                function: lowering.function.id,
                 node: node.id,
             };
-            if function.layout.constant_slot(constant, node.span)? != dst_slot {
+            if lowering
+                .function
+                .layout
+                .constant_slot(constant, node.span)?
+                != dst_slot
+            {
                 return Err(lowering_diagnostic(
                     node.span,
                     "String node does not occupy its local closure slot",
                 ));
             }
-            let root_layout = context
+            let root_layout = lowering
+                .context
                 .layouts
-                .get(&context.root_function)
+                .get(&lowering.context.root_function)
                 .ok_or_else(|| lowering_diagnostic(node.span, "missing island root layout"))?;
             let root_slot = root_layout.constant_slot(constant, node.span)?;
             let pending = PendingValueConstant {
@@ -2870,7 +2852,7 @@ fn lower_node(
                 bytes: value.as_bytes().to_vec(),
                 span: node.span,
             };
-            if let Some(previous) = constants.insert(constant, pending)
+            if let Some(previous) = lowering.constants.insert(constant, pending)
                 && (previous.root_slot != root_slot
                     || previous.owner_slot != dst_slot
                     || previous.store_schema != SchemaId::named("vix.String.v1")
@@ -2885,7 +2867,8 @@ fn lower_node(
         }
         Op::Parameter(parameter_id) => {
             require_input_count(node, 0)?;
-            let parameter = function
+            let parameter = lowering
+                .function
                 .parameters
                 .iter()
                 .find(|parameter| parameter.id == *parameter_id)
@@ -2901,7 +2884,14 @@ fn lower_node(
             (Vec::new(), representation_for_type(&node.ty, node.span)?)
         }
         Op::Call(callee) => {
-            let op = lower_call_node(node, dst_region, values, *callee, function.layout, context)?;
+            let op = lower_call_node(
+                node,
+                dst_region,
+                values,
+                *callee,
+                lowering.function.layout,
+                lowering.context,
+            )?;
             (vec![op], representation_for_type(&node.ty, node.span)?)
         }
         Op::Closure(callee) => {
@@ -2912,10 +2902,15 @@ fn lower_node(
                     "closure value does not occupy its two-word ABI",
                 ));
             }
-            let target = context.functions.get(callee).copied().ok_or_else(|| {
-                lowering_diagnostic(node.span, "closure function is absent from the island")
-            })?;
-            let target_layout = context.layouts.get(callee).ok_or_else(|| {
+            let target = lowering
+                .context
+                .functions
+                .get(callee)
+                .copied()
+                .ok_or_else(|| {
+                    lowering_diagnostic(node.span, "closure function is absent from the island")
+                })?;
+            let target_layout = lowering.context.layouts.get(callee).ok_or_else(|| {
                 lowering_diagnostic(node.span, "closure function has no frame layout")
             })?;
             let Type::Function { parameter, result } = &node.ty else {
@@ -2945,13 +2940,21 @@ fn lower_node(
                     "indirect closure constants require an environment",
                 ));
             }
-            let callee = context.function_ids.get(callee).copied().ok_or_else(|| {
-                lowering_diagnostic(node.span, "closure function has no local ABI id")
-            })?;
+            let callee = lowering
+                .context
+                .function_ids
+                .get(callee)
+                .copied()
+                .ok_or_else(|| {
+                    lowering_diagnostic(node.span, "closure function has no local ABI id")
+                })?;
             let (callee_region, environment_region) =
-                context.regions.closure(function.id, node.id, node.span)?;
+                lowering
+                    .context
+                    .regions
+                    .closure(lowering.function.id, node.id, node.span)?;
             let (callee_temp, environment_temp) =
-                function.layout.closure_temps(node.id, node.span)?;
+                lowering.function.layout.closure_temps(node.id, node.span)?;
             (
                 vec![
                     WeavyOp::ConstI64 {
@@ -3790,7 +3793,7 @@ fn attribution() -> Stream<Check> {
         );
         assert_eq!(
             machine.cause,
-            crate::runtime::MachineCause::Program(error.clone())
+            crate::runtime::MachineCause::Program(Box::new(error.clone()))
         );
         let mapped = machine.attribution.expect("pc maps to a Vix source node");
         assert_eq!(mapped.span, source.span);

@@ -20,8 +20,8 @@ pub struct MachineError {
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum MachineCause {
-    Program(ProgramError),
-    Task(TaskFault),
+    Program(Box<ProgramError>),
+    Task(Box<TaskFault>),
     Runtime(RuntimeFault),
 }
 
@@ -72,7 +72,7 @@ impl MachineError {
             subject: None,
             attribution,
             demand_chain: Vec::new(),
-            cause: MachineCause::Program(error),
+            cause: MachineCause::Program(Box::new(error)),
         }
     }
 
@@ -88,7 +88,7 @@ impl MachineError {
             subject: None,
             attribution,
             demand_chain: vec![demand],
-            cause: MachineCause::Task(error),
+            cause: MachineCause::Task(Box::new(error)),
         }
     }
 
@@ -122,7 +122,7 @@ impl From<TaskFault> for MachineError {
             subject: None,
             attribution: None,
             demand_chain: Vec::new(),
-            cause: MachineCause::Task(error),
+            cause: MachineCause::Task(Box::new(error)),
         }
     }
 }

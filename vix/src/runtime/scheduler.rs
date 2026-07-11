@@ -78,7 +78,7 @@ impl<S: EventSink> Runtime<S> {
         lowered: &LoweringArtifact,
         attribution: &LoweringAttribution,
         chaos: ChaosPolicy,
-    ) -> Result<Evaluation, MachineError> {
+    ) -> Result<Evaluation, Box<MachineError>> {
         self.emit(EventKind::Demanded {
             key: lowered.demand_key,
         });
@@ -169,11 +169,11 @@ impl<S: EventSink> Runtime<S> {
                 Err(fault) => {
                     let error =
                         self.task_fault(MachineOperation::Spawn, fault, lowered, attribution, None);
-                    return Err(self.terminate_machine_fault(
+                    return Err(Box::new(self.terminate_machine_fault(
                         task_id,
                         lowered.demand_key,
                         error,
-                    )?);
+                    )));
                 }
             };
             let lane_facts = execution_facts(lowered.executable().lane_facts());
@@ -195,11 +195,11 @@ impl<S: EventSink> Runtime<S> {
                             self.constant_attribution(constant.node, attribution),
                             Some(lowered.demand_key),
                         );
-                        return Err(self.terminate_machine_fault(
+                        return Err(Box::new(self.terminate_machine_fault(
                             task_id,
                             lowered.demand_key,
                             error,
-                        )?);
+                        )));
                     }
                 };
                 if let Err(fault) =
@@ -212,30 +212,31 @@ impl<S: EventSink> Runtime<S> {
                         attribution,
                         self.constant_attribution(constant.node, attribution),
                     );
-                    return Err(self.terminate_machine_fault(
+                    return Err(Box::new(self.terminate_machine_fault(
                         task_id,
                         lowered.demand_key,
                         error,
-                    )?);
+                    )));
                 }
             }
             let step = match self.store.with_value_memories(|value_memories| {
                 task.drive_hosted_with_value_memories(&mut [], &[], &mut [], value_memories)
+                    .map_err(Box::new)
             }) {
                 Ok(step) => step,
                 Err(fault) => {
                     let error = self.task_fault(
                         MachineOperation::Drive,
-                        fault,
+                        *fault,
                         lowered,
                         attribution,
                         self.root_attribution(lowered, attribution),
                     );
-                    return Err(self.terminate_machine_fault(
+                    return Err(Box::new(self.terminate_machine_fault(
                         task_id,
                         lowered.demand_key,
                         error,
-                    )?);
+                    )));
                 }
             };
             match step {
@@ -247,11 +248,11 @@ impl<S: EventSink> Runtime<S> {
                         self.root_attribution(lowered, attribution),
                         Some(lowered.demand_key),
                     );
-                    return Err(self.terminate_machine_fault(
+                    return Err(Box::new(self.terminate_machine_fault(
                         task_id,
                         lowered.demand_key,
                         error,
-                    )?);
+                    )));
                 }
                 TaskStep::Parked { input } => {
                     let error = MachineError::runtime(
@@ -260,22 +261,22 @@ impl<S: EventSink> Runtime<S> {
                         self.root_attribution(lowered, attribution),
                         Some(lowered.demand_key),
                     );
-                    return Err(self.terminate_machine_fault(
+                    return Err(Box::new(self.terminate_machine_fault(
                         task_id,
                         lowered.demand_key,
                         error,
-                    )?);
+                    )));
                 }
             }
             for event in task.trace() {
                 if let Err(error) =
                     self.emit_weavy(task_id, *event, attribution, lowered.demand_key)
                 {
-                    return Err(self.terminate_machine_fault(
+                    return Err(Box::new(self.terminate_machine_fault(
                         task_id,
                         lowered.demand_key,
-                        error,
-                    )?);
+                        *error,
+                    )));
                 }
             }
             let passed = match task.result_i64() {
@@ -288,11 +289,11 @@ impl<S: EventSink> Runtime<S> {
                         attribution,
                         self.root_attribution(lowered, attribution),
                     );
-                    return Err(self.terminate_machine_fault(
+                    return Err(Box::new(self.terminate_machine_fault(
                         task_id,
                         lowered.demand_key,
                         error,
-                    )?);
+                    )));
                 }
             };
             let interned = self
@@ -374,7 +375,11 @@ impl<S: EventSink> Runtime<S> {
         id
     }
 
-    fn transition_demand(&mut self, key: DemandKey, to: DemandState) -> Result<(), MachineError> {
+    fn transition_demand(
+        &mut self,
+        key: DemandKey,
+        to: DemandState,
+    ) -> Result<(), Box<MachineError>> {
         let demand = self.demands.get_mut(&key).ok_or_else(|| {
             MachineError::runtime(
                 MachineOperation::DemandTransition,
@@ -389,7 +394,7 @@ impl<S: EventSink> Runtime<S> {
         Ok(())
     }
 
-    fn transition_task(&mut self, id: TaskId, to: TaskState) -> Result<(), MachineError> {
+    fn transition_task(&mut self, id: TaskId, to: TaskState) -> Result<(), Box<MachineError>> {
         let task = self.tasks.get_mut(&id).ok_or_else(|| {
             MachineError::runtime(
                 MachineOperation::TaskTransition,
@@ -410,7 +415,7 @@ impl<S: EventSink> Runtime<S> {
         event: WeavyTaskEvent,
         attribution: &LoweringAttribution,
         demand: DemandKey,
-    ) -> Result<(), MachineError> {
+    ) -> Result<(), Box<MachineError>> {
         let kind = match event {
             WeavyTaskEvent::FrameEntered(function) => EventKind::WeavyFrameEntered {
                 task,
@@ -461,15 +466,19 @@ impl<S: EventSink> Runtime<S> {
         task: TaskId,
         demand: DemandKey,
         error: MachineError,
-    ) -> Result<MachineError, MachineError> {
-        self.transition_task(task, TaskState::Failed)?;
-        self.transition_demand(demand, DemandState::Failed)?;
+    ) -> MachineError {
+        if let Err(transition) = self.transition_task(task, TaskState::Failed) {
+            return *transition;
+        }
+        if let Err(transition) = self.transition_demand(demand, DemandState::Failed) {
+            return *transition;
+        }
         self.emit(EventKind::MachineFailed {
             task,
             key: demand,
             operation: error.operation,
         });
-        Ok(error)
+        error
     }
 
     fn constant_attribution(
@@ -701,7 +710,7 @@ fn fault_site() -> Stream<Check> {
             );
             assert!(matches!(
                 error.cause,
-                MachineCause::Task(TaskFault::PoisonedResult { .. })
+                MachineCause::Task(fault) if matches!(*fault, TaskFault::PoisonedResult { .. })
             ));
 
             let shifted = format!("\n\n{ENUM_SOURCE}");
@@ -735,9 +744,8 @@ fn fault_site() -> Stream<Check> {
                 None,
                 Some(artifact.demand_key),
             );
-            let returned = runtime
-                .terminate_machine_fault(task, artifact.demand_key, error.clone())
-                .expect("recorded task and demand transition to Failed");
+            let returned =
+                runtime.terminate_machine_fault(task, artifact.demand_key, error.clone());
             assert_eq!(returned, error);
             assert_eq!(runtime.tasks[&task].state, TaskState::Failed);
             assert_eq!(

@@ -11,7 +11,7 @@ use crate::runtime::{
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunError {
     Diagnostics(Diagnostics),
-    Machine(MachineError),
+    Machine(Box<MachineError>),
 }
 
 impl From<Diagnostics> for RunError {
@@ -31,6 +31,12 @@ impl From<LoweringError> for RunError {
 
 impl From<MachineError> for RunError {
     fn from(error: MachineError) -> Self {
+        Self::Machine(Box::new(error))
+    }
+}
+
+impl From<Box<MachineError>> for RunError {
+    fn from(error: Box<MachineError>) -> Self {
         Self::Machine(error)
     }
 }
