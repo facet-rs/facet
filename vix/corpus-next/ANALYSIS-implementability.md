@@ -1,5 +1,17 @@
 # Implementer's attack on the current vix surface
 
+> **Post-migration note.** The four ports have since been migrated onto the
+> ratified immutable-collection surface (`SURFACE.md` §6). `.push`/`Set.insert`
+> are now `+`; map `.insert` is `+ (k, v)` for known-new keys or `.with` for
+> insert-or-replace; `Set.contains` is `.has`; and `map.get(k)` is addressed
+> (`V`, absence typed `MissingKey`), so `.get(k).unwrap()` is now `.get(k)` and
+> optional lookups are `.has(k)` then an addressed `.get(k)`. So P0 #7 (is
+> `.push` legal?) and the `Map`/`unwrap`/`Set`-vs-`Multiset` questions here are
+> **answered for the port spellings**: the port constructs cited below are the
+> pre-migration snapshot. The underlying implementer questions (checker rules,
+> lowering, identity) stand — they are about the machine, not the retired
+> spelling.
+
 Seat: implementer's attack. Assumption: I am about to implement the checker,
 lowering, and runtime from the requested book pages, machine spec pages,
 `SURFACE.md`, round-5/round-6 rulings, and the four corpus-next ports.

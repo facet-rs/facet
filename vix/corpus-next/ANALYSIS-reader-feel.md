@@ -6,6 +6,17 @@ title = "Reader-feel analysis: corpus-next against the vix book"
 adjudication — where a finding touches correctness I've flagged it as a
 readability trap, not a verdict on whether the port is right.*
 
+> **Post-migration note.** The ports have since been migrated onto the ratified
+> immutable-collection surface (`SURFACE.md` §6): `.push`/`Set.insert` → `+`,
+> map `.insert` → `+ (k, v)` (known-new) or `.with` (insert-or-replace),
+> `Set.contains` → `.has`, and `map.get(k)` is addressed (`map.get(k)` +
+> `map.has(k)` replacing `map.get(k) -> Option<V>` and `map.get(k).unwrap()`).
+> Snippets quoted below that show the old spellings (e.g. the
+> `match inner.versions.get(pkg) { Some.. None.. }` in `region_contains_region`,
+> and the `.get(k) -> Option<V>` / `.insert(k, v)` vocabulary) reflect the
+> **pre-migration** text; the readability observations still hold, but the
+> operation names are now the ratified ones.
+
 **Persona**: a competent Rust programmer who has read exactly seven pages
 of the vix book (`_index`, `values`, `demand`, `std/collections`,
 `testing`, `building-a-solver`, `three-planes`) and now opens

@@ -1,5 +1,19 @@
 # Analysis: completeness/consistency + the adjudication queue
 
+> **Post-migration note.** The four ports have since been migrated onto the
+> ratified immutable-collection surface (`SURFACE.md` §6): `.push`/`Set.insert`
+> became `+`; map `.insert` became `+ (k, v)` for known-new keys or `.with`
+> for insert-or-replace; `Set.contains` became `.has`; and `map.get(k)` is now
+> addressed (`V`, absence is typed `MissingKey`), so `map.get(k).unwrap()`
+> collapsed to `map.get(k)` and optional lookups became `map.has(k)` then an
+> addressed `map.get(k)`. Current counts: `.push` 0, mutation `.insert` 0,
+> `map/set +` 73, `.with` 5, `.has` 41; the only surviving `.get(...).unwrap()`
+> are the two unbanked `Doc` reads in `rodin.vix`. The retired-spelling counts,
+> the `push` contradiction (1C-1, C4), and the `unwrap`-as-error questions
+> below describe the **pre-migration snapshot** that motivated the ratified
+> surface; they are retained as the audit trail, not as the ports' current
+> state.
+
 Seat: analysis (corpus-first campaign, round 6 directive). Inputs read: the
 book (`vix/docs/content/**`, incl. `spec/machine/*`), `SURFACE.md`, the four
 ports, the three GAPS files, `spec-changelog.md` rounds 1–6, and the design
