@@ -1219,6 +1219,9 @@ fn out_of_bounds() -> Stream<Check> {
             .expect("first report resolves the indexing source");
         let first_site = match first_failure {
             FailureValue::IndexOutOfBounds { site, .. } => site,
+            FailureValue::MissingKey { .. } | FailureValue::DuplicateKey { .. } => {
+                panic!("the array failure test received a collection failure")
+            }
         };
         assert_eq!(
             first_context.span,
