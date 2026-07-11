@@ -35,10 +35,14 @@ Cargo fixtures.
 ## Current checkpoint
 
 At the time of the latest authoritative integration checkpoint
-(`fbebd069e`):
+(`a29bd1965`):
 
-- the canonical rung prefix is green through rung 044. The exact-tip full Vix
-  run passed 317/317 tests, and the exact-tip full Weavy run passed 222/222;
+- the canonical rung prefix is green through rung 049. The integrated full Vix
+  release run `91785208-5017-4ec1-8bbd-3037939093fe` passed 324/324 tests,
+  and the integrated full Weavy release run
+  `8fce57b6-18d8-41e2-a206-2f1ef4f36a34` passed 228/228. Workspace all-target
+  check, strict all-feature/all-target Clippy, formatting, and diff checks are
+  green at the checkpoint;
 - rung 031 executes unchanged through the completed two-stage generator path.
   One verified generator task runs real `Match`/`If` control and publishes only
   taken `YieldSiteId`s; the runner then evaluates those provenance-keyed Value
@@ -60,10 +64,20 @@ At the time of the latest authoritative integration checkpoint
 - `Map.values()` projects values in canonical key order and
   `Array.sorted()` preserves duplicates while ordering Int/String/aggregate
   leaves by structural semantics;
-- checked String primitives (rung 045), Path/empty-root semantics (046-047),
-  and captured closures/plain recursion (048-049) have preserved forward
-  checkpoints in isolated worktrees. They are not part of the authoritative
-  prefix until their adversarial reviews, folds, and exact-tip reruns finish;
+- checked String primitives (rung 045) now use closed typed status outcomes and
+  preserve interpreter/native faults for missing delimiters, invalid and
+  overflowing integers, and unresident operands. Relative Path construction,
+  empty-root joining, byte projection to String, and implicit String-to-Path
+  rejection (046-047) are folded through verified operations rather than host
+  conversions;
+- captured closures (048) source captured values from their own exact declared
+  regions rather than structural closure subwords, including direct and
+  `Array.map` calls. Plain non-tail recursion (049) retains the verified call
+  frame ABI. Focused default and `WEAVY_JIT=0` certificates are green for both;
+- rung 050 is the first canonical red boundary. Its preserved red checkpoint
+  is `8b618a7c4`: TraceCheck evaluation and externally enforced budgets are
+  being implemented independently from the verifier-visible self-tail-loop
+  lowering so neither can be substituted with an inert assertion;
 - the persistent AVL core has a 200k insertion scaling oracle, but neither the
   rung-051 array certificate nor the end-to-end rung-138 Map proof is yet
   established. Trace-check evaluation, externally enforced budgets,
