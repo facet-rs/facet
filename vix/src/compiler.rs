@@ -3793,6 +3793,10 @@ fn lower_binary(
                 require_type(&right, element, expr_span(&binary.right))?;
                 (left.ty.clone(), Op::ArrayAppend)
             }
+            Type::String => {
+                require_type(&right, &Type::String, expr_span(&binary.right))?;
+                (Type::String, Op::StringConcat)
+            }
             Type::Map { key, value } => {
                 require_type(
                     &right,

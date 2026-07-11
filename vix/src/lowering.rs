@@ -3535,6 +3535,12 @@ fn lower_node(
                 "map/set lowering is not implemented",
             ));
         }
+        Op::StringConcat => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "string concatenation lowering is not implemented",
+            ));
+        }
         Op::Variant { variant } => {
             lower_variant_node(node, dst_region, dst_region_id, values, *variant)?
         }

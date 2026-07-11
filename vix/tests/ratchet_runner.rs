@@ -2927,6 +2927,30 @@ fn map_and_set_surface_has_distinct_typed_vir_grains() {
 }
 
 #[test]
+fn string_plus_remains_distinct_from_collection_addition() {
+    const SOURCE: &str = r#"
+fn suffixed(value: String) -> String {
+    value + "!"
+}
+"#;
+    let compilation = Compiler::new()
+        .compile(SOURCE)
+        .expect("string + compiles to its own VIR grain");
+    assert!(compilation.warnings.entries.is_empty());
+    let concat = compilation.functions[0]
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StringConcat))
+        .expect("string + becomes StringConcat");
+    assert_eq!(concat.ty, VirType::String);
+    assert_eq!(concat.effect, vix::vir::EffectFacts::PURE);
+    assert_eq!(
+        &SOURCE[concat.span.start as usize..concat.span.end as usize],
+        "value + \"!\""
+    );
+}
+
+#[test]
 fn mutation_shaped_collection_methods_are_unknown() {
     for source in [RUNG_032, RUNG_145, RUNG_146] {
         let (expected_message, expected_line) = reject_header(source);

@@ -480,6 +480,8 @@ pub enum Op {
     SetHas,
     SetLen,
     SetValues,
+    /// Concatenate two immutable strings.
+    StringConcat,
 }
 
 /// One SSA-like operation. Dependencies are explicit node ids; no Rust
@@ -982,6 +984,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::SetHas => op.push(41),
         Op::SetLen => op.push(42),
         Op::SetValues => op.push(43),
+        Op::StringConcat => op.push(44),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());
