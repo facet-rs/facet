@@ -3010,6 +3010,11 @@ impl Task {
         self.frames.len()
     }
 
+    #[must_use]
+    pub fn frame_arena_bytes(&self) -> usize {
+        self.arena.len()
+    }
+
     /// Write an i64 into the CURRENT frame at `offset` — used for
     /// entry arguments and by tests to poke frames.
     pub fn write_i64(&mut self, offset: u32, value: i64) {

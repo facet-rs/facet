@@ -225,14 +225,14 @@ fn rung_001_certifies_the_new_compiler_and_runtime_spine() {
             ..
         }
     )));
-    assert!(report.plain.events.iter().any(|event| matches!(
-        event.kind,
-        EventKind::WeavyMark { node, .. } if node.0 == 0
-    )));
-    assert!(report.plain.events.iter().any(|event| matches!(
-        event.kind,
-        EventKind::WeavyMark { node, .. } if node.0 == 1
-    )));
+    assert!(
+        report
+            .plain
+            .events
+            .iter()
+            .all(|event| !matches!(event.kind, EventKind::WeavyMark { .. })),
+        "production execution strips interior trace marks",
+    );
     assert!(report.chaos.events.iter().any(|event| matches!(
         event.kind,
         EventKind::TaskTransition {
@@ -2354,38 +2354,18 @@ fn rung_007_enums_payloads_and_match_run_through_vir_and_weavy() {
                 .expect("each rung 007 island constructs one variant")
         })
         .collect::<Vec<_>>();
-    let mut selected_arm_marks = vec![0usize; partitioned.islands.len()];
-    for event in &report.plain.events {
-        let EventKind::WeavyMark {
-            task,
-            function,
-            node,
-        } = &event.kind
-        else {
-            continue;
-        };
-        if *function != area.id {
-            continue;
-        }
-        let Some(arm_index) = arms.iter().position(|arm| arm.nodes.contains(node)) else {
-            continue;
-        };
-        let island_index = report
+    assert_eq!(
+        expected_variants,
+        arms.iter().map(|arm| arm.variant).collect::<Vec<_>>(),
+    );
+    assert!(
+        report
             .plain
             .events
             .iter()
-            .find_map(|event| match &event.kind {
-                EventKind::IslandEntered {
-                    task: entered,
-                    island,
-                } if entered == task => Some(island.0 as usize),
-                _ => None,
-            })
-            .expect("every marked task entered an island");
-        assert_eq!(arms[arm_index].variant, expected_variants[island_index]);
-        selected_arm_marks[island_index] += 1;
-    }
-    assert!(selected_arm_marks.into_iter().all(|marks| marks > 0));
+            .all(|event| !matches!(event.kind, EventKind::WeavyMark { .. })),
+        "production execution strips branch-interior trace marks",
+    );
 }
 
 #[test]
@@ -5326,6 +5306,16 @@ fn tail_loop_executes_ten_million_iterations_in_the_selected_lane() {
         task.result_i64().expect("scalar result"),
         49_999_995_000_000,
         "sum of 0..10_000_000 through the self-tail loop",
+    );
+    assert_eq!(
+        task.trace().len(),
+        2,
+        "the tail loop records only its frame entry and exit",
+    );
+    assert!(
+        task.frame_arena_bytes() < 4096,
+        "the tail loop keeps one bounded frame arena, observed {} bytes",
+        task.frame_arena_bytes(),
     );
     // The backedge appends no per-iteration instrumentation mark.
     assert!(

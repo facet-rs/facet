@@ -521,14 +521,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
         recipe,
         demand_key,
         demand_preimage,
-        executable: Executable::with_trace_mode(
-            verified,
-            if island.purpose == IslandPurpose::Value {
-                weavy::task::TraceMode::Production
-            } else {
-                weavy::task::TraceMode::Innards
-            },
-        ),
+        executable: Executable::with_trace_mode(verified, weavy::task::TraceMode::Production),
         array_outcome,
         pc_nodes,
         constants,

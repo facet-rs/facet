@@ -776,6 +776,14 @@ impl ExecTask<'_> {
         }
     }
 
+    #[must_use]
+    pub fn frame_arena_bytes(&self) -> usize {
+        match &self.lane {
+            Lane::Interpreter(task) => task.frame_arena_bytes(),
+            Lane::Native(task) => task.frame_arena_bytes(),
+        }
+    }
+
     pub(crate) fn result(&self) -> Result<&[u8], TaskFault> {
         self.check_result_available()?;
         Ok(match &self.lane {

@@ -1471,6 +1471,11 @@ impl JitTask {
         self.frames.len()
     }
 
+    #[must_use]
+    pub fn frame_arena_bytes(&self) -> usize {
+        self.arena.len()
+    }
+
     pub fn result_i64(&self) -> i64 {
         i64::from_le_bytes(self.result[..8].try_into().expect("8-byte result"))
     }
