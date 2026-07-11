@@ -9,6 +9,7 @@ use crate::runtime::{
     ChaosPolicy, Counters, DemandState, Evaluation, Event, EventLog, FailureContext, FailureValue,
     GeneratorOutcome, Location, MachineError, Runtime, TaskState, ValueId,
 };
+use crate::vir::{PartitionedRecipe, TraceCheck};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunError {
@@ -38,6 +39,8 @@ pub enum RunError {
     /// source context; it is never reclassified as a machine invariant.
     GeneratorLanguageFailure {
         test: String,
+        /// Boxed to keep `RunError` small: the failure value dwarfs every other
+        /// variant, and boxing it keeps the common `Result<_, RunError>` cheap.
         failure: Box<FailureValue>,
         context: Option<FailureContext>,
     },
@@ -97,10 +100,59 @@ pub struct CheckRun {
     /// The stable yield-provenance key of this check. Plain/chaos agreement and
     /// multiplicity are decided by this key, not by publication arrival order.
     pub provenance: ProvenanceKey,
-    pub identity: ValueId,
+    /// The evaluated value identity of a value check. Absent for a trace check,
+    /// which produces no store value.
+    pub identity: Option<ValueId>,
     pub passed: bool,
     pub failure: Option<FailureValue>,
     pub failure_context: Option<FailureContext>,
+    /// Detail for a *failed* trace check. Deliberately absent when a trace check
+    /// passes, so a passing trace check's report carries only its provenance and
+    /// verdict and stays byte-identical across the plain and chaos lanes even
+    /// though the observed counter differs between them.
+    pub trace_failure: Option<TraceFailure>,
+}
+
+/// Why a trace check went red: the descriptor and the value observed in the
+/// frozen completed-run snapshot. Only present on a failing trace check.
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct TraceFailure {
+    pub check: TraceCheck,
+    pub observed: u64,
+}
+
+/// The frozen completed-run snapshot a trace check is evaluated against. It is
+/// captured once, after every selected value check completes, and the trace
+/// checks read it without demanding any operand, issuing any scheduler request,
+/// or interning anything — so a trace check never counts its own reporting work
+/// against the very quantities it inspects.
+#[derive(Clone, Copy, Debug)]
+struct TraceSnapshot {
+    scheduler_requests: u64,
+    memo_entries: u64,
+    store_interns: u64,
+}
+
+impl TraceSnapshot {
+    /// Evaluate one trace check against the frozen snapshot.
+    fn evaluate(&self, provenance: ProvenanceKey, check: TraceCheck) -> CheckRun {
+        let (observed, bound) = match check {
+            TraceCheck::SchedulerRequestsAtMost { bound } => (self.scheduler_requests, bound),
+            TraceCheck::MemoEntriesAtMost { bound } => (self.memo_entries, bound),
+            TraceCheck::StoreInternsAtMost { bound } => (self.store_interns, bound),
+        };
+        // `bound` is a non-negative surface literal; compare in i128 so a large
+        // observed count can never wrap past the ceiling.
+        let passed = i128::from(observed) <= i128::from(bound);
+        CheckRun {
+            provenance,
+            identity: None,
+            passed,
+            failure: None,
+            failure_context: None,
+            trace_failure: (!passed).then_some(TraceFailure { check, observed }),
+        }
+    }
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -178,6 +230,34 @@ pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
     })
 }
 
+/// Evaluate one value-check island as an ordinary pure demand and record its
+/// provenance-keyed outcome. Provenance is the site's stable `YieldSiteId`, and
+/// with no dynamic keys the demand location is byte-identical to the historical
+/// flat check location.
+fn evaluate_value_site(
+    runtime: &mut Runtime<EventLog>,
+    cache: &mut LoweringCache,
+    test_name: &str,
+    island: &crate::vir::Island,
+    site: u32,
+    chaos: ChaosPolicy,
+) -> Result<CheckRun, RunError> {
+    let lowered = cache.get_or_lower(island)?;
+    let attribution = attribution_for(island);
+    let provenance = ProvenanceKey::site(site);
+    let location = Location::for_test_provenance(test_name, site, &provenance.dynamic_keys);
+    let evaluation: Evaluation =
+        runtime.evaluate(island.id, &location, lowered, &attribution, chaos)?;
+    Ok(CheckRun {
+        provenance,
+        identity: Some(evaluation.identity),
+        passed: evaluation.passed,
+        failure: evaluation.failure,
+        failure_context: evaluation.failure_context,
+        trace_failure: None,
+    })
+}
+
 fn run_lane(
     module: &crate::vir::Module,
     cache: &mut LoweringCache,
@@ -185,6 +265,9 @@ fn run_lane(
 ) -> Result<SuiteRun, RunError> {
     let mut runtime = Runtime::new(EventLog::default());
     let mut checks = Vec::new();
+    // Trace checks are deferred until every selected value check completes; they
+    // are evaluated once, together, against the frozen completed-run snapshot.
+    let mut deferred_traces: Vec<(ProvenanceKey, TraceCheck)> = Vec::new();
     let mut kill_available = chaos.kill_first_running_task;
 
     for test in &module.tests {
@@ -237,72 +320,80 @@ fn run_lane(
 
         let partitioned = module.partition_test(test);
         match taken {
-            // Taken generator sites, in publication order, evaluated as ordinary
-            // pure check demands and keyed by provenance.
+            // Taken generator sites, in publication order. Each resolves to its
+            // recipe by stable YieldSiteId — never by island-vector ordinal —
+            // so a value site becomes an ordinary pure demand and a trace site
+            // is deferred to the post-run snapshot.
             Some(sites) => {
                 for (site, raw) in sites {
-                    let island = partitioned.islands.get(site as usize).ok_or_else(|| {
-                        RunError::UnknownSiteKey {
+                    let partitioned_site = partitioned
+                        .sites
+                        .iter()
+                        .find(|candidate| candidate.id.0 == site)
+                        .ok_or(RunError::UnknownSiteKey {
                             test: test.name.clone(),
                             site: raw,
+                        })?;
+                    match &partitioned_site.recipe {
+                        PartitionedRecipe::Value { island } => {
+                            checks.push(evaluate_value_site(
+                                &mut runtime,
+                                cache,
+                                &partitioned.name,
+                                &partitioned.islands[*island],
+                                site,
+                                ChaosPolicy::default(),
+                            )?);
                         }
-                    })?;
-                    let lowered = cache.get_or_lower(island)?;
-                    let attribution = attribution_for(island);
-                    // Zero-dynamic-key base case: the empty dynamic tail makes this
-                    // location byte-identical to the flat check location.
-                    let provenance = ProvenanceKey::site(site);
-                    let location = Location::for_test_provenance(
-                        &partitioned.name,
-                        site,
-                        &provenance.dynamic_keys,
-                    );
-                    let evaluation: Evaluation = runtime.evaluate(
-                        island.id,
-                        &location,
-                        lowered,
-                        &attribution,
-                        ChaosPolicy::default(),
-                    )?;
-                    checks.push(CheckRun {
-                        provenance,
-                        identity: evaluation.identity,
-                        passed: evaluation.passed,
-                        failure: evaluation.failure,
-                        failure_context: evaluation.failure_context,
-                    });
+                        PartitionedRecipe::Trace(trace) => {
+                            deferred_traces.push((ProvenanceKey::site(site), *trace));
+                        }
+                    }
                 }
             }
-            // Flat generator: every top-level site publishes unconditionally, so
-            // the island index is its provenance selector.
+            // Flat generator: every top-level site publishes unconditionally.
+            // Its stable YieldSiteId is the provenance selector, independent of
+            // how value and trace sites interleave.
             None => {
-                for island in &partitioned.islands {
-                    let lowered = cache.get_or_lower(island)?;
-                    let attribution = attribution_for(island);
-                    let location = Location::for_test_island(&partitioned.name, island.id.0);
-                    let evaluation: Evaluation = runtime.evaluate(
-                        island.id,
-                        &location,
-                        lowered,
-                        &attribution,
-                        ChaosPolicy {
-                            kill_first_running_task: kill_available,
-                        },
-                    )?;
-                    kill_available = false;
-                    checks.push(CheckRun {
-                        provenance: ProvenanceKey::site(island.id.0),
-                        identity: evaluation.identity,
-                        passed: evaluation.passed,
-                        failure: evaluation.failure,
-                        failure_context: evaluation.failure_context,
-                    });
+                for partitioned_site in &partitioned.sites {
+                    let site = partitioned_site.id.0;
+                    match &partitioned_site.recipe {
+                        PartitionedRecipe::Value { island } => {
+                            checks.push(evaluate_value_site(
+                                &mut runtime,
+                                cache,
+                                &partitioned.name,
+                                &partitioned.islands[*island],
+                                site,
+                                ChaosPolicy {
+                                    kill_first_running_task: kill_available,
+                                },
+                            )?);
+                            kill_available = false;
+                        }
+                        PartitionedRecipe::Trace(trace) => {
+                            deferred_traces.push((ProvenanceKey::site(site), *trace));
+                        }
+                    }
                 }
             }
         }
     }
 
+    // Freeze the completed-run snapshot after every selected value check, then
+    // evaluate the deferred trace checks against it. This reads counters only;
+    // it mutates no runtime state, so a trace check never adds to the scheduler
+    // requests, memo entries, or store interns it inspects.
     let counters = runtime.counters();
+    let snapshot = TraceSnapshot {
+        scheduler_requests: counters.scheduler_requests,
+        memo_entries: runtime.memo_entries(),
+        store_interns: counters.store_interns,
+    };
+    for (provenance, trace) in deferred_traces {
+        checks.push(snapshot.evaluate(provenance, trace));
+    }
+
     let receipt_count = runtime.receipts().count() as u64;
     let all_demands_ready = runtime
         .demands()

@@ -150,6 +150,7 @@ module.exports = grammar({
         $.identifier,
         $.path_expr,
         $.string,
+        $.quantity,
         $.number,
         $.boolean,
       ),
@@ -343,6 +344,13 @@ module.exports = grammar({
 
     identifier: () => /[A-Za-z_][A-Za-z0-9_]*/,
     string: () => /"([^"\\]|\\.)*"/,
+    // A unit-bearing literal: decimal magnitude immediately followed by a unit
+    // suffix (`5s`, `256MB`). Lexed as one token so it outranks a bare `number`
+    // by longest match. It is only meaningful inside attribute argument values
+    // (e.g. `#[test { budget_wall: 5s }]`); the compiler rejects it with a typed
+    // diagnostic anywhere else. No other Vix token places digits immediately
+    // adjacent to letters, so introducing this token is lexically non-invasive.
+    quantity: () => token(seq(/[0-9]+/, /[A-Za-z]+/)),
     number: () => /[0-9]+/,
     tuple_index: () => /[0-9]+/,
     boolean: () => choice("true", "false"),

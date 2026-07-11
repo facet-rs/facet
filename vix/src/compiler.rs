@@ -7,11 +7,12 @@ use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnosti
 use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
 use crate::vir::{
-    ArrayMapGrain, ArrayMapGrainKey, ControlRegion, EffectFacts, EnumType, EnumVariant, Function,
-    FunctionId, GeneratorArm, GeneratorBody, GeneratorStep, MatchArm as VirMatchArm, Module, Node,
-    NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, ORDERING_GREATER_VARIANT,
-    ORDERING_LESS_VARIANT, Op, OrderedMatchArm, Parameter, ParameterId, ParameterKind, RecordField,
-    RecordType, Test, Type, VariantPayload, YieldSite, YieldSiteId,
+    ArrayMapGrain, ArrayMapGrainKey, Budget, CheckRecipe, ControlRegion, EffectFacts, EnumType,
+    EnumVariant, Function, FunctionId, GeneratorArm, GeneratorBody, GeneratorStep,
+    MatchArm as VirMatchArm, Module, Node, NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
+    ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm, Parameter, ParameterId,
+    ParameterKind, RecordField, RecordType, Test, TestMetadata, TraceCheck, Type, VariantPayload,
+    YieldSite, YieldSiteId,
 };
 
 pub struct Compiler {
@@ -97,6 +98,8 @@ struct FunctionSignature {
     is_test: bool,
     parameters: Vec<ParameterSignature>,
     return_type: Type,
+    /// Typed `#[test]` metadata, default for non-test functions.
+    metadata: TestMetadata,
 }
 
 #[derive(Clone)]
@@ -401,6 +404,7 @@ impl<'a> TypeResolver<'a> {
             | ast::Expr::Path(_)
             | ast::Expr::Str(_)
             | ast::Expr::Number(_)
+            | ast::Expr::Quantity(_)
             | ast::Expr::Bool(_) => {}
         }
         Ok(())
@@ -814,6 +818,7 @@ fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
                 generator: lowered
                     .generator
                     .expect("test function lowering produces a generator body"),
+                metadata: signature.metadata,
             });
         }
         module.functions.push(lowered.function);
@@ -890,6 +895,7 @@ fn declare_function(
             is_test,
             parameters: Vec::new(),
             return_type: Type::StreamCheck,
+            metadata: parse_test_metadata(function)?,
         });
     }
     if let Some(generics) = &function.generics {
@@ -961,6 +967,7 @@ fn declare_function(
         is_test,
         parameters,
         return_type,
+        metadata: TestMetadata::default(),
     })
 }
 
@@ -1014,6 +1021,133 @@ fn check_test_signature(function: &ast::FnItem) -> Result<(), Diagnostics> {
         }));
     }
     Ok(())
+}
+
+/// Parse the `#[test { … }]` attribute arguments into typed [`TestMetadata`].
+/// Only unit-bearing budget fields are accepted; unknown fields, duplicate
+/// fields, missing/non-unit values, and unit mismatches are typed diagnostics.
+/// Unit-bearing literals are accepted only here, never in ordinary values.
+fn parse_test_metadata(function: &ast::FnItem) -> Result<TestMetadata, Diagnostics> {
+    let mut budget = Budget::default();
+    let mut seen: BTreeSet<String> = BTreeSet::new();
+    for attribute in &function.attributes {
+        if attribute.name.value != "test" {
+            continue;
+        }
+        let Some(args) = &attribute.args else {
+            continue;
+        };
+        for field in &args.fields {
+            let name = field.name.value.as_str();
+            if !seen.insert(name.to_owned()) {
+                return Err(field_diagnostic(
+                    DiagnosticCode::DuplicateField,
+                    field.name.span,
+                    "test",
+                    name,
+                ));
+            }
+            match name {
+                "budget_wall" => {
+                    let (text, span) = attribute_quantity(field)?;
+                    budget.wall_ns = Some(duration_nanos(text, span)?);
+                }
+                "budget_rss" => {
+                    let (text, span) = attribute_quantity(field)?;
+                    budget.rss_bytes = Some(byte_count(text, span)?);
+                }
+                _ => {
+                    return Err(field_diagnostic(
+                        DiagnosticCode::UnknownField,
+                        field.name.span,
+                        "test",
+                        name,
+                    ));
+                }
+            }
+        }
+    }
+    Ok(TestMetadata { budget })
+}
+
+/// A budget field value must be a unit-bearing literal (`5s`, `256MB`); a bare
+/// field, a plain number, or any other expression is a typed error.
+fn attribute_quantity(field: &ast::NamedValue) -> Result<(&str, Span), Diagnostics> {
+    match &field.value {
+        Some(ast::Expr::Quantity(quantity)) => Ok((quantity.value.as_str(), quantity.span)),
+        Some(other) => Err(type_mismatch(
+            expr_span(other),
+            "a unit-bearing literal",
+            "expression",
+        )),
+        None => Err(type_mismatch(
+            field.name.span,
+            "a unit-bearing literal",
+            "bare field",
+        )),
+    }
+}
+
+/// Split a unit-bearing literal into its decimal magnitude and unit suffix. The
+/// `quantity` token guarantees at least one digit followed by at least one
+/// letter, so both halves are non-empty.
+fn split_quantity(text: &str, span: Span) -> Result<(u64, &str), Diagnostics> {
+    let boundary = text
+        .find(|c: char| !c.is_ascii_digit())
+        .unwrap_or(text.len());
+    let (digits, unit) = text.split_at(boundary);
+    let magnitude = digits
+        .parse::<u64>()
+        .map_err(|_| type_mismatch(span, "a representable magnitude", format!("`{text}`")))?;
+    Ok((magnitude, unit))
+}
+
+/// Convert a duration literal to nanoseconds with checked arithmetic. A byte
+/// unit here is a typed unit mismatch, not a silent reinterpretation.
+fn duration_nanos(text: &str, span: Span) -> Result<u64, Diagnostics> {
+    let (magnitude, unit) = split_quantity(text, span)?;
+    let per_unit = match unit {
+        "ns" => 1_u64,
+        "us" => 1_000,
+        "ms" => 1_000_000,
+        "s" => 1_000_000_000,
+        "m" => 60_000_000_000,
+        "h" => 3_600_000_000_000,
+        _ => {
+            return Err(type_mismatch(
+                span,
+                "a duration unit (ns/us/ms/s/m/h)",
+                format!("`{unit}`"),
+            ));
+        }
+    };
+    magnitude
+        .checked_mul(per_unit)
+        .ok_or_else(|| type_mismatch(span, "a representable duration", format!("`{text}`")))
+}
+
+/// Convert a byte-size literal to a byte count with checked arithmetic. Binary
+/// units: `KB`/`MB`/`GB` are 1024-based, matching resident-set budgeting; the
+/// `KiB`/`MiB`/`GiB` spellings are accepted as explicit aliases. A duration
+/// unit here is a typed unit mismatch.
+fn byte_count(text: &str, span: Span) -> Result<u64, Diagnostics> {
+    let (magnitude, unit) = split_quantity(text, span)?;
+    let per_unit = match unit {
+        "B" => 1_u64,
+        "KB" | "KiB" => 1 << 10,
+        "MB" | "MiB" => 1 << 20,
+        "GB" | "GiB" => 1 << 30,
+        _ => {
+            return Err(type_mismatch(
+                span,
+                "a byte unit (B/KB/MB/GB)",
+                format!("`{unit}`"),
+            ));
+        }
+    };
+    magnitude
+        .checked_mul(per_unit)
+        .ok_or_else(|| type_mismatch(span, "a representable byte count", format!("`{text}`")))
 }
 
 fn is_stream_check_type(ty: &ast::Type) -> bool {
@@ -1350,13 +1484,17 @@ fn lower_generator_body(
                         value,
                         statement.span,
                     )?;
-                    if top_level {
+                    // An unconditional top-level value check retains the
+                    // historical `Op::Yield` codata marker so flat tests keep
+                    // their exact VIR shape. A trace site publishes no codata
+                    // island, so it emits no marker node.
+                    if top_level && let CheckRecipe::Value { check } = &site.recipe {
                         push_node(
                             nodes,
                             statement.span,
                             Type::StreamCheck,
                             EffectFacts::CODATA,
-                            vec![site.check],
+                            vec![*check],
                             Op::Yield,
                         );
                     }
@@ -1380,9 +1518,11 @@ fn lower_generator_body(
     Ok(GeneratorBody { steps })
 }
 
-/// Lower one leaf `yield <check>` into a static [`YieldSite`]. The check is a
-/// pure parameterized recipe (`Op::Expect` over captured values), never an
-/// evaluated boolean or a host call.
+/// Lower one leaf `yield <check>` into a static [`YieldSite`]. A value check is
+/// a pure parameterized recipe (`Op::Expect` over captured values), never an
+/// evaluated boolean or a host call. A trace check is a self-contained
+/// descriptor and contributes no demandable node, so it is not recorded in
+/// `yielded_checks` (there is nothing to demand or `must_use`-consume).
 fn lower_yield_check_site(
     nodes: &mut Vec<Node>,
     yielded_checks: &mut Vec<NodeId>,
@@ -1392,13 +1532,15 @@ fn lower_yield_check_site(
     value: &ast::Expr,
     span: Span,
 ) -> Result<YieldSite, Diagnostics> {
-    let check = lower_check(nodes, bindings, context, value)?;
-    yielded_checks.push(check);
+    let recipe = lower_check(nodes, bindings, context, value)?;
+    if let CheckRecipe::Value { check } = &recipe {
+        yielded_checks.push(*check);
+    }
     let id = YieldSiteId(*site_counter);
     *site_counter = site_counter
         .checked_add(1)
         .expect("yield site count fits u32");
-    Ok(YieldSite { id, check, span })
+    Ok(YieldSite { id, recipe, span })
 }
 
 /// Lower a yielded `match` into a generator [`GeneratorStep::Match`]: real
@@ -1738,7 +1880,7 @@ fn lower_check(
     bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     expression: &ast::Expr,
-) -> Result<NodeId, Diagnostics> {
+) -> Result<CheckRecipe, Diagnostics> {
     let ast::Expr::Call(call) = expression else {
         return Err(Diagnostics::one(Diagnostic {
             code: DiagnosticCode::TypeMismatch,
@@ -1755,6 +1897,29 @@ fn lower_check(
             call.span,
             "named arguments on a check constructor",
         )));
+    }
+    // Trace-check constructors are descriptors over the completed run. They
+    // build no node: their scalar bound is captured directly, so nothing is
+    // lowered to a Weavy island, no scheduler request is issued, and no operand
+    // is demanded. Value-check constructors fall through and root an
+    // `Op::Expect` recipe below.
+    match call.callee.value.as_str() {
+        "scheduler_requests_at_most" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::SchedulerRequestsAtMost {
+                bound: trace_bound(call)?,
+            }));
+        }
+        "memo_entries_at_most" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::MemoEntriesAtMost {
+                bound: trace_bound(call)?,
+            }));
+        }
+        "store_interns_at_most" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::StoreInternsAtMost {
+                bound: trace_bound(call)?,
+            }));
+        }
+        _ => {}
     }
     let condition = match call.callee.value.as_str() {
         "expect" => {
@@ -1813,14 +1978,38 @@ fn lower_check(
             }));
         }
     };
-    Ok(push_node(
-        nodes,
-        call.span,
-        Type::Check,
-        EffectFacts::PURE,
-        vec![condition],
-        Op::Expect,
-    ))
+    Ok(CheckRecipe::Value {
+        check: push_node(
+            nodes,
+            call.span,
+            Type::Check,
+            EffectFacts::PURE,
+            vec![condition],
+            Op::Expect,
+        ),
+    })
+}
+
+/// The single integer bound of a trace-check constructor. The argument is a
+/// non-negative integer literal read directly from the surface — never demanded
+/// or lowered — so a trace check pins a bound without any evaluation.
+fn trace_bound(call: &ast::Call) -> Result<i64, Diagnostics> {
+    check_arity(call, 1)?;
+    let argument = &call.args.args[0];
+    let ast::Expr::Number(number) = argument else {
+        return Err(type_mismatch(
+            expr_span(argument),
+            "an integer bound literal",
+            "expression",
+        ));
+    };
+    number.value.parse::<i64>().map_err(|_| {
+        type_mismatch(
+            number.span,
+            "Int",
+            format!("number literal `{}`", number.value),
+        )
+    })
 }
 
 #[derive(Clone)]
@@ -2148,6 +2337,13 @@ fn lower_value_expected(
         ast::Expr::If(expression) => lower_if(nodes, bindings, context, expression, expected),
         ast::Expr::Bool(value) => Ok(lower_bool_constant(nodes, value.span, value.value)),
         ast::Expr::Number(value) => lower_integer_literal(nodes, value.span, &value.value),
+        // A unit-bearing literal only has meaning inside an attribute argument
+        // value (e.g. a `#[test]` budget). In an ordinary value position it is a
+        // typed error, never a silently-parsed number.
+        ast::Expr::Quantity(value) => Err(Diagnostics::one(Diagnostic::unsupported(
+            value.span,
+            "unit-bearing literal outside an attribute",
+        ))),
         ast::Expr::Str(value) => Ok(LoweredValue {
             node: push_node(
                 nodes,
@@ -5996,6 +6192,7 @@ fn expr_span(expression: &ast::Expr) -> Span {
         ast::Expr::Path(value) => value.span,
         ast::Expr::Str(value) => value.span,
         ast::Expr::Number(value) => value.span,
+        ast::Expr::Quantity(value) => value.span,
         ast::Expr::Bool(value) => value.span,
     }
 }

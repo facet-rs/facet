@@ -1155,7 +1155,11 @@ fn rung_031_split_last_compiles_to_generator_codata() {
     // Each site is a parameterized pure check recipe (`Op::Expect` over captured
     // values), never an evaluated boolean or a host call.
     for owned in &owned {
-        let check = &function.nodes[owned.site.check.0 as usize];
+        let check_node = owned
+            .site
+            .value_check()
+            .expect("rung 031 sites are all value checks");
+        let check = &function.nodes[check_node.0 as usize];
         assert_eq!(check.op, VirOp::Expect);
         assert_eq!(check.ty, VirType::Check);
     }
@@ -1174,8 +1178,11 @@ fn rung_031_split_last_compiles_to_generator_codata() {
     assert_eq!(shifted_owned.len(), owned.len());
     for (base, shifted) in owned.iter().zip(&shifted_owned) {
         assert_eq!(
-            canonical_recipe(function, base.site.check),
-            canonical_recipe(shifted_function, shifted.site.check),
+            canonical_recipe(function, base.site.value_check().expect("value-check site")),
+            canonical_recipe(
+                shifted_function,
+                shifted.site.value_check().expect("value-check site")
+            ),
             "recipe identity is span-insensitive",
         );
     }
@@ -1193,7 +1200,12 @@ fn rung_031_split_last_compiles_to_generator_codata() {
                 }]
             )
         })
-        .map(|owned| canonical_recipe(function, owned.site.check))
+        .map(|owned| {
+            canonical_recipe(
+                function,
+                owned.site.value_check().expect("value-check site"),
+            )
+        })
         .collect::<Vec<_>>();
     assert_eq!(some_recipes.len(), 3);
     assert_ne!(some_recipes[0], some_recipes[1]);

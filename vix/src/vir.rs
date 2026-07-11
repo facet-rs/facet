@@ -183,20 +183,73 @@ pub struct OrderedMatchArm {
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct YieldSiteId(pub u32);
 
-/// One static yield site: a parameterized pure check recipe together with the
-/// typed values it captures. A site publishes a check descriptor only when its
-/// owning control arm is taken at runtime; untaken arms publish nothing, so no
-/// phantom passing checks exist.
+/// One static yield site: a check recipe together with the typed values it
+/// captures. A site publishes a check descriptor only when its owning control
+/// arm is taken at runtime; untaken arms publish nothing, so no phantom passing
+/// checks exist.
 ///
-/// `check` roots a pure `Op::Expect` recipe in the enclosing function's node
-/// list, and that recipe's transitive inputs are the captured values. Recipe
-/// identity is span-insensitive (see [`canonical_recipe`]); `span` is source
-/// provenance only and never enters identity.
+/// The recipe is structurally a [`CheckRecipe::Value`] or a
+/// [`CheckRecipe::Trace`]. A value recipe roots a pure `Op::Expect` recipe in
+/// the enclosing function's node list, and that recipe's transitive inputs are
+/// the captured values; recipe identity is span-insensitive (see
+/// [`canonical_recipe`]). A trace recipe is a descriptor over the completed run
+/// that lowers to no island and demands no value. `span` is source provenance
+/// only and never enters identity.
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct YieldSite {
     pub id: YieldSiteId,
-    pub check: NodeId,
+    pub recipe: CheckRecipe,
     pub span: Span,
+}
+
+impl YieldSite {
+    /// The value-check recipe root, present exactly when this site is a value
+    /// check. Trace sites carry no demandable node.
+    #[must_use]
+    pub fn value_check(&self) -> Option<NodeId> {
+        match &self.recipe {
+            CheckRecipe::Value { check } => Some(*check),
+            CheckRecipe::Trace(_) => None,
+        }
+    }
+}
+
+/// A yielded check is structurally one of two kinds. A **value check** is an
+/// ordinary demanded pure island (`expect_eq`, `expect_some`, …). A **trace
+/// check** is a descriptor evaluated only after every selected value check
+/// completes, against a frozen completed-run counter/event/memo snapshot. Trace
+/// checks never lower to Weavy boolean islands, never issue scheduler requests,
+/// and never count their own result materialization or reporting.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum CheckRecipe {
+    /// Roots a pure `Op::Expect` recipe in the enclosing function's node list.
+    Value { check: NodeId },
+    /// A post-run assertion over the frozen completed-run snapshot.
+    Trace(TraceCheck),
+}
+
+/// A first-class trace check: a claim about the finished run rather than a
+/// demanded value. The three initial constructors bound machinery contacts and
+/// carry only a scalar ceiling, so nothing about them is demanded.
+///
+/// The enum is deliberately open. A later `never_demanded(expr)` /
+/// `demanded_once(expr)` slots in as a further variant carrying a *described
+/// wire* — a recipe/location description of an operand the check pins WITHOUT
+/// demanding it. Because a [`CheckRecipe::Trace`] is never lowered to an island
+/// and the runner never evaluates a trace check's operands as demands, that
+/// wire is held, not consumed. No such variant is constructed yet (rung 050/051
+/// need only the counter checks), and the design does not eagerly evaluate
+/// operands or fabricate reflection.
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum TraceCheck {
+    /// Scheduler machinery contacts during the test are at most `bound`.
+    SchedulerRequestsAtMost { bound: i64 },
+    /// Distinct memo entries standing at the end of the run are at most `bound`.
+    MemoEntriesAtMost { bound: i64 },
+    /// Store interns during the test are at most `bound`.
+    StoreInternsAtMost { bound: i64 },
 }
 
 /// One arm of a generator [`GeneratorStep::Match`]. The arm body is itself a
@@ -814,6 +867,41 @@ pub struct Test {
     pub function: FunctionId,
     /// The lowered generator/codata body of this test.
     pub generator: GeneratorBody,
+    /// Typed metadata parsed from the `#[test { … }]` attribute arguments.
+    pub metadata: TestMetadata,
+}
+
+/// Typed, in-language `#[test]` metadata. Parsed once at compile time from the
+/// attribute arguments; the outer enforcing runner reads it before execution.
+#[derive(facet::Facet, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TestMetadata {
+    pub budget: Budget,
+}
+
+/// A test execution budget. Each dimension is independently optional; a ceiling
+/// present here is enforced by the outer runner, which terminates a run that
+/// exceeds it. Stored as scalar units (facet-friendly); [`Budget::wall`]
+/// reconstructs a [`std::time::Duration`].
+#[derive(facet::Facet, Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct Budget {
+    /// Wall-clock ceiling in nanoseconds, when a `budget_wall` was declared.
+    pub wall_ns: Option<u64>,
+    /// Resident-set ceiling in bytes, when a `budget_rss` was declared.
+    pub rss_bytes: Option<u64>,
+}
+
+impl Budget {
+    /// Whether any budget dimension is present.
+    #[must_use]
+    pub fn is_present(&self) -> bool {
+        self.wall_ns.is_some() || self.rss_bytes.is_some()
+    }
+
+    /// The wall-clock ceiling as a [`std::time::Duration`], when declared.
+    #[must_use]
+    pub fn wall(&self) -> Option<std::time::Duration> {
+        self.wall_ns.map(std::time::Duration::from_nanos)
+    }
 }
 
 #[derive(facet::Facet, Clone, Debug, Default, PartialEq, Eq)]
@@ -851,7 +939,31 @@ pub struct ArrayMapPartition {
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct PartitionedTest {
     pub name: String,
+    /// Value-check islands, in site order. A [`PartitionedRecipe::Value`]
+    /// indexes into this vector. Trace sites contribute no island.
     pub islands: Vec<Island>,
+    /// Every yield site, in [`YieldSiteId`] order, mapped to its recipe. This
+    /// is the provenance-keyed site → recipe map the runner drives. It never
+    /// relies on an island-vector ordinal, which shifts once trace sites are
+    /// filtered out of the island vector.
+    pub sites: Vec<PartitionedSite>,
+}
+
+/// One yield site paired with the partitioned recipe it resolves to. The site's
+/// stable [`YieldSiteId`] is its provenance selector.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct PartitionedSite {
+    pub id: YieldSiteId,
+    pub recipe: PartitionedRecipe,
+}
+
+/// A partitioned check recipe: an index into [`PartitionedTest::islands`] for a
+/// value check, or a self-contained trace descriptor evaluated post-run.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum PartitionedRecipe {
+    Value { island: usize },
+    Trace(TraceCheck),
 }
 
 impl Module {
@@ -938,24 +1050,50 @@ impl Module {
         out
     }
 
-    /// Cut each yielded check into its own eager pure island. `yield` remains
-    /// the codata edge and is intentionally outside the island interior.
+    /// Cut each yielded value check into its own eager pure island, and resolve
+    /// each yield site to a provenance-keyed recipe. `yield` remains the codata
+    /// edge and is intentionally outside the island interior. A trace site
+    /// resolves to a self-contained descriptor and contributes no island: it is
+    /// evaluated post-run against the frozen snapshot, never lowered or demanded.
     ///
     /// r[impl machine.island.partition]
     #[must_use]
     pub fn partition_test(&self, test: &Test) -> PartitionedTest {
         let function = &self.functions[test.function.0 as usize];
-        let islands = function
-            .yielded_checks
-            .iter()
-            .enumerate()
-            .map(|(index, &output)| {
-                self.partition_function_output(function, output, IslandId(index as u32))
-            })
+        // Every site, in stable YieldSiteId order (dense across value and trace
+        // sites). Island ordinals compact over value sites only, so a site is
+        // keyed by its YieldSiteId, never by its position after filtering.
+        let mut ordered: Vec<&YieldSite> = test
+            .generator
+            .owned_sites()
+            .into_iter()
+            .map(|owned| owned.site)
             .collect();
+        ordered.sort_by_key(|site| site.id.0);
+        let mut islands = Vec::new();
+        let mut sites = Vec::with_capacity(ordered.len());
+        for site in ordered {
+            let recipe = match &site.recipe {
+                CheckRecipe::Value { check } => {
+                    let island = islands.len();
+                    islands.push(self.partition_function_output(
+                        function,
+                        *check,
+                        IslandId(u32::try_from(island).expect("island index fits u32")),
+                    ));
+                    PartitionedRecipe::Value { island }
+                }
+                CheckRecipe::Trace(trace) => PartitionedRecipe::Trace(*trace),
+            };
+            sites.push(PartitionedSite {
+                id: site.id,
+                recipe,
+            });
+        }
         PartitionedTest {
             name: test.name.clone(),
             islands,
+            sites,
         }
     }
 
