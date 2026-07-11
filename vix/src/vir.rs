@@ -503,6 +503,12 @@ pub enum Op {
     ArrayFold,
     /// Partition the final authored position from the remaining prefix.
     ArraySplitLast,
+    /// Test whether every authored array position satisfies one typed predicate.
+    ArrayAll,
+    /// Test whether any authored array position satisfies one typed predicate.
+    ArrayAny,
+    /// Test whether an array holds an element structurally equal to a given value.
+    ArrayContains,
     /// Add one element to a dense array, producing a fresh value.
     ArrayAppend,
     /// Concatenate two dense arrays, producing a fresh value.
@@ -1143,6 +1149,9 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::StreamFilter => op.push(49),
         Op::MapValues => op.push(50),
         Op::ArraySplitLast => op.push(51),
+        Op::ArrayAll => op.push(52),
+        Op::ArrayAny => op.push(53),
+        Op::ArrayContains => op.push(54),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());

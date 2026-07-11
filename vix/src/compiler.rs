@@ -1494,6 +1494,7 @@ enum PreludeReceiverType {
     Map,
     Set,
     Stream,
+    Int,
 }
 
 impl PreludeReceiverType {
@@ -1503,6 +1504,7 @@ impl PreludeReceiverType {
             Type::Map { .. } => Some(Self::Map),
             Type::Set(_) => Some(Self::Set),
             Type::Stream { .. } => Some(Self::Stream),
+            Type::Int => Some(Self::Int),
             _ => None,
         }
     }
@@ -1514,7 +1516,11 @@ enum PreludeMethod {
     ArrayMap,
     ArrayFold,
     ArraySplitLast,
+    ArrayAll,
+    ArrayAny,
+    ArrayContains,
     ArrayStream,
+    IntRem,
     MapGet,
     MapHas,
     MapLen,
@@ -1569,9 +1575,33 @@ impl PreludeMethodRegistry {
             },
             PreludeMethodEntry {
                 receiver: PreludeReceiverType::Array,
+                name: "all",
+                arity: 1,
+                method: PreludeMethod::ArrayAll,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Array,
+                name: "any",
+                arity: 1,
+                method: PreludeMethod::ArrayAny,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Array,
+                name: "contains",
+                arity: 1,
+                method: PreludeMethod::ArrayContains,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Array,
                 name: "stream",
                 arity: 0,
                 method: PreludeMethod::ArrayStream,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Int,
+                name: "rem",
+                arity: 1,
+                method: PreludeMethod::IntRem,
             },
             PreludeMethodEntry {
                 receiver: PreludeReceiverType::Map,
@@ -2165,6 +2195,66 @@ fn lower_method_call(
                 ty,
             })
         }
+        PreludeMethod::ArrayAll | PreludeMethod::ArrayAny => {
+            let Type::Array(element) = &receiver.ty else {
+                unreachable!("array predicate registry entry has an array receiver")
+            };
+            let predicate = match &call.args.args[0] {
+                ast::Expr::Closure(closure) => {
+                    lower_closure_with_parameter(nodes, bindings, context, closure, element)?
+                }
+                expression => lower_value_expected(nodes, bindings, context, expression, None)?,
+            };
+            let Type::Function { parameter, result } = &predicate.ty else {
+                return Err(type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    format!("fn({}) -> Bool", element.name()),
+                    predicate.ty.name(),
+                ));
+            };
+            if parameter.as_ref() != element.as_ref() || result.as_ref() != &Type::Bool {
+                return Err(type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    format!("fn({}) -> Bool", element.name()),
+                    predicate.ty.name(),
+                ));
+            }
+            let op = match entry.method {
+                PreludeMethod::ArrayAll => Op::ArrayAll,
+                PreludeMethod::ArrayAny => Op::ArrayAny,
+                _ => unreachable!("array predicate dispatch is closed"),
+            };
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    Type::Bool,
+                    EffectFacts::PURE,
+                    vec![receiver.node, predicate.node],
+                    op,
+                ),
+                ty: Type::Bool,
+            })
+        }
+        PreludeMethod::ArrayContains => {
+            let Type::Array(element) = &receiver.ty else {
+                unreachable!("array contains registry entry has an array receiver")
+            };
+            let element = element.as_ref().clone();
+            let value = lower_value(nodes, bindings, context, &call.args.args[0])?;
+            require_type(&value, &element, expr_span(&call.args.args[0]))?;
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    Type::Bool,
+                    EffectFacts::PURE,
+                    vec![receiver.node, value.node],
+                    Op::ArrayContains,
+                ),
+                ty: Type::Bool,
+            })
+        }
         PreludeMethod::ArrayStream => {
             let Type::Array(element) = &receiver.ty else {
                 unreachable!("array stream registry entry has an array receiver")
@@ -2180,6 +2270,38 @@ fn lower_method_call(
                     Op::ArrayStream,
                 ),
                 ty,
+            })
+        }
+        PreludeMethod::IntRem => {
+            let divisor = lower_value(nodes, bindings, context, &call.args.args[0])?;
+            require_type(&divisor, &Type::Int, expr_span(&call.args.args[0]))?;
+            let quotient = push_node(
+                nodes,
+                call.span,
+                Type::Int,
+                EffectFacts::PURE,
+                vec![receiver.node, divisor.node],
+                Op::Div,
+            );
+            let product = push_node(
+                nodes,
+                call.span,
+                Type::Int,
+                EffectFacts::PURE,
+                vec![quotient, divisor.node],
+                Op::Mul,
+            );
+            let remainder = push_node(
+                nodes,
+                call.span,
+                Type::Int,
+                EffectFacts::PURE,
+                vec![receiver.node, product],
+                Op::Sub,
+            );
+            Ok(LoweredValue {
+                node: remainder,
+                ty: Type::Int,
             })
         }
         PreludeMethod::MapGet | PreludeMethod::MapHas | PreludeMethod::MapWith => {
