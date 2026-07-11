@@ -4323,6 +4323,91 @@ fn attribution() -> Stream<Check> {
 }
 "#;
 
+    const ARRAY_SOURCE: &str = r#"
+#[test]
+fn schema_order() -> Stream<Check> {
+    let xs = [1, 2];
+    yield expect_eq(xs.len(), 2);
+}
+"#;
+
+    fn array_schema_contracts(source: &str) -> (SchemaAssignments, Vec<WeavySchemaContract>) {
+        let module = Compiler::new()
+            .compile(source)
+            .expect("array source compiles");
+        let partitioned = module.partition_test(&module.tests[0]);
+        let island = &partitioned.islands[0];
+        let assignments = SchemaAssignments::build(island, true).expect("closed schema assignment");
+        let layouts = BTreeMap::new();
+        let constants = BTreeMap::new();
+        let regions = RegionAssignments {
+            nodes: BTreeMap::new(),
+            control: BTreeMap::new(),
+            temps: BTreeMap::new(),
+            closures: BTreeMap::new(),
+            outcomes: BTreeMap::new(),
+            outcome_scratch: BTreeMap::new(),
+            call_outcomes: BTreeMap::new(),
+        };
+        let mut builder = ProgramContractBuilder {
+            layouts: &layouts,
+            constant_closures: &constants,
+            regions: &regions,
+            schemas_preassigned: &assignments,
+            function_order: Vec::new(),
+            closure_targets: BTreeSet::new(),
+            calls: Vec::new(),
+            schemas: vec![empty_schema(); assignments.types.len()],
+            schema_ready: vec![false; assignments.types.len()],
+            value_shapes: Vec::new(),
+            value_shape_keys: Vec::new(),
+        };
+        for ty in assignments.types.clone() {
+            builder
+                .schema_for_type(&ty, Span { start: 0, end: 0 })
+                .expect("predeclared schema materializes");
+        }
+        let schemas = std::mem::take(&mut builder.schemas);
+        drop(builder);
+        (assignments, schemas)
+    }
+
+    #[test]
+    fn closed_schema_assignment_is_span_independent_and_dense_arrays_are_exact() {
+        let (cold, cold_contracts) = array_schema_contracts(ARRAY_SOURCE);
+        let (shifted, shifted_contracts) = array_schema_contracts(&format!("\n\n{ARRAY_SOURCE}"));
+        assert_eq!(
+            cold.types
+                .iter()
+                .map(crate::vir::canonical_type)
+                .collect::<Vec<_>>(),
+            shifted
+                .types
+                .iter()
+                .map(crate::vir::canonical_type)
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(cold_contracts, shifted_contracts);
+
+        let array = Type::array(Type::Int);
+        let array_ref = cold
+            .schema_for(&array, Span { start: 0, end: 0 })
+            .expect("array has preassigned witness");
+        let element = cold
+            .schema_for(&Type::Int, Span { start: 0, end: 0 })
+            .expect("element has preassigned witness");
+        let array_contract = &cold_contracts[array_ref.0 as usize];
+        assert_eq!(
+            array_contract.payload,
+            WeavyPayloadKind::DenseArray { element }
+        );
+        assert_eq!(
+            cold_contracts[element.0 as usize].inline,
+            WeavyRegionShape::word(WeavyWordKind::Scalar)
+        );
+        assert_eq!(cold_contracts[element.0 as usize].value_shape, None);
+    }
+
     #[test]
     fn program_error_keeps_its_typed_cause_and_current_pc_span() {
         let module = Compiler::new().compile(SOURCE).expect("source compiles");
