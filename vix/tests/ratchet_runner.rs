@@ -1,10 +1,14 @@
 use vix::compiler::Compiler;
 use vix::diagnostic::{DiagnosticCode, DiagnosticSeverity};
 use vix::lowering::{LoweringCache, attribution_for, source_map_for};
-use vix::ratchet::run_source;
-use vix::runtime::{DemandState, EventKind, MemoVerdict, SchemaId, TaskState};
+use vix::ratchet::{RunError, run_source};
+use vix::runtime::{DemandState, EventKind, FailureValue, MemoVerdict, SchemaId, TaskState};
 use vix::surface::{SurfaceParser, ast};
-use vix::vir::{EffectKind, FunctionId, NodeRef, Op as VirOp, Type as VirType, VariantPayload};
+use vix::vir::{
+    ArrayMapExecutionShape, ArrayMapGrainKey, EffectKind, FunctionId, GeneratorControl,
+    GeneratorStep, NodeRef, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, Op as VirOp, Type as VirType,
+    VariantPayload, canonical_recipe,
+};
 use weavy::task::Op as WeavyOp;
 use weavy::{PayloadKind, RegionShape, ValueShapeKind, WordKind};
 
@@ -34,11 +38,30 @@ const RUNG_023: &str = include_str!("ratchet/023-option.vix");
 const RUNG_024: &str = include_str!("ratchet/024-user-result.vix");
 const RUNG_025: &str = include_str!("ratchet/025-ordering-enum.vix");
 const RUNG_026: &str = include_str!("ratchet/026-arrays.vix");
+const RUNG_027: &str = include_str!("ratchet/027-array-map.vix");
+const RUNG_028: &str = include_str!("ratchet/028-array-enumerate.vix");
+const RUNG_029: &str = include_str!("ratchet/029-array-fold.vix");
+const RUNG_030: &str = include_str!("ratchet/030-array-predicates.vix");
+const RUNG_031: &str = include_str!("ratchet/031-split-last.vix");
 const RUNG_032: &str = include_str!("ratchet/032-pop.reject.vix");
+const RUNG_033: &str = include_str!("ratchet/033-multiset-conversion.vix");
+const RUNG_034: &str = include_str!("ratchet/034-multiset-filter.vix");
+const RUNG_035: &str = include_str!("ratchet/035-canonical-order.vix");
+const RUNG_036: &str = include_str!("ratchet/036-multiset-fold.vix");
+const RUNG_037: &str = include_str!("ratchet/037-filter-map-flat-map.vix");
+const RUNG_038: &str = include_str!("ratchet/038-find-split-min-max.vix");
+const RUNG_039: &str = include_str!("ratchet/039-indexed-roundtrip.vix");
+const RUNG_040: &str = include_str!("ratchet/040-sorted-by.vix");
 const RUNG_041: &str = include_str!("ratchet/041-maps.vix");
 const RUNG_042: &str = include_str!("ratchet/042-map-overwrite.vix");
 const RUNG_043: &str = include_str!("ratchet/043-map-keys-canonical.vix");
 const RUNG_044: &str = include_str!("ratchet/044-sets.vix");
+const RUNG_045: &str = include_str!("ratchet/045-strings.vix");
+const RUNG_046: &str = include_str!("ratchet/046-paths.vix");
+const RUNG_047: &str = include_str!("ratchet/047-string-to-path.reject.vix");
+const RUNG_048: &str = include_str!("ratchet/048-closures-capture.vix");
+const RUNG_049: &str = include_str!("ratchet/049-recursion.vix");
+const RUNG_050: &str = include_str!("ratchet/050-deep-tail-recursion.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
 const RUNG_145: &str = include_str!("ratchet/145-push.reject.vix");
 const RUNG_146: &str = include_str!("ratchet/146-insert.reject.vix");
@@ -585,7 +608,7 @@ fn accepted_rungs_verify_and_execute_through_one_executable() {
     const ACCEPTED: &[&str] = &[
         RUNG_001, RUNG_002, RUNG_003, RUNG_004, RUNG_005, RUNG_006, RUNG_007, RUNG_008, RUNG_009,
         RUNG_010, RUNG_011, RUNG_012, RUNG_014, RUNG_015, RUNG_016, RUNG_017, RUNG_019, RUNG_020,
-        RUNG_021, RUNG_022, RUNG_023, RUNG_024, RUNG_025,
+        RUNG_021, RUNG_022, RUNG_023, RUNG_024, RUNG_025, RUNG_026, RUNG_027,
     ];
 
     for source in ACCEPTED {
@@ -613,6 +636,1269 @@ fn accepted_rungs_verify_and_execute_through_one_executable() {
         assert!(report.passed());
         assert!(report.agrees());
         assert_eq!(report.plain.checks, report.chaos.checks);
+    }
+}
+
+#[test]
+fn rung_028_array_stream_collects_position_keyed_rows() {
+    let compilation = Compiler::new()
+        .compile(RUNG_028)
+        .expect("rung 028 compiles to typed stream VIR");
+    let function = compilation
+        .functions
+        .iter()
+        .find(|function| function.name == "array_enumerate")
+        .expect("rung 028 test function exists");
+    let stream = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::ArrayStream))
+        .expect("array stream is a distinct VIR recipe");
+    assert_eq!(stream.ty, VirType::stream(VirType::Int, VirType::String));
+    assert_eq!(stream.effect.kind, EffectKind::Codata);
+    let collect = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamCollect))
+        .expect("collect is the explicit stream materialization boundary");
+    assert_eq!(collect.ty, VirType::map(VirType::Int, VirType::String));
+    assert!(collect.effect.fallible);
+
+    let partitioned = compilation.partition_test(&compilation.tests[0]);
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(&partitioned.islands[0])
+        .expect("rung 028 verifies before production execution");
+    assert!(
+        lowered
+            .program()
+            .fns
+            .iter()
+            .flat_map(|function| &function.code)
+            .any(|op| matches!(op, WeavyOp::OrderedInsertCommit { .. }))
+    );
+    assert!(
+        lowered
+            .program()
+            .fns
+            .iter()
+            .flat_map(|function| &function.code)
+            .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+    );
+
+    let report = run_source(RUNG_028).expect("rung 028 executes through verified production path");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+#[test]
+fn rung_029_array_fold_runs_in_authored_position_order() {
+    let compilation = Compiler::new()
+        .compile(RUNG_029)
+        .expect("rung 029 compiles to VIR");
+    let partitioned = compilation.partition_test(&compilation.tests[0]);
+    let mut cache = LoweringCache::default();
+    let mut string_concats = 0usize;
+    for island in &partitioned.islands {
+        let lowered = cache
+            .get_or_lower(island)
+            .expect("rung 029 verifies before production execution");
+        for op in lowered
+            .program()
+            .fns
+            .iter()
+            .flat_map(|function| &function.code)
+        {
+            match op {
+                WeavyOp::StringConcat { .. } => string_concats += 1,
+                WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. } => {
+                    panic!("rung 029 must not lower through a host call: {op:?}")
+                }
+                _ => {}
+            }
+        }
+    }
+    assert!(
+        string_concats >= 2,
+        "the two string folds must each lower a verifier-admitted StringConcat op, saw {string_concats}"
+    );
+
+    let report = run_source(RUNG_029).expect("rung 029 executes through verified production path");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+const PURE_STRING_CONCAT: &str = r#"
+#[test]
+fn concat() -> Stream<Check> {
+    let hello = "hel" + "lo";
+    yield expect_eq(hello, "hello");
+    yield expect_eq(hello + " world", "hello world");
+    yield expect_eq(("a" + "b") + ("c" + "d"), "abcd");
+}
+"#;
+
+#[test]
+fn pure_string_concatenation_runs_through_verified_path() {
+    let compilation = Compiler::new()
+        .compile(PURE_STRING_CONCAT)
+        .expect("string concatenation compiles to VIR");
+    let partitioned = compilation.partition_test(&compilation.tests[0]);
+    let mut cache = LoweringCache::default();
+    // Nested, result-feeding, and equality-fed concatenations lower to
+    // verifier-admitted StringConcat ops, and none of them escapes to a host
+    // call.
+    let mut string_concats = 0usize;
+    for island in &partitioned.islands {
+        let lowered = cache
+            .get_or_lower(island)
+            .expect("string concatenation verifies before production execution");
+        for op in lowered
+            .program()
+            .fns
+            .iter()
+            .flat_map(|function| &function.code)
+        {
+            match op {
+                WeavyOp::StringConcat { .. } => string_concats += 1,
+                WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. } => {
+                    panic!("string concatenation must not lower through a host call: {op:?}")
+                }
+                _ => {}
+            }
+        }
+    }
+    assert!(
+        string_concats >= 3,
+        "each concatenating `+` lowers to a StringConcat op, saw {string_concats}"
+    );
+
+    let report =
+        run_source(PURE_STRING_CONCAT).expect("string concatenation executes through Weavy");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+#[test]
+fn rung_030_array_predicates_run_through_verified_production_path() {
+    let report = run_source(RUNG_030).expect("rung 030 executes through verified production path");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 4);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+#[test]
+fn rung_033_array_stream_preserves_position_keys() {
+    let compilation = Compiler::new()
+        .compile(RUNG_033)
+        .expect("rung 033 compiles to typed stream VIR");
+    let function = compilation
+        .functions
+        .iter()
+        .find(|function| function.name == "multiset_conversion")
+        .expect("rung 033 test function exists");
+    let stream = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::ArrayStream))
+        .expect("array stream is a distinct codata recipe");
+    assert_eq!(stream.ty, VirType::stream(VirType::Int, VirType::Int));
+    assert_eq!(stream.effect.kind, EffectKind::Codata);
+    let collect = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamCollect))
+        .expect("collect materializes the position-keyed map");
+    assert_eq!(collect.ty, VirType::map(VirType::Int, VirType::Int));
+
+    let report = run_source(RUNG_033).expect("rung 033 executes through verified production path");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+#[test]
+fn rung_034_stream_filter_preserves_survivor_keys() {
+    let compilation = Compiler::new()
+        .compile(RUNG_034)
+        .expect("rung 034 compiles to a typed filter recipe");
+    let function = compilation
+        .functions
+        .iter()
+        .find(|function| function.name == "multiset_filter")
+        .expect("rung 034 test function exists");
+    let filter = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamFilter))
+        .expect("filter remains a distinct codata recipe until collection");
+    assert_eq!(filter.ty, VirType::stream(VirType::Int, VirType::Int));
+    assert_eq!(filter.effect.kind, EffectKind::Codata);
+
+    let report = run_source(RUNG_034).expect("rung 034 executes through verified production path");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 4);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+// Rung 038 — deterministic selection (`find_min`/`find_max`) and decomposition
+// (`split_min`). `find_min`/`find_max` retain the stream and return `Option<V>`,
+// invoking the predicate through the verified callable ABI; `split_min` removes
+// exactly one selected element and returns `Option<(V, [V])>`. Values
+// are compared in structural-semantic order with the stable stream key as the
+// tie-breaker, so a duplicate equal value remains in the rest.
+#[test]
+fn rung_038_selection_and_decomposition_compiles() {
+    let module = Compiler::new()
+        .compile(RUNG_038)
+        .expect("rung 038 compiles selection and decomposition into typed stream VIR");
+    assert_eq!(module.tests.len(), 1);
+    let test = &module.tests[0];
+    assert_eq!(test.name, "find_split_min_max");
+    let function = &module.functions[test.function.0 as usize];
+
+    // `find_min`/`find_max` are structural-order selections over the retained
+    // stream: each is a distinct op returning `Option<Int>` while the stream is
+    // not consumed.
+    let find_min = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamFindMin))
+        .expect("find_min is a distinct selection op");
+    let find_max = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamFindMax))
+        .expect("find_max is a distinct selection op");
+    assert_eq!(find_min.ty, VirType::option(VirType::Int));
+    assert_eq!(find_max.ty, VirType::option(VirType::Int));
+
+    // `split_min` decomposes the stream into the selected value and the ordered
+    // dense remainder, keeping duplicate equal values: `Option<(Int, [Int])>`.
+    let split_min = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamSplitMin))
+        .expect("split_min is a distinct decomposition op");
+    assert_eq!(
+        split_min.ty,
+        VirType::option(VirType::Tuple(vec![
+            VirType::Int,
+            VirType::array(VirType::Int),
+        ])),
+        "split_min returns the selected value paired with the ordered dense remainder"
+    );
+
+    // The `match` over `split_min` makes the generator branch-dependent: the
+    // taken Some arm publishes three checks, the untaken None arm one.
+    assert!(test.generator.has_conditional_sites());
+}
+
+// The whole rung 038 fixture is a branch-dependent generator (its `match` over
+// `split_min` owns the Some/None yield sites). The checked lowering executes the
+// taken Some arm and does not publish the untaken None-arm check.
+#[test]
+fn rung_038_executes_on_verified_path() {
+    let report = run_source(RUNG_038).expect("rung 038 executes through verified production path");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 5);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+// `find_min`/`find_max` execute through the verified callable ABI without
+// consuming their keyed-codata source. Stream completion is explicit through
+// `split_min`'s `[V]` result, whose Array methods own cardinality and membership.
+#[test]
+fn rung_038_selection_executes_on_verified_path() {
+    const SOURCE: &str = r#"
+#[test]
+fn selection() -> Stream<Check> {
+    let ms = [5, 3, 9, 3].stream();
+    yield expect_eq(ms.find_min(|n| n > 3), Some(5));
+    yield expect_eq(ms.find_min(|_| true), Some(3));
+    yield expect_eq(ms.find_max(|_| true), Some(9));
+    yield expect_none(ms.find_min(|n| n > 100));
+}
+"#;
+    let report =
+        run_source(SOURCE).expect("stream selection executes through verified production path");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 4);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+// `split_min` realizes a dense remainder at completion, so the selected key is
+// omitted once while an equal duplicate at another key remains. This is driven
+// through the production path independently of the canonical fixture.
+#[test]
+fn rung_038_split_min_executes_on_verified_path() {
+    const SOURCE: &str = r#"
+#[test]
+fn decompose() -> Stream<Check> {
+    let ms = [5, 3, 9, 3].stream();
+    yield match ms.split_min() {
+        Some((least, rest)) => {
+            yield expect_eq(least, 3);
+            yield expect_eq(rest, [5, 9, 3]);
+        },
+        None => expect(false),
+    };
+    let empty: [Int] = [];
+    yield expect_none(empty.stream().split_min());
+}
+"#;
+    let compilation = Compiler::new()
+        .compile(SOURCE)
+        .expect("split_min compiles to typed decomposition VIR");
+    let split_min = compilation.functions[0]
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamSplitMin))
+        .expect("split_min lowers to a distinct decomposition op");
+    assert_eq!(
+        split_min.ty,
+        VirType::option(VirType::Tuple(vec![
+            VirType::Int,
+            VirType::array(VirType::Int),
+        ]))
+    );
+
+    let report = run_source(SOURCE).expect("split_min executes through verified production path");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+#[test]
+fn array_split_last_is_a_pure_optional_partition() {
+    const SOURCE: &str = r#"
+#[test]
+fn split_last_values() -> Stream<Check> {
+    yield expect_eq([1, 2, 3].split_last(), Some((3, [1, 2])));
+    let empty: [Int] = [];
+    yield expect_eq(empty.split_last(), None);
+}
+"#;
+    let compilation = Compiler::new()
+        .compile(SOURCE)
+        .expect("split_last compiles to typed VIR independently of generator codata");
+    let split_nodes = compilation.functions[0]
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.op, VirOp::ArraySplitLast))
+        .collect::<Vec<_>>();
+    assert_eq!(split_nodes.len(), 2);
+    assert!(split_nodes.iter().all(|node| {
+        node.ty
+            == VirType::option(VirType::Tuple(vec![
+                VirType::Int,
+                VirType::array(VirType::Int),
+            ]))
+    }));
+
+    let report = run_source(SOURCE).expect("split_last executes through verified production path");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+}
+
+// Rung 031 is the first faithful dynamic `#[test] -> Stream<Check>` generator:
+// its outer `yield match xs.split_last()` decides at runtime whether the taken
+// arm publishes three checks (Some) or one (None), followed by one later
+// unconditional empty-array check. This certifies the compile/VIR boundary: the
+// generator/codata VIR is built with real Match control and static yield sites.
+// The runtime fold is a later checkpoint.
+#[test]
+fn rung_031_split_last_compiles_to_generator_codata() {
+    let module = Compiler::new()
+        .compile(RUNG_031)
+        .expect("rung 031 compiles into generator/codata VIR");
+    assert_eq!(module.tests.len(), 1);
+    let test = &module.tests[0];
+    assert_eq!(test.name, "split_last");
+    let function = &module.functions[test.function.0 as usize];
+    let generator = &test.generator;
+
+    // The generator lowers to two ordered steps: a real Match dispatch on
+    // `xs.split_last()`, then one later unconditional empty-array check.
+    assert_eq!(generator.steps.len(), 2);
+    let GeneratorStep::Match { scrutinee, arms } = &generator.steps[0] else {
+        panic!("first generator step is the split_last match")
+    };
+    // The scrutinee is the real optional-partition dispatch value, not a folded
+    // constant.
+    assert_eq!(
+        function.nodes[scrutinee.0 as usize].op,
+        VirOp::ArraySplitLast
+    );
+    assert_eq!(arms.len(), 2);
+
+    // Taken arms own their sites: three in Some, one in None. Untaken arms
+    // publish nothing, so no phantom passing checks exist.
+    let some_arm = arms
+        .iter()
+        .find(|arm| arm.variant == OPTION_SOME_VARIANT)
+        .expect("Some arm exists");
+    let none_arm = arms
+        .iter()
+        .find(|arm| arm.variant == OPTION_NONE_VARIANT)
+        .expect("None arm exists");
+    assert_eq!(some_arm.body.steps.len(), 3, "three Some-arm yield sites");
+    assert_eq!(none_arm.body.steps.len(), 1, "one None-arm yield site");
+    assert!(
+        !some_arm.bindings.is_empty(),
+        "the Some arm owns its (last, rest) payload projections",
+    );
+    assert!(
+        none_arm.bindings.is_empty(),
+        "the None arm binds no payload",
+    );
+
+    // The second step is the later unconditional empty-array check.
+    assert!(matches!(&generator.steps[1], GeneratorStep::Yield(_)));
+
+    // Control ownership over every published site.
+    let owned = generator.owned_sites();
+    assert_eq!(owned.len(), 5, "five static yield sites total");
+    let unconditional = owned.iter().filter(|owned| owned.owner.is_empty()).count();
+    assert_eq!(
+        unconditional, 1,
+        "exactly one later unconditional empty-array check",
+    );
+    let some_sites = owned
+        .iter()
+        .filter(|owned| {
+            matches!(
+                owned.owner.as_slice(),
+                [GeneratorControl::MatchArm {
+                    variant: OPTION_SOME_VARIANT,
+                    ..
+                }]
+            )
+        })
+        .count();
+    let none_sites = owned
+        .iter()
+        .filter(|owned| {
+            matches!(
+                owned.owner.as_slice(),
+                [GeneratorControl::MatchArm {
+                    variant: OPTION_NONE_VARIANT,
+                    ..
+                }]
+            )
+        })
+        .count();
+    assert_eq!(some_sites, 3);
+    assert_eq!(none_sites, 1);
+    // Every conditional site is owned by the same real split_last dispatch.
+    for owned in &owned {
+        if let [
+            GeneratorControl::MatchArm {
+                scrutinee: owner_scrutinee,
+                ..
+            },
+        ] = owned.owner.as_slice()
+        {
+            assert_eq!(*owner_scrutinee, *scrutinee);
+        }
+    }
+
+    // Each site is a parameterized pure check recipe (`Op::Expect` over captured
+    // values), never an evaluated boolean or a host call.
+    for owned in &owned {
+        let check_node = owned
+            .site
+            .value_check()
+            .expect("rung 031 sites are all value checks");
+        let check = &function.nodes[check_node.0 as usize];
+        assert_eq!(check.op, VirOp::Expect);
+        assert_eq!(check.ty, VirType::Check);
+    }
+
+    // The generator's sites are branch-dependent: the runtime seam.
+    assert!(generator.has_conditional_sites());
+
+    // Stable, span-insensitive recipe identity. A span-shifted copy of the same
+    // source produces byte-identical per-site recipe identities.
+    let shifted_source = format!("// generator-codata span shift\n\n{RUNG_031}");
+    let shifted = Compiler::new()
+        .compile(&shifted_source)
+        .expect("span-shifted rung 031 compiles");
+    let shifted_function = &shifted.functions[shifted.tests[0].function.0 as usize];
+    let shifted_owned = shifted.tests[0].generator.owned_sites();
+    assert_eq!(shifted_owned.len(), owned.len());
+    for (base, shifted) in owned.iter().zip(&shifted_owned) {
+        assert_eq!(
+            canonical_recipe(function, base.site.value_check().expect("value-check site")),
+            canonical_recipe(
+                shifted_function,
+                shifted.site.value_check().expect("value-check site")
+            ),
+            "recipe identity is span-insensitive",
+        );
+    }
+
+    // The three Some-arm recipes are distinct parameterized checks (different
+    // captured values), proving the recipe is not a collapsed boolean.
+    let some_recipes = owned
+        .iter()
+        .filter(|owned| {
+            matches!(
+                owned.owner.as_slice(),
+                [GeneratorControl::MatchArm {
+                    variant: OPTION_SOME_VARIANT,
+                    ..
+                }]
+            )
+        })
+        .map(|owned| {
+            canonical_recipe(
+                function,
+                owned.site.value_check().expect("value-check site"),
+            )
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(some_recipes.len(), 3);
+    assert_ne!(some_recipes[0], some_recipes[1]);
+    assert_ne!(some_recipes[1], some_recipes[2]);
+    assert_ne!(some_recipes[0], some_recipes[2]);
+}
+
+// A branch-dependent generator now executes through the provenance-keyed runtime:
+// one verified Weavy generator task follows the real `split_last` match and
+// publishes only the taken sites, then those descriptors become ordinary pure
+// check demands. The taken `Some` arm publishes sites 0,1,2; the later
+// unconditional site 4 always publishes; the untaken `None` arm (site 3,
+// `expect(false)`) publishes nothing, so there is no phantom failing check.
+// The generator task is one verified Weavy program that runs only the real
+// `split_last` match control and publishes the taken sites. It never lowers a
+// site's `Op::Expect` check operands, and it uses no host/legacy path.
+#[test]
+fn rung_031_generator_task_is_verified_control_and_publish_only() {
+    let module = Compiler::new()
+        .compile(RUNG_031)
+        .expect("rung 031 compiles into generator/codata VIR");
+    let island = module
+        .generator_task_island(&module.tests[0])
+        .expect("rung 031 generator task builds without a control-flow scrutinee boundary");
+
+    // VIR certificate: the generator island carries real control (Match) over the
+    // real scrutinee (ArraySplitLast) and publishes sites, but lowers no check
+    // operand (no Expect/Eq/Ne/IsVariant).
+    assert!(
+        island
+            .nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::Match { .. })),
+        "generator runs real match control",
+    );
+    assert!(
+        island
+            .nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::ArraySplitLast)),
+        "generator computes the real split_last scrutinee",
+    );
+    assert_eq!(
+        island
+            .nodes
+            .iter()
+            .filter(|node| matches!(node.op, VirOp::PublishSite(_)))
+            .count(),
+        5,
+        "one PublishSite per static yield site (0,1,2 Some; 3 None; 4 unconditional)",
+    );
+    assert!(
+        island.nodes.iter().all(|node| !matches!(
+            node.op,
+            VirOp::Expect | VirOp::Eq | VirOp::Ne | VirOp::IsVariant { .. }
+        )),
+        "generator lowers no check operand",
+    );
+
+    // The island lowers to a verified Executable whose program publishes and runs
+    // real variant control, with no host call.
+    let mut cache = LoweringCache::default();
+    let artifact = cache
+        .get_or_lower(&island)
+        .expect("generator task lowers to a verified executable");
+    let ops = artifact
+        .program()
+        .fns
+        .iter()
+        .flat_map(|function| function.code.iter())
+        .collect::<Vec<_>>();
+    assert!(
+        ops.iter().any(|op| matches!(op, WeavyOp::Publish { .. })),
+        "generator program publishes taken sites",
+    );
+    assert!(
+        ops.iter()
+            .any(|op| matches!(op, WeavyOp::EnumIsVariant { .. })),
+        "generator program runs real variant control",
+    );
+    assert!(
+        !ops.iter()
+            .any(|op| matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. })),
+        "generator program uses no host/legacy path",
+    );
+}
+
+#[test]
+fn rung_031_conditional_generator_executes_taken_sites() {
+    let report = run_source(RUNG_031)
+        .expect("rung 031 conditional generator executes through the provenance-keyed runtime");
+    assert!(
+        report.agrees(),
+        "plain and chaos agree on the check family: {report:?}"
+    );
+    assert!(report.passed(), "every taken check passes: {report:?}");
+    assert_eq!(
+        report.plain.checks.len(),
+        4,
+        "taken Some sites 0,1,2 plus unconditional site 4, no None-arm phantom",
+    );
+    assert!(report.plain.checks.iter().all(|check| check.passed));
+    assert_eq!(report.plain.checks, report.chaos.checks);
+}
+
+// Supplemental production-path certificate for the other taken arm: an empty
+// scrutinee takes the None arm, so only the None-arm site and the later
+// unconditional site publish. The Some arm publishes nothing, so its
+// payload-projecting checks are never demanded — no phantom, no invalid
+// projection of an absent Some payload.
+#[test]
+fn rung_031_taken_none_generator_publishes_only_the_none_arm() {
+    const SOURCE: &str = r#"
+#[test]
+fn taken_none() -> Stream<Check> {
+    let xs: [Int] = [];
+    yield match xs.split_last() {
+        Some((last, rest)) => {
+            yield expect_eq(last, 0);
+            yield expect_eq(rest, xs);
+        },
+        None => expect(true),
+    };
+    yield expect_eq(xs.len(), 0);
+}
+"#;
+    let report = run_source(SOURCE).expect("taken-None generator executes through the runtime");
+    assert!(report.agrees(), "plain and chaos agree: {report:?}");
+    assert!(
+        report.passed(),
+        "the None arm and the unconditional site pass: {report:?}"
+    );
+    assert_eq!(
+        report.plain.checks.len(),
+        2,
+        "None-arm site plus the later unconditional site; the Some arm publishes nothing",
+    );
+    assert_eq!(report.plain.checks, report.chaos.checks);
+}
+
+// A scrutinee that itself embeds control flow is beyond the zero-dynamic-key
+// checkpoint. Valid source must never panic the builder: it yields a typed
+// diagnostic boundary and the runner surfaces a typed RunError.
+#[test]
+fn rung_031_generator_control_flow_scrutinee_is_a_typed_boundary() {
+    const SOURCE: &str = r#"
+#[test]
+fn control_scrutinee() -> Stream<Check> {
+    let xs = [1, 2, 3];
+    let ys: [Int] = [];
+    let flag = true;
+    yield match (if flag { xs } else { ys }).split_last() {
+        Some((last, rest)) => {
+            yield expect_eq(last, 3);
+            yield expect_eq(rest, [1, 2]);
+        },
+        None => expect(false),
+    };
+}
+"#;
+    let module = Compiler::new()
+        .compile(SOURCE)
+        .expect("a control-flow scrutinee still compiles to VIR");
+    module
+        .generator_task_island(&module.tests[0])
+        .expect_err("a control-flow scrutinee is a typed boundary, not a panic");
+    match run_source(SOURCE) {
+        Err(RunError::Diagnostics(_)) => {}
+        other => panic!("expected a typed diagnostic boundary, got {other:?}"),
+    }
+}
+
+// A generator scrutinee may call a pure helper. Its synthetic transitive callees
+// are collected exactly as a check island's, so the Call target is never absent.
+#[test]
+fn rung_031_generator_scrutinee_may_call_a_pure_helper() {
+    const SOURCE: &str = r#"
+fn classify(n: Int) -> Option<Int> {
+    if n > 0 {
+        Some(n)
+    } else {
+        None
+    }
+}
+
+#[test]
+fn helper_scrutinee() -> Stream<Check> {
+    yield match classify(5) {
+        Some(v) => {
+            yield expect_eq(v, 5);
+        },
+        None => expect(false),
+    };
+    yield expect(true);
+}
+"#;
+    let module = Compiler::new().compile(SOURCE).expect("source compiles");
+    let island = module
+        .generator_task_island(&module.tests[0])
+        .expect("helper-scrutinee generator builds");
+    assert!(
+        !island.callees.is_empty(),
+        "the pure helper is collected as a synthetic generator callee",
+    );
+    let report = run_source(SOURCE).expect("helper-scrutinee generator executes");
+    assert!(report.agrees(), "plain and chaos agree: {report:?}");
+    assert!(
+        report.passed(),
+        "taken Some check and the unconditional check pass: {report:?}"
+    );
+    assert_eq!(report.plain.checks.len(), 2);
+}
+
+// A language failure raised while computing the generator's scrutinee control
+// stays on the typed language plane — it is not reclassified as a machine fault.
+#[test]
+fn rung_031_generator_scrutinee_language_failure_is_a_language_boundary() {
+    const SOURCE: &str = r#"
+fn risky(xs: [Int]) -> Option<Int> {
+    Some(xs[10])
+}
+
+#[test]
+fn faulting_scrutinee() -> Stream<Check> {
+    let xs = [1];
+    yield match risky(xs) {
+        Some(v) => {
+            yield expect_eq(v, 0);
+        },
+        None => expect(false),
+    };
+}
+"#;
+    match run_source(SOURCE) {
+        Err(RunError::GeneratorLanguageFailure {
+            test,
+            failure,
+            context,
+        }) => {
+            assert_eq!(test, "faulting_scrutinee");
+            assert!(
+                matches!(failure.as_ref(), FailureValue::IndexOutOfBounds { .. }),
+                "the scrutinee's out-of-bounds index is preserved as a typed failure: {failure:?}",
+            );
+            assert!(
+                context.is_some(),
+                "the language failure carries its source context",
+            );
+        }
+        other => panic!("expected a typed generator language failure, got {other:?}"),
+    }
+}
+
+#[test]
+fn rung_035_sorted_observes_values_in_canonical_order() {
+    let compilation = Compiler::new()
+        .compile(RUNG_035)
+        .expect("rung 035 compiles to a typed sorting recipe");
+    let function = compilation
+        .functions
+        .iter()
+        .find(|function| function.name == "canonical_order")
+        .expect("rung 035 test function exists");
+    let sorted = function
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.op, VirOp::ArraySorted))
+        .collect::<Vec<_>>();
+    assert_eq!(
+        sorted.len(),
+        2,
+        "each canonical-order check sorts one projected array"
+    );
+    assert!(
+        sorted
+            .iter()
+            .any(|node| node.ty == VirType::array(VirType::Int)),
+        "integers sort in structural order"
+    );
+    assert!(
+        sorted
+            .iter()
+            .any(|node| node.ty == VirType::array(VirType::String)),
+        "strings sort in structural order"
+    );
+
+    let partitioned = compilation.partition_test(&compilation.tests[0]);
+    let mut cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = cache
+            .get_or_lower(island)
+            .expect("rung 035 verifies before production execution");
+        assert!(
+            lowered
+                .program()
+                .fns
+                .iter()
+                .flat_map(|function| &function.code)
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. })),
+            "sorting never leaves the verified machine"
+        );
+    }
+    let report = run_source(RUNG_035).expect("rung 035 executes through verified production path");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+#[test]
+fn rung_036_multiset_fold_runs_through_verified_execution_without_host_calls() {
+    let module = Compiler::new()
+        .compile(RUNG_036)
+        .expect("rung 036 compiles through the canonical surface");
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 036 lowers through verified Weavy execution");
+        assert!(lowered.program().fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+    }
+
+    let report = run_source(RUNG_036).expect("rung 036 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+        if std::env::var("WEAVY_JIT").as_deref() == Ok("0") {
+            assert!(
+                lane.events
+                    .iter()
+                    .filter_map(|event| match event.kind {
+                        EventKind::ExecutionLane { facts, .. } => Some(facts),
+                        _ => None,
+                    })
+                    .all(|facts| matches!(
+                        facts,
+                        vix::runtime::ExecutionFacts {
+                            selected: vix::runtime::ExecutionLaneFact::Interpreter,
+                            fallback: Some(
+                                vix::runtime::ExecutionFallbackFact::DisabledByEnvironment
+                            ),
+                            ..
+                        }
+                    ))
+            );
+        }
+    }
+}
+
+#[test]
+fn rung_047_string_to_path_remains_rejected_at_the_declared_boundary() {
+    let (expected_message, _) = reject_header(RUNG_047);
+    let diagnostics = Compiler::new()
+        .compile(RUNG_047)
+        .expect_err("rung 047 must reject implicit String-to-Path conversion");
+    assert_eq!(diagnostics.entries.len(), 1);
+    let diagnostic = &diagnostics.entries[0];
+    assert_eq!(diagnostic.code, DiagnosticCode::StringIsNotPath);
+    assert_eq!(diagnostic.message(), expected_message);
+}
+
+// Rung 037 — filter_map preserves source keys for `Some` rows; flat_map composes
+// outer/inner keys deterministically. Both remain codata recipes until an explicit
+// collect materializes an ordered Map through the verified production path, with no
+// host call and no dense-array substitute for the keyed collection.
+#[test]
+fn rung_037_filter_map_and_flat_map_run_through_verified_production_path() {
+    let module = Compiler::new()
+        .compile(RUNG_037)
+        .expect("rung 037 compiles through the canonical surface");
+    let function = module
+        .functions
+        .iter()
+        .find(|function| function.name == "filter_map_flat_map")
+        .expect("rung 037 test function exists");
+
+    // filter_map is a distinct key-preserving codata recipe: Stream<Int, Int>.
+    let filter_map = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamFilterMap))
+        .expect("filter_map is a distinct codata recipe");
+    assert_eq!(filter_map.ty, VirType::stream(VirType::Int, VirType::Int));
+    assert_eq!(filter_map.effect.kind, EffectKind::Codata);
+
+    // flat_map composes the outer position key with the inner position key into a
+    // tuple key: Stream<(Int, Int), Int>.
+    let flat_map = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamFlatMap))
+        .expect("flat_map is a distinct codata recipe");
+    assert_eq!(
+        flat_map.ty,
+        VirType::stream(
+            VirType::Tuple(vec![VirType::Int, VirType::Int]),
+            VirType::Int,
+        ),
+    );
+    assert_eq!(flat_map.effect.kind, EffectKind::Codata);
+
+    // Every lowered frame stays inside the verified machine: no host calls.
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 037 lowers through verified Weavy execution");
+        assert!(lowered.program().fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+        assert!(
+            lowered
+                .program()
+                .fns
+                .iter()
+                .flat_map(|function| &function.code)
+                .any(|op| matches!(op, WeavyOp::OrderedInsertCommit { .. })),
+            "collect materializes rows through the ordered collection substrate",
+        );
+    }
+
+    let report = run_source(RUNG_037).expect("rung 037 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+// Rung 039 — filtering a position-keyed stream carries the surviving source
+// positions through to the collected Map: `%{0 => 50, 2 => 40, 3 => 20}`. The
+// filter remains a codata recipe until an explicit collect materializes the
+// keyed Map through the verified production path, with no host call and no
+// dense-array substitute that would renumber the survivors.
+#[test]
+fn rung_039_indexed_roundtrip_carries_survivor_positions_through_collect() {
+    let module = Compiler::new()
+        .compile(RUNG_039)
+        .expect("rung 039 compiles through the canonical surface");
+    let function = module
+        .functions
+        .iter()
+        .find(|function| function.name == "indexed_roundtrip")
+        .expect("rung 039 test function exists");
+
+    // The survivor filter is a distinct key-preserving codata recipe over the
+    // position-keyed array stream: Stream<Int, Int>.
+    let filter = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamFilter))
+        .expect("filter remains a distinct codata recipe until collection");
+    assert_eq!(filter.ty, VirType::stream(VirType::Int, VirType::Int));
+    assert_eq!(filter.effect.kind, EffectKind::Codata);
+
+    // Collect materializes the position-keyed Map, not a renumbered dense array.
+    let collect = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamCollect))
+        .expect("collect is the explicit stream materialization boundary");
+    assert_eq!(collect.ty, VirType::map(VirType::Int, VirType::Int));
+
+    // Every lowered frame stays inside the verified machine: no host calls, and
+    // collection materializes rows through the ordered collection substrate.
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 039 lowers through verified Weavy execution");
+        assert!(lowered.program().fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+        assert!(
+            lowered
+                .program()
+                .fns
+                .iter()
+                .flat_map(|function| &function.code)
+                .any(|op| matches!(op, WeavyOp::OrderedInsertCommit { .. })),
+            "collect materializes survivors through the ordered collection substrate",
+        );
+    }
+
+    let report = run_source(RUNG_039).expect("rung 039 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+// Rung 040 — `.sorted where { order: by_key(|x| x.weight) }` sorts the collected
+// values by the caller-supplied `Order<Row>`. `by_key(f)` is an ordinary typed
+// Vix recipe: it compares the structural order of the extracted key `f(x)`, and
+// breaks equal keys by the structural order of the whole source row. The two
+// weight-2 rows "b" and "a" therefore settle as `a` before `b` (structural row
+// order), yielding the unchanged expected order `c, a, b`. Sorting lowers
+// entirely through the verified machine with no host call.
+#[test]
+fn rung_040_sorted_with_order_runs_through_verified_production_path() {
+    let module = Compiler::new()
+        .compile(RUNG_040)
+        .expect("rung 040 compiles through the canonical surface");
+
+    // Every lowered frame stays inside the verified machine: no host calls, and
+    // the caller's Order sorts through the same structural sort substrate as the
+    // zero-argument `.sorted()` path.
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 040 lowers through verified Weavy execution");
+        assert!(lowered.program().fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+    }
+
+    let report = run_source(RUNG_040).expect("rung 040 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+        if std::env::var("WEAVY_JIT").as_deref() == Ok("0") {
+            assert!(
+                lane.events
+                    .iter()
+                    .filter_map(|event| match event.kind {
+                        EventKind::ExecutionLane { facts, .. } => Some(facts),
+                        _ => None,
+                    })
+                    .all(|facts| matches!(
+                        facts,
+                        vix::runtime::ExecutionFacts {
+                            selected: vix::runtime::ExecutionLaneFact::Interpreter,
+                            fallback: Some(
+                                vix::runtime::ExecutionFallbackFact::DisabledByEnvironment
+                            ),
+                            ..
+                        }
+                    ))
+            );
+        }
+    }
+}
+
+// Rung 045 — string operations: `+` concat (already green from rung 029), plus
+// `contains`, `split_once`, and `parse_int`. Each new method is a typed Vix recipe
+// over the resident semantic byte sequence of the string value (never over the
+// opaque handle integer). `contains(needle)` decides membership; `split_once(delim)`
+// partitions on the first delimiter occurrence into a `(String, String)` pair;
+// `parse_int()` reads the decimal integer the bytes denote. All three lower entirely
+// through the verified machine with no host call, and their resident results feed
+// semantic equality exactly like string literals.
+#[test]
+fn rung_045_string_operations_run_through_verified_production_path() {
+    let module = Compiler::new()
+        .compile(RUNG_045)
+        .expect("rung 045 compiles through the canonical surface");
+
+    // Every lowered frame stays inside the verified machine: no host calls. The
+    // three new string operations lower to verifier-admitted string-byte ops.
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 045 lowers through verified Weavy execution");
+        assert!(lowered.program().fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+    }
+
+    let report = run_source(RUNG_045).expect("rung 045 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 5);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+        if std::env::var("WEAVY_JIT").as_deref() == Ok("0") {
+            assert!(
+                lane.events
+                    .iter()
+                    .filter_map(|event| match event.kind {
+                        EventKind::ExecutionLane { facts, .. } => Some(facts),
+                        _ => None,
+                    })
+                    .all(|facts| matches!(
+                        facts,
+                        vix::runtime::ExecutionFacts {
+                            selected: vix::runtime::ExecutionLaneFact::Interpreter,
+                            fallback: Some(
+                                vix::runtime::ExecutionFallbackFact::DisabledByEnvironment
+                            ),
+                            ..
+                        }
+                    ))
+            );
+        }
+    }
+}
+
+#[test]
+fn rung_046_paths_join_and_render_through_verified_execution() {
+    let module = Compiler::new()
+        .compile(RUNG_046)
+        .expect("rung 046 compiles through the canonical Path surface");
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut lowering_cache = LoweringCache::default();
+    let mut has_path_join = false;
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 046 lowers through verified Weavy execution");
+        assert!(lowered.program().fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+        assert!(lowered.program().fns.iter().any(|function| {
+            function
+                .code
+                .iter()
+                .any(|op| matches!(op, WeavyOp::ByteProject { .. }))
+        }));
+        has_path_join |= lowered.program().fns.iter().any(|function| {
+            function
+                .code
+                .iter()
+                .any(|op| matches!(op, WeavyOp::PathJoin { .. }))
+        });
+    }
+    assert!(
+        has_path_join,
+        "rung 046 lowers joins through the verified PathJoin op"
+    );
+
+    let report = run_source(RUNG_046).expect("rung 046 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
     }
 }
 
@@ -2442,6 +3728,607 @@ fn rung_026_arrays_run_through_verified_execution_without_publication() {
 }
 
 #[test]
+fn rung_027_array_map_runs_through_verified_execution_without_publication() {
+    let module = Compiler::new()
+        .compile(RUNG_027)
+        .expect("rung 027 compiles to graph VIR");
+    let partitioned = module.partition_test(&module.tests[0]);
+    assert_eq!(partitioned.islands.len(), 4);
+    let mut cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let [decision] = island.array_map_partitions.as_slice() else {
+            panic!("each rung 027 check has one ArrayMap decision")
+        };
+        assert_eq!(decision.shape, ArrayMapExecutionShape::FusedProjection);
+        let lowered = cache
+            .get_or_lower(island)
+            .expect("rung 027 fused island verifies");
+        let map_pcs = pcs_for_node(lowered, 0, decision.node);
+        assert_eq!(map_pcs.len(), 1, "fused ArrayMap emits attribution only");
+        assert!(matches!(
+            lowered.program().fns[0].code[map_pcs[0]],
+            WeavyOp::Trace { .. }
+        ));
+        assert!(map_pcs.iter().all(|pc| !matches!(
+            lowered.program().fns[0].code[*pc],
+            WeavyOp::ArrayNew { .. } | WeavyOp::ArrayStore { .. } | WeavyOp::CallIndirect { .. }
+        )));
+    }
+
+    let report = run_source(RUNG_027).expect("rung 027 compiles and runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 4);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+        assert!(lane.events.iter().all(|event| match event.kind {
+            EventKind::StoreAlloc { identity, .. } => {
+                identity.schema == SchemaId::named("vix.Check.v1")
+            }
+            _ => true,
+        }));
+        if std::env::var("WEAVY_JIT").as_deref() == Ok("0") {
+            assert!(
+                lane.events
+                    .iter()
+                    .filter_map(|event| match event.kind {
+                        EventKind::ExecutionLane { facts, .. } => Some(facts),
+                        _ => None,
+                    })
+                    .all(|facts| matches!(
+                        facts,
+                        vix::runtime::ExecutionFacts {
+                            selected: vix::runtime::ExecutionLaneFact::Interpreter,
+                            fallback: Some(
+                                vix::runtime::ExecutionFallbackFact::DisabledByEnvironment
+                            ),
+                            ..
+                        }
+                    ))
+            );
+        }
+    }
+}
+
+#[test]
+fn rung_048_captured_closures_run_directly_and_through_array_map() {
+    let module = Compiler::new()
+        .compile(RUNG_048)
+        .expect("rung 048 compiles with a by-value closure environment");
+    let root = &module.functions[module.tests[0].function.0 as usize];
+    let closure = root
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::Closure(_)))
+        .expect("rung 048 constructs one closure value");
+    let VirOp::Closure(target) = closure.op else {
+        unreachable!("selected node is a closure")
+    };
+    assert!(
+        root.nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::CallValue))
+    );
+    assert!(
+        root.nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::ArrayMap { .. }))
+    );
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    let island = &partitioned.islands[0];
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(island)
+        .expect("rung 048 lowers its captured closure through verified Weavy");
+    let attribution = attribution_for(island);
+    let target_frame = frame_index(&attribution.functions, target);
+    let callable = lowered.contract().functions[target_frame]
+        .call_contract
+        .expect("captured closure has a verified callable ABI");
+    let contract = &lowered.contract().calls[callable.0 as usize];
+    assert_eq!(contract.entries.len(), 2, "argument plus captured Int");
+    let capture = *closure
+        .inputs
+        .first()
+        .expect("captured closure records its construction input");
+    let capture_region = island
+        .nodes
+        .iter()
+        .position(|node| node.id == capture)
+        .expect("capture remains in the island");
+    let capture_region = lowered.contract().functions[0].frame.regions[capture_region].offset;
+    let direct = root
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::CallValue))
+        .expect("direct closure call exists");
+    let direct_pcs = pcs_for_node(
+        lowered,
+        0,
+        NodeRef {
+            function: root.id,
+            node: direct.id,
+        },
+    );
+    let direct_call = direct_pcs
+        .iter()
+        .filter_map(|pc| match &lowered.program().fns[0].code[*pc] {
+            WeavyOp::CallIndirect { args, .. } => Some(args),
+            _ => None,
+        })
+        .next()
+        .expect("direct closure call lowers to CallIndirect");
+    assert_eq!(direct_call[1].src, capture_region);
+    assert_ne!(direct_call[1].src, direct_call[0].src + 8);
+    assert!(lowered.program().fns.iter().all(|function| {
+        function
+            .code
+            .iter()
+            .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+    }));
+    assert!(
+        lowered.program().fns[0]
+            .code
+            .iter()
+            .any(|op| matches!(op, WeavyOp::CallIndirect { .. }))
+    );
+    let recipe = lowered.recipe;
+    let calls = lowered.contract().calls.clone();
+
+    let shifted = Compiler::new()
+        .compile(&format!("\n{RUNG_048}"))
+        .expect("span-only rung 048 edit compiles");
+    let shifted_partitioned = shifted.partition_test(&shifted.tests[0]);
+    let shifted_lowered = cache
+        .get_or_lower(&shifted_partitioned.islands[0])
+        .expect("span-only rung 048 edit lowers");
+    assert_eq!(recipe, shifted_lowered.recipe);
+    assert_eq!(calls, shifted_lowered.contract().calls);
+
+    let report = run_source(RUNG_048).expect("rung 048 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+#[test]
+fn noncapturing_direct_closure_has_only_its_semantic_argument() {
+    const SOURCE: &str = r#"
+#[test]
+fn direct_inc() -> Stream<Check> {
+    let inc = |n| n + 1;
+    yield expect_eq(inc(1), 2);
+}
+"#;
+    let module = Compiler::new()
+        .compile(SOURCE)
+        .expect("noncapturing closure compiles");
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(&partitioned.islands[0])
+        .expect("noncapturing direct closure verifies");
+    let direct = module.functions[module.tests[0].function.0 as usize]
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::CallValue))
+        .expect("direct call exists");
+    let args = pcs_for_node(
+        lowered,
+        0,
+        NodeRef {
+            function: module.tests[0].function,
+            node: direct.id,
+        },
+    )
+    .into_iter()
+    .filter_map(|pc| match &lowered.program().fns[0].code[pc] {
+        WeavyOp::CallIndirect { args, .. } => Some(args),
+        _ => None,
+    })
+    .next()
+    .expect("direct call lowers indirectly");
+    assert_eq!(args.len(), 1);
+    let report = run_source(SOURCE).expect("noncapturing direct closure executes");
+    assert!(report.passed() && report.agrees());
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+#[test]
+fn rung_049_plain_recursion_uses_stable_verified_call_abi() {
+    let module = Compiler::new()
+        .compile(RUNG_049)
+        .expect("rung 049 compiles with recursive fib calls");
+    let fib = module
+        .functions
+        .iter()
+        .find(|function| function.name == "fib")
+        .expect("rung 049 declares fib");
+    assert!(
+        fib.nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::Call(callee) if callee == fib.id))
+    );
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    let island = &partitioned.islands[0];
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(island)
+        .expect("rung 049 lowers recursive fib through verified Weavy");
+    let attribution = attribution_for(island);
+    let fib_frame = frame_index(&attribution.functions, fib.id);
+    let callable = lowered.contract().functions[fib_frame]
+        .call_contract
+        .expect("recursive fib has a verified callable ABI");
+    let contract = &lowered.contract().calls[callable.0 as usize];
+    assert_eq!(contract.entries.len(), 1, "fib ABI has one Int argument");
+    assert!(
+        lowered.program().fns[fib_frame]
+            .code
+            .iter()
+            .any(|op| matches!(op, WeavyOp::Call { callee, .. } if callee.0 as usize == fib_frame))
+    );
+    assert!(lowered.program().fns.iter().all(|function| {
+        function
+            .code
+            .iter()
+            .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+    }));
+    let recipe = lowered.recipe;
+    let calls = lowered.contract().calls.clone();
+
+    let shifted = Compiler::new()
+        .compile(&format!("\n{RUNG_049}"))
+        .expect("span-only rung 049 edit compiles");
+    let shifted_partitioned = shifted.partition_test(&shifted.tests[0]);
+    let shifted_lowered = cache
+        .get_or_lower(&shifted_partitioned.islands[0])
+        .expect("span-only rung 049 edit lowers");
+    assert_eq!(recipe, shifted_lowered.recipe);
+    assert_eq!(calls, shifted_lowered.contract().calls);
+
+    let report = run_source(RUNG_049).expect("rung 049 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+#[test]
+fn rung_050_remains_red_until_trace_checks_and_outer_budgets_land() {
+    let diagnostics = Compiler::new()
+        .compile(RUNG_050)
+        .expect_err("canonical rung 050 remains blocked by concurrent TraceCheck/budget work");
+    assert!(!diagnostics.entries.is_empty());
+}
+
+#[test]
+// r[verify lang.collection.array-map]
+fn array_map_vir_wiring_infers_both_sides_of_the_callable_signature() {
+    const SOURCE: &str = r#"
+#[test]
+fn typed_map() -> Stream<Check> {
+    let xs = [true, false, true];
+    let ys = xs.map(|selected| if selected { 7 } else { 11 });
+    yield expect_eq(ys[1], 11);
+}
+"#;
+    let module = Compiler::new()
+        .compile(SOURCE)
+        .expect("array map source checks and lowers to VIR");
+    let function = module
+        .functions
+        .iter()
+        .find(|function| function.name == "typed_map")
+        .expect("test function exists");
+    let map = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::ArrayMap { .. }))
+        .expect("method call becomes ArrayMap VIR");
+    let VirOp::ArrayMap { grain } = map.op else {
+        unreachable!("selected ArrayMap node")
+    };
+    assert_eq!(grain.key, ArrayMapGrainKey::InputPosition);
+    assert_eq!(grain.origin, ArrayMapGrainKey::InputPosition);
+    assert_eq!(map.ty, VirType::array(VirType::Int));
+    assert_eq!(map.effect.kind, EffectKind::Pure);
+    assert!(!map.effect.fallible);
+    assert!(!map.effect.placed);
+    let [array_id, closure_id] = map.inputs.as_slice() else {
+        panic!("ArrayMap has array and typed callable inputs")
+    };
+    assert!(matches!(
+        function.nodes[array_id.0 as usize].op,
+        VirOp::Array
+    ));
+    let VirOp::Closure(closure_function) = function.nodes[closure_id.0 as usize].op else {
+        panic!("ArrayMap callable input is the generated closure value")
+    };
+    let closure = &module.functions[closure_function.0 as usize];
+    assert_eq!(closure.parameters.len(), 1);
+    assert_eq!(closure.parameters[0].ty, VirType::Bool);
+    assert_eq!(closure.return_type, VirType::Int);
+    assert_eq!(
+        function.nodes[closure_id.0 as usize].ty,
+        (VirType::Function {
+            parameter: Box::new(VirType::Bool),
+            result: Box::new(VirType::Int),
+        })
+    );
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    assert_eq!(partitioned.islands[0].array_map_partitions.len(), 1);
+    assert_eq!(
+        partitioned.islands[0].array_map_partitions[0].shape,
+        ArrayMapExecutionShape::FusedProjection,
+    );
+    assert!(partitioned.render().contains("FusedProjection"));
+    let recipe = partitioned.islands[0].canonical_recipe_bytes();
+    let mut alternative_partition = partitioned.islands[0].clone();
+    alternative_partition.array_map_partitions[0].shape = ArrayMapExecutionShape::MaterializedLoop;
+    assert_eq!(
+        alternative_partition.canonical_recipe_bytes(),
+        recipe,
+        "partition shape is not semantic recipe identity",
+    );
+
+    let shifted = Compiler::new()
+        .compile(&format!("\n\n{SOURCE}"))
+        .expect("span-only edit compiles");
+    assert_eq!(
+        module.partition_test(&module.tests[0]).islands[0].canonical_recipe_bytes(),
+        shifted.partition_test(&shifted.tests[0]).islands[0].canonical_recipe_bytes(),
+        "ArrayMap canonical encoding excludes source offsets",
+    );
+}
+
+#[test]
+// r[verify lang.collection.array-map]
+// r[verify machine.island.partition]
+fn array_map_materializes_runtime_length_across_a_typed_call_boundary() {
+    const SOURCE: &str = r#"
+struct Pair { left: Int, right: Int }
+
+fn mapped_pairs(xs: [Int]) -> [Pair] {
+    xs.map(|n| Pair { left: n * n + 3, right: n * 2 - 1 })
+}
+
+#[test]
+fn general_array_map() -> Stream<Check> {
+    let base = 4;
+    let xs = [base - 3, base - 2, base - 1, base, base + 1];
+    let ys = mapped_pairs(xs);
+    let index = base - 2;
+    yield expect_eq(ys[index].left, 12);
+    yield expect_eq(ys[index].right, 5);
+    yield expect_eq(ys.len(), 5);
+}
+"#;
+    let module = Compiler::new()
+        .compile(SOURCE)
+        .expect("general array map compiles to VIR");
+    let helper = module
+        .functions
+        .iter()
+        .find(|function| function.name == "mapped_pairs")
+        .expect("mapping helper exists");
+    let map = helper
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::ArrayMap { .. }))
+        .expect("helper contains ArrayMap VIR");
+    let [_, closure_node] = map.inputs.as_slice() else {
+        panic!("ArrayMap has source and callable")
+    };
+    let VirOp::Closure(mapper) = helper.nodes[closure_node.0 as usize].op else {
+        panic!("helper map uses a generated callable")
+    };
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    let island = &partitioned.islands[0];
+    let decision = island
+        .array_map_partitions
+        .iter()
+        .find(|decision| {
+            decision.node
+                == (NodeRef {
+                    function: helper.id,
+                    node: map.id,
+                })
+        })
+        .expect("helper ArrayMap has a partition decision");
+    assert_eq!(decision.shape, ArrayMapExecutionShape::MaterializedLoop);
+    assert!(partitioned.render().contains("MaterializedLoop"));
+
+    let mut lowering_cache = LoweringCache::default();
+    let lowered = lowering_cache
+        .get_or_lower(island)
+        .expect("runtime-length ArrayMap verifies before execution");
+    assert_pc_maps_complete(lowered);
+    let attribution = attribution_for(island);
+    let helper_frame = frame_index(&attribution.functions, helper.id);
+    let mapper_frame = frame_index(&attribution.functions, mapper);
+    let helper_ops = &lowered.program().fns[helper_frame].code;
+    assert!(
+        helper_ops
+            .iter()
+            .any(|op| matches!(op, WeavyOp::LoadArrayLen { .. }))
+    );
+    assert!(
+        helper_ops
+            .iter()
+            .any(|op| matches!(op, WeavyOp::ArrayNew { .. }))
+    );
+    assert!(
+        helper_ops
+            .iter()
+            .any(|op| matches!(op, WeavyOp::LoadArray { .. }))
+    );
+    assert!(
+        helper_ops
+            .iter()
+            .any(|op| matches!(op, WeavyOp::CallIndirect { .. }))
+    );
+    assert!(
+        helper_ops
+            .iter()
+            .any(|op| matches!(op, WeavyOp::ArrayStore { .. }))
+    );
+    assert!(helper_ops.iter().enumerate().any(|(pc, op)| {
+        matches!(op, WeavyOp::Jump { target } if usize::try_from(*target).is_ok_and(|target| target < pc))
+    }));
+    let contract = lowered.contract();
+    let mapper_contract = &contract.functions[mapper_frame];
+    let callable = mapper_contract
+        .call_contract
+        .expect("mapper has an exact callable ABI");
+    assert_eq!(
+        contract.calls[callable.0 as usize].result.shape,
+        mapper_contract.frame.regions[mapper_contract.result.0 as usize].shape,
+        "CallIndirect returns the same hidden typed outcome as the mapper function",
+    );
+
+    let report = run_source(SOURCE).expect("general ArrayMap runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+        assert!(lane.events.iter().all(|event| match event.kind {
+            EventKind::StoreAlloc { identity, .. } => {
+                identity.schema == SchemaId::named("vix.Check.v1")
+            }
+            _ => true,
+        }));
+    }
+}
+
+#[test]
+fn array_bearing_islands_propagate_non_map_indirect_call_outcomes() {
+    const SOURCE: &str = r#"
+#[test]
+fn array_and_call_value() -> Stream<Check> {
+    let xs = [1, 2, 3];
+    let transform = |n: Int| n * 3 + 1;
+    let transformed = transform(xs.len());
+    yield expect_eq(transformed, 10);
+}
+"#;
+    let module = Compiler::new()
+        .compile(SOURCE)
+        .expect("array-bearing indirect call compiles");
+    let root = &module.functions[module.tests[0].function.0 as usize];
+    let call = root
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::CallValue))
+        .expect("source contains a non-map CallValue");
+    let VirOp::Closure(target) = root.nodes[call.inputs[0].0 as usize].op else {
+        panic!("CallValue callee is a generated closure")
+    };
+    let partitioned = module.partition_test(&module.tests[0]);
+    let island = &partitioned.islands[0];
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(island)
+        .expect("array-bearing CallValue verifies with hidden outcomes");
+    let attribution = attribution_for(island);
+    let target_frame = frame_index(&attribution.functions, target);
+    let target_contract = &lowered.contract().functions[target_frame];
+    let callable = target_contract
+        .call_contract
+        .expect("non-map closure has an exact callable ABI");
+    assert_eq!(
+        lowered.contract().calls[callable.0 as usize].result.shape,
+        target_contract.frame.regions[target_contract.result.0 as usize].shape,
+    );
+    let call_pcs = pcs_for_node(
+        lowered,
+        0,
+        NodeRef {
+            function: root.id,
+            node: call.id,
+        },
+    );
+    assert!(call_pcs.iter().any(|pc| matches!(
+        lowered.program().fns[0].code[*pc],
+        WeavyOp::CallIndirect { .. }
+    )));
+    assert!(call_pcs.iter().any(|pc| matches!(
+        lowered.program().fns[0].code[*pc],
+        WeavyOp::EnumProjectChecked { variant: 0, .. }
+    )));
+
+    let report = run_source(SOURCE).expect("array-bearing CallValue executes");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.counters.pure_host_calls, 0);
+    assert_eq!(report.chaos.counters.pure_host_calls, 0);
+}
+
+#[test]
+fn repeated_map_projection_materializes_once_inside_the_island() {
+    const SOURCE: &str = r#"
+#[test]
+fn repeated_projection() -> Stream<Check> {
+    let ys = [2, 3, 4].map(|n| n * n);
+    let index = 1;
+    yield expect_eq(ys[index] + ys[index], 18);
+}
+"#;
+    let module = Compiler::new()
+        .compile(SOURCE)
+        .expect("repeated projection source compiles");
+    let partitioned = module.partition_test(&module.tests[0]);
+    let island = &partitioned.islands[0];
+    assert_eq!(island.array_map_partitions.len(), 1);
+    assert_eq!(
+        island.array_map_partitions[0].shape,
+        ArrayMapExecutionShape::MaterializedLoop,
+    );
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(island)
+        .expect("shared mapped result verifies");
+    assert_eq!(
+        lowered.program().fns[0]
+            .code
+            .iter()
+            .filter(|op| matches!(op, WeavyOp::CallIndirect { .. }))
+            .count(),
+        1,
+        "one mapper call site lives in the materialization loop",
+    );
+    let report = run_source(SOURCE).expect("shared mapped result executes");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.counters.pure_host_calls, 0);
+    assert_eq!(report.chaos.counters.pure_host_calls, 0);
+}
+
+#[test]
 // r[verify lang.collection.array-index]
 // r[verify machine.error.index-out-of-bounds]
 fn array_index_out_of_bounds_is_a_memoized_language_failure() {
@@ -2911,19 +4798,221 @@ fn map_and_set_surface_has_distinct_typed_vir_grains() {
 
     let partitioned = map_compilation.partition_test(&map_compilation.tests[0]);
     let mut lowering_cache = LoweringCache::default();
-    let error = match lowering_cache.get_or_lower(&partitioned.islands[0]) {
-        Ok(_) => panic!("map lowering remains the next runtime boundary"),
-        Err(vix::lowering::LoweringError::Diagnostics(diagnostics)) => diagnostics,
-        Err(vix::lowering::LoweringError::Machine(error)) => {
-            panic!("unexpected verifier failure: {error:?}")
-        }
-    };
-    assert_eq!(error.entries.len(), 1);
-    assert_eq!(error.entries[0].code, DiagnosticCode::LoweringUnsupported);
-    assert_eq!(
-        error.entries[0].message(),
-        "map/set lowering is not implemented"
+    let lowered = lowering_cache
+        .get_or_lower(&partitioned.islands[0])
+        .expect("map surface lowers through verified ordered execution");
+    assert!(
+        lowered
+            .contract()
+            .schemas
+            .iter()
+            .any(|schema| matches!(schema.payload, weavy::PayloadKind::OrderedCollection(_)))
     );
+    assert!(
+        lowered
+            .program()
+            .fns
+            .iter()
+            .flat_map(|function| &function.code)
+            .any(|op| matches!(
+                op,
+                WeavyOp::OrderedBeginInsert { .. }
+                    | WeavyOp::OrderedProbeKey { .. }
+                    | WeavyOp::OrderedLen { .. }
+            ))
+    );
+    assert!(
+        lowered
+            .program()
+            .fns
+            .iter()
+            .flat_map(|function| &function.code)
+            .all(|op| !matches!(op, WeavyOp::LoadArray { .. } | WeavyOp::LoadArrayLen { .. }))
+    );
+
+    for (rung, source, expected_checks) in [
+        ("041", RUNG_041, 5usize),
+        ("042", RUNG_042, 3),
+        ("043", RUNG_043, 1),
+        ("044", RUNG_044, 5),
+    ] {
+        let report = run_source(source).unwrap_or_else(|error| {
+            panic!("rung {rung} executes through ordered substrate: {error:?}")
+        });
+        assert!(report.passed());
+        assert!(report.agrees());
+        assert_eq!(report.plain.checks.len(), expected_checks);
+        assert_eq!(report.plain.checks, report.chaos.checks);
+        for lane in [&report.plain, &report.chaos] {
+            assert_eq!(lane.counters.pure_host_calls, 0);
+            assert_eq!(lane.receipt_count, 0);
+        }
+    }
+}
+
+#[test]
+fn map_failures_are_typed_attributed_and_replay_stable() {
+    const MISSING: &str = r#"
+fn required_value(m: Map<String, Int>) -> Int {
+    m.get("missing")
+}
+
+#[test]
+fn missing_key() -> Stream<Check> {
+    let m: Map<String, Int> = %{};
+    let value = required_value(m);
+    yield expect_eq(value, 0);
+}
+"#;
+    const DUPLICATES: &str = r#"
+fn duplicate_row(m: Map<String, Int>) -> Map<String, Int> {
+    m + ("k", 2)
+}
+
+fn overlapping_maps() -> Map<String, Int> {
+    %{"a" => 1} ++ %{"a" => 2}
+}
+
+#[test]
+fn duplicate_row_check() -> Stream<Check> {
+    let collision = duplicate_row(%{"k" => 1});
+    yield expect_eq(collision.len(), 0);
+}
+
+#[test]
+fn overlapping_maps_check() -> Stream<Check> {
+    let collision = overlapping_maps();
+    yield expect_eq(collision.len(), 0);
+}
+"#;
+
+    let missing = run_source(MISSING).expect("missing Map key is a language failure report");
+    assert_eq!(missing.plain.checks, missing.chaos.checks);
+    for lane in [&missing.plain, &missing.chaos] {
+        let [check] = lane.checks.as_slice() else {
+            panic!("one missing-key check")
+        };
+        assert!(!check.passed);
+        assert!(matches!(
+            check.failure,
+            Some(vix::runtime::FailureValue::MissingKey { .. })
+        ));
+        let context = check
+            .failure_context
+            .as_ref()
+            .expect("missing key resolves through current source attribution");
+        assert_eq!(
+            &MISSING[context.span.start as usize..context.span.end as usize],
+            "m.get(\"missing\")"
+        );
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+
+    let duplicates =
+        run_source(DUPLICATES).expect("duplicate Map keys are language failure reports");
+    assert_eq!(duplicates.plain.checks, duplicates.chaos.checks);
+    for lane in [&duplicates.plain, &duplicates.chaos] {
+        let [row, merge] = lane.checks.as_slice() else {
+            panic!("one row collision and one merge collision")
+        };
+        for (check, operation) in [
+            (row, "m + (\"k\", 2)"),
+            (merge, "%{\"a\" => 1} ++ %{\"a\" => 2}"),
+        ] {
+            assert!(!check.passed);
+            assert!(matches!(
+                check.failure,
+                Some(vix::runtime::FailureValue::DuplicateKey { .. })
+            ));
+            let context = check
+                .failure_context
+                .as_ref()
+                .expect("duplicate key resolves through current source attribution");
+            assert_eq!(
+                &DUPLICATES[context.span.start as usize..context.span.end as usize],
+                operation
+            );
+        }
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+#[test]
+fn string_failures_are_typed_attributed_and_replay_stable() {
+    for (source, operation, expected) in [
+        (
+            r#"#[test]
+fn missing() -> Stream<Check> { let value = "a".split_once("/"); yield expect_eq(value.0, ""); }"#,
+            "\"a\".split_once(\"/\")",
+            "MissingDelimiter",
+        ),
+        (
+            r#"#[test]
+fn invalid() -> Stream<Check> { let value = "nope".parse_int(); yield expect_eq(value, 0); }"#,
+            "\"nope\".parse_int()",
+            "InvalidInteger",
+        ),
+        (
+            r#"#[test]
+fn overflow() -> Stream<Check> { let value = "9223372036854775808".parse_int(); yield expect_eq(value, 0); }"#,
+            "\"9223372036854775808\".parse_int()",
+            "IntegerOverflow",
+        ),
+    ] {
+        let report = run_source(source).expect("string failure becomes a production report");
+        assert_eq!(report.plain.checks, report.chaos.checks);
+        for lane in [&report.plain, &report.chaos] {
+            let [check] = lane.checks.as_slice() else {
+                panic!("one failed check")
+            };
+            assert!(!check.passed);
+            assert!(
+                format!("{:?}", check.failure.as_ref().expect("typed failure"))
+                    .starts_with(expected)
+            );
+            let context = check
+                .failure_context
+                .as_ref()
+                .expect("operation source attribution");
+            assert_eq!(
+                &source[context.span.start as usize..context.span.end as usize],
+                operation
+            );
+            assert_eq!(lane.counters.pure_host_calls, 0);
+            assert_eq!(lane.receipt_count, 0);
+        }
+    }
+}
+
+#[test]
+fn map_values_follow_canonical_key_order() {
+    const SOURCE: &str = r#"
+#[test]
+fn map_values() -> Stream<Check> {
+    let m = %{"b" => 2, "a" => 1, "c" => 3};
+    yield expect_eq(m.values(), [1, 2, 3]);
+}
+"#;
+    let compilation = Compiler::new()
+        .compile(SOURCE)
+        .expect("Map.values source compiles");
+    assert!(
+        compilation.functions[0]
+            .nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::MapValues))
+    );
+
+    let report = run_source(SOURCE).expect("Map.values runs through verified production path");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
 }
 
 #[test]
@@ -3012,4 +5101,356 @@ fn assert_contiguous_sequences(events: &[vix::runtime::Event]) {
     assert!(events.iter().enumerate().all(|(index, event)| {
         event.sequence == u64::try_from(index).expect("event count fits u64")
     }));
+}
+
+// ---------------------------------------------------------------------------
+// Rung 050 — verifier-visible self-tail loop (auxiliary certificates).
+//
+// Canonical rung 050 stays red until the separately-owned TraceCheck/budget
+// syntax lands. These certificates cover the machine slice it depends on: a
+// terminal self-call lowers to an in-place loop backedge (no Weavy Call, no new
+// frame), ordinary and non-self recursion keep the Weavy Call, and the loop runs
+// identically and cheaply in the interpreter and JIT with no per-iteration
+// scheduler/memo/host machinery.
+//
+// r[impl machine.safepoint.two-classes]
+// ---------------------------------------------------------------------------
+
+const TAIL_LOOP_SOURCE: &str = r#"
+fn count_up(n: Int) where { limit: Int, acc: Int } -> Int {
+    if n == limit { acc } else { count_up(n + 1) where { limit, acc: acc + n } }
+}
+
+#[test]
+fn drive() -> Stream<Check> {
+    yield expect_eq(count_up(0) where { limit: 5, acc: 0 }, 10);
+}
+"#;
+
+/// A tail call whose callee is a *different* function stays an ordinary Weavy
+/// Call: only terminal self-calls become loops.
+const TAIL_TO_OTHER_SOURCE: &str = r#"
+fn inc(n: Int) -> Int { n + 1 }
+fn wrap(n: Int) -> Int { inc(n) }
+
+#[test]
+fn drive() -> Stream<Check> {
+    yield expect_eq(wrap(41), 42);
+}
+"#;
+
+struct LoweredProgram {
+    program: weavy::task::Program,
+    pc_nodes: Vec<Vec<NodeRef>>,
+    frames: Vec<FunctionId>,
+    module: vix::vir::Module,
+}
+
+impl LoweredProgram {
+    fn frame_of(&self, name: &str) -> usize {
+        let id = self
+            .module
+            .functions
+            .iter()
+            .find(|function| function.name == name)
+            .expect("named function exists")
+            .id;
+        self.frames
+            .iter()
+            .position(|frame| *frame == id)
+            .expect("function has a lowered frame")
+    }
+
+    fn code(&self, name: &str) -> &[WeavyOp] {
+        &self.program.fns[self.frame_of(name)].code
+    }
+}
+
+fn lower_program(source: &str) -> LoweredProgram {
+    let module = Compiler::new()
+        .compile(source)
+        .expect("source compiles")
+        .module;
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(&partitioned.islands[0])
+        .expect("source lowers to Weavy");
+    let program = lowered.program().clone();
+    let pc_nodes = lowered.pc_nodes.clone();
+    let frames = attribution_for(&partitioned.islands[0]).functions;
+    LoweredProgram {
+        program,
+        pc_nodes,
+        frames,
+        module,
+    }
+}
+
+/// A backedge is a `Jump` whose target is at or before its own instruction —
+/// the only shape that closes a loop within one function.
+fn backedges(code: &[WeavyOp]) -> Vec<usize> {
+    code.iter()
+        .enumerate()
+        .filter_map(|(pc, op)| match op {
+            WeavyOp::Jump { target } if (*target as usize) <= pc => Some(pc),
+            _ => None,
+        })
+        .collect()
+}
+
+fn has_weavy_call(code: &[WeavyOp]) -> bool {
+    code.iter()
+        .any(|op| matches!(op, WeavyOp::Call { .. } | WeavyOp::CallIndirect { .. }))
+}
+
+/// The standalone one-function Weavy program for a tail-recursive function.
+/// After the transform a tail-recursive function contains no `Call`, so it is
+/// self-contained and can be spawned directly at `FnId(0)`.
+fn standalone_tail_loop(name: &str) -> weavy::task::Program {
+    let lowered = lower_program(TAIL_LOOP_SOURCE);
+    let frame = lowered.frame_of(name);
+    assert!(
+        !has_weavy_call(&lowered.program.fns[frame].code),
+        "a standalone tail loop must contain no Weavy Call",
+    );
+    weavy::task::Program {
+        fns: vec![lowered.program.fns[frame].clone()],
+    }
+}
+
+// r[impl machine.safepoint.two-classes]
+#[test]
+fn tail_self_call_lowers_to_a_loop_backedge() {
+    let lowered = lower_program(TAIL_LOOP_SOURCE);
+    let frame = lowered.frame_of("count_up");
+    let code = &lowered.program.fns[frame].code;
+
+    // The recursion is a loop, not a frame-allocating call.
+    assert!(
+        !has_weavy_call(code),
+        "a terminal self-call must not lower to a Weavy Call",
+    );
+
+    // Exactly one backedge, returning to the loop entry (pc 0).
+    let edges = backedges(code);
+    assert_eq!(edges.len(), 1, "one loop backedge");
+    let backedge_pc = edges[0];
+    assert!(
+        matches!(code[backedge_pc], WeavyOp::Jump { target: 0 }),
+        "the backedge targets the loop entry",
+    );
+
+    // The backedge stays attributed (PC -> VIR node) to the terminal self-call.
+    let owner = lowered.pc_nodes[frame][backedge_pc];
+    let count_up = lowered
+        .module
+        .functions
+        .iter()
+        .find(|function| function.name == "count_up")
+        .expect("count_up exists");
+    assert_eq!(owner.function, count_up.id);
+    let node = count_up
+        .nodes
+        .iter()
+        .find(|node| node.id == owner.node)
+        .expect("backedge attributes to a VIR node");
+    assert!(
+        matches!(node.op, VirOp::Call(callee) if callee == count_up.id),
+        "the backedge attributes to the terminal self-call node",
+    );
+}
+
+// r[impl machine.safepoint.two-classes]
+#[test]
+fn non_tail_self_recursion_keeps_a_weavy_call() {
+    // rung 049: `fib(n - 1) + fib(n - 2)` — the calls are operands of `+`, not
+    // tail values, so each remains a Weavy Call and no loop forms.
+    let lowered = lower_program(RUNG_049);
+    let code = lowered.code("fib");
+    assert!(
+        has_weavy_call(code),
+        "non-tail self-recursion still lowers to a Weavy Call",
+    );
+    assert!(
+        backedges(code).is_empty(),
+        "non-tail self-recursion forms no loop backedge",
+    );
+}
+
+// r[impl machine.safepoint.two-classes]
+#[test]
+fn tail_call_to_another_function_keeps_a_weavy_call() {
+    // `wrap` ends in `inc(n)` — a tail call, but to a different function, so it
+    // keeps the Weavy Call path.
+    let lowered = lower_program(TAIL_TO_OTHER_SOURCE);
+    let code = lowered.code("wrap");
+    assert!(
+        has_weavy_call(code),
+        "a tail call to another function stays a Weavy Call",
+    );
+    assert!(
+        backedges(code).is_empty(),
+        "a non-self tail call forms no loop backedge",
+    );
+}
+
+// The 10,000,000-iteration result, driven through the verified Executable in the
+// lane the environment selects (native by default; the interpreter under
+// WEAVY_JIT=0). Production trace mode keeps the interior pollpoints inert.
+//
+// r[impl machine.safepoint.two-classes]
+#[test]
+fn tail_loop_executes_ten_million_iterations_in_the_selected_lane() {
+    use weavy::exec::Executable;
+    use weavy::task::{FnId, TaskStep, TraceMode};
+
+    let module = Compiler::new()
+        .compile(TAIL_LOOP_SOURCE)
+        .expect("source compiles")
+        .module;
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(&partitioned.islands[0])
+        .expect("source lowers to Weavy");
+    let count_up = module
+        .functions
+        .iter()
+        .find(|function| function.name == "count_up")
+        .expect("count_up exists")
+        .id;
+    let frame = attribution_for(&partitioned.islands[0])
+        .functions
+        .iter()
+        .position(|function| *function == count_up)
+        .expect("count_up has a frame");
+
+    let verified = lowered
+        .program()
+        .clone()
+        .verify(lowered.contract().clone())
+        .expect("lowered tail loop re-verifies");
+    let executable = Executable::with_trace_mode(verified, TraceMode::Production);
+    let mut task = executable
+        .spawn(FnId(frame as u32))
+        .expect("count_up spawns as a verified entry");
+    task.write_entry_i64(0, 0).expect("n");
+    task.write_entry_i64(1, 10_000_000).expect("limit");
+    task.write_entry_i64(2, 0).expect("acc");
+
+    // A pure tail loop runs to completion in a single drive: it never parks on
+    // demand and never yields codata.
+    let mut ready: [bool; 0] = [];
+    let step = task.drive(&mut ready, &[]).expect("tail loop drives");
+    assert_eq!(
+        step,
+        TaskStep::Done,
+        "a pure tail loop completes in one drive without parking or yielding",
+    );
+    assert_eq!(
+        task.result_i64().expect("scalar result"),
+        49_999_995_000_000,
+        "sum of 0..10_000_000 through the self-tail loop",
+    );
+    // The backedge appends no per-iteration instrumentation mark.
+    assert!(
+        !task
+            .trace()
+            .iter()
+            .any(|event| matches!(event, weavy::task::TaskEvent::Mark(_))),
+        "Production-mode tail loop records no instrumentation marks",
+    );
+}
+
+// The interpreter and JIT lanes agree on the 10,000,000-iteration result in one
+// process, and neither records a per-iteration mark.
+//
+// r[impl machine.safepoint.two-classes]
+#[test]
+fn tail_loop_interpreter_and_jit_agree() {
+    use weavy::jit::task_lane::{JitProgram, JitTask};
+    use weavy::task::{FnId, Task, TaskEvent, TraceMode};
+
+    let program = standalone_tail_loop("count_up");
+
+    let mut interpreter = Task::spawn_with_mode(&program, FnId(0), TraceMode::Production);
+    interpreter.write_i64(0, 0);
+    interpreter.write_i64(8, 10_000_000);
+    interpreter.write_i64(16, 0);
+    interpreter.run(&program, &mut [], &[]);
+    let interpreted = interpreter.result_i64();
+    assert_eq!(interpreted, 49_999_995_000_000);
+    assert!(
+        !interpreter
+            .trace
+            .iter()
+            .any(|event| matches!(event, TaskEvent::Mark(_))),
+    );
+
+    // The JIT lane is present on native targets unless disabled by the
+    // environment (WEAVY_JIT=0); when it is, this run is interpreter-only and
+    // there is nothing to compare against.
+    match JitProgram::compile_with_mode(&program, TraceMode::Production) {
+        Some(jit) => {
+            let mut native = JitTask::spawn(&jit, FnId(0));
+            native.write_i64(0, 0);
+            native.write_i64(8, 10_000_000);
+            native.write_i64(16, 0);
+            native.run(&jit, &mut [], &[]);
+            assert_eq!(
+                native.result_i64(),
+                interpreted,
+                "interpreter and JIT agree on the tail-loop result",
+            );
+            assert_eq!(
+                native.trace, interpreter.trace,
+                "interpreter and JIT record the same (mark-free) Production trace",
+            );
+        }
+        None => assert!(
+            !weavy::jit::task_lane::available(),
+            "the JIT compiles the tail loop whenever the native lane is available",
+        ),
+    }
+}
+
+// Strongest currently-available counter evidence for the rung's budget intent:
+// the backedge performs no per-iteration machinery, so the task event trace does
+// not grow with iteration count. Canonical rung 050 asserts this through
+// TraceCheck budgets (scheduler_requests/memo_entries), which are separately
+// owned; the machine-level invariant is that the loop's trace length is constant
+// in the iteration count and carries no marks.
+//
+// r[impl machine.safepoint.two-classes]
+#[test]
+fn tail_loop_backedge_adds_no_per_iteration_machinery() {
+    use weavy::task::{FnId, Task, TaskEvent, TraceMode};
+
+    let program = standalone_tail_loop("count_up");
+    let run = |iterations: i64| {
+        let mut task = Task::spawn_with_mode(&program, FnId(0), TraceMode::Production);
+        task.write_i64(0, 0);
+        task.write_i64(8, iterations);
+        task.write_i64(16, 0);
+        task.run(&program, &mut [], &[]);
+        let marks = task
+            .trace
+            .iter()
+            .filter(|event| matches!(event, TaskEvent::Mark(_)))
+            .count();
+        (task.result_i64(), task.trace.len(), marks)
+    };
+
+    let (small_result, small_len, small_marks) = run(1_000);
+    let (large_result, large_len, large_marks) = run(1_000_000);
+
+    assert_eq!(small_result, 499_500);
+    assert_eq!(large_result, 499_999_500_000);
+    assert_eq!(small_marks, 0, "no instrumentation marks at any scale");
+    assert_eq!(large_marks, 0, "no instrumentation marks at any scale");
+    assert_eq!(
+        small_len, large_len,
+        "the tail-loop task trace length is constant in the iteration count",
+    );
 }

@@ -12,6 +12,7 @@ pub enum DiagnosticCode {
     InvalidTestSignature,
     UnsupportedExpression,
     TypeMismatch,
+    StringIsNotPath,
     UnknownName,
     InvalidArity,
     LoweringUnsupported,
@@ -123,9 +124,10 @@ impl Diagnostic {
                 DiagnosticCode::UnknownMethod => format!("unknown method {name}"),
                 _ => name.clone(),
             },
-            DiagnosticPayload::Type { expected, found } => {
-                format!("expected {expected}, found {found}")
-            }
+            DiagnosticPayload::Type { expected, found } => match self.code {
+                DiagnosticCode::StringIsNotPath => "no conversion from String to Path".to_owned(),
+                _ => format!("expected {expected}, found {found}"),
+            },
             DiagnosticPayload::Arity { expected, found } => {
                 format!("expected {expected} arguments, found {found}")
             }
