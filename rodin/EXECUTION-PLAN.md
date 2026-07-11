@@ -258,6 +258,47 @@ tests. They land in this dependency order:
    peak RSS together. Passing only the value assertions or only a core arena
    microbenchmark does not satisfy the rung.
 
+Rung 051 lands through these forward checkpoints:
+
+1. The Vix runtime adopts one explicit identity epoch: a closed role-tagged
+   framed writer plus an owned, pre-resolved semantic tree and
+   `Store::intern_tree`. Stable Vix `SchemaId`s come from canonical `Type`
+   encoding; program-local Weavy schema ordinals, ABI offsets, padding, and
+   handle integers never enter identity. The new digest is not claimed to be
+   bit-compatible with the retiring flat/raw encoding.
+2. `range where { from, to }` allocates one dense array and fills it in-frame.
+   Range and fold loop bodies contain the same cheap interior-pollpoint
+   vocabulary as rung 050 and emit no per-iteration trace marks, scheduler
+   contacts, store operations, or identities.
+3. A completed value-island task exposes its molten result only through a
+   borrow-scoped opaque resolver. Vix may walk typed payload bytes while the
+   `ExecTask` lives; no task-local handle integer or `FrozenRef` escapes that
+   borrow, and Weavy computes no semantic identity.
+4. The molten fold shape is admitted only for the exact strict one-item-append
+   closure: the accumulator is consumed once as the append base, does not
+   otherwise escape, and the appended expression is evaluated exactly once.
+   Arbitrary folds retain the semantic copy path; forced-copy differential
+   coverage uses a bounded input rather than the million-element rung.
+5. Shared-value extraction is gated by an explicit publication-capability
+   registry. The initial eligible representation is dense Array. A qualifying
+   shared Map or Set is a typed red diagnostic until ordered freeze exists; the
+   partitioner never selects an aggregate it cannot publish.
+6. A value island is nominated by the content-free location
+   `test/<test>/value/<stable-id>`, where the stable id comes from canonical
+   graph provenance rather than partition-vector or arrival order. Its
+   `DemandKey` remains recipe plus arguments and uses ordinary within-runtime
+   memo reuse; there is no private cross-test cache.
+7. Scheduler-owned `realize_value` walks the opaque task result into the owned
+   semantic tree, interns bottom-up once, and binds consumers with the resulting
+   store handle and `ValueId`. A failed shared demand propagates on each
+   consumer edge with that consumer's rebuilt report context; no unevaluated
+   check is assigned a fabricated result identity.
+8. Production counters distinguish the value-island spawn from total check
+   spawns and record one aggregate freeze per successful lane, active versus
+   forced-copy fold selection, bytes hashed, and peak molten bytes/nodes. The
+   wall/RSS watchdog and TraceCheck substrate then assert those facts in the
+   unchanged canonical rung.
+
 Before any composite dynamic key or completed aggregate crosses that boundary,
 the runtime Store must intern it through the canonical framed value walk:
 embedded handles contribute their referents' content identities, never their
