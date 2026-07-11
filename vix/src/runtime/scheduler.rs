@@ -905,6 +905,7 @@ fn task_fault_site(fault: &TaskFault) -> Option<&FaultSite> {
         | TaskFault::UnresidentCompareValueBytes { site, .. }
         | TaskFault::UnresidentStringConcatOperand { site, .. }
         | TaskFault::StringConcatAllocationFailed { site }
+        | TaskFault::PublicationAllocationFailed { site }
         | TaskFault::InvalidEnumSelector { site, .. }
         | TaskFault::EnumProjectionMismatch { site, .. }
         | TaskFault::InvalidArrayStatus { site, .. }
@@ -926,6 +927,7 @@ fn task_fault_site(fault: &TaskFault) -> Option<&FaultSite> {
         | TaskFault::NativeFaultExit { .. }
         | TaskFault::InvalidFaultSite { .. }
         | TaskFault::ResultBeforeDone { .. }
+        | TaskFault::PublicationIndexOutOfRange { .. }
         | TaskFault::DriveAfterDone => None,
     }
 }
@@ -953,6 +955,8 @@ fn result_shape_attribution(
         | TaskFault::UnresidentCompareValueBytes { .. }
         | TaskFault::UnresidentStringConcatOperand { .. }
         | TaskFault::StringConcatAllocationFailed { .. }
+        | TaskFault::PublicationAllocationFailed { .. }
+        | TaskFault::PublicationIndexOutOfRange { .. }
         | TaskFault::InvalidEnumSelector { .. }
         | TaskFault::EnumProjectionMismatch { .. }
         | TaskFault::InvalidArrayStatus { .. }
