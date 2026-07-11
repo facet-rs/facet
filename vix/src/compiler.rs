@@ -2896,12 +2896,15 @@ fn lower_method_call(
                 .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
             let key = key.clone();
             let value = value.clone();
-            let transform = match &call.args.args[0] {
-                ast::Expr::Closure(closure) => {
-                    lower_closure_with_parameter(nodes, bindings, context, closure, &value)?
-                }
-                expression => lower_value_expected(nodes, bindings, context, expression, None)?,
+            let ast::Expr::Closure(closure) = &call.args.args[0] else {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    expr_span(&call.args.args[0]),
+                    "flat_map expects a closure returning an array stream",
+                )));
             };
+            // The closure is lowered as an array-returning frame `fn(V) -> [W]`;
+            // its inner stream keys are the dense positions of that array.
+            let transform = lower_array_stream_closure(nodes, bindings, context, closure, &value)?;
             let Type::Function { parameter, result } = &transform.ty else {
                 return Err(type_mismatch(
                     expr_span(&call.args.args[0]),
@@ -2916,14 +2919,14 @@ fn lower_method_call(
                     transform.ty.name(),
                 ));
             }
-            let (inner_key, inner_value) = result.stream_types().ok_or_else(|| {
+            let inner_value = result.array_element().ok_or_else(|| {
                 type_mismatch(
                     expr_span(&call.args.args[0]),
                     format!("fn({}) -> Stream<_, _>", value.name()),
                     transform.ty.name(),
                 )
             })?;
-            let composed_key = Type::Tuple(vec![key, inner_key.clone()]);
+            let composed_key = Type::Tuple(vec![key, Type::Int]);
             let ty = Type::stream(composed_key, inner_value.clone());
             Ok(LoweredValue {
                 node: push_node(
@@ -3108,6 +3111,41 @@ fn lower_closure_with_parameter(
     lower_closure_typed(nodes, context, closure, parameter_ty, None)
 }
 
+/// Lower a `flat_map` closure `|v| <array>.stream()` to an array-returning
+/// callable value of type `fn(V) -> [W]`. The terminal `.stream()` is a codata
+/// view that `flat_map` re-derives with fresh position keys at collection time,
+/// so the frame itself returns the dense array.
+fn lower_array_stream_closure(
+    nodes: &mut Vec<Node>,
+    _outer_bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    closure: &ast::ClosureExpr,
+    parameter: &Type,
+) -> Result<LoweredValue, Diagnostics> {
+    let parameter_ty = match &closure.ty {
+        Some(declared) => {
+            let declared = lower_declared_type(declared, context.types)?;
+            if &declared != parameter {
+                return Err(type_mismatch(
+                    type_span(declared_type_ref(closure)),
+                    parameter.name(),
+                    declared.name(),
+                ));
+            }
+            declared
+        }
+        None => parameter.clone(),
+    };
+    lower_closure_typed_with_body_kind(
+        nodes,
+        context,
+        closure,
+        parameter_ty,
+        None,
+        ClosureBodyKind::ArrayStreamSource,
+    )
+}
+
 fn declared_type_ref(closure: &ast::ClosureExpr) -> &ast::Type {
     closure.ty.as_ref().expect("declared closure type")
 }
@@ -3118,6 +3156,36 @@ fn lower_closure_typed(
     closure: &ast::ClosureExpr,
     parameter_ty: Type,
     expected_result: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    lower_closure_typed_with_body_kind(
+        nodes,
+        context,
+        closure,
+        parameter_ty,
+        expected_result,
+        ClosureBodyKind::Value,
+    )
+}
+
+/// How a closure body's result value is finalized into the closure frame's
+/// return.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClosureBodyKind {
+    /// The body value is the closure's return.
+    Value,
+    /// The body is `<array>.stream()`; the closure returns the underlying dense
+    /// array so it lowers as an ordinary array-returning frame. `flat_map`
+    /// streams that array with fresh position keys at collection time.
+    ArrayStreamSource,
+}
+
+fn lower_closure_typed_with_body_kind(
+    nodes: &mut Vec<Node>,
+    context: &ModuleContext<'_>,
+    closure: &ast::ClosureExpr,
+    parameter_ty: Type,
+    expected_result: Option<&Type>,
+    body_kind: ClosureBodyKind,
 ) -> Result<LoweredValue, Diagnostics> {
     let (id, name) = context.allocate_closure();
     context.enter_function(name.clone());
@@ -3163,9 +3231,32 @@ fn lower_closure_typed(
         if let Some(expected_result) = expected_result {
             require_type(&output, expected_result, closure.span)?;
         }
+        // For an array-stream-producing closure, redirect the frame's return to
+        // the dense array underneath the terminal `.stream()`, so the closure is
+        // an ordinary array-returning frame.
+        let (output_node, return_type) = match body_kind {
+            ClosureBodyKind::Value => (output.node, output.ty.clone()),
+            ClosureBodyKind::ArrayStreamSource => {
+                let terminal = &closure_nodes[output.node.0 as usize];
+                if !matches!(terminal.op, Op::ArrayStream) {
+                    return Err(Diagnostics::one(Diagnostic::unsupported(
+                        closure.span,
+                        "flat_map closure body must be an array stream",
+                    )));
+                }
+                let array_node = *terminal.inputs.first().ok_or_else(|| {
+                    Diagnostics::one(Diagnostic::unsupported(
+                        closure.span,
+                        "array stream closure has no source array",
+                    ))
+                })?;
+                let array_ty = closure_nodes[array_node.0 as usize].ty.clone();
+                (array_node, array_ty)
+            }
+        };
         let ty = Type::Function {
             parameter: Box::new(parameter_ty.clone()),
-            result: Box::new(output.ty.clone()),
+            result: Box::new(return_type.clone()),
         };
         Ok::<_, Diagnostics>((
             Function {
@@ -3179,9 +3270,9 @@ fn lower_closure_typed(
                     ty: parameter_ty,
                     kind: ParameterKind::Positional,
                 }],
-                return_type: output.ty,
+                return_type,
                 nodes: closure_nodes,
-                output: Some(output.node),
+                output: Some(output_node),
                 yielded_checks: Vec::new(),
             },
             ty,

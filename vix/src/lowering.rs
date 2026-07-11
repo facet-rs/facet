@@ -3020,22 +3020,41 @@ fn stream_collect_extra_temporary_types(
         return Ok(Vec::new());
     }
     let source = stream_collect_source(node, nodes)?;
+    let upstream_value = |span| -> Result<Type, Diagnostics> {
+        let upstream = source
+            .inputs
+            .first()
+            .and_then(|input| nodes.iter().find(|candidate| candidate.id == *input))
+            .ok_or_else(|| lowering_diagnostic(span, "stream transform has no upstream recipe"))?;
+        let (_, source_value) = upstream
+            .ty
+            .stream_types()
+            .ok_or_else(|| lowering_diagnostic(span, "stream transform upstream is not codata"))?;
+        Ok(source_value.clone())
+    };
     match source.op {
         Op::StreamFilterMap => {
-            let upstream = source
-                .inputs
-                .first()
-                .and_then(|input| nodes.iter().find(|candidate| candidate.id == *input))
-                .ok_or_else(|| {
-                    lowering_diagnostic(node.span, "filter_map has no upstream stream recipe")
-                })?;
-            let (_, source_value) = upstream.ty.stream_types().ok_or_else(|| {
-                lowering_diagnostic(node.span, "filter_map upstream is not keyed codata")
-            })?;
+            let source_value = upstream_value(node.span)?;
             let (_, collected) = node.ty.map_types().ok_or_else(|| {
                 lowering_diagnostic(node.span, "filter_map collect result is not a map")
             })?;
-            Ok(vec![source_value.clone(), Type::option(collected.clone())])
+            Ok(vec![source_value, Type::option(collected.clone())])
+        }
+        Op::StreamFlatMap => {
+            let source_value = upstream_value(node.span)?;
+            let (_, collected) = node.ty.map_types().ok_or_else(|| {
+                lowering_diagnostic(node.span, "flat_map collect result is not a map")
+            })?;
+            // outer value, inner dense array, then the four nested-loop counters
+            // (outer index, outer length, inner index, inner length).
+            Ok(vec![
+                source_value,
+                Type::array(collected.clone()),
+                Type::Int,
+                Type::Int,
+                Type::Int,
+                Type::Int,
+            ])
         }
         _ => Ok(Vec::new()),
     }
@@ -3052,6 +3071,12 @@ fn stream_collect_call_outcome_type(node: &Node, nodes: &[Node]) -> Result<Type,
                 lowering_diagnostic(node.span, "filter_map collect result is not a map")
             })?;
             Ok(Type::option(collected.clone()))
+        }
+        Op::StreamFlatMap => {
+            let (_, collected) = node.ty.map_types().ok_or_else(|| {
+                lowering_diagnostic(node.span, "flat_map collect result is not a map")
+            })?;
+            Ok(Type::array(collected.clone()))
         }
         _ => Ok(Type::Bool),
     }
@@ -4630,10 +4655,33 @@ fn lower_node(
             (Vec::new(), ValueRepresentation::CodataRecipe)
         }
         Op::StreamFlatMap => {
-            return Err(lowering_diagnostic(
-                node.span,
-                "stream flat_map lowering is not implemented",
-            ));
+            require_input_count(node, 2)?;
+            let source = input_value(node, values, 0)?;
+            let mapper = input_value(node, values, 1)?;
+            let Type::Stream { value: source_value, .. } = &source.ty else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "stream flat_map source is not keyed codata",
+                ));
+            };
+            let Type::Stream { value: output_value, .. } = &node.ty else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "stream flat_map result is not keyed codata",
+                ));
+            };
+            require_value(node, &source, &source.ty, ValueRepresentation::CodataRecipe)?;
+            let mapper_ty = Type::Function {
+                parameter: Box::new(source_value.as_ref().clone()),
+                result: Box::new(Type::array(output_value.as_ref().clone())),
+            };
+            require_value(
+                node,
+                &mapper,
+                &mapper_ty,
+                ValueRepresentation::InlineComposite,
+            )?;
+            (Vec::new(), ValueRepresentation::CodataRecipe)
         }
         Op::StreamCollect => {
             return Err(lowering_diagnostic(
@@ -7083,6 +7131,9 @@ fn lower_array_stream_collect_node(
         sequence.nodes.get(&stream_id).copied().ok_or_else(|| {
             lowering_diagnostic(node.span, "stream collect input has no VIR recipe")
         })?;
+    if matches!(recipe.op, Op::StreamFlatMap) {
+        return lower_stream_flat_map_collect_node(node, dst, values, sequence, outputs, recipe);
+    }
     let (array_stream, transform) = match recipe.op {
         Op::ArrayStream => (recipe, StreamCollectTransform::Identity),
         Op::StreamFilter => {
@@ -7392,6 +7443,277 @@ fn lower_array_stream_collect_node(
     });
     outputs.code.jump(next);
     outputs.code.bind(done, node.span)?;
+    temps.cursor.drain(node.span)?;
+    temps.cursor.finish(node.span)?;
+    Ok(ValueRepresentation::RealizedHandle)
+}
+
+/// Lower a `flat_map` collect: for each outer source row, call the mapper to
+/// produce a dense inner array, then stream every inner position into the
+/// ordered map under a composed `(outer_key, inner_key)` tuple key. Collisions
+/// (a duplicate composed key) fail through the declared language failure
+/// semantics, exactly like any other keyed insertion.
+fn lower_stream_flat_map_collect_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+    recipe: &Node,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_input_count(recipe, 2)?;
+    let stream = values.get(&node.inputs[0]).ok_or_else(|| {
+        lowering_diagnostic(node.span, "flat_map collect recipe is not topologically prior")
+    })?;
+    let mapper = input_value(recipe, values, 1)?;
+    let array_stream = stream_transform_base(node, recipe, sequence)?;
+    require_input_count(array_stream, 1)?;
+    let source = values
+        .get(&array_stream.inputs[0])
+        .cloned()
+        .ok_or_else(|| {
+            lowering_diagnostic(node.span, "flat_map source array is not topologically prior")
+        })?;
+    let Type::Array(element) = &source.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "flat_map source stream is not a dense array",
+        ));
+    };
+    let element = element.as_ref().clone();
+    require_value(node, stream, &recipe.ty, ValueRepresentation::CodataRecipe)?;
+    require_value(
+        node,
+        &source,
+        &Type::array(element.clone()),
+        ValueRepresentation::RealizedHandle,
+    )?;
+    let collection_ty = node.ty.clone();
+    let (collection_key, collection_value) = collection_ty
+        .map_types()
+        .ok_or_else(|| lowering_diagnostic(node.span, "flat_map collect result is not a map"))?;
+    let composed_key = Type::Tuple(vec![Type::Int, Type::Int]);
+    if collection_key != &composed_key {
+        return Err(lowering_diagnostic(
+            node.span,
+            "flat_map does not compose position keys into a pair",
+        ));
+    }
+    let inner_value = collection_value.clone();
+    let mapper_ty = Type::Function {
+        parameter: Box::new(element.clone()),
+        result: Box::new(Type::array(inner_value.clone())),
+    };
+    require_value(node, &mapper, &mapper_ty, ValueRepresentation::InlineComposite)?;
+
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(node.span, "flat_map collect has no typed outcome scratch")
+    })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(node.span, "flat_map collect has no typed outcome return")
+    })?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(node.span, "flat_map collect has no trace site"))?;
+    let collection_schema = sequence
+        .lowering
+        .schemas
+        .schema_for(&collection_ty, node.span)?;
+    let element_schema = sequence.lowering.schemas.schema_for(&element, node.span)?;
+    let element_width = element_byte_width(&element, node.span)?;
+    let inner_schema = sequence
+        .lowering
+        .schemas
+        .schema_for(&inner_value, node.span)?;
+    let inner_width = element_byte_width(&inner_value, node.span)?;
+
+    let mut temps = ordered_collection_temps(node, &collection_ty, sequence)?;
+    // Persistent temporaries, provisioned in this exact order by
+    // `stream_collect_extra_temporary_types`.
+    let outer_value = temps.cursor.take(&element, node.span)?;
+    let inner_array = temps
+        .cursor
+        .take(&Type::array(inner_value.clone()), node.span)?;
+    let outer_index = temps.cursor.take(&Type::Int, node.span)?;
+    let outer_len = temps.cursor.take(&Type::Int, node.span)?;
+    let inner_index = temps.cursor.take(&Type::Int, node.span)?;
+    let inner_len = temps.cursor.take(&Type::Int, node.span)?;
+    let comparison = temps.cursor.checkpoint();
+    let cursor = ordered_cursor(node, sequence, 0)?;
+
+    outputs.code.push(WeavyOp::OrderedEmpty {
+        dst: dst.start().byte_offset(),
+        collection_schema_ref: i64::from(collection_schema.0),
+    });
+    outputs.code.push(WeavyOp::LoadArrayLen {
+        dst: outer_len.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: outer_index.region.start().byte_offset(),
+        value: 0,
+    });
+    let outer_next = outputs.code.label();
+    let outer_done = outputs.code.label();
+    outputs.code.bind(outer_next, node.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: outer_index.region.start().byte_offset(),
+        b: outer_len.region.start().byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, outer_done);
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: outer_value.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        index: outer_index.region.start().byte_offset(),
+        elem_width: element_width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    // Materialize the inner dense array for this outer row.
+    emit_checked_call_indirect(node, &mapper, &outer_value, &inner_array, sequence, outputs)?;
+    outputs.code.push(WeavyOp::LoadArrayLen {
+        dst: inner_len.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: inner_array.region.start().byte_offset(),
+        elem_schema_ref: i64::from(inner_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: inner_index.region.start().byte_offset(),
+        value: 0,
+    });
+    let inner_next = outputs.code.label();
+    let inner_done = outputs.code.label();
+    outputs.code.bind(inner_next, node.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: inner_index.region.start().byte_offset(),
+        b: inner_len.region.start().byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, inner_done);
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: temps.projected_value.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: inner_array.region.start().byte_offset(),
+        index: inner_index.region.start().byte_offset(),
+        elem_width: inner_width,
+        elem_schema_ref: i64::from(inner_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    // Compose the tuple key (outer_index, inner_index) structurally, so the key
+    // region keeps its declared product shape instead of raw word writes.
+    outputs.code.push(WeavyOp::ProductConstruct {
+        dst: temps.projected_key.region_id,
+        fields: vec![
+            StructuralFieldSource {
+                field: 0,
+                source: outer_index.region_id,
+            },
+            StructuralFieldSource {
+                field: 1,
+                source: inner_index.region_id,
+            },
+        ],
+    });
+    temps.cursor.rewind(comparison, node.span)?;
+    emit_ordered_insert(OrderedInsertLowering {
+        node,
+        site,
+        collection: dst.start(),
+        destination: dst.start(),
+        key: &temps.projected_key,
+        value: Some(&temps.projected_value),
+        key_ty: &composed_key,
+        collection_schema,
+        cursor,
+        candidate: &temps.candidate,
+        ordering: &temps.ordering,
+        ready: &temps.ready,
+        present: &temps.present,
+        duplicate: DuplicateDisposition::LanguageFailure,
+        comparison_checkpoint: comparison,
+        temps: &mut temps.cursor,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code: outputs.code,
+    })?;
+    // inner_index += 1
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 1,
+    });
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: inner_index.region.start().byte_offset(),
+        a: inner_index.region.start().byte_offset(),
+        b: scratch.fields[0].byte_offset(),
+    });
+    outputs.code.jump(inner_next);
+    outputs.code.bind(inner_done, node.span)?;
+    // outer_index += 1
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 1,
+    });
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: outer_index.region.start().byte_offset(),
+        a: outer_index.region.start().byte_offset(),
+        b: scratch.fields[0].byte_offset(),
+    });
+    outputs.code.jump(outer_next);
+    outputs.code.bind(outer_done, node.span)?;
     temps.cursor.drain(node.span)?;
     temps.cursor.finish(node.span)?;
     Ok(ValueRepresentation::RealizedHandle)
