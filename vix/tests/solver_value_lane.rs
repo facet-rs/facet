@@ -98,6 +98,7 @@ struct SolverState {
 
 struct DeadRegion { selections: Map<PackageId, Version> }
 struct Choice { package: PackageId, candidates: Int }
+struct SearchResult { solution: Option<Map<String, Version>>, learned: [DeadRegion] }
 enum SolveStep { Pass(SolverState), Conflict(DeadRegion) }
 
 fn empty_state() -> SolverState {
@@ -296,16 +297,16 @@ fn selected_result(packages: [PackageId]) where { state: SolverState, out: Map<S
     }
 }
 
-fn search(universe: PackageUniverse) where { state: SolverState } -> Option<Map<String, Version>> {
+fn search(universe: PackageUniverse) where { state: SolverState } -> SearchResult {
     match choose_undecided(universe) where { state } {
-        None => selected_result(state.domains.keys()) where { state, out: %{} },
+        None => SearchResult { solution: selected_result(state.domains.keys()) where { state, out: %{} }, learned: state.learned },
         Some(choice) => try_rows(universe) where { state, package: choice.package, rows: eligible_rows(universe) where { state, package: choice.package } },
     }
 }
 
-fn try_rows(universe: PackageUniverse) where { state: SolverState, package: PackageId, rows: [PackageRow] } -> Option<Map<String, Version>> {
+fn try_rows(universe: PackageUniverse) where { state: SolverState, package: PackageId, rows: [PackageRow] } -> SearchResult {
     match highest_row(rows) {
-        None => None,
+        None => SearchResult { solution: None, learned: state.learned },
         Some(row) => {
             let rest = without_version(rows) where { version: row.version, out: [] };
             let branch = SolverState { selected: state.selected.with (package, row.version), ..state };
@@ -314,9 +315,12 @@ fn try_rows(universe: PackageUniverse) where { state: SolverState, package: Pack
             } else {
                 match select_row(universe) where { state, package, row } {
                     SolveStep::Conflict(region) => try_rows(universe) where { state: remember(state) where { region }, package, rows: rest },
-                    SolveStep::Pass(next) => match search(universe) where { state: next } {
-                        Some(solution) => Some(solution),
-                        None => try_rows(universe) where { state, package, rows: rest },
+                    SolveStep::Pass(next) => {
+                        let nested = search(universe) where { state: next };
+                        match nested.solution {
+                            Some(solution) => SearchResult { solution: Some(solution), learned: nested.learned },
+                            None => try_rows(universe) where { state: SolverState { learned: nested.learned, ..state }, package, rows: rest },
+                        }
                     },
                 }
             }
@@ -327,7 +331,7 @@ fn try_rows(universe: PackageUniverse) where { state: SolverState, package: Pack
 fn mini_solve(universe: PackageUniverse) where { requirements: Map<String, VersionSet> } -> Option<Map<String, Version>> {
     match seed_requirements(universe) where { names: requirements.keys(), requirements, state: empty_state() } {
         None => None,
-        Some(state) => search(universe) where { state },
+        Some(state) => (search(universe) where { state }).solution,
     }
 }
 "#;
