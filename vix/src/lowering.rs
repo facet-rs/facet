@@ -1956,10 +1956,11 @@ impl<'a> ProgramContractBuilder<'a> {
         if let Some(value_shape) = self.value_shape_for_type(parameter, span)? {
             entry = entry.with_value_shape(value_shape);
         }
-        let result = self
-            .callable_outcomes
-            .then(|| ArrayOutcomeAbi::for_value(result.clone()).ty)
-            .unwrap_or_else(|| result.clone());
+        let result = if self.callable_outcomes {
+            ArrayOutcomeAbi::for_value(result.clone()).ty
+        } else {
+            result.clone()
+        };
         let mut result_region = WeavyFrameRegion::new(0, self.shape_for_type(&result, span)?);
         if let Some(value_shape) = self.value_shape_for_type(&result, span)? {
             result_region = result_region.with_value_shape(value_shape);
@@ -3961,16 +3962,24 @@ fn collect_typed_compare_leaves(
     Ok(())
 }
 
+struct StructuralOrderOutput {
+    ordering: FrameSlot,
+    condition: FrameSlot,
+}
+
 fn emit_structural_order(
     node: &Node,
     ty: &Type,
     a: &LoweredSlot,
     b: &LoweredSlot,
-    dst: FrameSlot,
-    condition: FrameSlot,
+    output: StructuralOrderOutput,
     temps: &mut TemporaryCursor<'_>,
     code: &mut CodeBuilder,
 ) -> Result<(), Diagnostics> {
+    let StructuralOrderOutput {
+        ordering: dst,
+        condition,
+    } = output;
     let mut leaves = Vec::new();
     collect_typed_compare_leaves(node, ty, a, b, temps, code, &mut leaves)?;
     let done = code.label();
@@ -5172,11 +5181,21 @@ fn lower_checked_call_value_node(
     Ok(output.representation)
 }
 
+struct ArrayMapFacts {
+    source: LoweredSlot,
+    mapper: LoweredSlot,
+    output_ty: Type,
+    input_schema: i64,
+    output_schema: i64,
+    input_width: u32,
+    output_width: u32,
+}
+
 fn array_map_array_facts(
     map: &Node,
     values: &BTreeMap<NodeId, LoweredSlot>,
     sequence: &SequenceContext<'_, '_, '_>,
-) -> Result<(LoweredSlot, LoweredSlot, Type, Type, i64, i64, u32, u32), Diagnostics> {
+) -> Result<ArrayMapFacts, Diagnostics> {
     validate_array_map(map, values)?;
     let source = input_value(map, values, 0)?;
     let mapper = input_value(map, values, 1)?;
@@ -5195,16 +5214,15 @@ fn array_map_array_facts(
         .map_err(|_| lowering_diagnostic(map.span, "array map input width overflow"))?;
     let output_width = u32::try_from(type_words(&output_ty, map.span)?.as_usize() * word_bytes)
         .map_err(|_| lowering_diagnostic(map.span, "array map output width overflow"))?;
-    Ok((
+    Ok(ArrayMapFacts {
         source,
         mapper,
-        input_ty,
         output_ty,
-        i64::from(input_schema.0),
-        i64::from(output_schema.0),
+        input_schema: i64::from(input_schema.0),
+        output_schema: i64::from(output_schema.0),
         input_width,
         output_width,
-    ))
+    })
 }
 
 fn lower_materialized_array_map(
@@ -5215,8 +5233,15 @@ fn lower_materialized_array_map(
     outputs: &mut SequenceOutputs<'_, '_>,
 ) -> Result<ValueRepresentation, Diagnostics> {
     // r[impl lang.collection.array-map]
-    let (source, mapper, _, _, input_schema, output_schema, input_width, output_width) =
-        array_map_array_facts(map, values, sequence)?;
+    let ArrayMapFacts {
+        source,
+        mapper,
+        input_schema,
+        output_schema,
+        input_width,
+        output_width,
+        ..
+    } = array_map_array_facts(map, values, sequence)?;
     let (input, output) = array_map_temporary_slots(map, sequence)?;
     let scratch =
         sequence.function.layout.outcome_scratch.ok_or_else(|| {
@@ -5347,8 +5372,14 @@ fn lower_fused_array_map_projection(
     sequence: &SequenceContext<'_, '_, '_>,
     outputs: &mut SequenceOutputs<'_, '_>,
 ) -> Result<ValueRepresentation, Diagnostics> {
-    let (source, mapper, _, output_ty, input_schema, _, input_width, _) =
-        array_map_array_facts(map, values, sequence)?;
+    let ArrayMapFacts {
+        source,
+        mapper,
+        output_ty,
+        input_schema,
+        input_width,
+        ..
+    } = array_map_array_facts(map, values, sequence)?;
     let (input, output) = array_map_temporary_slots(map, sequence)?;
     let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
         lowering_diagnostic(node.span, "fused array map has no checked outcome scratch")
@@ -6845,7 +6876,7 @@ fn lower_checked_collection_node(
             let comparison = temps.cursor.checkpoint();
             match &collection_ty {
                 Type::Map { key, value } => {
-                    if node.inputs.len() % 2 != 0 {
+                    if !node.inputs.len().is_multiple_of(2) {
                         return Err(lowering_diagnostic(
                             node.span,
                             "map literal does not contain key/value pairs",
@@ -7237,8 +7268,10 @@ fn lower_checked_collection_node(
                 key_ty,
                 &sought,
                 &temps.candidate,
-                temps.ordering.region.start(),
-                scratch.condition,
+                StructuralOrderOutput {
+                    ordering: temps.ordering.region.start(),
+                    condition: scratch.condition,
+                },
                 &mut temps.cursor,
                 outputs.code,
             )?;
@@ -7715,8 +7748,10 @@ fn emit_ordered_insert(context: OrderedInsertLowering<'_, '_, '_>) -> Result<(),
         key_ty,
         key,
         candidate,
-        ordering.region.start(),
-        scratch.condition,
+        StructuralOrderOutput {
+            ordering: ordering.region.start(),
+            condition: scratch.condition,
+        },
         temps,
         code,
     )?;

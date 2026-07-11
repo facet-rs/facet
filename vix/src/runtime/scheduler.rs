@@ -370,26 +370,26 @@ impl<S: EventSink> Runtime<S> {
                         recipe: lowered.recipe,
                         site,
                     };
-                    return Ok(self.complete_language_failure(
+                    return self.complete_language_failure(
                         task_id,
                         location,
                         lowered,
                         attribution,
                         failure,
-                    )?);
+                    );
                 }
                 Ok(DecodedResult::DuplicateKey { site }) => {
                     let failure = FailureValue::DuplicateKey {
                         recipe: lowered.recipe,
                         site,
                     };
-                    return Ok(self.complete_language_failure(
+                    return self.complete_language_failure(
                         task_id,
                         location,
                         lowered,
                         attribution,
                         failure,
-                    )?);
+                    );
                 }
                 Err(fault) => {
                     let fallback = result_shape_attribution(
@@ -1121,7 +1121,7 @@ fn duplicate_key() -> Stream<Check> {
             let site = FaultSite {
                 function: FnId(0),
                 pc,
-                op: artifact.program().fns[0].code[pc].clone(),
+                op: Box::new(artifact.program().fns[0].code[pc].clone()),
                 call: None,
             };
             let fault = TaskFault::PoisonedResult {

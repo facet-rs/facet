@@ -100,7 +100,7 @@ impl StoreHandle {
 pub struct FaultSite {
     pub function: FnId,
     pub pc: usize,
-    pub op: Op,
+    pub op: Box<Op>,
     pub call: Option<CallSiteFacts>,
 }
 
@@ -828,7 +828,7 @@ pub(crate) fn fault_site(
     Ok(FaultSite {
         function,
         pc,
-        op,
+        op: Box::new(op),
         call,
     })
 }
@@ -1803,7 +1803,7 @@ mod tests {
         };
         assert_eq!(site.function, FnId(0));
         assert_eq!(site.pc, 0);
-        assert!(matches!(site.op, Op::ArrayStatusIs { .. }));
+        assert!(matches!(site.op.as_ref(), Op::ArrayStatusIs { .. }));
         assert_eq!(trace, vec![TaskEvent::FrameEntered(FnId(0))]);
         assert!(matches!(*poison, TaskFault::PoisonedReDrive { .. }));
     }
@@ -2412,7 +2412,7 @@ mod tests {
             };
             assert_eq!(site.function, FnId(0));
             assert_eq!(site.pc, expected_pc);
-            assert_eq!(site.op, op);
+            assert_eq!(site.op.as_ref(), &op);
             assert_eq!(interpreter.1, vec![TaskEvent::FrameEntered(FnId(0))]);
             assert!(matches!(interpreter.2, TaskFault::PoisonedReDrive { .. }));
         }

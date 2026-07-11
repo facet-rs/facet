@@ -985,6 +985,14 @@ struct OrderedPayload {
     part: OrderedPart,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OrderedPayloadRegion {
+    offset: u32,
+    width: u32,
+    payload: OrderedPayload,
+    role: AccessRole,
+}
+
 impl OrderedPart {
     fn width_defect(self, schema: SchemaRef, expected: usize, actual: u32) -> ProgramDefect {
         match self {
@@ -2789,13 +2797,15 @@ impl Verifier<'_> {
                     function_id,
                     pc,
                     frame,
-                    *key,
-                    *key_width,
-                    OrderedPayload {
-                        schema: key_schema,
-                        part: OrderedPart::Key,
+                    OrderedPayloadRegion {
+                        offset: *key,
+                        width: *key_width,
+                        payload: OrderedPayload {
+                            schema: key_schema,
+                            part: OrderedPart::Key,
+                        },
+                        role: AccessRole::OrderedKeyDestination,
                     },
-                    AccessRole::OrderedKeyDestination,
                 )?;
                 self.require_handle_write(
                     function_id,
@@ -2850,13 +2860,15 @@ impl Verifier<'_> {
                     function_id,
                     pc,
                     frame,
-                    *value,
-                    *value_width,
-                    OrderedPayload {
-                        schema: value_schema,
-                        part: OrderedPart::Value,
+                    OrderedPayloadRegion {
+                        offset: *value,
+                        width: *value_width,
+                        payload: OrderedPayload {
+                            schema: value_schema,
+                            part: OrderedPart::Value,
+                        },
+                        role: AccessRole::OrderedValueDestination,
                     },
-                    AccessRole::OrderedValueDestination,
                 )?;
                 self.require_status_write(
                     function_id,
@@ -2895,13 +2907,15 @@ impl Verifier<'_> {
                     function_id,
                     pc,
                     frame,
-                    *key,
-                    *key_width,
-                    OrderedPayload {
-                        schema: key_schema,
-                        part: OrderedPart::Key,
+                    OrderedPayloadRegion {
+                        offset: *key,
+                        width: *key_width,
+                        payload: OrderedPayload {
+                            schema: key_schema,
+                            part: OrderedPart::Key,
+                        },
+                        role: AccessRole::OrderedKeyDestination,
                     },
-                    AccessRole::OrderedKeyDestination,
                 )?;
                 self.require_status_write(
                     function_id,
@@ -2982,13 +2996,15 @@ impl Verifier<'_> {
                     function_id,
                     pc,
                     frame,
-                    *key,
-                    *key_width,
-                    OrderedPayload {
-                        schema: contract.key,
-                        part: OrderedPart::Key,
+                    OrderedPayloadRegion {
+                        offset: *key,
+                        width: *key_width,
+                        payload: OrderedPayload {
+                            schema: contract.key,
+                            part: OrderedPart::Key,
+                        },
+                        role: AccessRole::OrderedKeySource,
                     },
-                    AccessRole::OrderedKeySource,
                 )?;
                 match (contract.kind, contract.value, value) {
                     (OrderedCollectionKind::Map, Some(value_schema), Some(value)) => {
@@ -2996,13 +3012,15 @@ impl Verifier<'_> {
                             function_id,
                             pc,
                             frame,
-                            *value,
-                            *value_width,
-                            OrderedPayload {
-                                schema: value_schema,
-                                part: OrderedPart::Value,
+                            OrderedPayloadRegion {
+                                offset: *value,
+                                width: *value_width,
+                                payload: OrderedPayload {
+                                    schema: value_schema,
+                                    part: OrderedPart::Value,
+                                },
+                                role: AccessRole::OrderedValueSource,
                             },
-                            AccessRole::OrderedValueSource,
                         )?;
                     }
                     (OrderedCollectionKind::Set, None, None) if *value_width == 0 => {
@@ -3066,13 +3084,15 @@ impl Verifier<'_> {
                     function_id,
                     pc,
                     frame,
-                    *row,
-                    *row_width,
-                    OrderedPayload {
-                        schema: contract.row,
-                        part: OrderedPart::Row,
+                    OrderedPayloadRegion {
+                        offset: *row,
+                        width: *row_width,
+                        payload: OrderedPayload {
+                            schema: contract.row,
+                            part: OrderedPart::Row,
+                        },
+                        role: AccessRole::OrderedRowDestination,
                     },
-                    AccessRole::OrderedRowDestination,
                 )?;
                 self.require_status_write(
                     function_id,
@@ -3902,11 +3922,14 @@ impl Verifier<'_> {
         function: FnId,
         pc: usize,
         frame: &ValidatedFrame,
-        offset: u32,
-        width: u32,
-        payload: OrderedPayload,
-        role: AccessRole,
+        region: OrderedPayloadRegion,
     ) -> Result<(), ProgramError> {
+        let OrderedPayloadRegion {
+            offset,
+            width,
+            payload,
+            role,
+        } = region;
         let OrderedPayload { schema, part } = payload;
         let expected = &self.contract.schemas[schema.0 as usize];
         let expected_len = expected.inline.checked_byte_len().ok_or_else(|| {

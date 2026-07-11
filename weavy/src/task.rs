@@ -301,6 +301,13 @@ pub(crate) struct OrderedNode {
     len: usize,
 }
 
+struct OrderedNodeParts {
+    key: Vec<u8>,
+    value: Option<Vec<u8>>,
+    left: Option<usize>,
+    right: Option<usize>,
+}
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OrderedCursorOperation {
     Probe,
@@ -541,15 +548,17 @@ impl MoltenArena {
             .map_or(0, |node| node.len)
     }
 
-    fn ordered_node_parts(
-        &self,
-        index: usize,
-    ) -> Result<(Vec<u8>, Option<Vec<u8>>, Option<usize>, Option<usize>), OrderedCursorError> {
+    fn ordered_node_parts(&self, index: usize) -> Result<OrderedNodeParts, OrderedCursorError> {
         let node = self
             .ordered_nodes
             .get(index)
             .ok_or(OrderedCursorError::Invalid)?;
-        Ok((node.key.clone(), node.value.clone(), node.left, node.right))
+        Ok(OrderedNodeParts {
+            key: node.key.clone(),
+            value: node.value.clone(),
+            left: node.left,
+            right: node.right,
+        })
     }
 
     fn alloc_balanced_ordered_node(
@@ -563,12 +572,20 @@ impl MoltenArena {
         let skew = i16::from(self.ordered_height(left)) - i16::from(self.ordered_height(right));
         if skew > 1 {
             let left_index = left.ok_or(OrderedCursorError::Invalid)?;
-            let (left_key, left_value, left_left, left_right) =
-                self.ordered_node_parts(left_index)?;
+            let OrderedNodeParts {
+                key: left_key,
+                value: left_value,
+                left: left_left,
+                right: left_right,
+            } = self.ordered_node_parts(left_index)?;
             if self.ordered_height(left_right) > self.ordered_height(left_left) {
                 let pivot = left_right.ok_or(OrderedCursorError::Invalid)?;
-                let (pivot_key, pivot_value, pivot_left, pivot_right) =
-                    self.ordered_node_parts(pivot)?;
+                let OrderedNodeParts {
+                    key: pivot_key,
+                    value: pivot_value,
+                    left: pivot_left,
+                    right: pivot_right,
+                } = self.ordered_node_parts(pivot)?;
                 let new_left =
                     self.alloc_ordered_node(schema, left_key, left_value, left_left, pivot_left)?;
                 let new_right = self.alloc_ordered_node(schema, key, value, pivot_right, right)?;
@@ -591,12 +608,20 @@ impl MoltenArena {
         }
         if skew < -1 {
             let right_index = right.ok_or(OrderedCursorError::Invalid)?;
-            let (right_key, right_value, right_left, right_right) =
-                self.ordered_node_parts(right_index)?;
+            let OrderedNodeParts {
+                key: right_key,
+                value: right_value,
+                left: right_left,
+                right: right_right,
+            } = self.ordered_node_parts(right_index)?;
             if self.ordered_height(right_left) > self.ordered_height(right_right) {
                 let pivot = right_left.ok_or(OrderedCursorError::Invalid)?;
-                let (pivot_key, pivot_value, pivot_left, pivot_right) =
-                    self.ordered_node_parts(pivot)?;
+                let OrderedNodeParts {
+                    key: pivot_key,
+                    value: pivot_value,
+                    left: pivot_left,
+                    right: pivot_right,
+                } = self.ordered_node_parts(pivot)?;
                 let new_left = self.alloc_ordered_node(schema, key, value, left, pivot_left)?;
                 let new_right = self.alloc_ordered_node(
                     schema,
@@ -878,7 +903,7 @@ impl MoltenArena {
             return Err(OrderedOpStatus::DuplicateKey);
         }
         let mut rebuilt = if let Some(existing) = existing {
-            let (_, _, left, right) = self
+            let OrderedNodeParts { left, right, .. } = self
                 .ordered_node_parts(existing)
                 .map_err(ordered_consume_status)?;
             self.alloc_ordered_node(schema, key, value, left, right)
@@ -888,7 +913,12 @@ impl MoltenArena {
                 .map_err(|_| OrderedOpStatus::AllocationFailed)?
         };
         for step in path.into_iter().rev() {
-            let (parent_key, parent_value, mut left, mut right) = self
+            let OrderedNodeParts {
+                key: parent_key,
+                value: parent_value,
+                mut left,
+                mut right,
+            } = self
                 .ordered_node_parts(step.node)
                 .map_err(ordered_consume_status)?;
             match step.direction {
@@ -925,7 +955,9 @@ impl MoltenArena {
             }
             _ => unreachable!(),
         };
-        let (key, value, _, right) = self
+        let OrderedNodeParts {
+            key, value, right, ..
+        } = self
             .ordered_node_parts(next)
             .map_err(ordered_consume_status)?;
         let mut right_spine = Vec::new();

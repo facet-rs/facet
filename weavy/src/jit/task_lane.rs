@@ -1646,7 +1646,7 @@ impl JitTask {
                     let site = fault_site(verified, frame.fn_id, pc)?;
                     let actual = resume_scratch as i64;
                     let function = &verified.contract().functions[frame.fn_id.0 as usize];
-                    let (value, expected) = match &site.op {
+                    let (value, expected) = match site.op.as_ref() {
                         Op::EnumIsVariant { value, .. } => (*value, None),
                         Op::EnumProjectChecked { value, variant, .. } => {
                             (*value, Some(i64::from(*variant)))
