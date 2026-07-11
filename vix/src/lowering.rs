@@ -31,8 +31,8 @@ use crate::runtime::{
 use crate::support::Span;
 use crate::vir::{
     ArrayMapExecutionShape, ArrayMapPartition, EnumType, EnumVariant, Function, FunctionId, Island,
-    Node, NodeId, NodeRef, ORDERING_EQUAL_VARIANT, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT,
-    Op, Type, VariantPayload,
+    Node, NodeId, NodeRef, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, ORDERING_EQUAL_VARIANT,
+    ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, Type, VariantPayload,
 };
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -2504,6 +2504,7 @@ impl FunctionLayout {
                     | Op::ArrayAppend
                     | Op::ArrayConcat
                     | Op::ArrayFold
+                    | Op::ArraySplitLast
                     | Op::Map
                     | Op::MapAdd
                     | Op::MapConcat
@@ -2526,6 +2527,8 @@ impl FunctionLayout {
                 vec![Type::Int, Type::Int]
             } else if matches!(node.op, Op::ArrayFold) {
                 array_fold_temporary_types(node, nodes)?
+            } else if matches!(node.op, Op::ArraySplitLast) {
+                array_split_last_temporary_types(node, nodes)?
             } else if let Some(types) = collection_temporary_types(node, nodes)? {
                 types
             } else if let Type::Array(element) = &node.ty {
@@ -2863,6 +2866,34 @@ fn array_fold_temporary_types(node: &Node, nodes: &[Node]) -> Result<Vec<Type>, 
         element.as_ref().clone(),
         Type::Tuple(vec![node.ty.clone(), element.as_ref().clone()]),
         node.ty.clone(),
+    ])
+}
+
+fn array_split_last_temporary_types(node: &Node, nodes: &[Node]) -> Result<Vec<Type>, Diagnostics> {
+    require_input_count(node, 1)?;
+    let source = nodes
+        .iter()
+        .find(|candidate| candidate.id == node.inputs[0])
+        .ok_or_else(|| lowering_diagnostic(node.span, "split_last source is unavailable"))?;
+    let Type::Array(element) = &source.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "split_last source is not an array",
+        ));
+    };
+    let rest = Type::array(element.as_ref().clone());
+    let payload = Type::Tuple(vec![element.as_ref().clone(), rest.clone()]);
+    if node.ty != Type::option(payload.clone()) {
+        return Err(lowering_diagnostic(
+            node.span,
+            "split_last result is not its optional partition type",
+        ));
+    }
+    Ok(vec![
+        element.as_ref().clone(),
+        element.as_ref().clone(),
+        rest,
+        payload,
     ])
 }
 
@@ -3284,6 +3315,9 @@ fn lower_node_sequence(
             }
             Op::ArrayFold => {
                 lower_checked_array_fold_node(node, dst, dst_region_id, values, sequence, outputs)?
+            }
+            Op::ArraySplitLast => {
+                lower_checked_array_split_last_node(node, dst_region_id, values, sequence, outputs)?
             }
             Op::Map
             | Op::MapAdd
@@ -5481,6 +5515,194 @@ fn lower_checked_array_fold_node(
     outputs.code.bind(done, node.span)?;
     temps.finish(node.span)?;
     Ok(accumulator.representation)
+}
+
+fn lower_checked_array_split_last_node(
+    node: &Node,
+    dst_region_id: WeavyRegionId,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_input_count(node, 1)?;
+    let source = input_value(node, values, 0)?;
+    let Type::Array(element) = &source.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "split_last source is not an array",
+        ));
+    };
+    require_value(
+        node,
+        &source,
+        &source.ty,
+        ValueRepresentation::RealizedHandle,
+    )?;
+    let rest_ty = Type::array(element.as_ref().clone());
+    let payload_ty = Type::Tuple(vec![element.as_ref().clone(), rest_ty.clone()]);
+    require_node_type(node, Type::option(payload_ty.clone()))?;
+
+    let scratch =
+        sequence.function.layout.outcome_scratch.ok_or_else(|| {
+            lowering_diagnostic(node.span, "split_last has no typed outcome scratch")
+        })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence
+        .array_return
+        .ok_or_else(|| lowering_diagnostic(node.span, "split_last has no typed outcome return"))?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(node.span, "split_last has no stable trace site"))?;
+    let element_schema = sequence.lowering.schemas.schema_for(element, node.span)?;
+    let element_width = element_byte_width(element, node.span)?;
+    let mut temps = TemporaryCursor::new(
+        sequence.function.layout,
+        sequence.lowering.regions,
+        sequence.function.id,
+        node,
+    )?;
+    let last = temps.take(element, node.span)?;
+    let copy = temps.take(element, node.span)?;
+    let rest = temps.take(&rest_ty, node.span)?;
+    let payload = temps.take(&payload_ty, node.span)?;
+
+    outputs.code.push(WeavyOp::LoadArrayLen {
+        dst: scratch.fields[2].byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 0,
+    });
+    outputs.code.push(WeavyOp::EqI64 {
+        dst: scratch.condition.byte_offset(),
+        a: scratch.fields[2].byte_offset(),
+        b: scratch.fields[0].byte_offset(),
+    });
+    let nonempty = outputs.code.label();
+    let done = outputs.code.label();
+    outputs.code.jump_if_zero(scratch.condition, nonempty);
+    outputs.code.push(WeavyOp::EnumConstruct {
+        dst: dst_region_id,
+        variant: OPTION_NONE_VARIANT,
+        fields: Vec::new(),
+    });
+    outputs.code.jump(done);
+
+    outputs.code.bind(nonempty, node.span)?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 1,
+    });
+    outputs.code.push(WeavyOp::SubI64 {
+        dst: scratch.fields[1].byte_offset(),
+        a: scratch.fields[2].byte_offset(),
+        b: scratch.fields[0].byte_offset(),
+    });
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: last.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        index: scratch.fields[1].byte_offset(),
+        elem_width: element_width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ArrayNew {
+        dst: rest.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        count_slot: scratch.fields[1].byte_offset(),
+        elem_width: element_width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 0,
+    });
+    emit_array_copy_loop(ArrayCopyLoopContext {
+        node,
+        site,
+        source: &source,
+        destination: rest.region,
+        source_index: scratch.fields[0],
+        source_index_region: assigned.fields[0],
+        destination_index: scratch.fields[0],
+        length: scratch.fields[1],
+        length_region: assigned.fields[1],
+        temp: &copy,
+        elem_width: element_width,
+        elem_schema_ref: element_schema,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code: outputs.code,
+    })?;
+    outputs.code.push(WeavyOp::ProductConstruct {
+        dst: payload.region_id,
+        fields: vec![
+            StructuralFieldSource {
+                field: 0,
+                source: last.region_id,
+            },
+            StructuralFieldSource {
+                field: 1,
+                source: rest.region_id,
+            },
+        ],
+    });
+    outputs.code.push(WeavyOp::EnumConstruct {
+        dst: dst_region_id,
+        variant: OPTION_SOME_VARIANT,
+        fields: vec![StructuralFieldSource {
+            field: 0,
+            source: payload.region_id,
+        }],
+    });
+    outputs.code.bind(done, node.span)?;
+    temps.finish(node.span)?;
+    Ok(ValueRepresentation::InlineComposite)
 }
 
 fn lower_checked_array_node(
