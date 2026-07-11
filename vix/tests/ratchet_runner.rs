@@ -5,8 +5,8 @@ use vix::ratchet::run_source;
 use vix::runtime::{DemandState, EventKind, MemoVerdict, SchemaId, TaskState};
 use vix::surface::{SurfaceParser, ast};
 use vix::vir::{
-    ArrayMapGrainKey, EffectKind, FunctionId, NodeRef, Op as VirOp, Type as VirType,
-    VariantPayload,
+    ArrayMapExecutionShape, ArrayMapGrainKey, EffectKind, FunctionId, NodeRef, Op as VirOp,
+    Type as VirType, VariantPayload,
 };
 use weavy::task::Op as WeavyOp;
 use weavy::{PayloadKind, RegionShape, ValueShapeKind, WordKind};
@@ -2517,6 +2517,23 @@ fn typed_map() -> Stream<Check> {
         })
     );
 
+    let partitioned = module.partition_test(&module.tests[0]);
+    assert_eq!(partitioned.islands[0].array_map_partitions.len(), 1);
+    assert_eq!(
+        partitioned.islands[0].array_map_partitions[0].shape,
+        ArrayMapExecutionShape::FusedProjection,
+    );
+    assert!(partitioned.render().contains("FusedProjection"));
+    let recipe = partitioned.islands[0].canonical_recipe_bytes();
+    let mut alternative_partition = partitioned.islands[0].clone();
+    alternative_partition.array_map_partitions[0].shape =
+        ArrayMapExecutionShape::MaterializedLoop;
+    assert_eq!(
+        alternative_partition.canonical_recipe_bytes(),
+        recipe,
+        "partition shape is not semantic recipe identity",
+    );
+
     let shifted = Compiler::new()
         .compile(&format!("\n\n{SOURCE}"))
         .expect("span-only edit compiles");
@@ -2525,6 +2542,210 @@ fn typed_map() -> Stream<Check> {
         shifted.partition_test(&shifted.tests[0]).islands[0].canonical_recipe_bytes(),
         "ArrayMap canonical encoding excludes source offsets",
     );
+}
+
+#[test]
+// r[verify lang.collection.array-map]
+// r[verify machine.island.partition]
+fn array_map_materializes_runtime_length_across_a_typed_call_boundary() {
+    const SOURCE: &str = r#"
+struct Pair { left: Int, right: Int }
+
+fn mapped_pairs(xs: [Int]) -> [Pair] {
+    xs.map(|n| Pair { left: n * n + 3, right: n * 2 - 1 })
+}
+
+#[test]
+fn general_array_map() -> Stream<Check> {
+    let base = 4;
+    let xs = [base - 3, base - 2, base - 1, base, base + 1];
+    let ys = mapped_pairs(xs);
+    let index = base - 2;
+    yield expect_eq(ys[index].left, 12);
+    yield expect_eq(ys[index].right, 5);
+    yield expect_eq(ys.len(), 5);
+}
+"#;
+    let module = Compiler::new()
+        .compile(SOURCE)
+        .expect("general array map compiles to VIR");
+    let helper = module
+        .functions
+        .iter()
+        .find(|function| function.name == "mapped_pairs")
+        .expect("mapping helper exists");
+    let map = helper
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::ArrayMap { .. }))
+        .expect("helper contains ArrayMap VIR");
+    let [_, closure_node] = map.inputs.as_slice() else {
+        panic!("ArrayMap has source and callable")
+    };
+    let VirOp::Closure(mapper) = helper.nodes[closure_node.0 as usize].op else {
+        panic!("helper map uses a generated callable")
+    };
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    let island = &partitioned.islands[0];
+    let decision = island
+        .array_map_partitions
+        .iter()
+        .find(|decision| {
+            decision.node
+                == (NodeRef {
+                    function: helper.id,
+                    node: map.id,
+                })
+        })
+        .expect("helper ArrayMap has a partition decision");
+    assert_eq!(decision.shape, ArrayMapExecutionShape::MaterializedLoop);
+    assert!(partitioned.render().contains("MaterializedLoop"));
+
+    let mut lowering_cache = LoweringCache::default();
+    let lowered = lowering_cache
+        .get_or_lower(island)
+        .expect("runtime-length ArrayMap verifies before execution");
+    assert_pc_maps_complete(lowered);
+    let attribution = attribution_for(island);
+    let helper_frame = frame_index(&attribution.functions, helper.id);
+    let mapper_frame = frame_index(&attribution.functions, mapper);
+    let helper_ops = &lowered.program().fns[helper_frame].code;
+    assert!(helper_ops.iter().any(|op| matches!(op, WeavyOp::LoadArrayLen { .. })));
+    assert!(helper_ops.iter().any(|op| matches!(op, WeavyOp::ArrayNew { .. })));
+    assert!(helper_ops.iter().any(|op| matches!(op, WeavyOp::LoadArray { .. })));
+    assert!(helper_ops.iter().any(|op| matches!(op, WeavyOp::CallIndirect { .. })));
+    assert!(helper_ops.iter().any(|op| matches!(op, WeavyOp::ArrayStore { .. })));
+    assert!(helper_ops.iter().enumerate().any(|(pc, op)| {
+        matches!(op, WeavyOp::Jump { target } if usize::try_from(*target).is_ok_and(|target| target < pc))
+    }));
+    let contract = lowered.contract();
+    let mapper_contract = &contract.functions[mapper_frame];
+    let callable = mapper_contract
+        .call_contract
+        .expect("mapper has an exact callable ABI");
+    assert_eq!(
+        contract.calls[callable.0 as usize].result.shape,
+        mapper_contract.frame.regions[mapper_contract.result.0 as usize].shape,
+        "CallIndirect returns the same hidden typed outcome as the mapper function",
+    );
+
+    let report = run_source(SOURCE).expect("general ArrayMap runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+        assert!(lane.events.iter().all(|event| match event.kind {
+            EventKind::StoreAlloc { identity, .. } => {
+                identity.schema == SchemaId::named("vix.Check.v1")
+            }
+            _ => true,
+        }));
+    }
+}
+
+#[test]
+fn array_bearing_islands_propagate_non_map_indirect_call_outcomes() {
+    const SOURCE: &str = r#"
+#[test]
+fn array_and_call_value() -> Stream<Check> {
+    let xs = [1, 2, 3];
+    let transform = |n: Int| n * 3 + 1;
+    let transformed = transform(xs.len());
+    yield expect_eq(transformed, 10);
+}
+"#;
+    let module = Compiler::new()
+        .compile(SOURCE)
+        .expect("array-bearing indirect call compiles");
+    let root = &module.functions[module.tests[0].function.0 as usize];
+    let call = root
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::CallValue))
+        .expect("source contains a non-map CallValue");
+    let VirOp::Closure(target) = root.nodes[call.inputs[0].0 as usize].op else {
+        panic!("CallValue callee is a generated closure")
+    };
+    let partitioned = module.partition_test(&module.tests[0]);
+    let island = &partitioned.islands[0];
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(island)
+        .expect("array-bearing CallValue verifies with hidden outcomes");
+    let attribution = attribution_for(island);
+    let target_frame = frame_index(&attribution.functions, target);
+    let target_contract = &lowered.contract().functions[target_frame];
+    let callable = target_contract
+        .call_contract
+        .expect("non-map closure has an exact callable ABI");
+    assert_eq!(
+        lowered.contract().calls[callable.0 as usize].result.shape,
+        target_contract.frame.regions[target_contract.result.0 as usize].shape,
+    );
+    let call_pcs = pcs_for_node(lowered, 0, NodeRef {
+        function: root.id,
+        node: call.id,
+    });
+    assert!(call_pcs.iter().any(|pc| matches!(
+        lowered.program().fns[0].code[*pc],
+        WeavyOp::CallIndirect { .. }
+    )));
+    assert!(call_pcs.iter().any(|pc| matches!(
+        lowered.program().fns[0].code[*pc],
+        WeavyOp::EnumProjectChecked { variant: 0, .. }
+    )));
+
+    let report = run_source(SOURCE).expect("array-bearing CallValue executes");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.counters.pure_host_calls, 0);
+    assert_eq!(report.chaos.counters.pure_host_calls, 0);
+}
+
+#[test]
+fn repeated_map_projection_materializes_once_inside_the_island() {
+    const SOURCE: &str = r#"
+#[test]
+fn repeated_projection() -> Stream<Check> {
+    let ys = [2, 3, 4].map(|n| n * n);
+    let index = 1;
+    yield expect_eq(ys[index] + ys[index], 18);
+}
+"#;
+    let module = Compiler::new()
+        .compile(SOURCE)
+        .expect("repeated projection source compiles");
+    let partitioned = module.partition_test(&module.tests[0]);
+    let island = &partitioned.islands[0];
+    assert_eq!(island.array_map_partitions.len(), 1);
+    assert_eq!(
+        island.array_map_partitions[0].shape,
+        ArrayMapExecutionShape::MaterializedLoop,
+    );
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(island)
+        .expect("shared mapped result verifies");
+    assert_eq!(
+        lowered.program().fns[0]
+            .code
+            .iter()
+            .filter(|op| matches!(op, WeavyOp::CallIndirect { .. }))
+            .count(),
+        1,
+        "one mapper call site lives in the materialization loop",
+    );
+    let report = run_source(SOURCE).expect("shared mapped result executes");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.counters.pure_host_calls, 0);
+    assert_eq!(report.chaos.counters.pure_host_calls, 0);
 }
 
 #[test]

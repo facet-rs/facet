@@ -567,6 +567,20 @@ pub struct Island {
     pub nodes: Vec<Node>,
     pub output: NodeId,
     pub callees: Vec<Function>,
+    pub array_map_partitions: Vec<ArrayMapPartition>,
+}
+
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ArrayMapExecutionShape {
+    FusedProjection,
+    MaterializedLoop,
+}
+
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ArrayMapPartition {
+    pub node: NodeRef,
+    pub shape: ArrayMapExecutionShape,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -683,6 +697,17 @@ impl Module {
                 let mut seen = BTreeSet::from([function.id]);
                 let mut callees = Vec::new();
                 collect_callees(self, &nodes, &mut seen, &mut callees);
+                let mut array_map_partitions =
+                    collect_array_map_partitions(function.id, &nodes, output);
+                for callee in &callees {
+                    if let Some(output) = callee.output {
+                        array_map_partitions.extend(collect_array_map_partitions(
+                            callee.id,
+                            &callee.nodes,
+                            output,
+                        ));
+                    }
+                }
                 Island {
                     id: IslandId(index as u32),
                     function: function.id,
@@ -690,6 +715,7 @@ impl Module {
                     nodes,
                     output,
                     callees,
+                    array_map_partitions,
                 }
             })
             .collect();
@@ -697,6 +723,65 @@ impl Module {
             name: test.name.clone(),
             islands,
         }
+    }
+}
+
+fn collect_array_map_partitions(
+    function: FunctionId,
+    nodes: &[Node],
+    output: NodeId,
+) -> Vec<ArrayMapPartition> {
+    nodes
+        .iter()
+        .filter(|node| matches!(node.op, Op::ArrayMap { .. }))
+        .map(|map| {
+            let consumers = nodes
+                .iter()
+                .filter(|candidate| candidate.inputs.contains(&map.id))
+                .collect::<Vec<_>>();
+            let value_consumers = consumers
+                .iter()
+                .filter(|consumer| matches!(consumer.op, Op::ArrayIndex))
+                .count();
+            let shape = if map.id != output
+                && !consumers.is_empty()
+                && value_consumers <= 1
+                && consumers
+                    .iter()
+                    .all(|consumer| matches!(consumer.op, Op::ArrayIndex | Op::ArrayLen))
+            {
+                ArrayMapExecutionShape::FusedProjection
+            } else {
+                ArrayMapExecutionShape::MaterializedLoop
+            };
+            ArrayMapPartition {
+                node: NodeRef {
+                    function,
+                    node: map.id,
+                },
+                shape,
+            }
+        })
+        .collect()
+}
+
+impl PartitionedTest {
+    /// Deterministic partition inspection. These choices are deliberately not
+    /// part of [`Island::canonical_recipe_bytes`].
+    #[must_use]
+    pub fn render(&self) -> String {
+        let mut out = format!("partition {}\n", self.name);
+        for island in &self.islands {
+            let _ = writeln!(out, "island {} {}", island.id.0, island.function_name);
+            for decision in &island.array_map_partitions {
+                let _ = writeln!(
+                    out,
+                    "  array-map f{} n{} {:?}",
+                    decision.node.function.0, decision.node.node.0, decision.shape
+                );
+            }
+        }
+        out
     }
 }
 

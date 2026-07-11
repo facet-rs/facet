@@ -28,7 +28,8 @@ use crate::runtime::{
 };
 use crate::support::Span;
 use crate::vir::{
-    EnumType, EnumVariant, Function, FunctionId, Island, Node, NodeId, NodeRef,
+    ArrayMapExecutionShape, ArrayMapPartition, EnumType, EnumVariant, Function, FunctionId,
+    Island, Node, NodeId, NodeRef,
     ORDERING_EQUAL_VARIANT, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, Type,
     VariantPayload,
 };
@@ -393,6 +394,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
         layouts: &layouts,
         regions: &regions,
         schemas: &schemas,
+        array_map_partitions: &island.array_map_partitions,
     };
 
     let mut pending_constants = BTreeMap::new();
@@ -669,6 +671,7 @@ struct ProgramContractBuilder<'a> {
     schemas_preassigned: &'a SchemaAssignments,
     function_order: Vec<FunctionContractSource<'a>>,
     closure_targets: BTreeSet<FunctionId>,
+    callable_outcomes: bool,
     calls: Vec<WeavyCallContract>,
     schemas: Vec<WeavySchemaContract>,
     schema_ready: Vec<bool>,
@@ -1091,6 +1094,7 @@ impl<'a> ProgramContractBuilder<'a> {
             schemas_preassigned,
             function_order,
             closure_targets,
+            callable_outcomes: layouts.values().any(|layout| layout.array_outcome.is_some()),
             calls: Vec::new(),
             schemas: vec![empty_schema(); schemas_preassigned.types.len()],
             schema_ready: vec![false; schemas_preassigned.types.len()],
@@ -1237,6 +1241,25 @@ impl<'a> ProgramContractBuilder<'a> {
                 environment.start().byte_offset(),
                 WeavyRegionShape::word(WeavyWordKind::Scalar),
             ));
+        }
+        for (&node, (input, output)) in &layout.array_map_temps {
+            let (input_id, output_id) =
+                self.regions
+                    .array_map_temps(function.id, node, function.span)?;
+            if input_id.0 as usize != regions.len() {
+                return Err(lowering_diagnostic(
+                    function.span,
+                    "array map input temporary contract order is not canonical",
+                ));
+            }
+            regions.push(self.frame_region(input.region.start(), &input.ty)?);
+            if output_id.0 as usize != regions.len() {
+                return Err(lowering_diagnostic(
+                    function.span,
+                    "array map output temporary contract order is not canonical",
+                ));
+            }
+            regions.push(self.frame_region(output.region.start(), &output.ty)?);
         }
         let local_constants = self
             .constant_closures
@@ -1644,8 +1667,12 @@ impl<'a> ProgramContractBuilder<'a> {
         if let Some(value_shape) = self.value_shape_for_type(parameter, span)? {
             entry = entry.with_value_shape(value_shape);
         }
-        let mut result_region = WeavyFrameRegion::new(0, self.shape_for_type(result, span)?);
-        if let Some(value_shape) = self.value_shape_for_type(result, span)? {
+        let result = self
+            .callable_outcomes
+            .then(|| ArrayOutcomeAbi::for_value(result.clone()).ty)
+            .unwrap_or_else(|| result.clone());
+        let mut result_region = WeavyFrameRegion::new(0, self.shape_for_type(&result, span)?);
+        if let Some(value_shape) = self.value_shape_for_type(&result, span)? {
             result_region = result_region.with_value_shape(value_shape);
         }
         Ok(self.intern_call(WeavyCallContract {
@@ -1734,6 +1761,28 @@ struct LoweringContext<'a> {
     layouts: &'a BTreeMap<FunctionId, FunctionLayout>,
     regions: &'a RegionAssignments,
     schemas: &'a SchemaAssignments,
+    array_map_partitions: &'a [ArrayMapPartition],
+}
+
+impl LoweringContext<'_> {
+    fn array_map_shape(
+        &self,
+        function: FunctionId,
+        node: NodeId,
+        span: Span,
+    ) -> Result<ArrayMapExecutionShape, Diagnostics> {
+        self.array_map_partitions
+            .iter()
+            .find(|partition| {
+                partition.node
+                    == NodeRef {
+                        function,
+                        node,
+                    }
+            })
+            .map(|partition| partition.shape)
+            .ok_or_else(|| lowering_diagnostic(span, "array map has no partition decision"))
+    }
 }
 
 /// The contract and the instruction stream share this canonical region order.
@@ -1744,6 +1793,7 @@ struct RegionAssignments {
     control: BTreeMap<FunctionId, AssignedControlRegions>,
     temps: BTreeMap<FunctionId, BTreeMap<NodeId, Vec<WeavyRegionId>>>,
     closures: BTreeMap<FunctionId, BTreeMap<NodeId, (WeavyRegionId, WeavyRegionId)>>,
+    array_map_temps: BTreeMap<FunctionId, BTreeMap<NodeId, (WeavyRegionId, WeavyRegionId)>>,
     outcomes: BTreeMap<FunctionId, WeavyRegionId>,
     outcome_scratch: BTreeMap<FunctionId, AssignedOutcomeScratch>,
     call_outcomes: BTreeMap<FunctionId, BTreeMap<NodeId, WeavyRegionId>>,
@@ -1771,6 +1821,7 @@ impl RegionAssignments {
         let mut control = BTreeMap::new();
         let mut temps = BTreeMap::new();
         let mut closures = BTreeMap::new();
+        let mut array_map_temps = BTreeMap::new();
         let mut outcomes = BTreeMap::new();
         let mut outcome_scratch = BTreeMap::new();
         let mut call_outcomes = BTreeMap::new();
@@ -1842,6 +1893,22 @@ impl RegionAssignments {
                 })?;
                 assigned_closures.insert(node, (callee, environment));
             }
+            let mut assigned_array_map_temps = BTreeMap::new();
+            for &node in layout.array_map_temps.keys() {
+                let input = WeavyRegionId(u32::try_from(next).map_err(|_| {
+                    lowering_diagnostic(span, "array map temporary assignment exceeds u32")
+                })?);
+                next = next.checked_add(1).ok_or_else(|| {
+                    lowering_diagnostic(span, "array map temporary assignment overflow")
+                })?;
+                let output = WeavyRegionId(u32::try_from(next).map_err(|_| {
+                    lowering_diagnostic(span, "array map temporary assignment exceeds u32")
+                })?);
+                next = next.checked_add(1).ok_or_else(|| {
+                    lowering_diagnostic(span, "array map temporary assignment overflow")
+                })?;
+                assigned_array_map_temps.insert(node, (input, output));
+            }
             let constants = constant_closures.get(&function).ok_or_else(|| {
                 lowering_diagnostic(span, "missing constants for region assignment")
             })?;
@@ -1896,6 +1963,7 @@ impl RegionAssignments {
             nodes.insert(function, assigned);
             temps.insert(function, assigned_temps);
             closures.insert(function, assigned_closures);
+            array_map_temps.insert(function, assigned_array_map_temps);
             Ok(())
         };
         insert(island.function, &island.nodes, Span { start: 0, end: 0 })?;
@@ -1907,6 +1975,7 @@ impl RegionAssignments {
             control,
             temps,
             closures,
+            array_map_temps,
             outcomes,
             outcome_scratch,
             call_outcomes,
@@ -1965,6 +2034,19 @@ impl RegionAssignments {
             .ok_or_else(|| lowering_diagnostic(span, "closure node has no assigned typed regions"))
     }
 
+    fn array_map_temps(
+        &self,
+        function: FunctionId,
+        node: NodeId,
+        span: Span,
+    ) -> Result<(WeavyRegionId, WeavyRegionId), Diagnostics> {
+        self.array_map_temps
+            .get(&function)
+            .and_then(|nodes| nodes.get(&node))
+            .copied()
+            .ok_or_else(|| lowering_diagnostic(span, "array map node has no typed temporaries"))
+    }
+
     fn array_outcome(
         &self,
         function: FunctionId,
@@ -2006,6 +2088,7 @@ struct FunctionLayout {
     regions: BTreeMap<NodeId, FrameRegion>,
     typed_temps: BTreeMap<NodeId, Vec<TemporaryRegion>>,
     closure_temps: BTreeMap<NodeId, (FrameRegion, FrameRegion)>,
+    array_map_temps: BTreeMap<NodeId, (TemporaryRegion, TemporaryRegion)>,
     constant_slots: BTreeMap<NodeRef, FrameSlot>,
     scratch: Option<FrameSlot>,
     control_scratch: Option<ControlScratch>,
@@ -2182,6 +2265,56 @@ impl FunctionLayout {
                 .ok_or_else(|| lowering_diagnostic(node.span, "function frame size overflow"))?;
             closure_temps.insert(node.id, (callee, environment));
         }
+        let mut array_map_temps = BTreeMap::new();
+        for node in nodes
+            .iter()
+            .filter(|node| matches!(node.op, Op::ArrayMap { .. }))
+        {
+            let source = node
+                .inputs
+                .first()
+                .and_then(|input| nodes.iter().find(|candidate| candidate.id == *input))
+                .ok_or_else(|| lowering_diagnostic(node.span, "array map source is missing"))?;
+            let Type::Array(input_ty) = &source.ty else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "array map source does not have array type",
+                ));
+            };
+            let Type::Array(output_ty) = &node.ty else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "array map result does not have array type",
+                ));
+            };
+            let input_words = type_words(input_ty, node.span)?;
+            let input_region = FrameRegion::for_words(next_word, input_words).ok_or_else(|| {
+                lowering_diagnostic(node.span, "array map input temporary overflow")
+            })?;
+            next_word = next_word.checked_add(input_words.as_usize()).ok_or_else(|| {
+                lowering_diagnostic(node.span, "function frame size overflow")
+            })?;
+            let output_words = type_words(output_ty, node.span)?;
+            let output_region = FrameRegion::for_words(next_word, output_words).ok_or_else(|| {
+                lowering_diagnostic(node.span, "array map output temporary overflow")
+            })?;
+            next_word = next_word.checked_add(output_words.as_usize()).ok_or_else(|| {
+                lowering_diagnostic(node.span, "function frame size overflow")
+            })?;
+            array_map_temps.insert(
+                node.id,
+                (
+                    TemporaryRegion {
+                        region: input_region,
+                        ty: input_ty.as_ref().clone(),
+                    },
+                    TemporaryRegion {
+                        region: output_region,
+                        ty: output_ty.as_ref().clone(),
+                    },
+                ),
+            );
+        }
         for &constant in constants {
             let slot = if constant.function == function {
                 let node = nodes
@@ -2248,8 +2381,26 @@ impl FunctionLayout {
         };
         let mut call_outcomes = BTreeMap::new();
         if array_outcome.is_some() {
-            for node in nodes.iter().filter(|node| matches!(node.op, Op::Call(_))) {
-                let ty = ArrayOutcomeAbi::for_value(node.ty.clone()).ty;
+            for node in nodes
+                .iter()
+                .filter(|node| {
+                    matches!(
+                        node.op,
+                        Op::Call(_) | Op::CallValue | Op::ArrayMap { .. }
+                    )
+                })
+            {
+                let value_ty = match &node.op {
+                    Op::ArrayMap { .. } => node
+                        .ty
+                        .array_element()
+                        .ok_or_else(|| {
+                            lowering_diagnostic(node.span, "array map result is not an array")
+                        })?
+                        .clone(),
+                    _ => node.ty.clone(),
+                };
+                let ty = ArrayOutcomeAbi::for_value(value_ty).ty;
                 let words = type_words(&ty, node.span)?;
                 let region = FrameRegion::for_words(next_word, words).ok_or_else(|| {
                     lowering_diagnostic(node.span, "array call outcome frame region overflow")
@@ -2264,6 +2415,7 @@ impl FunctionLayout {
             regions,
             typed_temps,
             closure_temps,
+            array_map_temps,
             constant_slots,
             scratch,
             control_scratch,
@@ -2304,6 +2456,16 @@ impl FunctionLayout {
             .get(&node)
             .copied()
             .ok_or_else(|| lowering_diagnostic(span, "closure node has no typed temporary regions"))
+    }
+
+    fn array_map_temps(
+        &self,
+        node: NodeId,
+        span: Span,
+    ) -> Result<&(TemporaryRegion, TemporaryRegion), Diagnostics> {
+        self.array_map_temps
+            .get(&node)
+            .ok_or_else(|| lowering_diagnostic(span, "array map node has no temporary layout"))
     }
 }
 
@@ -2694,7 +2856,20 @@ fn lower_node_sequence(
             Op::Call(callee) if sequence.function.layout.array_outcome.is_some() => {
                 lower_array_call_node(node, dst_region_id, values, *callee, sequence, outputs)?
             }
-            Op::Array | Op::ArrayIndex | Op::ArrayLen | Op::ArrayAppend | Op::ArrayConcat => {
+            Op::CallValue if sequence.function.layout.array_outcome.is_some() => {
+                lower_checked_call_value_node(
+                    node,
+                    dst,
+                    dst_region_id,
+                    values,
+                    sequence,
+                    outputs,
+                )?
+            }
+            Op::Array | Op::ArrayIndex | Op::ArrayLen | Op::ArrayMap { .. } => {
+                lower_partitioned_array_node(node, dst, dst_region_id, values, sequence, outputs)?
+            }
+            Op::ArrayAppend | Op::ArrayConcat => {
                 lower_checked_array_node(node, dst, values, sequence, outputs)?
             }
             Op::Map
@@ -4079,6 +4254,537 @@ fn lower_array_call_node(
     });
     outputs.code.bind(done, node.span)?;
     representation_for_type(&node.ty, node.span)
+}
+
+fn lower_partitioned_array_node(
+    node: &Node,
+    dst: FrameRegion,
+    dst_region_id: WeavyRegionId,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    match node.op {
+        Op::ArrayMap { .. } => match sequence.lowering.array_map_shape(
+            sequence.function.id,
+            node.id,
+            node.span,
+        )? {
+            ArrayMapExecutionShape::FusedProjection => {
+                validate_array_map(node, values)?;
+                Ok(ValueRepresentation::RealizedHandle)
+            }
+            ArrayMapExecutionShape::MaterializedLoop => {
+                lower_materialized_array_map(node, dst, values, sequence, outputs)
+            }
+        },
+        Op::ArrayIndex | Op::ArrayLen => {
+            let map = node
+                .inputs
+                .first()
+                .and_then(|input| sequence.nodes.get(input).copied())
+                .filter(|input| matches!(input.op, Op::ArrayMap { .. }));
+            if let Some(map) = map
+                && sequence.lowering.array_map_shape(
+                    sequence.function.id,
+                    map.id,
+                    map.span,
+                )? == ArrayMapExecutionShape::FusedProjection
+            {
+                return lower_fused_array_map_projection(
+                    node,
+                    map,
+                    dst,
+                    dst_region_id,
+                    values,
+                    sequence,
+                    outputs,
+                );
+            }
+            lower_checked_array_node(node, dst, values, sequence, outputs)
+        }
+        Op::Array => lower_checked_array_node(node, dst, values, sequence, outputs),
+        _ => unreachable!("partitioned array lowering receives only array operations"),
+    }
+}
+
+fn validate_array_map(
+    map: &Node,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+) -> Result<(), Diagnostics> {
+    require_input_count(map, 2)?;
+    let source = input_value(map, values, 0)?;
+    let mapper = input_value(map, values, 1)?;
+    let Type::Array(input) = &source.ty else {
+        return Err(lowering_diagnostic(map.span, "array map source is not an array"));
+    };
+    let Type::Array(output) = &map.ty else {
+        return Err(lowering_diagnostic(map.span, "array map result is not an array"));
+    };
+    let Type::Function { parameter, result } = &mapper.ty else {
+        return Err(lowering_diagnostic(map.span, "array map mapper is not callable"));
+    };
+    if parameter.as_ref() != input.as_ref() || result.as_ref() != output.as_ref() {
+        return Err(lowering_diagnostic(
+            map.span,
+            "array map callable signature does not match its array types",
+        ));
+    }
+    require_value(
+        map,
+        &source,
+        &source.ty,
+        ValueRepresentation::RealizedHandle,
+    )?;
+    require_value(
+        map,
+        &mapper,
+        &mapper.ty,
+        ValueRepresentation::InlineComposite,
+    )
+}
+
+fn array_map_temporary_slots(
+    map: &Node,
+    sequence: &SequenceContext<'_, '_, '_>,
+) -> Result<(LoweredSlot, LoweredSlot), Diagnostics> {
+    let (input, output) = sequence
+        .function
+        .layout
+        .array_map_temps(map.id, map.span)?;
+    let (input_id, output_id) = sequence.lowering.regions.array_map_temps(
+        sequence.function.id,
+        map.id,
+        map.span,
+    )?;
+    Ok((
+        LoweredSlot {
+            region: input.region,
+            region_id: input_id,
+            ty: input.ty.clone(),
+            representation: representation_for_type(&input.ty, map.span)?,
+        },
+        LoweredSlot {
+            region: output.region,
+            region_id: output_id,
+            ty: output.ty.clone(),
+            representation: representation_for_type(&output.ty, map.span)?,
+        },
+    ))
+}
+
+fn emit_checked_call_indirect(
+    node: &Node,
+    mapper: &LoweredSlot,
+    input: &LoweredSlot,
+    output: &LoweredSlot,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<(), Diagnostics> {
+    let Type::Function { parameter, result } = &mapper.ty else {
+        return Err(lowering_diagnostic(node.span, "indirect callee is not callable"));
+    };
+    require_value(
+        node,
+        input,
+        parameter,
+        representation_for_type(parameter, node.span)?,
+    )?;
+    require_value(
+        node,
+        output,
+        result,
+        representation_for_type(result, node.span)?,
+    )?;
+    let call_outcome = sequence
+        .function
+        .layout
+        .call_outcomes
+        .get(&node.id)
+        .ok_or_else(|| lowering_diagnostic(node.span, "indirect call has no outcome layout"))?;
+    let call_outcome_id = sequence.lowering.regions.call_outcome(
+        sequence.function.id,
+        node.id,
+        node.span,
+    )?;
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(node.span, "indirect call has no checked outcome scratch")
+    })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let own_outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(node.span, "indirect call has no checked outcome return")
+    })?;
+    outputs.code.push(WeavyOp::CallIndirect {
+        callee: mapper.region.start().byte_offset(),
+        args: vec![ArgCopy {
+            src: input.region.start().byte_offset(),
+            dst: 0,
+            size: input
+                .region
+                .byte_size()
+                .ok_or_else(|| lowering_diagnostic(node.span, "indirect argument size overflow"))?,
+        }],
+        ret: call_outcome.region.start().byte_offset(),
+    });
+    let failures = outputs.code.label();
+    let done = outputs.code.label();
+    outputs.code.push(WeavyOp::EnumIsVariant {
+        dst: assigned.condition,
+        value: call_outcome_id,
+        variant: 0,
+    });
+    outputs.code.jump_if_zero(scratch.condition, failures);
+    outputs.code.push(WeavyOp::EnumProjectChecked {
+        dst: output.region_id,
+        value: call_outcome_id,
+        variant: 0,
+        field: 0,
+    });
+    outputs.code.jump(done);
+    outputs.code.bind(failures, node.span)?;
+    for (variant, field_count) in [(1u32, 3usize), (2u32, 2usize)] {
+        let next = outputs.code.label();
+        outputs.code.push(WeavyOp::EnumIsVariant {
+            dst: assigned.condition,
+            value: call_outcome_id,
+            variant,
+        });
+        outputs.code.jump_if_zero(scratch.condition, next);
+        for field in 0..field_count {
+            outputs.code.push(WeavyOp::EnumProjectChecked {
+                dst: assigned.fields[field],
+                value: call_outcome_id,
+                variant,
+                field: field as u32,
+            });
+        }
+        outputs.code.push(WeavyOp::EnumConstruct {
+            dst: own_outcome,
+            variant,
+            fields: (0..field_count)
+                .map(|field| StructuralFieldSource {
+                    field: field as u32,
+                    source: assigned.fields[field],
+                })
+                .collect(),
+        });
+        outputs.code.jump(return_label);
+        outputs.code.bind(next, node.span)?;
+    }
+    outputs.code.push(WeavyOp::EnumProjectChecked {
+        dst: assigned.fields[0],
+        value: call_outcome_id,
+        variant: 2,
+        field: 0,
+    });
+    outputs.code.bind(done, node.span)
+}
+
+fn lower_checked_call_value_node(
+    node: &Node,
+    dst: FrameRegion,
+    dst_region_id: WeavyRegionId,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_input_count(node, 2)?;
+    let callee = input_value(node, values, 0)?;
+    let argument = input_value(node, values, 1)?;
+    let output = LoweredSlot {
+        region: dst,
+        region_id: dst_region_id,
+        ty: node.ty.clone(),
+        representation: representation_for_type(&node.ty, node.span)?,
+    };
+    emit_checked_call_indirect(
+        node,
+        &callee,
+        &argument,
+        &output,
+        sequence,
+        outputs,
+    )?;
+    Ok(output.representation)
+}
+
+fn array_map_array_facts(
+    map: &Node,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+) -> Result<(LoweredSlot, LoweredSlot, Type, Type, i64, i64, u32, u32), Diagnostics> {
+    validate_array_map(map, values)?;
+    let source = input_value(map, values, 0)?;
+    let mapper = input_value(map, values, 1)?;
+    let Type::Array(input_ty) = &source.ty else {
+        unreachable!("validated array map source")
+    };
+    let Type::Array(output_ty) = &map.ty else {
+        unreachable!("validated array map result")
+    };
+    let input_ty = input_ty.as_ref().clone();
+    let output_ty = output_ty.as_ref().clone();
+    let input_schema = sequence.lowering.schemas.schema_for(&input_ty, map.span)?;
+    let output_schema = sequence.lowering.schemas.schema_for(&output_ty, map.span)?;
+    let word_bytes = usize::try_from(FrameSlot::word_size()).expect("word size fits usize");
+    let input_width = u32::try_from(type_words(&input_ty, map.span)?.as_usize() * word_bytes)
+        .map_err(|_| lowering_diagnostic(map.span, "array map input width overflow"))?;
+    let output_width = u32::try_from(type_words(&output_ty, map.span)?.as_usize() * word_bytes)
+        .map_err(|_| lowering_diagnostic(map.span, "array map output width overflow"))?;
+    Ok((
+        source,
+        mapper,
+        input_ty,
+        output_ty,
+        i64::from(input_schema.0),
+        i64::from(output_schema.0),
+        input_width,
+        output_width,
+    ))
+}
+
+fn lower_materialized_array_map(
+    map: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    // r[impl lang.collection.array-map]
+    let (source, mapper, _, _, input_schema, output_schema, input_width, output_width) =
+        array_map_array_facts(map, values, sequence)?;
+    let (input, output) = array_map_temporary_slots(map, sequence)?;
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(map.span, "array map has no checked outcome scratch")
+    })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, map.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, map.span)?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(map.span, "array map has no checked outcome return")
+    })?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: map.id,
+        })
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(map.span, "array map has no stable trace site"))?;
+
+    outputs.code.push(WeavyOp::LoadArrayLen {
+        dst: scratch.fields[2].byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        elem_schema_ref: input_schema,
+    });
+    emit_array_status_machine_checks(
+        map,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ArrayNew {
+        dst: dst.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        count_slot: scratch.fields[2].byte_offset(),
+        elem_width: output_width,
+        elem_schema_ref: output_schema,
+    });
+    emit_array_status_machine_checks(
+        map,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 0,
+    });
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[1].byte_offset(),
+        value: 1,
+    });
+    let loop_start = outputs.code.label();
+    let done = outputs.code.label();
+    outputs.code.bind(loop_start, map.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[2].byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, done);
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: input.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        index: scratch.fields[0].byte_offset(),
+        elem_width: input_width,
+        elem_schema_ref: input_schema,
+    });
+    emit_array_load_status_checks(ArrayLoadStatusContext {
+        node: map,
+        site,
+        index: assigned.fields[0],
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code: outputs.code,
+    })?;
+    emit_checked_call_indirect(map, &mapper, &input, &output, sequence, outputs)?;
+    outputs.code.push(WeavyOp::ArrayStore {
+        status: scratch.status.byte_offset(),
+        array: dst.start().byte_offset(),
+        index: scratch.fields[0].byte_offset(),
+        src: output.region.start().byte_offset(),
+        elem_width: output_width,
+        elem_schema_ref: output_schema,
+    });
+    emit_array_status_machine_checks(
+        map,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: scratch.fields[0].byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[1].byte_offset(),
+    });
+    outputs.code.jump(loop_start);
+    outputs.code.bind(done, map.span)?;
+    Ok(ValueRepresentation::RealizedHandle)
+}
+
+fn lower_fused_array_map_projection(
+    node: &Node,
+    map: &Node,
+    dst: FrameRegion,
+    dst_region_id: WeavyRegionId,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    let (source, mapper, _, output_ty, input_schema, _, input_width, _) =
+        array_map_array_facts(map, values, sequence)?;
+    let (input, output) = array_map_temporary_slots(map, sequence)?;
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(node.span, "fused array map has no checked outcome scratch")
+    })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(node.span, "fused array map has no checked outcome return")
+    })?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(node.span, "projection has no stable trace site"))?;
+    match node.op {
+        Op::ArrayLen => {
+            require_input_count(node, 1)?;
+            outputs.code.push(WeavyOp::LoadArrayLen {
+                dst: dst.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                array: source.region.start().byte_offset(),
+                elem_schema_ref: input_schema,
+            });
+            emit_array_status_machine_checks(
+                node,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            Ok(ValueRepresentation::Word)
+        }
+        Op::ArrayIndex => {
+            require_input_count(node, 2)?;
+            let index = input_value(node, values, 1)?;
+            require_value(node, &index, &Type::Int, ValueRepresentation::Word)?;
+            outputs.code.push(WeavyOp::LoadArrayLen {
+                dst: scratch.fields[2].byte_offset(),
+                status: scratch.status.byte_offset(),
+                array: source.region.start().byte_offset(),
+                elem_schema_ref: input_schema,
+            });
+            emit_array_status_machine_checks(
+                node,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            outputs.code.push(WeavyOp::LoadArray {
+                dst: input.region.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                array: source.region.start().byte_offset(),
+                index: index.region.start().byte_offset(),
+                elem_width: input_width,
+                elem_schema_ref: input_schema,
+            });
+            emit_array_load_status_checks(ArrayLoadStatusContext {
+                node,
+                site,
+                index: index.region_id,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                code: outputs.code,
+            })?;
+            emit_checked_call_indirect(map, &mapper, &input, &output, sequence, outputs)?;
+            if node.ty != output_ty {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "fused array map projection type does not match mapper result",
+                ));
+            }
+            outputs
+                .code
+                .extend(copy_lowered_value(node, &output, dst, dst_region_id)?);
+            representation_for_type(&output_ty, node.span)
+        }
+        _ => unreachable!("fused map projection is index or length"),
+    }
 }
 
 fn lower_checked_array_node(
@@ -5538,6 +6244,7 @@ fn schema_order() -> Stream<Check> {
             control: BTreeMap::new(),
             temps: BTreeMap::new(),
             closures: BTreeMap::new(),
+            array_map_temps: BTreeMap::new(),
             outcomes: BTreeMap::new(),
             outcome_scratch: BTreeMap::new(),
             call_outcomes: BTreeMap::new(),
@@ -5549,6 +6256,7 @@ fn schema_order() -> Stream<Check> {
             schemas_preassigned: &assignments,
             function_order: Vec::new(),
             closure_targets: BTreeSet::new(),
+            callable_outcomes: false,
             calls: Vec::new(),
             schemas: vec![empty_schema(); assignments.types.len()],
             schema_ready: vec![false; assignments.types.len()],
