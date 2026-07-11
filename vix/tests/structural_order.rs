@@ -6,46 +6,68 @@
 //! (`[1,2] < [1,2,3]`). Both recurse through nested products/enums/arrays and
 //! reuse the machine's structural comparison — no host comparator, no
 //! handle/hash order.
-//!
-//! This file starts as a RED CERTIFICATE: it pins the exact typed boundary at
-//! which enum and array ordering are currently rejected. When the comparison
-//! lowering lands, these assertions flip to exercising the real order.
 
-use vix::ratchet::{RunError, run_source};
+use vix::ratchet::run_source;
 
-fn rejection(source: &str) -> (vix::diagnostic::DiagnosticCode, String) {
-    match run_source(source) {
-        Err(RunError::Diagnostics(d)) => {
-            assert_eq!(d.entries.len(), 1, "one typed boundary, got {:?}", d.entries);
-            (d.entries[0].code, d.entries[0].message())
-        }
-        other => panic!("expected a typed rejection, got {other:?}"),
-    }
+fn all_pass(source: &str, expected_checks: usize) {
+    let report = run_source(source).expect("compiles and runs through the production path");
+    assert!(report.passed(), "checks pass: {:?}", report.plain.checks);
+    assert!(report.agrees(), "plain and chaos lanes agree");
+    assert_eq!(report.plain.checks.len(), expected_checks);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    assert_eq!(report.plain.counters.pure_host_calls, 0);
 }
 
-const ENUM_ORDER: &str = r#"
-enum E { A, B(Int) }
 #[test]
-fn t() -> Stream<Check> { yield expect(E::A < E::B(1)); }
-"#;
-
-const ARRAY_ORDER: &str = r#"
+fn enum_declaration_and_payload_order() {
+    all_pass(
+        r#"
+enum E { A, B(Int), C(Int) }
 #[test]
-fn t() -> Stream<Check> { yield expect([1, 2] < [1, 3]); }
-"#;
-
-#[test]
-fn enum_order_is_currently_a_typed_red_boundary() {
-    let (code, message) = rejection(ENUM_ORDER);
-    assert_eq!(code, vix::diagnostic::DiagnosticCode::LoweringUnsupported);
-    assert!(
-        message.contains("enum order needs variant-directed typed lowering"),
-        "unexpected message: {message}"
+fn t() -> Stream<Check> {
+    yield expect(E::A < E::B(0));
+    yield expect(E::B(9) < E::C(0));
+    yield expect(E::B(1) < E::B(2));
+    yield expect(E::B(2) > E::B(1));
+    yield expect_eq(E::B(5) <=> E::B(5), Ordering::Equal);
+    yield expect(!(E::C(0) < E::B(9)));
+}
+"#,
+        6,
     );
 }
 
 #[test]
-fn array_order_is_currently_a_typed_red_boundary() {
-    let (code, _message) = rejection(ARRAY_ORDER);
-    assert_eq!(code, vix::diagnostic::DiagnosticCode::TypeMismatch);
+fn array_lexicographic_and_length_tiebreak() {
+    all_pass(
+        r#"
+#[test]
+fn t() -> Stream<Check> {
+    let empty: [Int] = [];
+    yield expect([1, 2] < [1, 3]);
+    yield expect([1, 2] < [1, 2, 3]);
+    yield expect([1, 2, 3] > [1, 2]);
+    yield expect_eq([1, 2, 3] <=> [1, 2, 3], Ordering::Equal);
+    yield expect(empty < [0]);
+    yield expect([2] > [1, 9, 9]);
+}
+"#,
+        6,
+    );
+}
+
+#[test]
+fn nested_array_of_enums_orders_structurally() {
+    all_pass(
+        r#"
+enum Tag { Lo, Hi(Int) }
+#[test]
+fn t() -> Stream<Check> {
+    yield expect([Tag::Lo, Tag::Hi(1)] < [Tag::Lo, Tag::Hi(2)]);
+    yield expect([Tag::Lo] < [Tag::Hi(0)]);
+    yield expect([Tag::Hi(1), Tag::Lo] > [Tag::Lo, Tag::Hi(9)]);
+}
+"#,
+        3,
+    );
 }

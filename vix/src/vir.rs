@@ -622,7 +622,8 @@ impl Type {
     pub fn structural_order_is_defined(&self) -> bool {
         match self {
             Self::Bool | Self::Int | Self::String | Self::Path => true,
-            Self::Array(_) | Self::Map { .. } | Self::Set(_) => false,
+            Self::Array(element) => element.structural_order_is_defined(),
+            Self::Map { .. } | Self::Set(_) => false,
             Self::Function { .. } => false,
             Self::Tuple(elements) => elements.iter().all(Self::structural_order_is_defined),
             Self::Record(record) => record

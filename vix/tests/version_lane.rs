@@ -78,12 +78,9 @@ fn rung_084_stops_at_the_parse_req_boundary() {
     assert_eq!(unresolved_name(RUNG_084), "parse_req");
 }
 
-/// Green target for rung 083: the version value substrate parses and orders
-/// through the production path, plain and chaos agreeing. Ignored until
-/// structural comparison of enums and arrays lands (the `<` on `Version`);
-/// drop the `#[ignore]` to advance the lane.
+/// Rung 083: the version value substrate parses and orders through the
+/// production path, plain and chaos agreeing.
 #[test]
-#[ignore = "readiness lane: green once structural comparison of enums/arrays lands"]
 fn rung_083_version_parse_runs_through_production_path() {
     let report =
         run_source(&lane_source(RUNG_083)).expect("rung 083 compiles and runs in production");
