@@ -2516,7 +2516,7 @@ impl Verifier<'_> {
                 }
             }
             Op::Await { dst, input } => {
-                self.require_scalar_read(
+                self.require_status_read(
                     function_id,
                     pc,
                     frame,
@@ -2690,7 +2690,7 @@ impl Verifier<'_> {
                 expected: _,
             } => {
                 self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
-                self.require_scalar_read(
+                self.require_status_read(
                     function_id,
                     pc,
                     frame,
@@ -5089,13 +5089,13 @@ mod tests {
             let (mut program, contract) = compare_program(false);
             program.fns[0].code[0] = operation;
             assert_eq!(
-                program.verify(contract),
-                Err(op_error(
+                program.verify(contract).expect_err("schema is rejected"),
+                op_error(
                     0,
                     ProgramDefect::SchemaNotByteComparable {
                         schema: SchemaRef(0)
                     }
-                ))
+                )
             );
         }
     }

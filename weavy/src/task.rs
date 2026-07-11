@@ -3356,7 +3356,7 @@ impl Task {
                         let Some(verified) = verified else {
                             panic!("string status validation requires VerifiedProgram");
                         };
-                        return Err(TaskFault::InvalidArrayStatus {
+                        return Err(TaskFault::InvalidStringStatus {
                             site: fault_site(verified, fn_id, pc)?,
                             actual,
                         });
