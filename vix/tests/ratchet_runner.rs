@@ -623,6 +623,51 @@ fn accepted_rungs_verify_and_execute_through_one_executable() {
 
 #[test]
 fn rung_028_array_stream_collects_position_keyed_rows() {
+    let compilation = Compiler::new()
+        .compile(RUNG_028)
+        .expect("rung 028 compiles to typed stream VIR");
+    let function = compilation
+        .functions
+        .iter()
+        .find(|function| function.name == "array_enumerate")
+        .expect("rung 028 test function exists");
+    let stream = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::ArrayStream))
+        .expect("array stream is a distinct VIR recipe");
+    assert_eq!(stream.ty, VirType::stream(VirType::Int, VirType::String));
+    assert_eq!(stream.effect.kind, EffectKind::Codata);
+    let collect = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamCollect))
+        .expect("collect is the explicit stream materialization boundary");
+    assert_eq!(collect.ty, VirType::map(VirType::Int, VirType::String));
+    assert!(collect.effect.fallible);
+
+    let partitioned = compilation.partition_test(&compilation.tests[0]);
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(&partitioned.islands[0])
+        .expect("rung 028 verifies before production execution");
+    assert!(
+        lowered
+            .program()
+            .fns
+            .iter()
+            .flat_map(|function| &function.code)
+            .any(|op| matches!(op, WeavyOp::OrderedInsertCommit { .. }))
+    );
+    assert!(
+        lowered
+            .program()
+            .fns
+            .iter()
+            .flat_map(|function| &function.code)
+            .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+    );
+
     let report = run_source(RUNG_028).expect("rung 028 executes through verified production path");
     assert!(report.passed());
     assert!(report.agrees());

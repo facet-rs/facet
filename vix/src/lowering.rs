@@ -505,6 +505,7 @@ fn nodes_contain_checked_collection_ops(nodes: &[Node]) -> bool {
                 | Op::SetHas
                 | Op::SetLen
                 | Op::SetValues
+                | Op::StreamCollect
         ) || matches!(node.op, Op::Eq | Op::Ne)
             && node.inputs.iter().any(|input| {
                 nodes
@@ -2482,6 +2483,7 @@ impl FunctionLayout {
                     | Op::SetConcat
                     | Op::SetHas
                     | Op::SetValues
+                    | Op::StreamCollect
             )
         }) {
             let mut types = if matches!(node.op, Op::Eq | Op::Ne) {
@@ -2538,6 +2540,7 @@ impl FunctionLayout {
                     | Op::SetConcat
                     | Op::SetHas
                     | Op::SetValues
+                    | Op::StreamCollect
             )
         }) {
             let count = usize::from(matches!(node.op, Op::MapConcat | Op::SetConcat)) + 1;
@@ -2790,7 +2793,7 @@ fn collection_temporary_types(
     nodes: &[Node],
 ) -> Result<Option<Vec<Type>>, Diagnostics> {
     let collection = match node.op {
-        Op::Map => node.ty.clone(),
+        Op::Map | Op::StreamCollect => node.ty.clone(),
         Op::MapAdd | Op::MapConcat | Op::MapWith | Op::MapGet | Op::MapHas | Op::MapKeys => node
             .inputs
             .first()
@@ -3208,7 +3211,8 @@ fn lower_node_sequence(
             | Op::SetConcat
             | Op::SetHas
             | Op::SetLen
-            | Op::SetValues => {
+            | Op::SetValues
+            | Op::StreamCollect => {
                 lower_checked_collection_node(node, dst, dst_region_id, values, sequence, outputs)?
             }
             Op::Match { .. } => {
@@ -4229,10 +4233,28 @@ fn lower_node(
                 "array map lowering is not implemented",
             ));
         }
-        Op::ArrayStream | Op::StreamCollect => {
+        Op::ArrayStream => {
+            require_input_count(node, 1)?;
+            let source = input_value(node, values, 0)?;
+            let Type::Array(element) = &source.ty else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "array stream source is not an array",
+                ));
+            };
+            require_value(
+                node,
+                &source,
+                &Type::array(element.as_ref().clone()),
+                ValueRepresentation::RealizedHandle,
+            )?;
+            require_node_type(node, Type::stream(Type::Int, element.as_ref().clone()))?;
+            (Vec::new(), ValueRepresentation::CodataRecipe)
+        }
+        Op::StreamCollect => {
             return Err(lowering_diagnostic(
                 node.span,
-                "stream recipe lowering is not implemented",
+                "stream collect did not reach checked lowering",
             ));
         }
         Op::ArrayAppend | Op::ArrayConcat => {
@@ -5567,6 +5589,181 @@ fn lower_checked_array_node(
     }
 }
 
+fn lower_array_stream_collect_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_input_count(node, 1)?;
+    let stream_id = node.inputs[0];
+    let stream = values.get(&stream_id).ok_or_else(|| {
+        lowering_diagnostic(
+            node.span,
+            "stream collect recipe is not topologically prior",
+        )
+    })?;
+    let recipe =
+        sequence.nodes.get(&stream_id).copied().ok_or_else(|| {
+            lowering_diagnostic(node.span, "stream collect input has no VIR recipe")
+        })?;
+    if !matches!(recipe.op, Op::ArrayStream) {
+        return Err(lowering_diagnostic(
+            node.span,
+            "stream collect recipe source is not implemented",
+        ));
+    }
+    require_input_count(recipe, 1)?;
+    let source = values.get(&recipe.inputs[0]).cloned().ok_or_else(|| {
+        lowering_diagnostic(node.span, "array stream source is not topologically prior")
+    })?;
+    let Type::Array(element) = &source.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array stream source is not a dense array",
+        ));
+    };
+    let stream_ty = Type::stream(Type::Int, element.as_ref().clone());
+    require_value(node, stream, &stream_ty, ValueRepresentation::CodataRecipe)?;
+    require_value(
+        node,
+        &source,
+        &Type::array(element.as_ref().clone()),
+        ValueRepresentation::RealizedHandle,
+    )?;
+    let collection_ty = Type::map(Type::Int, element.as_ref().clone());
+    require_node_type(node, collection_ty.clone())?;
+
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(node.span, "stream collect has no typed outcome scratch")
+    })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(node.span, "stream collect has no typed outcome return")
+    })?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(node.span, "stream collect has no trace site"))?;
+    let collection_schema = sequence
+        .lowering
+        .schemas
+        .schema_for(&collection_ty, node.span)?;
+    let element_schema = sequence.lowering.schemas.schema_for(element, node.span)?;
+    let element_width = element_byte_width(element, node.span)?;
+    let mut temps = ordered_collection_temps(node, &collection_ty, sequence)?;
+    let comparison = temps.cursor.checkpoint();
+    let cursor = ordered_cursor(node, sequence, 0)?;
+
+    outputs.code.push(WeavyOp::OrderedEmpty {
+        dst: dst.start().byte_offset(),
+        collection_schema_ref: i64::from(collection_schema.0),
+    });
+    outputs.code.push(WeavyOp::LoadArrayLen {
+        dst: scratch.fields[1].byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 0,
+    });
+    let next = outputs.code.label();
+    let done = outputs.code.label();
+    outputs.code.bind(next, node.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[1].byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, done);
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: temps.projected_value.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        index: scratch.fields[0].byte_offset(),
+        elem_width: element_width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    let key = LoweredSlot {
+        region: FrameRegion::for_words(scratch.fields[0].word_index(), FrameWords::ONE)
+            .expect("scratch scalar is one frame word"),
+        region_id: assigned.fields[0],
+        ty: Type::Int,
+        representation: ValueRepresentation::Word,
+    };
+    temps.cursor.rewind(comparison, node.span)?;
+    emit_ordered_insert(OrderedInsertLowering {
+        node,
+        site,
+        collection: dst.start(),
+        destination: dst.start(),
+        key: &key,
+        value: Some(&temps.projected_value),
+        key_ty: &Type::Int,
+        collection_schema,
+        cursor,
+        candidate: &temps.candidate,
+        ordering: &temps.ordering,
+        ready: &temps.ready,
+        present: &temps.present,
+        duplicate: DuplicateDisposition::LanguageFailure,
+        comparison_checkpoint: comparison,
+        temps: &mut temps.cursor,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code: outputs.code,
+    })?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[2].byte_offset(),
+        value: 1,
+    });
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: scratch.fields[0].byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[2].byte_offset(),
+    });
+    outputs.code.jump(next);
+    outputs.code.bind(done, node.span)?;
+    temps.cursor.drain(node.span)?;
+    temps.cursor.finish(node.span)?;
+    Ok(ValueRepresentation::RealizedHandle)
+}
+
 fn lower_checked_collection_node(
     node: &Node,
     dst: FrameRegion,
@@ -5575,6 +5772,9 @@ fn lower_checked_collection_node(
     sequence: &SequenceContext<'_, '_, '_>,
     outputs: &mut SequenceOutputs<'_, '_>,
 ) -> Result<ValueRepresentation, Diagnostics> {
+    if matches!(node.op, Op::StreamCollect) {
+        return lower_array_stream_collect_node(node, dst, values, sequence, outputs);
+    }
     let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
         lowering_diagnostic(
             node.span,
