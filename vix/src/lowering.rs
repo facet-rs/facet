@@ -340,6 +340,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
             constant_closures.get(&island.function).ok_or_else(|| {
                 lowering_diagnostic(output.span, "island function has no constant closure")
             })?,
+            array_outcome.as_ref().map(|_| output.ty.clone()),
             output.span,
         )?,
     );
@@ -352,6 +353,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
                 constant_closures.get(&function.id).ok_or_else(|| {
                     lowering_diagnostic(function.span, "called function has no constant closure")
                 })?,
+                array_outcome.as_ref().map(|_| function.return_type.clone()),
                 function.span,
             )?,
         );
@@ -1083,6 +1085,19 @@ impl<'a> ProgramContractBuilder<'a> {
             };
             constant_region_ids.insert(*constant, region_id);
         }
+        let array_outcome = if let Some(outcome) = &layout.array_outcome {
+            let region_id = self.regions.array_outcome(function.id, function.span)?;
+            if region_id.0 as usize != regions.len() {
+                return Err(lowering_diagnostic(
+                    function.span,
+                    "array outcome contract order is not canonical",
+                ));
+            }
+            regions.push(self.frame_region(outcome.region.start(), &outcome.ty)?);
+            Some(region_id)
+        } else {
+            None
+        };
         let mut entries = Vec::with_capacity(
             function
                 .parameters
@@ -1100,9 +1115,12 @@ impl<'a> ProgramContractBuilder<'a> {
             })?;
             entries.push(entry);
         }
-        let result = *node_region_ids
-            .get(&function.output)
-            .ok_or_else(|| lowering_diagnostic(function.span, "output node has no frame region"))?;
+        let result = match array_outcome {
+            Some(outcome) => outcome,
+            None => *node_region_ids.get(&function.output).ok_or_else(|| {
+                lowering_diagnostic(function.span, "output node has no frame region")
+            })?,
+        };
         let call_contract = if self.closure_targets.contains(&function.id) {
             let call = self.call_contract_for_function(function, &entries, result, &regions)?;
             Some(call)
@@ -1502,6 +1520,7 @@ struct RegionAssignments {
     control: BTreeMap<FunctionId, AssignedControlRegions>,
     temps: BTreeMap<FunctionId, BTreeMap<NodeId, Vec<WeavyRegionId>>>,
     closures: BTreeMap<FunctionId, BTreeMap<NodeId, (WeavyRegionId, WeavyRegionId)>>,
+    outcomes: BTreeMap<FunctionId, WeavyRegionId>,
 }
 
 #[derive(Clone, Copy)]
@@ -1519,6 +1538,7 @@ impl RegionAssignments {
         let mut control = BTreeMap::new();
         let mut temps = BTreeMap::new();
         let mut closures = BTreeMap::new();
+        let mut outcomes = BTreeMap::new();
         let mut insert = |function: FunctionId, body: &[Node], span: Span| {
             let layout = layouts.get(&function).ok_or_else(|| {
                 lowering_diagnostic(span, "missing function layout for region assignment")
@@ -1597,6 +1617,14 @@ impl RegionAssignments {
                     })?;
                 }
             }
+            if layout.array_outcome.is_some() {
+                outcomes.insert(
+                    function,
+                    WeavyRegionId(u32::try_from(next).map_err(|_| {
+                        lowering_diagnostic(span, "array outcome region assignment exceeds u32")
+                    })?),
+                );
+            }
             nodes.insert(function, assigned);
             temps.insert(function, assigned_temps);
             closures.insert(function, assigned_closures);
@@ -1611,6 +1639,7 @@ impl RegionAssignments {
             control,
             temps,
             closures,
+            outcomes,
         })
     }
 
@@ -1665,6 +1694,19 @@ impl RegionAssignments {
             .copied()
             .ok_or_else(|| lowering_diagnostic(span, "closure node has no assigned typed regions"))
     }
+
+    fn array_outcome(
+        &self,
+        function: FunctionId,
+        span: Span,
+    ) -> Result<WeavyRegionId, Diagnostics> {
+        self.outcomes.get(&function).copied().ok_or_else(|| {
+            lowering_diagnostic(
+                span,
+                "array-bearing function has no assigned outcome region",
+            )
+        })
+    }
 }
 
 struct FunctionLayout {
@@ -1674,6 +1716,7 @@ struct FunctionLayout {
     constant_slots: BTreeMap<NodeRef, FrameSlot>,
     scratch: Option<FrameSlot>,
     control_scratch: Option<ControlScratch>,
+    array_outcome: Option<TemporaryRegion>,
     frame_size: usize,
 }
 
@@ -1694,6 +1737,7 @@ impl FunctionLayout {
         function: FunctionId,
         nodes: &[Node],
         constants: &BTreeSet<NodeRef>,
+        outcome_value: Option<Type>,
         span: Span,
     ) -> Result<Self, Diagnostics> {
         let mut regions = BTreeMap::new();
@@ -1840,6 +1884,18 @@ impl FunctionLayout {
             };
             constant_slots.insert(constant, slot);
         }
+        let array_outcome = if let Some(value) = outcome_value {
+            let ty = ArrayOutcomeAbi::for_value(value).ty;
+            let words = type_words(&ty, span)?;
+            let region = FrameRegion::for_words(next_word, words)
+                .ok_or_else(|| lowering_diagnostic(span, "array outcome frame region overflow"))?;
+            next_word = next_word
+                .checked_add(words.as_usize())
+                .ok_or_else(|| lowering_diagnostic(span, "function frame size overflow"))?;
+            Some(TemporaryRegion { region, ty })
+        } else {
+            None
+        };
         let frame_size = FrameSlot::frame_size(next_word)
             .ok_or_else(|| lowering_diagnostic(span, "function frame size overflow"))?;
         Ok(Self {
@@ -1849,6 +1905,7 @@ impl FunctionLayout {
             constant_slots,
             scratch,
             control_scratch,
+            array_outcome,
             frame_size,
         })
     }
@@ -2093,22 +2150,38 @@ fn lower_vir_function(
         };
         lower_node_sequence(&node_ids, &mut values, &sequence, &mut outputs, None)?;
     }
-    let output_region = values
-        .get(&output)
-        .map(|value| value.region)
-        .ok_or_else(|| {
-            lowering_diagnostic(output_node.span, "function output has no frame region")
-        })?;
+    let output_value = values.get(&output).cloned().ok_or_else(|| {
+        lowering_diagnostic(output_node.span, "function output has no frame region")
+    })?;
     let previous_source = code.swap_source(Some(NodeRef {
         function,
         node: output,
     }));
-    code.push(WeavyOp::Ret {
-        src: output_region.start().byte_offset(),
-        size: output_region
-            .byte_size()
-            .ok_or_else(|| lowering_diagnostic(output_node.span, "return size overflow"))?,
-    });
+    if let Some(outcome) = &layout.array_outcome {
+        let outcome_region = context.regions.array_outcome(function, output_node.span)?;
+        code.push(WeavyOp::EnumConstruct {
+            dst: outcome_region,
+            variant: 0,
+            fields: vec![StructuralFieldSource {
+                field: 0,
+                source: output_value.region_id,
+            }],
+        });
+        code.push(WeavyOp::Ret {
+            src: outcome.region.start().byte_offset(),
+            size: outcome.region.byte_size().ok_or_else(|| {
+                lowering_diagnostic(output_node.span, "array outcome return size overflow")
+            })?,
+        });
+    } else {
+        code.push(WeavyOp::Ret {
+            src: output_value.region.start().byte_offset(),
+            size: output_value
+                .region
+                .byte_size()
+                .ok_or_else(|| lowering_diagnostic(output_node.span, "return size overflow"))?,
+        });
+    }
     code.swap_source(previous_source);
     let (code, pc_nodes) = code.finish(output_node.span)?;
     Ok(LoweredWeavyFunction {
