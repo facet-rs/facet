@@ -57,12 +57,12 @@ fn propagate(state: State) where { row: Row } -> Step {
         match step {
             Step::Conflict(ng) => Step::Conflict(ng),
             Step::Pass(s) => {
-                let narrowed = s.domains.get(dep.pkg).unwrap().intersect(dep.req);
+                let narrowed = s.domains.get(dep.pkg).intersect(dep.req);
                 if narrowed.is_empty() {
                     Step::Conflict(no_good_for s where { dep })
                 } else {
                     Step::Pass(State {
-                        domains: s.domains.insert dep.pkg where { value: narrowed },
+                        domains: s.domains.with (dep.pkg, narrowed),
                         ..s
                     })
                 }
@@ -72,7 +72,7 @@ fn propagate(state: State) where { row: Row } -> Step {
 }
 ```
 
-Ordinary code: a fold, a map insert, a record spread. Each step denotes a
+Ordinary code: a fold, a map `with`, a record spread. Each step denotes a
 fresh `State`. Hold that thought.
 
 ## Backtracking is free

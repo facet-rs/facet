@@ -43,11 +43,11 @@ map) is describing a *sequence of values*, each fresh:
 
 ```vix
 fn put_domain(state: State) where { pkg: PkgId, domain: Domain } -> State {
-    State { domains: state.domains.insert pkg where { value: domain }, ..state }
+    State { domains: state.domains.with (pkg, domain), ..state }
 }
 ```
 
-`insert` returns a new map; the record spread builds a new state around
+`with` returns a new map; the record spread builds a new state around
 it. Whether the implementation actually copies anything is its own
 business — semantically, you were never sharing.
 
@@ -59,15 +59,16 @@ business — semantically, you were never sharing.
 > ```
 >
 > ```vix
-> state.domains.insert(pkg, domain)   // vix: not a sentence
+> state.domains.with (pkg, domain)   // vix: not a sentence
 > ```
 >
 > In vix it isn't even grammatical — there are no expression statements,
 > because an expression whose value goes nowhere *describes nothing*. The
 > compiler rejects it, and that rejection is the language telling you the
-> truth: `insert` never changed anything; it denoted a new map you didn't
-> name. The bug class "I called the update method and threw away the
-> result" cannot be written.
+> truth: `with` never changed anything; it denoted a new map you didn't
+> name. If a result is discarded through an otherwise legal shape such as an
+> underscore binding, `must_use` warns instead; warning promotion remains a
+> user or harness policy.
 
 Three languages, one situation — two names for one collection:
 
@@ -87,6 +88,7 @@ b.push(4);            // JS: accepted — and `a` changed. Spooky.
 let a = [1, 2, 3];
 let b = a;            // vix: b IS a, forever. Nothing to reject,
                       // nothing to be spooked by — neither can change.
+let c = b + 4;        // [1, 2, 3, 4]; a and b are unchanged.
 ```
 
 Rust protects you from aliased mutation with a borrow checker you must

@@ -129,7 +129,7 @@ fn molten_accumulator() -> Stream<Check> { … }
 A method call takes a receiver and one argument, which is the same shape:
 
 ```vix
-domains.insert pkg where { value: narrowed }
+domains.with (pkg, narrowed)
 xs.map(f)
 ```
 

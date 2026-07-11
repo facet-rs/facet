@@ -237,6 +237,23 @@ Field access. Depends on element `i` alone.
 
 The number of elements. Free — it's the arity of the struct.
 
+### `array + item -> [T]`, `array ++ other -> [T]`
+
+`+` adds one element at the end. `++` concatenates two arrays. Both describe a
+new array and preserve authored order; neither changes an operand.
+
+```vix
+let one_more = members + p"crates/picante/Cargo.toml";
+let all = first_half ++ second_half;
+```
+
+The distinction stays unambiguous for nested arrays: `outer + inner` appends one
+inner array, while `outer ++ others` concatenates outer arrays. Use spread when
+constructing from several authored pieces: `[..prefix, middle, ..suffix]`.
+
+Both operators are `must_use`. Discarding their result warns that the left array
+was not changed; warning promotion is a user or harness policy.
+
 ### `.map(f: fn(T) -> U) -> [U]`
 
 Field-wise: the result's field `i` is `f(self[i])`. Each output element depends on
@@ -272,10 +289,40 @@ fails to define a result.
 
 ## Map operations
 
-### `.get(k) -> Option<V>`, `.insert(k) where { value: V } -> Map<K,V>`, `.len()`
+### `.get(k) -> V`, `.has(k) -> Bool`, `.len()`
 
-By value, like everything. `insert` denotes a new map. There is no `m[k]`: a map
-lookup can fail, and the type says so.
+`get` is an addressed read, like array indexing. A present key produces its
+value. A missing key fails the demand with typed `MissingKey { key }` at the get
+site — never `None`, a default value, or an unwrap failure.
+
+```vix
+let version = versions.get("taxon");       // Version or Failed(MissingKey)
+let outcome = versions.get("taxon")?;     // Result<Version, Failure>
+let present = versions.has("taxon");      // membership only; value not demanded
+```
+
+Postfix `?` observes any failure of the projection, not only `MissingKey`. Write
+`get(k)?.ok()` only when discarding every failure address is deliberate.
+
+### `map + (key, value)`, `left ++ right`, `.with (key, value)`
+
+`+` extends a map by one row and fails with typed `DuplicateKey { key }` when
+the key already exists. `++` combines maps and fails when their key sets overlap.
+The conflicting key is chosen deterministically in structural order.
+
+`with` is different on purpose: it returns a map containing the binding,
+replacing an existing value when necessary.
+
+```vix
+let extended = versions + ("vix", vix_version);      // requires a new key
+let combined = workspace ++ dependencies;            // requires disjoint maps
+let selected = versions.with ("vix", replacement);  // explicit overwrite
+```
+
+All three results are `must_use`. The warning is educational rather than a hard
+language error: the original map was not changed.
+
+There is no `m[k]`; the named `get` operation owns the stable failure site.
 
 ### `.unwrap()` on an `Option<T>` or a `Result<T, E>`
 
@@ -294,6 +341,15 @@ In key order. `values()` renumbers: it is the compaction.
 ### `.stream() -> Stream<K, V>`
 
 The rows, keys attached.
+
+## Set operations
+
+### `.has(x)`, `set + x`, `left ++ right`, `.values()`
+
+`has` tests membership. `+` adds one element and `++` is set union; both are
+idempotent because equal elements are the same field. `.values()` returns the
+elements in structural order. The Set surface does not expose the unit payloads
+of its canonical-map representation.
 
 ## Stream operations
 
@@ -330,9 +386,9 @@ that retains each source element as a key and attaches an image as its value.
 - **`Multiset<T>`** — a collection that is unordered but keeps duplicates is an
   array that has forgotten why. If you want counts, you want `Map<T, Int>`.
 - **`enumerate`, `Indexed<T>`** — the key was always there.
-- **`pop`, `push`, `insert`, `remove` as mutations** — nothing mutates. The
-  by-value forms exist where they earn it (`split_last`, `appended`, `take_min`,
-  map/set `insert` returning a fresh collection).
+- **`pop`, `push`, `insert`, `remove` as mutations** — nothing mutates. `+` adds
+  one collection field, `++` adds all fields, `map.with` deliberately rebinds a
+  key, and `split_last` returns both the selected element and the remainder.
 - **"First ready" selection** — an operation whose result depends on completion
   order would make program output nondeterministic. The implementation may
   *process* in arrival order whenever that's invisible; it may never *show* you.

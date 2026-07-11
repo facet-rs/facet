@@ -9,10 +9,7 @@ failure is not what it is — it's what the machine does when you demand it.
 
 ```vix
 fn require_key(m: Map<String, Version>) where { key: String } -> Version {
-    match m.get key {
-        Some(v) => v,
-        None    => fail MissingKey { key, available: m.keys() },
-    }
+    m.get(key)
 }
 ```
 
@@ -107,14 +104,14 @@ one side is hashed.
 ## `?` is the only way to see a failure from inside
 
 ```vix
-let parsed = parse_manifest text ?;    //  Result<Manifest, Failure>
+let parsed = (parse_manifest text)?;    // Result<Manifest, Failure>
 ```
 
 A trailing `?` — no space before it — catches a failure and hands it to you **with
 its address intact**:
 
 ```vix
-match parse_manifest text ? {
+match (parse_manifest text)? {
     Ok(m)   => use m,
     Err(f)  => yield diagnostic_for f,   // f has payload, subject, site; reports span, chain
 }
@@ -125,7 +122,7 @@ the thing the failure was carrying — which is the bug that motivated this enti
 chapter. If you truly don't care why, say so, in the source:
 
 ```vix
-let maybe = parse_manifest text ?.ok();   // Option<Manifest>, deliberately
+let maybe = (parse_manifest text)?.ok();   // Option<Manifest>, deliberately
 ```
 
 **Coming from Rust**: `?` is *propagation* there and *catching* here. It has to be:
@@ -162,5 +159,7 @@ It costs you a *diagnostic*, not a process: the span of the `unwrap` and the cha
 of demands beneath it. That is why `.unwrap()` is honest in vix in a way it isn't
 elsewhere — it names the place where you assumed, and says what you assumed about.
 
-And `m.get(k).unwrap()` to force an error is a thing you should never write, because
-`fail MissingKey { key: k }` says what you meant and carries what you'd want.
+`m.get(k)` already has this shape: a present key produces `V`, and an absent key
+fails with `MissingKey { key: k }` at the get site. There is nothing to unwrap.
+Use `m.has(k)` when the question is membership, or `m.get(k)?` when the caller
+intends to inspect the addressed failure.
