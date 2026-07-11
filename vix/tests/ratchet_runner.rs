@@ -2404,6 +2404,36 @@ fn rung_026_reaches_vir_and_is_red_at_array_lowering() {
 }
 
 #[test]
+fn array_index_out_of_bounds_is_a_memoized_language_failure() {
+    let source = r#"
+#[test]
+fn oob() -> Stream<Check> {
+    let xs = [10, 20];
+    yield expect_eq(xs[7], 0);
+}
+"#;
+    let report = run_source(source).expect("language failure is report data");
+    for lane in [&report.plain, &report.chaos] {
+        let [check] = lane.checks.as_slice() else {
+            panic!("one OOB check")
+        };
+        assert!(!check.passed);
+        assert!(matches!(
+            check.failure,
+            Some(vix::runtime::FailureValue::IndexOutOfBounds {
+                index: 7,
+                length: 2,
+                subject: None,
+                ..
+            })
+        ));
+        assert_eq!(lane.receipt_count, 0);
+        assert_eq!(lane.counters.pure_host_calls, 0);
+    }
+    assert_eq!(report.plain.checks, report.chaos.checks);
+}
+
+#[test]
 fn array_vir_is_general_before_lowering_is_implemented() {
     const SOURCE: &str = r#"
 fn double(x: Int) -> Int {
