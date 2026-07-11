@@ -369,7 +369,7 @@ impl<S: EventSink> Runtime<S> {
                     let error = self.task_fault(
                         MachineOperation::EntryBinding,
                         fault,
-                        &lowered,
+                        lowered,
                         attribution,
                         None,
                     );
