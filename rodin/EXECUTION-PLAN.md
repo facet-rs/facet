@@ -35,11 +35,11 @@ Cargo fixtures.
 ## Current checkpoint
 
 At the time of the latest authoritative integration checkpoint
-(`a29bd1965`):
+(`60863a83b`):
 
 - the canonical rung prefix is green through rung 049. The integrated full Vix
-  release run `91785208-5017-4ec1-8bbd-3037939093fe` passed 324/324 tests,
-  and the integrated full Weavy release run
+  run `dc0b8068-858a-4fc7-bce3-9fbad03a020c` passed 339/339 tests, and the
+  integrated full Weavy release run
   `8fce57b6-18d8-41e2-a206-2f1ef4f36a34` passed 228/228. Workspace all-target
   check, strict all-feature/all-target Clippy, formatting, and diff checks are
   green at the checkpoint;
@@ -74,15 +74,23 @@ At the time of the latest authoritative integration checkpoint
   regions rather than structural closure subwords, including direct and
   `Array.map` calls. Plain non-tail recursion (049) retains the verified call
   frame ABI. Focused default and `WEAVY_JIT=0` certificates are green for both;
+- `CheckRecipe` now distinguishes demanded Value checks from post-run Trace
+  checks. Scheduler/memo/store bounds are evaluated against one frozen snapshot
+  after all selected Value checks, with no island, demand, memo entry, or intern
+  for the Trace check itself. Typed wall/RSS metadata is enforced by an outer
+  child-process watchdog that kills runaway native work; default run
+  `4933603b-4592-4b12-abd9-f18880f24a55` and interpreter run
+  `1be4cb14-7092-4da7-86e6-1358bc983144` each passed 15/15 focused checks;
 - rung 050 is the first canonical red boundary. Its preserved red checkpoint
-  is `8b618a7c4`: TraceCheck evaluation and externally enforced budgets are
-  being implemented independently from the verifier-visible self-tail-loop
-  lowering so neither can be substituted with an inert assertion;
+  is `8b618a7c4`. The canonical source now parses and its TraceCheck/budget
+  substrate is live; the remaining boundary is verifier-visible self-tail-loop
+  lowering with a cheap interior pollpoint. Ordinary recursion remains the
+  rung-049 call-frame path;
 - the persistent AVL core has a 200k insertion scaling oracle, but neither the
   rung-051 array certificate nor the end-to-end rung-138 Map proof is yet
-  established. Trace-check evaluation, externally enforced budgets,
-  range/fold driving, shared-demand extraction, molten-to-store publication,
-  non-colliding live/frozen handles, and production arena observability remain
+  established. Range/fold driving, shared-demand extraction,
+  molten-to-store publication, non-colliding live/frozen handles, the identity
+  epoch's closed framed writer, and production arena observability remain
   explicit seams;
 - the Cargo fixture harness exists in `vix/tests/rodin_fixtures.rs` and its Cargo
   side is independently runnable;
