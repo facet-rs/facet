@@ -266,7 +266,7 @@ fn within() -> Stream<Check> {
         matches!(
             outcome,
             BudgetOutcome::Within {
-                report: vix::budget::ChildReport::RanSource { passed: true }
+                report: vix::budget::ChildReport::RanSource { passed: true, .. }
             }
         ),
         "the outcome is an in-budget successful source run: {outcome:?}",

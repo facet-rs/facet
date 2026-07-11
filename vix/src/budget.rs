@@ -87,7 +87,14 @@ enum ChildEvent {
 #[repr(u8)]
 pub enum ChildReport {
     /// A `RunSource` workload completed; `passed` is its ratchet verdict.
-    RanSource { passed: bool },
+    RanSource {
+        passed: bool,
+        /// Resident-set samples at typed production execution boundaries.
+        /// They are captured in the child while the corresponding runtime is
+        /// live, so a caller can distinguish retained work from post-return
+        /// allocator accounting.
+        observations: Vec<ExecutionRssObservation>,
+    },
     /// An `Immediate` workload completed.
     Completed,
     /// The workload failed to run (e.g. the source did not compile).
@@ -99,11 +106,18 @@ impl ChildReport {
     #[must_use]
     pub fn succeeded(&self) -> bool {
         match self {
-            ChildReport::RanSource { passed } => *passed,
+            ChildReport::RanSource { passed, .. } => *passed,
             ChildReport::Completed => true,
             ChildReport::Failed { .. } => false,
         }
     }
+}
+
+/// A resident-set observation made at one typed [`crate::ratchet::ExecutionPhase`].
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct ExecutionRssObservation {
+    pub phase: crate::ratchet::ExecutionPhase,
+    pub resident_bytes: Option<u64>,
 }
 
 /// The typed outcome of running a workload under an enforced budget. Anything
@@ -477,14 +491,24 @@ fn prepare_workload(workload: &Workload) -> Prepared {
 #[must_use]
 fn execute_prepared(prepared: Prepared) -> ChildReport {
     match prepared {
-        Prepared::Source(Ok(run)) => match run.execute() {
-            Ok(report) => ChildReport::RanSource {
-                passed: report.passed(),
-            },
-            Err(error) => ChildReport::Failed {
-                message: format!("{error:?}"),
-            },
-        },
+        Prepared::Source(Ok(run)) => {
+            let mut observations = Vec::new();
+            let outcome = run.execute_with_observer(|phase| {
+                observations.push(ExecutionRssObservation {
+                    phase,
+                    resident_bytes: resident_bytes(std::process::id()),
+                });
+            });
+            match outcome {
+                Ok(report) => ChildReport::RanSource {
+                    passed: report.passed(),
+                    observations,
+                },
+                Err(error) => ChildReport::Failed {
+                    message: format!("{error:?}"),
+                },
+            }
+        }
         Prepared::Source(Err(message)) => ChildReport::Failed { message },
         Prepared::Immediate | Prepared::SlowPrepare => ChildReport::Completed,
         Prepared::Delay(duration) => {

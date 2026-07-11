@@ -219,6 +219,19 @@ pub struct PreparedRun {
     cache: LoweringCache,
 }
 
+/// Execution lifecycle boundaries exposed to the outer budget runner. Each
+/// `Runtime` owns store, memo, demand, task, and event-log state; observing
+/// these points distinguishes fixed lane scaffolding from growth retained while
+/// a lane executes.
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ExecutionPhase {
+    PlainRuntimeReady,
+    PlainCompleted,
+    ChaosRuntimeReady,
+    ChaosCompleted,
+}
+
 /// r[impl machine.scheduler.chaos-kill-oracle]
 /// r[impl machine.scheduler.replay-is-semantics]
 pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
@@ -283,11 +296,24 @@ impl PreparedRun {
     ///
     /// r[impl machine.scheduler.chaos-kill-oracle]
     /// r[impl machine.scheduler.replay-is-semantics]
-    pub fn execute(mut self) -> Result<RatchetReport, RunError> {
+    pub fn execute(self) -> Result<RatchetReport, RunError> {
+        self.execute_with_observer(|_| {})
+    }
+
+    /// Execute with lifecycle observations made while each lane's runtime is
+    /// still live. This is intentionally a production-path seam: observers see
+    /// no per-iteration callbacks and cannot hide retained execution state.
+    pub fn execute_with_observer(
+        mut self,
+        mut observe: impl FnMut(ExecutionPhase),
+    ) -> Result<RatchetReport, RunError> {
         let plain = run_lane(
             &self.compilation.module,
             &mut self.cache,
             ChaosPolicy::default(),
+            ExecutionPhase::PlainRuntimeReady,
+            ExecutionPhase::PlainCompleted,
+            &mut observe,
         )?;
         let chaos = run_lane(
             &self.compilation.module,
@@ -295,6 +321,9 @@ impl PreparedRun {
             ChaosPolicy {
                 kill_first_running_task: true,
             },
+            ExecutionPhase::ChaosRuntimeReady,
+            ExecutionPhase::ChaosCompleted,
+            &mut observe,
         )?;
         Ok(RatchetReport {
             warnings: self.compilation.warnings,
@@ -337,8 +366,12 @@ fn run_lane(
     module: &crate::vir::Module,
     cache: &mut LoweringCache,
     chaos: ChaosPolicy,
+    ready_phase: ExecutionPhase,
+    completed_phase: ExecutionPhase,
+    observe: &mut impl FnMut(ExecutionPhase),
 ) -> Result<SuiteRun, RunError> {
     let mut runtime = Runtime::new(EventLog::default());
+    observe(ready_phase);
     let mut checks = Vec::new();
     // Trace checks are deferred until every selected value check completes; they
     // are evaluated once, together, against the frozen completed-run snapshot.
@@ -476,6 +509,7 @@ fn run_lane(
     let all_tasks_terminal = runtime
         .tasks()
         .all(|task| matches!(task.state, TaskState::Completed | TaskState::Discarded));
+    observe(completed_phase);
     let events = runtime.into_sink().into_events();
     Ok(SuiteRun {
         checks,
