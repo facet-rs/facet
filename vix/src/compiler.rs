@@ -1829,6 +1829,7 @@ struct LoweredValue {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum PreludeReceiverType {
     Array,
+    String,
     Map,
     Set,
     Stream,
@@ -1839,6 +1840,7 @@ impl PreludeReceiverType {
     fn from_vir_type(ty: &Type) -> Option<Self> {
         match ty {
             Type::Array(_) => Some(Self::Array),
+            Type::String => Some(Self::String),
             Type::Map { .. } => Some(Self::Map),
             Type::Set(_) => Some(Self::Set),
             Type::Stream { .. } => Some(Self::Stream),
@@ -1857,6 +1859,9 @@ enum PreludeMethod {
     ArrayAll,
     ArrayAny,
     ArrayContains,
+    StringContains,
+    StringSplitOnce,
+    StringParseInt,
     ArraySorted,
     ArrayStream,
     IntRem,
@@ -1934,6 +1939,24 @@ impl PreludeMethodRegistry {
                 name: "contains",
                 arity: 1,
                 method: PreludeMethod::ArrayContains,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::String,
+                name: "contains",
+                arity: 1,
+                method: PreludeMethod::StringContains,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::String,
+                name: "split_once",
+                arity: 1,
+                method: PreludeMethod::StringSplitOnce,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::String,
+                name: "parse_int",
+                arity: 0,
+                method: PreludeMethod::StringParseInt,
             },
             PreludeMethodEntry {
                 receiver: PreludeReceiverType::Array,
@@ -2686,6 +2709,54 @@ fn lower_method_call(
                 ty: Type::Bool,
             })
         }
+        PreludeMethod::StringContains => {
+            let needle = lower_value(nodes, bindings, context, &positional[0])?;
+            require_type(&needle, &Type::String, expr_span(&positional[0]))?;
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    Type::Bool,
+                    EffectFacts::PURE,
+                    vec![receiver.node, needle.node],
+                    Op::StringContains,
+                ),
+                ty: Type::Bool,
+            })
+        }
+        PreludeMethod::StringSplitOnce => {
+            let delimiter = lower_value(nodes, bindings, context, &positional[0])?;
+            require_type(&delimiter, &Type::String, expr_span(&positional[0]))?;
+            let ty = Type::Tuple(vec![Type::String, Type::String]);
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts {
+                        fallible: true,
+                        ..EffectFacts::PURE
+                    },
+                    vec![receiver.node, delimiter.node],
+                    Op::StringSplitOnce,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::StringParseInt => Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                Type::Int,
+                EffectFacts {
+                    fallible: true,
+                    ..EffectFacts::PURE
+                },
+                vec![receiver.node],
+                Op::StringParseInt,
+            ),
+            ty: Type::Int,
+        }),
         PreludeMethod::ArrayStream => {
             let Type::Array(element) = &receiver.ty else {
                 unreachable!("array stream registry entry has an array receiver")

@@ -356,6 +356,10 @@ pub enum TaskFault {
         site: FaultSite,
         actual: i64,
     },
+    InvalidStringStatus {
+        site: FaultSite,
+        actual: i64,
+    },
     InvalidOrderedStatus {
         site: FaultSite,
         actual: i64,
@@ -1293,6 +1297,39 @@ mod tests {
         )
     }
 
+    fn string_operation_program(operation: Op) -> (Program, ProgramContract) {
+        let schema = SchemaRef(0);
+        (
+            Program {
+                fns: vec![function(5, vec![operation, Op::Ret { src: 32, size: 8 }])],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    5,
+                    vec![
+                        word_region(0, WordKind::Handle(schema)),
+                        word_region(8, WordKind::Handle(schema)),
+                        word_region(16, WordKind::Handle(schema)),
+                        word_region(24, WordKind::Scalar),
+                        word_region(32, WordKind::Scalar),
+                    ],
+                    &[0, 1],
+                    4,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![SchemaContract {
+                    inline: RegionShape::word(WordKind::Handle(schema)),
+                    value_shape: None,
+                    payload: PayloadKind::OpaqueBytes {
+                        byte_comparable: true,
+                    },
+                }],
+                value_shapes: vec![],
+            },
+        )
+    }
+
     fn non_scalar_entry_program() -> (Program, ProgramContract) {
         // A callable word is non-scalar, so the entry accessor must reject it;
         // opaque cursor words are separately confined and cannot appear here.
@@ -1912,6 +1949,40 @@ mod tests {
         assert_eq!(site.function, FnId(0));
         assert_eq!(site.pc, 0);
         assert!(matches!(site.op.as_ref(), Op::ArrayStatusIs { .. }));
+        assert_eq!(trace, vec![TaskEvent::FrameEntered(FnId(0))]);
+        assert!(matches!(*poison, TaskFault::PoisonedReDrive { .. }));
+    }
+
+    #[test]
+    fn string_status_discriminator_matches_across_public_executable_lanes() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let string_program = || {
+            let (mut program, contract) = array_status_program();
+            program.fns[0].code[0] = Op::StringStatusIs {
+                dst: 0,
+                status: 8,
+                expected: crate::task::StringOpStatus::Ok,
+            };
+            verify((program, contract))
+        };
+        let interpreter = run_public_array_status(string_program(), 99, true)
+            .expect_err("invalid StringOpStatus faults in interpreter");
+        let native = run_public_array_status(string_program(), 99, false)
+            .expect_err("invalid StringOpStatus faults in native lane");
+        assert_eq!(interpreter, native);
+        let (fault, trace, poison) = interpreter;
+        let site = match *fault {
+            TaskFault::InvalidStringStatus { site, actual } => {
+                assert_eq!(actual, 99);
+                site
+            }
+            fault => panic!("unexpected string status fault: {fault:?}"),
+        };
+        assert_eq!(site.function, FnId(0));
+        assert_eq!(site.pc, 0);
+        assert!(matches!(site.op.as_ref(), Op::StringStatusIs { .. }));
         assert_eq!(trace, vec![TaskEvent::FrameEntered(FnId(0))]);
         assert!(matches!(*poison, TaskFault::PoisonedReDrive { .. }));
     }
@@ -3262,6 +3333,98 @@ mod tests {
                 native.expect_err("unresident string concat operand"),
                 interp
             );
+        }
+    }
+
+    #[test]
+    fn string_byte_operations_preserve_unresident_faults_across_lanes() {
+        let cases = [
+            (
+                "contains-left",
+                Op::StringContains {
+                    dst: 32,
+                    text: 0,
+                    needle: 8,
+                },
+                1,
+                CompareSide::Left,
+            ),
+            (
+                "contains-right",
+                Op::StringContains {
+                    dst: 32,
+                    text: 0,
+                    needle: 8,
+                },
+                1,
+                CompareSide::Right,
+            ),
+            (
+                "split-text",
+                Op::StringSplitOnce {
+                    left: 16,
+                    right: 16,
+                    status: 24,
+                    text: 0,
+                    delimiter: 8,
+                },
+                1,
+                CompareSide::Left,
+            ),
+            (
+                "split-delimiter",
+                Op::StringSplitOnce {
+                    left: 16,
+                    right: 16,
+                    status: 24,
+                    text: 0,
+                    delimiter: 8,
+                },
+                1,
+                CompareSide::Right,
+            ),
+            (
+                "parse-text",
+                Op::StringParseInt {
+                    dst: 32,
+                    status: 24,
+                    text: 0,
+                },
+                1,
+                CompareSide::Left,
+            ),
+        ];
+        for (name, operation, bad, side) in cases {
+            let verified = Arc::new(verify(string_operation_program(operation)));
+            let store = [ValueMemory::from_slice(b"a"), ValueMemory::empty()];
+            let memories = ValueMemories {
+                store: &store,
+                molten: &[],
+            };
+            let text = if side == CompareSide::Left { 1 } else { 0 };
+            let needle = if side == CompareSide::Right { 1 } else { 0 };
+            let interp = run_interpreter(
+                &verified,
+                |task| {
+                    task.write_i64(0, text);
+                    task.write_i64(8, needle);
+                },
+                memories,
+            )
+            .expect_err(name);
+            assert!(
+                matches!(interp, TaskFault::UnresidentStringConcatOperand { side: actual, handle, site: FaultSite { function: FnId(0), pc: 0, .. } } if actual == side && handle == bad)
+            );
+            if let Some(native) = run_native(
+                Arc::clone(&verified),
+                |task| {
+                    task.write_i64(0, text);
+                    task.write_i64(8, needle);
+                },
+                memories,
+            ) {
+                assert_eq!(native.expect_err(name), interp);
+            }
         }
     }
 

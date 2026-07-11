@@ -750,6 +750,12 @@ pub enum Op {
     StreamSplitMin,
     /// Concatenate two immutable strings.
     StringConcat,
+    /// Test whether a string contains a byte-identical substring.
+    StringContains,
+    /// Partition a string at its first delimiter occurrence.
+    StringSplitOnce,
+    /// Parse a canonical decimal string as an Int.
+    StringParseInt,
 }
 
 /// One SSA-like operation. Dependencies are explicit node ids; no Rust
@@ -1552,6 +1558,9 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::SetLen => op.push(42),
         Op::SetValues => op.push(43),
         Op::StringConcat => op.push(44),
+        Op::StringContains => op.push(61),
+        Op::StringSplitOnce => op.push(62),
+        Op::StringParseInt => op.push(63),
         Op::ArrayMap { grain } => {
             op.push(45);
             op.push(match grain.key {

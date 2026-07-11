@@ -164,6 +164,18 @@ pub struct Ctx {
         i64,
         *mut i64,
     ) -> i64,
+    string_contains: unsafe extern "C" fn(
+        *const RawValueMemory, usize, *const RawValueMemory, usize,
+        *mut core::ffi::c_void, i64, i64, *mut i64,
+    ) -> i64,
+    string_split_once: unsafe extern "C" fn(
+        *const RawValueMemory, usize, *const RawValueMemory, usize,
+        *mut core::ffi::c_void, i64, i64, *mut i64, *mut i64,
+    ) -> i64,
+    string_parse_int: unsafe extern "C" fn(
+        *const RawValueMemory, usize, *const RawValueMemory, usize,
+        *mut core::ffi::c_void, i64, *mut i64,
+    ) -> i64,
     /// The task's append-only publication log, reached only through the ABI
     /// function below so both lanes share one log semantics.
     publications: *mut core::ffi::c_void,
@@ -194,6 +206,7 @@ const EXIT_STRING_CONCAT_LEFT_UNRESIDENT: i64 = 13;
 const EXIT_STRING_CONCAT_RIGHT_UNRESIDENT: i64 = 14;
 const EXIT_STRING_CONCAT_ALLOCATION: i64 = 15;
 const EXIT_PUBLICATION_ALLOCATION: i64 = 16;
+const EXIT_INVALID_STRING_STATUS: i64 = 17;
 
 const LENT_MOLTEN_MIN: i64 = i64::MIN / 2;
 
@@ -1127,6 +1140,58 @@ pub unsafe extern "C" fn weavy_task_string_concat(cx: *mut Ctx) {
             *c.exit = EXIT_STRING_CONCAT_ALLOCATION;
         }
     }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_string_contains(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog; let text = *c.prog.add(1); let needle = *c.prog.add(2); let pc = *c.prog.add(3);
+    c.prog = c.prog.add(4);
+    let mut value = 0;
+    let result = (c.string_contains)(c.store_value_memories, c.store_value_memory_count, c.lent_molten_value_memories, c.lent_molten_value_memory_count, c.molten, read_i64(c.frame, text), read_i64(c.frame, needle), &raw mut value);
+    if result == 0 { write_i64(c.frame, dst, value); cont!(cx); }
+    *c.await_index = pc; *c.resume = if result == 4 { read_i64(c.frame, text) as u64 } else { read_i64(c.frame, needle) as u64 };
+    *c.exit = if result == 4 { EXIT_STRING_CONCAT_LEFT_UNRESIDENT } else if result == 5 { EXIT_STRING_CONCAT_RIGHT_UNRESIDENT } else { EXIT_STRING_CONCAT_ALLOCATION };
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_string_split_once(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let left = *c.prog; let right = *c.prog.add(1); let status = *c.prog.add(2); let text = *c.prog.add(3); let delimiter = *c.prog.add(4); let pc = *c.prog.add(5);
+    c.prog = c.prog.add(6);
+    let mut left_value = 0; let mut right_value = 0;
+    let result = (c.string_split_once)(c.store_value_memories, c.store_value_memory_count, c.lent_molten_value_memories, c.lent_molten_value_memory_count, c.molten, read_i64(c.frame, text), read_i64(c.frame, delimiter), &raw mut left_value, &raw mut right_value);
+    if result <= 3 { write_i64(c.frame, status, result); if result == 0 { write_i64(c.frame, left, left_value); write_i64(c.frame, right, right_value); } cont!(cx); }
+    *c.await_index = pc; *c.resume = if result == 4 { read_i64(c.frame, text) as u64 } else { read_i64(c.frame, delimiter) as u64 };
+    *c.exit = if result == 4 { EXIT_STRING_CONCAT_LEFT_UNRESIDENT } else if result == 5 { EXIT_STRING_CONCAT_RIGHT_UNRESIDENT } else { EXIT_STRING_CONCAT_ALLOCATION };
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_string_parse_int(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog; let status = *c.prog.add(1); let text = *c.prog.add(2); let pc = *c.prog.add(3);
+    c.prog = c.prog.add(4);
+    let mut value = 0;
+    let result = (c.string_parse_int)(c.store_value_memories, c.store_value_memory_count, c.lent_molten_value_memories, c.lent_molten_value_memory_count, c.molten, read_i64(c.frame, text), &raw mut value);
+    if result <= 3 { write_i64(c.frame, status, result); write_i64(c.frame, dst, value); cont!(cx); }
+    *c.await_index = pc; *c.resume = read_i64(c.frame, text) as u64;
+    *c.exit = if result == 4 { EXIT_STRING_CONCAT_LEFT_UNRESIDENT } else { EXIT_STRING_CONCAT_ALLOCATION };
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_string_status_is(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog; let status = *c.prog.add(1); let expected = *c.prog.add(2) as i64; let pc = *c.prog.add(3);
+    c.prog = c.prog.add(4);
+    let actual = read_i64(c.frame, status);
+    if !(0..=3).contains(&actual) {
+        *c.await_index = pc;
+        *c.resume = actual as u64;
+        *c.exit = EXIT_INVALID_STRING_STATUS;
+        return;
+    }
+    write_i64(c.frame, dst, i64::from(actual == expected));
+    cont!(cx);
 }
 
 /// PUBLISH — immediates: [site, record_off, record_width, schema_ref, pc].

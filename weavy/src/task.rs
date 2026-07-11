@@ -249,6 +249,29 @@ pub(crate) enum StringConcatFault {
     AllocationFailed,
 }
 
+/// Closed status vocabulary for canonical string operations.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(i64)]
+pub enum StringOpStatus {
+    Ok = 0,
+    MissingDelimiter = 1,
+    InvalidInteger = 2,
+    IntegerOverflow = 3,
+}
+
+impl StringOpStatus {
+    #[must_use]
+    pub const fn from_word(word: i64) -> Option<Self> {
+        match word {
+            0 => Some(Self::Ok),
+            1 => Some(Self::MissingDelimiter),
+            2 => Some(Self::InvalidInteger),
+            3 => Some(Self::IntegerOverflow),
+            _ => None,
+        }
+    }
+}
+
 impl StringConcatFault {
     /// The closed i64 status the JIT ABI helper reports to its stencil.
     #[cfg_attr(not(feature = "jit"), allow(dead_code))]
@@ -1282,6 +1305,47 @@ impl MoltenArena {
         });
         Ok(handle)
     }
+
+    fn split_once_value_bytes(
+        &mut self,
+        memories: MemoryView<'_>,
+        text: i64,
+        delimiter: i64,
+    ) -> Result<(StringOpStatus, Option<i64>, Option<i64>), StringConcatFault> {
+        let text = handle_bytes(memories, self, text)
+            .map_err(|_| StringConcatFault::LeftUnresident(text))?
+            .to_vec();
+        let delimiter = handle_bytes(memories, self, delimiter)
+            .map_err(|_| StringConcatFault::RightUnresident(delimiter))?
+            .to_vec();
+        let Some(index) = find_subslice(&text, &delimiter) else {
+            return Ok((StringOpStatus::MissingDelimiter, None, None));
+        };
+        let split = index
+            .checked_add(delimiter.len())
+            .ok_or(StringConcatFault::AllocationFailed)?;
+        let left = self.alloc_string_bytes(&text[..index])?;
+        let right = self.alloc_string_bytes(&text[split..])?;
+        Ok((StringOpStatus::Ok, Some(left), Some(right)))
+    }
+
+    fn alloc_string_bytes(&mut self, bytes: &[u8]) -> Result<i64, StringConcatFault> {
+        let handle =
+            task_molten_handle(self.buffers.len()).ok_or(StringConcatFault::AllocationFailed)?;
+        let mut owned = Vec::new();
+        owned
+            .try_reserve_exact(bytes.len())
+            .map_err(|_| StringConcatFault::AllocationFailed)?;
+        owned.extend_from_slice(bytes);
+        self.buffers
+            .try_reserve_exact(1)
+            .map_err(|_| StringConcatFault::AllocationFailed)?;
+        self.buffers.push(MoltenBuffer {
+            bytes: owned,
+            initialized: Vec::new(),
+        });
+        Ok(handle)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1986,6 +2050,143 @@ pub(crate) unsafe extern "C" fn string_concat_abi(
     }
 }
 
+#[cfg_attr(not(feature = "jit"), allow(dead_code))]
+pub(crate) unsafe extern "C" fn string_contains_abi(
+    store: *const RawValueMemory,
+    store_len: usize,
+    lent: *const RawValueMemory,
+    lent_len: usize,
+    arena: *mut core::ffi::c_void,
+    text: i64,
+    needle: i64,
+    out: *mut i64,
+) -> i64 {
+    if out.is_null()
+        || arena.is_null()
+        || (store.is_null() && store_len != 0)
+        || (lent.is_null() && lent_len != 0)
+    {
+        return 6;
+    }
+    let store = if store_len == 0 {
+        &[]
+    } else {
+        unsafe { core::slice::from_raw_parts(store, store_len) }
+    };
+    let lent = if lent_len == 0 {
+        &[]
+    } else {
+        unsafe { core::slice::from_raw_parts(lent, lent_len) }
+    };
+    let memories = MemoryView::Raw(RawValueMemories {
+        store,
+        molten: lent,
+    });
+    let arena = unsafe { &*arena.cast::<MoltenArena>() };
+    match string_contains_value_bytes(memories, arena, text, needle) {
+        Ok(found) => {
+            unsafe { *out = i64::from(found) };
+            0
+        }
+        Err(StringConcatFault::LeftUnresident(_)) => 4,
+        Err(StringConcatFault::RightUnresident(_)) => 5,
+        Err(StringConcatFault::AllocationFailed) => 6,
+    }
+}
+
+#[cfg_attr(not(feature = "jit"), allow(dead_code))]
+pub(crate) unsafe extern "C" fn string_split_once_abi(
+    store: *const RawValueMemory,
+    store_len: usize,
+    lent: *const RawValueMemory,
+    lent_len: usize,
+    arena: *mut core::ffi::c_void,
+    text: i64,
+    delimiter: i64,
+    left: *mut i64,
+    right: *mut i64,
+) -> i64 {
+    if left.is_null()
+        || right.is_null()
+        || arena.is_null()
+        || (store.is_null() && store_len != 0)
+        || (lent.is_null() && lent_len != 0)
+    {
+        return 6;
+    }
+    let store = if store_len == 0 {
+        &[]
+    } else {
+        unsafe { core::slice::from_raw_parts(store, store_len) }
+    };
+    let lent = if lent_len == 0 {
+        &[]
+    } else {
+        unsafe { core::slice::from_raw_parts(lent, lent_len) }
+    };
+    let memories = MemoryView::Raw(RawValueMemories {
+        store,
+        molten: lent,
+    });
+    let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
+    match arena.split_once_value_bytes(memories, text, delimiter) {
+        Ok((status, Some(a), Some(b))) => {
+            unsafe {
+                *left = a;
+                *right = b
+            };
+            status as i64
+        }
+        Ok((status, _, _)) => status as i64,
+        Err(StringConcatFault::LeftUnresident(_)) => 4,
+        Err(StringConcatFault::RightUnresident(_)) => 5,
+        Err(StringConcatFault::AllocationFailed) => 6,
+    }
+}
+
+#[cfg_attr(not(feature = "jit"), allow(dead_code))]
+pub(crate) unsafe extern "C" fn string_parse_int_abi(
+    store: *const RawValueMemory,
+    store_len: usize,
+    lent: *const RawValueMemory,
+    lent_len: usize,
+    arena: *mut core::ffi::c_void,
+    text: i64,
+    out: *mut i64,
+) -> i64 {
+    if out.is_null()
+        || arena.is_null()
+        || (store.is_null() && store_len != 0)
+        || (lent.is_null() && lent_len != 0)
+    {
+        return 6;
+    }
+    let store = if store_len == 0 {
+        &[]
+    } else {
+        unsafe { core::slice::from_raw_parts(store, store_len) }
+    };
+    let lent = if lent_len == 0 {
+        &[]
+    } else {
+        unsafe { core::slice::from_raw_parts(lent, lent_len) }
+    };
+    let memories = MemoryView::Raw(RawValueMemories {
+        store,
+        molten: lent,
+    });
+    let arena = unsafe { &*arena.cast::<MoltenArena>() };
+    match string_parse_int_value_bytes(memories, arena, text) {
+        Ok((status, value)) => {
+            unsafe { *out = value };
+            status as i64
+        }
+        Err(StringConcatFault::LeftUnresident(_)) => 4,
+        Err(StringConcatFault::RightUnresident(_)) => 5,
+        Err(StringConcatFault::AllocationFailed) => 6,
+    }
+}
+
 /// # Safety
 /// `log` must point to a live [`PublicationLog`] and must not be otherwise
 /// aliased for the duration of the call. `record` must point to `record_len`
@@ -2274,6 +2475,24 @@ pub enum Op {
     /// with the precise side, and an allocation the arena cannot satisfy faults
     /// rather than fabricating a handle.
     StringConcat { dst: u32, a: u32, b: u32 },
+    /// Search two resident string byte runs without exposing their handles.
+    StringContains { dst: u32, text: u32, needle: u32 },
+    /// Split a resident string at its first delimiter occurrence.
+    StringSplitOnce {
+        left: u32,
+        right: u32,
+        status: u32,
+        text: u32,
+        delimiter: u32,
+    },
+    /// Parse a resident string as a signed decimal integer.
+    StringParseInt { dst: u32, status: u32, text: u32 },
+    /// Compare a string-operation status with one closed status word.
+    StringStatusIs {
+        dst: u32,
+        status: u32,
+        expected: StringOpStatus,
+    },
     /// Append one descriptor to the task's verified append-only publication log.
     ///
     /// The complete `record_width`-byte value at `frame[record..]` is copied by
@@ -3055,6 +3274,104 @@ impl Task {
                         }
                     };
                     write_i64_at(&mut self.arena, base + dst as usize, handle);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::StringContains { dst, text, needle } => {
+                    let text = read_i64_at(&self.arena, base + text as usize);
+                    let needle = read_i64_at(&self.arena, base + needle as usize);
+                    let found = match string_contains_value_bytes(
+                        MemoryView::from(value_memories),
+                        &self.molten,
+                        text,
+                        needle,
+                    ) {
+                        Ok(found) => found,
+                        Err(fault) => {
+                            let Some(verified) = verified else {
+                                panic!("legacy raw StringContains operand is not resident");
+                            };
+                            return Err(string_concat_fault(
+                                fault_site(verified, fn_id, pc)?,
+                                fault,
+                            ));
+                        }
+                    };
+                    write_i64_at(&mut self.arena, base + dst as usize, i64::from(found));
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::StringSplitOnce {
+                    left,
+                    right,
+                    status,
+                    text,
+                    delimiter,
+                } => {
+                    let text = read_i64_at(&self.arena, base + text as usize);
+                    let delimiter = read_i64_at(&self.arena, base + delimiter as usize);
+                    let (result, left_handle, right_handle) = match self
+                        .molten
+                        .split_once_value_bytes(MemoryView::from(value_memories), text, delimiter)
+                    {
+                        Ok(result) => result,
+                        Err(fault) => {
+                            let Some(verified) = verified else {
+                                panic!("legacy raw StringSplitOnce operand is not resident");
+                            };
+                            return Err(string_concat_fault(
+                                fault_site(verified, fn_id, pc)?,
+                                fault,
+                            ));
+                        }
+                    };
+                    write_i64_at(&mut self.arena, base + status as usize, result as i64);
+                    if let (Some(left_handle), Some(right_handle)) = (left_handle, right_handle) {
+                        write_i64_at(&mut self.arena, base + left as usize, left_handle);
+                        write_i64_at(&mut self.arena, base + right as usize, right_handle);
+                    }
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::StringParseInt { dst, status, text } => {
+                    let text = read_i64_at(&self.arena, base + text as usize);
+                    let (result, value) = match string_parse_int_value_bytes(
+                        MemoryView::from(value_memories),
+                        &self.molten,
+                        text,
+                    ) {
+                        Ok(result) => result,
+                        Err(fault) => {
+                            let Some(verified) = verified else {
+                                panic!("legacy raw StringParseInt operand is not resident");
+                            };
+                            return Err(string_concat_fault(
+                                fault_site(verified, fn_id, pc)?,
+                                fault,
+                            ));
+                        }
+                    };
+                    write_i64_at(&mut self.arena, base + status as usize, result as i64);
+                    write_i64_at(&mut self.arena, base + dst as usize, value);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::StringStatusIs {
+                    dst,
+                    status,
+                    expected,
+                } => {
+                    let actual = read_i64_at(&self.arena, base + status as usize);
+                    let Some(actual) = StringOpStatus::from_word(actual) else {
+                        let Some(verified) = verified else {
+                            panic!("string status validation requires VerifiedProgram");
+                        };
+                        return Err(TaskFault::InvalidStringStatus {
+                            site: fault_site(verified, fn_id, pc)?,
+                            actual,
+                        });
+                    };
+                    write_i64_at(
+                        &mut self.arena,
+                        base + dst as usize,
+                        i64::from(actual == expected),
+                    );
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
                 Op::Publish {
@@ -4106,6 +4423,49 @@ fn compare_value_bytes(
         core::cmp::Ordering::Equal => 1,
         core::cmp::Ordering::Greater => 2,
     })
+}
+
+fn string_contains_value_bytes(
+    memories: MemoryView<'_>,
+    molten: &MoltenArena,
+    text: i64,
+    needle: i64,
+) -> Result<bool, StringConcatFault> {
+    let text = handle_bytes(memories, molten, text)
+        .map_err(|_| StringConcatFault::LeftUnresident(text))?;
+    let needle = handle_bytes(memories, molten, needle)
+        .map_err(|_| StringConcatFault::RightUnresident(needle))?;
+    Ok(find_subslice(text, needle).is_some())
+}
+
+fn string_parse_int_value_bytes(
+    memories: MemoryView<'_>,
+    molten: &MoltenArena,
+    text: i64,
+) -> Result<(StringOpStatus, i64), StringConcatFault> {
+    let text = handle_bytes(memories, molten, text)
+        .map_err(|_| StringConcatFault::LeftUnresident(text))?;
+    let Ok(text) = core::str::from_utf8(text) else {
+        return Ok((StringOpStatus::InvalidInteger, 0));
+    };
+    match text.parse::<i64>() {
+        Ok(value) => Ok((StringOpStatus::Ok, value)),
+        Err(error)
+            if error.kind() == &core::num::IntErrorKind::PosOverflow
+                || error.kind() == &core::num::IntErrorKind::NegOverflow =>
+        {
+            Ok((StringOpStatus::IntegerOverflow, 0))
+        }
+        Err(_) => Ok((StringOpStatus::InvalidInteger, 0)),
+    }
+}
+
+fn find_subslice(text: &[u8], needle: &[u8]) -> Option<usize> {
+    if needle.is_empty() {
+        return Some(0);
+    }
+    text.windows(needle.len())
+        .position(|window| window == needle)
 }
 
 /// Lift a [`StringConcatFault`] to the typed task fault carried at `site`.

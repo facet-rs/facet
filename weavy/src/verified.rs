@@ -2616,6 +2616,88 @@ impl Verifier<'_> {
                     ));
                 }
             }
+            Op::StringContains { dst, text, needle } => {
+                self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                let text_schema =
+                    self.read_handle(function_id, pc, frame, *text, AccessRole::CompareLeft)?;
+                let needle_schema =
+                    self.read_handle(function_id, pc, frame, *needle, AccessRole::CompareRight)?;
+                if text_schema != needle_schema {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::CompareSchemaMismatch {
+                            left: text_schema,
+                            right: needle_schema,
+                        },
+                    ));
+                }
+                self.require_byte_comparable_schema(function_id, pc, text_schema)?;
+            }
+            Op::StringSplitOnce {
+                left,
+                right,
+                status,
+                text,
+                delimiter,
+            } => {
+                let left_schema =
+                    self.read_handle(function_id, pc, frame, *left, AccessRole::Destination)?;
+                let right_schema =
+                    self.read_handle(function_id, pc, frame, *right, AccessRole::Destination)?;
+                let text_schema =
+                    self.read_handle(function_id, pc, frame, *text, AccessRole::CompareLeft)?;
+                let delimiter_schema =
+                    self.read_handle(function_id, pc, frame, *delimiter, AccessRole::CompareRight)?;
+                if left_schema != text_schema
+                    || right_schema != text_schema
+                    || delimiter_schema != text_schema
+                {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::CompareSchemaMismatch {
+                            left: text_schema,
+                            right: delimiter_schema,
+                        },
+                    ));
+                }
+                self.require_byte_comparable_schema(function_id, pc, text_schema)?;
+                self.require_scalar_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::ArrayStatus,
+                )?;
+            }
+            Op::StringParseInt { dst, status, text } => {
+                self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                let text_schema =
+                    self.read_handle(function_id, pc, frame, *text, AccessRole::CompareLeft)?;
+                self.require_byte_comparable_schema(function_id, pc, text_schema)?;
+                self.require_scalar_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::ArrayStatus,
+                )?;
+            }
+            Op::StringStatusIs {
+                dst,
+                status,
+                expected: _,
+            } => {
+                self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                self.require_status_read(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::ArrayStatusSource,
+                )?;
+            }
             Op::Publish {
                 site: _,
                 record,
@@ -3751,6 +3833,34 @@ impl Verifier<'_> {
         Ok(*schema)
     }
 
+    fn require_byte_comparable_schema(
+        &self,
+        function: FnId,
+        pc: usize,
+        schema: SchemaRef,
+    ) -> Result<(), ProgramError> {
+        let Some(contract) = self.contract.schemas.get(schema.0 as usize) else {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::SchemaNotByteComparable { schema },
+            ));
+        };
+        if !matches!(
+            contract.payload,
+            PayloadKind::OpaqueBytes {
+                byte_comparable: true
+            }
+        ) {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::SchemaNotByteComparable { schema },
+            ));
+        }
+        Ok(())
+    }
+
     fn require_scalar_read(
         &self,
         function: FnId,
@@ -4437,6 +4547,10 @@ impl Verifier<'_> {
                     | Op::Await { .. }
                     | Op::CompareValueBytes { .. }
                     | Op::StringConcat { .. }
+                    | Op::StringContains { .. }
+                    | Op::StringSplitOnce { .. }
+                    | Op::StringParseInt { .. }
+                    | Op::StringStatusIs { .. }
                     | Op::Publish { .. }
                     | Op::ConstF64 { .. }
                     | Op::AddF64 { .. }
@@ -4949,6 +5063,41 @@ mod tests {
                 value_shapes: vec![],
             },
         )
+    }
+
+    #[test]
+    fn string_byte_operations_reject_non_byte_comparable_schemas() {
+        for operation in [
+            Op::StringContains {
+                dst: 16,
+                text: 0,
+                needle: 8,
+            },
+            Op::StringSplitOnce {
+                left: 0,
+                right: 8,
+                status: 16,
+                text: 0,
+                delimiter: 8,
+            },
+            Op::StringParseInt {
+                dst: 16,
+                status: 16,
+                text: 0,
+            },
+        ] {
+            let (mut program, contract) = compare_program(false);
+            program.fns[0].code[0] = operation;
+            assert_eq!(
+                program.verify(contract).expect_err("schema is rejected"),
+                op_error(
+                    0,
+                    ProgramDefect::SchemaNotByteComparable {
+                        schema: SchemaRef(0)
+                    }
+                )
+            );
+        }
     }
 
     fn gapped_and_schema_program() -> (Program, ProgramContract) {
