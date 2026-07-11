@@ -1158,9 +1158,10 @@ impl Module {
             let Some(check) = site.value_check() else {
                 continue;
             };
-            let mut dependencies = BTreeSet::new();
-            collect_dependencies(function, check, &mut dependencies);
-            for dependency in dependencies {
+            let mut visited = BTreeSet::new();
+            let mut materializers = BTreeSet::new();
+            collect_publication_materializers(function, check, &mut visited, &mut materializers);
+            for dependency in materializers {
                 consumer_sets.entry(dependency).or_default().insert(site.id);
             }
         }
@@ -1172,7 +1173,7 @@ impl Module {
                     .get(&node.id)
                     .is_some_and(|sites| sites.len() >= 2)
             })
-            .filter(|node| matches!(node.ty, Type::Array(_) | Type::Map { .. } | Type::Set(_)))
+            .filter(|node| is_shared_publication_materializer(node))
             .collect::<Vec<_>>();
         let candidate_ids = shared.iter().map(|node| node.id).collect::<BTreeSet<_>>();
         shared.retain(|candidate| {
@@ -1655,6 +1656,79 @@ fn prune_control_regions(nodes: &mut [Node], needed: &BTreeSet<NodeId>) {
             }
             _ => {}
         }
+    }
+}
+
+/// Shared publication owns aggregate construction, never an aggregate-typed
+/// view. A call, record projection, or enum payload projection may carry an
+/// ordered handle, but extracting that node would launder the handle without
+/// owning the producer's ordered freeze. Dense arrays have a complete freeze
+/// capability; ordered Map/Set materializers remain nominated so the explicit
+/// rung-138 diagnostic fires instead of silently recomputing them.
+fn is_shared_publication_materializer(node: &Node) -> bool {
+    match &node.ty {
+        Type::Array(_) => true,
+        Type::Map { .. } => matches!(
+            node.op,
+            Op::Map | Op::MapAdd | Op::MapConcat | Op::MapWith | Op::StreamCollect
+        ),
+        Type::Set(_) => matches!(node.op, Op::Set | Op::SetAdd | Op::SetConcat),
+        _ => false,
+    }
+}
+
+fn collect_publication_materializers(
+    function: &Function,
+    node: NodeId,
+    visited: &mut BTreeSet<NodeId>,
+    materializers: &mut BTreeSet<NodeId>,
+) {
+    if !visited.insert(node) {
+        return;
+    }
+    let node = &function.nodes[node.0 as usize];
+    let aggregate_view = matches!(node.ty, Type::Map { .. } | Type::Set(_))
+        && !is_shared_publication_materializer(node);
+    if aggregate_view {
+        return;
+    }
+    if is_shared_publication_materializer(node) {
+        materializers.insert(node.id);
+    }
+    for &input in &node.inputs {
+        collect_publication_materializers(function, input, visited, materializers);
+    }
+    match &node.op {
+        Op::Match { arms } => {
+            for arm in arms {
+                collect_publication_materializers(function, arm.output, visited, materializers);
+            }
+        }
+        Op::If {
+            consequent,
+            alternative,
+        } => {
+            collect_publication_materializers(function, consequent.output, visited, materializers);
+            collect_publication_materializers(function, alternative.output, visited, materializers);
+        }
+        Op::OrderedMatch { arms, fallback } => {
+            for arm in arms {
+                collect_publication_materializers(
+                    function,
+                    arm.condition.output,
+                    visited,
+                    materializers,
+                );
+                collect_publication_materializers(
+                    function,
+                    arm.body.output,
+                    visited,
+                    materializers,
+                );
+            }
+            collect_publication_materializers(function, fallback.output, visited, materializers);
+        }
+        _ => {}
     }
 }
 
