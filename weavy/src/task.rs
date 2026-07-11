@@ -484,6 +484,25 @@ impl MoltenArena {
         })
     }
 
+    /// Consume a single-use Probe cursor and expose the current node's value.
+    /// This is the `get` terminal, taken only after a structural comparison has
+    /// found an equal key; `has` never calls it, so membership never projects a
+    /// value. Returns `(present, value bytes)`; an empty position is a miss.
+    pub(crate) fn probe_ordered_value(
+        &mut self,
+        token: OrderedCursorToken,
+        schema: i64,
+    ) -> Result<(bool, Vec<u8>), OrderedOpStatus> {
+        let root = self
+            .consume_ordered_cursor(token, schema, OrderedCursorOperation::Probe)
+            .map_err(ordered_consume_status)?;
+        let Some(index) = root else {
+            return Ok((false, Vec::new()));
+        };
+        let value = self.ordered_nodes[index].value.clone().unwrap_or_default();
+        Ok((true, value))
+    }
+
     pub(crate) fn begin_ordered_cursor(
         &mut self,
         schema: i64,
@@ -813,6 +832,53 @@ pub(crate) unsafe extern "C" fn ordered_probe_key_abi(
             }
             let copy = step.key.len().min(out_key.len());
             out_key[..copy].copy_from_slice(&step.key[..copy]);
+            OrderedOpStatus::Ok as i64
+        }
+        Err(status) => status as i64,
+    }
+}
+
+/// # Safety
+/// `arena` must point to a live [`MoltenArena`] for the duration of the call and
+/// must not be mutably aliased elsewhere. `out_present` must be non-null and
+/// writable for one `i64`. `out_value` must be non-null and writable for
+/// `value_width` bytes when `value_width > 0`. No output may alias another or
+/// memory inside `arena`. Both outputs are cleared before the operation.
+pub(crate) unsafe extern "C" fn ordered_probe_value_abi(
+    arena: *mut core::ffi::c_void,
+    index: i64,
+    generation: i64,
+    schema: i64,
+    value_width: usize,
+    out_present: *mut i64,
+    out_value: *mut u8,
+) -> i64 {
+    if out_present.is_null() || (out_value.is_null() && value_width != 0) {
+        return OrderedOpStatus::InvalidHandle as i64;
+    }
+    unsafe {
+        *out_present = 0;
+    }
+    let out_value = if value_width == 0 {
+        &mut [][..]
+    } else {
+        unsafe { core::slice::from_raw_parts_mut(out_value, value_width) }
+    };
+    out_value.fill(0);
+    if arena.is_null() {
+        return OrderedOpStatus::InvalidHandle as i64;
+    }
+    let Some(token) = OrderedCursorToken::from_words(index, generation) else {
+        return OrderedOpStatus::InvalidHandle as i64;
+    };
+    let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
+    match arena.probe_ordered_value(token, schema) {
+        Ok((present, value)) => {
+            unsafe {
+                *out_present = i64::from(present);
+            }
+            let copy = value.len().min(out_value.len());
+            out_value[..copy].copy_from_slice(&value[..copy]);
             OrderedOpStatus::Ok as i64
         }
         Err(status) => status as i64,
@@ -1274,6 +1340,22 @@ pub enum Op {
         right: u32,
         status: u32,
         key_width: u32,
+        collection_schema_ref: i64,
+    },
+    /// Consume a Probe cursor and expose the current node's Map value.
+    ///
+    /// The `get` terminal: taken only after a structural comparison found an
+    /// equal key. `frame[present]` receives `1` and `value` the node's
+    /// `value_width` value bytes when the cursor named a node, or `0` at an
+    /// empty position (a miss the lowering turns into `MissingKey`).
+    /// `frame[status]` receives [`OrderedOpStatus`]. `has` never emits this op,
+    /// so membership never projects a value.
+    OrderedProbeValue {
+        cursor: u32,
+        present: u32,
+        value: u32,
+        status: u32,
+        value_width: u32,
         collection_schema_ref: i64,
     },
 }
@@ -1962,6 +2044,42 @@ impl Task {
                     write_i64_at(&mut self.arena, base + present as usize, present_value);
                     write_i64_at(&mut self.arena, base + left as usize, left_value);
                     write_i64_at(&mut self.arena, base + right as usize, right_value);
+                    write_i64_at(&mut self.arena, base + status as usize, op_status as i64);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::OrderedProbeValue {
+                    cursor,
+                    present,
+                    value,
+                    status,
+                    value_width,
+                    collection_schema_ref,
+                } => {
+                    let index = read_i64_at(&self.arena, base + cursor as usize);
+                    let generation = read_i64_at(&self.arena, base + cursor as usize + 8);
+                    let value_at = base + value as usize;
+                    let value_width = value_width as usize;
+                    self.arena[value_at..value_at + value_width].fill(0);
+                    let mut present_value = 0i64;
+                    let op_status = match OrderedCursorToken::from_words(index, generation) {
+                        None => OrderedOpStatus::InvalidHandle,
+                        Some(token) => {
+                            match self
+                                .molten
+                                .probe_ordered_value(token, collection_schema_ref)
+                            {
+                                Ok((present_flag, bytes)) => {
+                                    present_value = i64::from(present_flag);
+                                    let copy = bytes.len().min(value_width);
+                                    self.arena[value_at..value_at + copy]
+                                        .copy_from_slice(&bytes[..copy]);
+                                    OrderedOpStatus::Ok
+                                }
+                                Err(status) => status,
+                            }
+                        }
+                    };
+                    write_i64_at(&mut self.arena, base + present as usize, present_value);
                     write_i64_at(&mut self.arena, base + status as usize, op_status as i64);
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
@@ -2785,6 +2903,38 @@ mod tests {
         assert_eq!(
             arena.probe_ordered_key(cursor, 8),
             Err(OrderedOpStatus::SchemaMismatch)
+        );
+    }
+
+    #[test]
+    fn probe_ordered_value_exposes_map_values_and_spends_the_cursor() {
+        let mut arena = MoltenArena::default();
+        let node = arena
+            .alloc_ordered_node(9, vec![2], Some(vec![9, 9, 9]), None, None)
+            .unwrap();
+
+        // A rooted probe exposes the node's value bytes.
+        let cursor = arena.begin_ordered_probe(node as i64 + 1, 9).unwrap();
+        assert_eq!(
+            arena.probe_ordered_value(cursor, 9),
+            Ok((true, vec![9, 9, 9]))
+        );
+
+        // The empty collection is a miss with no value.
+        let cursor = arena.begin_ordered_probe(ORDERED_EMPTY_HANDLE, 9).unwrap();
+        assert_eq!(
+            arena.probe_ordered_value(cursor, 9),
+            Ok((false, Vec::new()))
+        );
+
+        // The value cursor is single-use, like the key cursor.
+        let cursor = arena.begin_ordered_probe(node as i64 + 1, 9).unwrap();
+        arena
+            .probe_ordered_value(cursor, 9)
+            .expect("first value probe");
+        assert_eq!(
+            arena.probe_ordered_value(cursor, 9),
+            Err(OrderedOpStatus::Stale)
         );
     }
 

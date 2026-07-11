@@ -1963,6 +1963,109 @@ mod tests {
         }
     }
 
+    fn ordered_value_program(code: Vec<Op>, entries: &[u32]) -> (Program, ProgramContract) {
+        let collection = WordKind::Handle(SchemaRef(3));
+        (
+            Program {
+                fns: vec![function(6, code)],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    6,
+                    vec![
+                        word_region(0, collection),
+                        FrameRegion::new(
+                            8,
+                            RegionShape::new(vec![AllowedKinds::new(WordKind::Opaque); 2]),
+                        ),
+                        word_region(24, WordKind::Status),
+                        word_region(32, WordKind::Scalar),
+                        word_region(40, WordKind::Scalar),
+                    ],
+                    entries,
+                    2,
+                    None,
+                )],
+                calls: vec![],
+                schemas: ordered_map_schemas(),
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    fn probe_value_op() -> Op {
+        Op::OrderedProbeValue {
+            cursor: 8,
+            present: 32,
+            value: 40,
+            status: 24,
+            value_width: 8,
+            collection_schema_ref: 3,
+        }
+    }
+
+    #[test]
+    fn ordered_probe_value_handshake_matches_across_lanes() {
+        use crate::task::OrderedOpStatus;
+
+        let begin = Op::OrderedBeginProbe {
+            cursor: 8,
+            status: 24,
+            collection: 0,
+            collection_schema_ref: 3,
+        };
+        let cases: [(&str, (Program, ProgramContract), i64, OrderedOpStatus); 2] = [
+            (
+                "empty value miss",
+                ordered_value_program(
+                    vec![
+                        begin.clone(),
+                        probe_value_op(),
+                        Op::Ret { src: 24, size: 8 },
+                    ],
+                    &[0],
+                ),
+                0,
+                OrderedOpStatus::Ok,
+            ),
+            (
+                "forged value cursor",
+                ordered_value_program(vec![probe_value_op(), Op::Ret { src: 24, size: 8 }], &[]),
+                -1,
+                OrderedOpStatus::InvalidHandle,
+            ),
+        ];
+        for (name, program, cursor_seed, expected) in cases {
+            let verified = Arc::new(verify(program));
+            let interp = run_interpreter(
+                &verified,
+                |task| {
+                    task.write_i64(0, 0);
+                    task.write_i64(8, cursor_seed);
+                    task.write_i64(16, 0);
+                },
+                ValueMemories::empty(),
+            )
+            .unwrap_or_else(|fault| panic!("{name}: {fault:?}"));
+            assert_eq!(
+                i64::from_le_bytes(interp.1[..8].try_into().unwrap()),
+                expected as i64,
+                "{name} interpreter status"
+            );
+            if let Some(native) = run_native(
+                Arc::clone(&verified),
+                |task| {
+                    task.write_i64(0, 0);
+                    task.write_i64(8, cursor_seed);
+                    task.write_i64(16, 0);
+                },
+                ValueMemories::empty(),
+            ) {
+                assert_eq!(native.expect("native value probe"), interp, "{name}");
+            }
+        }
+    }
+
     #[test]
     fn ordered_begin_probe_matches_across_public_executable_lanes() {
         use crate::task::OrderedOpStatus;

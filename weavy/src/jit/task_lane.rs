@@ -82,6 +82,15 @@ struct Ctx {
         *mut i64,
         *mut u8,
     ) -> i64,
+    ordered_probe_value: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        i64,
+        usize,
+        *mut i64,
+        *mut u8,
+    ) -> i64,
 }
 
 const EXIT_AWAIT_PARKED: i64 = 1;
@@ -363,6 +372,10 @@ fn compile_fn(
                 task_stencils::ORDERED_PROBE_KEY,
                 Continuations::Fallthrough(task_stencils::ORDERED_PROBE_KEY_CONT),
             ),
+            Op::OrderedProbeValue { .. } => (
+                task_stencils::ORDERED_PROBE_VALUE,
+                Continuations::Fallthrough(task_stencils::ORDERED_PROBE_VALUE_CONT),
+            ),
             Op::ArrayStoreWord { .. } | Op::ArrayStore { .. } => (
                 task_stencils::ARRAY_STORE_WORD,
                 Continuations::Fallthrough(task_stencils::ARRAY_STORE_WORD_CONT),
@@ -504,6 +517,7 @@ fn compile_fn(
             Op::ArrayNew { .. } => 5,
             Op::OrderedBeginProbe { .. } => 4,
             Op::OrderedProbeKey { .. } => 8,
+            Op::OrderedProbeValue { .. } => 6,
             Op::ArrayStoreWord { .. } | Op::LoadArray { .. } | Op::ArrayStore { .. } => 6,
             Op::LoadArrayWord { .. } => 5,
             Op::LoadArrayLen { .. } => 4,
@@ -776,6 +790,25 @@ fn compile_fn(
                     u64::from(*right),
                     u64::from(*status),
                     u64::from(*key_width),
+                    *collection_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::OrderedProbeValue {
+                cursor,
+                present,
+                value,
+                status,
+                value_width,
+                collection_schema_ref,
+            } => {
+                for v in [
+                    u64::from(*cursor),
+                    u64::from(*present),
+                    u64::from(*value),
+                    u64::from(*status),
+                    u64::from(*value_width),
                     *collection_schema_ref as u64,
                 ] {
                     layout.push_prog_word(root.prog_index, v);
@@ -1168,6 +1201,7 @@ impl JitTask {
                 array_len: crate::task::array_len_abi,
                 ordered_begin_probe: crate::task::ordered_begin_probe_abi,
                 ordered_probe_key: crate::task::ordered_probe_key_abi,
+                ordered_probe_value: crate::task::ordered_probe_value_abi,
             };
             // SAFETY: `frame.resume` is a chain offset of this compiled
             // function; the copied code uses the extern "C" fn(*mut Ctx)

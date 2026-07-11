@@ -419,6 +419,7 @@ pub enum AccessRole {
     OrderedCursorSource,
     OrderedPresent,
     OrderedKeyDestination,
+    OrderedValueDestination,
     OrderedChildHandle,
 }
 
@@ -889,6 +890,24 @@ pub enum ProgramDefect {
         expected: RegionShape,
         actual: RegionShape,
     },
+    /// A probe value destination's static width did not match its value schema's
+    /// exact inline byte length.
+    OrderedValueWidth {
+        schema: SchemaRef,
+        expected: usize,
+        actual: u32,
+    },
+    /// A probe value destination's region shape did not match its value schema's
+    /// inline shape or structural value shape exactly.
+    OrderedValueShapeMismatch {
+        schema: SchemaRef,
+        expected: RegionShape,
+        actual: RegionShape,
+    },
+    /// A value projection targeted a Set collection, which has no values.
+    OrderedValueOnSet {
+        schema: SchemaRef,
+    },
     ArraySchemaNotDense {
         schema: SchemaRef,
     },
@@ -924,6 +943,64 @@ pub enum ProgramDefect {
 pub enum StructuralKind {
     Product,
     Enum,
+}
+
+/// Which half of an ordered-collection row a payload destination projects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum OrderedPart {
+    Key,
+    Value,
+}
+
+/// A payload destination's schema paired with which row half it projects.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+struct OrderedPayload {
+    schema: SchemaRef,
+    part: OrderedPart,
+}
+
+impl OrderedPart {
+    fn role(self) -> AccessRole {
+        match self {
+            OrderedPart::Key => AccessRole::OrderedKeyDestination,
+            OrderedPart::Value => AccessRole::OrderedValueDestination,
+        }
+    }
+
+    fn width_defect(self, schema: SchemaRef, expected: usize, actual: u32) -> ProgramDefect {
+        match self {
+            OrderedPart::Key => ProgramDefect::OrderedKeyWidth {
+                schema,
+                expected,
+                actual,
+            },
+            OrderedPart::Value => ProgramDefect::OrderedValueWidth {
+                schema,
+                expected,
+                actual,
+            },
+        }
+    }
+
+    fn shape_defect(
+        self,
+        schema: SchemaRef,
+        expected: RegionShape,
+        actual: RegionShape,
+    ) -> ProgramDefect {
+        match self {
+            OrderedPart::Key => ProgramDefect::OrderedKeyShapeMismatch {
+                schema,
+                expected,
+                actual,
+            },
+            OrderedPart::Value => ProgramDefect::OrderedValueShapeMismatch {
+                schema,
+                expected,
+                actual,
+            },
+        }
+    }
 }
 
 /// Structured verifier error. Function and PC are absent only for global
@@ -2611,13 +2688,16 @@ impl Verifier<'_> {
                     *present,
                     AccessRole::OrderedPresent,
                 )?;
-                self.require_ordered_key_write(
+                self.require_ordered_payload_region(
                     function_id,
                     pc,
                     frame,
                     *key,
                     *key_width,
-                    key_schema,
+                    OrderedPayload {
+                        schema: key_schema,
+                        part: OrderedPart::Key,
+                    },
                 )?;
                 self.require_handle_write(
                     function_id,
@@ -2634,6 +2714,50 @@ impl Verifier<'_> {
                     *right,
                     collection_schema,
                     AccessRole::OrderedChildHandle,
+                )?;
+                self.require_status_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::OrderedStatus,
+                )?;
+            }
+            Op::OrderedProbeValue {
+                cursor,
+                present,
+                value,
+                status,
+                value_width,
+                collection_schema_ref,
+            } => {
+                let (_, value_schema) =
+                    self.ordered_collection_value_schema(function_id, pc, *collection_schema_ref)?;
+                self.require_ordered_cursor_region(
+                    function_id,
+                    pc,
+                    function_index,
+                    frame,
+                    *cursor,
+                    AccessRole::OrderedCursorSource,
+                )?;
+                self.require_scalar_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *present,
+                    AccessRole::OrderedPresent,
+                )?;
+                self.require_ordered_payload_region(
+                    function_id,
+                    pc,
+                    frame,
+                    *value,
+                    *value_width,
+                    OrderedPayload {
+                        schema: value_schema,
+                        part: OrderedPart::Value,
+                    },
                 )?;
                 self.require_status_write(
                     function_id,
@@ -3385,56 +3509,80 @@ impl Verifier<'_> {
         Ok((collection, contract.key))
     }
 
-    /// A probe key destination must be a whole region whose shape and structural
-    /// value shape are exactly the collection's key schema, at its exact width.
-    fn require_ordered_key_write(
+    /// The full collection schema table refs for a value projection: the
+    /// collection schema and its value schema, rejecting a Set (no value).
+    fn ordered_collection_value_schema(
+        &self,
+        function: FnId,
+        pc: usize,
+        witness: i64,
+    ) -> Result<(SchemaRef, SchemaRef), ProgramError> {
+        let collection = usize::try_from(witness)
+            .ok()
+            .filter(|index| *index < self.contract.schemas.len())
+            .and_then(|index| u32::try_from(index).ok().map(SchemaRef))
+            .ok_or_else(|| {
+                self.op(
+                    function,
+                    pc,
+                    ProgramDefect::OrderedCollectionWitnessOutOfRange {
+                        witness,
+                        schema_count: self.contract.schemas.len(),
+                    },
+                )
+            })?;
+        let PayloadKind::OrderedCollection(contract) =
+            &self.contract.schemas[collection.0 as usize].payload
+        else {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::OrderedCollectionSchemaNotCollection { schema: collection },
+            ));
+        };
+        let Some(value) = contract.value else {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::OrderedValueOnSet { schema: collection },
+            ));
+        };
+        Ok((collection, value))
+    }
+
+    /// A key or value destination must be a whole region whose shape and
+    /// structural value shape are exactly the named schema, at its exact width.
+    fn require_ordered_payload_region(
         &self,
         function: FnId,
         pc: usize,
         frame: &ValidatedFrame,
         offset: u32,
-        key_width: u32,
-        key_schema: SchemaRef,
+        width: u32,
+        payload: OrderedPayload,
     ) -> Result<(), ProgramError> {
-        let expected = &self.contract.schemas[key_schema.0 as usize];
+        let OrderedPayload { schema, part } = payload;
+        let expected = &self.contract.schemas[schema.0 as usize];
         let expected_len = expected.inline.checked_byte_len().ok_or_else(|| {
             self.op(
                 function,
                 pc,
                 ProgramDefect::ShapeSizeOverflow {
-                    owner: ShapeOwner::SchemaInline(key_schema),
+                    owner: ShapeOwner::SchemaInline(schema),
                 },
             )
         })?;
-        if expected_len == 0 || usize::try_from(key_width).ok() != Some(expected_len) {
-            return Err(self.op(
-                function,
-                pc,
-                ProgramDefect::OrderedKeyWidth {
-                    schema: key_schema,
-                    expected: expected_len,
-                    actual: key_width,
-                },
-            ));
+        if expected_len == 0 || usize::try_from(width).ok() != Some(expected_len) {
+            return Err(self.op(function, pc, part.width_defect(schema, expected_len, width)));
         }
-        let region_index = self.exact_region(
-            function,
-            pc,
-            frame,
-            offset,
-            expected_len,
-            AccessRole::OrderedKeyDestination,
-        )?;
+        let region_index =
+            self.exact_region(function, pc, frame, offset, expected_len, part.role())?;
         let region = &self.contract.functions[function.0 as usize].frame.regions[region_index];
         if region.shape != expected.inline || region.value_shape != expected.value_shape {
             return Err(self.op(
                 function,
                 pc,
-                ProgramDefect::OrderedKeyShapeMismatch {
-                    schema: key_schema,
-                    expected: expected.inline.clone(),
-                    actual: region.shape.clone(),
-                },
+                part.shape_defect(schema, expected.inline.clone(), region.shape.clone()),
             ));
         }
         Ok(())
@@ -3786,6 +3934,7 @@ impl Verifier<'_> {
                     | Op::ArrayStatusIs { .. }
                     | Op::OrderedBeginProbe { .. }
                     | Op::OrderedProbeKey { .. }
+                    | Op::OrderedProbeValue { .. }
                     | Op::Trace { .. } => pending.push(pc + 1),
                     Op::ArrayStoreWord { .. } => {
                         return Err(self.unsupported(
@@ -7259,6 +7408,112 @@ mod tests {
                 ProgramDefect::OrderedCursorRegionShape {
                     region: RegionId(0),
                     shape: RegionShape::new(vec![WordKind::Scalar.into(); 2]),
+                },
+            ),
+        );
+    }
+
+    fn ordered_map_and_set_schemas() -> Vec<SchemaContract> {
+        let scalar = RegionShape::word(WordKind::Scalar);
+        let row = RegionShape::new(vec![WordKind::Scalar.into(), WordKind::Scalar.into()]);
+        vec![
+            schema(scalar.clone(), PayloadKind::Inline),
+            schema(scalar.clone(), PayloadKind::Inline),
+            schema(row, PayloadKind::Inline),
+            schema(
+                RegionShape::word(WordKind::Handle(SchemaRef(3))),
+                PayloadKind::OrderedCollection(OrderedCollectionContract {
+                    kind: OrderedCollectionKind::Map,
+                    key: SchemaRef(0),
+                    value: Some(SchemaRef(1)),
+                    row: SchemaRef(2),
+                    fanout: 4,
+                }),
+            ),
+            schema(
+                RegionShape::word(WordKind::Handle(SchemaRef(4))),
+                PayloadKind::OrderedCollection(OrderedCollectionContract {
+                    kind: OrderedCollectionKind::Set,
+                    key: SchemaRef(0),
+                    value: None,
+                    row: SchemaRef(0),
+                    fanout: 4,
+                }),
+            ),
+        ]
+    }
+
+    fn ordered_probe_value_program(
+        value_width: u32,
+        collection_schema_ref: i64,
+    ) -> (Program, ProgramContract) {
+        (
+            Program {
+                fns: vec![function(
+                    5,
+                    vec![
+                        Op::OrderedProbeValue {
+                            cursor: 0,
+                            present: 16,
+                            value: 24,
+                            status: 32,
+                            value_width,
+                            collection_schema_ref,
+                        },
+                        Op::Ret { src: 32, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    5,
+                    vec![
+                        region(0, RegionShape::new(vec![WordKind::Opaque.into(); 2])),
+                        word_region(16, WordKind::Scalar),
+                        word_region(24, WordKind::Scalar),
+                        word_region(32, WordKind::Status),
+                    ],
+                    &[],
+                    3,
+                    None,
+                )],
+                calls: vec![],
+                schemas: ordered_map_and_set_schemas(),
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    #[test]
+    fn ordered_probe_value_types_the_value_and_rejects_sets() {
+        // Baseline: a Map value projection at the exact value width verifies.
+        let (program, contract) = ordered_probe_value_program(8, 3);
+        program
+            .verify(contract)
+            .expect("a well-typed value projection is admitted");
+
+        // A Set collection has no values, so a value projection is a type error.
+        let (program, contract) = ordered_probe_value_program(8, 4);
+        assert_eq!(
+            program.verify(contract).expect_err("value on set"),
+            op_error(
+                0,
+                ProgramDefect::OrderedValueOnSet {
+                    schema: SchemaRef(4),
+                },
+            ),
+        );
+
+        // The value destination width must equal the value schema inline width.
+        let (program, contract) = ordered_probe_value_program(16, 3);
+        assert_eq!(
+            program.verify(contract).expect_err("wrong value width"),
+            op_error(
+                0,
+                ProgramDefect::OrderedValueWidth {
+                    schema: SchemaRef(1),
+                    expected: 8,
+                    actual: 16,
                 },
             ),
         );
