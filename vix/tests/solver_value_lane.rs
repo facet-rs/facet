@@ -79,9 +79,9 @@ fn unchanged_rung_085_preserves_its_fixture_provider_red_boundary() {
 }
 
 #[test]
-fn unchanged_rungs_086_through_088_preserve_the_parse_req_red_boundary() {
+fn unchanged_rungs_086_through_088_preserve_the_version_set_type_red_boundary() {
     for rung in [RUNG_086, RUNG_087, RUNG_088] {
-        assert_eq!(unknown_name(rung), "parse_req");
+        assert_eq!(unknown_name(rung), "VersionSet");
     }
 }
 
@@ -107,9 +107,8 @@ fn rung_088_conflict_value_runs_with_typed_version_sets() {
 
 #[test]
 fn typed_package_universe_keeps_same_name_sources_distinct() {
-    all_pass(
-        r#"
-enum PackageSource { Registry(String), Git(String, String) }
+    all_pass(&version_lane(r#"
+struct PackageSource { canonical: String }
 struct PackageId { source: PackageSource, name: String }
 struct Dependency { package: PackageId, requirement: VersionSet, optional: Bool, cfg: Option<String> }
 struct PackageRow { package: PackageId, version: Version, dependencies: [Dependency], features: Map<String, [String]>, yanked: Bool }
@@ -117,8 +116,8 @@ struct PackageUniverse { rows: Map<PackageId, [PackageRow]> }
 
 #[test]
 fn sources_are_domain_identity() -> Stream<Check> {
-    let registry = PackageId { source: PackageSource::Registry("https://index.crates.io"), name: "same" };
-    let git = PackageId { source: PackageSource::Git("https://example.invalid/same", "abc123"), name: "same" };
+    let registry = PackageId { source: PackageSource { canonical: "registry:https://index.crates.io" }, name: "same" };
+    let git = PackageId { source: PackageSource { canonical: "git:https://example.invalid/same#abc123" }, name: "same" };
     let row = PackageRow { package: registry, version: parse_version("1.0.0"), dependencies: [], features: %{}, yanked: false };
     let universe = PackageUniverse { rows: %{registry => [row], git => []} };
     yield expect(registry != git);
@@ -126,7 +125,7 @@ fn sources_are_domain_identity() -> Stream<Check> {
     yield expect_eq(universe.rows.get(registry).len(), 1);
     yield expect_eq(universe.rows.get(git).len(), 0);
 }
-"#,
+"#),
         4,
     );
 }
