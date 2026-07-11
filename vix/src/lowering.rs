@@ -474,35 +474,74 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
 }
 
 fn island_contains_checked_collection_ops(island: &Island) -> bool {
-    island
-        .nodes
-        .iter()
-        .chain(island.callees.iter().flat_map(|function| &function.nodes))
-        .any(|node| {
-            matches!(
-                node.op,
-                Op::Array
-                    | Op::ArrayIndex
-                    | Op::ArrayLen
-                    | Op::ArrayMap { .. }
-                    | Op::ArrayAppend
-                    | Op::ArrayConcat
-                    | Op::Map
-                    | Op::MapAdd
-                    | Op::MapConcat
-                    | Op::MapWith
-                    | Op::MapGet
-                    | Op::MapHas
-                    | Op::MapLen
-                    | Op::MapKeys
-                    | Op::Set
-                    | Op::SetAdd
-                    | Op::SetConcat
-                    | Op::SetHas
-                    | Op::SetLen
-                    | Op::SetValues
-            )
-        })
+    nodes_contain_checked_collection_ops(&island.nodes)
+        || island
+            .callees
+            .iter()
+            .any(|function| nodes_contain_checked_collection_ops(&function.nodes))
+}
+
+fn nodes_contain_checked_collection_ops(nodes: &[Node]) -> bool {
+    nodes.iter().any(|node| {
+        matches!(
+            node.op,
+            Op::Array
+                | Op::ArrayIndex
+                | Op::ArrayLen
+                | Op::ArrayMap { .. }
+                | Op::ArrayAppend
+                | Op::ArrayConcat
+                | Op::Map
+                | Op::MapAdd
+                | Op::MapConcat
+                | Op::MapWith
+                | Op::MapGet
+                | Op::MapHas
+                | Op::MapLen
+                | Op::MapKeys
+                | Op::Set
+                | Op::SetAdd
+                | Op::SetConcat
+                | Op::SetHas
+                | Op::SetLen
+                | Op::SetValues
+        ) || matches!(node.op, Op::Eq | Op::Ne)
+            && node.inputs.iter().any(|input| {
+                nodes
+                    .iter()
+                    .find(|candidate| candidate.id == *input)
+                    .is_some_and(|candidate| type_contains_array(&candidate.ty))
+            })
+    })
+}
+
+fn type_contains_array(ty: &Type) -> bool {
+    match ty {
+        Type::Array(_) => true,
+        Type::Tuple(fields) => fields.iter().any(type_contains_array),
+        Type::Record(record) => record
+            .fields
+            .iter()
+            .any(|field| type_contains_array(&field.ty)),
+        Type::Enum(enumeration) => {
+            enumeration
+                .variants
+                .iter()
+                .any(|variant| match &variant.payload {
+                    VariantPayload::Unit => false,
+                    VariantPayload::Tuple(fields) => fields.iter().any(type_contains_array),
+                    VariantPayload::Record(fields) => {
+                        fields.iter().any(|field| type_contains_array(&field.ty))
+                    }
+                })
+        }
+        Type::Function { parameter, result } => {
+            type_contains_array(parameter) || type_contains_array(result)
+        }
+        Type::Map { key, value } => type_contains_array(key) || type_contains_array(value),
+        Type::Set(element) => type_contains_array(element),
+        Type::Bool | Type::Int | Type::Check | Type::StreamCheck | Type::String => false,
+    }
 }
 
 fn program_error_attribution(
@@ -827,6 +866,43 @@ fn lower_equality_node(
     let accumulator = temps.take(&Type::Int, node.span)?;
     let work = temps.take(&Type::Int, node.span)?;
     let equal = temps.take(&Type::Int, node.span)?;
+    let array = if type_contains_array(&a.ty) {
+        let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+            lowering_diagnostic(node.span, "array equality has no checked outcome scratch")
+        })?;
+        let assigned = sequence
+            .lowering
+            .regions
+            .outcome_scratch(sequence.function.id, node.span)?;
+        let outcome = sequence
+            .lowering
+            .regions
+            .array_outcome(sequence.function.id, node.span)?;
+        let return_label = sequence.array_return.ok_or_else(|| {
+            lowering_diagnostic(node.span, "array equality has no checked outcome return")
+        })?;
+        let site = sequence
+            .lowering
+            .trace_ids
+            .get(&NodeRef {
+                function: sequence.function.id,
+                node: node.id,
+            })
+            .copied()
+            .ok_or_else(|| {
+                lowering_diagnostic(node.span, "array equality has no stable trace site")
+            })?;
+        Some(ArrayEqualityContext {
+            schemas: sequence.lowering.schemas,
+            scratch,
+            assigned,
+            outcome,
+            return_label,
+            site,
+        })
+    } else {
+        None
+    };
     outputs.code.push(WeavyOp::ConstI64 {
         dst: accumulator.region.start().byte_offset(),
         value: 1,
@@ -838,6 +914,7 @@ fn lower_equality_node(
         equal: equal.region.start(),
         temps: &mut temps,
         code: outputs.code,
+        array,
     }
     .emit(&a.ty, &a, &b)?;
     if matches!(node.op, Op::Ne) {
@@ -866,6 +943,17 @@ struct SemanticEqualityEmitter<'node, 'temps, 'code> {
     equal: FrameSlot,
     temps: &'node mut TemporaryCursor<'temps>,
     code: &'code mut CodeBuilder,
+    array: Option<ArrayEqualityContext<'node>>,
+}
+
+#[derive(Clone, Copy)]
+struct ArrayEqualityContext<'a> {
+    schemas: &'a SchemaAssignments,
+    scratch: OutcomeScratch,
+    assigned: AssignedOutcomeScratch,
+    outcome: WeavyRegionId,
+    return_label: CodeLabel,
+    site: u32,
 }
 
 impl SemanticEqualityEmitter<'_, '_, '_> {
@@ -1013,11 +1101,120 @@ impl SemanticEqualityEmitter<'_, '_, '_> {
                     self.code.bind(next, node.span)?;
                 }
             }
-            Type::Array(_)
-            | Type::Map { .. }
-            | Type::Set(_)
-            | Type::Function { .. }
-            | Type::StreamCheck => {
+            Type::Array(element) => {
+                let array = self.array.ok_or_else(|| {
+                    lowering_diagnostic(node.span, "array equality has no checked access context")
+                })?;
+                let left_length = self.temps.take(&Type::Int, node.span)?;
+                let right_length = self.temps.take(&Type::Int, node.span)?;
+                let index = self.temps.take(&Type::Int, node.span)?;
+                let left = self.temps.take(element, node.span)?;
+                let right = self.temps.take(element, node.span)?;
+                let element_schema = array.schemas.schema_for(element, node.span)?;
+                let element_width = element_byte_width(element, node.span)?;
+
+                self.code.push(WeavyOp::LoadArrayLen {
+                    dst: left_length.region.start().byte_offset(),
+                    status: array.scratch.status.byte_offset(),
+                    array: a.region.start().byte_offset(),
+                    elem_schema_ref: i64::from(element_schema.0),
+                });
+                emit_array_status_machine_checks(
+                    node,
+                    array.site,
+                    array.scratch,
+                    array.assigned,
+                    array.outcome,
+                    array.return_label,
+                    self.code,
+                )?;
+                self.code.push(WeavyOp::LoadArrayLen {
+                    dst: right_length.region.start().byte_offset(),
+                    status: array.scratch.status.byte_offset(),
+                    array: b.region.start().byte_offset(),
+                    elem_schema_ref: i64::from(element_schema.0),
+                });
+                emit_array_status_machine_checks(
+                    node,
+                    array.site,
+                    array.scratch,
+                    array.assigned,
+                    array.outcome,
+                    array.return_label,
+                    self.code,
+                )?;
+                self.code.push(WeavyOp::EqI64 {
+                    dst: work.byte_offset(),
+                    a: left_length.region.start().byte_offset(),
+                    b: right_length.region.start().byte_offset(),
+                });
+                self.code.push(WeavyOp::MulI64 {
+                    dst: accumulator.byte_offset(),
+                    a: accumulator.byte_offset(),
+                    b: work.byte_offset(),
+                });
+                let done = self.code.label();
+                self.code.jump_if_zero(work, done);
+                self.code.push(WeavyOp::ConstI64 {
+                    dst: index.region.start().byte_offset(),
+                    value: 0,
+                });
+                let next = self.code.label();
+                self.code.bind(next, node.span)?;
+                self.code.push(WeavyOp::LtI64 {
+                    dst: work.byte_offset(),
+                    a: index.region.start().byte_offset(),
+                    b: left_length.region.start().byte_offset(),
+                });
+                self.code.jump_if_zero(work, done);
+                self.code.push(WeavyOp::LoadArray {
+                    dst: left.region.start().byte_offset(),
+                    status: array.scratch.status.byte_offset(),
+                    array: a.region.start().byte_offset(),
+                    index: index.region.start().byte_offset(),
+                    elem_width: element_width,
+                    elem_schema_ref: i64::from(element_schema.0),
+                });
+                emit_array_status_machine_checks(
+                    node,
+                    array.site,
+                    array.scratch,
+                    array.assigned,
+                    array.outcome,
+                    array.return_label,
+                    self.code,
+                )?;
+                self.code.push(WeavyOp::LoadArray {
+                    dst: right.region.start().byte_offset(),
+                    status: array.scratch.status.byte_offset(),
+                    array: b.region.start().byte_offset(),
+                    index: index.region.start().byte_offset(),
+                    elem_width: element_width,
+                    elem_schema_ref: i64::from(element_schema.0),
+                });
+                emit_array_status_machine_checks(
+                    node,
+                    array.site,
+                    array.scratch,
+                    array.assigned,
+                    array.outcome,
+                    array.return_label,
+                    self.code,
+                )?;
+                self.emit(element, &left, &right)?;
+                self.code.push(WeavyOp::ConstI64 {
+                    dst: equal.byte_offset(),
+                    value: 1,
+                });
+                self.code.push(WeavyOp::AddI64 {
+                    dst: index.region.start().byte_offset(),
+                    a: index.region.start().byte_offset(),
+                    b: equal.byte_offset(),
+                });
+                self.code.jump(next);
+                self.code.bind(done, node.span)?;
+            }
+            Type::Map { .. } | Type::Set(_) | Type::Function { .. } | Type::StreamCheck => {
                 return Err(lowering_diagnostic(
                     node.span,
                     "equality lowering is not implemented for this VIR type",
@@ -2660,11 +2857,16 @@ fn comparison_temporary_types(ty: &Type, out: &mut Vec<Type>) {
                 }
             }
         }
+        Type::Array(element) => {
+            out.extend([Type::Int, Type::Int, Type::Int]);
+            out.push(element.as_ref().clone());
+            out.push(element.as_ref().clone());
+            comparison_temporary_types(element, out);
+        }
         Type::Bool
         | Type::Int
         | Type::Check
         | Type::String
-        | Type::Array(_)
         | Type::Map { .. }
         | Type::Set(_)
         | Type::Function { .. }

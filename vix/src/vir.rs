@@ -340,7 +340,8 @@ impl Type {
     pub fn equality_is_structural(&self) -> bool {
         match self {
             Self::Bool | Self::Int | Self::String => true,
-            Self::Array(_) | Self::Map { .. } | Self::Set(_) => false,
+            Self::Array(element) => element.equality_is_structural(),
+            Self::Map { .. } | Self::Set(_) => false,
             Self::Function { .. } => false,
             Self::Tuple(elements) => elements.iter().all(Self::equality_is_structural),
             Self::Record(record) => record
