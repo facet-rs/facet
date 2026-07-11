@@ -784,7 +784,10 @@ impl<S: EventSink> Runtime<S> {
             key: lowered.demand_key,
             failure: failure.clone(),
         });
-        Ok(GeneratorOutcome::LanguageFailure { failure, context })
+        Ok(GeneratorOutcome::LanguageFailure {
+            failure: Box::new(failure),
+            context,
+        })
     }
 
     fn materialize_constants(&mut self, lowered: &LoweringArtifact) -> Vec<Handle> {

@@ -210,7 +210,7 @@ fn run_lane(
                 GeneratorOutcome::LanguageFailure { failure, context } => {
                     return Err(RunError::GeneratorLanguageFailure {
                         test: test.name.clone(),
-                        failure,
+                        failure: *failure,
                         context,
                     });
                 }
