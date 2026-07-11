@@ -3584,6 +3584,11 @@ fn lower_closure_typed_with_body_kind(
     expected_result: Option<&Type>,
     body_kind: ClosureBodyKind,
 ) -> Result<LoweredValue, Diagnostics> {
+    let captures = outer_bindings
+        .iter()
+        .filter(|(name, _)| closure_body_mentions(&closure.body, name))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect::<Vec<_>>();
     let (id, name) = context.allocate_closure();
     context.enter_function(name.clone());
     let lowered = (|| {
@@ -3615,7 +3620,7 @@ fn lower_closure_typed_with_body_kind(
             ty: parameter_ty.clone(),
             kind: ParameterKind::Positional,
         }];
-        for (index, (name, captured)) in outer_bindings.iter().enumerate() {
+        for (index, (name, captured)) in captures.iter().enumerate() {
             let id = ParameterId(u32::try_from(index + 1).expect("closure capture count fits u32"));
             let node = push_node(
                 &mut closure_nodes,
@@ -3724,17 +3729,62 @@ fn lower_closure_typed_with_body_kind(
     let (function, ty) = lowered?;
     context.insert_closure(function);
 
+    let capture_inputs = captures
+        .iter()
+        .map(|(_, captured)| {
+            let source = nodes.get(captured.node.0 as usize).ok_or_else(|| {
+                Diagnostics::one(Diagnostic::unsupported(
+                    closure.span,
+                    "captured value is absent",
+                ))
+            })?;
+            let Op::Int(value) = source.op else {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    closure.span,
+                    "closure capture currently requires an Int value at construction",
+                )));
+            };
+            Ok(push_node(
+                nodes,
+                closure.span,
+                Type::Int,
+                EffectFacts::PURE,
+                Vec::new(),
+                Op::Int(value),
+            ))
+        })
+        .collect::<Result<Vec<_>, Diagnostics>>()?;
+
     Ok(LoweredValue {
         node: push_node(
             nodes,
             closure.span,
             ty.clone(),
             EffectFacts::PURE,
-            outer_bindings.values().map(|value| value.node).collect(),
+            capture_inputs,
             Op::Closure(id),
         ),
         ty,
     })
+}
+
+fn closure_body_mentions(body: &ast::ClosureBody, name: &str) -> bool {
+    match body {
+        ast::ClosureBody::Expr(expression) => expression_mentions_binding(expression, name),
+        ast::ClosureBody::Block(_) => false,
+    }
+}
+
+fn expression_mentions_binding(expression: &ast::Expr, name: &str) -> bool {
+    match expression {
+        ast::Expr::Identifier(identifier) => identifier.value == name,
+        ast::Expr::Binary(binary) => {
+            expression_mentions_binding(&binary.left, name)
+                || expression_mentions_binding(&binary.right, name)
+        }
+        ast::Expr::Paren(paren) => expression_mentions_binding(&paren.inner, name),
+        _ => false,
+    }
 }
 
 fn bind_closure_patterns(
