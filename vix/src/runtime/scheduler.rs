@@ -849,9 +849,9 @@ mod tests {
     use crate::compiler::Compiler;
     use crate::lowering::{LoweringCache, attribution_for};
     use crate::runtime::{EventLog, MachineCause};
-    use weavy::{Executable, ValueShapeRef};
     use weavy::exec::{DriveTable, TaskFault};
     use weavy::task::{ArrayOpStatus, Op};
+    use weavy::{Executable, ValueShapeRef};
 
     const ENUM_SOURCE: &str = r#"
 enum Outcome {
@@ -1216,21 +1216,26 @@ fn out_of_bounds() -> Stream<Check> {
                     ..
                 })
             ));
-            assert!(runtime
-                .tasks()
-                .all(|task| task.state == TaskState::Failed));
-            assert!(runtime
-                .demands()
-                .all(|demand| demand.state == DemandState::MachineFailed));
+            assert!(runtime.tasks().all(|task| task.state == TaskState::Failed));
+            assert!(
+                runtime
+                    .demands()
+                    .all(|demand| demand.state == DemandState::MachineFailed)
+            );
             assert!(runtime.memo.is_empty());
-            assert!(runtime
-                .store()
-                .inspect()
-                .all(|entry| entry.failure().is_none()));
-            assert!(!runtime.sink().events().iter().any(|event| matches!(
-                event.kind,
-                EventKind::LanguageFailed { .. }
-            )));
+            assert!(
+                runtime
+                    .store()
+                    .inspect()
+                    .all(|entry| entry.failure().is_none())
+            );
+            assert!(
+                !runtime
+                    .sink()
+                    .events()
+                    .iter()
+                    .any(|event| matches!(event.kind, EventKind::LanguageFailed { .. }))
+            );
             assert!(runtime.sink().events().iter().any(|event| matches!(
                 event.kind,
                 EventKind::MachineFailed {

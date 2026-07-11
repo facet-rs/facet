@@ -4,8 +4,8 @@ use crate::compiler::Compiler;
 use crate::diagnostic::Diagnostics;
 use crate::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
 use crate::runtime::{
-    ChaosPolicy, Counters, DemandState, Evaluation, Event, EventLog, FailureContext,
-    FailureValue, Location, MachineError, Runtime, TaskState, ValueId,
+    ChaosPolicy, Counters, DemandState, Evaluation, Event, EventLog, FailureContext, FailureValue,
+    Location, MachineError, Runtime, TaskState, ValueId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
