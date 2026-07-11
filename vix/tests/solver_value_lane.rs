@@ -13,6 +13,11 @@ const RUNG_085: &str = include_str!("ratchet/085-index-rows.vix");
 const RUNG_086: &str = include_str!("ratchet/086-domains.vix");
 const RUNG_087: &str = include_str!("ratchet/087-propagate-narrows.vix");
 const RUNG_088: &str = include_str!("ratchet/088-propagate-conflicts.vix");
+const RUNG_089: &str = include_str!("ratchet/089-mini-solve-trivial.vix");
+const RUNG_090: &str = include_str!("ratchet/090-backtracking.vix");
+const RUNG_091: &str = include_str!("ratchet/091-exhaustion-is-none.vix");
+const RUNG_092: &str = include_str!("ratchet/092-learning-prunes.vix");
+const RUNG_093: &str = include_str!("ratchet/093-solve-is-deterministic.vix");
 
 // The rung's `IndexRow.vers: String` is an adapter-only historical surface.
 // `fixture_index` parses it only at the rung's `by_key` demand; solver state
@@ -38,12 +43,58 @@ fn rows(index: FixtureIndex) where { name: String } -> Map<Int, IndexRow> {
 }
 "#;
 
+// The solver fixture is one typed package universe: rows retain source-aware
+// identity, typed Versions, dependency requirements, and policy-bearing fields.
+// The canonical rungs retain their historical name-keyed roots and result map;
+// the kernel resolves those roots into PackageId-keyed state without making
+// name-only identity a universe representation.
+const SOLVER_FIXTURE: &str = r#"
+struct PackageSource { canonical: String }
+struct PackageId { source: PackageSource, name: String }
+struct Dependency { package: PackageId, requirement: VersionSet, optional: Bool, cfg: Option<String> }
+struct PackageRow { package: PackageId, version: Version, dependencies: [Dependency], features: Map<String, [String]>, yanked: Bool }
+struct PackageUniverse { rows: Map<PackageId, [PackageRow]> }
+
+fn registry(name: String) -> PackageId {
+    PackageId { source: PackageSource { canonical: "registry:https://index.crates.io" }, name }
+}
+
+fn fixture_index() -> PackageUniverse {
+    let liba = registry("liba");
+    let libb = registry("libb");
+    let libc = registry("libc");
+    let libd = registry("libd");
+    PackageUniverse {
+        rows: %{
+            liba => [
+                PackageRow { package: liba, version: parse_version("1.2.0"), dependencies: [Dependency { package: libb, requirement: parse_req("^1.0"), optional: false, cfg: None }], features: %{}, yanked: false },
+                PackageRow { package: liba, version: parse_version("1.3.0"), dependencies: [Dependency { package: libb, requirement: parse_req("^2.0"), optional: false, cfg: None }], features: %{}, yanked: false },
+            ],
+            libb => [
+                PackageRow { package: libb, version: parse_version("1.0.0"), dependencies: [], features: %{}, yanked: false },
+                PackageRow { package: libb, version: parse_version("2.0.0"), dependencies: [], features: %{}, yanked: false },
+            ],
+            libc => [
+                PackageRow { package: libc, version: parse_version("1.0.0"), dependencies: [Dependency { package: libb, requirement: parse_req("^1.0"), optional: false, cfg: None }], features: %{}, yanked: false },
+            ],
+            libd => [
+                PackageRow { package: libd, version: parse_version("3.0.0"), dependencies: [Dependency { package: libb, requirement: parse_req("^1.0"), optional: false, cfg: None }], features: %{}, yanked: false },
+            ],
+        },
+    }
+}
+"#;
+
 fn version_lane(rung: &str) -> String {
     format!("{STD_VERSION}\n{rung}")
 }
 
 fn index_lane() -> String {
     format!("{STD_VERSION}\n{INDEX_FIXTURE}\n{RUNG_085}")
+}
+
+fn solver_lane(rung: &str) -> String {
+    format!("{STD_VERSION}\n{SOLVER_FIXTURE}\n{rung}")
 }
 
 fn unknown_name(source: &str) -> String {
@@ -83,6 +134,11 @@ fn unchanged_rungs_086_through_088_preserve_the_version_set_type_red_boundary() 
     for rung in [RUNG_086, RUNG_087, RUNG_088] {
         assert_eq!(unknown_name(rung), "VersionSet");
     }
+}
+
+#[test]
+fn rung_089_preserves_the_typed_mini_solve_red_boundary() {
+    assert_eq!(unknown_name(&solver_lane(RUNG_089)), "mini_solve");
 }
 
 #[test]
