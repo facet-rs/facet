@@ -309,6 +309,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
     }
     let array_outcome =
         island_contains_array_ops(island).then(|| ArrayOutcomeAbi::for_value(output.ty.clone()));
+    let schemas = SchemaAssignments::build(island, array_outcome.is_some())?;
 
     let function_ids = island.local_function_ids();
     let functions = island
@@ -397,8 +398,14 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
         pc_nodes.push(lowered.pc_nodes);
     }
     let program = WeavyProgram { fns: functions_out };
-    let contract =
-        ProgramContractBuilder::build(island, &program, &layouts, &constant_closures, &regions)?;
+    let contract = ProgramContractBuilder::build(
+        island,
+        &program,
+        &layouts,
+        &constant_closures,
+        &regions,
+        &schemas,
+    )?;
     let constants = bind_constants(
         pending_constants,
         &contract,
@@ -609,13 +616,113 @@ struct ProgramContractBuilder<'a> {
     layouts: &'a BTreeMap<FunctionId, FunctionLayout>,
     constant_closures: &'a BTreeMap<FunctionId, BTreeSet<NodeRef>>,
     regions: &'a RegionAssignments,
+    schemas_preassigned: &'a SchemaAssignments,
     function_order: Vec<FunctionContractSource<'a>>,
     closure_targets: BTreeSet<FunctionId>,
     calls: Vec<WeavyCallContract>,
     schemas: Vec<WeavySchemaContract>,
-    schema_keys: Vec<Type>,
+    schema_ready: Vec<bool>,
     value_shapes: Vec<WeavyValueShapeContract>,
     value_shape_keys: Vec<Type>,
+}
+
+fn empty_schema() -> WeavySchemaContract {
+    WeavySchemaContract {
+        inline: WeavyRegionShape::default(),
+        value_shape: None,
+        payload: WeavyPayloadKind::Inline,
+    }
+}
+
+/// Closed program-local schema order. It is sorted by Vix's canonical semantic
+/// type encoding, so source spans and lowering traversal cannot affect a
+/// Weavy `SchemaRef` witness.
+struct SchemaAssignments {
+    types: Vec<Type>,
+}
+
+impl SchemaAssignments {
+    fn build(island: &Island, array_outcomes: bool) -> Result<Self, Diagnostics> {
+        let mut types = Vec::new();
+        let mut add = |ty: &Type| collect_schema_types(ty, &mut types);
+        for node in &island.nodes {
+            add(&node.ty);
+        }
+        for function in &island.callees {
+            add(&function.return_type);
+            for parameter in &function.parameters {
+                add(&parameter.ty);
+            }
+            for node in &function.nodes {
+                add(&node.ty);
+            }
+        }
+        if array_outcomes {
+            let output = island
+                .nodes
+                .iter()
+                .find(|node| node.id == island.output)
+                .ok_or_else(|| {
+                    lowering_diagnostic(Span { start: 0, end: 0 }, "missing island output")
+                })?;
+            add(&ArrayOutcomeAbi::for_value(output.ty.clone()).ty);
+            for function in &island.callees {
+                add(&ArrayOutcomeAbi::for_value(function.return_type.clone()).ty);
+            }
+        }
+        types.sort_by_key(crate::vir::canonical_type);
+        types.dedup();
+        if types.iter().any(|ty| matches!(ty, Type::StreamCheck)) {
+            return Err(lowering_diagnostic(
+                Span { start: 0, end: 0 },
+                "Stream<Check> cannot be a dynamic program payload schema",
+            ));
+        }
+        Ok(Self { types })
+    }
+
+    fn schema_for(&self, ty: &Type, span: Span) -> Result<WeavySchemaRef, Diagnostics> {
+        self.types
+            .iter()
+            .position(|candidate| candidate == ty)
+            .and_then(|index| u32::try_from(index).ok())
+            .map(WeavySchemaRef)
+            .ok_or_else(|| {
+                lowering_diagnostic(span, "type is absent from closed schema assignment")
+            })
+    }
+}
+
+fn collect_schema_types(ty: &Type, out: &mut Vec<Type>) {
+    out.push(ty.clone());
+    match ty {
+        Type::Function { parameter, result } => {
+            collect_schema_types(parameter, out);
+            collect_schema_types(result, out);
+        }
+        Type::Tuple(fields) => fields
+            .iter()
+            .for_each(|field| collect_schema_types(field, out)),
+        Type::Record(record) => record
+            .fields
+            .iter()
+            .for_each(|field| collect_schema_types(&field.ty, out)),
+        Type::Enum(enumeration) => {
+            for variant in &enumeration.variants {
+                match &variant.payload {
+                    VariantPayload::Unit => {}
+                    VariantPayload::Tuple(fields) => fields
+                        .iter()
+                        .for_each(|field| collect_schema_types(field, out)),
+                    VariantPayload::Record(fields) => fields
+                        .iter()
+                        .for_each(|field| collect_schema_types(&field.ty, out)),
+                }
+            }
+        }
+        Type::Array(element) => collect_schema_types(element, out),
+        Type::Bool | Type::Int | Type::Check | Type::StreamCheck | Type::String => {}
+    }
 }
 
 fn lower_equality_node(
@@ -878,6 +985,7 @@ impl<'a> ProgramContractBuilder<'a> {
         layouts: &'a BTreeMap<FunctionId, FunctionLayout>,
         constant_closures: &'a BTreeMap<FunctionId, BTreeSet<NodeRef>>,
         regions: &'a RegionAssignments,
+        schemas_preassigned: &'a SchemaAssignments,
     ) -> Result<WeavyProgramContract, Diagnostics> {
         let root_output = island.output;
         let mut function_order = Vec::with_capacity(1 + island.callees.len());
@@ -914,14 +1022,18 @@ impl<'a> ProgramContractBuilder<'a> {
             layouts,
             constant_closures,
             regions,
+            schemas_preassigned,
             function_order,
             closure_targets,
             calls: Vec::new(),
-            schemas: Vec::new(),
-            schema_keys: Vec::new(),
+            schemas: vec![empty_schema(); schemas_preassigned.types.len()],
+            schema_ready: vec![false; schemas_preassigned.types.len()],
             value_shapes: Vec::new(),
             value_shape_keys: Vec::new(),
         };
+        for ty in builder.schemas_preassigned.types.clone() {
+            builder.schema_for_type(&ty, Span { start: 0, end: 0 })?;
+        }
 
         let mut functions = Vec::with_capacity(program.fns.len());
         for (function_index, function) in program.fns.iter().enumerate() {
@@ -1279,21 +1391,12 @@ impl<'a> ProgramContractBuilder<'a> {
     }
 
     fn schema_for_type(&mut self, ty: &Type, span: Span) -> Result<WeavySchemaRef, Diagnostics> {
-        if let Some(index) = self
-            .schema_keys
-            .iter()
-            .position(|candidate| candidate == ty)
-        {
-            return Ok(WeavySchemaRef(index as u32));
+        let schema = self.schemas_preassigned.schema_for(ty, span)?;
+        let index = schema.0 as usize;
+        if self.schema_ready[index] {
+            return Ok(schema);
         }
-        let index = self.schemas.len();
-        let schema = WeavySchemaRef(index as u32);
-        self.schema_keys.push(ty.clone());
-        self.schemas.push(WeavySchemaContract {
-            inline: WeavyRegionShape::default(),
-            value_shape: None,
-            payload: WeavyPayloadKind::Inline,
-        });
+        self.schema_ready[index] = true;
         let inline = match ty {
             Type::String | Type::Array(_) => WeavyRegionShape::word(WeavyWordKind::Handle(schema)),
             _ => self.shape_for_type(ty, span)?,
@@ -1688,7 +1791,14 @@ impl RegionAssignments {
                     })?);
                     next += 1;
                 }
-                outcome_scratch.insert(function, AssignedOutcomeScratch { status, condition, fields });
+                outcome_scratch.insert(
+                    function,
+                    AssignedOutcomeScratch {
+                        status,
+                        condition,
+                        fields,
+                    },
+                );
                 let mut assigned_calls = BTreeMap::new();
                 for node in layout.call_outcomes.keys() {
                     assigned_calls.insert(
@@ -2019,7 +2129,11 @@ impl FunctionLayout {
                     .ok_or_else(|| lowering_diagnostic(span, "array outcome scratch overflow"))?;
                 next_word += 1;
             }
-            Some(OutcomeScratch { status, condition, fields })
+            Some(OutcomeScratch {
+                status,
+                condition,
+                fields,
+            })
         } else {
             None
         };

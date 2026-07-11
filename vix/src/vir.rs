@@ -914,7 +914,7 @@ fn canonical_control_region(region: &ControlRegion) -> Vec<u8> {
     encoded
 }
 
-fn canonical_type(ty: &Type) -> Vec<u8> {
+pub(crate) fn canonical_type(ty: &Type) -> Vec<u8> {
     match ty {
         Type::Bool => b"bool".to_vec(),
         Type::Int => b"int".to_vec(),
