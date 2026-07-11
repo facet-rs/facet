@@ -3343,6 +3343,95 @@ fn map_and_set_surface_has_distinct_typed_vir_grains() {
 }
 
 #[test]
+fn map_failures_are_typed_attributed_and_replay_stable() {
+    const MISSING: &str = r#"
+fn required_value(m: Map<String, Int>) -> Int {
+    m.get("missing")
+}
+
+#[test]
+fn missing_key() -> Stream<Check> {
+    let m: Map<String, Int> = %{};
+    let value = required_value(m);
+    yield expect_eq(value, 0);
+}
+"#;
+    const DUPLICATES: &str = r#"
+fn duplicate_row(m: Map<String, Int>) -> Map<String, Int> {
+    m + ("k", 2)
+}
+
+fn overlapping_maps() -> Map<String, Int> {
+    %{"a" => 1} ++ %{"a" => 2}
+}
+
+#[test]
+fn duplicate_row_check() -> Stream<Check> {
+    let collision = duplicate_row(%{"k" => 1});
+    yield expect_eq(collision.len(), 0);
+}
+
+#[test]
+fn overlapping_maps_check() -> Stream<Check> {
+    let collision = overlapping_maps();
+    yield expect_eq(collision.len(), 0);
+}
+"#;
+
+    let missing = run_source(MISSING).expect("missing Map key is a language failure report");
+    assert_eq!(missing.plain.checks, missing.chaos.checks);
+    for lane in [&missing.plain, &missing.chaos] {
+        let [check] = lane.checks.as_slice() else {
+            panic!("one missing-key check")
+        };
+        assert!(!check.passed);
+        assert!(matches!(
+            check.failure,
+            Some(vix::runtime::FailureValue::MissingKey { .. })
+        ));
+        let context = check
+            .failure_context
+            .as_ref()
+            .expect("missing key resolves through current source attribution");
+        assert_eq!(
+            &MISSING[context.span.start as usize..context.span.end as usize],
+            "m.get(\"missing\")"
+        );
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+
+    let duplicates =
+        run_source(DUPLICATES).expect("duplicate Map keys are language failure reports");
+    assert_eq!(duplicates.plain.checks, duplicates.chaos.checks);
+    for lane in [&duplicates.plain, &duplicates.chaos] {
+        let [row, merge] = lane.checks.as_slice() else {
+            panic!("one row collision and one merge collision")
+        };
+        for (check, operation) in [
+            (row, "m + (\"k\", 2)"),
+            (merge, "%{\"a\" => 1} ++ %{\"a\" => 2}"),
+        ] {
+            assert!(!check.passed);
+            assert!(matches!(
+                check.failure,
+                Some(vix::runtime::FailureValue::DuplicateKey { .. })
+            ));
+            let context = check
+                .failure_context
+                .as_ref()
+                .expect("duplicate key resolves through current source attribution");
+            assert_eq!(
+                &DUPLICATES[context.span.start as usize..context.span.end as usize],
+                operation
+            );
+        }
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+#[test]
 fn string_plus_remains_distinct_from_collection_addition() {
     const SOURCE: &str = r#"
 fn suffixed(value: String) -> String {
