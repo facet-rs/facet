@@ -2736,6 +2736,48 @@ fn unused_collection_result_is_a_typed_warning() {
         "xs + 4"
     );
     assert_eq!(compilation.module.functions.len(), 1);
+
+    const ALL_MARKERS: &str = r#"
+fn unused_collection_results(
+    xs: [Int],
+    map: Map<String, Int>,
+    set: Set<Int>,
+) -> Int {
+    let array_all = xs ++ xs;
+    let map_one = map + ("x", 1);
+    let map_all = map ++ map;
+    let rebound = map.with ("x", 1);
+    let set_one = set + 1;
+    let set_all = set ++ set;
+    0
+}
+"#;
+    let compilation = Compiler::new()
+        .compile(ALL_MARKERS)
+        .expect("must-use markers do not reject the program");
+    assert_eq!(
+        compilation
+            .warnings
+            .entries
+            .iter()
+            .map(|warning| warning.message())
+            .collect::<Vec<_>>(),
+        [
+            "unused result of `++`",
+            "unused result of `+`",
+            "unused result of `++`",
+            "unused result of `with`",
+            "unused result of `+`",
+            "unused result of `++`",
+        ]
+    );
+    assert!(
+        compilation
+            .warnings
+            .entries
+            .iter()
+            .all(|warning| warning.code.severity() == DiagnosticSeverity::Warning)
+    );
 }
 
 #[test]
