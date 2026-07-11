@@ -3454,7 +3454,6 @@ fn lower_node(
                 "array literal lowering is not implemented",
             ));
         }
-        // r[impl lang.collection.array-index]
         Op::ArrayIndex => {
             return Err(lowering_diagnostic(
                 node.span,
@@ -3940,6 +3939,7 @@ fn lower_checked_array_node(
             )?;
             Ok(ValueRepresentation::Word)
         }
+        // r[impl lang.collection.array-index]
         Op::ArrayIndex => {
             require_input_count(node, 2)?;
             let array = input_value(node, values, 0)?;
