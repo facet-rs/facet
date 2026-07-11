@@ -3290,19 +3290,56 @@ fn map_and_set_surface_has_distinct_typed_vir_grains() {
 
     let partitioned = map_compilation.partition_test(&map_compilation.tests[0]);
     let mut lowering_cache = LoweringCache::default();
-    let error = match lowering_cache.get_or_lower(&partitioned.islands[0]) {
-        Ok(_) => panic!("map lowering remains the next runtime boundary"),
-        Err(vix::lowering::LoweringError::Diagnostics(diagnostics)) => diagnostics,
-        Err(vix::lowering::LoweringError::Machine(error)) => {
-            panic!("unexpected verifier failure: {error:?}")
-        }
-    };
-    assert_eq!(error.entries.len(), 1);
-    assert_eq!(error.entries[0].code, DiagnosticCode::LoweringUnsupported);
-    assert_eq!(
-        error.entries[0].message(),
-        "map/set lowering is not implemented"
+    let lowered = lowering_cache
+        .get_or_lower(&partitioned.islands[0])
+        .expect("map surface lowers through verified ordered execution");
+    assert!(
+        lowered
+            .contract()
+            .schemas
+            .iter()
+            .any(|schema| matches!(schema.payload, weavy::PayloadKind::OrderedCollection(_)))
     );
+    assert!(
+        lowered
+            .program()
+            .fns
+            .iter()
+            .flat_map(|function| &function.code)
+            .any(|op| matches!(
+                op,
+                WeavyOp::OrderedBeginInsert { .. }
+                    | WeavyOp::OrderedProbeKey { .. }
+                    | WeavyOp::OrderedLen { .. }
+            ))
+    );
+    assert!(
+        lowered
+            .program()
+            .fns
+            .iter()
+            .flat_map(|function| &function.code)
+            .all(|op| !matches!(op, WeavyOp::LoadArray { .. } | WeavyOp::LoadArrayLen { .. }))
+    );
+
+    for (rung, source, expected_checks) in [
+        ("041", RUNG_041, 5usize),
+        ("042", RUNG_042, 3),
+        ("043", RUNG_043, 1),
+        ("044", RUNG_044, 5),
+    ] {
+        let report = run_source(source).unwrap_or_else(|error| {
+            panic!("rung {rung} executes through ordered substrate: {error:?}")
+        });
+        assert!(report.passed());
+        assert!(report.agrees());
+        assert_eq!(report.plain.checks.len(), expected_checks);
+        assert_eq!(report.plain.checks, report.chaos.checks);
+        for lane in [&report.plain, &report.chaos] {
+            assert_eq!(lane.counters.pure_host_calls, 0);
+            assert_eq!(lane.receipt_count, 0);
+        }
+    }
 }
 
 #[test]

@@ -2277,10 +2277,10 @@ impl FunctionLayout {
                 vec![Type::Int, Type::Int, Type::Int]
             } else if matches!(node.op, Op::Compare) {
                 vec![Type::Int, Type::Int]
-            } else if let Type::Array(element) = &node.ty {
-                vec![element.as_ref().clone()]
             } else if let Some(types) = collection_temporary_types(node, nodes)? {
                 types
+            } else if let Type::Array(element) = &node.ty {
+                vec![element.as_ref().clone()]
             } else {
                 return Err(lowering_diagnostic(
                     node.span,
