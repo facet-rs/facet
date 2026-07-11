@@ -12,9 +12,32 @@
 //!
 //! Ported from vixenware `rodin-fixtures`, retargeted from the Rust reference
 //! resolver (`rodin-core`) to rodin.vix. The cargo-oracle side works today; the
-//! `vix_selected` SUT seam is filled in as rodin.vix grows (rodin/docs/40-search).
-//! The five differential tests are #[ignore]'d until the native resolver lands;
-//! the behaviors they pin are catalogued in rodin/docs/05-fixture-corpus.md.
+//! `vix_selected` SUT seam runs the current WIP `rodin.vix` as rodin grows
+//! (rodin/docs/40-search). The behaviors these differentials pin are catalogued
+//! in rodin/docs/05-fixture-corpus.md.
+//!
+//! ## The live-Cargo oracle lane (typed, serde-free)
+//!
+//! Below the differential corpus, this file also carries an *independent*
+//! live-Cargo oracle harness — the one true oracle is cargo, not the deleted
+//! Rust resolver and not any recorded expected-selection (rodin/docs/00-oracle,
+//! rodin/PLAN.md). It reuses the fixture DSL (`Fixture`/`materialize`) and adds
+//! the two cargo oracles as typed, minimizable data:
+//!
+//!   * Oracle 1 — version selection: `cargo generate-lockfile --offline` parsed
+//!     (via `facet-cargo-toml`, no serde) into `(source, name, compat-class,
+//!     version)` identities (rodin/docs/10-identity).
+//!   * Oracle 2 — the target-projected enabled graph: `cargo tree -e
+//!     normal,build --target <triple> --offline` parsed into typed graph edges.
+//!
+//! A future Vix resolver kernel emits a typed [`SolveResult`]; the harness
+//! compares it against both oracles and turns every divergence into a structured
+//! [`Discrepancy`] value suitable for minimization (serialized to JSON via
+//! `facet-json`, never hand-written). The kernel does not exist yet, so nothing
+//! in-tree produces a real `SolveResult`; the comparator is exercised with
+//! candidates constructed from cargo's own oracle output (a trivially-matching
+//! twin) and deliberately-perturbed variants — the Cargo side itself carries
+//! production-shaped coverage against real offline workspaces.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -22,6 +45,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use facet::Facet;
+use facet_cargo_toml::{CargoLock, LockPackage};
+use semver::Version as SemVer;
 use vix::machine::{DriveEvent, Machine, MachineArg, NamedArg, RenderedValue};
 
 const LINUX: &str = "x86_64-unknown-linux-gnu";
@@ -1280,6 +1306,404 @@ fn push_generated_clause(clauses: &mut VixClauses, next_id: &mut i32, clause: Vi
     *next_id += 1;
 }
 
+// ===========================================================================
+// The live-Cargo oracle harness (typed, serde-free).
+//
+// cargo is THE and ONLY oracle (rodin/PLAN.md, rodin/docs/00-oracle.md). This
+// layer runs real, offline cargo over a materialized fixture workspace and turns
+// both observable outputs into typed, minimizable data:
+//
+//   * Oracle 1 — `cargo generate-lockfile` → per-identity version selection.
+//   * Oracle 2 — `cargo tree --target`     → the target-projected enabled graph.
+//
+// A future Vix resolver kernel will emit a `SolveResult`; `SolveResult::compare`
+// diffs it against both oracles and yields `Discrepancy` values. The kernel is
+// not built yet — see the residual seam note in rodin/PLAN.md — so no in-tree
+// code produces a real `SolveResult`; the tests construct candidates instead.
+// ===========================================================================
+
+/// Provenance of a package identity (rodin/docs/10-identity.md). The same `name`
+/// from two provenances is two identities; cargo resolves and locks them apart,
+/// so the harness must never fold a registry crate into a path crate of the same
+/// name. Serialized into discrepancy artifacts, hence `Facet`.
+#[derive(Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+enum Source {
+    /// A path dependency — no `source` key in Cargo.lock.
+    Path,
+    /// crates.io or an alternate registry, keyed by index URL.
+    Registry { url: String },
+    /// A git dependency, by url and the locked rev.
+    Git { url: String, rev: String },
+}
+
+impl Source {
+    /// Classify a Cargo.lock `source` string. `None` is a path dependency;
+    /// `registry+`/`sparse+` are registries; `git+URL#REV` is a git source.
+    fn classify(source: Option<&str>) -> Self {
+        match source {
+            None => Self::Path,
+            Some(raw) => {
+                if let Some(url) = raw
+                    .strip_prefix("registry+")
+                    .or_else(|| raw.strip_prefix("sparse+"))
+                {
+                    Self::Registry {
+                        url: url.to_owned(),
+                    }
+                } else if let Some(body) = raw.strip_prefix("git+") {
+                    match body.split_once('#') {
+                        Some((url, rev)) => Self::Git {
+                            url: url.to_owned(),
+                            rev: rev.to_owned(),
+                        },
+                        None => Self::Git {
+                            url: body.to_owned(),
+                            rev: String::new(),
+                        },
+                    }
+                } else {
+                    Self::Registry {
+                        url: raw.to_owned(),
+                    }
+                }
+            }
+        }
+    }
+}
+
+/// The semver coexistence bucket (rodin/docs/10-identity.md § compat-class rule).
+/// Same class ⇒ two versions compete for one slot; different class ⇒ they coexist
+/// (this is why `serde 1.x` and `serde 2.x` can both appear in one lockfile).
+#[derive(Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+enum CompatClass {
+    /// `major >= 1` → class keyed on major (`1.4.2` and `1.9.0` share class `1`).
+    Major { major: u64 },
+    /// `major == 0, minor != 0` → the `0.y` footgun; each `0.minor` is its own class.
+    ZeroMinor { minor: u64 },
+    /// `major == 0, minor == 0` → each `0.0.patch` is its own class.
+    ZeroZeroPatch { patch: u64 },
+}
+
+impl CompatClass {
+    fn of(version: &SemVer) -> Self {
+        if version.major >= 1 {
+            Self::Major {
+                major: version.major,
+            }
+        } else if version.minor != 0 {
+            Self::ZeroMinor {
+                minor: version.minor,
+            }
+        } else {
+            Self::ZeroZeroPatch {
+                patch: version.patch,
+            }
+        }
+    }
+}
+
+/// A package identity: the `(source, name, compat-class)` triple everything else
+/// quantifies over (rodin/docs/10-identity.md). Two nodes with equal triples are
+/// the same resolution domain and must resolve to one version.
+#[derive(Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct PackageIdentity {
+    source: Source,
+    name: String,
+    compat: CompatClass,
+}
+
+/// One row of Oracle 1: an identity locked to an exact version. `version` stays a
+/// string (the exact Cargo.lock spelling); `compat` is derived from it.
+#[derive(Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct SelectedPackage {
+    identity: PackageIdentity,
+    version: String,
+}
+
+impl SelectedPackage {
+    fn from_lock(package: &LockPackage) -> Result<Self, String> {
+        let parsed = SemVer::parse(&package.version)
+            .map_err(|err| format!("parse version `{}`: {err}", package.version))?;
+        Ok(Self {
+            identity: PackageIdentity {
+                source: Source::classify(package.source.as_deref()),
+                name: package.name.clone(),
+                compat: CompatClass::of(&parsed),
+            },
+            version: package.version.clone(),
+        })
+    }
+}
+
+/// A node in the target-projected graph: a package name at a resolved version, as
+/// cargo tree prints it.
+#[derive(Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct GraphNode {
+    name: String,
+    version: String,
+}
+
+/// One edge of Oracle 2: a consumed dependency edge under a specific target and
+/// the `normal,build` edge-kind filter.
+#[derive(Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct GraphEdge {
+    from: GraphNode,
+    to: GraphNode,
+}
+
+/// Oracle 1 — the lockfile's per-identity version selection.
+struct LockOracle {
+    selected: BTreeSet<SelectedPackage>,
+}
+
+/// Oracle 2 — the target-projected enabled graph for one triple.
+struct TreeOracle {
+    triple: String,
+    nodes: BTreeSet<GraphNode>,
+    edges: BTreeSet<GraphEdge>,
+}
+
+/// What a future Vix resolver kernel emits: a per-identity selection plus the
+/// per-target enabled graph. The harness accepts this typed value and compares it
+/// against the two cargo oracles. Nothing in-tree builds a real one yet.
+#[derive(Facet, Clone, Debug, Default)]
+struct SolveResult {
+    selected: BTreeSet<SelectedPackage>,
+    /// Enabled graph edges, keyed by target triple.
+    graphs: BTreeMap<String, BTreeSet<GraphEdge>>,
+}
+
+impl SolveResult {
+    /// Compare against Oracle 1 and, for every provided `TreeOracle`, Oracle 2.
+    /// The result is deterministic (BTree iteration order) and structural — ready
+    /// to hand to a minimizer, never prose.
+    fn compare(&self, lock: &LockOracle, trees: &[TreeOracle]) -> Vec<Discrepancy> {
+        let mut out = compare_lockfile(&self.selected, lock);
+        for tree in trees {
+            let candidate = self.graphs.get(&tree.triple).cloned().unwrap_or_default();
+            out.extend(compare_tree(&tree.triple, &candidate, tree));
+        }
+        out
+    }
+}
+
+/// A single typed divergence between a candidate `SolveResult` and a cargo oracle.
+/// The vocabulary mirrors the historical differential's classification
+/// (rodin/docs/00-oracle.md § provenance): MissingInRodin / ExtraInRodin /
+/// VersionMismatch, now split across the two oracles.
+#[derive(Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum Discrepancy {
+    /// Oracle 1: cargo locked this identity+version; the candidate did not select it.
+    MissingSelection { expected: SelectedPackage },
+    /// Oracle 1: the candidate selected an identity+version cargo did not lock.
+    ExtraSelection { unexpected: SelectedPackage },
+    /// Oracle 1: same identity (same coexistence domain), different locked version.
+    VersionMismatch {
+        identity: PackageIdentity,
+        cargo: String,
+        candidate: String,
+    },
+    /// Oracle 2: cargo's target-projected graph has an edge the candidate lacks.
+    MissingEdge { target: String, edge: GraphEdge },
+    /// Oracle 2: the candidate has a target-projected edge cargo does not.
+    ExtraEdge { target: String, edge: GraphEdge },
+}
+
+/// A minimizable, machine-readable report over one fixture: the discrepancies
+/// found against the cargo oracles, serialized to JSON via `facet-json`.
+#[derive(Facet, Clone, Debug)]
+struct DiscrepancyReport {
+    fixture: String,
+    discrepancies: Vec<Discrepancy>,
+}
+
+impl DiscrepancyReport {
+    /// Serialize to pretty JSON via facet — never hand-written, never serde.
+    fn to_json(&self) -> Result<String, String> {
+        facet_json::to_string_pretty(self)
+            .map_err(|err| format!("serialize discrepancy report: {err}"))
+    }
+}
+
+/// Oracle 1 comparison: per-identity, missing/extra/version-mismatch.
+fn compare_lockfile(
+    candidate: &BTreeSet<SelectedPackage>,
+    oracle: &LockOracle,
+) -> Vec<Discrepancy> {
+    let index = |set: &BTreeSet<SelectedPackage>| -> BTreeMap<PackageIdentity, String> {
+        set.iter()
+            .map(|pkg| (pkg.identity.clone(), pkg.version.clone()))
+            .collect()
+    };
+    let candidate_by_id = index(candidate);
+    let oracle_by_id = index(&oracle.selected);
+    let mut out = Vec::new();
+    for (identity, cargo_version) in &oracle_by_id {
+        match candidate_by_id.get(identity) {
+            None => out.push(Discrepancy::MissingSelection {
+                expected: SelectedPackage {
+                    identity: identity.clone(),
+                    version: cargo_version.clone(),
+                },
+            }),
+            Some(candidate_version) if candidate_version != cargo_version => {
+                out.push(Discrepancy::VersionMismatch {
+                    identity: identity.clone(),
+                    cargo: cargo_version.clone(),
+                    candidate: candidate_version.clone(),
+                });
+            }
+            Some(_) => {}
+        }
+    }
+    for (identity, candidate_version) in &candidate_by_id {
+        if !oracle_by_id.contains_key(identity) {
+            out.push(Discrepancy::ExtraSelection {
+                unexpected: SelectedPackage {
+                    identity: identity.clone(),
+                    version: candidate_version.clone(),
+                },
+            });
+        }
+    }
+    out
+}
+
+/// Oracle 2 comparison: the symmetric difference of the edge sets for `target`.
+fn compare_tree(
+    target: &str,
+    candidate: &BTreeSet<GraphEdge>,
+    oracle: &TreeOracle,
+) -> Vec<Discrepancy> {
+    let mut out = Vec::new();
+    for edge in oracle.edges.difference(candidate) {
+        out.push(Discrepancy::MissingEdge {
+            target: target.to_owned(),
+            edge: edge.clone(),
+        });
+    }
+    for edge in candidate.difference(&oracle.edges) {
+        out.push(Discrepancy::ExtraEdge {
+            target: target.to_owned(),
+            edge: edge.clone(),
+        });
+    }
+    out
+}
+
+impl Fixture {
+    /// Oracle 1: `cargo generate-lockfile --offline` in the materialized
+    /// workspace, then parse `Cargo.lock` (via facet-cargo-toml, no serde) into
+    /// typed `(source, name, compat-class, version)` identities.
+    fn lock_oracle(&self) -> Result<LockOracle, String> {
+        let workspace = self.materialize()?;
+        let output = Command::new("cargo")
+            .args(["generate-lockfile", "--offline"])
+            .current_dir(&workspace)
+            .output()
+            .map_err(|err| format!("spawning cargo generate-lockfile: {err}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "cargo generate-lockfile failed for `{}`: {}",
+                self.name,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        let lock_path = workspace.join("Cargo.lock");
+        let contents = std::fs::read_to_string(&lock_path)
+            .map_err(|err| format!("read {}: {err}", lock_path.display()))?;
+        let lock = CargoLock::parse(&contents).map_err(|err| format!("parse Cargo.lock: {err}"))?;
+        let mut selected = BTreeSet::new();
+        for package in &lock.packages {
+            selected.insert(SelectedPackage::from_lock(package)?);
+        }
+        Ok(LockOracle { selected })
+    }
+
+    /// Oracle 2: the target-projected enabled graph. `cargo tree -e normal,build
+    /// --target <triple>` with `--no-dedupe` (so repeated subtrees still yield
+    /// their edges) and `--prefix depth` (so parent/child is reconstructable).
+    fn tree_oracle(&self, triple: &str) -> Result<TreeOracle, String> {
+        let workspace = self.materialize()?;
+        let output = Command::new("cargo")
+            .args([
+                "tree",
+                "-e",
+                "normal,build",
+                "--target",
+                triple,
+                "--prefix",
+                "depth",
+                "--no-dedupe",
+                "--offline",
+                "-p",
+                &self.root,
+            ])
+            .current_dir(&workspace)
+            .output()
+            .map_err(|err| format!("spawning cargo tree: {err}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "cargo tree failed for {} on {triple}: {}",
+                self.root,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        let text = String::from_utf8(output.stdout).map_err(|err| err.to_string())?;
+        parse_depth_tree(triple, &text)
+    }
+}
+
+/// Parse `cargo tree --prefix depth --no-dedupe` output into a typed graph. Each
+/// line is `<depth><name> v<version> [(source)]`; parent/child edges are rebuilt
+/// from the depth stack.
+fn parse_depth_tree(triple: &str, text: &str) -> Result<TreeOracle, String> {
+    let mut nodes = BTreeSet::new();
+    let mut edges = BTreeSet::new();
+    // stack[d] = the node most recently seen at depth d.
+    let mut stack: Vec<GraphNode> = Vec::new();
+    for line in text.lines() {
+        if line.trim().is_empty() {
+            continue;
+        }
+        let split = line
+            .find(|c: char| !c.is_ascii_digit())
+            .ok_or_else(|| format!("cargo tree line has no package after depth: {line:?}"))?;
+        let depth: usize = line[..split]
+            .parse()
+            .map_err(|err| format!("parse tree depth in {line:?}: {err}"))?;
+        let mut tokens = line[split..].split_whitespace();
+        let name = tokens
+            .next()
+            .ok_or_else(|| format!("cargo tree line missing package name: {line:?}"))?;
+        let version = tokens
+            .next()
+            .ok_or_else(|| format!("cargo tree line missing version: {line:?}"))?
+            .trim_start_matches('v');
+        let node = GraphNode {
+            name: name.to_owned(),
+            version: version.to_owned(),
+        };
+        nodes.insert(node.clone());
+        stack.truncate(depth);
+        if let Some(parent) = stack.last() {
+            edges.insert(GraphEdge {
+                from: parent.clone(),
+                to: node.clone(),
+            });
+        }
+        stack.push(node);
+    }
+    Ok(TreeOracle {
+        triple: triple.to_owned(),
+        nodes,
+        edges,
+    })
+}
+
 // ---------------------------------------------------------------------------
 // The harness smoke test: prove the ported DSL -> workspace -> cargo -> parse
 // path works end to end against the real cargo oracle (independent of rodin.vix).
@@ -1543,4 +1967,287 @@ fn rodin_linear_interiors_use_tail_loops() {
         enabled.total() < forced.total(),
         "tail-loop trace should shrink linear recursion events: enabled={enabled:?} forced={forced:?}"
     );
+}
+
+// ===========================================================================
+// The live-Cargo oracle harness: production-shaped coverage.
+//
+// Every test below drives a real, offline cargo over a materialized path
+// workspace and validates the typed extraction and the comparator. cargo is the
+// only oracle; no recorded reference selection is consulted.
+// ===========================================================================
+
+/// A trivial three-crate line workspace: `app -> mid -> leaf`, all `0.1.0`,
+/// all path dependencies.
+fn line_fixture(name: &str) -> Fixture {
+    Fixture::new(name, "app")
+        .krate(FixtureCrate::new("leaf"))
+        .krate(FixtureCrate::new("mid").dep(FixtureDep::new("leaf")))
+        .krate(FixtureCrate::new("app").dep(FixtureDep::new("mid")))
+}
+
+fn selected_named(oracle: &LockOracle, name: &str) -> SelectedPackage {
+    oracle
+        .selected
+        .iter()
+        .find(|pkg| pkg.identity.name == name)
+        .unwrap_or_else(|| panic!("`{name}` locked by cargo: {:?}", oracle.selected))
+        .clone()
+}
+
+/// The compat-class rule (rodin/docs/10-identity.md) — recovered as an executable
+/// oracle over cargo's coexistence semantics, keyed on the first non-zero
+/// version component.
+#[test]
+fn compat_class_follows_cargo_coexistence_rule() {
+    let class = |v: &str| CompatClass::of(&SemVer::parse(v).unwrap());
+    // major >= 1 → the major band; 1.4.2 and 1.9.0 share class `1`, 2.0.0 is `2`.
+    assert_eq!(class("1.4.2"), CompatClass::Major { major: 1 });
+    assert_eq!(class("1.9.0"), CompatClass::Major { major: 1 });
+    assert_eq!(class("2.0.0"), CompatClass::Major { major: 2 });
+    // major == 0, minor != 0 → the 0.y footgun; 0.4.x and 0.5.x are distinct.
+    assert_eq!(class("0.4.9"), CompatClass::ZeroMinor { minor: 4 });
+    assert_eq!(class("0.5.0"), CompatClass::ZeroMinor { minor: 5 });
+    // major == 0, minor == 0 → each 0.0.patch is its own class.
+    assert_eq!(class("0.0.7"), CompatClass::ZeroZeroPatch { patch: 7 });
+    // Two same-class versions are one coexistence domain; different class coexist.
+    assert_eq!(class("1.4.2"), class("1.9.0"));
+    assert_ne!(class("1.9.0"), class("2.0.0"));
+    assert_ne!(class("0.4.9"), class("0.5.0"));
+}
+
+/// Oracle 1: `cargo generate-lockfile` locks every workspace member as a
+/// path-source identity at its declared version.
+#[test]
+fn lock_oracle_locks_path_workspace_identities() {
+    let oracle = line_fixture("lock-identities")
+        .lock_oracle()
+        .expect("cargo generate-lockfile resolves");
+    for name in ["app", "mid", "leaf"] {
+        let pkg = selected_named(&oracle, name);
+        assert_eq!(pkg.identity.source, Source::Path, "{name} is a path source");
+        assert_eq!(
+            pkg.identity.compat,
+            CompatClass::ZeroMinor { minor: 1 },
+            "{name}@0.1.0 is compat class 0.1"
+        );
+        assert_eq!(pkg.version, "0.1.0");
+    }
+}
+
+/// Oracle 2: the tree is a *projection* — a `cfg(windows)` edge is in the graph on
+/// windows and gone on linux, both as node presence and as a typed edge.
+#[test]
+fn tree_oracle_projects_target_conditional_edges() {
+    let fixture = Fixture::new("tree-target-edges", "app")
+        .krate(FixtureCrate::new("winthing"))
+        .krate(FixtureCrate::new("app").dep(FixtureDep::new("winthing").target("cfg(windows)")));
+
+    let windows = fixture.tree_oracle(WINDOWS).expect("cargo tree on windows");
+    let linux = fixture.tree_oracle(LINUX).expect("cargo tree on linux");
+
+    assert!(
+        windows.nodes.iter().any(|node| node.name == "winthing"),
+        "winthing is a node on windows: {:?}",
+        windows.nodes
+    );
+    assert!(
+        !linux.nodes.iter().any(|node| node.name == "winthing"),
+        "winthing is absent on linux: {:?}",
+        linux.nodes
+    );
+
+    let edge = GraphEdge {
+        from: GraphNode {
+            name: "app".to_owned(),
+            version: "0.1.0".to_owned(),
+        },
+        to: GraphNode {
+            name: "winthing".to_owned(),
+            version: "0.1.0".to_owned(),
+        },
+    };
+    assert!(
+        windows.edges.contains(&edge),
+        "app->winthing edge present on windows: {:?}",
+        windows.edges
+    );
+    assert!(
+        !linux.edges.iter().any(|e| e.to.name == "winthing"),
+        "no winthing edge on linux: {:?}",
+        linux.edges
+    );
+}
+
+/// The two oracles cohere: every node in the target-projected tree is an identity
+/// the lockfile selected (the tree is a subset of the lock — doc 00).
+#[test]
+fn tree_nodes_are_a_subset_of_lock_selection() {
+    let fixture = line_fixture("oracles-cohere");
+    let lock = fixture.lock_oracle().expect("generate-lockfile");
+    let tree = fixture.tree_oracle(LINUX).expect("cargo tree");
+    assert!(!tree.nodes.is_empty(), "tree has nodes");
+    for node in &tree.nodes {
+        assert!(
+            lock.selected
+                .iter()
+                .any(|pkg| pkg.identity.name == node.name && pkg.version == node.version),
+            "tree node {node:?} must be locked by Oracle 1: {:?}",
+            lock.selected
+        );
+    }
+}
+
+/// A candidate `SolveResult` built from cargo's own oracle output must match both
+/// oracles with zero discrepancies — the comparator's reflexivity plus the whole
+/// materialize -> cargo -> parse -> compare pipeline, end to end.
+#[test]
+fn cargo_derived_candidate_matches_both_oracles() {
+    let fixture = line_fixture("candidate-matches");
+    let lock = fixture.lock_oracle().expect("generate-lockfile");
+    let tree = fixture.tree_oracle(LINUX).expect("cargo tree");
+
+    let mut graphs = BTreeMap::new();
+    graphs.insert(tree.triple.clone(), tree.edges.clone());
+    let candidate = SolveResult {
+        selected: lock.selected.clone(),
+        graphs,
+    };
+
+    let discrepancies = candidate.compare(&lock, std::slice::from_ref(&tree));
+    assert!(
+        discrepancies.is_empty(),
+        "cargo-derived candidate matches both oracles: {discrepancies:?}"
+    );
+}
+
+/// Oracle 1 comparator: a missing selection, a same-domain version bump, and an
+/// extra selection each become their own typed `Discrepancy`.
+#[test]
+fn lockfile_comparator_types_missing_extra_and_version_mismatch() {
+    let fixture = line_fixture("lock-discrepancies");
+    let oracle = fixture.lock_oracle().expect("generate-lockfile");
+    let leaf = selected_named(&oracle, "leaf");
+    let mid = selected_named(&oracle, "mid");
+
+    let mut candidate = oracle.selected.clone();
+    // Drop `leaf` entirely → MissingSelection.
+    candidate.remove(&leaf);
+    // Bump `mid` within its coexistence domain (0.1.0 -> 0.1.9 stays class 0.1) →
+    // VersionMismatch, not a re-identification.
+    candidate.remove(&mid);
+    candidate.insert(SelectedPackage {
+        identity: mid.identity.clone(),
+        version: "0.1.9".to_owned(),
+    });
+    // Invent an identity cargo never locked → ExtraSelection.
+    let ghost = SelectedPackage {
+        identity: PackageIdentity {
+            source: Source::Path,
+            name: "ghost".to_owned(),
+            compat: CompatClass::ZeroMinor { minor: 1 },
+        },
+        version: "0.1.0".to_owned(),
+    };
+    candidate.insert(ghost.clone());
+
+    let discrepancies = compare_lockfile(&candidate, &oracle);
+    assert_eq!(
+        discrepancies.len(),
+        3,
+        "exactly three typed divergences: {discrepancies:?}"
+    );
+    assert!(discrepancies.contains(&Discrepancy::MissingSelection {
+        expected: leaf.clone()
+    }));
+    assert!(discrepancies.contains(&Discrepancy::VersionMismatch {
+        identity: mid.identity.clone(),
+        cargo: "0.1.0".to_owned(),
+        candidate: "0.1.9".to_owned(),
+    }));
+    assert!(discrepancies.contains(&Discrepancy::ExtraSelection { unexpected: ghost }));
+}
+
+/// Oracle 2 comparator: a dropped edge and an invented edge become MissingEdge and
+/// ExtraEdge for the target.
+#[test]
+fn tree_comparator_types_missing_and_extra_edges() {
+    let fixture = line_fixture("tree-discrepancies");
+    let tree = fixture.tree_oracle(LINUX).expect("cargo tree");
+    assert!(!tree.edges.is_empty(), "line workspace has edges");
+
+    let mut candidate = tree.edges.clone();
+    let dropped = candidate.iter().next().cloned().unwrap();
+    candidate.remove(&dropped);
+    let invented = GraphEdge {
+        from: GraphNode {
+            name: "app".to_owned(),
+            version: "0.1.0".to_owned(),
+        },
+        to: GraphNode {
+            name: "ghost".to_owned(),
+            version: "9.9.9".to_owned(),
+        },
+    };
+    candidate.insert(invented.clone());
+
+    let discrepancies = compare_tree(LINUX, &candidate, &tree);
+    assert_eq!(
+        discrepancies.len(),
+        2,
+        "one missing, one extra: {discrepancies:?}"
+    );
+    assert!(discrepancies.contains(&Discrepancy::MissingEdge {
+        target: LINUX.to_owned(),
+        edge: dropped,
+    }));
+    assert!(discrepancies.contains(&Discrepancy::ExtraEdge {
+        target: LINUX.to_owned(),
+        edge: invented,
+    }));
+}
+
+/// The discrepancy report is a machine-readable artifact: it serializes to JSON
+/// via facet (no serde, no hand-written JSON) and round-trips back to the same
+/// typed values — ready to feed a minimizer.
+#[test]
+fn discrepancy_report_serializes_and_round_trips_via_facet_json() {
+    let report = DiscrepancyReport {
+        fixture: "demo".to_owned(),
+        discrepancies: vec![
+            Discrepancy::MissingSelection {
+                expected: SelectedPackage {
+                    identity: PackageIdentity {
+                        source: Source::Registry {
+                            url: "https://github.com/rust-lang/crates.io-index".to_owned(),
+                        },
+                        name: "serde".to_owned(),
+                        compat: CompatClass::Major { major: 1 },
+                    },
+                    version: "1.0.1".to_owned(),
+                },
+            },
+            Discrepancy::VersionMismatch {
+                identity: PackageIdentity {
+                    source: Source::Path,
+                    name: "mid".to_owned(),
+                    compat: CompatClass::ZeroMinor { minor: 1 },
+                },
+                cargo: "0.1.0".to_owned(),
+                candidate: "0.1.9".to_owned(),
+            },
+        ],
+    };
+
+    let json = report.to_json().expect("serialize via facet-json");
+    assert!(
+        json.contains("MissingSelection"),
+        "variant tag present: {json}"
+    );
+    assert!(json.contains("serde"), "identity payload present: {json}");
+
+    let parsed: DiscrepancyReport =
+        facet_json::from_str(&json).expect("round-trip back through facet-json");
+    assert_eq!(parsed.fixture, report.fixture);
+    assert_eq!(parsed.discrepancies, report.discrepancies);
 }

@@ -43,8 +43,10 @@ the vix book (`/vix`) exists. That is the definition of done.
   learn from), `libe` (1.0.0, optional dep `libnet` behind feature `net`),
   `libz` (never visited — asserting laziness), plus archived `.crate`
   files for fetch/extract rungs.
-- `fixture_workspace("kitchen-sink")` — 12 packages, diamonds, features,
-  and a recorded `expected_selection()` from the reference resolver.
+- `fixture_workspace("kitchen-sink")` — 12 packages, diamonds, features. Its
+  `cargo_selection()` is cargo's own locked selection (cargo generate-lockfile),
+  the only oracle (rodin/docs/00-oracle.md). There is no recorded reference
+  selection: the Rust reference resolver was deleted and was never an authority.
 - Rungs marked for rerun execute twice against one store; variants
   `rerun_with: "<fixture-mutation>"` apply the named mutation between runs.
 
@@ -80,7 +82,7 @@ the vix book (`/vix`) exists. That is the definition of done.
 | 089–091 | capstone: search | trivial solve, backtracking-without-trail, unsat is None |
 | 092–095 | capstone: learning & discipline | learned pruning, deterministic solve, lazy index, solution snapshot |
 | 096–097 | capstone: features | optional deps on/off (+never_read) |
-| 098 | capstone: oracle | matches the reference resolver on kitchen-sink |
+| 098 | capstone: oracle | matches cargo's locked selection on kitchen-sink |
 | 099 | capstone: warm restart | one req bumped; untouched subtree untouched |
 | 100 | **the solver** | the book's final chapter, whole, green |
 

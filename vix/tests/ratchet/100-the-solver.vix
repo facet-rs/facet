@@ -85,7 +85,7 @@ fn the_solver() -> Stream<Check> {
     let init = State { domains: ws.requirements(), selected: %{}, learned: %[] };
     yield match search(init) {
         Outcome::Solved(sel) => {
-            let expected = ws.expected_selection();
+            let expected = ws.cargo_selection();  // cargo generate-lockfile — the only oracle
             yield expect(expected.keys().all(|pkg| sel.has(pkg) && sel.get(pkg) == expected.get(pkg)));
         },
         Outcome::Exhausted(_) => expect(false),

@@ -1,13 +1,16 @@
 
-// Rung 098 — the differential oracle: our solve matches the recorded
-// expected selection for the standard fixture workspace, package by package.
+// Rung 098 — the differential oracle: our solve matches cargo's locked
+// selection for the standard fixture workspace, package by package. cargo is
+// the only oracle (rodin/docs/00-oracle.md); there is no recorded reference
+// resolver — the Rust one was deleted, and its `expected_selection()` was never
+// an authority. `cargo_selection()` is cargo generate-lockfile on the fixture.
 #[test { budget_wall: 30s, budget_rss: 2GB }]
 fn differential_oracle() -> Stream<Check> {
     let ws = fixture_workspace("kitchen-sink");   // 12 packages, diamonds, features
     let solution = mini_solve(fixture_index()) where { requirements: ws.requirements() };
     yield match solution {
         Some(sel) => {
-            let expected = ws.expected_selection();  // recorded from the reference resolver
+            let expected = ws.cargo_selection();  // cargo generate-lockfile — the only oracle
             yield expect_eq(sel.len(), expected.len());
             yield expect(expected.keys().all(|pkg| sel.has(pkg) && sel.get(pkg) == expected.get(pkg)));
         },
