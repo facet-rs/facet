@@ -34,33 +34,42 @@ Cargo fixtures.
 
 ## Current checkpoint
 
-At the time of the latest checkpoint:
+At the time of the latest authoritative integration checkpoint
+(`fbebd069e`):
 
-- the canonical accepted production path is green through rung 030 in plain,
-  chaos, native, and interpreter-fallback lanes; checked String concatenation,
-  array predicates, and structural equality all run through `Executable`;
-- `Array.split_last()` independently executes as a pure
-  `[T] -> Option<(T, [T])>` operation;
-- rung 031 compiles unchanged into `GeneratorBody` VIR with branch-owned,
-  parameterized yield sites and stable span-independent recipes. Weavy now has
-  a verified append-only `Publish` operation with interpreter/JIT parity. The
-  remaining red boundary is the runtime bridge from taken generator sites to
-  ordinary pure check demands. The adjudicated bridge publishes only stable
-  yield provenance: rung 031 has an empty dynamic-key tail, so no captured
-  value, handle, or content identity crosses the generator boundary;
-- rungs 033 through 036 execute position-keyed stream collection,
-  key-preserving filtering, canonical structural sorting, and deterministic
-  folding through verified ordered Map/array execution;
+- the canonical rung prefix is green through rung 044. The exact-tip full Vix
+  run passed 317/317 tests, and the exact-tip full Weavy run passed 222/222;
+- rung 031 executes unchanged through the completed two-stage generator path.
+  One verified generator task runs real `Match`/`If` control and publishes only
+  taken `YieldSiteId`s; the runner then evaluates those provenance-keyed Value
+  checks as ordinary pure demands. Untaken arms publish nothing, plain/chaos
+  agreement compares the provenance family rather than append order, and the
+  zero-dynamic-key base case transports no capture, handle, or content hash;
+- rungs 033 through 040 execute position-keyed collection, key-preserving
+  filtering, `filter_map`, composed-key `flat_map`, canonical structural
+  sorting, deterministic folding, structural stream selection/decomposition,
+  ordered-Map equality, and caller-supplied `Order<T>` through verified
+  execution;
+- `Array.split_last()` and `Stream.split_min()` return ordinary immutable
+  decomposition values. `split_min` realizes its remainder as `[V]` in key
+  order, omits exactly the selected row, and preserves equal duplicates at
+  distinct keys;
 - Weavy owns the verified persistent ordered Map/Set arena, including probe,
   insert, union, iteration, and interpreter/JIT parity; Vix rungs 041-044 run
   through it with typed `MissingKey` and `DuplicateKey` outcomes;
 - `Map.values()` projects values in canonical key order and
   `Array.sorted()` preserves duplicates while ordering Int/String/aggregate
   leaves by structural semantics;
-- the persistent AVL core has a 200k insertion scaling oracle, but the
-  end-to-end rung-138 proof is not yet established: range/fold driving,
-  counter/budget enforcement, molten-to-store publication, non-colliding live
-  and frozen handles, and ordered-arena observability remain explicit seams;
+- checked String primitives (rung 045), Path/empty-root semantics (046-047),
+  and captured closures/plain recursion (048-049) have preserved forward
+  checkpoints in isolated worktrees. They are not part of the authoritative
+  prefix until their adversarial reviews, folds, and exact-tip reruns finish;
+- the persistent AVL core has a 200k insertion scaling oracle, but neither the
+  rung-051 array certificate nor the end-to-end rung-138 Map proof is yet
+  established. Trace-check evaluation, externally enforced budgets,
+  range/fold driving, shared-demand extraction, molten-to-store publication,
+  non-colliding live/frozen handles, and production arena observability remain
+  explicit seams;
 - the Cargo fixture harness exists in `vix/tests/rodin_fixtures.rs` and its Cargo
   side is independently runnable;
 - rungs 098 and 100 still use a recorded `expected_selection()` from the deleted
@@ -187,6 +196,41 @@ inside the generator, eagerly freeze operands, add a host observer, suspend for
 mid-drive interning, or constant-fold conditional yields. Weavy owns interior
 molten construction; the Vix scheduler remains the only edge-publication and
 identity authority when later dynamic key values cross an island boundary.
+
+Rungs 050 and 051 are one scale-substrate sequence, not two local optimizer
+tests. They land in this dependency order:
+
+1. Check construction distinguishes `ValueCheck` from `TraceCheck`. Value
+   checks remain ordinary demanded islands; scheduler/memo/store assertions are
+   deferred until the run is complete and inspect a frozen counter/event
+   snapshot without demanding their described operands or counting their own
+   reporting work.
+2. `#[test { budget_wall, budget_rss }]` is parsed into typed test metadata and
+   enforced by an outer runner that can terminate an over-budget execution.
+   An in-process elapsed-time assertion that cannot stop a stuck native loop is
+   not enforcement; an inert parsed attribute is not a gate.
+3. A self-tail call lowers to a verifier-visible in-frame loop with an interior
+   pollpoint. It copies the next argument set without overlap, touches no
+   scheduler/memo/identity machinery at the backedge, and has interpreter/JIT
+   parity. Ordinary non-tail recursion keeps the verified call-frame path.
+4. `range where { from, to } -> [Int]` builds the specified dense value without
+   a scheduler request per element. `Array.fold` may select a proven-strict
+   in-frame execution shape, but the forced-copy differential remains able to
+   select the non-molten shape.
+5. The molten array accumulator is a verifier-confined builder, not a mutable
+   public Array handle. Builder creation/push/finish are non-copyable interior
+   operations; the verifier prevents escape and the finished immutable Array
+   is observationally identical to repeated by-value `+`.
+6. Shared wires used by several yielded Value checks are not cloned into
+   independent self-contained recipes. The partitioner extracts the shared
+   value demand, the completed aggregate crosses the island edge once through
+   scheduler-owned framed publication, and each check consumes the same
+   published `ValueId`. Rung 051 must therefore witness one million-element
+   construction once, not four fast recomputations.
+7. The production certificate measures the inactive/active molten choice,
+   store publication count, memo entries, scheduler contacts, wall time, and
+   peak RSS together. Passing only the value assertions or only a core arena
+   microbenchmark does not satisfy the rung.
 
 Before any composite dynamic key or completed aggregate crosses that boundary,
 the runtime Store must intern it through the canonical framed value walk:
