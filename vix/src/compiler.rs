@@ -4244,7 +4244,6 @@ fn type_span(ty: &ast::Type) -> Span {
         ast::Type::Function(value) => value.span,
         ast::Type::Array(value) => value.span,
         ast::Type::Generic(value) => value.span,
-        ast::Type::Array(value) => value.span,
         ast::Type::Tuple(value) => value.span,
         ast::Type::Path(value) => value.span,
     }
