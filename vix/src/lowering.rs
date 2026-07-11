@@ -281,13 +281,34 @@ pub struct LoweringCacheCounters {
 /// memo: eviction can only cause recompilation.
 ///
 /// r[impl machine.lowering.cache]
-#[derive(Default)]
 pub struct LoweringCache {
     entries: BTreeMap<RecipeId, LoweringArtifact>,
     counters: LoweringCacheCounters,
+    trace_mode: TraceMode,
+}
+
+impl Default for LoweringCache {
+    fn default() -> Self {
+        Self {
+            entries: BTreeMap::new(),
+            counters: LoweringCacheCounters::default(),
+            trace_mode: TraceMode::Production,
+        }
+    }
 }
 
 impl LoweringCache {
+    /// Construct an explicit diagnostic cache that retains interior source
+    /// marks. Ordinary production lowering uses [`Default`] and strips only
+    /// these unbounded marks while preserving structural task events.
+    #[must_use]
+    pub fn innards() -> Self {
+        Self {
+            trace_mode: TraceMode::Innards,
+            ..Self::default()
+        }
+    }
+
     pub fn get_or_lower(&mut self, island: &Island) -> Result<&LoweringArtifact, LoweringError> {
         let recipe = RecipeId::from_canonical_vir(&island.canonical_recipe_bytes());
         if self.entries.contains_key(&recipe) {
@@ -295,7 +316,7 @@ impl LoweringCache {
             return Ok(self.entries.get(&recipe).expect("entry was just observed"));
         }
         self.counters.misses += 1;
-        let lowered = lower_island(island, recipe)?;
+        let lowered = lower_island(island, recipe, self.trace_mode)?;
         self.entries.insert(recipe, lowered);
         Ok(self.entries.get(&recipe).expect("entry was just inserted"))
     }
@@ -349,7 +370,11 @@ fn push_source_entries(entries: &mut Vec<SourceMapEntry>, function: FunctionId, 
     }
 }
 
-fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, LoweringError> {
+fn lower_island(
+    island: &Island,
+    recipe: RecipeId,
+    trace_mode: TraceMode,
+) -> Result<LoweringArtifact, LoweringError> {
     let output = island
         .nodes
         .iter()
@@ -503,11 +528,10 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
         recipe,
         demand_key,
         demand_preimage,
-        // The ratchet is ordinary production execution. Keep source-attributed
-        // `Op::Trace` nodes in the verified program, but compile them in
-        // Production mode so an interior pollpoint cannot retain one mark per
-        // iteration. Diagnostics request Innards explicitly.
-        executable: Executable::with_trace_mode(verified, TraceMode::Production),
+        // Keep source-attributed `Op::Trace` nodes in the verified program. The
+        // cache chooses bounded Production tracing for ordinary execution or
+        // explicit Innards tracing for diagnostics.
+        executable: Executable::with_trace_mode(verified, trace_mode),
         array_outcome,
         pc_nodes,
         constants,

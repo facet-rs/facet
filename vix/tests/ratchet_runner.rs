@@ -4,7 +4,7 @@ use vix::budget::{BudgetOutcome, ChildReport, run_source_under_declared_budget};
 use vix::compiler::Compiler;
 use vix::diagnostic::{DiagnosticCode, DiagnosticSeverity};
 use vix::lowering::{LoweringCache, attribution_for, source_map_for};
-use vix::ratchet::{RunError, run_source};
+use vix::ratchet::{RunError, run_source, run_source_innards};
 use vix::runtime::{DemandState, EventKind, FailureValue, MemoVerdict, SchemaId, TaskState};
 use vix::surface::{SurfaceParser, ast};
 use vix::vir::{
@@ -207,6 +207,10 @@ fn rung_001_certifies_the_new_compiler_and_runtime_spine() {
     assert_eq!(report.chaos.counters.task_discards, 1);
     assert_eq!(report.chaos.receipt_count, 0);
 
+    let innards = run_source_innards(RUNG_001).expect("rung 001 diagnostic lane runs");
+    assert!(innards.passed());
+    assert!(innards.agrees());
+
     assert_contiguous_sequences(&report.plain.events);
     assert_contiguous_sequences(&report.chaos.events);
     assert!(report.plain.events.iter().any(|event| matches!(
@@ -224,11 +228,11 @@ fn rung_001_certifies_the_new_compiler_and_runtime_spine() {
             ..
         }
     )));
-    assert!(report.plain.events.iter().any(|event| matches!(
+    assert!(innards.plain.events.iter().any(|event| matches!(
         event.kind,
         EventKind::WeavyMark { node, .. } if node.0 == 0
     )));
-    assert!(report.plain.events.iter().any(|event| matches!(
+    assert!(innards.plain.events.iter().any(|event| matches!(
         event.kind,
         EventKind::WeavyMark { node, .. } if node.0 == 1
     )));
@@ -2057,6 +2061,10 @@ fn rung_002_integer_arithmetic_runs_through_vir_and_weavy() {
     assert_eq!(report.plain.checks, report.chaos.checks);
     assert_eq!(report.plain.receipt_count, 0);
     assert_eq!(report.chaos.receipt_count, 0);
+
+    let innards = run_source_innards(RUNG_007).expect("rung 007 diagnostic lane runs");
+    assert!(innards.passed());
+    assert!(innards.agrees());
 }
 
 #[test]
@@ -2389,7 +2397,7 @@ fn rung_007_enums_payloads_and_match_run_through_vir_and_weavy() {
         })
         .collect::<Vec<_>>();
     let mut selected_arm_marks = vec![0usize; partitioned.islands.len()];
-    for event in &report.plain.events {
+    for event in &innards.plain.events {
         let EventKind::WeavyMark {
             task,
             function,
@@ -2404,7 +2412,7 @@ fn rung_007_enums_payloads_and_match_run_through_vir_and_weavy() {
         let Some(arm_index) = arms.iter().position(|arm| arm.nodes.contains(node)) else {
             continue;
         };
-        let island_index = report
+        let island_index = innards
             .plain
             .events
             .iter()
