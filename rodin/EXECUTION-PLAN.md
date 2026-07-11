@@ -45,8 +45,9 @@ At the time of the latest checkpoint:
   parameterized yield sites and stable span-independent recipes. Weavy now has
   a verified append-only `Publish` operation with interpreter/JIT parity. The
   remaining red boundary is the runtime bridge from taken generator sites to
-  ordinary pure check demands, including typed capture publication without
-  leaking task-local handles;
+  ordinary pure check demands. The adjudicated bridge publishes only stable
+  yield provenance: rung 031 has an empty dynamic-key tail, so no captured
+  value, handle, or content identity crosses the generator boundary;
 - rungs 033 through 036 execute position-keyed stream collection,
   key-preserving filtering, canonical structural sorting, and deterministic
   folding through verified ordered Map/array execution;
@@ -162,17 +163,30 @@ faithful shape is:
 1. `Array.split_last` remains an ordinary pure
    `[T] -> Option<(T, [T])>` operation and lands independently.
 2. A test body lowers to one verified generator task. Taken control-flow arms
-   append descriptors containing a stable yield-site key, a parameterized check
-   recipe, and typed captured arguments to an append-only codata log.
-3. Each published descriptor becomes an ordinary pure check demand whose
-   `DemandPreimage` contains the check closure and captured value identities.
-   Untaken arms publish nothing; there are no phantom passing checks.
-4. Chaos replay must reproduce the same ordered descriptor set and check
-   identities. Pure check islands retain their existing prohibition on
-   yielding.
+   append descriptors containing a stable yield-site identity plus any stable
+   keys contributed by keyed dynamic iteration. A delivery ordinal, captured
+   result, task-local handle, or evaluated `Check` is never a stream key.
+3. Draining constructs the provenance-keyed family of `Check` descriptors and
+   demands no check operand. Each selected Value check is evaluated afterward
+   as an ordinary pure demand; its operands remain graph wires and are demanded
+   only by that evaluation. Untaken arms publish nothing, so there are no
+   phantom checks.
+4. Rung 031 is the zero-dynamic-key base case: its descriptor is just the
+   `YieldSiteId`, and the existing self-contained check island re-demands pure
+   projections through the ordinary memo path. Later keyed codata extends the
+   same descriptor with dynamic provenance keys rather than captured values.
+5. Stream-element identity (yield provenance) and evaluation memo identity
+   (`DemandKey`) remain distinct. Equal check values at distinct provenance
+   keys are distinct stream elements even when their evaluation work dedupes.
+6. Chaos replay must reproduce the same provenance-to-outcome family;
+   publication arrival order is not semantic. Pure check islands retain their
+   existing prohibition on yielding.
 
 This reuses the existing memo/evaluation machinery. It does not evaluate checks
-inside the generator, add a host observer, or constant-fold conditional yields.
+inside the generator, eagerly freeze operands, add a host observer, suspend for
+mid-drive interning, or constant-fold conditional yields. Weavy owns interior
+molten construction; the Vix scheduler remains the only edge-publication and
+identity authority when later dynamic key values cross an island boundary.
 
 The rung-138 scale certificate is production-shaped only when all of these are
 measured together:
