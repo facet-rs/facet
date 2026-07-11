@@ -169,6 +169,25 @@ struct Ctx {
         i64,
         *mut i64,
     ) -> i64,
+    byte_project: unsafe extern "C" fn(
+        *const crate::task::RawValueMemory,
+        usize,
+        *const crate::task::RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        *mut i64,
+    ) -> i64,
+    path_join: unsafe extern "C" fn(
+        *const crate::task::RawValueMemory,
+        usize,
+        *const crate::task::RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        *mut i64,
+    ) -> i64,
     publications: *mut core::ffi::c_void,
     publish: unsafe extern "C" fn(*mut core::ffi::c_void, u64, i64, *const u8, usize) -> i64,
 }
@@ -190,6 +209,11 @@ const EXIT_STRING_CONCAT_RIGHT_UNRESIDENT: i64 = 14;
 const EXIT_STRING_CONCAT_ALLOCATION: i64 = 15;
 const EXIT_PUBLICATION_ALLOCATION: i64 = 16;
 const EXIT_INVALID_STRING_STATUS: i64 = 17;
+const EXIT_BYTE_PROJECT_SOURCE_UNRESIDENT: i64 = 18;
+const EXIT_BYTE_PROJECT_ALLOCATION: i64 = 19;
+const EXIT_PATH_JOIN_BASE_UNRESIDENT: i64 = 20;
+const EXIT_PATH_JOIN_SEGMENT_UNRESIDENT: i64 = 21;
+const EXIT_PATH_JOIN_ALLOCATION: i64 = 22;
 
 /// Whether the task JIT lane is usable on this target.
 pub fn available() -> bool {
@@ -542,6 +566,14 @@ fn compile_fn(
                 task_stencils::STRING_STATUS_IS,
                 Continuations::Fallthrough(task_stencils::STRING_STATUS_IS_CONT),
             ),
+            Op::ByteProject { .. } => (
+                task_stencils::BYTE_PROJECT,
+                Continuations::Fallthrough(task_stencils::BYTE_PROJECT_CONT),
+            ),
+            Op::PathJoin { .. } => (
+                task_stencils::PATH_JOIN,
+                Continuations::Fallthrough(task_stencils::PATH_JOIN_CONT),
+            ),
             Op::Publish { .. } => (
                 task_stencils::PUBLISH,
                 Continuations::Fallthrough(task_stencils::PUBLISH_CONT),
@@ -681,6 +713,8 @@ fn compile_fn(
             Op::StringContains { .. } | Op::StringParseInt { .. } => 4,
             Op::StringStatusIs { .. } => 4,
             Op::StringSplitOnce { .. } => 6,
+            Op::ByteProject { .. } => 3,
+            Op::PathJoin { .. } => 4,
             Op::Publish { .. } => 5,
             Op::Await { .. } => 3,
             Op::Call { .. } | Op::CallIndirect { .. } => 1,
@@ -1262,6 +1296,18 @@ fn compile_fn(
                     layout.push_prog_word(root.prog_index, value);
                 }
             }
+            Op::ByteProject { dst, source } => {
+                for v in [dst, source] {
+                    layout.push_prog_word(root.prog_index, u64::from(*v));
+                }
+                layout.push_prog_word(root.prog_index, i as u64);
+            }
+            Op::PathJoin { dst, base, segment } => {
+                for v in [dst, base, segment] {
+                    layout.push_prog_word(root.prog_index, u64::from(*v));
+                }
+                layout.push_prog_word(root.prog_index, i as u64);
+            }
             Op::Publish {
                 site,
                 record,
@@ -1575,6 +1621,8 @@ impl JitTask {
                 string_contains: crate::task::string_contains_abi,
                 string_split_once: crate::task::string_split_once_abi,
                 string_parse_int: crate::task::string_parse_int_abi,
+                byte_project: crate::task::byte_project_abi,
+                path_join: crate::task::path_join_abi,
                 publications: (&raw mut self.publications).cast::<core::ffi::c_void>(),
                 publish: crate::task::publish_abi,
             };
@@ -1758,6 +1806,49 @@ impl JitTask {
                     };
                     let pc = usize::try_from(index_scratch).expect("pc");
                     return Err(TaskFault::StringConcatAllocationFailed {
+                        site: fault_site(verified, frame.fn_id, pc)?,
+                    });
+                }
+                EXIT_BYTE_PROJECT_SOURCE_UNRESIDENT => {
+                    let Some(verified) = verified else {
+                        panic!("legacy raw ByteProject source is not resident");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("pc");
+                    return Err(TaskFault::UnresidentByteProjectSource {
+                        site: fault_site(verified, frame.fn_id, pc)?,
+                        handle: resume_scratch as i64,
+                    });
+                }
+                EXIT_BYTE_PROJECT_ALLOCATION => {
+                    let Some(verified) = verified else {
+                        panic!("legacy raw ByteProject allocation failed");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("pc");
+                    return Err(TaskFault::ByteProjectionAllocationFailed {
+                        site: fault_site(verified, frame.fn_id, pc)?,
+                    });
+                }
+                EXIT_PATH_JOIN_BASE_UNRESIDENT | EXIT_PATH_JOIN_SEGMENT_UNRESIDENT => {
+                    let Some(verified) = verified else {
+                        panic!("legacy raw PathJoin operand is not resident");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("pc");
+                    return Err(TaskFault::UnresidentPathJoinOperand {
+                        site: fault_site(verified, frame.fn_id, pc)?,
+                        side: if exit_scratch == EXIT_PATH_JOIN_BASE_UNRESIDENT {
+                            CompareSide::Left
+                        } else {
+                            CompareSide::Right
+                        },
+                        handle: resume_scratch as i64,
+                    });
+                }
+                EXIT_PATH_JOIN_ALLOCATION => {
+                    let Some(verified) = verified else {
+                        panic!("legacy raw PathJoin allocation failed");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("pc");
+                    return Err(TaskFault::PathJoinAllocationFailed {
                         site: fault_site(verified, frame.fn_id, pc)?,
                     });
                 }

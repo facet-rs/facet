@@ -10430,6 +10430,8 @@ fn op_name(op: &Op) -> &'static str {
         Op::StringSplitOnce { .. } => "StringSplitOnce",
         Op::StringParseInt { .. } => "StringParseInt",
         Op::StringStatusIs { .. } => "StringStatusIs",
+        Op::ByteProject { .. } => "ByteProject",
+        Op::PathJoin { .. } => "PathJoin",
         Op::Publish { .. } => "Publish",
         Op::ConstF64 { .. } => "ConstF64",
         Op::AddF64 { .. } => "AddF64",

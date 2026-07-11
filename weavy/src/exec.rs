@@ -337,6 +337,21 @@ pub enum TaskFault {
     StringConcatAllocationFailed {
         site: FaultSite,
     },
+    UnresidentByteProjectSource {
+        site: FaultSite,
+        handle: i64,
+    },
+    ByteProjectionAllocationFailed {
+        site: FaultSite,
+    },
+    UnresidentPathJoinOperand {
+        site: FaultSite,
+        side: CompareSide,
+        handle: i64,
+    },
+    PathJoinAllocationFailed {
+        site: FaultSite,
+    },
     PublicationAllocationFailed {
         site: FaultSite,
     },
@@ -1320,6 +1335,107 @@ mod tests {
                 calls: vec![],
                 schemas: vec![SchemaContract {
                     inline: RegionShape::word(WordKind::Handle(schema)),
+                    value_shape: None,
+                    payload: PayloadKind::OpaqueBytes {
+                        byte_comparable: true,
+                    },
+                }],
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    fn byte_project_program() -> (Program, ProgramContract) {
+        let path = SchemaRef(0);
+        let string = SchemaRef(1);
+        (
+            Program {
+                fns: vec![function(
+                    4,
+                    vec![
+                        Op::ByteProject { dst: 8, source: 0 },
+                        Op::CompareValueBytes {
+                            dst: 24,
+                            a: 8,
+                            b: 16,
+                        },
+                        Op::Ret { src: 24, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    4,
+                    vec![
+                        word_region(0, WordKind::Handle(path)),
+                        word_region(8, WordKind::Handle(string)),
+                        word_region(16, WordKind::Handle(string)),
+                        word_region(24, WordKind::Scalar),
+                    ],
+                    &[0, 2],
+                    3,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![
+                    SchemaContract {
+                        inline: RegionShape::word(WordKind::Handle(path)),
+                        value_shape: None,
+                        payload: PayloadKind::OpaqueBytes {
+                            byte_comparable: true,
+                        },
+                    },
+                    SchemaContract {
+                        inline: RegionShape::word(WordKind::Handle(string)),
+                        value_shape: None,
+                        payload: PayloadKind::OpaqueBytes {
+                            byte_comparable: true,
+                        },
+                    },
+                ],
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    fn path_join_program() -> (Program, ProgramContract) {
+        let path = SchemaRef(0);
+        (
+            Program {
+                fns: vec![function(
+                    5,
+                    vec![
+                        Op::PathJoin {
+                            dst: 16,
+                            base: 0,
+                            segment: 8,
+                        },
+                        Op::CompareValueBytes {
+                            dst: 32,
+                            a: 16,
+                            b: 24,
+                        },
+                        Op::Ret { src: 32, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    5,
+                    vec![
+                        word_region(0, WordKind::Handle(path)),
+                        word_region(8, WordKind::Handle(path)),
+                        word_region(16, WordKind::Handle(path)),
+                        word_region(24, WordKind::Handle(path)),
+                        word_region(32, WordKind::Scalar),
+                    ],
+                    &[0, 1, 3],
+                    4,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![SchemaContract {
+                    inline: RegionShape::word(WordKind::Handle(path)),
                     value_shape: None,
                     payload: PayloadKind::OpaqueBytes {
                         byte_comparable: true,
@@ -3425,6 +3541,143 @@ mod tests {
             ) {
                 assert_eq!(native.expect_err(name), interp);
             }
+        }
+    }
+
+    #[test]
+    fn byte_project_copies_across_distinct_schemas_across_lanes() {
+        let verified = Arc::new(verify(byte_project_program()));
+        let store = [
+            ValueMemory::from_slice(b"crates/taxon/Cargo.toml"),
+            ValueMemory::from_slice(b"crates/taxon/Cargo.toml"),
+        ];
+        let memories = ValueMemories {
+            store: &store,
+            molten: &[],
+        };
+        let interp = run_interpreter(
+            &verified,
+            |task: &mut Task| {
+                task.write_i64(0, 0);
+                task.write_i64(16, 1);
+            },
+            memories,
+        )
+        .expect("byte projection runs in the interpreter");
+        assert_eq!(interp.1, 1i64.to_le_bytes().to_vec());
+        let native = run_native(
+            Arc::clone(&verified),
+            |task: &mut JitTask| {
+                task.write_i64(0, 0);
+                task.write_i64(16, 1);
+            },
+            memories,
+        );
+        if cfg!(weavy_jit_active) {
+            assert_eq!(
+                native
+                    .expect("native byte projection is available when the JIT is active")
+                    .expect("byte projection runs natively"),
+                interp,
+            );
+        } else {
+            assert!(native.is_none(), "disabled JIT must not run a native lane");
+        }
+    }
+
+    #[test]
+    fn path_join_is_root_aware_and_faults_for_unresident_operands_across_lanes() {
+        let verified = Arc::new(verify(path_join_program()));
+        for (base, segment, expected) in [
+            (b"".as_slice(), b"x".as_slice(), b"x".as_slice()),
+            (b"a".as_slice(), b"x".as_slice(), b"a/x".as_slice()),
+        ] {
+            let store = [
+                ValueMemory::from_slice(base),
+                ValueMemory::from_slice(segment),
+                ValueMemory::from_slice(expected),
+            ];
+            let memories = ValueMemories {
+                store: &store,
+                molten: &[],
+            };
+            let interp = run_interpreter(
+                &verified,
+                |task: &mut Task| {
+                    task.write_i64(0, 0);
+                    task.write_i64(8, 1);
+                    task.write_i64(24, 2);
+                },
+                memories,
+            )
+            .expect("Path join runs in the interpreter");
+            assert_eq!(interp.1, 1i64.to_le_bytes().to_vec());
+            let native = run_native(
+                Arc::clone(&verified),
+                |task: &mut JitTask| {
+                    task.write_i64(0, 0);
+                    task.write_i64(8, 1);
+                    task.write_i64(24, 2);
+                },
+                memories,
+            );
+            if cfg!(weavy_jit_active) {
+                assert_eq!(
+                    native
+                        .expect("native Path join is available when the JIT is active")
+                        .expect("Path join runs natively"),
+                    interp,
+                );
+            } else {
+                assert!(native.is_none(), "disabled JIT must not run a native lane");
+            }
+        }
+
+        let store = [
+            ValueMemory::empty(),
+            ValueMemory::from_slice(b"x"),
+            ValueMemory::from_slice(b"x"),
+        ];
+        let memories = ValueMemories {
+            store: &store,
+            molten: &[],
+        };
+        let interp = run_interpreter(
+            &verified,
+            |task: &mut Task| {
+                task.write_i64(0, 0);
+                task.write_i64(8, 1);
+                task.write_i64(24, 2);
+            },
+            memories,
+        )
+        .expect_err("unresident Path join base faults");
+        assert!(matches!(
+            interp,
+            TaskFault::UnresidentPathJoinOperand {
+                side: CompareSide::Left,
+                handle: 0,
+                ..
+            }
+        ));
+        let native = run_native(
+            Arc::clone(&verified),
+            |task: &mut JitTask| {
+                task.write_i64(0, 0);
+                task.write_i64(8, 1);
+                task.write_i64(24, 2);
+            },
+            memories,
+        );
+        if cfg!(weavy_jit_active) {
+            assert_eq!(
+                native
+                    .expect("native Path join is available when the JIT is active")
+                    .expect_err("unresident Path join base faults natively"),
+                interp,
+            );
+        } else {
+            assert!(native.is_none(), "disabled JIT must not run a native lane");
         }
     }
 

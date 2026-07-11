@@ -291,6 +291,8 @@ const TASK_NAMES: &[(&str, &str)] = &[
     ("STRING_SPLIT_ONCE", "weavy_task_string_split_once"),
     ("STRING_PARSE_INT", "weavy_task_string_parse_int"),
     ("STRING_STATUS_IS", "weavy_task_string_status_is"),
+    ("BYTE_PROJECT", "weavy_task_byte_project"),
+    ("PATH_JOIN", "weavy_task_path_join"),
     ("PUBLISH", "weavy_task_publish"),
     ("AWAIT", "weavy_task_await"),
     ("CALL", "weavy_task_call"),
