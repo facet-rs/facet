@@ -6,7 +6,7 @@ use vix::runtime::{DemandState, EventKind, MemoVerdict, TaskState};
 use vix::surface::{SurfaceParser, ast};
 use vix::vir::{EffectKind, FunctionId, NodeRef, Op as VirOp, Type as VirType, VariantPayload};
 use weavy::task::Op as WeavyOp;
-use weavy::{PayloadKind, ProgramDefect, RegionShape, ValueShapeKind, WordKind};
+use weavy::{PayloadKind, RegionShape, ValueShapeKind, WordKind};
 
 const RUNG_001: &str = include_str!("ratchet/001-harness.vix");
 const RUNG_002: &str = include_str!("ratchet/002-arithmetic.vix");
@@ -558,26 +558,47 @@ fn cached_contract_is_stable_across_span_only_edits() {
 }
 
 #[test]
-fn structural_raw_copy_boundary_is_typed_and_preserved() {
-    const SOURCE: &str = r#"
-#[test]
-fn tuple_boundary() -> Stream<Check> {
-    let pair = (true, false);
-    yield expect(pair.0);
-}
-"#;
+fn accepted_rungs_verify_and_execute_through_one_executable() {
+    const ACCEPTED: &[&str] = &[
+        RUNG_001, RUNG_002, RUNG_003, RUNG_004, RUNG_005, RUNG_006, RUNG_007, RUNG_008, RUNG_009,
+        RUNG_010, RUNG_011, RUNG_012, RUNG_014, RUNG_015, RUNG_016, RUNG_017, RUNG_019, RUNG_020,
+        RUNG_021, RUNG_022, RUNG_023, RUNG_024, RUNG_025,
+    ];
 
-    with_first_lowered(SOURCE, |lowered| {
-        let err = lowered
-            .program
-            .clone()
-            .verify(lowered.contract.clone())
-            .expect_err("raw tuple construction is still outside structural verification");
-        assert!(matches!(
-            err.defect,
-            ProgramDefect::RawStructuralWordAccess { .. }
-        ));
-    });
+    for source in ACCEPTED {
+        let module = Compiler::new()
+            .compile(source)
+            .expect("accepted rung compiles");
+        let mut lowering_cache = LoweringCache::default();
+        for test in &module.tests {
+            let partitioned = module.partition_test(test);
+            for island in &partitioned.islands {
+                let lowered = lowering_cache
+                    .get_or_lower(island)
+                    .expect("accepted artifact verifies before execution");
+                let verified = lowered.executable.program();
+                assert_eq!(verified.program().fns.len(), lowered.program.fns.len());
+                assert!(
+                    verified
+                        .program()
+                        .fns
+                        .iter()
+                        .zip(&lowered.program.fns)
+                        .all(|(verified, rendered)| verified.code.len() == rendered.code.len())
+                );
+                assert_eq!(verified.contract(), &lowered.contract);
+                assert!(lowered.program.fns.iter().all(|function| {
+                    function.code.iter().all(|op| {
+                        !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. })
+                    })
+                }));
+            }
+        }
+        let report = run_source(source).expect("accepted rung executes through Executable");
+        assert!(report.passed());
+        assert!(report.agrees());
+        assert_eq!(report.plain.checks, report.chaos.checks);
+    }
 }
 
 #[test]
