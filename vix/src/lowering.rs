@@ -5500,7 +5500,7 @@ fn lower_checked_collection_node(
             Ok(ValueRepresentation::RealizedHandle)
         }
         Op::MapAdd | Op::MapWith | Op::SetAdd => {
-            let expected = if matches!(node.op, Op::SetAdd) { 2 } else { 3 };
+            let expected = if matches!(node.op, Op::MapWith) { 3 } else { 2 };
             require_input_count(node, expected)?;
             let collection = input_value(node, values, 0)?;
             require_value(
@@ -5509,28 +5509,51 @@ fn lower_checked_collection_node(
                 &collection_ty,
                 ValueRepresentation::RealizedHandle,
             )?;
-            let key = input_value(node, values, 1)?;
+            let mut temps = ordered_collection_temps(node, &collection_ty, sequence)?;
             let (key_ty, value, duplicate) = match &collection_ty {
                 Type::Map { key: key_ty, value } => {
-                    let value_slot = input_value(node, values, 2)?;
-                    require_value(
-                        node,
-                        &value_slot,
-                        value,
-                        representation_for_type(value, node.span)?,
-                    )?;
-                    (
-                        key_ty.as_ref(),
-                        Some(value_slot),
-                        if matches!(node.op, Op::MapWith) {
-                            DuplicateDisposition::Machine
-                        } else {
-                            DuplicateDisposition::LanguageFailure
-                        },
-                    )
+                    if matches!(node.op, Op::MapAdd) {
+                        let row = input_value(node, values, 1)?;
+                        let row_ty =
+                            Type::Tuple(vec![key_ty.as_ref().clone(), value.as_ref().clone()]);
+                        require_value(node, &row, &row_ty, ValueRepresentation::InlineComposite)?;
+                        outputs.code.push(WeavyOp::ProductProject {
+                            dst: temps.projected_key.region_id,
+                            product: row.region_id,
+                            field: 0,
+                        });
+                        outputs.code.push(WeavyOp::ProductProject {
+                            dst: temps.projected_value.region_id,
+                            product: row.region_id,
+                            field: 1,
+                        });
+                        (
+                            key_ty.as_ref(),
+                            Some(temps.projected_value.clone()),
+                            DuplicateDisposition::LanguageFailure,
+                        )
+                    } else {
+                        let value_slot = input_value(node, values, 2)?;
+                        require_value(
+                            node,
+                            &value_slot,
+                            value,
+                            representation_for_type(value, node.span)?,
+                        )?;
+                        (
+                            key_ty.as_ref(),
+                            Some(value_slot),
+                            DuplicateDisposition::Machine,
+                        )
+                    }
                 }
                 Type::Set(element) => (element.as_ref(), None, DuplicateDisposition::Success),
                 _ => unreachable!(),
+            };
+            let key = if matches!(node.op, Op::MapAdd) {
+                temps.projected_key.clone()
+            } else {
+                input_value(node, values, 1)?
             };
             require_value(
                 node,
@@ -5538,7 +5561,6 @@ fn lower_checked_collection_node(
                 key_ty,
                 representation_for_type(key_ty, node.span)?,
             )?;
-            let mut temps = ordered_collection_temps(node, &collection_ty, sequence)?;
             let comparison = temps.cursor.checkpoint();
             emit_ordered_insert(OrderedInsertLowering {
                 node,
