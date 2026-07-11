@@ -34,22 +34,28 @@ Cargo fixtures.
 
 ## Current checkpoint
 
-At the time this plan was written:
+At the time of the latest checkpoint:
 
-- the canonical accepted production path is green through rung 028 in plain,
-  chaos, native, and interpreter-fallback lanes;
-- rung 029 has typed multi-parameter closures and verified in-frame `ArrayFold`
-  lowering; its remaining red boundary is checked String concatenation;
-- rung 031 now parses block-bodied match arms and exposes the first real dynamic
-  `Stream<Check>` boundary: the current runner still partitions a static list of
-  top-level yields and cannot represent branch-dependent check publication;
-- rungs 033 and 034 execute position-keyed stream collection and key-preserving
-  filtering through verified ordered Map construction;
+- the canonical accepted production path is green through rung 030 in plain,
+  chaos, native, and interpreter-fallback lanes; checked String concatenation,
+  array predicates, and structural equality all run through `Executable`;
+- `Array.split_last()` independently executes as a pure
+  `[T] -> Option<(T, [T])>` operation;
+- rung 031 compiles unchanged into `GeneratorBody` VIR with branch-owned,
+  parameterized yield sites and stable span-independent recipes. Weavy now has
+  a verified append-only `Publish` operation with interpreter/JIT parity. The
+  remaining red boundary is the runtime bridge from taken generator sites to
+  ordinary pure check demands, including typed capture publication without
+  leaking task-local handles;
+- rungs 033 through 036 execute position-keyed stream collection,
+  key-preserving filtering, canonical structural sorting, and deterministic
+  folding through verified ordered Map/array execution;
 - Weavy owns the verified persistent ordered Map/Set arena, including probe,
   insert, union, iteration, and interpreter/JIT parity; Vix rungs 041-044 run
   through it with typed `MissingKey` and `DuplicateKey` outcomes;
-- `Map.values()` projects values in canonical key order; structural
-  duplicate-preserving `Array.sorted()` remains the next rung-035 boundary;
+- `Map.values()` projects values in canonical key order and
+  `Array.sorted()` preserves duplicates while ordering Int/String/aggregate
+  leaves by structural semantics;
 - the persistent AVL core has a 200k insertion scaling oracle, but the
   end-to-end rung-138 proof is not yet established: range/fold driving,
   counter/budget enforcement, molten-to-store publication, non-colliding live
