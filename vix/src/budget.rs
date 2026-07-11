@@ -18,9 +18,9 @@
 //! RSS reports a typed [`BudgetOutcome::RssEnforcementUnsupported`] seam rather
 //! than silently degrading to an unenforceable assertion.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{Read, Write};
 use std::path::Path;
-use std::process::{Child, ChildStdin, ChildStdout, Command, ExitStatus, Stdio};
+use std::process::{Child, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::vir::Budget;

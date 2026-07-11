@@ -219,12 +219,6 @@ pub struct PreparedRun {
     cache: LoweringCache,
 }
 
-/// r[impl machine.scheduler.chaos-kill-oracle]
-/// r[impl machine.scheduler.replay-is-semantics]
-pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
-    run_source_with_config(source, CompilerConfig::default())
-}
-
 /// Run every declared test twice under explicit shape-selection configuration.
 /// The forced-copy molten differential compiles the same source with
 /// `force_molten_copy` set and proves the produced value identities match the
