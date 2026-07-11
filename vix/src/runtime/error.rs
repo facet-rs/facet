@@ -61,6 +61,10 @@ pub enum RuntimeFault {
         site: u32,
         status: weavy::task::ArrayOpStatus,
     },
+    OrderedMachineStatus {
+        site: u32,
+        status: weavy::task::OrderedOpStatus,
+    },
     LanguageFailurePending {
         site: u32,
         index: i64,
