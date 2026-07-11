@@ -643,7 +643,9 @@ struct SchemaAssignments {
 
 impl SchemaAssignments {
     fn build(island: &Island, array_outcomes: bool) -> Result<Self, Diagnostics> {
-        let mut types = Vec::new();
+        // Cross-frame captured constants are represented by a contract entry
+        // even when the owning String node is not in this function body.
+        let mut types = vec![Type::Bool, Type::Int, Type::Check, Type::String];
         let mut add = |ty: &Type| collect_schema_types(ty, &mut types);
         for node in &island.nodes {
             add(&node.ty);
@@ -688,7 +690,10 @@ impl SchemaAssignments {
             .and_then(|index| u32::try_from(index).ok())
             .map(WeavySchemaRef)
             .ok_or_else(|| {
-                lowering_diagnostic(span, "type is absent from closed schema assignment")
+                lowering_diagnostic(
+                    span,
+                    &format!("{} is absent from closed schema assignment", ty.name()),
+                )
             })
     }
 }
