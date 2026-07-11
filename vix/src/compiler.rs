@@ -1507,6 +1507,7 @@ impl PreludeReceiverType {
 enum PreludeMethod {
     ArrayLen,
     ArrayMap,
+    ArrayFold,
     ArrayStream,
     MapGet,
     MapHas,
@@ -1545,6 +1546,12 @@ impl PreludeMethodRegistry {
                 name: "map",
                 arity: 1,
                 method: PreludeMethod::ArrayMap,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Array,
+                name: "fold",
+                arity: 2,
+                method: PreludeMethod::ArrayFold,
             },
             PreludeMethodEntry {
                 receiver: PreludeReceiverType::Array,
@@ -2065,6 +2072,48 @@ fn lower_method_call(
                             origin: ArrayMapGrainKey::InputPosition,
                         },
                     },
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::ArrayFold => {
+            let Type::Array(element) = &receiver.ty else {
+                unreachable!("array fold registry entry has an array receiver")
+            };
+            let initial = lower_value(nodes, bindings, context, &call.args.args[0])?;
+            let parameter_ty = Type::Tuple(vec![initial.ty.clone(), element.as_ref().clone()]);
+            let folder = match &call.args.args[1] {
+                ast::Expr::Closure(closure) => {
+                    lower_closure_with_parameter(nodes, bindings, context, closure, &parameter_ty)?
+                }
+                expression => lower_value_expected(nodes, bindings, context, expression, None)?,
+            };
+            let Type::Function { parameter, result } = &folder.ty else {
+                return Err(type_mismatch(
+                    expr_span(&call.args.args[1]),
+                    format!("fn({}) -> {}", parameter_ty.name(), initial.ty.name()),
+                    folder.ty.name(),
+                ));
+            };
+            if parameter.as_ref() != &parameter_ty || result.as_ref() != &initial.ty {
+                return Err(type_mismatch(
+                    expr_span(&call.args.args[1]),
+                    format!("fn({}) -> {}", parameter_ty.name(), initial.ty.name()),
+                    folder.ty.name(),
+                ));
+            }
+            let ty = initial.ty.clone();
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts {
+                        fallible: true,
+                        ..EffectFacts::PURE
+                    },
+                    vec![receiver.node, initial.node, folder.node],
+                    Op::ArrayFold,
                 ),
                 ty,
             })

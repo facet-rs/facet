@@ -499,6 +499,8 @@ pub enum Op {
     ArrayMap {
         grain: ArrayMapGrain,
     },
+    /// Fold authored array positions left-to-right through one typed callable.
+    ArrayFold,
     /// Add one element to a dense array, producing a fresh value.
     ArrayAppend,
     /// Concatenate two dense arrays, producing a fresh value.
@@ -1131,6 +1133,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         }
         Op::ArrayStream => op.push(46),
         Op::StreamCollect => op.push(47),
+        Op::ArrayFold => op.push(48),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());

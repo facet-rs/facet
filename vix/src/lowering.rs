@@ -489,6 +489,7 @@ fn nodes_contain_checked_collection_ops(nodes: &[Node]) -> bool {
                 | Op::ArrayIndex
                 | Op::ArrayLen
                 | Op::ArrayMap { .. }
+                | Op::ArrayFold
                 | Op::ArrayAppend
                 | Op::ArrayConcat
                 | Op::Map
@@ -2471,6 +2472,7 @@ impl FunctionLayout {
                     | Op::Compare
                     | Op::ArrayAppend
                     | Op::ArrayConcat
+                    | Op::ArrayFold
                     | Op::Map
                     | Op::MapAdd
                     | Op::MapConcat
@@ -2490,6 +2492,8 @@ impl FunctionLayout {
                 vec![Type::Int, Type::Int, Type::Int]
             } else if matches!(node.op, Op::Compare) {
                 vec![Type::Int, Type::Int]
+            } else if matches!(node.op, Op::ArrayFold) {
+                array_fold_temporary_types(node, nodes)?
             } else if let Some(types) = collection_temporary_types(node, nodes)? {
                 types
             } else if let Type::Array(element) = &node.ty {
@@ -2697,10 +2701,12 @@ impl FunctionLayout {
         };
         let mut call_outcomes = BTreeMap::new();
         if array_outcome.is_some() {
-            for node in nodes
-                .iter()
-                .filter(|node| matches!(node.op, Op::Call(_) | Op::CallValue | Op::ArrayMap { .. }))
-            {
+            for node in nodes.iter().filter(|node| {
+                matches!(
+                    node.op,
+                    Op::Call(_) | Op::CallValue | Op::ArrayMap { .. } | Op::ArrayFold
+                )
+            }) {
                 let value_ty = match &node.op {
                     Op::ArrayMap { .. } => node
                         .ty
@@ -2786,6 +2792,40 @@ impl FunctionLayout {
             .get(&node)
             .ok_or_else(|| lowering_diagnostic(span, "array map node has no temporary layout"))
     }
+}
+
+fn array_fold_temporary_types(node: &Node, nodes: &[Node]) -> Result<Vec<Type>, Diagnostics> {
+    if node.inputs.len() != 3 {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array fold does not have source, initial value, and callable inputs",
+        ));
+    }
+    let source = nodes
+        .iter()
+        .find(|candidate| candidate.id == node.inputs[0])
+        .ok_or_else(|| lowering_diagnostic(node.span, "array fold source is unavailable"))?;
+    let Type::Array(element) = &source.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array fold source is not an array",
+        ));
+    };
+    let initial = nodes
+        .iter()
+        .find(|candidate| candidate.id == node.inputs[1])
+        .ok_or_else(|| lowering_diagnostic(node.span, "array fold initial value is unavailable"))?;
+    if initial.ty != node.ty {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array fold result does not match its initial value",
+        ));
+    }
+    Ok(vec![
+        element.as_ref().clone(),
+        Type::Tuple(vec![node.ty.clone(), element.as_ref().clone()]),
+        node.ty.clone(),
+    ])
 }
 
 fn collection_temporary_types(
@@ -3197,6 +3237,9 @@ fn lower_node_sequence(
             }
             Op::ArrayAppend | Op::ArrayConcat => {
                 lower_checked_array_node(node, dst, values, sequence, outputs)?
+            }
+            Op::ArrayFold => {
+                lower_checked_array_fold_node(node, dst, dst_region_id, values, sequence, outputs)?
             }
             Op::Map
             | Op::MapAdd
@@ -4233,6 +4276,12 @@ fn lower_node(
                 "array map lowering is not implemented",
             ));
         }
+        Op::ArrayFold => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "array fold did not reach checked lowering",
+            ));
+        }
         Op::ArrayStream => {
             require_input_count(node, 1)?;
             let source = input_value(node, values, 0)?;
@@ -5166,6 +5215,166 @@ fn lower_fused_array_map_projection(
         }
         _ => unreachable!("fused map projection is index or length"),
     }
+}
+
+fn lower_checked_array_fold_node(
+    node: &Node,
+    dst: FrameRegion,
+    dst_region_id: WeavyRegionId,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_input_count(node, 3)?;
+    let source = input_value(node, values, 0)?;
+    let initial = input_value(node, values, 1)?;
+    let folder = input_value(node, values, 2)?;
+    let Type::Array(element) = &source.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array fold source is not an array",
+        ));
+    };
+    require_value(
+        node,
+        &source,
+        &Type::array(element.as_ref().clone()),
+        ValueRepresentation::RealizedHandle,
+    )?;
+    require_value(
+        node,
+        &initial,
+        &node.ty,
+        representation_for_type(&node.ty, node.span)?,
+    )?;
+    let parameter_ty = Type::Tuple(vec![node.ty.clone(), element.as_ref().clone()]);
+    require_value(
+        node,
+        &folder,
+        &Type::Function {
+            parameter: Box::new(parameter_ty.clone()),
+            result: Box::new(node.ty.clone()),
+        },
+        ValueRepresentation::InlineComposite,
+    )?;
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(node.span, "array fold has no checked outcome scratch")
+    })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(node.span, "array fold has no checked outcome return")
+    })?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(node.span, "array fold has no stable trace site"))?;
+    let element_schema = sequence.lowering.schemas.schema_for(element, node.span)?;
+    let element_width = element_byte_width(element, node.span)?;
+    let mut temps = TemporaryCursor::new(
+        sequence.function.layout,
+        sequence.lowering.regions,
+        sequence.function.id,
+        node,
+    )?;
+    let element_slot = temps.take(element, node.span)?;
+    let parameter = temps.take(&parameter_ty, node.span)?;
+    let result = temps.take(&node.ty, node.span)?;
+    let accumulator = LoweredSlot {
+        region: dst,
+        region_id: dst_region_id,
+        ty: node.ty.clone(),
+        representation: representation_for_type(&node.ty, node.span)?,
+    };
+    outputs
+        .code
+        .extend(copy_lowered_value(node, &initial, dst, dst_region_id)?);
+    outputs.code.push(WeavyOp::LoadArrayLen {
+        dst: scratch.fields[1].byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 0,
+    });
+    let next = outputs.code.label();
+    let done = outputs.code.label();
+    outputs.code.bind(next, node.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[1].byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, done);
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: element_slot.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        index: scratch.fields[0].byte_offset(),
+        elem_width: element_width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ProductConstruct {
+        dst: parameter.region_id,
+        fields: vec![
+            StructuralFieldSource {
+                field: 0,
+                source: accumulator.region_id,
+            },
+            StructuralFieldSource {
+                field: 1,
+                source: element_slot.region_id,
+            },
+        ],
+    });
+    emit_checked_call_indirect(node, &folder, &parameter, &result, sequence, outputs)?;
+    outputs
+        .code
+        .extend(copy_lowered_value(node, &result, dst, dst_region_id)?);
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[2].byte_offset(),
+        value: 1,
+    });
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: scratch.fields[0].byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[2].byte_offset(),
+    });
+    outputs.code.jump(next);
+    outputs.code.bind(done, node.span)?;
+    temps.finish(node.span)?;
+    Ok(accumulator.representation)
 }
 
 fn lower_checked_array_node(
