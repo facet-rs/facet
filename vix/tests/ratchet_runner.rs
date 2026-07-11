@@ -56,6 +56,8 @@ const RUNG_041: &str = include_str!("ratchet/041-maps.vix");
 const RUNG_042: &str = include_str!("ratchet/042-map-overwrite.vix");
 const RUNG_043: &str = include_str!("ratchet/043-map-keys-canonical.vix");
 const RUNG_044: &str = include_str!("ratchet/044-sets.vix");
+const RUNG_048: &str = include_str!("ratchet/048-closures-capture.vix");
+const RUNG_049: &str = include_str!("ratchet/049-recursion.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
 const RUNG_145: &str = include_str!("ratchet/145-push.reject.vix");
 const RUNG_146: &str = include_str!("ratchet/146-insert.reject.vix");
@@ -3651,6 +3653,145 @@ fn rung_027_array_map_runs_through_verified_execution_without_publication() {
                     ))
             );
         }
+    }
+}
+
+#[test]
+fn rung_048_captured_closures_run_directly_and_through_array_map() {
+    let module = Compiler::new()
+        .compile(RUNG_048)
+        .expect("rung 048 compiles with a by-value closure environment");
+    let root = &module.functions[module.tests[0].function.0 as usize];
+    let closure = root
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::Closure(_)))
+        .expect("rung 048 constructs one closure value");
+    let VirOp::Closure(target) = closure.op else {
+        unreachable!("selected node is a closure")
+    };
+    assert!(
+        root.nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::CallValue))
+    );
+    assert!(
+        root.nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::ArrayMap { .. }))
+    );
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    let island = &partitioned.islands[0];
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(island)
+        .expect("rung 048 lowers its captured closure through verified Weavy");
+    let attribution = attribution_for(island);
+    let target_frame = frame_index(&attribution.functions, target);
+    let callable = lowered.contract().functions[target_frame]
+        .call_contract
+        .expect("captured closure has a verified callable ABI");
+    let contract = &lowered.contract().calls[callable.0 as usize];
+    assert_eq!(contract.entries.len(), 2, "argument plus captured Int");
+    assert!(lowered.program().fns.iter().all(|function| {
+        function
+            .code
+            .iter()
+            .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+    }));
+    assert!(
+        lowered.program().fns[0]
+            .code
+            .iter()
+            .any(|op| matches!(op, WeavyOp::CallIndirect { .. }))
+    );
+    let recipe = lowered.recipe;
+    let calls = lowered.contract().calls.clone();
+
+    let shifted = Compiler::new()
+        .compile(&format!("\n{RUNG_048}"))
+        .expect("span-only rung 048 edit compiles");
+    let shifted_partitioned = shifted.partition_test(&shifted.tests[0]);
+    let shifted_lowered = cache
+        .get_or_lower(&shifted_partitioned.islands[0])
+        .expect("span-only rung 048 edit lowers");
+    assert_eq!(recipe, shifted_lowered.recipe);
+    assert_eq!(calls, shifted_lowered.contract().calls);
+
+    let report = run_source(RUNG_048).expect("rung 048 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+#[test]
+fn rung_049_plain_recursion_uses_stable_verified_call_abi() {
+    let module = Compiler::new()
+        .compile(RUNG_049)
+        .expect("rung 049 compiles with recursive fib calls");
+    let fib = module
+        .functions
+        .iter()
+        .find(|function| function.name == "fib")
+        .expect("rung 049 declares fib");
+    assert!(
+        fib.nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::Call(callee) if callee == fib.id))
+    );
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    let island = &partitioned.islands[0];
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(island)
+        .expect("rung 049 lowers recursive fib through verified Weavy");
+    let attribution = attribution_for(island);
+    let fib_frame = frame_index(&attribution.functions, fib.id);
+    let callable = lowered.contract().functions[fib_frame]
+        .call_contract
+        .expect("recursive fib has a verified callable ABI");
+    let contract = &lowered.contract().calls[callable.0 as usize];
+    assert_eq!(contract.entries.len(), 1, "fib ABI has one Int argument");
+    assert!(
+        lowered.program().fns[fib_frame]
+            .code
+            .iter()
+            .any(|op| matches!(op, WeavyOp::Call { callee, .. } if callee.0 as usize == fib_frame))
+    );
+    assert!(lowered.program().fns.iter().all(|function| {
+        function
+            .code
+            .iter()
+            .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+    }));
+    let recipe = lowered.recipe;
+    let calls = lowered.contract().calls.clone();
+
+    let shifted = Compiler::new()
+        .compile(&format!("\n{RUNG_049}"))
+        .expect("span-only rung 049 edit compiles");
+    let shifted_partitioned = shifted.partition_test(&shifted.tests[0]);
+    let shifted_lowered = cache
+        .get_or_lower(&shifted_partitioned.islands[0])
+        .expect("span-only rung 049 edit lowers");
+    assert_eq!(recipe, shifted_lowered.recipe);
+    assert_eq!(calls, shifted_lowered.contract().calls);
+
+    let report = run_source(RUNG_049).expect("rung 049 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
     }
 }
 
