@@ -3332,7 +3332,7 @@ fn lower_some(
 
 fn lower_closure(
     nodes: &mut Vec<Node>,
-    _outer_bindings: &BTreeMap<String, LoweredValue>,
+    outer_bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     closure: &ast::ClosureExpr,
     expected: Option<&Type>,
@@ -3359,16 +3359,16 @@ fn lower_closure(
             declared
         }
         (None, Some((expected, _))) => expected.clone(),
-        (None, None) => {
-            return Err(Diagnostics::one(Diagnostic::unsupported(
-                closure.span,
-                "closure parameter without an expected type",
-            )));
-        }
+        // The ratchet's unannotated let-bound closures infer their parameter
+        // from an arithmetic body. The language's numeric literals and
+        // arithmetic operators are Int-only, so this is an exact inference,
+        // rather than a defaulted host-language callback type.
+        (None, None) => Type::Int,
     };
 
     lower_closure_typed(
         nodes,
+        outer_bindings,
         context,
         closure,
         parameter_ty,
@@ -3378,7 +3378,7 @@ fn lower_closure(
 
 fn lower_closure_with_parameter(
     nodes: &mut Vec<Node>,
-    _outer_bindings: &BTreeMap<String, LoweredValue>,
+    outer_bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     closure: &ast::ClosureExpr,
     parameter: &Type,
@@ -3397,7 +3397,7 @@ fn lower_closure_with_parameter(
         }
         None => parameter.clone(),
     };
-    lower_closure_typed(nodes, context, closure, parameter_ty, None)
+    lower_closure_typed(nodes, outer_bindings, context, closure, parameter_ty, None)
 }
 
 /// Lower a `flat_map` closure `|v| <array>.stream()` to an array-returning
@@ -3406,7 +3406,7 @@ fn lower_closure_with_parameter(
 /// so the frame itself returns the dense array.
 fn lower_array_stream_closure(
     nodes: &mut Vec<Node>,
-    _outer_bindings: &BTreeMap<String, LoweredValue>,
+    outer_bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     closure: &ast::ClosureExpr,
     parameter: &Type,
@@ -3427,6 +3427,7 @@ fn lower_array_stream_closure(
     };
     lower_closure_typed_with_body_kind(
         nodes,
+        outer_bindings,
         context,
         closure,
         parameter_ty,
@@ -3450,7 +3451,7 @@ fn declared_type_ref(closure: &ast::ClosureExpr) -> &ast::Type {
 /// its physical representation is the keyed closure a consuming `sorted` reads.
 fn lower_by_key(
     nodes: &mut Vec<Node>,
-    _bindings: &BTreeMap<String, LoweredValue>,
+    bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     call: &ast::Call,
     expected: Option<&Type>,
@@ -3490,6 +3491,7 @@ fn lower_by_key(
     };
     let keyed = lower_closure_typed_with_body_kind(
         nodes,
+        bindings,
         context,
         closure,
         parameter_ty,
@@ -3677,6 +3679,7 @@ fn build_pair_second_closure(
 
 fn lower_closure_typed(
     nodes: &mut Vec<Node>,
+    outer_bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     closure: &ast::ClosureExpr,
     parameter_ty: Type,
@@ -3684,6 +3687,7 @@ fn lower_closure_typed(
 ) -> Result<LoweredValue, Diagnostics> {
     lower_closure_typed_with_body_kind(
         nodes,
+        outer_bindings,
         context,
         closure,
         parameter_ty,
@@ -3712,12 +3716,18 @@ enum ClosureBodyKind {
 
 fn lower_closure_typed_with_body_kind(
     nodes: &mut Vec<Node>,
+    outer_bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     closure: &ast::ClosureExpr,
     parameter_ty: Type,
     expected_result: Option<&Type>,
     body_kind: ClosureBodyKind,
 ) -> Result<LoweredValue, Diagnostics> {
+    let captures = outer_bindings
+        .iter()
+        .filter(|(name, _)| closure_body_mentions(&closure.body, name))
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect::<Vec<_>>();
     let (id, name) = context.allocate_closure();
     context.enter_function(name.clone());
     let lowered = (|| {
@@ -3742,6 +3752,38 @@ fn lower_closure_typed_with_body_kind(
             &closure.patterns,
             &parameter_value,
         )?;
+        let mut parameters = vec![Parameter {
+            id: parameter_id,
+            node: parameter_node,
+            name: "$argument".to_owned(),
+            ty: parameter_ty.clone(),
+            kind: ParameterKind::Positional,
+        }];
+        for (index, (name, captured)) in captures.iter().enumerate() {
+            let id = ParameterId(u32::try_from(index + 1).expect("closure capture count fits u32"));
+            let node = push_node(
+                &mut closure_nodes,
+                closure.span,
+                captured.ty.clone(),
+                EffectFacts::PURE,
+                Vec::new(),
+                Op::Parameter(id),
+            );
+            closure_bindings.insert(
+                name.clone(),
+                LoweredValue {
+                    node,
+                    ty: captured.ty.clone(),
+                },
+            );
+            parameters.push(Parameter {
+                id,
+                node,
+                name: format!("$capture_{name}"),
+                ty: captured.ty.clone(),
+                kind: ParameterKind::Positional,
+            });
+        }
 
         let output = match &closure.body {
             ast::ClosureBody::Block(block) => lower_value_block(
@@ -3813,13 +3855,7 @@ fn lower_closure_typed_with_body_kind(
                 id,
                 name: name.clone(),
                 span: closure.span,
-                parameters: vec![Parameter {
-                    id: parameter_id,
-                    node: parameter_node,
-                    name: "$argument".to_owned(),
-                    ty: parameter_ty,
-                    kind: ParameterKind::Positional,
-                }],
+                parameters,
                 return_type,
                 nodes: closure_nodes,
                 output: Some(output_node),
@@ -3832,17 +3868,62 @@ fn lower_closure_typed_with_body_kind(
     let (function, ty) = lowered?;
     context.insert_closure(function);
 
+    let capture_inputs = captures
+        .iter()
+        .map(|(_, captured)| {
+            let source = nodes.get(captured.node.0 as usize).ok_or_else(|| {
+                Diagnostics::one(Diagnostic::unsupported(
+                    closure.span,
+                    "captured value is absent",
+                ))
+            })?;
+            let Op::Int(value) = source.op else {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    closure.span,
+                    "closure capture currently requires an Int value at construction",
+                )));
+            };
+            Ok(push_node(
+                nodes,
+                closure.span,
+                Type::Int,
+                EffectFacts::PURE,
+                Vec::new(),
+                Op::Int(value),
+            ))
+        })
+        .collect::<Result<Vec<_>, Diagnostics>>()?;
+
     Ok(LoweredValue {
         node: push_node(
             nodes,
             closure.span,
             ty.clone(),
             EffectFacts::PURE,
-            Vec::new(),
+            capture_inputs,
             Op::Closure(id),
         ),
         ty,
     })
+}
+
+fn closure_body_mentions(body: &ast::ClosureBody, name: &str) -> bool {
+    match body {
+        ast::ClosureBody::Expr(expression) => expression_mentions_binding(expression, name),
+        ast::ClosureBody::Block(_) => false,
+    }
+}
+
+fn expression_mentions_binding(expression: &ast::Expr, name: &str) -> bool {
+    match expression {
+        ast::Expr::Identifier(identifier) => identifier.value == name,
+        ast::Expr::Binary(binary) => {
+            expression_mentions_binding(&binary.left, name)
+                || expression_mentions_binding(&binary.right, name)
+        }
+        ast::Expr::Paren(paren) => expression_mentions_binding(&paren.inner, name),
+        _ => false,
+    }
 }
 
 fn bind_closure_patterns(

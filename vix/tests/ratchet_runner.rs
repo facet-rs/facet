@@ -59,6 +59,8 @@ const RUNG_044: &str = include_str!("ratchet/044-sets.vix");
 const RUNG_045: &str = include_str!("ratchet/045-strings.vix");
 const RUNG_046: &str = include_str!("ratchet/046-paths.vix");
 const RUNG_047: &str = include_str!("ratchet/047-string-to-path.reject.vix");
+const RUNG_048: &str = include_str!("ratchet/048-closures-capture.vix");
+const RUNG_049: &str = include_str!("ratchet/049-recursion.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
 const RUNG_145: &str = include_str!("ratchet/145-push.reject.vix");
 const RUNG_146: &str = include_str!("ratchet/146-insert.reject.vix");
@@ -3775,6 +3777,224 @@ fn rung_027_array_map_runs_through_verified_execution_without_publication() {
                     ))
             );
         }
+    }
+}
+
+#[test]
+fn rung_048_captured_closures_run_directly_and_through_array_map() {
+    let module = Compiler::new()
+        .compile(RUNG_048)
+        .expect("rung 048 compiles with a by-value closure environment");
+    let root = &module.functions[module.tests[0].function.0 as usize];
+    let closure = root
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::Closure(_)))
+        .expect("rung 048 constructs one closure value");
+    let VirOp::Closure(target) = closure.op else {
+        unreachable!("selected node is a closure")
+    };
+    assert!(
+        root.nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::CallValue))
+    );
+    assert!(
+        root.nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::ArrayMap { .. }))
+    );
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    let island = &partitioned.islands[0];
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(island)
+        .expect("rung 048 lowers its captured closure through verified Weavy");
+    let attribution = attribution_for(island);
+    let target_frame = frame_index(&attribution.functions, target);
+    let callable = lowered.contract().functions[target_frame]
+        .call_contract
+        .expect("captured closure has a verified callable ABI");
+    let contract = &lowered.contract().calls[callable.0 as usize];
+    assert_eq!(contract.entries.len(), 2, "argument plus captured Int");
+    let capture = *closure
+        .inputs
+        .first()
+        .expect("captured closure records its construction input");
+    let capture_region = island
+        .nodes
+        .iter()
+        .position(|node| node.id == capture)
+        .expect("capture remains in the island");
+    let capture_region = lowered.contract().functions[0].frame.regions[capture_region].offset;
+    let direct = root
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::CallValue))
+        .expect("direct closure call exists");
+    let direct_pcs = pcs_for_node(
+        lowered,
+        0,
+        NodeRef {
+            function: root.id,
+            node: direct.id,
+        },
+    );
+    let direct_call = direct_pcs
+        .iter()
+        .filter_map(|pc| match &lowered.program().fns[0].code[*pc] {
+            WeavyOp::CallIndirect { args, .. } => Some(args),
+            _ => None,
+        })
+        .next()
+        .expect("direct closure call lowers to CallIndirect");
+    assert_eq!(direct_call[1].src, capture_region);
+    assert_ne!(direct_call[1].src, direct_call[0].src + 8);
+    assert!(lowered.program().fns.iter().all(|function| {
+        function
+            .code
+            .iter()
+            .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+    }));
+    assert!(
+        lowered.program().fns[0]
+            .code
+            .iter()
+            .any(|op| matches!(op, WeavyOp::CallIndirect { .. }))
+    );
+    let recipe = lowered.recipe;
+    let calls = lowered.contract().calls.clone();
+
+    let shifted = Compiler::new()
+        .compile(&format!("\n{RUNG_048}"))
+        .expect("span-only rung 048 edit compiles");
+    let shifted_partitioned = shifted.partition_test(&shifted.tests[0]);
+    let shifted_lowered = cache
+        .get_or_lower(&shifted_partitioned.islands[0])
+        .expect("span-only rung 048 edit lowers");
+    assert_eq!(recipe, shifted_lowered.recipe);
+    assert_eq!(calls, shifted_lowered.contract().calls);
+
+    let report = run_source(RUNG_048).expect("rung 048 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+#[test]
+fn noncapturing_direct_closure_has_only_its_semantic_argument() {
+    const SOURCE: &str = r#"
+#[test]
+fn direct_inc() -> Stream<Check> {
+    let inc = |n| n + 1;
+    yield expect_eq(inc(1), 2);
+}
+"#;
+    let module = Compiler::new()
+        .compile(SOURCE)
+        .expect("noncapturing closure compiles");
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(&partitioned.islands[0])
+        .expect("noncapturing direct closure verifies");
+    let direct = module.functions[module.tests[0].function.0 as usize]
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::CallValue))
+        .expect("direct call exists");
+    let args = pcs_for_node(
+        lowered,
+        0,
+        NodeRef {
+            function: module.tests[0].function,
+            node: direct.id,
+        },
+    )
+    .into_iter()
+    .filter_map(|pc| match &lowered.program().fns[0].code[pc] {
+        WeavyOp::CallIndirect { args, .. } => Some(args),
+        _ => None,
+    })
+    .next()
+    .expect("direct call lowers indirectly");
+    assert_eq!(args.len(), 1);
+    let report = run_source(SOURCE).expect("noncapturing direct closure executes");
+    assert!(report.passed() && report.agrees());
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+#[test]
+fn rung_049_plain_recursion_uses_stable_verified_call_abi() {
+    let module = Compiler::new()
+        .compile(RUNG_049)
+        .expect("rung 049 compiles with recursive fib calls");
+    let fib = module
+        .functions
+        .iter()
+        .find(|function| function.name == "fib")
+        .expect("rung 049 declares fib");
+    assert!(
+        fib.nodes
+            .iter()
+            .any(|node| matches!(node.op, VirOp::Call(callee) if callee == fib.id))
+    );
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    let island = &partitioned.islands[0];
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(island)
+        .expect("rung 049 lowers recursive fib through verified Weavy");
+    let attribution = attribution_for(island);
+    let fib_frame = frame_index(&attribution.functions, fib.id);
+    let callable = lowered.contract().functions[fib_frame]
+        .call_contract
+        .expect("recursive fib has a verified callable ABI");
+    let contract = &lowered.contract().calls[callable.0 as usize];
+    assert_eq!(contract.entries.len(), 1, "fib ABI has one Int argument");
+    assert!(
+        lowered.program().fns[fib_frame]
+            .code
+            .iter()
+            .any(|op| matches!(op, WeavyOp::Call { callee, .. } if callee.0 as usize == fib_frame))
+    );
+    assert!(lowered.program().fns.iter().all(|function| {
+        function
+            .code
+            .iter()
+            .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+    }));
+    let recipe = lowered.recipe;
+    let calls = lowered.contract().calls.clone();
+
+    let shifted = Compiler::new()
+        .compile(&format!("\n{RUNG_049}"))
+        .expect("span-only rung 049 edit compiles");
+    let shifted_partitioned = shifted.partition_test(&shifted.tests[0]);
+    let shifted_lowered = cache
+        .get_or_lower(&shifted_partitioned.islands[0])
+        .expect("span-only rung 049 edit lowers");
+    assert_eq!(recipe, shifted_lowered.recipe);
+    assert_eq!(calls, shifted_lowered.contract().calls);
+
+    let report = run_source(RUNG_049).expect("rung 049 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
     }
 }
 

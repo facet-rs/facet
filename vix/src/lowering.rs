@@ -1400,6 +1400,12 @@ impl<'a> ProgramContractBuilder<'a> {
                 Op::Closure(callee) => Some(callee),
                 _ => None,
             })
+            .chain(function_order.iter().flat_map(|function| {
+                function.nodes.iter().filter_map(move |node| {
+                    matches!(node.op, Op::Call(callee) if callee == function.id)
+                        .then_some(function.id)
+                })
+            }))
             .collect();
 
         let mut builder = Self {
@@ -3851,6 +3857,7 @@ fn lower_node_sequence(
                 let mut lowering = NodeLoweringContext {
                     function: sequence.function,
                     context: sequence.lowering,
+                    nodes: sequence.nodes,
                     constants: outputs.constants,
                 };
                 let lowered = lower_node(node, dst, dst_region_id, values, &mut lowering)?;
@@ -4791,6 +4798,7 @@ struct FunctionLoweringContext<'a> {
 struct NodeLoweringContext<'function, 'lowering, 'constants> {
     function: &'function FunctionLoweringContext<'function>,
     context: &'lowering LoweringContext<'lowering>,
+    nodes: &'function BTreeMap<NodeId, &'function Node>,
     constants: &'constants mut BTreeMap<NodeRef, PendingValueConstant>,
 }
 
@@ -4951,7 +4959,6 @@ fn lower_node(
             (vec![op], representation_for_type(&node.ty, node.span)?)
         }
         Op::Closure(callee) => {
-            require_input_count(node, 0)?;
             if !matches!(node.ty, Type::Function { .. }) || dst_region.words().as_usize() != 2 {
                 return Err(lowering_diagnostic(
                     node.span,
@@ -4972,12 +4979,24 @@ fn lower_node(
             let Type::Function { parameter, result } = &node.ty else {
                 unreachable!("closure type was checked above")
             };
-            let [target_parameter] = target.parameters.as_slice() else {
+            let Some(target_parameter) = target.parameters.first() else {
                 return Err(lowering_diagnostic(
                     node.span,
-                    "closure function does not have exactly one parameter",
+                    "closure function does not have its callable parameter",
                 ));
             };
+            if node.inputs.len() != target.parameters.len().saturating_sub(1) {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "closure capture count does not match its callable ABI",
+                ));
+            }
+            if node.inputs.len() > 1 {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "closure environment currently carries exactly one captured word",
+                ));
+            }
             if &target_parameter.ty != parameter.as_ref()
                 || &target.return_type != result.as_ref()
                 || target_layout
@@ -5005,16 +5024,26 @@ fn lower_node(
                     .closure(lowering.function.id, node.id, node.span)?;
             let (callee_temp, environment_temp) =
                 lowering.function.layout.closure_temps(node.id, node.span)?;
+            let environment = if node.inputs.first().is_some() {
+                let capture = input_value(node, values, 0)?;
+                require_value(node, &capture, &Type::Int, ValueRepresentation::Word)?;
+                WeavyOp::CopyI64 {
+                    dst: environment_temp.start().byte_offset(),
+                    src: capture.region.start().byte_offset(),
+                }
+            } else {
+                WeavyOp::ConstI64 {
+                    dst: environment_temp.start().byte_offset(),
+                    value: 0,
+                }
+            };
             (
                 vec![
                     WeavyOp::ConstI64 {
                         dst: callee_temp.start().byte_offset(),
                         value: i64::from(callee),
                     },
-                    WeavyOp::ConstI64 {
-                        dst: environment_temp.start().byte_offset(),
-                        value: 0,
-                    },
+                    environment,
                     WeavyOp::ProductConstruct {
                         dst: dst_region_id,
                         fields: vec![
@@ -5033,7 +5062,7 @@ fn lower_node(
             )
         }
         Op::CallValue => {
-            let op = lower_call_value_node(node, dst_region, values)?;
+            let op = lower_call_value_node(node, dst_region, values, lowering)?;
             (vec![op], representation_for_type(&node.ty, node.span)?)
         }
         Op::Add | Op::Sub | Op::Mul | Op::Div => {
@@ -5855,22 +5884,14 @@ fn emit_checked_call_indirect(
             .byte_size()
             .ok_or_else(|| lowering_diagnostic(node.span, "indirect argument size overflow"))?,
     }];
-    if let Some(target) = static_closure_target(mapper, sequence) {
-        let target_layout =
-            sequence.lowering.layouts.get(&target).ok_or_else(|| {
-                lowering_diagnostic(node.span, "closure target has no frame layout")
-            })?;
-        for (&constant, &destination) in &target_layout.constant_slots {
-            let source = sequence
-                .function
-                .layout
-                .constant_slot(constant, node.span)?;
-            args.push(ArgCopy {
-                src: source.byte_offset(),
-                dst: destination.byte_offset(),
-                size: FrameSlot::word_size(),
-            });
-        }
+    if let Some((_, extra)) = static_closure_call_args(
+        mapper,
+        sequence.nodes,
+        sequence.function.layout,
+        sequence.lowering,
+        node.span,
+    )? {
+        args.extend(extra);
     }
     outputs.code.push(WeavyOp::CallIndirect {
         callee: mapper.region.start().byte_offset(),
@@ -5903,25 +5924,6 @@ fn emit_checked_call_indirect(
         outputs.code,
     )?;
     outputs.code.bind(done, node.span)
-}
-
-fn static_closure_target(
-    mapper: &LoweredSlot,
-    sequence: &SequenceContext<'_, '_, '_>,
-) -> Option<FunctionId> {
-    sequence.nodes.values().copied().find_map(|candidate| {
-        let Op::Closure(target) = candidate.op else {
-            return None;
-        };
-        (candidate.ty == mapper.ty
-            && sequence
-                .function
-                .layout
-                .region(candidate.id, candidate.span)
-                .ok()
-                == Some(mapper.region))
-        .then_some(target)
-    })
 }
 
 fn propagate_checked_call_failure(
@@ -10250,10 +10252,78 @@ fn emit_array_load_status_checks(context: ArrayLoadStatusContext<'_>) -> Result<
     code.bind(success, node.span)
 }
 
+fn static_closure_call_args(
+    callee: &LoweredSlot,
+    nodes: &BTreeMap<NodeId, &Node>,
+    caller_layout: &FunctionLayout,
+    context: &LoweringContext<'_>,
+    span: Span,
+) -> Result<Option<(FunctionId, Vec<ArgCopy>)>, Diagnostics> {
+    let Some(closure) = nodes.values().copied().find(|candidate| {
+        matches!(candidate.op, Op::Closure(_))
+            && candidate.ty == callee.ty
+            && caller_layout.region(candidate.id, candidate.span).ok() == Some(callee.region)
+    }) else {
+        return Ok(None);
+    };
+    let Op::Closure(target_id) = closure.op else {
+        unreachable!("selected static closure node")
+    };
+    let target = context
+        .functions
+        .get(&target_id)
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(span, "closure target is absent from the island"))?;
+    if target.parameters.len() != closure.inputs.len() + 1 {
+        return Err(lowering_diagnostic(
+            span,
+            "closure capture inputs do not match the callable ABI",
+        ));
+    }
+    let mut args = Vec::with_capacity(
+        closure.inputs.len().saturating_add(
+            context
+                .layouts
+                .get(&target_id)
+                .map_or(0, |layout| layout.constant_slots.len()),
+        ),
+    );
+    for (index, capture) in closure.inputs.iter().enumerate() {
+        let source = caller_layout.region(*capture, span)?;
+        let destination = target.parameters[index + 1].node;
+        let target_layout = context
+            .layouts
+            .get(&target_id)
+            .ok_or_else(|| lowering_diagnostic(span, "closure target has no frame layout"))?;
+        let destination = target_layout.region(destination, span)?;
+        args.push(ArgCopy {
+            src: source.start().byte_offset(),
+            dst: destination.start().byte_offset(),
+            size: source
+                .byte_size()
+                .ok_or_else(|| lowering_diagnostic(span, "closure capture size overflow"))?,
+        });
+    }
+    let target_layout = context
+        .layouts
+        .get(&target_id)
+        .ok_or_else(|| lowering_diagnostic(span, "closure target has no frame layout"))?;
+    for (&constant, &destination) in &target_layout.constant_slots {
+        let source = caller_layout.constant_slot(constant, span)?;
+        args.push(ArgCopy {
+            src: source.byte_offset(),
+            dst: destination.byte_offset(),
+            size: FrameSlot::word_size(),
+        });
+    }
+    Ok(Some((target_id, args)))
+}
+
 fn lower_call_value_node(
     node: &Node,
     dst: FrameRegion,
     values: &BTreeMap<NodeId, LoweredSlot>,
+    lowering: &NodeLoweringContext<'_, '_, '_>,
 ) -> Result<WeavyOp, Diagnostics> {
     require_input_count(node, 2)?;
     let callee = input_value(node, values, 0)?;
@@ -10282,16 +10352,31 @@ fn lower_call_value_node(
         parameter,
         representation_for_type(parameter, node.span)?,
     )?;
+    let mut args = vec![ArgCopy {
+        src: argument.region.start().byte_offset(),
+        dst: 0,
+        size: argument
+            .region
+            .byte_size()
+            .ok_or_else(|| lowering_diagnostic(node.span, "argument size overflow"))?,
+    }];
+    let Some((_, extra)) = static_closure_call_args(
+        &callee,
+        lowering.nodes,
+        lowering.function.layout,
+        lowering.context,
+        node.span,
+    )?
+    else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "direct CallValue has no static closure construction node",
+        ));
+    };
+    args.extend(extra);
     Ok(WeavyOp::CallIndirect {
         callee: callee.region.start().byte_offset(),
-        args: vec![ArgCopy {
-            src: argument.region.start().byte_offset(),
-            dst: 0,
-            size: argument
-                .region
-                .byte_size()
-                .ok_or_else(|| lowering_diagnostic(node.span, "argument size overflow"))?,
-        }],
+        args,
         ret: dst.start().byte_offset(),
     })
 }
