@@ -6,6 +6,7 @@ ast({
   _expr: { enum: "Expr" },
   _if_branch: { enum: "IfBranch" },
   _closure_body: { enum: "ClosureBody" },
+  _match_arm_body: { enum: "MatchArmBody" },
   _type: { enum: "Type" },
   _pattern: { enum: "Pattern" },
   _variant_type_payload: { enum: "VariantTypePayload" },
@@ -42,6 +43,7 @@ ast({
   tuple_pattern: { as: "Tuple" },
   record_pattern: { as: "Record" },
   tuple_expr: { as: "Tuple" },
+  path_expr: { as: "Path", decode: "path" },
   generic_type: { as: "Generic" },
   array_type: { as: "Array" },
   tuple_type: { as: "Tuple" },
@@ -50,6 +52,7 @@ ast({
 
   identifier: { as: "Identifier", decode: "text" },
   string: { as: "Str", decode: "string" },
+  quantity: { as: "Quantity", decode: "text" },
   number: { as: "Number", decode: "text" },
   tuple_index: { as: "Index", decode: "text" },
   boolean: { as: "Bool", decode: "bool" },

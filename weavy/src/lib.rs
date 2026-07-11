@@ -16,7 +16,7 @@ pub mod verified;
 
 pub use exec::{
     CompareSide, DriveTable, EntryWriteKind, ExecTask, ExecTaskState, Executable, FallbackReason,
-    FaultSite, LaneFacts, LaneKind, StoreHandle, StructuralResult, TaskFault,
+    FaultSite, LaneFacts, LaneKind, PublishedDescriptor, StoreHandle, StructuralResult, TaskFault,
 };
 pub use task::StructuralFieldSource;
 pub use verified::{

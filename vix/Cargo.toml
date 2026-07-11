@@ -21,6 +21,9 @@ facet-value = { path = "../facet-value", default-features = false, features = ["
 exec-protocol = { path = "../exec-protocol", optional = true }
 hex.workspace = true
 blake3.workspace = true
+# Cross-process resident-set observation for the outer budget runner. Only the
+# unix RSS readers use it, behind typed cfg boundaries.
+libc.workspace = true
 miniz_oxide = { version = "0.8.9", default-features = false, features = ["with-alloc"] }
 object.workspace = true
 phon = { path = "../phon/rust/phon" }

@@ -42,6 +42,20 @@ pub struct Evaluation {
     pub failure_context: Option<FailureContext>,
 }
 
+/// The outcome of driving one generator task to completion.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GeneratorOutcome {
+    /// The taken sites' raw provenance selectors, in publication order.
+    Sites(Vec<u64>),
+    /// The generator's scrutinee control language-failed before deciding a
+    /// branch. A language failure, never a machine invariant. The typed failure
+    /// is boxed so the common `Sites` path stays small.
+    LanguageFailure {
+        failure: Box<FailureValue>,
+        context: Option<FailureContext>,
+    },
+}
+
 /// The scheduler owns passive maps and admission bookkeeping; Weavy owns the
 /// executable task and any suspension state.
 ///
@@ -307,6 +321,19 @@ impl<S: EventSink> Runtime<S> {
                         error,
                     )));
                 }
+                Ok(DecodedResult::OrderedMachine { site, status }) => {
+                    let error = MachineError::runtime(
+                        MachineOperation::Result,
+                        RuntimeFault::OrderedMachineStatus { site, status },
+                        self.output_attribution(lowered, attribution),
+                        Some(lowered.demand_key),
+                    );
+                    return Err(Box::new(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )));
+                }
                 // r[impl machine.error.index-out-of-bounds]
                 Ok(DecodedResult::IndexOutOfBounds {
                     site,
@@ -357,26 +384,62 @@ impl<S: EventSink> Runtime<S> {
                         recipe: lowered.recipe,
                         site,
                     };
-                    return Ok(self.complete_language_failure(
+                    return self.complete_language_failure(
                         task_id,
                         location,
                         lowered,
                         attribution,
                         failure,
-                    )?);
+                    );
                 }
                 Ok(DecodedResult::DuplicateKey { site }) => {
                     let failure = FailureValue::DuplicateKey {
                         recipe: lowered.recipe,
                         site,
                     };
-                    return Ok(self.complete_language_failure(
+                    return self.complete_language_failure(
                         task_id,
                         location,
                         lowered,
                         attribution,
                         failure,
-                    )?);
+                    );
+                }
+                Ok(DecodedResult::MissingDelimiter { site }) => {
+                    return self.complete_language_failure(
+                        task_id,
+                        location,
+                        lowered,
+                        attribution,
+                        FailureValue::MissingDelimiter {
+                            recipe: lowered.recipe,
+                            site,
+                        },
+                    );
+                }
+                Ok(DecodedResult::InvalidInteger { site }) => {
+                    return self.complete_language_failure(
+                        task_id,
+                        location,
+                        lowered,
+                        attribution,
+                        FailureValue::InvalidInteger {
+                            recipe: lowered.recipe,
+                            site,
+                        },
+                    );
+                }
+                Ok(DecodedResult::IntegerOverflow { site }) => {
+                    return self.complete_language_failure(
+                        task_id,
+                        location,
+                        lowered,
+                        attribution,
+                        FailureValue::IntegerOverflow {
+                            recipe: lowered.recipe,
+                            site,
+                        },
+                    );
                 }
                 Err(fault) => {
                     let fallback = result_shape_attribution(
@@ -430,6 +493,373 @@ impl<S: EventSink> Runtime<S> {
                 failure_context: None,
             });
         }
+    }
+
+    /// Drive one generator task to `Done` and return its outcome: either the
+    /// taken sites' raw provenance selectors in publication order, or a language
+    /// failure raised while constructing the generator's control. The generator
+    /// runs only real `Match`/`If` control and publishes; it never evaluates a
+    /// check operand. Publication arrival order is a live schedule artifact — the
+    /// caller re-keys the completed check family by provenance. A scrutinee
+    /// language failure stays on the language plane; only a machine invariant
+    /// violation is a `MachineError`.
+    pub fn drive_generator(
+        &mut self,
+        island: IslandId,
+        lowered: &LoweringArtifact,
+        attribution: &LoweringAttribution,
+        chaos: ChaosPolicy,
+    ) -> Result<GeneratorOutcome, Box<MachineError>> {
+        self.emit(EventKind::Demanded {
+            key: lowered.demand_key,
+        });
+        self.demands.insert(
+            lowered.demand_key,
+            DemandRecord {
+                key: lowered.demand_key,
+                state: DemandState::Queued,
+                result: None,
+            },
+        );
+        self.emit(EventKind::DemandTransition {
+            key: lowered.demand_key,
+            from: DemandState::Absent,
+            to: DemandState::Queued,
+        });
+        let constants = self.materialize_constants(lowered);
+        let mut kill_armed = chaos.kill_first_running_task;
+        loop {
+            self.counters.scheduler_requests += 1;
+            let task_id = self.spawn_task(lowered.demand_key);
+            self.transition_demand(lowered.demand_key, DemandState::Running)?;
+            self.transition_task(task_id, TaskState::Running)?;
+            self.emit(EventKind::IslandEntered {
+                task: task_id,
+                island,
+            });
+            self.emit(EventKind::SafePoint {
+                task: task_id,
+                class: SafePointClass::Edge,
+            });
+
+            if kill_armed {
+                kill_armed = false;
+                self.counters.task_discards += 1;
+                self.transition_task(task_id, TaskState::Discarded)?;
+                self.transition_demand(lowered.demand_key, DemandState::Queued)?;
+                continue;
+            }
+
+            let mut task = match lowered.executable().spawn(FnId(0)) {
+                Ok(task) => task,
+                Err(fault) => {
+                    let error =
+                        self.task_fault(MachineOperation::Spawn, fault, lowered, attribution, None);
+                    return Err(Box::new(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )));
+                }
+            };
+            let lane_facts = execution_facts(lowered.executable().lane_facts());
+            match lane_facts.selected {
+                ExecutionLaneFact::Interpreter => self.counters.interpreter_task_spawns += 1,
+                ExecutionLaneFact::Native => self.counters.native_task_spawns += 1,
+            }
+            self.emit(EventKind::ExecutionLane {
+                task: task_id,
+                facts: lane_facts,
+            });
+            for (constant, handle) in lowered.constants.iter().zip(constants.iter().copied()) {
+                let handle = match self.store.weavy_handle(handle) {
+                    Some(handle) => handle,
+                    None => {
+                        let error = MachineError::runtime(
+                            MachineOperation::EntryBinding,
+                            RuntimeFault::MissingConstantStoreHandle,
+                            self.constant_attribution(constant.node, attribution),
+                            Some(lowered.demand_key),
+                        );
+                        return Err(Box::new(self.terminate_machine_fault(
+                            task_id,
+                            lowered.demand_key,
+                            error,
+                        )));
+                    }
+                };
+                if let Err(fault) =
+                    task.write_entry_store_handle(constant.root.entry, constant.root.schema, handle)
+                {
+                    let error = self.task_fault(
+                        MachineOperation::EntryBinding,
+                        fault,
+                        lowered,
+                        attribution,
+                        self.constant_attribution(constant.node, attribution),
+                    );
+                    return Err(Box::new(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )));
+                }
+            }
+            let step = match self.store.with_value_memories(|value_memories| {
+                task.drive_hosted_with_value_memories(&mut [], &[], &mut [], value_memories)
+                    .map_err(Box::new)
+            }) {
+                Ok(step) => step,
+                Err(fault) => {
+                    let error = self.task_fault(
+                        MachineOperation::Drive,
+                        *fault,
+                        lowered,
+                        attribution,
+                        None,
+                    );
+                    return Err(Box::new(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )));
+                }
+            };
+            match step {
+                TaskStep::Done => {}
+                TaskStep::Yielded => {
+                    let error = MachineError::runtime(
+                        MachineOperation::Drive,
+                        RuntimeFault::PureIslandYielded,
+                        None,
+                        Some(lowered.demand_key),
+                    );
+                    return Err(Box::new(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )));
+                }
+                TaskStep::Parked { input } => {
+                    let error = MachineError::runtime(
+                        MachineOperation::Drive,
+                        RuntimeFault::PureIslandParked { input },
+                        None,
+                        Some(lowered.demand_key),
+                    );
+                    return Err(Box::new(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )));
+                }
+            }
+            for event in task.trace() {
+                if let Err(error) =
+                    self.emit_weavy(task_id, *event, attribution, lowered.demand_key)
+                {
+                    return Err(Box::new(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        *error,
+                    )));
+                }
+            }
+            // The generator's placeholder value is unused; its taken sites live in
+            // the publication log. `Ok` drains them; a typed collection language
+            // failure while constructing control stays on the language plane; a
+            // machine-invariant status is a machine fault.
+            match decode_result(&task, lowered) {
+                Ok(DecodedResult::Ok(_)) => {
+                    let count = match task.publication_count() {
+                        Ok(count) => count,
+                        Err(fault) => {
+                            let error = self.task_fault(
+                                MachineOperation::Result,
+                                fault,
+                                lowered,
+                                attribution,
+                                None,
+                            );
+                            return Err(Box::new(self.terminate_machine_fault(
+                                task_id,
+                                lowered.demand_key,
+                                error,
+                            )));
+                        }
+                    };
+                    let mut sites = Vec::with_capacity(count);
+                    for index in 0..count {
+                        match task.publication(index) {
+                            Ok(descriptor) => sites.push(descriptor.provenance_key()),
+                            Err(fault) => {
+                                let error = self.task_fault(
+                                    MachineOperation::Result,
+                                    fault,
+                                    lowered,
+                                    attribution,
+                                    None,
+                                );
+                                return Err(Box::new(self.terminate_machine_fault(
+                                    task_id,
+                                    lowered.demand_key,
+                                    error,
+                                )));
+                            }
+                        }
+                    }
+                    self.transition_task(task_id, TaskState::Completed)?;
+                    self.transition_demand(lowered.demand_key, DemandState::Ready)?;
+                    return Ok(GeneratorOutcome::Sites(sites));
+                }
+                Ok(DecodedResult::IndexOutOfBounds {
+                    site,
+                    index,
+                    length,
+                }) => {
+                    let failure = FailureValue::IndexOutOfBounds {
+                        recipe: lowered.recipe,
+                        site,
+                        index,
+                        length,
+                        subject: None,
+                    };
+                    return self.complete_generator_language_failure(
+                        task_id,
+                        lowered,
+                        attribution,
+                        failure,
+                    );
+                }
+                Ok(DecodedResult::MissingKey { site }) => {
+                    let failure = FailureValue::MissingKey {
+                        recipe: lowered.recipe,
+                        site,
+                    };
+                    return self.complete_generator_language_failure(
+                        task_id,
+                        lowered,
+                        attribution,
+                        failure,
+                    );
+                }
+                Ok(DecodedResult::DuplicateKey { site }) => {
+                    let failure = FailureValue::DuplicateKey {
+                        recipe: lowered.recipe,
+                        site,
+                    };
+                    return self.complete_generator_language_failure(
+                        task_id,
+                        lowered,
+                        attribution,
+                        failure,
+                    );
+                }
+                Ok(DecodedResult::MissingDelimiter { site }) => {
+                    let failure = FailureValue::MissingDelimiter {
+                        recipe: lowered.recipe,
+                        site,
+                    };
+                    return self.complete_generator_language_failure(
+                        task_id,
+                        lowered,
+                        attribution,
+                        failure,
+                    );
+                }
+                Ok(DecodedResult::InvalidInteger { site }) => {
+                    let failure = FailureValue::InvalidInteger {
+                        recipe: lowered.recipe,
+                        site,
+                    };
+                    return self.complete_generator_language_failure(
+                        task_id,
+                        lowered,
+                        attribution,
+                        failure,
+                    );
+                }
+                Ok(DecodedResult::IntegerOverflow { site }) => {
+                    let failure = FailureValue::IntegerOverflow {
+                        recipe: lowered.recipe,
+                        site,
+                    };
+                    return self.complete_generator_language_failure(
+                        task_id,
+                        lowered,
+                        attribution,
+                        failure,
+                    );
+                }
+                Ok(DecodedResult::ArrayMachine { site, status }) => {
+                    let error = MachineError::runtime(
+                        MachineOperation::Result,
+                        RuntimeFault::ArrayMachineStatus { site, status },
+                        self.output_attribution(lowered, attribution),
+                        Some(lowered.demand_key),
+                    );
+                    return Err(Box::new(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )));
+                }
+                Ok(DecodedResult::OrderedMachine { site, status }) => {
+                    let error = MachineError::runtime(
+                        MachineOperation::Result,
+                        RuntimeFault::OrderedMachineStatus { site, status },
+                        self.output_attribution(lowered, attribution),
+                        Some(lowered.demand_key),
+                    );
+                    return Err(Box::new(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )));
+                }
+                Err(fault) => {
+                    let error = self.task_fault(
+                        MachineOperation::Result,
+                        *fault,
+                        lowered,
+                        attribution,
+                        self.output_attribution(lowered, attribution),
+                    );
+                    return Err(Box::new(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )));
+                }
+            }
+        }
+    }
+
+    /// Complete a generator task whose scrutinee control language-failed: intern
+    /// the typed failure by its semantic identity, mark the generator demand
+    /// failed, and surface it on the language plane. It is never reclassified as
+    /// a machine invariant.
+    fn complete_generator_language_failure(
+        &mut self,
+        task: TaskId,
+        lowered: &LoweringArtifact,
+        attribution: &LoweringAttribution,
+        failure: FailureValue,
+    ) -> Result<GeneratorOutcome, Box<MachineError>> {
+        let context = failure_context(&failure, lowered, attribution);
+        let interned = self.store.intern_failure(failure.clone(), &[]);
+        self.observe_interned(interned);
+        self.transition_task(task, TaskState::Completed)?;
+        self.transition_demand(lowered.demand_key, DemandState::Failed)?;
+        self.emit(EventKind::LanguageFailed {
+            task,
+            key: lowered.demand_key,
+            failure: failure.clone(),
+        });
+        Ok(GeneratorOutcome::LanguageFailure {
+            failure: Box::new(failure),
+            context,
+        })
     }
 
     fn materialize_constants(&mut self, lowered: &LoweringArtifact) -> Vec<Handle> {
@@ -693,6 +1123,15 @@ impl<S: EventSink> Runtime<S> {
         self.counters
     }
 
+    /// The number of distinct memo entries standing at this point in the run.
+    /// This is the live table size, not a cumulative counter, so it is the
+    /// quantity a `memo_entries_at_most` trace check bounds. Reads never mutate
+    /// the table, so inspecting it costs no memo entry of its own.
+    #[must_use]
+    pub fn memo_entries(&self) -> u64 {
+        self.memo.len() as u64
+    }
+
     pub fn demands(&self) -> impl Iterator<Item = &DemandRecord> {
         self.demands.values()
     }
@@ -733,6 +1172,9 @@ fn failure_context(
         FailureValue::IndexOutOfBounds { recipe, site, .. }
         | FailureValue::MissingKey { recipe, site }
         | FailureValue::DuplicateKey { recipe, site }
+        | FailureValue::MissingDelimiter { recipe, site }
+        | FailureValue::InvalidInteger { recipe, site }
+        | FailureValue::IntegerOverflow { recipe, site }
             if *recipe == lowered.recipe =>
         {
             let source = attribution.source_for_trace(*site)?;
@@ -745,7 +1187,10 @@ fn failure_context(
         }
         FailureValue::IndexOutOfBounds { .. }
         | FailureValue::MissingKey { .. }
-        | FailureValue::DuplicateKey { .. } => None,
+        | FailureValue::DuplicateKey { .. }
+        | FailureValue::MissingDelimiter { .. }
+        | FailureValue::InvalidInteger { .. }
+        | FailureValue::IntegerOverflow { .. } => None,
     }
 }
 
@@ -762,9 +1207,22 @@ enum DecodedResult {
     DuplicateKey {
         site: u32,
     },
+    MissingDelimiter {
+        site: u32,
+    },
+    InvalidInteger {
+        site: u32,
+    },
+    IntegerOverflow {
+        site: u32,
+    },
     ArrayMachine {
         site: u32,
         status: weavy::task::ArrayOpStatus,
+    },
+    OrderedMachine {
+        site: u32,
+        status: weavy::task::OrderedOpStatus,
     },
 }
 
@@ -823,6 +1281,24 @@ fn decode_result(
         ))?;
         return Ok(DecodedResult::ArrayMachine { site, status });
     }
+    if selector == abi.ordered_machine_variant {
+        let site = u32::try_from(result.enum_scalar_field(selector, 0)?).map_err(|_| {
+            Box::new(TaskFault::InvalidResultShape {
+                entry: FnId(0),
+                region: lowered.executable().program().contract().functions[0].result,
+                size: 0,
+            })
+        })?;
+        let raw_status = result.enum_scalar_field(selector, 1)?;
+        let status = weavy::task::OrderedOpStatus::from_word(raw_status).ok_or(Box::new(
+            TaskFault::InvalidResultShape {
+                entry: FnId(0),
+                region: lowered.executable().program().contract().functions[0].result,
+                size: 0,
+            },
+        ))?;
+        return Ok(DecodedResult::OrderedMachine { site, status });
+    }
     if selector == abi.missing_key_variant || selector == abi.duplicate_key_variant {
         let site = u32::try_from(result.enum_scalar_field(selector, 0)?).map_err(|_| {
             Box::new(TaskFault::InvalidResultShape {
@@ -835,6 +1311,25 @@ fn decode_result(
             DecodedResult::MissingKey { site }
         } else {
             DecodedResult::DuplicateKey { site }
+        });
+    }
+    if selector == abi.string_missing_delimiter_variant
+        || selector == abi.string_invalid_integer_variant
+        || selector == abi.string_integer_overflow_variant
+    {
+        let site = u32::try_from(result.enum_scalar_field(selector, 0)?).map_err(|_| {
+            Box::new(TaskFault::InvalidResultShape {
+                entry: FnId(0),
+                region: lowered.executable().program().contract().functions[0].result,
+                size: 0,
+            })
+        })?;
+        return Ok(if selector == abi.string_missing_delimiter_variant {
+            DecodedResult::MissingDelimiter { site }
+        } else if selector == abi.string_invalid_integer_variant {
+            DecodedResult::InvalidInteger { site }
+        } else {
+            DecodedResult::IntegerOverflow { site }
         });
     }
     Err(Box::new(TaskFault::InvalidResultShape {
@@ -868,9 +1363,18 @@ fn task_fault_site(fault: &TaskFault) -> Option<&FaultSite> {
         | TaskFault::IndirectCalleeContractMismatch { site, .. }
         | TaskFault::MissingIndirectCallFacts { site }
         | TaskFault::UnresidentCompareValueBytes { site, .. }
+        | TaskFault::UnresidentStringConcatOperand { site, .. }
+        | TaskFault::StringConcatAllocationFailed { site }
+        | TaskFault::UnresidentByteProjectSource { site, .. }
+        | TaskFault::ByteProjectionAllocationFailed { site }
+        | TaskFault::UnresidentPathJoinOperand { site, .. }
+        | TaskFault::PathJoinAllocationFailed { site }
+        | TaskFault::PublicationAllocationFailed { site }
         | TaskFault::InvalidEnumSelector { site, .. }
         | TaskFault::EnumProjectionMismatch { site, .. }
-        | TaskFault::InvalidArrayStatus { site, .. } => Some(site),
+        | TaskFault::InvalidArrayStatus { site, .. }
+        | TaskFault::InvalidStringStatus { site, .. }
+        | TaskFault::InvalidOrderedStatus { site, .. } => Some(site),
         TaskFault::PoisonedReDrive { original } | TaskFault::PoisonedResult { original } => {
             task_fault_site(original)
         }
@@ -888,6 +1392,7 @@ fn task_fault_site(fault: &TaskFault) -> Option<&FaultSite> {
         | TaskFault::NativeFaultExit { .. }
         | TaskFault::InvalidFaultSite { .. }
         | TaskFault::ResultBeforeDone { .. }
+        | TaskFault::PublicationIndexOutOfRange { .. }
         | TaskFault::DriveAfterDone => None,
     }
 }
@@ -913,9 +1418,19 @@ fn result_shape_attribution(
         | TaskFault::IndirectCalleeContractMismatch { .. }
         | TaskFault::MissingIndirectCallFacts { .. }
         | TaskFault::UnresidentCompareValueBytes { .. }
+        | TaskFault::UnresidentStringConcatOperand { .. }
+        | TaskFault::StringConcatAllocationFailed { .. }
+        | TaskFault::UnresidentByteProjectSource { .. }
+        | TaskFault::ByteProjectionAllocationFailed { .. }
+        | TaskFault::UnresidentPathJoinOperand { .. }
+        | TaskFault::PathJoinAllocationFailed { .. }
+        | TaskFault::PublicationAllocationFailed { .. }
+        | TaskFault::PublicationIndexOutOfRange { .. }
         | TaskFault::InvalidEnumSelector { .. }
         | TaskFault::EnumProjectionMismatch { .. }
         | TaskFault::InvalidArrayStatus { .. }
+        | TaskFault::InvalidStringStatus { .. }
+        | TaskFault::InvalidOrderedStatus { .. }
         | TaskFault::NativeFaultExit { .. }
         | TaskFault::InvalidFaultSite { .. }
         | TaskFault::PoisonedReDrive { .. }
@@ -945,7 +1460,7 @@ mod tests {
     use super::*;
     use crate::compiler::Compiler;
     use crate::lowering::{LoweringCache, attribution_for};
-    use crate::runtime::{EventLog, MachineCause};
+    use crate::runtime::{EventLog, FramedNode, MachineCause};
     use weavy::exec::{DriveTable, TaskFault};
     use weavy::task::{ArrayOpStatus, Op};
     use weavy::{Executable, ValueShapeRef};
@@ -969,6 +1484,29 @@ fn out_of_bounds() -> Stream<Check> {
     yield expect_eq(values[7], 0);
 }
 "#;
+
+    const MISSING_KEY_SOURCE: &str = r#"
+#[test]
+fn missing_key() -> Stream<Check> {
+    let values: Map<String, Int> = %{};
+    yield expect_eq(values.get("missing"), 0);
+}
+"#;
+
+    const DUPLICATE_KEY_SOURCE: &str = r#"
+#[test]
+fn duplicate_key() -> Stream<Check> {
+    let values = %{"present" => 1} + ("present", 2);
+    yield expect_eq(values.len(), 0);
+}
+"#;
+
+    #[derive(Clone, Copy)]
+    enum ExpectedLanguageFailure {
+        IndexOutOfBounds,
+        MissingKey,
+        DuplicateKey,
+    }
 
     fn with_lowered(source: &str, inspect: impl FnOnce(&LoweringArtifact, &LoweringAttribution)) {
         let module = Compiler::new().compile(source).expect("source compiles");
@@ -1057,7 +1595,7 @@ fn out_of_bounds() -> Stream<Check> {
             let site = FaultSite {
                 function: FnId(0),
                 pc,
-                op: artifact.program().fns[0].code[pc].clone(),
+                op: Box::new(artifact.program().fns[0].code[pc].clone()),
                 call: None,
             };
             let fault = TaskFault::PoisonedResult {
@@ -1186,9 +1724,20 @@ fn out_of_bounds() -> Stream<Check> {
     #[test]
     // r[verify machine.error.failure-source-site-identity]
     fn language_failure_memo_hit_rebuilds_current_attribution_without_reexecution() {
-        let module = Compiler::new()
-            .compile(OUT_OF_BOUNDS_SOURCE)
-            .expect("source compiles");
+        for (source, expected) in [
+            (
+                OUT_OF_BOUNDS_SOURCE,
+                ExpectedLanguageFailure::IndexOutOfBounds,
+            ),
+            (MISSING_KEY_SOURCE, ExpectedLanguageFailure::MissingKey),
+            (DUPLICATE_KEY_SOURCE, ExpectedLanguageFailure::DuplicateKey),
+        ] {
+            assert_language_failure_memo_hit(source, expected);
+        }
+    }
+
+    fn assert_language_failure_memo_hit(source: &str, expected: ExpectedLanguageFailure) {
+        let module = Compiler::new().compile(source).expect("source compiles");
         let partitioned = module.partition_test(&module.tests[0]);
         let island = &partitioned.islands[0];
         let first_attribution = attribution_for(island);
@@ -1217,12 +1766,7 @@ fn out_of_bounds() -> Stream<Check> {
             .failure_context
             .clone()
             .expect("first report resolves the indexing source");
-        let first_site = match first_failure {
-            FailureValue::IndexOutOfBounds { site, .. } => site,
-            FailureValue::MissingKey { .. } | FailureValue::DuplicateKey { .. } => {
-                panic!("the array failure test received a collection failure")
-            }
-        };
+        let first_site = expected_failure_site(&first_failure, expected);
         assert_eq!(
             first_context.span,
             first_attribution
@@ -1231,7 +1775,7 @@ fn out_of_bounds() -> Stream<Check> {
                 .span
         );
 
-        let shifted_source = format!("\n\n{OUT_OF_BOUNDS_SOURCE}");
+        let shifted_source = format!("\n\n{source}");
         let shifted_module = Compiler::new()
             .compile(&shifted_source)
             .expect("shifted source compiles");
@@ -1294,6 +1838,20 @@ fn out_of_bounds() -> Stream<Check> {
         );
     }
 
+    fn expected_failure_site(failure: &FailureValue, expected: ExpectedLanguageFailure) -> u32 {
+        match (expected, failure) {
+            (
+                ExpectedLanguageFailure::IndexOutOfBounds,
+                FailureValue::IndexOutOfBounds { site, .. },
+            )
+            | (ExpectedLanguageFailure::MissingKey, FailureValue::MissingKey { site, .. })
+            | (ExpectedLanguageFailure::DuplicateKey, FailureValue::DuplicateKey { site, .. }) => {
+                *site
+            }
+            _ => panic!("language failure kind does not match the production source: {failure:?}"),
+        }
+    }
+
     #[test]
     fn verified_array_machine_result_is_never_a_language_failure_or_memo() {
         with_lowered(OUT_OF_BOUNDS_SOURCE, |artifact, attribution| {
@@ -1345,5 +1903,58 @@ fn out_of_bounds() -> Stream<Check> {
                 }
             )));
         });
+    }
+
+    const PASSING_CHECK_SOURCE: &str = r#"
+#[test]
+fn passing() -> Stream<Check> {
+    yield expect_eq(1 + 1, 2);
+}
+"#;
+
+    #[test]
+    // r[verify machine.identity.framed-encoding]
+    fn realized_check_identity_is_the_framed_leaf_identity() {
+        let module = Compiler::new()
+            .compile(PASSING_CHECK_SOURCE)
+            .expect("source compiles");
+        let partitioned = module.partition_test(&module.tests[0]);
+        let island = &partitioned.islands[0];
+        let attribution = attribution_for(island);
+        let location = Location::for_test_island(&partitioned.name, island.id.0);
+        let mut cache = LoweringCache::default();
+        let mut runtime = Runtime::new(EventLog::default());
+        let artifact = cache
+            .get_or_lower(island)
+            .expect("source lowers through the verified executable");
+        let evaluation = runtime
+            .evaluate(
+                island.id,
+                &location,
+                artifact,
+                &attribution,
+                ChaosPolicy::default(),
+            )
+            .expect("passing check evaluates to a realized value");
+
+        assert!(evaluation.passed, "1 + 1 == 2 is a passing check");
+        assert!(evaluation.failure.is_none());
+
+        // The production realized-scalar path routes through the closed writer:
+        // its identity is exactly the framed scalar-leaf identity, computed here
+        // independently of the store.
+        let expected =
+            FramedNode::leaf(SchemaId::named("vix.Check.v1"), vec![u8::from(true)]).identity();
+        assert_eq!(
+            evaluation.identity, expected,
+            "realized check identity is the framed leaf identity from the closed writer"
+        );
+
+        // And the store carries that same entry-carried identity as a load.
+        let entry = runtime
+            .store()
+            .entry(evaluation.handle)
+            .expect("realized value is resident");
+        assert_eq!(entry.identity, expected);
     }
 }

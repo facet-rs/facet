@@ -7853,6 +7853,7 @@ dependencies = [
  "facet-toml",
  "facet-value",
  "hex",
+ "libc",
  "miniz_oxide",
  "object 0.39.1",
  "phon",

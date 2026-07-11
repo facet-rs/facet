@@ -1,7 +1,10 @@
 // Rung 046 — paths are join-only: p"" literals, segment joins.
 #[test]
 fn paths() -> Stream<Check> {
-    let root = p"crates";
-    let manifest = root / "taxon" / "Cargo.toml";
+    let root = p"";
+    let crates = root / "crates";
+    let manifest = crates / "taxon" / "Cargo.toml";
+    yield expect_eq(root.to_string(), "");
+    yield expect_eq(crates.to_string(), "crates");
     yield expect_eq(manifest.to_string(), "crates/taxon/Cargo.toml");
 }

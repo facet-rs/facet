@@ -33,6 +33,22 @@ the vix book (`/vix`) exists. That is the definition of done.
    chapter. The harness is itself part of what the ladder demands into
    existence.
 
+## Priority tracks do not reorder the ladder
+
+A named implementation-priority track may select existing rung files above the
+current consecutive red boundary. This makes an end-to-end product dependency
+cone visible without renumbering the pedagogical ladder.
+
+- A track references the original rung source; it does not copy or weaken it.
+- Green track entries above a red predecessor are progress, not canonical score.
+- Original surface-introduction order and the foundation contract still bind.
+- A missing prerequisite is added to the track or implemented canonically; it
+  is never replaced by a track-local workaround.
+- Rung corrections remain explicit design decisions.
+
+The active Rodin track, gates, and stop conditions are specified in
+[`rodin/EXECUTION-PLAN.md`](../../../rodin/EXECUTION-PLAN.md).
+
 ## Fixtures the suite ships
 
 - `fixture_tree(name)` — small file trees (`small-crate`, `touched-fixture`,
