@@ -17,8 +17,6 @@ pub enum RunError {
     /// list of unconditional top-level checks; folding conditional codata into
     /// demand-driven descriptors is a later runtime checkpoint. This is the
     /// explicit typed seam, not a silent partial run.
-    ///
-    /// r[impl machine.test.generator-runtime-seam]
     UnsupportedGenerator {
         test: String,
     },

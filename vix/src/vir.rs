@@ -191,8 +191,6 @@ pub struct YieldSiteId(pub u32);
 /// list, and that recipe's transitive inputs are the captured values. Recipe
 /// identity is span-insensitive (see [`canonical_recipe`]); `span` is source
 /// provenance only and never enters identity.
-///
-/// r[impl machine.test.generator-yield-site]
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct YieldSite {
     pub id: YieldSiteId,
@@ -213,8 +211,6 @@ pub struct GeneratorArm {
 
 /// One ordered step in a test generator: either a static yield site or real
 /// control whose arms are themselves generator bodies.
-///
-/// r[impl machine.test.generator-step]
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum GeneratorStep {
@@ -239,8 +235,6 @@ pub enum GeneratorStep {
 /// A flat generator (only `Yield` steps) is exactly the historical static
 /// yield list the runner already executes; branch-dependent steps are the
 /// dynamic codata boundary this checkpoint introduces.
-///
-/// r[impl machine.test.generator-codata]
 #[derive(facet::Facet, Clone, Debug, Default, PartialEq, Eq)]
 pub struct GeneratorBody {
     pub steps: Vec<GeneratorStep>,
@@ -1340,8 +1334,6 @@ fn canonical_control_region(region: &ControlRegion) -> Vec<u8> {
 /// dependency order, so the identity depends only on the recipe's structure and
 /// its captured value shapes — never on source spans or the root's absolute
 /// position in the function.
-///
-/// r[impl machine.test.recipe-identity]
 #[must_use]
 pub fn canonical_recipe(function: &Function, root: NodeId) -> Vec<u8> {
     let mut needed = BTreeSet::new();

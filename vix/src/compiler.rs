@@ -1285,8 +1285,6 @@ fn lower_function(
 /// the `must_use` lint and the flat static runner. `top_level` marks the test
 /// body itself, whose unconditional leaf yields retain the historical
 /// `Op::Yield` codata marker node so flat tests keep their exact VIR shape.
-///
-/// r[impl machine.test.generator-codata]
 #[allow(clippy::too_many_arguments)]
 fn lower_generator_body(
     nodes: &mut Vec<Node>,
@@ -1393,8 +1391,6 @@ fn lower_yield_check_site(
 /// Lower a yielded `match` into a generator [`GeneratorStep::Match`]: real
 /// variant dispatch on a scrutinee value whose taken arm is a nested generator
 /// body. Untaken arms contribute no yield sites, so there are no phantom checks.
-///
-/// r[impl machine.test.generator-step]
 fn lower_generator_match(
     nodes: &mut Vec<Node>,
     yielded_checks: &mut Vec<NodeId>,
