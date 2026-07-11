@@ -1722,7 +1722,7 @@ mod tests {
             .expect_err("invalid status faults");
         assert_eq!(interpreter, native);
         let (fault, trace, poison) = interpreter;
-        let site = match fault {
+        let site = match *fault {
             TaskFault::InvalidArrayStatus { site, actual } => {
                 assert_eq!(actual, 99);
                 site
@@ -1733,7 +1733,7 @@ mod tests {
         assert_eq!(site.pc, 0);
         assert!(matches!(site.op, Op::ArrayStatusIs { .. }));
         assert_eq!(trace, vec![TaskEvent::FrameEntered(FnId(0))]);
-        assert!(matches!(poison, TaskFault::PoisonedReDrive { .. }));
+        assert!(matches!(*poison, TaskFault::PoisonedReDrive { .. }));
     }
 
     #[test]
