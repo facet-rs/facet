@@ -4065,7 +4065,16 @@ struct ArrayLoadStatusContext<'a> {
 }
 
 fn emit_array_load_status_checks(context: ArrayLoadStatusContext<'_>) -> Result<(), Diagnostics> {
-    let ArrayLoadStatusContext { node, site, index, scratch, assigned, outcome, return_label, code } = context;
+    let ArrayLoadStatusContext {
+        node,
+        site,
+        index,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code,
+    } = context;
     let success = code.label();
     for expected in [ArrayOpStatus::Ok, ArrayOpStatus::OutOfRange] {
         let next = code.label();

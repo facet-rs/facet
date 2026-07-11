@@ -698,11 +698,13 @@ fn decode_result(
     };
     let result = task.result_structural()?;
     let selector = result.enum_selector()?;
-    let selector = u32::try_from(selector).map_err(|_| Box::new(TaskFault::InvalidResultShape {
-        entry: FnId(0),
-        region: lowered.executable().program().contract().functions[0].result,
-        size: 0,
-    }))?;
+    let selector = u32::try_from(selector).map_err(|_| {
+        Box::new(TaskFault::InvalidResultShape {
+            entry: FnId(0),
+            region: lowered.executable().program().contract().functions[0].result,
+            size: 0,
+        })
+    })?;
     if selector == abi.ok_variant {
         return Ok(DecodedResult::Ok(
             result.enum_scalar_field(selector, 0)? != 0,
@@ -731,13 +733,13 @@ fn decode_result(
             })
         })?;
         let raw_status = result.enum_scalar_field(selector, 1)?;
-        let status = weavy::task::ArrayOpStatus::from_word(raw_status).ok_or(
-            Box::new(TaskFault::InvalidResultShape {
+        let status = weavy::task::ArrayOpStatus::from_word(raw_status).ok_or(Box::new(
+            TaskFault::InvalidResultShape {
                 entry: FnId(0),
                 region: lowered.executable().program().contract().functions[0].result,
                 size: 0,
-            }),
-        )?;
+            },
+        ))?;
         return Ok(DecodedResult::ArrayMachine { site, status });
     }
     Err(Box::new(TaskFault::InvalidResultShape {
