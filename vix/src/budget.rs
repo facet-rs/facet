@@ -101,6 +101,15 @@ pub enum BudgetOutcome {
     /// runner cannot soundly observe. Reported as a typed seam rather than a
     /// silently unenforced budget.
     RssEnforcementUnsupported { platform: String },
+    /// The source was rejected before a child was spawned, so no declared
+    /// budget could be trusted as the enforcement authority.
+    SourceRejected { detail: String },
+    /// The outer source runner requires one test because `run_source` executes
+    /// a whole module while each test owns its own budget.
+    BudgetTestCardinality { count: u64 },
+    /// The one test has no wall or RSS ceiling, so calling this an enforced run
+    /// would be false.
+    BudgetNotDeclared { test: String },
 }
 
 impl BudgetOutcome {
@@ -119,6 +128,38 @@ impl BudgetOutcome {
 const RSS_ENFORCEABLE: bool = true;
 #[cfg(not(any(target_os = "macos", target_os = "linux")))]
 const RSS_ENFORCEABLE: bool = false;
+
+/// Compile `source` in the parent and enforce the one test's declared budget.
+/// The source metadata is the authority: callers cannot substitute a looser
+/// [`Budget`] than the `#[test { ... }]` declaration before spawning the child.
+#[must_use]
+pub fn run_source_under_declared_budget(child_exe: &Path, source: &str) -> BudgetOutcome {
+    let compilation = match crate::compiler::Compiler::new().compile(source) {
+        Ok(compilation) => compilation,
+        Err(diagnostics) => {
+            return BudgetOutcome::SourceRejected {
+                detail: format!("{diagnostics:?}"),
+            };
+        }
+    };
+    let [test] = compilation.module.tests.as_slice() else {
+        return BudgetOutcome::BudgetTestCardinality {
+            count: u64::try_from(compilation.module.tests.len()).unwrap_or(u64::MAX),
+        };
+    };
+    if !test.metadata.budget.is_present() {
+        return BudgetOutcome::BudgetNotDeclared {
+            test: test.name.clone(),
+        };
+    }
+    run_under_budget(
+        child_exe,
+        &test.metadata.budget,
+        &Workload::RunSource {
+            source: source.to_owned(),
+        },
+    )
+}
 
 /// Run `workload` in a child process launched from `child_exe`, enforcing
 /// `budget`. The typed budget is read *before* execution; the child is killed

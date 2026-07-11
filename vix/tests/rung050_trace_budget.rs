@@ -25,7 +25,7 @@
 
 use std::path::Path;
 
-use vix::budget::{BudgetOutcome, Workload, run_under_budget};
+use vix::budget::{BudgetOutcome, Workload, run_source_under_declared_budget, run_under_budget};
 use vix::compiler::Compiler;
 use vix::diagnostic::DiagnosticCode;
 use vix::ratchet::run_source;
@@ -257,14 +257,7 @@ fn within() -> Stream<Check> {
     yield store_interns_at_most(1000);
 }
 "#;
-    let budget = budget_of(SOURCE);
-    let outcome = run_under_budget(
-        Path::new(CHILD_EXE),
-        &budget,
-        &Workload::RunSource {
-            source: SOURCE.to_owned(),
-        },
-    );
+    let outcome = run_source_under_declared_budget(Path::new(CHILD_EXE), SOURCE);
     assert!(
         outcome.passed(),
         "the within-budget production run passes through the child: {outcome:?}",
@@ -277,6 +270,25 @@ fn within() -> Stream<Check> {
             }
         ),
         "the outcome is an in-budget successful source run: {outcome:?}",
+    );
+}
+
+/// The canonical source entry point refuses to call an unbudgeted test an
+/// enforced run. The child path is never consulted at this boundary.
+#[test]
+fn source_budget_enforcement_requires_a_declared_ceiling() {
+    const SOURCE: &str = r#"
+#[test]
+fn no_budget() -> Stream<Check> {
+    yield expect(true);
+}
+"#;
+    let outcome = run_source_under_declared_budget(Path::new("not-spawned"), SOURCE);
+    assert_eq!(
+        outcome,
+        BudgetOutcome::BudgetNotDeclared {
+            test: "no_budget".to_owned(),
+        },
     );
 }
 
