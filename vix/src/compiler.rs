@@ -326,7 +326,12 @@ impl<'a> TypeResolver<'a> {
                     if let Some(guard) = &arm.guard {
                         self.resolve_expr_types(guard)?;
                     }
-                    self.resolve_expr_types(&arm.body)?;
+                    match &arm.body {
+                        ast::MatchArmBody::Block(block) => self.resolve_block_types(block)?,
+                        ast::MatchArmBody::Expr(expression) => {
+                            self.resolve_expr_types(expression)?;
+                        }
+                    }
                 }
             }
             ast::Expr::Binary(expression) => {
@@ -2657,6 +2662,30 @@ fn lower_value_block(
     lower_value_expected(nodes, &bindings, context, tail, expected)
 }
 
+fn lower_match_arm_body(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    body: &ast::MatchArmBody,
+    expected: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    match body {
+        ast::MatchArmBody::Block(block) => {
+            lower_value_block(nodes, bindings, context, block, expected)
+        }
+        ast::MatchArmBody::Expr(expression) => {
+            lower_value_expected(nodes, bindings, context, expression, expected)
+        }
+    }
+}
+
+fn match_arm_body_span(body: &ast::MatchArmBody) -> Span {
+    match body {
+        ast::MatchArmBody::Block(block) => block.span,
+        ast::MatchArmBody::Expr(expression) => expr_span(expression),
+    }
+}
+
 fn if_branch_span(branch: &ast::IfBranch) -> Span {
     match branch {
         ast::IfBranch::Block(block) => block.span,
@@ -3094,9 +3123,9 @@ fn lower_enum_match(
             pattern,
         )?;
         let arm_expected = expected.or(result_type.as_ref());
-        let output = lower_value_expected(nodes, &arm_bindings, context, &arm.body, arm_expected)?;
+        let output = lower_match_arm_body(nodes, &arm_bindings, context, &arm.body, arm_expected)?;
         if let Some(expected) = &result_type {
-            require_type(&output, expected, expr_span(&arm.body))?;
+            require_type(&output, expected, match_arm_body_span(&arm.body))?;
         } else {
             result_type = Some(output.ty.clone());
         }
@@ -3208,9 +3237,9 @@ fn lower_ordered_match(
 
         let body_start = nodes.len();
         let arm_expected = expected.or(result_type.as_ref());
-        let output = lower_value_expected(nodes, &arm_bindings, context, &arm.body, arm_expected)?;
+        let output = lower_match_arm_body(nodes, &arm_bindings, context, &arm.body, arm_expected)?;
         if let Some(expected) = &result_type {
-            require_type(&output, expected, expr_span(&arm.body))?;
+            require_type(&output, expected, match_arm_body_span(&arm.body))?;
         } else {
             result_type = Some(output.ty.clone());
         }

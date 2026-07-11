@@ -274,12 +274,13 @@ module.exports = grammar({
     match_expr: ($) =>
       seq("match", field("scrutinee", $._expr), field("arms", $.match_arm_list)),
     match_arm_list: ($) => seq("{", sepBy(",", field("arm", $.match_arm)), "}"),
+    _match_arm_body: ($) => choice($.block, $._expr),
     match_arm: ($) =>
       seq(
         field("pattern", $._pattern),
         optional(seq("if", field("guard", $._expr))),
         "=>",
-        field("body", $._expr),
+        field("body", $._match_arm_body),
       ),
     _pattern: ($) =>
       choice(

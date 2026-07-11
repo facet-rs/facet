@@ -6,6 +6,7 @@ ast({
   _expr: { enum: "Expr" },
   _if_branch: { enum: "IfBranch" },
   _closure_body: { enum: "ClosureBody" },
+  _match_arm_body: { enum: "MatchArmBody" },
   _type: { enum: "Type" },
   _pattern: { enum: "Pattern" },
   _variant_type_payload: { enum: "VariantTypePayload" },
