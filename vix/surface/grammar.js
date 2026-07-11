@@ -215,8 +215,13 @@ module.exports = grammar({
           field("receiver", $._expr),
           ".",
           field("name", $.identifier),
-          field("args", $.arg_list),
-          optional(field("named_args", $.where_args)),
+          choice(
+            seq(
+              field("args", $.arg_list),
+              optional(field("named_args", $.where_args)),
+            ),
+            field("named_args", $.where_args),
+          ),
         ),
       ),
     index_expr: ($) =>

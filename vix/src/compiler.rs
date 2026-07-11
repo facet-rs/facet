@@ -350,7 +350,7 @@ impl<'a> TypeResolver<'a> {
             }
             ast::Expr::MethodCall(expression) => {
                 self.resolve_expr_types(&expression.receiver)?;
-                for argument in &expression.args.args {
+                for argument in method_positional_args(expression) {
                     self.resolve_expr_types(argument)?;
                 }
                 if let Some(named) = &expression.named_args {
@@ -2383,6 +2383,13 @@ fn lower_array_index(
     })
 }
 
+/// The positional arguments of a method call. The parenless named-argument
+/// form (`receiver.name where { .. }`) carries no argument list, so it reads as
+/// an empty positional slice.
+fn method_positional_args(call: &ast::MethodCall) -> &[ast::Expr] {
+    call.args.as_ref().map_or(&[][..], |args| &args.args)
+}
+
 fn lower_method_call(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
@@ -2401,10 +2408,15 @@ fn lower_method_call(
             },
         }));
     };
-    if call.args.args.len() != entry.arity {
-        return Err(invalid_arity(call.span, entry.arity, call.args.args.len()));
+    let positional = method_positional_args(call);
+    if positional.len() != entry.arity {
+        return Err(invalid_arity(call.span, entry.arity, positional.len()));
     }
-    if let Some(named) = &call.named_args {
+    // `sorted` is the sole method that accepts a named argument: an explicit
+    // `Order<T>` recipe. Every other method rejects named arguments.
+    if let Some(named) = &call.named_args
+        && !matches!(entry.method, PreludeMethod::ArraySorted)
+    {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             named.span,
             "named method arguments",
@@ -2427,7 +2439,7 @@ fn lower_method_call(
             let Type::Array(element) = &receiver.ty else {
                 unreachable!("array map registry entry has an array receiver")
             };
-            let mapper = match &call.args.args[0] {
+            let mapper = match &positional[0] {
                 ast::Expr::Closure(closure) => {
                     lower_closure_with_parameter(nodes, bindings, context, closure, element)?
                 }
@@ -2435,14 +2447,14 @@ fn lower_method_call(
             };
             let Type::Function { parameter, result } = &mapper.ty else {
                 return Err(type_mismatch(
-                    expr_span(&call.args.args[0]),
+                    expr_span(&positional[0]),
                     format!("fn({}) -> _", element.name()),
                     mapper.ty.name(),
                 ));
             };
             if parameter.as_ref() != element.as_ref() {
                 return Err(type_mismatch(
-                    expr_span(&call.args.args[0]),
+                    expr_span(&positional[0]),
                     format!("fn({}) -> _", element.name()),
                     mapper.ty.name(),
                 ));
@@ -2469,9 +2481,9 @@ fn lower_method_call(
             let Type::Array(element) = &receiver.ty else {
                 unreachable!("array fold registry entry has an array receiver")
             };
-            let initial = lower_value(nodes, bindings, context, &call.args.args[0])?;
+            let initial = lower_value(nodes, bindings, context, &positional[0])?;
             let parameter_ty = Type::Tuple(vec![initial.ty.clone(), element.as_ref().clone()]);
-            let folder = match &call.args.args[1] {
+            let folder = match &positional[1] {
                 ast::Expr::Closure(closure) => {
                     lower_closure_with_parameter(nodes, bindings, context, closure, &parameter_ty)?
                 }
@@ -2479,14 +2491,14 @@ fn lower_method_call(
             };
             let Type::Function { parameter, result } = &folder.ty else {
                 return Err(type_mismatch(
-                    expr_span(&call.args.args[1]),
+                    expr_span(&positional[1]),
                     format!("fn({}) -> {}", parameter_ty.name(), initial.ty.name()),
                     folder.ty.name(),
                 ));
             };
             if parameter.as_ref() != &parameter_ty || result.as_ref() != &initial.ty {
                 return Err(type_mismatch(
-                    expr_span(&call.args.args[1]),
+                    expr_span(&positional[1]),
                     format!("fn({}) -> {}", parameter_ty.name(), initial.ty.name()),
                     folder.ty.name(),
                 ));
@@ -2556,7 +2568,7 @@ fn lower_method_call(
             let Type::Array(element) = &receiver.ty else {
                 unreachable!("array predicate registry entry has an array receiver")
             };
-            let predicate = match &call.args.args[0] {
+            let predicate = match &positional[0] {
                 ast::Expr::Closure(closure) => {
                     lower_closure_with_parameter(nodes, bindings, context, closure, element)?
                 }
@@ -2564,14 +2576,14 @@ fn lower_method_call(
             };
             let Type::Function { parameter, result } = &predicate.ty else {
                 return Err(type_mismatch(
-                    expr_span(&call.args.args[0]),
+                    expr_span(&positional[0]),
                     format!("fn({}) -> Bool", element.name()),
                     predicate.ty.name(),
                 ));
             };
             if parameter.as_ref() != element.as_ref() || result.as_ref() != &Type::Bool {
                 return Err(type_mismatch(
-                    expr_span(&call.args.args[0]),
+                    expr_span(&positional[0]),
                     format!("fn({}) -> Bool", element.name()),
                     predicate.ty.name(),
                 ));
@@ -2598,8 +2610,8 @@ fn lower_method_call(
                 unreachable!("array contains registry entry has an array receiver")
             };
             let element = element.as_ref().clone();
-            let value = lower_value(nodes, bindings, context, &call.args.args[0])?;
-            require_type(&value, &element, expr_span(&call.args.args[0]))?;
+            let value = lower_value(nodes, bindings, context, &positional[0])?;
+            require_type(&value, &element, expr_span(&positional[0]))?;
             Ok(LoweredValue {
                 node: push_node(
                     nodes,
@@ -2630,8 +2642,8 @@ fn lower_method_call(
             })
         }
         PreludeMethod::IntRem => {
-            let divisor = lower_value(nodes, bindings, context, &call.args.args[0])?;
-            require_type(&divisor, &Type::Int, expr_span(&call.args.args[0]))?;
+            let divisor = lower_value(nodes, bindings, context, &positional[0])?;
+            require_type(&divisor, &Type::Int, expr_span(&positional[0]))?;
             let quotient = push_node(
                 nodes,
                 call.span,
@@ -2667,8 +2679,8 @@ fn lower_method_call(
                 .map_types()
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .ok_or_else(|| type_mismatch(call.span, "Map<K, V>", receiver.ty.name()))?;
-            let lowered_key = lower_value(nodes, bindings, context, &call.args.args[0])?;
-            require_type(&lowered_key, &key, expr_span(&call.args.args[0]))?;
+            let lowered_key = lower_value(nodes, bindings, context, &positional[0])?;
+            require_type(&lowered_key, &key, expr_span(&positional[0]))?;
             let (ty, effect, inputs, op) = match entry.method {
                 PreludeMethod::MapGet => (
                     value,
@@ -2686,8 +2698,8 @@ fn lower_method_call(
                     Op::MapHas,
                 ),
                 PreludeMethod::MapWith => {
-                    let lowered_value = lower_value(nodes, bindings, context, &call.args.args[1])?;
-                    require_type(&lowered_value, &value, expr_span(&call.args.args[1]))?;
+                    let lowered_value = lower_value(nodes, bindings, context, &positional[1])?;
+                    require_type(&lowered_value, &value, expr_span(&positional[1]))?;
                     (
                         receiver.ty.clone(),
                         EffectFacts::PURE,
@@ -2755,8 +2767,8 @@ fn lower_method_call(
                 .set_element()
                 .cloned()
                 .ok_or_else(|| type_mismatch(call.span, "Set<T>", receiver.ty.name()))?;
-            let candidate = lower_value(nodes, bindings, context, &call.args.args[0])?;
-            require_type(&candidate, &element, expr_span(&call.args.args[0]))?;
+            let candidate = lower_value(nodes, bindings, context, &positional[0])?;
+            require_type(&candidate, &element, expr_span(&positional[0]))?;
             Ok(LoweredValue {
                 node: push_node(
                     nodes,
@@ -2804,7 +2816,7 @@ fn lower_method_call(
                 .ty
                 .stream_types()
                 .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
-            let predicate = match &call.args.args[0] {
+            let predicate = match &positional[0] {
                 ast::Expr::Closure(closure) => {
                     lower_closure_with_parameter(nodes, bindings, context, closure, value)?
                 }
@@ -2812,14 +2824,14 @@ fn lower_method_call(
             };
             let Type::Function { parameter, result } = &predicate.ty else {
                 return Err(type_mismatch(
-                    expr_span(&call.args.args[0]),
+                    expr_span(&positional[0]),
                     format!("fn({}) -> Bool", value.name()),
                     predicate.ty.name(),
                 ));
             };
             if parameter.as_ref() != value || result.as_ref() != &Type::Bool {
                 return Err(type_mismatch(
-                    expr_span(&call.args.args[0]),
+                    expr_span(&positional[0]),
                     format!("fn({}) -> Bool", value.name()),
                     predicate.ty.name(),
                 ));
@@ -2844,7 +2856,7 @@ fn lower_method_call(
                 .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
             let key = key.clone();
             let value = value.clone();
-            let transform = match &call.args.args[0] {
+            let transform = match &positional[0] {
                 ast::Expr::Closure(closure) => {
                     lower_closure_with_parameter(nodes, bindings, context, closure, &value)?
                 }
@@ -2852,21 +2864,21 @@ fn lower_method_call(
             };
             let Type::Function { parameter, result } = &transform.ty else {
                 return Err(type_mismatch(
-                    expr_span(&call.args.args[0]),
+                    expr_span(&positional[0]),
                     format!("fn({}) -> Option<_>", value.name()),
                     transform.ty.name(),
                 ));
             };
             if parameter.as_ref() != &value {
                 return Err(type_mismatch(
-                    expr_span(&call.args.args[0]),
+                    expr_span(&positional[0]),
                     format!("fn({}) -> Option<_>", value.name()),
                     transform.ty.name(),
                 ));
             }
             let output = result.option_inner().ok_or_else(|| {
                 type_mismatch(
-                    expr_span(&call.args.args[0]),
+                    expr_span(&positional[0]),
                     format!("fn({}) -> Option<_>", value.name()),
                     transform.ty.name(),
                 )
@@ -2891,9 +2903,9 @@ fn lower_method_call(
                 .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
             let key = key.clone();
             let value = value.clone();
-            let ast::Expr::Closure(closure) = &call.args.args[0] else {
+            let ast::Expr::Closure(closure) = &positional[0] else {
                 return Err(Diagnostics::one(Diagnostic::unsupported(
-                    expr_span(&call.args.args[0]),
+                    expr_span(&positional[0]),
                     "flat_map expects a closure returning an array stream",
                 )));
             };
@@ -2902,21 +2914,21 @@ fn lower_method_call(
             let transform = lower_array_stream_closure(nodes, bindings, context, closure, &value)?;
             let Type::Function { parameter, result } = &transform.ty else {
                 return Err(type_mismatch(
-                    expr_span(&call.args.args[0]),
+                    expr_span(&positional[0]),
                     format!("fn({}) -> Stream<_, _>", value.name()),
                     transform.ty.name(),
                 ));
             };
             if parameter.as_ref() != &value {
                 return Err(type_mismatch(
-                    expr_span(&call.args.args[0]),
+                    expr_span(&positional[0]),
                     format!("fn({}) -> Stream<_, _>", value.name()),
                     transform.ty.name(),
                 ));
             }
             let inner_value = result.array_element().ok_or_else(|| {
                 type_mismatch(
-                    expr_span(&call.args.args[0]),
+                    expr_span(&positional[0]),
                     format!("fn({}) -> Stream<_, _>", value.name()),
                     transform.ty.name(),
                 )
