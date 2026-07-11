@@ -3694,6 +3694,41 @@ fn rung_048_captured_closures_run_directly_and_through_array_map() {
         .expect("captured closure has a verified callable ABI");
     let contract = &lowered.contract().calls[callable.0 as usize];
     assert_eq!(contract.entries.len(), 2, "argument plus captured Int");
+    let capture = *closure
+        .inputs
+        .first()
+        .expect("captured closure records its construction input");
+    let capture_region = island
+        .nodes
+        .iter()
+        .find(|node| node.id == capture)
+        .expect("capture remains in the island")
+        .id;
+    let capture_region =
+        lowered.contract().functions[0].frame.regions[capture_region.0 as usize].offset;
+    let direct = root
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::CallValue))
+        .expect("direct closure call exists");
+    let direct_pcs = pcs_for_node(
+        lowered,
+        0,
+        NodeRef {
+            function: root.id,
+            node: direct.id,
+        },
+    );
+    let direct_call = direct_pcs
+        .iter()
+        .filter_map(|pc| match &lowered.program().fns[0].code[*pc] {
+            WeavyOp::CallIndirect { args, .. } => Some(args),
+            _ => None,
+        })
+        .next()
+        .expect("direct closure call lowers to CallIndirect");
+    assert_eq!(direct_call[1].src, capture_region);
+    assert_ne!(direct_call[1].src, direct_call[0].src + 8);
     assert!(lowered.program().fns.iter().all(|function| {
         function
             .code
@@ -3724,6 +3759,52 @@ fn rung_048_captured_closures_run_directly_and_through_array_map() {
     assert!(report.agrees());
     assert_eq!(report.plain.checks.len(), 2);
     assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+#[test]
+fn noncapturing_direct_closure_has_only_its_semantic_argument() {
+    const SOURCE: &str = r#"
+#[test]
+fn direct_inc() -> Stream<Check> {
+    let inc = |n| n + 1;
+    yield expect_eq(inc(1), 2);
+}
+"#;
+    let module = Compiler::new()
+        .compile(SOURCE)
+        .expect("noncapturing closure compiles");
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(&partitioned.islands[0])
+        .expect("noncapturing direct closure verifies");
+    let direct = module.functions[module.tests[0].function.0 as usize]
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::CallValue))
+        .expect("direct call exists");
+    let args = pcs_for_node(
+        lowered,
+        0,
+        NodeRef {
+            function: module.tests[0].function,
+            node: direct.id,
+        },
+    )
+    .into_iter()
+    .filter_map(|pc| match &lowered.program().fns[0].code[pc] {
+        WeavyOp::CallIndirect { args, .. } => Some(args),
+        _ => None,
+    })
+    .next()
+    .expect("direct call lowers indirectly");
+    assert_eq!(args.len(), 1);
+    let report = run_source(SOURCE).expect("noncapturing direct closure executes");
+    assert!(report.passed() && report.agrees());
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.pure_host_calls, 0);
         assert_eq!(lane.receipt_count, 0);
