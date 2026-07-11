@@ -55,6 +55,7 @@ const RUNG_041: &str = include_str!("ratchet/041-maps.vix");
 const RUNG_042: &str = include_str!("ratchet/042-map-overwrite.vix");
 const RUNG_043: &str = include_str!("ratchet/043-map-keys-canonical.vix");
 const RUNG_044: &str = include_str!("ratchet/044-sets.vix");
+const RUNG_045: &str = include_str!("ratchet/045-strings.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
 const RUNG_145: &str = include_str!("ratchet/145-push.reject.vix");
 const RUNG_146: &str = include_str!("ratchet/146-insert.reject.vix");
@@ -1356,6 +1357,68 @@ fn rung_040_sorted_with_order_runs_through_verified_production_path() {
     assert!(report.passed());
     assert!(report.agrees());
     assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+        if std::env::var("WEAVY_JIT").as_deref() == Ok("0") {
+            assert!(
+                lane.events
+                    .iter()
+                    .filter_map(|event| match event.kind {
+                        EventKind::ExecutionLane { facts, .. } => Some(facts),
+                        _ => None,
+                    })
+                    .all(|facts| matches!(
+                        facts,
+                        vix::runtime::ExecutionFacts {
+                            selected: vix::runtime::ExecutionLaneFact::Interpreter,
+                            fallback: Some(
+                                vix::runtime::ExecutionFallbackFact::DisabledByEnvironment
+                            ),
+                            ..
+                        }
+                    ))
+            );
+        }
+    }
+}
+
+// Rung 045 — string operations: `+` concat (already green from rung 029), plus
+// `contains`, `split_once`, and `parse_int`. Each new method is a typed Vix recipe
+// over the resident semantic byte sequence of the string value (never over the
+// opaque handle integer). `contains(needle)` decides membership; `split_once(delim)`
+// partitions on the first delimiter occurrence into a `(String, String)` pair;
+// `parse_int()` reads the decimal integer the bytes denote. All three lower entirely
+// through the verified machine with no host call, and their resident results feed
+// semantic equality exactly like string literals.
+#[test]
+fn rung_045_string_operations_run_through_verified_production_path() {
+    let module = Compiler::new()
+        .compile(RUNG_045)
+        .expect("rung 045 compiles through the canonical surface");
+
+    // Every lowered frame stays inside the verified machine: no host calls. The
+    // three new string operations lower to verifier-admitted string-byte ops.
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 045 lowers through verified Weavy execution");
+        assert!(lowered.program().fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+    }
+
+    let report = run_source(RUNG_045).expect("rung 045 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 5);
     assert_eq!(report.plain.checks, report.chaos.checks);
     for lane in [&report.plain, &report.chaos] {
         assert!(lane.checks.iter().all(|check| check.passed));
