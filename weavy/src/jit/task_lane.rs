@@ -1481,6 +1481,10 @@ impl JitTask {
         &self.publications
     }
 
+    pub(crate) fn molten(&self) -> &crate::task::MoltenArena {
+        &self.molten
+    }
+
     /// Write an i64 into the CURRENT frame at `offset` — used for
     /// entry arguments before the first [`JitTask::run`], matching
     /// [`Task::write_i64`](crate::task::Task::write_i64).

@@ -9,7 +9,7 @@ use crate::runtime::{
     ChaosPolicy, Counters, DemandState, Evaluation, Event, EventLog, FailureContext, FailureValue,
     GeneratorOutcome, Location, MachineError, Runtime, TaskState, ValueId,
 };
-use crate::vir::{PartitionedRecipe, TraceCheck};
+use crate::vir::{PartitionedRecipe, TraceCheck, ValueIslandId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunError {
@@ -103,6 +103,9 @@ pub struct CheckRun {
     /// The evaluated value identity of a value check. Absent for a trace check,
     /// which produces no store value.
     pub identity: Option<ValueId>,
+    /// Ordinary demand arguments by semantic identity. Shared publications
+    /// appear here exactly as they do in the demand preimage.
+    pub arguments: Vec<ValueId>,
     pub passed: bool,
     pub failure: Option<FailureValue>,
     pub failure_context: Option<FailureContext>,
@@ -131,6 +134,13 @@ struct TraceSnapshot {
     scheduler_requests: u64,
     memo_entries: u64,
     store_interns: u64,
+    value_island_spawns: u64,
+    successful_aggregate_freezes: u64,
+    active_molten_selections: u64,
+    forced_copy_selections: u64,
+    framed_bytes: u64,
+    peak_molten_bytes: u64,
+    peak_molten_nodes: u64,
 }
 
 impl TraceSnapshot {
@@ -140,6 +150,19 @@ impl TraceSnapshot {
             TraceCheck::SchedulerRequestsAtMost { bound } => (self.scheduler_requests, bound),
             TraceCheck::MemoEntriesAtMost { bound } => (self.memo_entries, bound),
             TraceCheck::StoreInternsAtMost { bound } => (self.store_interns, bound),
+            TraceCheck::ValueIslandSpawnsAtMost { bound } => (self.value_island_spawns, bound),
+            TraceCheck::SuccessfulAggregateFreezesAtMost { bound } => {
+                (self.successful_aggregate_freezes, bound)
+            }
+            TraceCheck::ActiveMoltenSelectionsAtMost { bound } => {
+                (self.active_molten_selections, bound)
+            }
+            TraceCheck::ForcedCopySelectionsAtMost { bound } => {
+                (self.forced_copy_selections, bound)
+            }
+            TraceCheck::FramedBytesAtMost { bound } => (self.framed_bytes, bound),
+            TraceCheck::PeakMoltenBytesAtMost { bound } => (self.peak_molten_bytes, bound),
+            TraceCheck::PeakMoltenNodesAtMost { bound } => (self.peak_molten_nodes, bound),
         };
         // `bound` is a non-negative surface literal; compare in i128 so a large
         // observed count can never wrap past the ceiling.
@@ -147,6 +170,7 @@ impl TraceSnapshot {
         CheckRun {
             provenance,
             identity: None,
+            arguments: Vec::new(),
             passed,
             failure: None,
             failure_context: None,
@@ -158,11 +182,19 @@ impl TraceSnapshot {
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct SuiteRun {
     pub checks: Vec<CheckRun>,
+    pub values: Vec<ValuePublicationRun>,
     pub counters: Counters,
     pub events: Vec<Event>,
     pub receipt_count: u64,
     pub all_demands_ready: bool,
     pub all_tasks_terminal: bool,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct ValuePublicationRun {
+    pub provenance: ValueIslandId,
+    pub identity: ValueId,
+    pub failure: Option<FailureValue>,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -184,12 +216,21 @@ impl SuiteRun {
             .map(|check| (check.provenance.clone(), check))
             .collect()
     }
+
+    #[must_use]
+    pub fn value_family(&self) -> BTreeMap<ValueIslandId, &ValuePublicationRun> {
+        self.values
+            .iter()
+            .map(|value| (value.provenance, value))
+            .collect()
+    }
 }
 
 impl RatchetReport {
     #[must_use]
     pub fn agrees(&self) -> bool {
         self.plain.check_family() == self.chaos.check_family()
+            && self.plain.value_family() == self.chaos.value_family()
     }
 
     #[must_use]
@@ -259,7 +300,10 @@ pub fn prepare_source_with_config(
         }
         // Every value-check island. A trace site reads the frozen counter
         // snapshot and lowers nothing, so it is skipped here.
-        let partitioned = compilation.module.partition_test(test);
+        let partitioned = compilation.module.try_partition_test(test)?;
+        for value in &partitioned.values {
+            cache.get_or_lower(&value.island)?;
+        }
         for site in &partitioned.sites {
             if let PartitionedRecipe::Value { island } = &site.recipe {
                 cache.get_or_lower(&partitioned.islands[*island])?;
@@ -278,7 +322,11 @@ impl PreparedRun {
     /// r[impl machine.scheduler.chaos-kill-oracle]
     /// r[impl machine.scheduler.replay-is-semantics]
     pub fn execute(mut self) -> Result<RatchetReport, RunError> {
-        let plain = run_lane(&self.compilation.module, &mut self.cache, ChaosPolicy::default())?;
+        let plain = run_lane(
+            &self.compilation.module,
+            &mut self.cache,
+            ChaosPolicy::default(),
+        )?;
         let chaos = run_lane(
             &self.compilation.module,
             &mut self.cache,
@@ -311,6 +359,7 @@ fn evaluate_value_site(
     cache: &mut LoweringCache,
     test_name: &str,
     island: &crate::vir::Island,
+    published_values: &BTreeMap<ValueIslandId, Evaluation>,
     site: u32,
     chaos: ChaosPolicy,
 ) -> Result<CheckRun, RunError> {
@@ -318,11 +367,29 @@ fn evaluate_value_site(
     let attribution = attribution_for(island);
     let provenance = ProvenanceKey::site(site);
     let location = Location::for_test_provenance(test_name, site, &provenance.dynamic_keys);
-    let evaluation: Evaluation =
-        runtime.evaluate(island.id, &location, lowered, &attribution, chaos)?;
+    let arguments = island
+        .value_inputs
+        .iter()
+        .map(|value| {
+            published_values
+                .get(value)
+                .cloned()
+                .expect("partitioned value input was published")
+        })
+        .collect::<Vec<_>>();
+    let evaluation: Evaluation = runtime.evaluate(
+        island.id,
+        &location,
+        lowered,
+        &attribution,
+        &arguments,
+        chaos,
+    )?;
+    let argument_identities = arguments.iter().map(|argument| argument.identity).collect();
     Ok(CheckRun {
         provenance,
         identity: Some(evaluation.identity),
+        arguments: argument_identities,
         passed: evaluation.passed,
         failure: evaluation.failure,
         failure_context: evaluation.failure_context,
@@ -337,6 +404,7 @@ fn run_lane(
 ) -> Result<SuiteRun, RunError> {
     let mut runtime = Runtime::new(EventLog::default());
     let mut checks = Vec::new();
+    let mut values = Vec::new();
     // Trace checks are deferred until every selected value check completes; they
     // are evaluated once, together, against the frozen completed-run snapshot.
     let mut deferred_traces: Vec<(ProvenanceKey, TraceCheck)> = Vec::new();
@@ -390,7 +458,30 @@ fn run_lane(
             None
         };
 
-        let partitioned = module.partition_test(test);
+        let partitioned = module.try_partition_test(test)?;
+        let mut published_values = BTreeMap::new();
+        for value in &partitioned.values {
+            let lowered = cache.get_or_lower(&value.island)?;
+            let attribution = attribution_for(&value.island);
+            let location = Location::for_test_value(&partitioned.name, &value.id.stable_segment());
+            let evaluation = runtime.evaluate(
+                value.island.id,
+                &location,
+                lowered,
+                &attribution,
+                &[],
+                ChaosPolicy {
+                    kill_first_running_task: kill_available,
+                },
+            )?;
+            kill_available = false;
+            values.push(ValuePublicationRun {
+                provenance: value.id,
+                identity: evaluation.identity,
+                failure: evaluation.failure.clone(),
+            });
+            published_values.insert(value.id, evaluation);
+        }
         match taken {
             // Taken generator sites, in publication order. Each resolves to its
             // recipe by stable YieldSiteId — never by island-vector ordinal —
@@ -413,6 +504,7 @@ fn run_lane(
                                 cache,
                                 &partitioned.name,
                                 &partitioned.islands[*island],
+                                &published_values,
                                 site,
                                 ChaosPolicy::default(),
                             )?);
@@ -436,6 +528,7 @@ fn run_lane(
                                 cache,
                                 &partitioned.name,
                                 &partitioned.islands[*island],
+                                &published_values,
                                 site,
                                 ChaosPolicy {
                                     kill_first_running_task: kill_available,
@@ -461,6 +554,13 @@ fn run_lane(
         scheduler_requests: counters.scheduler_requests,
         memo_entries: runtime.memo_entries(),
         store_interns: counters.store_interns,
+        value_island_spawns: counters.value_island_spawns,
+        successful_aggregate_freezes: counters.successful_aggregate_freezes,
+        active_molten_selections: counters.active_molten_selections,
+        forced_copy_selections: counters.forced_copy_selections,
+        framed_bytes: counters.framed_bytes,
+        peak_molten_bytes: counters.peak_molten_bytes,
+        peak_molten_nodes: counters.peak_molten_nodes,
     };
     for (provenance, trace) in deferred_traces {
         checks.push(snapshot.evaluate(provenance, trace));
@@ -476,6 +576,7 @@ fn run_lane(
     let events = runtime.into_sink().into_events();
     Ok(SuiteRun {
         checks,
+        values,
         counters,
         events,
         receipt_count,

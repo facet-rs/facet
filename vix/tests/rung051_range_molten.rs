@@ -10,10 +10,10 @@
 //!      the semantic copy path, and a bounded forced-copy differential proves
 //!      the molten and copy values are identical, duplicates and order included.
 //!
-//! Checkpoints 3, 5, 6, 7, and 8 (shared value-island extraction and the
-//! molten-to-store publication that lets one million-element construction cross
-//! the island edge exactly once) are out of scope here; the seam is pinned by
-//! an `#[ignore]`d certificate at the end rather than guessed at.
+//! Checkpoints 3, 5, 6, 7, and 8 add shared value-island extraction and the
+//! molten-to-store publication that lets the million-element construction cross
+//! the island edge exactly once. The canonical certificate at the end exercises
+//! that production path unchanged.
 
 use vix::compiler::{Compiler, CompilerConfig};
 use vix::lowering::LoweringCache;
@@ -344,35 +344,28 @@ fn duplicates() -> Stream<Check> {
 }
 
 // ---------------------------------------------------------------------------
-// Remaining red seam — checkpoints 3/5/6/7/8
+// Shared publication — checkpoints 3/5/6/7/8
 // ---------------------------------------------------------------------------
 
 /// Shared value-island extraction and the molten-to-store publication that
 /// carries one aggregate across the island edge exactly once. This is the
-/// precise remaining seam after checkpoints 2 and 4; it is pinned here and left
-/// red on purpose. The million-element rung is only production-shaped once one
-/// construction is *shared* by its four value checks; checkpoints 2 and 4 build
-/// it correctly but independently per check.
+/// production edge after checkpoints 2 and 4. The canonical fixture is included
+/// unchanged: one construction is shared by its value checks and frozen once.
 #[test]
-#[ignore = "rung-051 checkpoints 3/5/6/7/8: shared value-island publication seam is not in scope for checkpoints 2 and 4"]
-fn shared_value_island_publication_is_the_remaining_red_seam() {
-    const SOURCE: &str = r#"
-#[test { budget_wall: 5s, budget_rss: 1GB }]
-fn molten_accumulator() -> Stream<Check> {
-    let n = 1000000;
-    let xs = (range where { from: 0, to: n }).fold([], |acc, i| acc + (i * 2));
-    yield expect_eq(xs.len(), n);
-    yield expect_eq(xs[0], 0);
-    yield expect_eq(xs[999999], 1999998);
-    yield store_interns_at_most(10);
-    yield memo_entries_at_most(10);
-}
-"#;
-    let report = run_source(SOURCE).expect("million-element molten source runs");
+fn canonical_rung_051_publishes_the_million_element_value_once() {
+    const SOURCE: &str = include_str!("ratchet/051-molten-accumulator.vix");
+    let report = run_source(SOURCE).expect("canonical million-element molten source runs");
     assert!(
         report.passed(),
         "the shared-publication rung passes: {report:?}"
     );
+    assert_eq!(report.plain.counters.value_island_spawns, 1);
+    assert_eq!(report.plain.counters.successful_aggregate_freezes, 1);
+    assert_eq!(report.plain.counters.active_molten_selections, 1);
+    assert_eq!(report.plain.counters.forced_copy_selections, 0);
+    assert_eq!(report.plain.counters.framed_bytes, 8_000_000);
+    assert_eq!(report.chaos.counters.value_island_spawns, 2);
+    assert_eq!(report.chaos.counters.successful_aggregate_freezes, 1);
 }
 
 // ---------------------------------------------------------------------------

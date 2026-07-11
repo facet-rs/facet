@@ -245,11 +245,38 @@ pub enum CheckRecipe {
 #[repr(u8)]
 pub enum TraceCheck {
     /// Scheduler machinery contacts during the test are at most `bound`.
-    SchedulerRequestsAtMost { bound: i64 },
+    SchedulerRequestsAtMost {
+        bound: i64,
+    },
     /// Distinct memo entries standing at the end of the run are at most `bound`.
-    MemoEntriesAtMost { bound: i64 },
+    MemoEntriesAtMost {
+        bound: i64,
+    },
     /// Store interns during the test are at most `bound`.
-    StoreInternsAtMost { bound: i64 },
+    StoreInternsAtMost {
+        bound: i64,
+    },
+    ValueIslandSpawnsAtMost {
+        bound: i64,
+    },
+    SuccessfulAggregateFreezesAtMost {
+        bound: i64,
+    },
+    ActiveMoltenSelectionsAtMost {
+        bound: i64,
+    },
+    ForcedCopySelectionsAtMost {
+        bound: i64,
+    },
+    FramedBytesAtMost {
+        bound: i64,
+    },
+    PeakMoltenBytesAtMost {
+        bound: i64,
+    },
+    PeakMoltenNodesAtMost {
+        bound: i64,
+    },
 }
 
 /// One arm of a generator [`GeneratorStep::Match`]. The arm body is itself a
@@ -916,17 +943,52 @@ pub struct Module {
     pub enums: Vec<EnumType>,
     pub functions: Vec<Function>,
     pub tests: Vec<Test>,
+    pub force_molten_copy: bool,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct Island {
     pub id: IslandId,
+    pub purpose: IslandPurpose,
     pub function: FunctionId,
     pub function_name: String,
+    pub parameters: Vec<Parameter>,
+    pub value_inputs: Vec<ValueIslandId>,
+    pub forced_copy_value: bool,
     pub nodes: Vec<Node>,
     pub output: NodeId,
     pub callees: Vec<Function>,
     pub array_map_partitions: Vec<ArrayMapPartition>,
+}
+
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum IslandPurpose {
+    Check,
+    Generator,
+    Value,
+}
+
+/// Content-free canonical graph provenance for a shared value producer. This
+/// names the VIR producer, never a source binding, vector/arrival ordinal,
+/// content digest, or runtime handle.
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct ValueIslandId {
+    pub function: FunctionId,
+    pub node: NodeId,
+}
+
+impl ValueIslandId {
+    #[must_use]
+    pub fn stable_segment(self) -> String {
+        format!("f{}-n{}", self.function.0, self.node.0)
+    }
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct PartitionedValue {
+    pub id: ValueIslandId,
+    pub island: Island,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
@@ -945,6 +1007,7 @@ pub struct ArrayMapPartition {
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct PartitionedTest {
     pub name: String,
+    pub values: Vec<PartitionedValue>,
     /// Value-check islands, in site order. A [`PartitionedRecipe::Value`]
     /// indexes into this vector. Trace sites contribute no island.
     pub islands: Vec<Island>,
@@ -1065,6 +1128,11 @@ impl Module {
     /// r[impl machine.island.partition]
     #[must_use]
     pub fn partition_test(&self, test: &Test) -> PartitionedTest {
+        self.try_partition_test(test)
+            .expect("unsupported shared publication in unchecked partition inspection")
+    }
+
+    pub fn try_partition_test(&self, test: &Test) -> Result<PartitionedTest, Diagnostics> {
         let function = &self.functions[test.function.0 as usize];
         // Every site, in stable YieldSiteId order (dense across value and trace
         // sites). Island ordinals compact over value sites only, so a site is
@@ -1076,16 +1144,85 @@ impl Module {
             .map(|owned| owned.site)
             .collect();
         ordered.sort_by_key(|site| site.id.0);
+        let mut consumer_counts = BTreeMap::<NodeId, usize>::new();
+        for check in ordered.iter().filter_map(|site| site.value_check()) {
+            let mut dependencies = BTreeSet::new();
+            collect_dependencies(function, check, &mut dependencies);
+            for dependency in dependencies {
+                *consumer_counts.entry(dependency).or_default() += 1;
+            }
+        }
+        let mut shared = function
+            .nodes
+            .iter()
+            .filter(|node| consumer_counts.get(&node.id).copied().unwrap_or(0) >= 2)
+            .filter(|node| matches!(node.ty, Type::Array(_) | Type::Map { .. } | Type::Set(_)))
+            .collect::<Vec<_>>();
+        let candidate_ids = shared.iter().map(|node| node.id).collect::<BTreeSet<_>>();
+        shared.retain(|candidate| {
+            !candidate_ids.iter().copied().any(|other| {
+                if other == candidate.id {
+                    return false;
+                }
+                let mut dependencies = BTreeSet::new();
+                collect_dependencies(function, other, &mut dependencies);
+                dependencies.contains(&candidate.id)
+            })
+        });
+        shared.sort_by_key(|node| ValueIslandId {
+            function: function.id,
+            node: node.id,
+        });
+        if let Some(node) = shared
+            .iter()
+            .find(|node| matches!(node.ty, Type::Map { .. } | Type::Set(_)))
+        {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                node.span,
+                format!(
+                    "shared {} publication requires the ordered rung-138 freeze capability",
+                    node.ty.name()
+                ),
+            )));
+        }
+        let shared_ids = shared
+            .iter()
+            .map(|node| {
+                (
+                    node.id,
+                    ValueIslandId {
+                        function: function.id,
+                        node: node.id,
+                    },
+                )
+            })
+            .collect::<BTreeMap<_, _>>();
+        let values = shared
+            .iter()
+            .enumerate()
+            .map(|(ordinal, node)| PartitionedValue {
+                id: shared_ids[&node.id],
+                island: self.partition_function_output_with_shared(
+                    function,
+                    node.id,
+                    IslandId(u32::try_from(ordinal).expect("value island index fits u32")),
+                    IslandPurpose::Value,
+                    &BTreeMap::new(),
+                ),
+            })
+            .collect::<Vec<_>>();
         let mut islands = Vec::new();
         let mut sites = Vec::with_capacity(ordered.len());
         for site in ordered {
             let recipe = match &site.recipe {
                 CheckRecipe::Value { check } => {
                     let island = islands.len();
-                    islands.push(self.partition_function_output(
+                    islands.push(self.partition_function_output_with_shared(
                         function,
                         *check,
                         IslandId(u32::try_from(island).expect("island index fits u32")),
+                        IslandPurpose::Check,
+                        &shared_ids,
                     ));
                     PartitionedRecipe::Value { island }
                 }
@@ -1096,27 +1233,50 @@ impl Module {
                 recipe,
             });
         }
-        PartitionedTest {
+        Ok(PartitionedTest {
             name: test.name.clone(),
+            values,
             islands,
             sites,
-        }
+        })
     }
 
-    fn partition_function_output(
+    fn partition_function_output_with_shared(
         &self,
         function: &Function,
         output: NodeId,
         id: IslandId,
+        purpose: IslandPurpose,
+        shared: &BTreeMap<NodeId, ValueIslandId>,
     ) -> Island {
         let mut needed = BTreeSet::new();
-        collect_dependencies(function, output, &mut needed);
+        collect_dependencies_stopping_at(function, output, shared, &mut needed);
         let mut nodes = function
             .nodes
             .iter()
             .filter(|node| needed.contains(&node.id))
             .cloned()
             .collect::<Vec<_>>();
+        let mut parameters = Vec::new();
+        let mut value_inputs = Vec::new();
+        for node in &mut nodes {
+            let Some(&value) = shared.get(&node.id) else {
+                continue;
+            };
+            let id = ParameterId(
+                u32::try_from(parameters.len()).expect("shared value parameter count fits u32"),
+            );
+            node.op = Op::Parameter(id);
+            node.inputs.clear();
+            parameters.push(Parameter {
+                id,
+                node: node.id,
+                name: format!("$value_{}", value.stable_segment()),
+                ty: node.ty.clone(),
+                kind: ParameterKind::Positional,
+            });
+            value_inputs.push(value);
+        }
         prune_control_regions(&mut nodes, &needed);
         let mut seen = BTreeSet::from([function.id]);
         let mut callees = Vec::new();
@@ -1133,8 +1293,12 @@ impl Module {
         }
         Island {
             id,
+            purpose,
             function: function.id,
             function_name: function.name.clone(),
+            parameters,
+            value_inputs,
+            forced_copy_value: purpose == IslandPurpose::Value && self.force_molten_copy,
             nodes,
             output,
             callees,
@@ -1179,8 +1343,12 @@ impl Module {
         }
         Ok(Island {
             id: IslandId(0),
+            purpose: IslandPurpose::Generator,
             function: test.function,
             function_name: format!("{}$generator", test.name),
+            parameters: Vec::new(),
+            value_inputs: Vec::new(),
+            forced_copy_value: false,
             nodes,
             output,
             callees,
@@ -1496,6 +1664,43 @@ fn collect_dependencies(function: &Function, node: NodeId, needed: &mut BTreeSet
     }
 }
 
+fn collect_dependencies_stopping_at(
+    function: &Function,
+    node: NodeId,
+    shared: &BTreeMap<NodeId, ValueIslandId>,
+    needed: &mut BTreeSet<NodeId>,
+) {
+    if !needed.insert(node) || shared.contains_key(&node) {
+        return;
+    }
+    let node = &function.nodes[node.0 as usize];
+    for &input in &node.inputs {
+        collect_dependencies_stopping_at(function, input, shared, needed);
+    }
+    match &node.op {
+        Op::Match { arms } => {
+            for arm in arms {
+                collect_dependencies_stopping_at(function, arm.output, shared, needed);
+            }
+        }
+        Op::If {
+            consequent,
+            alternative,
+        } => {
+            collect_dependencies_stopping_at(function, consequent.output, shared, needed);
+            collect_dependencies_stopping_at(function, alternative.output, shared, needed);
+        }
+        Op::OrderedMatch { arms, fallback } => {
+            for arm in arms {
+                collect_dependencies_stopping_at(function, arm.condition.output, shared, needed);
+                collect_dependencies_stopping_at(function, arm.body.output, shared, needed);
+            }
+            collect_dependencies_stopping_at(function, fallback.output, shared, needed);
+        }
+        _ => {}
+    }
+}
+
 impl Island {
     pub(crate) fn local_function_ids(&self) -> BTreeMap<FunctionId, u32> {
         let mut ids = BTreeMap::from([(self.function, 0)]);
@@ -1518,6 +1723,21 @@ impl Island {
         let mut entry = Vec::new();
         frame(&mut entry, b"entry");
         frame(&mut entry, self.function_name.as_bytes());
+        frame(&mut entry, &(self.parameters.len() as u64).to_le_bytes());
+        for parameter in &self.parameters {
+            let mut encoded = Vec::new();
+            frame(&mut encoded, &parameter.id.0.to_le_bytes());
+            frame(&mut encoded, &parameter.node.0.to_le_bytes());
+            frame(&mut encoded, &canonical_type(&parameter.ty));
+            frame(
+                &mut encoded,
+                match parameter.kind {
+                    ParameterKind::Positional => b"positional",
+                    ParameterKind::Named => b"named",
+                },
+            );
+            frame(&mut entry, &encoded);
+        }
         for node in &self.nodes {
             frame(&mut entry, &canonical_node(node, &function_ids));
         }

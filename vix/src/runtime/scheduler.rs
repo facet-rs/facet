@@ -1,11 +1,15 @@
 use std::collections::BTreeMap;
+use std::ops::Deref;
 
-use weavy::exec::{FallbackReason, FaultSite, LaneKind, TaskFault};
+use weavy::exec::{
+    FallbackReason, FaultSite, LaneKind, ResolvedTaskValue, TaskFault, TaskValueResolver,
+};
 use weavy::task::{FnId, TaskEvent as WeavyTaskEvent, TaskStep};
 
 use crate::lowering::{LoweringArtifact, LoweringAttribution};
-use crate::vir::IslandId;
+use crate::vir::{IslandId, Type};
 
+use super::identity::FramedNode;
 use super::identity::{DemandKey, DemandPreimage, Location, LocationId, SchemaId, ValueId};
 use super::model::{
     DemandRecord, DemandState, FailureContext, FailureValue, MemoVerdict, Receipt, TaskId,
@@ -25,6 +29,35 @@ struct MemoEntry {
     preimage: DemandPreimage,
     result: Handle,
     receipt: Option<Receipt>,
+}
+
+struct DemandExecution<'a> {
+    artifact: &'a LoweringArtifact,
+    demand_key: DemandKey,
+    demand_preimage: DemandPreimage,
+}
+
+impl<'a> DemandExecution<'a> {
+    fn new(artifact: &'a LoweringArtifact, arguments: Vec<ValueId>) -> Self {
+        let demand_preimage = DemandPreimage {
+            closure: artifact.recipe,
+            arguments,
+        };
+        let demand_key = DemandKey::from_preimage(&demand_preimage);
+        Self {
+            artifact,
+            demand_key,
+            demand_preimage,
+        }
+    }
+}
+
+impl Deref for DemandExecution<'_> {
+    type Target = LoweringArtifact;
+
+    fn deref(&self) -> &Self::Target {
+        self.artifact
+    }
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -94,8 +127,14 @@ impl<S: EventSink> Runtime<S> {
         location: &Location,
         lowered: &LoweringArtifact,
         attribution: &LoweringAttribution,
+        arguments: &[Evaluation],
         chaos: ChaosPolicy,
     ) -> Result<Evaluation, Box<MachineError>> {
+        let invocation = DemandExecution::new(
+            lowered,
+            arguments.iter().map(|argument| argument.identity).collect(),
+        );
+        let lowered = &invocation;
         self.emit(EventKind::Demanded {
             key: lowered.demand_key,
         });
@@ -167,11 +206,59 @@ impl<S: EventSink> Runtime<S> {
             to: DemandState::Queued,
         });
 
-        let constants = self.materialize_constants(lowered);
+        if let Some(argument) = arguments.iter().find(|argument| argument.failure.is_some()) {
+            let failure = argument.failure.clone().expect("selected failed argument");
+            self.memo.insert(
+                location.id,
+                MemoEntry {
+                    location: location.clone(),
+                    key: lowered.demand_key,
+                    preimage: lowered.demand_preimage.clone(),
+                    result: argument.handle,
+                    receipt: None,
+                },
+            );
+            if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
+                demand.result = Some(argument.handle);
+            }
+            self.transition_demand(lowered.demand_key, DemandState::Failed)?;
+            return Ok(Evaluation {
+                handle: argument.handle,
+                identity: argument.identity,
+                passed: false,
+                memo: MemoVerdict::Miss,
+                failure: Some(failure),
+                failure_context: self.output_attribution(lowered.artifact, attribution).map(
+                    |source| FailureContext {
+                        function: source.function,
+                        node: source.node,
+                        span: source.span,
+                        demand_chain: vec![lowered.demand_key],
+                    },
+                ),
+            });
+        }
+
+        if lowered.value_inputs.len() != arguments.len() {
+            return Err(Box::new(MachineError::runtime(
+                MachineOperation::EntryBinding,
+                RuntimeFault::ValueInputCardinality {
+                    expected: lowered.value_inputs.len(),
+                    actual: arguments.len(),
+                },
+                None,
+                Some(lowered.demand_key),
+            )));
+        }
+
+        let constants = self.materialize_constants(lowered.artifact);
         let mut kill_armed = chaos.kill_first_running_task;
         loop {
             self.counters.scheduler_requests += 1;
             let task_id = self.spawn_task(lowered.demand_key);
+            if matches!(lowered.output_type, Type::Array(_)) {
+                self.counters.value_island_spawns += 1;
+            }
             self.transition_demand(lowered.demand_key, DemandState::Running)?;
             self.transition_task(task_id, TaskState::Running)?;
             self.emit(EventKind::IslandEntered {
@@ -246,10 +333,89 @@ impl<S: EventSink> Runtime<S> {
                     )));
                 }
             }
-            let step = match self.store.with_value_memories(|value_memories| {
-                task.drive_hosted_with_value_memories(&mut [], &[], &mut [], value_memories)
-                    .map_err(Box::new)
-            }) {
+            for (binding, argument) in lowered.value_inputs.iter().zip(arguments) {
+                if binding.store_schema != argument.identity.schema {
+                    let error = MachineError::runtime(
+                        MachineOperation::EntryBinding,
+                        RuntimeFault::ValueInputSchemaMismatch,
+                        None,
+                        Some(lowered.demand_key),
+                    );
+                    return Err(Box::new(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )));
+                }
+                let handle = match self.store.weavy_handle(argument.handle) {
+                    Some(handle) => handle,
+                    None => {
+                        let error = MachineError::runtime(
+                            MachineOperation::EntryBinding,
+                            RuntimeFault::MissingValueInputStoreHandle,
+                            None,
+                            Some(lowered.demand_key),
+                        );
+                        return Err(Box::new(self.terminate_machine_fault(
+                            task_id,
+                            lowered.demand_key,
+                            error,
+                        )));
+                    }
+                };
+                if let Err(fault) =
+                    task.write_entry_store_handle(binding.entry, binding.schema, handle)
+                {
+                    let error = self.task_fault(
+                        MachineOperation::EntryBinding,
+                        fault,
+                        &lowered,
+                        attribution,
+                        None,
+                    );
+                    return Err(Box::new(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )));
+                }
+            }
+            let mut value_memory_overrides = Vec::new();
+            for (binding, argument) in lowered.value_inputs.iter().zip(arguments) {
+                let Some(element_schema) = binding.payload_element_schema else {
+                    continue;
+                };
+                let resident = self
+                    .store
+                    .entry(argument.handle)
+                    .and_then(StoreEntry::resident_bytes)
+                    .ok_or_else(|| {
+                        Box::new(MachineError::runtime(
+                            MachineOperation::EntryBinding,
+                            RuntimeFault::MissingValueInputStoreHandle,
+                            None,
+                            Some(lowered.demand_key),
+                        ))
+                    })?;
+                let mut abi_view = resident.to_vec();
+                let schema_bytes = abi_view.get_mut(8..16).ok_or_else(|| {
+                    Box::new(MachineError::runtime(
+                        MachineOperation::EntryBinding,
+                        RuntimeFault::ValueInputSchemaMismatch,
+                        None,
+                        Some(lowered.demand_key),
+                    ))
+                })?;
+                schema_bytes.copy_from_slice(&i64::from(element_schema.0).to_le_bytes());
+                value_memory_overrides.push((argument.handle, abi_view));
+            }
+            let step = match self.store.with_value_memory_overrides(
+                &value_memory_overrides,
+                |value_memories| {
+                    task.drive_hosted_with_value_memories(&mut [], &[], &mut [], value_memories)
+                        .map_err(Box::new)
+                },
+            ) {
                 Ok(step) => step,
                 Err(fault) => {
                     let error = self.task_fault(
@@ -307,7 +473,70 @@ impl<S: EventSink> Runtime<S> {
                 }
             }
             let passed = match decode_result(&task, lowered) {
-                Ok(DecodedResult::Ok(passed)) => passed,
+                Ok(DecodedResult::OkScalar(passed)) => passed,
+                Ok(DecodedResult::OkValue) => {
+                    let realized = match realize_value(&task, lowered.artifact, &self.store) {
+                        Ok(realized) => realized,
+                        Err(fault) => {
+                            let error = self.task_fault(
+                                MachineOperation::Result,
+                                fault,
+                                lowered,
+                                attribution,
+                                self.output_attribution(lowered.artifact, attribution),
+                            );
+                            return Err(Box::new(self.terminate_machine_fault(
+                                task_id,
+                                lowered.demand_key,
+                                error,
+                            )));
+                        }
+                    };
+                    self.counters.peak_molten_nodes = self
+                        .counters
+                        .peak_molten_nodes
+                        .max(realized.molten_nodes as u64);
+                    self.counters.peak_molten_bytes = self
+                        .counters
+                        .peak_molten_bytes
+                        .max(realized.molten_bytes as u64);
+                    self.counters.framed_bytes += realized.framed_bytes as u64;
+                    let interned = self.store.intern_tree(&realized.node, &realized.resident);
+                    self.observe_interned(interned);
+                    self.counters.successful_aggregate_freezes += 1;
+                    if lowered.forced_copy_value {
+                        self.counters.forced_copy_selections += 1;
+                    } else {
+                        self.counters.active_molten_selections += 1;
+                    }
+                    self.memo.insert(
+                        location.id,
+                        MemoEntry {
+                            location: location.clone(),
+                            key: lowered.demand_key,
+                            preimage: lowered.demand_preimage.clone(),
+                            result: interned.handle,
+                            receipt: None,
+                        },
+                    );
+                    if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
+                        demand.result = Some(interned.handle);
+                    }
+                    self.transition_task(task_id, TaskState::Completed)?;
+                    self.transition_demand(lowered.demand_key, DemandState::Ready)?;
+                    self.emit(EventKind::Completed {
+                        key: lowered.demand_key,
+                        identity: interned.identity,
+                    });
+                    return Ok(Evaluation {
+                        handle: interned.handle,
+                        identity: interned.identity,
+                        passed: true,
+                        memo: MemoVerdict::Miss,
+                        failure: None,
+                        failure_context: None,
+                    });
+                }
                 Ok(DecodedResult::ArrayMachine { site, status }) => {
                     let error = MachineError::runtime(
                         MachineOperation::Result,
@@ -510,6 +739,8 @@ impl<S: EventSink> Runtime<S> {
         attribution: &LoweringAttribution,
         chaos: ChaosPolicy,
     ) -> Result<GeneratorOutcome, Box<MachineError>> {
+        let invocation = DemandExecution::new(lowered, Vec::new());
+        let lowered = &invocation;
         self.emit(EventKind::Demanded {
             key: lowered.demand_key,
         });
@@ -526,7 +757,7 @@ impl<S: EventSink> Runtime<S> {
             from: DemandState::Absent,
             to: DemandState::Queued,
         });
-        let constants = self.materialize_constants(lowered);
+        let constants = self.materialize_constants(lowered.artifact);
         let mut kill_armed = chaos.kill_first_running_task;
         loop {
             self.counters.scheduler_requests += 1;
@@ -670,7 +901,7 @@ impl<S: EventSink> Runtime<S> {
             // failure while constructing control stays on the language plane; a
             // machine-invariant status is a machine fault.
             match decode_result(&task, lowered) {
-                Ok(DecodedResult::Ok(_)) => {
+                Ok(DecodedResult::OkScalar(_)) => {
                     let count = match task.publication_count() {
                         Ok(count) => count,
                         Err(fault) => {
@@ -711,6 +942,9 @@ impl<S: EventSink> Runtime<S> {
                     self.transition_task(task_id, TaskState::Completed)?;
                     self.transition_demand(lowered.demand_key, DemandState::Ready)?;
                     return Ok(GeneratorOutcome::Sites(sites));
+                }
+                Ok(DecodedResult::OkValue) => {
+                    unreachable!("generator placeholder cannot be a value publication")
                 }
                 Ok(DecodedResult::IndexOutOfBounds {
                     site,
@@ -842,7 +1076,7 @@ impl<S: EventSink> Runtime<S> {
     fn complete_generator_language_failure(
         &mut self,
         task: TaskId,
-        lowered: &LoweringArtifact,
+        lowered: &DemandExecution<'_>,
         attribution: &LoweringAttribution,
         failure: FailureValue,
     ) -> Result<GeneratorOutcome, Box<MachineError>> {
@@ -1018,7 +1252,7 @@ impl<S: EventSink> Runtime<S> {
         &mut self,
         task: TaskId,
         location: &Location,
-        lowered: &LoweringArtifact,
+        lowered: &DemandExecution<'_>,
         attribution: &LoweringAttribution,
         failure: FailureValue,
     ) -> Result<Evaluation, Box<MachineError>> {
@@ -1099,7 +1333,7 @@ impl<S: EventSink> Runtime<S> {
         &self,
         operation: MachineOperation,
         fault: TaskFault,
-        lowered: &LoweringArtifact,
+        lowered: &DemandExecution<'_>,
         attribution: &LoweringAttribution,
         fallback: Option<MachineAttribution>,
     ) -> MachineError {
@@ -1162,9 +1396,185 @@ impl<S: EventSink> Runtime<S> {
     }
 }
 
+struct RealizedValue {
+    node: FramedNode,
+    resident: Vec<u8>,
+    framed_bytes: usize,
+    molten_nodes: usize,
+    molten_bytes: usize,
+}
+
+fn realize_value(
+    task: &weavy::exec::ExecTask<'_>,
+    lowered: &LoweringArtifact,
+    store: &Store,
+) -> Result<RealizedValue, TaskFault> {
+    task.with_result_resolver(|result, resolver| {
+        let selector = u32::try_from(result.enum_selector()?)
+            .map_err(|_| invalid_realized_result(lowered, 0))?;
+        let value = result.enum_value_field(selector, 0)?;
+        let resolved = resolver
+            .resolve(value)
+            .ok_or_else(|| invalid_realized_result(lowered, 0))?;
+        let (node, resident, framed_bytes) =
+            realize_resolved(&resolver, resolved, &lowered.output_type, store, lowered)?;
+        let (molten_nodes, molten_bytes) = resolver.molten_stats();
+        Ok(RealizedValue {
+            node,
+            resident,
+            framed_bytes,
+            molten_nodes,
+            molten_bytes,
+        })
+    })
+}
+
+fn realize_resolved<'task>(
+    resolver: &TaskValueResolver<'task>,
+    resolved: ResolvedTaskValue<'task>,
+    ty: &Type,
+    store: &Store,
+    lowered: &LoweringArtifact,
+) -> Result<(FramedNode, Vec<u8>, usize), TaskFault> {
+    match resolved {
+        ResolvedTaskValue::TaskMolten(bytes) => match ty {
+            Type::Array(element) => realize_array(resolver, bytes, element, store, lowered),
+            Type::String | Type::Path => Ok((
+                FramedNode::leaf(semantic_schema_id(ty), bytes.to_vec()),
+                bytes.to_vec(),
+                bytes.len(),
+            )),
+            _ => Err(invalid_realized_result(lowered, bytes.len())),
+        },
+        ResolvedTaskValue::Store(handle) => {
+            let entry = store
+                .entry_by_weavy_handle(handle)
+                .ok_or_else(|| invalid_realized_result(lowered, 0))?;
+            let resident = entry
+                .resident_bytes()
+                .ok_or_else(|| invalid_realized_result(lowered, 0))?
+                .to_vec();
+            // A root that is already store-backed needs no freeze. Nested store
+            // references are handled by `realize_array` through their ValueId.
+            Err(invalid_realized_result(lowered, resident.len()))
+        }
+        ResolvedTaskValue::LentMolten { .. } => Err(invalid_realized_result(lowered, 0)),
+    }
+}
+
+fn realize_array<'task>(
+    resolver: &TaskValueResolver<'task>,
+    bytes: &'task [u8],
+    element: &Type,
+    store: &Store,
+    lowered: &LoweringArtifact,
+) -> Result<(FramedNode, Vec<u8>, usize), TaskFault> {
+    const HEADER: usize = 32;
+    let tag =
+        read_payload_word(bytes, 0).ok_or_else(|| invalid_realized_result(lowered, bytes.len()))?;
+    let count = usize::try_from(
+        read_payload_word(bytes, 16)
+            .ok_or_else(|| invalid_realized_result(lowered, bytes.len()))?,
+    )
+    .map_err(|_| invalid_realized_result(lowered, bytes.len()))?;
+    let width = usize::try_from(
+        read_payload_word(bytes, 24)
+            .ok_or_else(|| invalid_realized_result(lowered, bytes.len()))?,
+    )
+    .map_err(|_| invalid_realized_result(lowered, bytes.len()))?;
+    let data_len = count
+        .checked_mul(width)
+        .ok_or_else(|| invalid_realized_result(lowered, bytes.len()))?;
+    let data = bytes
+        .get(
+            HEADER
+                ..HEADER
+                    .checked_add(data_len)
+                    .ok_or_else(|| invalid_realized_result(lowered, bytes.len()))?,
+        )
+        .ok_or_else(|| invalid_realized_result(lowered, bytes.len()))?;
+    if tag != 1 || width == 0 || HEADER + data_len != bytes.len() {
+        return Err(invalid_realized_result(lowered, bytes.len()));
+    }
+    let array_schema = semantic_schema_id(&Type::Array(Box::new(element.clone())));
+    let element_schema = semantic_schema_id(element);
+    if matches!(element, Type::Bool | Type::Int) {
+        if width != 8 {
+            return Err(invalid_realized_result(lowered, bytes.len()));
+        }
+        return Ok((
+            FramedNode::SeqInline {
+                schema: array_schema,
+                element_schema,
+                element_width: u32::try_from(width)
+                    .map_err(|_| invalid_realized_result(lowered, bytes.len()))?,
+                canonical_bytes: data.to_vec(),
+            },
+            bytes.to_vec(),
+            data.len(),
+        ));
+    }
+    if !matches!(element, Type::String | Type::Path | Type::Array(_)) || width != 8 {
+        return Err(invalid_realized_result(lowered, bytes.len()));
+    }
+    let mut children = Vec::with_capacity(count);
+    let mut framed_bytes = 0usize;
+    for index in 0..count {
+        let offset = HEADER + index * width;
+        let child = resolver
+            .resolve_nested(bytes, offset)
+            .ok_or_else(|| invalid_realized_result(lowered, bytes.len()))?;
+        let identity = match child {
+            ResolvedTaskValue::Store(handle) => {
+                store
+                    .entry_by_weavy_handle(handle)
+                    .ok_or_else(|| invalid_realized_result(lowered, bytes.len()))?
+                    .identity
+            }
+            ResolvedTaskValue::TaskMolten(_) => {
+                let (node, _, nested_bytes) =
+                    realize_resolved(resolver, child, element, store, lowered)?;
+                framed_bytes = framed_bytes.saturating_add(nested_bytes);
+                node.identity()
+            }
+            ResolvedTaskValue::LentMolten { .. } => {
+                return Err(invalid_realized_result(lowered, bytes.len()));
+            }
+        };
+        children.push(identity);
+    }
+    Ok((
+        FramedNode::SeqChildren {
+            schema: array_schema,
+            element_schema,
+            children,
+        },
+        bytes.to_vec(),
+        framed_bytes,
+    ))
+}
+
+fn read_payload_word(bytes: &[u8], offset: usize) -> Option<i64> {
+    Some(i64::from_le_bytes(
+        bytes.get(offset..offset.checked_add(8)?)?.try_into().ok()?,
+    ))
+}
+
+fn semantic_schema_id(ty: &Type) -> SchemaId {
+    SchemaId::named(&format!("vix.semantic.v1:{}", ty.name()))
+}
+
+fn invalid_realized_result(lowered: &LoweringArtifact, size: usize) -> TaskFault {
+    TaskFault::InvalidResultShape {
+        entry: FnId(0),
+        region: lowered.executable().program().contract().functions[0].result,
+        size,
+    }
+}
+
 fn failure_context(
     failure: &FailureValue,
-    lowered: &LoweringArtifact,
+    lowered: &DemandExecution<'_>,
     attribution: &LoweringAttribution,
 ) -> Option<FailureContext> {
     // r[impl machine.error.failure-source-site-identity]
@@ -1195,7 +1605,8 @@ fn failure_context(
 }
 
 enum DecodedResult {
-    Ok(bool),
+    OkScalar(bool),
+    OkValue,
     IndexOutOfBounds {
         site: u32,
         index: i64,
@@ -1231,9 +1642,7 @@ fn decode_result(
     lowered: &LoweringArtifact,
 ) -> Result<DecodedResult, Box<TaskFault>> {
     let Some(abi) = &lowered.array_outcome else {
-        return Ok(task
-            .result_i64()
-            .map(|result| DecodedResult::Ok(result != 0))?);
+        return Ok(DecodedResult::OkScalar(task.result_i64()? != 0));
     };
     let result = task.result_structural()?;
     let selector = result.enum_selector()?;
@@ -1245,9 +1654,12 @@ fn decode_result(
         })
     })?;
     if selector == abi.ok_variant {
-        return Ok(DecodedResult::Ok(
-            result.enum_scalar_field(selector, 0)? != 0,
-        ));
+        if lowered.output_type == Type::Check {
+            return Ok(DecodedResult::OkScalar(
+                result.enum_scalar_field(selector, 0)? != 0,
+            ));
+        }
+        return Ok(DecodedResult::OkValue);
     }
     if selector == abi.index_out_of_bounds_variant {
         let site = u32::try_from(result.enum_scalar_field(selector, 0)?).map_err(|_| {
@@ -1677,6 +2089,7 @@ fn duplicate_key() -> Stream<Check> {
     fn no_site_task_fault_keeps_its_demand_without_source_attribution() {
         with_lowered(ENUM_SOURCE, |artifact, attribution| {
             let runtime = Runtime::new(EventLog::default());
+            let invocation = DemandExecution::new(artifact, Vec::new());
             let error = runtime.task_fault(
                 MachineOperation::Drive,
                 TaskFault::DriveTableLength {
@@ -1684,7 +2097,7 @@ fn duplicate_key() -> Stream<Check> {
                     expected: 1,
                     actual: 0,
                 },
-                artifact,
+                &invocation,
                 attribution,
                 None,
             );
@@ -1701,6 +2114,7 @@ fn duplicate_key() -> Stream<Check> {
     fn result_shape_fault_alone_uses_the_output_attribution() {
         with_lowered(ENUM_SOURCE, |artifact, attribution| {
             let runtime = Runtime::new(EventLog::default());
+            let invocation = DemandExecution::new(artifact, Vec::new());
             let output = runtime
                 .output_attribution(artifact, attribution)
                 .expect("root return has output source attribution");
@@ -1713,7 +2127,7 @@ fn duplicate_key() -> Stream<Check> {
             let error = runtime.task_fault(
                 MachineOperation::Result,
                 fault,
-                artifact,
+                &invocation,
                 attribution,
                 fallback,
             );
@@ -1756,6 +2170,7 @@ fn duplicate_key() -> Stream<Check> {
                     &location,
                     artifact,
                     &first_attribution,
+                    &[],
                     ChaosPolicy::default(),
                 )
                 .expect("first demand becomes a typed language failure");
@@ -1794,6 +2209,7 @@ fn duplicate_key() -> Stream<Check> {
                     &location,
                     artifact,
                     &shifted_attribution,
+                    &[],
                     ChaosPolicy::default(),
                 )
                 .expect("second demand is an exact memo hit")
@@ -1864,6 +2280,7 @@ fn duplicate_key() -> Stream<Check> {
                     &location,
                     &artifact,
                     attribution,
+                    &[],
                     ChaosPolicy::default(),
                 )
                 .expect_err("non-OutOfRange status is a machine error");
@@ -1933,6 +2350,7 @@ fn passing() -> Stream<Check> {
                 &location,
                 artifact,
                 &attribution,
+                &[],
                 ChaosPolicy::default(),
             )
             .expect("passing check evaluates to a realized value");

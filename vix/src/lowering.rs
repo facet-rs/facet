@@ -31,8 +31,9 @@ use crate::runtime::{
 use crate::support::Span;
 use crate::vir::{
     ArrayMapExecutionShape, ArrayMapPartition, EnumType, EnumVariant, Function, FunctionId, Island,
-    Node, NodeId, NodeRef, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, ORDERING_EQUAL_VARIANT,
-    ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, Type, VariantPayload, YieldSiteId,
+    IslandPurpose, Node, NodeId, NodeRef, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
+    ORDERING_EQUAL_VARIANT, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, Type,
+    ValueIslandId, VariantPayload, YieldSiteId,
 };
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -85,6 +86,15 @@ pub struct ValueConstant {
     pub owner: ConstantBinding,
     pub store_schema: SchemaId,
     pub bytes: Vec<u8>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValueInputBinding {
+    pub value: ValueIslandId,
+    pub entry: usize,
+    pub schema: WeavySchemaRef,
+    pub store_schema: SchemaId,
+    pub payload_element_schema: Option<WeavySchemaRef>,
 }
 
 /// The internal result ABI carried by every function in an array-bearing
@@ -180,6 +190,10 @@ pub struct LoweringArtifact {
     pub array_outcome: Option<ArrayOutcomeAbi>,
     pub pc_nodes: Vec<Vec<NodeRef>>,
     pub constants: Vec<ValueConstant>,
+    pub value_inputs: Vec<ValueInputBinding>,
+    pub output_type: Type,
+    pub output_schema: SchemaId,
+    pub forced_copy_value: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -226,6 +240,10 @@ impl LoweringArtifact {
             array_outcome: self.array_outcome.clone(),
             pc_nodes: self.pc_nodes.clone(),
             constants: self.constants.clone(),
+            value_inputs: self.value_inputs.clone(),
+            output_type: self.output_type.clone(),
+            output_schema: self.output_schema,
+            forced_copy_value: self.forced_copy_value,
         }
     }
 
@@ -355,14 +373,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
         .iter()
         .find(|node| node.id == island.output)
         .ok_or_else(|| lowering_diagnostic(Span { start: 0, end: 0 }, "missing island output"))?;
-    // A check island outputs a `Check`; a generator-task island runs control and
-    // publishes sites, returning a placeholder scalar whose value is unused (the
-    // taken sites are read from the publication log).
-    let publishes = island
-        .nodes
-        .iter()
-        .any(|node| matches!(node.op, Op::PublishSite(_)));
-    if publishes {
+    if island.purpose == IslandPurpose::Generator {
         if output.ty != Type::Int {
             return Err(lowering_diagnostic(
                 output.span,
@@ -370,8 +381,14 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
             )
             .into());
         }
-    } else if output.ty != Type::Check {
+    } else if island.purpose == IslandPurpose::Check && output.ty != Type::Check {
         return Err(lowering_diagnostic(output.span, "island output is not a Check").into());
+    } else if island.purpose == IslandPurpose::Value && !matches!(output.ty, Type::Array(_)) {
+        return Err(lowering_diagnostic(
+            output.span,
+            "value-island output lacks a registered publication capability",
+        )
+        .into());
     }
     let array_outcome = island_contains_checked_collection_ops(island)
         .then(|| ArrayOutcomeAbi::for_value(output.ty.clone()));
@@ -404,7 +421,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
         FunctionLayout::build(
             island.function,
             &island.nodes,
-            &[],
+            &island.parameters,
             Some(island.output),
             constant_closures.get(&island.function).ok_or_else(|| {
                 lowering_diagnostic(output.span, "island function has no constant closure")
@@ -447,7 +464,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
     let lowered_root = lower_vir_function(
         island.function,
         &island.nodes,
-        &[],
+        &island.parameters,
         island.output,
         &context,
         &mut pending_constants,
@@ -485,6 +502,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
         &layouts,
         &function_ids,
     )?;
+    let value_inputs = bind_value_inputs(island, &contract, &schemas)?;
     let demand_preimage = DemandPreimage {
         closure: recipe,
         arguments: Vec::new(),
@@ -503,11 +521,80 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
         recipe,
         demand_key,
         demand_preimage,
-        executable: Executable::new(verified),
+        executable: Executable::with_trace_mode(
+            verified,
+            if island.purpose == IslandPurpose::Value {
+                weavy::task::TraceMode::Production
+            } else {
+                weavy::task::TraceMode::Innards
+            },
+        ),
         array_outcome,
         pc_nodes,
         constants,
+        value_inputs,
+        output_type: output.ty.clone(),
+        output_schema: semantic_schema_id(&output.ty),
+        forced_copy_value: island.forced_copy_value,
     })
+}
+
+fn semantic_schema_id(ty: &Type) -> SchemaId {
+    SchemaId::named(&format!("vix.semantic.v1:{}", ty.name()))
+}
+
+fn bind_value_inputs(
+    island: &Island,
+    contract: &WeavyProgramContract,
+    schemas: &SchemaAssignments,
+) -> Result<Vec<ValueInputBinding>, Diagnostics> {
+    let root = contract.functions.first().ok_or_else(|| {
+        lowering_diagnostic(Span { start: 0, end: 0 }, "island has no root contract")
+    })?;
+    island
+        .parameters
+        .iter()
+        .zip(&island.value_inputs)
+        .enumerate()
+        .map(|(entry, (parameter, value))| {
+            let span = island
+                .nodes
+                .iter()
+                .find(|node| node.id == parameter.node)
+                .map_or(Span { start: 0, end: 0 }, |node| node.span);
+            let region = root.entries.get(entry).copied().ok_or_else(|| {
+                lowering_diagnostic(span, "shared value parameter has no root entry")
+            })?;
+            let region = &contract.functions[0].frame.regions[region.0 as usize];
+            let schema = match region.shape.words.as_slice() {
+                [kinds] => match kinds.as_slice() {
+                    [WeavyWordKind::Handle(schema)] => *schema,
+                    _ => {
+                        return Err(lowering_diagnostic(
+                            span,
+                            "shared value parameter is not a typed handle entry",
+                        ));
+                    }
+                },
+                _ => {
+                    return Err(lowering_diagnostic(
+                        span,
+                        "shared value parameter is not a one-word handle entry",
+                    ));
+                }
+            };
+            Ok(ValueInputBinding {
+                value: *value,
+                entry,
+                schema,
+                store_schema: semantic_schema_id(&parameter.ty),
+                payload_element_schema: match &parameter.ty {
+                    Type::Array(element) => Some(schemas.schema_for(element, span)?),
+                    _ => None,
+                },
+            })
+        })
+        .collect()
 }
 
 fn island_contains_checked_collection_ops(island: &Island) -> bool {
@@ -631,7 +718,7 @@ fn bind_constants(
         .into_values()
         .map(|pending| {
             let owner_parameters = if pending.node.function == island.function {
-                0
+                island.parameters.len()
             } else {
                 island
                     .callees
@@ -639,8 +726,13 @@ fn bind_constants(
                     .find(|function| function.id == pending.node.function)
                     .map_or(0, |function| function.parameters.len())
             };
-            let root_entry =
-                constant_entry_index(island.function, pending.node, 0, layouts, pending.span)?;
+            let root_entry = constant_entry_index(
+                island.function,
+                pending.node,
+                island.parameters.len(),
+                layouts,
+                pending.span,
+            )?;
             let owner_entry = constant_entry_index(
                 pending.node.function,
                 pending.node,
@@ -1381,7 +1473,7 @@ impl<'a> ProgramContractBuilder<'a> {
         function_order.push(FunctionContractSource {
             id: island.function,
             span: Span { start: 0, end: 0 },
-            parameters: &[],
+            parameters: island.parameters.as_slice(),
             nodes: island.nodes.as_slice(),
             output: root_output,
         });

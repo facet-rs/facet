@@ -18,9 +18,9 @@
 //! RSS reports a typed [`BudgetOutcome::RssEnforcementUnsupported`] seam rather
 //! than silently degrading to an unenforceable assertion.
 
-use std::io::{Read, Write};
+use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::{Child, Command, ExitStatus, Stdio};
+use std::process::{ChildStdout, Command, ExitStatus, Stdio};
 use std::time::{Duration, Instant};
 
 use crate::vir::Budget;
@@ -72,6 +72,20 @@ pub enum ChildReport {
     Completed,
     /// The workload failed to run (e.g. the source did not compile).
     Failed { message: String },
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum ParentMessage {
+    Prepare { workload: Workload },
+    Start,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum ChildMessage {
+    Ready,
+    Report { report: ChildReport },
 }
 
 impl ChildReport {
@@ -178,7 +192,9 @@ pub fn run_under_budget(child_exe: &Path, budget: &Budget, workload: &Workload) 
         };
     }
 
-    let request = match facet_json::to_string(workload) {
+    let request = match facet_json::to_string(&ParentMessage::Prepare {
+        workload: workload.clone(),
+    }) {
         Ok(request) => request,
         Err(error) => {
             return BudgetOutcome::ChildError {
@@ -200,17 +216,71 @@ pub fn run_under_budget(child_exe: &Path, budget: &Budget, workload: &Workload) 
         }
     };
 
-    // Hand the child its request and close stdin so the child reaches EOF and
-    // begins execution.
-    if let Some(mut stdin) = child.stdin.take()
-        && let Err(error) = stdin.write_all(request.as_bytes())
+    let Some(mut stdin) = child.stdin.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return BudgetOutcome::ChildError {
+            detail: "child stdin was not piped".to_owned(),
+        };
+    };
+    let Some(stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return BudgetOutcome::ChildError {
+            detail: "child stdout was not piped".to_owned(),
+        };
+    };
+    if let Err(error) = stdin
+        .write_all(request.as_bytes())
+        .and_then(|()| stdin.write_all(b"\n"))
+        .and_then(|()| stdin.flush())
     {
         let _ = child.kill();
         let _ = child.wait();
         return BudgetOutcome::ChildError {
-            detail: format!("writing workload request: {error}"),
+            detail: format!("writing preparation request: {error}"),
         };
     }
+    let mut stdout = BufReader::new(stdout);
+    let mut ready = String::new();
+    if let Err(error) = stdout.read_line(&mut ready) {
+        let _ = child.kill();
+        let _ = child.wait();
+        return BudgetOutcome::ChildError {
+            detail: format!("reading readiness message: {error}"),
+        };
+    }
+    match facet_json::from_str::<ChildMessage>(ready.trim_end()) {
+        Ok(ChildMessage::Ready) => {}
+        Ok(ChildMessage::Report { report }) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return BudgetOutcome::ChildError {
+                detail: format!("child reported before readiness: {report:?}"),
+            };
+        }
+        Err(error) => {
+            let _ = child.kill();
+            let _ = child.wait();
+            return BudgetOutcome::ChildError {
+                detail: format!("decoding readiness message: {error}; stdout: {ready:?}"),
+            };
+        }
+    }
+    let start_message = facet_json::to_string(&ParentMessage::Start)
+        .expect("fixed start message is facet-json encodable");
+    if let Err(error) = stdin
+        .write_all(start_message.as_bytes())
+        .and_then(|()| stdin.write_all(b"\n"))
+        .and_then(|()| stdin.flush())
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        return BudgetOutcome::ChildError {
+            detail: format!("writing start message: {error}"),
+        };
+    }
+    drop(stdin);
 
     let pid = child.id();
     let start = Instant::now();
@@ -226,7 +296,7 @@ pub fn run_under_budget(child_exe: &Path, budget: &Budget, workload: &Workload) 
                         elapsed_ns: saturating_nanos(elapsed),
                     };
                 }
-                return finished(&mut child, status);
+                return finished(&mut stdout, status);
             }
             Ok(None) => {}
             Err(error) => {
@@ -269,18 +339,19 @@ pub fn run_under_budget(child_exe: &Path, budget: &Budget, workload: &Workload) 
 }
 
 /// Collect a normally-exited child's report from stdout.
-fn finished(child: &mut Child, status: ExitStatus) -> BudgetOutcome {
+fn finished(stdout: &mut BufReader<ChildStdout>, status: ExitStatus) -> BudgetOutcome {
     let mut output = String::new();
-    if let Some(mut stdout) = child.stdout.take() {
-        let _ = stdout.read_to_string(&mut output);
-    }
+    let _ = stdout.read_line(&mut output);
     if !status.success() {
         return BudgetOutcome::ChildError {
             detail: format!("child exited with {status}; stdout: {output:?}"),
         };
     }
-    match facet_json::from_str::<ChildReport>(&output) {
-        Ok(report) => BudgetOutcome::Within { report },
+    match facet_json::from_str::<ChildMessage>(output.trim_end()) {
+        Ok(ChildMessage::Report { report }) => BudgetOutcome::Within { report },
+        Ok(ChildMessage::Ready) => BudgetOutcome::ChildError {
+            detail: "child sent duplicate readiness instead of a report".to_owned(),
+        },
         Err(error) => BudgetOutcome::ChildError {
             detail: format!("decoding child report: {error}; stdout: {output:?}"),
         },
@@ -295,20 +366,42 @@ fn saturating_nanos(duration: Duration) -> u64 {
 /// execute it, and write the report to stdout as facet-json. Runaway workloads
 /// never reach the write; the parent watchdog terminates them. Never returns.
 pub fn run_child_from_stdio() -> ! {
-    let mut input = String::new();
-    std::io::stdin()
-        .read_to_string(&mut input)
-        .expect("read workload request from stdin");
-    let workload: Workload =
-        facet_json::from_str(&input).expect("decode workload request from stdin");
+    let stdin = std::io::stdin();
+    let mut input = BufReader::new(stdin.lock());
+    let mut line = String::new();
+    input
+        .read_line(&mut line)
+        .expect("read workload preparation request from stdin");
+    let ParentMessage::Prepare { workload } =
+        facet_json::from_str(line.trim_end()).expect("decode workload preparation request")
+    else {
+        panic!("first parent message must prepare a workload")
+    };
     let prepared = prepare_workload(&workload);
-    let report = execute_prepared(prepared);
-    let encoded = facet_json::to_string(&report).expect("encode child report");
     let mut stdout = std::io::stdout();
+    let ready = facet_json::to_string(&ChildMessage::Ready).expect("encode readiness message");
+    stdout
+        .write_all(ready.as_bytes())
+        .and_then(|()| stdout.write_all(b"\n"))
+        .and_then(|()| stdout.flush())
+        .expect("write readiness message to stdout");
+    line.clear();
+    input
+        .read_line(&mut line)
+        .expect("read execution start message from stdin");
+    let ParentMessage::Start =
+        facet_json::from_str(line.trim_end()).expect("decode execution start message")
+    else {
+        panic!("second parent message must start execution")
+    };
+    let report = execute_prepared(prepared);
+    let encoded =
+        facet_json::to_string(&ChildMessage::Report { report }).expect("encode child report");
     stdout
         .write_all(encoded.as_bytes())
+        .and_then(|()| stdout.write_all(b"\n"))
+        .and_then(|()| stdout.flush())
         .expect("write child report to stdout");
-    stdout.flush().expect("flush child report");
     std::process::exit(0);
 }
 
