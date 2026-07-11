@@ -1098,6 +1098,35 @@ impl<'a> ProgramContractBuilder<'a> {
         } else {
             None
         };
+        if let Some(scratch) = layout.outcome_scratch {
+            let assigned = self.regions.outcome_scratch(function.id, function.span)?;
+            for (slot, region_id) in std::iter::once((scratch.condition, assigned.condition))
+                .chain(scratch.fields.into_iter().zip(assigned.fields))
+            {
+                if region_id.0 as usize != regions.len() {
+                    return Err(lowering_diagnostic(
+                        function.span,
+                        "array outcome scratch contract order is not canonical",
+                    ));
+                }
+                regions.push(WeavyFrameRegion::new(
+                    slot.byte_offset(),
+                    WeavyRegionShape::word(WeavyWordKind::Scalar),
+                ));
+            }
+        }
+        for (&node, outcome) in &layout.call_outcomes {
+            let region_id = self
+                .regions
+                .call_outcome(function.id, node, function.span)?;
+            if region_id.0 as usize != regions.len() {
+                return Err(lowering_diagnostic(
+                    function.span,
+                    "array call outcome contract order is not canonical",
+                ));
+            }
+            regions.push(self.frame_region(outcome.region.start(), &outcome.ty)?);
+        }
         let mut entries = Vec::with_capacity(
             function
                 .parameters
@@ -1521,11 +1550,19 @@ struct RegionAssignments {
     temps: BTreeMap<FunctionId, BTreeMap<NodeId, Vec<WeavyRegionId>>>,
     closures: BTreeMap<FunctionId, BTreeMap<NodeId, (WeavyRegionId, WeavyRegionId)>>,
     outcomes: BTreeMap<FunctionId, WeavyRegionId>,
+    outcome_scratch: BTreeMap<FunctionId, AssignedOutcomeScratch>,
+    call_outcomes: BTreeMap<FunctionId, BTreeMap<NodeId, WeavyRegionId>>,
 }
 
 #[derive(Clone, Copy)]
 struct AssignedControlRegions {
     condition: WeavyRegionId,
+}
+
+#[derive(Clone, Copy)]
+struct AssignedOutcomeScratch {
+    condition: WeavyRegionId,
+    fields: [WeavyRegionId; 3],
 }
 
 impl RegionAssignments {
@@ -1539,6 +1576,8 @@ impl RegionAssignments {
         let mut temps = BTreeMap::new();
         let mut closures = BTreeMap::new();
         let mut outcomes = BTreeMap::new();
+        let mut outcome_scratch = BTreeMap::new();
+        let mut call_outcomes = BTreeMap::new();
         let mut insert = |function: FunctionId, body: &[Node], span: Span| {
             let layout = layouts.get(&function).ok_or_else(|| {
                 lowering_diagnostic(span, "missing function layout for region assignment")
@@ -1618,12 +1657,34 @@ impl RegionAssignments {
                 }
             }
             if layout.array_outcome.is_some() {
-                outcomes.insert(
-                    function,
-                    WeavyRegionId(u32::try_from(next).map_err(|_| {
-                        lowering_diagnostic(span, "array outcome region assignment exceeds u32")
-                    })?),
-                );
+                let outcome = WeavyRegionId(u32::try_from(next).map_err(|_| {
+                    lowering_diagnostic(span, "array outcome region assignment exceeds u32")
+                })?);
+                outcomes.insert(function, outcome);
+                next += 1;
+                let condition = WeavyRegionId(u32::try_from(next).map_err(|_| {
+                    lowering_diagnostic(span, "array outcome scratch assignment exceeds u32")
+                })?);
+                next += 1;
+                let mut fields = [WeavyRegionId(0); 3];
+                for field in &mut fields {
+                    *field = WeavyRegionId(u32::try_from(next).map_err(|_| {
+                        lowering_diagnostic(span, "array outcome scratch assignment exceeds u32")
+                    })?);
+                    next += 1;
+                }
+                outcome_scratch.insert(function, AssignedOutcomeScratch { condition, fields });
+                let mut assigned_calls = BTreeMap::new();
+                for node in layout.call_outcomes.keys() {
+                    assigned_calls.insert(
+                        *node,
+                        WeavyRegionId(u32::try_from(next).map_err(|_| {
+                            lowering_diagnostic(span, "array call outcome assignment exceeds u32")
+                        })?),
+                    );
+                    next += 1;
+                }
+                call_outcomes.insert(function, assigned_calls);
             }
             nodes.insert(function, assigned);
             temps.insert(function, assigned_temps);
@@ -1640,6 +1701,8 @@ impl RegionAssignments {
             temps,
             closures,
             outcomes,
+            outcome_scratch,
+            call_outcomes,
         })
     }
 
@@ -1707,6 +1770,29 @@ impl RegionAssignments {
             )
         })
     }
+
+    fn outcome_scratch(
+        &self,
+        function: FunctionId,
+        span: Span,
+    ) -> Result<AssignedOutcomeScratch, Diagnostics> {
+        self.outcome_scratch.get(&function).copied().ok_or_else(|| {
+            lowering_diagnostic(span, "array-bearing function has no outcome scratch")
+        })
+    }
+
+    fn call_outcome(
+        &self,
+        function: FunctionId,
+        node: NodeId,
+        span: Span,
+    ) -> Result<WeavyRegionId, Diagnostics> {
+        self.call_outcomes
+            .get(&function)
+            .and_then(|nodes| nodes.get(&node))
+            .copied()
+            .ok_or_else(|| lowering_diagnostic(span, "direct call has no assigned outcome region"))
+    }
 }
 
 struct FunctionLayout {
@@ -1717,6 +1803,8 @@ struct FunctionLayout {
     scratch: Option<FrameSlot>,
     control_scratch: Option<ControlScratch>,
     array_outcome: Option<TemporaryRegion>,
+    outcome_scratch: Option<OutcomeScratch>,
+    call_outcomes: BTreeMap<NodeId, TemporaryRegion>,
     frame_size: usize,
 }
 
@@ -1730,6 +1818,12 @@ struct TemporaryRegion {
 struct ControlScratch {
     expected: FrameSlot,
     condition: FrameSlot,
+}
+
+#[derive(Clone, Copy)]
+struct OutcomeScratch {
+    condition: FrameSlot,
+    fields: [FrameSlot; 3],
 }
 
 impl FunctionLayout {
@@ -1896,6 +1990,32 @@ impl FunctionLayout {
         } else {
             None
         };
+        let outcome_scratch = if array_outcome.is_some() {
+            let condition = FrameSlot::for_word(next_word)
+                .ok_or_else(|| lowering_diagnostic(span, "array outcome scratch overflow"))?;
+            next_word += 1;
+            let mut fields = [FrameSlot::for_word(0).expect("zero slot"); 3];
+            for field in &mut fields {
+                *field = FrameSlot::for_word(next_word)
+                    .ok_or_else(|| lowering_diagnostic(span, "array outcome scratch overflow"))?;
+                next_word += 1;
+            }
+            Some(OutcomeScratch { condition, fields })
+        } else {
+            None
+        };
+        let mut call_outcomes = BTreeMap::new();
+        if array_outcome.is_some() {
+            for node in nodes.iter().filter(|node| matches!(node.op, Op::Call(_))) {
+                let ty = ArrayOutcomeAbi::for_value(node.ty.clone()).ty;
+                let words = type_words(&ty, node.span)?;
+                let region = FrameRegion::for_words(next_word, words).ok_or_else(|| {
+                    lowering_diagnostic(node.span, "array call outcome frame region overflow")
+                })?;
+                next_word += words.as_usize();
+                call_outcomes.insert(node.id, TemporaryRegion { region, ty });
+            }
+        }
         let frame_size = FrameSlot::frame_size(next_word)
             .ok_or_else(|| lowering_diagnostic(span, "function frame size overflow"))?;
         Ok(Self {
@@ -1906,6 +2026,8 @@ impl FunctionLayout {
             scratch,
             control_scratch,
             array_outcome,
+            outcome_scratch,
+            call_outcomes,
             frame_size,
         })
     }
@@ -2138,11 +2260,13 @@ fn lower_vir_function(
     let node_ids = nodes.iter().map(|node| node.id).collect::<Vec<_>>();
     let mut values = BTreeMap::new();
     let mut code = CodeBuilder::with_capacity(nodes.len().saturating_mul(2) + 1);
+    let array_return = layout.array_outcome.as_ref().map(|_| code.label());
     {
         let sequence = SequenceContext {
             nodes: &nodes_by_id,
             function: &function_context,
             lowering: context,
+            array_return,
         };
         let mut outputs = SequenceOutputs {
             constants,
@@ -2167,6 +2291,10 @@ fn lower_vir_function(
                 source: output_value.region_id,
             }],
         });
+        code.bind(
+            array_return.expect("array outcome has return label"),
+            output_node.span,
+        )?;
         code.push(WeavyOp::Ret {
             src: outcome.region.start().byte_offset(),
             size: outcome.region.byte_size().ok_or_else(|| {
@@ -2200,6 +2328,7 @@ struct SequenceContext<'nodes, 'function, 'lowering> {
     nodes: &'nodes BTreeMap<NodeId, &'nodes Node>,
     function: &'function FunctionLoweringContext<'function>,
     lowering: &'lowering LoweringContext<'lowering>,
+    array_return: Option<CodeLabel>,
 }
 
 struct SequenceOutputs<'constants, 'code> {
@@ -2276,6 +2405,9 @@ fn lower_node_sequence(
         let previous_source = outputs.code.swap_source(Some(node_ref));
         outputs.code.push(WeavyOp::Trace { id: trace_id });
         let representation = match &node.op {
+            Op::Call(callee) if sequence.function.layout.array_outcome.is_some() => {
+                lower_array_call_node(node, dst_region_id, values, *callee, sequence, outputs)?
+            }
             Op::Match { .. } => {
                 lower_match_node(node, dst, dst_region_id, values, sequence, outputs)?
             }
@@ -3358,6 +3490,167 @@ fn lower_call_node(
         args,
         ret: dst.start().byte_offset(),
     })
+}
+
+fn lower_array_call_node(
+    node: &Node,
+    dst_region: WeavyRegionId,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    callee: FunctionId,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    let target = sequence
+        .lowering
+        .functions
+        .get(&callee)
+        .copied()
+        .ok_or_else(|| {
+            lowering_diagnostic(
+                node.span,
+                "called function is absent from the island closure",
+            )
+        })?;
+    if target.return_type != node.ty {
+        return Err(lowering_diagnostic(
+            node.span,
+            "call result does not match the called function",
+        ));
+    }
+    require_input_count(node, target.parameters.len())?;
+    let target_layout = sequence
+        .lowering
+        .layouts
+        .get(&callee)
+        .ok_or_else(|| lowering_diagnostic(node.span, "called function has no frame layout"))?;
+    let call_outcome = sequence
+        .function
+        .layout
+        .call_outcomes
+        .get(&node.id)
+        .ok_or_else(|| lowering_diagnostic(node.span, "direct call has no typed outcome layout"))?;
+    let call_outcome_id =
+        sequence
+            .lowering
+            .regions
+            .call_outcome(sequence.function.id, node.id, node.span)?;
+    let mut args = Vec::with_capacity(
+        target
+            .parameters
+            .len()
+            .saturating_add(target_layout.constant_slots.len()),
+    );
+    for (index, parameter) in target.parameters.iter().enumerate() {
+        let source = input_value(node, values, index)?;
+        require_value(
+            node,
+            &source,
+            &parameter.ty,
+            representation_for_type(&parameter.ty, node.span)?,
+        )?;
+        let parameter_region = target_layout.region(parameter.node, node.span)?;
+        args.push(ArgCopy {
+            src: source.region.start().byte_offset(),
+            dst: parameter_region.start().byte_offset(),
+            size: source
+                .region
+                .byte_size()
+                .ok_or_else(|| lowering_diagnostic(node.span, "argument size overflow"))?,
+        });
+    }
+    for (&constant, &target_slot) in &target_layout.constant_slots {
+        let source_slot = sequence
+            .function
+            .layout
+            .constant_slot(constant, node.span)?;
+        args.push(ArgCopy {
+            src: source_slot.byte_offset(),
+            dst: target_slot.byte_offset(),
+            size: FrameSlot::word_size(),
+        });
+    }
+    let callee = *sequence
+        .lowering
+        .function_ids
+        .get(&callee)
+        .ok_or_else(|| lowering_diagnostic(node.span, "called function has no local ABI id"))?;
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(node.span, "array-bearing function has no outcome scratch")
+    })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let own_outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(
+            node.span,
+            "array-bearing function has no outcome return label",
+        )
+    })?;
+    let failures = outputs.code.label();
+    let done = outputs.code.label();
+    outputs.code.push(WeavyOp::Call {
+        callee: WeavyFnId(callee),
+        args,
+        ret: call_outcome.region.start().byte_offset(),
+    });
+    outputs.code.push(WeavyOp::EnumIsVariant {
+        dst: assigned.condition,
+        value: call_outcome_id,
+        variant: 0,
+    });
+    outputs.code.jump_if_zero(scratch.condition, failures);
+    outputs.code.push(WeavyOp::EnumProjectChecked {
+        dst: dst_region,
+        value: call_outcome_id,
+        variant: 0,
+        field: 0,
+    });
+    outputs.code.jump(done);
+    outputs.code.bind(failures, node.span)?;
+    for (variant, field_count) in [(1u32, 3usize), (2u32, 2usize)] {
+        let next = outputs.code.label();
+        outputs.code.push(WeavyOp::EnumIsVariant {
+            dst: assigned.condition,
+            value: call_outcome_id,
+            variant,
+        });
+        outputs.code.jump_if_zero(scratch.condition, next);
+        for field in 0..field_count {
+            outputs.code.push(WeavyOp::EnumProjectChecked {
+                dst: assigned.fields[field],
+                value: call_outcome_id,
+                variant,
+                field: field as u32,
+            });
+        }
+        outputs.code.push(WeavyOp::EnumConstruct {
+            dst: own_outcome,
+            variant,
+            fields: (0..field_count)
+                .map(|field| StructuralFieldSource {
+                    field: field as u32,
+                    source: assigned.fields[field],
+                })
+                .collect(),
+        });
+        outputs.code.jump(return_label);
+        outputs.code.bind(next, node.span)?;
+    }
+    // Both checked selectors above validate the closed source enum; a surviving
+    // path is unreachable for a valid selector and is deliberately loud.
+    outputs.code.push(WeavyOp::EnumProjectChecked {
+        dst: assigned.fields[0],
+        value: call_outcome_id,
+        variant: 2,
+        field: 0,
+    });
+    outputs.code.bind(done, node.span)?;
+    Ok(representation_for_type(&node.ty, node.span)?)
 }
 
 fn lower_call_value_node(
