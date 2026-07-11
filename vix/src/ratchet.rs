@@ -2,11 +2,38 @@
 
 use crate::compiler::Compiler;
 use crate::diagnostic::Diagnostics;
-use crate::lowering::{LoweringCache, LoweringCacheCounters, attribution_for};
+use crate::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
 use crate::runtime::{
-    ChaosPolicy, Counters, DemandState, Evaluation, Event, EventLog, Location, Runtime, TaskState,
-    ValueId,
+    ChaosPolicy, Counters, DemandState, Evaluation, Event, EventLog, Location, MachineError,
+    Runtime, TaskState, ValueId,
 };
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RunError {
+    Diagnostics(Diagnostics),
+    Machine(MachineError),
+}
+
+impl From<Diagnostics> for RunError {
+    fn from(diagnostics: Diagnostics) -> Self {
+        Self::Diagnostics(diagnostics)
+    }
+}
+
+impl From<LoweringError> for RunError {
+    fn from(error: LoweringError) -> Self {
+        match error {
+            LoweringError::Diagnostics(diagnostics) => Self::Diagnostics(diagnostics),
+            LoweringError::Machine(error) => Self::Machine(error),
+        }
+    }
+}
+
+impl From<MachineError> for RunError {
+    fn from(error: MachineError) -> Self {
+        Self::Machine(error)
+    }
+}
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct CheckRun {
@@ -54,7 +81,7 @@ impl RatchetReport {
 ///
 /// r[impl machine.scheduler.chaos-kill-oracle]
 /// r[impl machine.scheduler.replay-is-semantics]
-pub fn run_source(source: &str) -> Result<RatchetReport, Diagnostics> {
+pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
     let module = Compiler::new().compile(source)?;
     let mut cache = LoweringCache::default();
 
@@ -77,7 +104,7 @@ fn run_lane(
     module: &crate::vir::Module,
     cache: &mut LoweringCache,
     chaos: ChaosPolicy,
-) -> Result<SuiteRun, Diagnostics> {
+) -> Result<SuiteRun, RunError> {
     let mut runtime = Runtime::new(EventLog::default());
     let mut checks = Vec::new();
     let mut kill_available = chaos.kill_first_running_task;

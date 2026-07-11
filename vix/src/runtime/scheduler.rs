@@ -1,18 +1,21 @@
 use std::collections::BTreeMap;
 
+use weavy::exec::{FallbackReason, FaultSite, LaneKind, TaskFault};
 use weavy::task::{FnId, TaskEvent as WeavyTaskEvent, TaskStep};
 
-use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics};
 use crate::lowering::{LoweringArtifact, LoweringAttribution};
-use crate::support::Span;
 use crate::vir::IslandId;
 
 use super::identity::{DemandKey, DemandPreimage, Location, LocationId, SchemaId, ValueId};
 use super::model::{
     DemandRecord, DemandState, MemoVerdict, Receipt, TaskId, TaskRecord, TaskState,
 };
-use super::observe::{Counters, Event, EventKind, EventSink, SafePointClass};
+use super::observe::{
+    Counters, Event, EventKind, EventSink, ExecutionFacts, ExecutionFallbackFact,
+    ExecutionLaneFact, SafePointClass,
+};
 use super::store::{Handle, Interned, Store, StoreEntry};
+use super::{MachineAttribution, MachineError, MachineOperation, RuntimeFault};
 
 #[derive(Clone, Debug)]
 struct MemoEntry {
@@ -75,7 +78,7 @@ impl<S: EventSink> Runtime<S> {
         lowered: &LoweringArtifact,
         attribution: &LoweringAttribution,
         chaos: ChaosPolicy,
-    ) -> Result<Evaluation, Diagnostics> {
+    ) -> Result<Evaluation, MachineError> {
         self.emit(EventKind::Demanded {
             key: lowered.demand_key,
         });
@@ -89,7 +92,14 @@ impl<S: EventSink> Runtime<S> {
             let identity = self
                 .store
                 .entry(handle)
-                .ok_or_else(|| runtime_invariant("memo handle missing from store"))?
+                .ok_or_else(|| {
+                    MachineError::runtime(
+                        MachineOperation::MemoRead,
+                        RuntimeFault::MissingMemoStoreHandle,
+                        None,
+                        None,
+                    )
+                })?
                 .identity;
             let passed = self
                 .store
@@ -154,44 +164,137 @@ impl<S: EventSink> Runtime<S> {
                 continue;
             }
 
-            let mut task = lowered
-                .executable()
-                .spawn(FnId(0))
-                .map_err(|fault| runtime_invariant(&format!("Weavy spawn fault: {fault:?}")))?;
-            for (constant, handle) in lowered.constants.iter().zip(constants) {
-                let handle = self.store.weavy_handle(handle).ok_or_else(|| {
-                    runtime_invariant("constant handle missing while initializing task frame")
-                })?;
-                task.write_entry_store_handle(constant.root.entry, constant.root.schema, handle)
-                    .map_err(|fault| {
-                        runtime_invariant(&format!("Weavy constant binding fault: {fault:?}"))
-                    })?;
+            let mut task = match lowered.executable().spawn(FnId(0)) {
+                Ok(task) => task,
+                Err(fault) => {
+                    let error =
+                        self.task_fault(MachineOperation::Spawn, fault, lowered, attribution, None);
+                    return Err(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )?);
+                }
+            };
+            let lane_facts = execution_facts(lowered.executable().lane_facts());
+            match lane_facts.selected {
+                ExecutionLaneFact::Interpreter => self.counters.interpreter_task_spawns += 1,
+                ExecutionLaneFact::Native => self.counters.native_task_spawns += 1,
             }
-            let step = self
-                .store
-                .with_value_memories(|value_memories| {
-                    task.drive_hosted_with_value_memories(&mut [], &[], &mut [], value_memories)
-                })
-                .map_err(|fault| runtime_invariant(&format!("Weavy drive fault: {fault:?}")))?;
+            self.emit(EventKind::ExecutionLane {
+                task: task_id,
+                facts: lane_facts,
+            });
+            for (constant, handle) in lowered.constants.iter().zip(constants) {
+                let handle = match self.store.weavy_handle(handle) {
+                    Some(handle) => handle,
+                    None => {
+                        let error = MachineError::runtime(
+                            MachineOperation::EntryBinding,
+                            RuntimeFault::MissingConstantStoreHandle,
+                            self.constant_attribution(constant.node, attribution),
+                            Some(lowered.demand_key),
+                        );
+                        return Err(self.terminate_machine_fault(
+                            task_id,
+                            lowered.demand_key,
+                            error,
+                        )?);
+                    }
+                };
+                if let Err(fault) =
+                    task.write_entry_store_handle(constant.root.entry, constant.root.schema, handle)
+                {
+                    let error = self.task_fault(
+                        MachineOperation::EntryBinding,
+                        fault,
+                        lowered,
+                        attribution,
+                        self.constant_attribution(constant.node, attribution),
+                    );
+                    return Err(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )?);
+                }
+            }
+            let step = match self.store.with_value_memories(|value_memories| {
+                task.drive_hosted_with_value_memories(&mut [], &[], &mut [], value_memories)
+            }) {
+                Ok(step) => step,
+                Err(fault) => {
+                    let error = self.task_fault(
+                        MachineOperation::Drive,
+                        fault,
+                        lowered,
+                        attribution,
+                        self.root_attribution(lowered, attribution),
+                    );
+                    return Err(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )?);
+                }
+            };
             match step {
                 TaskStep::Done => {}
                 TaskStep::Yielded => {
-                    return Err(runtime_invariant(
-                        "pure island unexpectedly yielded to the host",
-                    ));
+                    let error = MachineError::runtime(
+                        MachineOperation::Drive,
+                        RuntimeFault::PureIslandYielded,
+                        self.root_attribution(lowered, attribution),
+                        Some(lowered.demand_key),
+                    );
+                    return Err(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )?);
                 }
-                TaskStep::Parked { .. } => {
-                    self.transition_task(task_id, TaskState::Parked)?;
-                    return Err(runtime_invariant("pure island unexpectedly parked"));
+                TaskStep::Parked { input } => {
+                    let error = MachineError::runtime(
+                        MachineOperation::Drive,
+                        RuntimeFault::PureIslandParked { input },
+                        self.root_attribution(lowered, attribution),
+                        Some(lowered.demand_key),
+                    );
+                    return Err(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )?);
                 }
             }
             for event in task.trace() {
-                self.emit_weavy(task_id, *event, attribution)?;
+                if let Err(error) =
+                    self.emit_weavy(task_id, *event, attribution, lowered.demand_key)
+                {
+                    return Err(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )?);
+                }
             }
-            let passed = task
-                .result_i64()
-                .map_err(|fault| runtime_invariant(&format!("Weavy result fault: {fault:?}")))?
-                != 0;
+            let passed = match task.result_i64() {
+                Ok(result) => result != 0,
+                Err(fault) => {
+                    let error = self.task_fault(
+                        MachineOperation::Result,
+                        fault,
+                        lowered,
+                        attribution,
+                        self.root_attribution(lowered, attribution),
+                    );
+                    return Err(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )?);
+                }
+            };
             let interned = self
                 .store
                 .intern_realized(SchemaId::named("vix.Check.v1"), &[u8::from(passed)]);
@@ -271,24 +374,32 @@ impl<S: EventSink> Runtime<S> {
         id
     }
 
-    fn transition_demand(&mut self, key: DemandKey, to: DemandState) -> Result<(), Diagnostics> {
-        let from = self
-            .demands
-            .get(&key)
-            .ok_or_else(|| runtime_invariant("demand transition without a demand record"))?
-            .state;
-        self.demands.get_mut(&key).expect("checked above").state = to;
+    fn transition_demand(&mut self, key: DemandKey, to: DemandState) -> Result<(), MachineError> {
+        let demand = self.demands.get_mut(&key).ok_or_else(|| {
+            MachineError::runtime(
+                MachineOperation::DemandTransition,
+                RuntimeFault::MissingDemandRecord { key },
+                None,
+                Some(key),
+            )
+        })?;
+        let from = demand.state;
+        demand.state = to;
         self.emit(EventKind::DemandTransition { key, from, to });
         Ok(())
     }
 
-    fn transition_task(&mut self, id: TaskId, to: TaskState) -> Result<(), Diagnostics> {
-        let from = self
-            .tasks
-            .get(&id)
-            .ok_or_else(|| runtime_invariant("task transition without a task record"))?
-            .state;
-        self.tasks.get_mut(&id).expect("checked above").state = to;
+    fn transition_task(&mut self, id: TaskId, to: TaskState) -> Result<(), MachineError> {
+        let task = self.tasks.get_mut(&id).ok_or_else(|| {
+            MachineError::runtime(
+                MachineOperation::TaskTransition,
+                RuntimeFault::MissingTaskRecord,
+                None,
+                None,
+            )
+        })?;
+        let from = task.state;
+        task.state = to;
         self.emit(EventKind::TaskTransition { task: id, from, to });
         Ok(())
     }
@@ -298,26 +409,42 @@ impl<S: EventSink> Runtime<S> {
         task: TaskId,
         event: WeavyTaskEvent,
         attribution: &LoweringAttribution,
-    ) -> Result<(), Diagnostics> {
+        demand: DemandKey,
+    ) -> Result<(), MachineError> {
         let kind = match event {
             WeavyTaskEvent::FrameEntered(function) => EventKind::WeavyFrameEntered {
                 task,
-                function: attribution
-                    .function_for_frame(function.0)
-                    .ok_or_else(|| runtime_invariant("Weavy frame has no Vix attribution"))?,
+                function: attribution.function_for_frame(function.0).ok_or_else(|| {
+                    MachineError::runtime(
+                        MachineOperation::TraceAttribution,
+                        RuntimeFault::MissingFrameAttribution { function },
+                        None,
+                        Some(demand),
+                    )
+                })?,
             },
             WeavyTaskEvent::FrameExited(function) => EventKind::WeavyFrameExited {
                 task,
-                function: attribution
-                    .function_for_frame(function.0)
-                    .ok_or_else(|| runtime_invariant("Weavy frame has no Vix attribution"))?,
+                function: attribution.function_for_frame(function.0).ok_or_else(|| {
+                    MachineError::runtime(
+                        MachineOperation::TraceAttribution,
+                        RuntimeFault::MissingFrameAttribution { function },
+                        None,
+                        Some(demand),
+                    )
+                })?,
             },
             WeavyTaskEvent::Parked { input } => EventKind::WeavyParked { task, input },
             WeavyTaskEvent::Resumed => EventKind::WeavyResumed { task },
             WeavyTaskEvent::Mark(id) => {
-                let source = attribution
-                    .source_for_trace(id)
-                    .ok_or_else(|| runtime_invariant("Weavy trace has no Vix attribution"))?;
+                let source = attribution.source_for_trace(id).ok_or_else(|| {
+                    MachineError::runtime(
+                        MachineOperation::TraceAttribution,
+                        RuntimeFault::MissingTraceAttribution { trace: id },
+                        None,
+                        Some(demand),
+                    )
+                })?;
                 EventKind::WeavyMark {
                     task,
                     function: source.function,
@@ -327,6 +454,76 @@ impl<S: EventSink> Runtime<S> {
         };
         self.emit(kind);
         Ok(())
+    }
+
+    fn terminate_machine_fault(
+        &mut self,
+        task: TaskId,
+        demand: DemandKey,
+        error: MachineError,
+    ) -> Result<MachineError, MachineError> {
+        self.transition_task(task, TaskState::Failed)?;
+        self.transition_demand(demand, DemandState::Failed)?;
+        self.emit(EventKind::MachineFailed {
+            task,
+            key: demand,
+            operation: error.operation,
+        });
+        Ok(error)
+    }
+
+    fn constant_attribution(
+        &self,
+        node: crate::vir::NodeRef,
+        attribution: &LoweringAttribution,
+    ) -> Option<MachineAttribution> {
+        let source = attribution.source_for_node(node)?;
+        let weavy_function = attribution
+            .functions
+            .iter()
+            .position(|function| *function == source.function)
+            .and_then(|frame| u32::try_from(frame).ok())
+            .map(FnId);
+        Some(MachineAttribution {
+            function: source.function,
+            node: source.node,
+            span: source.span,
+            weavy_function,
+            weavy_pc: None,
+        })
+    }
+
+    fn root_attribution(
+        &self,
+        lowered: &LoweringArtifact,
+        attribution: &LoweringAttribution,
+    ) -> Option<MachineAttribution> {
+        let (pc, node) = lowered
+            .pc_nodes
+            .first()
+            .and_then(|nodes| nodes.iter().enumerate().next_back())?;
+        let source = attribution.source_for_node(*node)?;
+        Some(MachineAttribution {
+            function: source.function,
+            node: source.node,
+            span: source.span,
+            weavy_function: Some(FnId(0)),
+            weavy_pc: Some(pc),
+        })
+    }
+
+    fn task_fault(
+        &self,
+        operation: MachineOperation,
+        fault: TaskFault,
+        lowered: &LoweringArtifact,
+        attribution: &LoweringAttribution,
+        fallback: Option<MachineAttribution>,
+    ) -> MachineError {
+        let source = task_fault_site(&fault)
+            .and_then(|site| task_fault_attribution(site, lowered, attribution))
+            .or(fallback);
+        MachineError::task(operation, fault, source, lowered.demand_key)
     }
 
     fn emit(&mut self, kind: EventKind) {
@@ -373,13 +570,64 @@ impl<S: EventSink> Runtime<S> {
     }
 }
 
-fn runtime_invariant(detail: &str) -> Diagnostics {
-    Diagnostics::one(Diagnostic {
-        code: DiagnosticCode::RuntimeInvariant,
-        primary: Span { start: 0, end: 0 },
-        labels: Vec::new(),
-        payload: DiagnosticPayload::Invariant {
-            detail: detail.to_owned(),
-        },
+fn execution_facts(facts: weavy::exec::LaneFacts) -> ExecutionFacts {
+    let selected = match facts.selected {
+        LaneKind::Interpreter => ExecutionLaneFact::Interpreter,
+        LaneKind::Native => ExecutionLaneFact::Native,
+    };
+    let fallback = facts.fallback.map(|fallback| match fallback {
+        FallbackReason::NativeUnavailable => ExecutionFallbackFact::NativeUnavailable,
+        FallbackReason::DisabledByEnvironment => ExecutionFallbackFact::DisabledByEnvironment,
+    });
+    ExecutionFacts {
+        selected,
+        native_available: facts.native_available,
+        native_compiled: facts.native_compiled,
+        fallback,
+    }
+}
+
+fn task_fault_site(fault: &TaskFault) -> Option<&FaultSite> {
+    match fault {
+        TaskFault::IndirectCalleeNegative { site, .. }
+        | TaskFault::IndirectCalleeOutOfRange { site, .. }
+        | TaskFault::IndirectCalleeContractMismatch { site, .. }
+        | TaskFault::MissingIndirectCallFacts { site }
+        | TaskFault::UnresidentCompareValueBytes { site, .. }
+        | TaskFault::InvalidEnumSelector { site, .. }
+        | TaskFault::EnumProjectionMismatch { site, .. } => Some(site),
+        TaskFault::PoisonedReDrive { original } | TaskFault::PoisonedResult { original } => {
+            task_fault_site(original)
+        }
+        TaskFault::InvalidEntryFunction { .. }
+        | TaskFault::InvalidEntryShape { .. }
+        | TaskFault::InvalidEntryIndex { .. }
+        | TaskFault::EntryKindMismatch { .. }
+        | TaskFault::EntryMissing { .. }
+        | TaskFault::EntryAlreadyInitialized { .. }
+        | TaskFault::EntryWriteAfterDrive { .. }
+        | TaskFault::EntryValueSize { .. }
+        | TaskFault::InvalidResultShape { .. }
+        | TaskFault::DriveTableLength { .. }
+        | TaskFault::NativeFaultExit { .. }
+        | TaskFault::InvalidFaultSite { .. }
+        | TaskFault::ResultBeforeDone { .. }
+        | TaskFault::DriveAfterDone => None,
+    }
+}
+
+fn task_fault_attribution(
+    site: &FaultSite,
+    lowered: &LoweringArtifact,
+    attribution: &LoweringAttribution,
+) -> Option<MachineAttribution> {
+    let node = lowered.node_for_pc(site.function.0, site.pc as u32)?;
+    let source = attribution.source_for_node(node)?;
+    Some(MachineAttribution {
+        function: source.function,
+        node: source.node,
+        span: source.span,
+        weavy_function: Some(site.function),
+        weavy_pc: Some(site.pc),
     })
 }

@@ -23,7 +23,8 @@ use weavy::{
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics};
 use crate::runtime::{
-    DemandKey, DemandPreimage, FrameRegion, FrameSlot, FrameWords, RecipeId, SchemaId,
+    DemandKey, DemandPreimage, FrameRegion, FrameSlot, FrameWords, MachineAttribution,
+    MachineError, MachineOperation, RecipeId, SchemaId,
 };
 use crate::support::Span;
 use crate::vir::{
@@ -103,6 +104,24 @@ pub struct LoweringArtifact {
     pub constants: Vec<ValueConstant>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LoweringError {
+    Diagnostics(Diagnostics),
+    Machine(MachineError),
+}
+
+impl From<Diagnostics> for LoweringError {
+    fn from(diagnostics: Diagnostics) -> Self {
+        Self::Diagnostics(diagnostics)
+    }
+}
+
+impl From<MachineError> for LoweringError {
+    fn from(error: MachineError) -> Self {
+        Self::Machine(error)
+    }
+}
+
 impl LoweringArtifact {
     #[must_use]
     pub fn program(&self) -> &WeavyProgram {
@@ -178,7 +197,7 @@ pub struct LoweringCache {
 }
 
 impl LoweringCache {
-    pub fn get_or_lower(&mut self, island: &Island) -> Result<&LoweringArtifact, Diagnostics> {
+    pub fn get_or_lower(&mut self, island: &Island) -> Result<&LoweringArtifact, LoweringError> {
         let recipe = RecipeId::from_canonical_vir(&island.canonical_recipe_bytes());
         if self.entries.contains_key(&recipe) {
             self.counters.hits += 1;
@@ -239,17 +258,14 @@ fn push_source_entries(entries: &mut Vec<SourceMapEntry>, function: FunctionId, 
     }
 }
 
-fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, Diagnostics> {
+fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, LoweringError> {
     let output = island
         .nodes
         .iter()
         .find(|node| node.id == island.output)
         .ok_or_else(|| lowering_diagnostic(Span { start: 0, end: 0 }, "missing island output"))?;
     if output.ty != Type::Check {
-        return Err(lowering_diagnostic(
-            output.span,
-            "island output is not a Check",
-        ));
+        return Err(lowering_diagnostic(output.span, "island output is not a Check").into());
     }
 
     let function_ids = island.local_function_ids();
@@ -351,9 +367,10 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
         arguments: Vec::new(),
     };
     let verified = program.verify(contract).map_err(|error| {
-        lowering_diagnostic(
-            output.span,
-            &format!("Weavy verifier rejected lowered program: {error:?}"),
+        MachineError::program(
+            MachineOperation::LoweringVerification,
+            error.clone(),
+            program_error_attribution(&error, &pc_nodes, &attribution),
         )
     })?;
     Ok(LoweringArtifact {
@@ -363,6 +380,26 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
         executable: Executable::new(verified),
         pc_nodes,
         constants,
+    })
+}
+
+fn program_error_attribution(
+    error: &weavy::ProgramError,
+    pc_nodes: &[Vec<NodeRef>],
+    attribution: &LoweringAttribution,
+) -> Option<MachineAttribution> {
+    let (function, pc) = (error.function?, error.pc?);
+    let node = pc_nodes
+        .get(function.0 as usize)
+        .and_then(|nodes| nodes.get(pc))
+        .copied()?;
+    let source = attribution.source_for_node(node)?;
+    Some(MachineAttribution {
+        function: source.function,
+        node: source.node,
+        span: source.span,
+        weavy_function: Some(function),
+        weavy_pc: Some(pc),
     })
 }
 

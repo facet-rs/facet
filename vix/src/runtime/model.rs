@@ -19,6 +19,7 @@ pub enum TaskState {
     Parked,
     Completed,
     Discarded,
+    Failed,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]

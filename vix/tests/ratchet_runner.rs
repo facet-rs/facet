@@ -2352,8 +2352,11 @@ fn rung_025_ordering_is_an_ordinary_matchable_enum() {
 
 #[test]
 fn rung_026_reaches_vir_and_is_red_at_array_lowering() {
-    let diagnostics = run_source(RUNG_026)
+    let error = run_source(RUNG_026)
         .expect_err("rung 026 is deliberately red at production array lowering");
+    let vix::ratchet::RunError::Diagnostics(diagnostics) = error else {
+        panic!("rung 026 must remain a lowering diagnostic");
+    };
     assert_eq!(diagnostics.entries.len(), 1);
     let diagnostic = &diagnostics.entries[0];
     assert_eq!(diagnostic.code, DiagnosticCode::LoweringUnsupported);

@@ -1,6 +1,7 @@
 use crate::diagnostic::DiagnosticCode;
 use crate::vir::{FunctionId, IslandId, NodeId};
 
+use super::MachineOperation;
 use super::identity::{DemandKey, LocationId, ValueId};
 use super::model::{DemandState, MemoVerdict, TaskId, TaskState};
 
@@ -19,6 +20,8 @@ pub struct Counters {
     pub scheduler_requests: u64,
     pub task_spawns: u64,
     pub task_discards: u64,
+    pub native_task_spawns: u64,
+    pub interpreter_task_spawns: u64,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
@@ -26,6 +29,28 @@ pub struct Counters {
 pub enum SafePointClass {
     Edge,
     Poll,
+}
+
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ExecutionLaneFact {
+    Interpreter,
+    Native,
+}
+
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ExecutionFallbackFact {
+    NativeUnavailable,
+    DisabledByEnvironment,
+}
+
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+pub struct ExecutionFacts {
+    pub selected: ExecutionLaneFact,
+    pub native_available: bool,
+    pub native_compiled: bool,
+    pub fallback: Option<ExecutionFallbackFact>,
 }
 
 /// Stable causal event vocabulary. Event ordering is local to this runtime;
@@ -56,6 +81,15 @@ pub enum EventKind {
         task: TaskId,
         from: TaskState,
         to: TaskState,
+    },
+    ExecutionLane {
+        task: TaskId,
+        facts: ExecutionFacts,
+    },
+    MachineFailed {
+        task: TaskId,
+        key: DemandKey,
+        operation: MachineOperation,
     },
     IslandEntered {
         task: TaskId,
