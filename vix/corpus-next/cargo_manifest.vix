@@ -451,41 +451,39 @@ fn register_workspace_members(workspace: Tree, workspace_root: Path, members: [S
 }
 
 fn register_workspace_package(state: WorkspaceIndexState, name: String, version: String, member_path: String) -> WorkspaceIndexState {
-    match state.package_ids.get(name) {
-        Some(_) => state,
-        None => {
-            let pkg = state.next_pkg;
-            let version_id = state.next_version;
-            WorkspaceIndexState {
-                packages: [..state.packages, pkg],
-                package_ids: state.package_ids.insert(name, pkg),
-                member_paths: state.member_paths.insert(pkg, member_path),
-                names: state.names.insert(pkg, name),
-                version_ids: [..state.version_ids, version_id],
-                version_pkgs: state.version_pkgs.insert(version_id, pkg),
-                version_values: state.version_values.insert(version_id, version),
-                next_pkg: pkg + 1,
-                next_version: version_id + 1,
-                ..state
-            }
-        },
+    if state.package_ids.has(name) {
+        state
+    } else {
+        let pkg = state.next_pkg;
+        let version_id = state.next_version;
+        WorkspaceIndexState {
+            packages: [..state.packages, pkg],
+            package_ids: state.package_ids + (name, pkg),
+            member_paths: state.member_paths + (pkg, member_path),
+            names: state.names + (pkg, name),
+            version_ids: [..state.version_ids, version_id],
+            version_pkgs: state.version_pkgs + (version_id, pkg),
+            version_values: state.version_values + (version_id, version),
+            next_pkg: pkg + 1,
+            next_version: version_id + 1,
+            ..state
+        }
     }
 }
 
 fn register_sparse_package_name(state: WorkspaceIndexState, name: String) -> WorkspaceIndexState {
-    match state.package_ids.get(name) {
-        Some(_) => state,
-        None => {
-            let pkg = state.next_pkg;
-            WorkspaceIndexState {
-                packages: [..state.packages, pkg],
-                package_ids: state.package_ids.insert(name, pkg),
-                member_paths: state.member_paths.insert(pkg, ""),
-                names: state.names.insert(pkg, name),
-                next_pkg: pkg + 1,
-                ..state
-            }
-        },
+    if state.package_ids.has(name) {
+        state
+    } else {
+        let pkg = state.next_pkg;
+        WorkspaceIndexState {
+            packages: [..state.packages, pkg],
+            package_ids: state.package_ids + (name, pkg),
+            member_paths: state.member_paths + (pkg, ""),
+            names: state.names + (pkg, name),
+            next_pkg: pkg + 1,
+            ..state
+        }
     }
 }
 
@@ -493,8 +491,8 @@ fn register_sparse_version(state: WorkspaceIndexState, pkg: Int, version: String
     let version_id = state.next_version;
     WorkspaceIndexState {
         version_ids: [..state.version_ids, version_id],
-        version_pkgs: state.version_pkgs.insert(version_id, pkg),
-        version_values: state.version_values.insert(version_id, version),
+        version_pkgs: state.version_pkgs + (version_id, pkg),
+        version_values: state.version_values + (version_id, version),
         next_version: version_id + 1,
         ..state
     }
@@ -508,23 +506,27 @@ fn register_sparse_row(state: WorkspaceIndexState, row: SparseIndexRow) -> Works
     if row.yanked {
         state
     } else {
-        match state.package_ids.get(row.name) {
-            Some(pkg) => register_sparse_version(state, pkg, row.vers),
-            None => {
-                let pkg = state.next_pkg;
-                let state = register_sparse_package_name(state, row.name);
-                register_sparse_version(state, pkg, row.vers)
-            },
+        if state.package_ids.has(row.name) {
+            register_sparse_version(state, state.package_ids.get(row.name), row.vers)
+        } else {
+            let pkg = state.next_pkg;
+            let state = register_sparse_package_name(state, row.name);
+            register_sparse_version(state, pkg, row.vers)
         }
     }
 }
 
 fn feature_key(state: WorkspaceIndexState, pkg: Int, feature: String) -> String {
-    state.names.get(pkg).unwrap() + "\t" + feature
+    state.names.get(pkg) + "\t" + feature
 }
 
 fn feature_id_opt(state: WorkspaceIndexState, pkg: Int, feature: String) -> Option<Int> {
-    state.feature_keys.get(feature_key(state, pkg, feature))
+    let key = feature_key(state, pkg, feature);
+    if state.feature_keys.has(key) {
+        Some(state.feature_keys.get(key))
+    } else {
+        None
+    }
 }
 
 fn feature_id(state: WorkspaceIndexState, pkg: Int, feature: String) -> Int {
@@ -533,33 +535,32 @@ fn feature_id(state: WorkspaceIndexState, pkg: Int, feature: String) -> Int {
 
 fn register_feature(state: WorkspaceIndexState) where { pkg: Int, feature: String, target: Option<String> = None } -> WorkspaceIndexState {
     let key = feature_key(state, pkg, feature);
-    match state.feature_keys.get(key) {
-        Some(_) => match target {
+    if state.feature_keys.has(key) {
+        match target {
             Some(expr) => WorkspaceIndexState {
-                feature_targets: state.feature_targets.insert(key, expr),
+                feature_targets: state.feature_targets.with(key, expr),
                 ..state
             },
             None => state,
-        },
-        None => {
-            let id = state.next_feature;
-            let state = WorkspaceIndexState {
-                feature_ids: [..state.feature_ids, id],
-                feature_keys: state.feature_keys.insert(key, id),
-                feature_pkgs: state.feature_pkgs.insert(id, pkg),
-                feature_names: state.feature_names.insert(id, feature),
-                feature_enables: state.feature_enables.insert(id, ""),
-                next_feature: id + 1,
+        }
+    } else {
+        let id = state.next_feature;
+        let state = WorkspaceIndexState {
+            feature_ids: [..state.feature_ids, id],
+            feature_keys: state.feature_keys + (key, id),
+            feature_pkgs: state.feature_pkgs + (id, pkg),
+            feature_names: state.feature_names + (id, feature),
+            feature_enables: state.feature_enables + (id, ""),
+            next_feature: id + 1,
+            ..state
+        };
+        match target {
+            Some(expr) => WorkspaceIndexState {
+                feature_targets: state.feature_targets + (key, expr),
                 ..state
-            };
-            match target {
-                Some(expr) => WorkspaceIndexState {
-                    feature_targets: state.feature_targets.insert(key, expr),
-                    ..state
-                },
-                None => state,
-            }
-        },
+            },
+            None => state,
+        }
     }
 }
 
@@ -570,7 +571,7 @@ fn register_feature_names(pkg: Int, features: [String], state: WorkspaceIndexSta
 fn register_feature_enables(state: WorkspaceIndexState, pkg: Int, feature: String, enables: [String]) -> WorkspaceIndexState {
     let id = feature_id(state, pkg, feature);
     WorkspaceIndexState {
-        feature_enables: state.feature_enables.insert(id, enables.join("\n")),
+        feature_enables: state.feature_enables.with(id, enables.join("\n")),
         ..state
     }
 }
@@ -602,7 +603,7 @@ fn register_sparse_features(pkg: Int, row: SparseIndexRow, state: WorkspaceIndex
         }
     });
     let state = row.features.keys().fold(state, |state, feature| {
-        register_feature_enables(state, pkg, feature, row.features.get(feature).unwrap())
+        register_feature_enables(state, pkg, feature, row.features.get(feature))
     });
     row.deps.fold(state, |state, dep| {
         if dep.optional {
@@ -617,7 +618,7 @@ fn register_sparse_features(pkg: Int, row: SparseIndexRow, state: WorkspaceIndex
 
 fn workspace_gate_targets_insert(gate_targets: Map<Int, String>, clause_id: Int, target: Option<String>) -> Map<Int, String> {
     match target {
-        Some(expr) => gate_targets.insert(clause_id, expr),
+        Some(expr) => gate_targets + (clause_id, expr),
         None => gate_targets,
     }
 }
@@ -628,18 +629,18 @@ fn workspace_add_selected_guard_clause(clause: WorkspaceSelectedGuardClause) whe
     WorkspaceIndexState {
         clause_ids: [..clause.state.clause_ids, clause_id],
         guard_ids: [..clause.state.guard_ids, guard_id],
-        guard_clause_ids: clause.state.guard_clause_ids.insert(guard_id, clause_id),
-        guard_tags: clause.state.guard_tags.insert(guard_id, "selected"),
-        guard_kinds: clause.state.guard_kinds.insert(guard_id, 0),
-        guard_pkgs: clause.state.guard_pkgs.insert(guard_id, clause.parent_pkg),
-        guard_version_values: clause.state.guard_version_values.insert(guard_id, clause.parent_version),
-        guard_features: clause.state.guard_features.insert(guard_id, 0),
-        consequent_tags: clause.state.consequent_tags.insert(clause_id, clause.consequent_tag),
-        consequent_pkgs: clause.state.consequent_pkgs.insert(clause_id, clause.dep_pkg),
-        consequent_version_sets: clause.state.consequent_version_sets.insert(clause_id, clause.req),
-        consequent_req_texts: clause.state.consequent_req_texts.insert(clause_id, clause.req_text),
-        consequent_features: clause.state.consequent_features.insert(clause_id, 0),
-        gate_kinds: clause.state.gate_kinds.insert(clause_id, clause.kind),
+        guard_clause_ids: clause.state.guard_clause_ids + (guard_id, clause_id),
+        guard_tags: clause.state.guard_tags + (guard_id, "selected"),
+        guard_kinds: clause.state.guard_kinds + (guard_id, 0),
+        guard_pkgs: clause.state.guard_pkgs + (guard_id, clause.parent_pkg),
+        guard_version_values: clause.state.guard_version_values + (guard_id, clause.parent_version),
+        guard_features: clause.state.guard_features + (guard_id, 0),
+        consequent_tags: clause.state.consequent_tags + (clause_id, clause.consequent_tag),
+        consequent_pkgs: clause.state.consequent_pkgs + (clause_id, clause.dep_pkg),
+        consequent_version_sets: clause.state.consequent_version_sets + (clause_id, clause.req),
+        consequent_req_texts: clause.state.consequent_req_texts + (clause_id, clause.req_text),
+        consequent_features: clause.state.consequent_features + (clause_id, 0),
+        gate_kinds: clause.state.gate_kinds + (clause_id, clause.kind),
         gate_targets: workspace_gate_targets_insert(clause.state.gate_targets, clause_id, target),
         next_clause: clause_id + 1,
         next_guard: guard_id + 1,
@@ -653,18 +654,18 @@ fn workspace_add_selected_feature_clause(clause: WorkspaceSelectedFeatureClause)
     WorkspaceIndexState {
         clause_ids: [..clause.state.clause_ids, clause_id],
         guard_ids: [..clause.state.guard_ids, guard_id],
-        guard_clause_ids: clause.state.guard_clause_ids.insert(guard_id, clause_id),
-        guard_tags: clause.state.guard_tags.insert(guard_id, "selected"),
-        guard_kinds: clause.state.guard_kinds.insert(guard_id, 0),
-        guard_pkgs: clause.state.guard_pkgs.insert(guard_id, clause.parent_pkg),
-        guard_version_values: clause.state.guard_version_values.insert(guard_id, clause.parent_version),
-        guard_features: clause.state.guard_features.insert(guard_id, 0),
-        consequent_tags: clause.state.consequent_tags.insert(clause_id, "feature"),
-        consequent_pkgs: clause.state.consequent_pkgs.insert(clause_id, clause.feature_pkg),
-        consequent_version_sets: clause.state.consequent_version_sets.insert(clause_id, VersionSet::from_req("*")),
-        consequent_req_texts: clause.state.consequent_req_texts.insert(clause_id, "*"),
-        consequent_features: clause.state.consequent_features.insert(clause_id, clause.feature),
-        gate_kinds: clause.state.gate_kinds.insert(clause_id, clause.kind),
+        guard_clause_ids: clause.state.guard_clause_ids + (guard_id, clause_id),
+        guard_tags: clause.state.guard_tags + (guard_id, "selected"),
+        guard_kinds: clause.state.guard_kinds + (guard_id, 0),
+        guard_pkgs: clause.state.guard_pkgs + (guard_id, clause.parent_pkg),
+        guard_version_values: clause.state.guard_version_values + (guard_id, clause.parent_version),
+        guard_features: clause.state.guard_features + (guard_id, 0),
+        consequent_tags: clause.state.consequent_tags + (clause_id, "feature"),
+        consequent_pkgs: clause.state.consequent_pkgs + (clause_id, clause.feature_pkg),
+        consequent_version_sets: clause.state.consequent_version_sets + (clause_id, VersionSet::from_req("*")),
+        consequent_req_texts: clause.state.consequent_req_texts + (clause_id, "*"),
+        consequent_features: clause.state.consequent_features + (clause_id, clause.feature),
+        gate_kinds: clause.state.gate_kinds + (clause_id, clause.kind),
         gate_targets: workspace_gate_targets_insert(clause.state.gate_targets, clause_id, target),
         next_clause: clause_id + 1,
         next_guard: guard_id + 1,
@@ -679,18 +680,18 @@ fn workspace_add_feature_expansion_clause(clause: WorkspaceFeatureExpansionClaus
     WorkspaceIndexState {
         clause_ids: [..clause.state.clause_ids, clause_id],
         guard_ids: [..clause.state.guard_ids, selected_guard, feature_guard],
-        guard_clause_ids: clause.state.guard_clause_ids.insert(selected_guard, clause_id).insert(feature_guard, clause_id),
-        guard_tags: clause.state.guard_tags.insert(selected_guard, "selected").insert(feature_guard, "feature"),
-        guard_kinds: clause.state.guard_kinds.insert(selected_guard, 0).insert(feature_guard, 2),
-        guard_pkgs: clause.state.guard_pkgs.insert(selected_guard, clause.pkg).insert(feature_guard, clause.pkg),
-        guard_version_values: clause.state.guard_version_values.insert(selected_guard, clause.version),
-        guard_features: clause.state.guard_features.insert(selected_guard, 0).insert(feature_guard, clause.guard_feature),
-        consequent_tags: clause.state.consequent_tags.insert(clause_id, "feature"),
-        consequent_pkgs: clause.state.consequent_pkgs.insert(clause_id, clause.feature_pkg),
-        consequent_version_sets: clause.state.consequent_version_sets.insert(clause_id, VersionSet::from_req("*")),
-        consequent_req_texts: clause.state.consequent_req_texts.insert(clause_id, "*"),
-        consequent_features: clause.state.consequent_features.insert(clause_id, clause.feature),
-        gate_kinds: clause.state.gate_kinds.insert(clause_id, clause.kind),
+        guard_clause_ids: clause.state.guard_clause_ids + (selected_guard, clause_id) + (feature_guard, clause_id),
+        guard_tags: clause.state.guard_tags + (selected_guard, "selected") + (feature_guard, "feature"),
+        guard_kinds: clause.state.guard_kinds + (selected_guard, 0) + (feature_guard, 2),
+        guard_pkgs: clause.state.guard_pkgs + (selected_guard, clause.pkg) + (feature_guard, clause.pkg),
+        guard_version_values: clause.state.guard_version_values + (selected_guard, clause.version),
+        guard_features: clause.state.guard_features + (selected_guard, 0) + (feature_guard, clause.guard_feature),
+        consequent_tags: clause.state.consequent_tags + (clause_id, "feature"),
+        consequent_pkgs: clause.state.consequent_pkgs + (clause_id, clause.feature_pkg),
+        consequent_version_sets: clause.state.consequent_version_sets + (clause_id, VersionSet::from_req("*")),
+        consequent_req_texts: clause.state.consequent_req_texts + (clause_id, "*"),
+        consequent_features: clause.state.consequent_features + (clause_id, clause.feature),
+        gate_kinds: clause.state.gate_kinds + (clause_id, clause.kind),
         gate_targets: workspace_gate_targets_insert(clause.state.gate_targets, clause_id, target),
         next_clause: clause_id + 1,
         next_guard: feature_guard + 1,
@@ -722,15 +723,17 @@ fn add_workspace_required_dep_clauses(args: WorkspaceRequiredDepClauses) where {
 }
 
 fn workspace_member_package_name(state: WorkspaceIndexState, member: String) -> String {
-    state.packages.fold(None, |found, pkg| match state.member_paths.get(pkg) {
-        Some(path) if path == member => Some(state.names.get(pkg).unwrap()),
-        Some(_) => found,
-        None => found,
+    state.packages.fold(None, |found, pkg| {
+        if state.member_paths.get(pkg) == member {
+            Some(state.names.get(pkg))
+        } else {
+            found
+        }
     }).unwrap()
 }
 
 fn workspace_member_pkg_ids(state: WorkspaceIndexState, members: [String]) -> [Int] {
-    members.map(|member| state.package_ids.get(workspace_member_package_name(state, member)).unwrap())
+    members.map(|member| state.package_ids.get(workspace_member_package_name(state, member)))
 }
 
 fn add_workspace_root_member_clause(state: WorkspaceIndexState, member_pkg: Int) -> WorkspaceIndexState {
@@ -781,7 +784,7 @@ fn manifest_feature_names(manifest: Tree) -> [String] {
 
 fn manifest_feature_enables(manifest: Tree, feature: String) -> [String] {
     match manifest_toml(manifest).features {
-        Some(features) => features.get(feature).unwrap(),
+        Some(features) => features.get(feature),
         None => [],
     }
 }
@@ -801,7 +804,7 @@ fn dependency_table(manifest: Tree, kind: String) -> Map<String, CargoDependency
 }
 
 fn dependency_spec(manifest: Tree, name: String, kind: String) -> CargoDependencySpec {
-    dependency_table(manifest, kind).get(name).unwrap()
+    dependency_table(manifest, kind).get(name)
 }
 
 fn dependency_names(manifest: Tree, kind: String) -> [String] {
@@ -816,7 +819,7 @@ fn dependency_names_text(manifest: Tree, kind: String) -> String {
 }
 
 fn target_dependency_spec(manifest: Tree, target: String, name: String, kind: String) -> CargoDependencySpec {
-    let tables = manifest_toml(manifest).target.unwrap().get(target).unwrap();
+    let tables = manifest_toml(manifest).target.unwrap().get(target);
     let table = if kind == "build" {
         tables.build_dependencies.unwrap()
     } else if kind == "dev" {
@@ -824,7 +827,7 @@ fn target_dependency_spec(manifest: Tree, target: String, name: String, kind: St
     } else {
         tables.dependencies.unwrap()
     };
-    table.get(name).unwrap()
+    table.get(name)
 }
 
 fn dependency_workspace(spec: CargoDependencySpec) -> Bool {
@@ -877,7 +880,7 @@ fn dependency_features_literal(spec: CargoDependencySpec) -> [String] {
 }
 
 fn workspace_dependency_spec(workspace: Tree, name: String) -> CargoDependencySpec {
-    workspace_toml(workspace).dependencies.unwrap().get(name).unwrap()
+    workspace_toml(workspace).dependencies.unwrap().get(name)
 }
 
 fn dependency_version_req(spec: CargoDependencySpec, workspace: Tree, name: String, workspace_dep: Bool) -> String {
@@ -905,15 +908,15 @@ fn dependency_default_features(spec: CargoDependencySpec, workspace: Tree, name:
 }
 
 fn string_set_from_array(values: [String]) -> Set<String> {
-    values.fold(%[], |set, value| set.insert(value))
+    values.fold(%[], |set, value| set + value)
 }
 
 fn append_string_unique(values: [String], value: String) -> [String] {
-    string_set_from_array(values).insert(value).values()
+    (string_set_from_array(values) + value).values()
 }
 
 fn append_strings_unique(values: [String], extra: [String]) -> [String] {
-    extra.fold(string_set_from_array(values), |set, value| set.insert(value)).values()
+    extra.fold(string_set_from_array(values), |set, value| set + value).values()
 }
 
 fn dependency_features_inherited(spec: CargoDependencySpec, workspace: Tree, name: String, workspace_dep: Bool) -> [String] {
@@ -956,7 +959,7 @@ fn register_manifest_optional_dep_features(manifest: Tree, pkg: Int, names: [Str
 fn register_workspace_member_features(workspace: Tree, workspace_root: Path, members: [String], state: WorkspaceIndexState) -> WorkspaceIndexState {
     members.fold(state, |state, member| {
         let manifest = member_manifest(workspace, workspace_root, member);
-        let pkg = state.package_ids.get(package_name(manifest)).unwrap();
+        let pkg = state.package_ids.get(package_name(manifest));
         let state = register_feature_names(pkg, manifest_feature_names(manifest), state);
         let state = register_manifest_feature_enables(manifest, pkg, manifest_feature_names(manifest), state);
         let state = register_manifest_optional_dep_features(manifest, pkg, dependency_names(manifest, "normal"), "normal", state);
@@ -1010,7 +1013,7 @@ fn add_manifest_feature_expansion_clauses(manifest: Tree, pkg: Int, version: Str
 fn add_workspace_feature_expansion_clauses(workspace: Tree, workspace_root: Path, members: [String], state: WorkspaceIndexState) -> WorkspaceIndexState {
     members.fold(state, |state, member| {
         let manifest = member_manifest(workspace, workspace_root, member);
-        let pkg = state.package_ids.get(package_name(manifest)).unwrap();
+        let pkg = state.package_ids.get(package_name(manifest));
         add_manifest_feature_expansion_clauses(manifest, pkg, package_version_in_workspace(manifest, workspace), manifest_feature_names(manifest), state)
     })
 }
@@ -1031,20 +1034,21 @@ fn sparse_feature_target(row: SparseIndexRow, feature: String) -> Option<String>
 
 fn add_sparse_dep_clause(parent_pkg: Int, parent_version: String, dep: SparseIndexDep, state: WorkspaceIndexState) -> WorkspaceIndexState {
     if sparse_dep_consumed(dep) {
-        match state.package_ids.get(sparse_dep_package_name(dep)) {
-            Some(dep_pkg) => {
-                let target = sparse_dep_target(dep);
-                let state = add_workspace_required_dep_clauses WorkspaceRequiredDepClauses {
-                    state,
-                    parent_pkg,
-                    parent_version,
-                    dep_pkg,
-                    req: dep.req,
-                    kind: dep.kind,
-                } where { target };
-                add_dependency_requested_feature_clauses(state, parent_pkg, parent_version, dep_pkg, sparse_dep_requested_features(dep), dep.kind, sparse_dep_target(dep))
-            },
-            None => state,
+        let dep_name = sparse_dep_package_name(dep);
+        if state.package_ids.has(dep_name) {
+            let dep_pkg = state.package_ids.get(dep_name);
+            let target = sparse_dep_target(dep);
+            let state = add_workspace_required_dep_clauses WorkspaceRequiredDepClauses {
+                state,
+                parent_pkg,
+                parent_version,
+                dep_pkg,
+                req: dep.req,
+                kind: dep.kind,
+            } where { target };
+            add_dependency_requested_feature_clauses(state, parent_pkg, parent_version, dep_pkg, sparse_dep_requested_features(dep), dep.kind, sparse_dep_target(dep))
+        } else {
+            state
         }
     } else {
         state
@@ -1055,9 +1059,11 @@ fn add_sparse_row_dependency_clauses(row: SparseIndexRow, state: WorkspaceIndexS
     if row.yanked {
         state
     } else {
-        match state.package_ids.get(row.name) {
-            Some(parent_pkg) => row.deps.fold(state, |state, dep| add_sparse_dep_clause(parent_pkg, row.vers, dep, state)),
-            None => state,
+        if state.package_ids.has(row.name) {
+            let parent_pkg = state.package_ids.get(row.name);
+            row.deps.fold(state, |state, dep| add_sparse_dep_clause(parent_pkg, row.vers, dep, state))
+        } else {
+            state
         }
     }
 }
@@ -1097,11 +1103,13 @@ fn add_sparse_row_feature_expansion_clauses(row: SparseIndexRow, state: Workspac
     if row.yanked {
         state
     } else {
-        match state.package_ids.get(row.name) {
-            Some(pkg) => row.features.keys().fold(state, |state, feature| {
-                add_sparse_feature_enables(row, pkg, row.vers, feature_id(state, pkg, feature), row.features.get(feature).unwrap(), state)
-            }),
-            None => state,
+        if state.package_ids.has(row.name) {
+            let pkg = state.package_ids.get(row.name);
+            row.features.keys().fold(state, |state, feature| {
+                add_sparse_feature_enables(row, pkg, row.vers, feature_id(state, pkg, feature), row.features.get(feature), state)
+            })
+        } else {
+            state
         }
     }
 }
@@ -1111,7 +1119,7 @@ fn add_sparse_feature_expansion_clauses(rows: [SparseIndexRow], state: Workspace
 }
 
 fn add_dependency_requested_feature_clauses(state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, dep_pkg: Int, features: [String], kind: String, target: Option<String>) -> WorkspaceIndexState {
-    let state = if state.member_paths.get(dep_pkg).unwrap() == "" {
+    let state = if state.member_paths.get(dep_pkg) == "" {
         register_feature_names(dep_pkg, features, state)
     } else {
         state
@@ -1132,24 +1140,24 @@ fn add_dependency_requested_feature_clauses(state: WorkspaceIndexState, parent_p
 fn register_workspace_dep_name(workspace: Tree, manifest: Tree, state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, dep_name: String, kind: String) -> WorkspaceIndexState {
     let spec = dependency_spec(manifest, dep_name, kind);
     let package_name = dependency_package_name(spec, dep_name);
-    match state.package_ids.get(package_name) {
-        Some(dep_pkg) => {
-            let workspace_dep = dependency_workspace(spec);
-            if dependency_optional(spec) {
-                state
-            } else {
-                let state = add_workspace_required_dep_clauses WorkspaceRequiredDepClauses {
-                    state,
-                    parent_pkg,
-                    parent_version,
-                    dep_pkg,
-                    req: dependency_req_or_any(dependency_version_req(spec, workspace, dep_name, workspace_dep)),
-                    kind,
-                };
-                add_dependency_requested_feature_clauses(state, parent_pkg, parent_version, dep_pkg, dependency_requested_features(spec, workspace, dep_name, workspace_dep), kind, None)
-            }
-        },
-        None => state,
+    if state.package_ids.has(package_name) {
+        let dep_pkg = state.package_ids.get(package_name);
+        let workspace_dep = dependency_workspace(spec);
+        if dependency_optional(spec) {
+            state
+        } else {
+            let state = add_workspace_required_dep_clauses WorkspaceRequiredDepClauses {
+                state,
+                parent_pkg,
+                parent_version,
+                dep_pkg,
+                req: dependency_req_or_any(dependency_version_req(spec, workspace, dep_name, workspace_dep)),
+                kind,
+            };
+            add_dependency_requested_feature_clauses(state, parent_pkg, parent_version, dep_pkg, dependency_requested_features(spec, workspace, dep_name, workspace_dep), kind, None)
+        }
+    } else {
+        state
     }
 }
 
@@ -1160,7 +1168,7 @@ fn register_workspace_kind_deps(workspace: Tree, manifest: Tree, state: Workspac
 fn register_workspace_direct_deps(workspace: Tree, workspace_root: Path, members: [String], state: WorkspaceIndexState) -> WorkspaceIndexState {
     members.fold(state, |state, member| {
         let manifest = member_manifest(workspace, workspace_root, member);
-        let parent_pkg = state.package_ids.get(package_name(manifest)).unwrap();
+        let parent_pkg = state.package_ids.get(package_name(manifest));
         let parent_version = package_version_in_workspace(manifest, workspace);
         let state = register_workspace_kind_deps(workspace, manifest, state, parent_pkg, parent_version, "normal");
         let state = register_workspace_kind_deps(workspace, manifest, state, parent_pkg, parent_version, "build");
@@ -1315,8 +1323,8 @@ fn workspace_member_transitive_sparse_index_clause_count_limit(workspace: Tree, 
 
 fn workspace_version_set_clauses_for_pkg(state: WorkspaceIndexState, pkg: Int) -> VersionSet {
     state.clause_ids.fold(VersionSet::from_req("*"), |allowed, clause_id| {
-        if state.consequent_tags.get(clause_id).unwrap() == "version_set" && state.consequent_pkgs.get(clause_id).unwrap() == pkg {
-            allowed.intersect(state.consequent_version_sets.get(clause_id).unwrap())
+        if state.consequent_tags.get(clause_id) == "version_set" && state.consequent_pkgs.get(clause_id) == pkg {
+            allowed.intersect(state.consequent_version_sets.get(clause_id))
         } else {
             allowed
         }
@@ -1329,8 +1337,8 @@ fn append_req_text(out: String, req: String) -> String {
 
 fn workspace_version_set_req_text_for_pkg(state: WorkspaceIndexState, pkg: Int) -> String {
     state.clause_ids.fold("", |out, clause_id| {
-        if state.consequent_tags.get(clause_id).unwrap() == "version_set" && state.consequent_pkgs.get(clause_id).unwrap() == pkg {
-            append_req_text(out, state.consequent_req_texts.get(clause_id).unwrap())
+        if state.consequent_tags.get(clause_id) == "version_set" && state.consequent_pkgs.get(clause_id) == pkg {
+            append_req_text(out, state.consequent_req_texts.get(clause_id))
         } else {
             out
         }
@@ -1339,7 +1347,7 @@ fn workspace_version_set_req_text_for_pkg(state: WorkspaceIndexState, pkg: Int) 
 
 fn workspace_member_direct_sparse_dep_req_text_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int, dep_name: String) -> String {
     let state = workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit);
-    let pkg = state.package_ids.get(dep_name).unwrap();
+    let pkg = state.package_ids.get(dep_name);
     workspace_version_set_req_text_for_pkg(state, pkg)
 }
 
@@ -1359,7 +1367,7 @@ fn take_versions(values: [Version], limit: Int) -> [Version] {
 
 fn workspace_member_direct_sparse_dep_candidate_text_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int, dep_name: String) -> String {
     let state = workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit);
-    let pkg = state.package_ids.get(dep_name).unwrap();
+    let pkg = state.package_ids.get(dep_name);
     let index = workspace_index_from_state(state);
     workspace_candidate_text_take(index, pkg, candidates_for(index, pkg, workspace_version_set_clauses_for_pkg(state, pkg)), 12)
 }
@@ -1444,7 +1452,7 @@ fn bool_text(value: Bool) -> String {
 
 fn guard_id_for_clause(state: WorkspaceIndexState, clause_id: Int) -> Int {
     state.guard_ids.fold(None, |found, guard_id| {
-        if state.guard_clause_ids.get(guard_id).unwrap() == clause_id {
+        if state.guard_clause_ids.get(guard_id) == clause_id {
             Some(guard_id)
         } else {
             found
@@ -1458,27 +1466,27 @@ fn append_index_dump_line(out: String, line: String) -> String {
 
 fn workspace_index_dump_clause(state: WorkspaceIndexState, clause_id: Int) -> String {
     let guard_id = guard_id_for_clause(state, clause_id);
-    let parent_pkg = state.guard_pkgs.get(guard_id).unwrap();
-    let dep_pkg = state.consequent_pkgs.get(clause_id).unwrap();
+    let parent_pkg = state.guard_pkgs.get(guard_id);
+    let dep_pkg = state.consequent_pkgs.get(clause_id);
     "c\t"
-        + state.names.get(parent_pkg).unwrap()
+        + state.names.get(parent_pkg)
         + "\t"
-        + state.guard_version_values.get(guard_id).unwrap()
+        + state.guard_version_values.get(guard_id)
         + "\t"
-        + state.consequent_tags.get(clause_id).unwrap()
+        + state.consequent_tags.get(clause_id)
         + "\t"
-        + state.names.get(dep_pkg).unwrap()
+        + state.names.get(dep_pkg)
         + "\t"
-        + state.consequent_req_texts.get(clause_id).unwrap()
+        + state.consequent_req_texts.get(clause_id)
         + "\t"
-        + state.gate_kinds.get(clause_id).unwrap()
+        + state.gate_kinds.get(clause_id)
 }
 
 fn workspace_index_dump(state: WorkspaceIndexState) -> String {
-    let out = state.packages.fold("", |out, pkg| append_index_dump_line(out, "p\t" + state.names.get(pkg).unwrap()));
+    let out = state.packages.fold("", |out, pkg| append_index_dump_line(out, "p\t" + state.names.get(pkg)));
     let out = state.version_ids.fold(out, |out, version_id| {
-        let pkg = state.version_pkgs.get(version_id).unwrap();
-        append_index_dump_line(out, "v\t" + state.names.get(pkg).unwrap() + "\t" + state.version_values.get(version_id).unwrap())
+        let pkg = state.version_pkgs.get(version_id);
+        append_index_dump_line(out, "v\t" + state.names.get(pkg) + "\t" + state.version_values.get(version_id))
     });
     state.clause_ids.fold(out, |out, clause_id| append_index_dump_line(out, workspace_index_dump_clause(state, clause_id)))
 }
@@ -1488,13 +1496,13 @@ fn workspace_member_direct_sparse_index_dump_limit(workspace: Tree, workspace_ro
 }
 
 fn selected_pkg_contains(selected: Map<Int, Version>, pkg: Int) -> Bool {
-    selected.get(pkg) != None
+    selected.has(pkg)
 }
 
 fn solution_guard_is_parent(index: Index, guard_id: Int, clause_id: Int, parent: Int) -> Bool {
-    index.guard_clause_ids.get(guard_id).unwrap() == clause_id
-        && index.guard_pkgs.get(guard_id).unwrap() == parent
-        && index.guard_tags.get(guard_id).unwrap() == "selected"
+    index.guard_clause_ids.get(guard_id) == clause_id
+        && index.guard_pkgs.get(guard_id) == parent
+        && index.guard_tags.get(guard_id) == "selected"
 }
 
 fn solution_clause_has_parent_guard(index: Index, parent: Int, clause_id: Int) -> Bool {
@@ -1505,8 +1513,8 @@ fn solution_dependency_clause_active(index: Index, result: SolveResult, parent: 
     gate_active_id(index, clause_id, target)
         && selected_pkg_contains(result.selected, parent)
         && solution_clause_has_parent_guard(index, parent, clause_id)
-        && index.consequent_tags.get(clause_id).unwrap() == "in_graph"
-        && selected_pkg_contains(result.selected, index.consequent_pkgs.get(clause_id).unwrap())
+        && index.consequent_tags.get(clause_id) == "in_graph"
+        && selected_pkg_contains(result.selected, index.consequent_pkgs.get(clause_id))
 }
 
 fn append_dep_name(out: String, name: String) -> String {
@@ -1516,7 +1524,7 @@ fn append_dep_name(out: String, name: String) -> String {
 fn solution_dep_names_text(state: WorkspaceIndexState, index: Index, result: SolveResult, parent: Int, target: String) -> String {
     index.clause_ids.fold("", |out, clause_id| {
         if solution_dependency_clause_active(index, result, parent, clause_id, target) {
-            append_dep_name(out, crate_name(state.names.get(index.consequent_pkgs.get(clause_id).unwrap()).unwrap()))
+            append_dep_name(out, crate_name(state.names.get(index.consequent_pkgs.get(clause_id))))
         } else {
             out
         }
@@ -1538,9 +1546,11 @@ fn unit_feature_name(feature: String) -> String {
 }
 
 fn feature_target_active(state: WorkspaceIndexState, pkg: Int, feature: String, target: String) -> Bool {
-    match state.feature_targets.get(feature_key(state, pkg, feature)) {
-        Some(expr) => target_matches(expr, target),
-        None => true,
+    let key = feature_key(state, pkg, feature);
+    if state.feature_targets.has(key) {
+        target_matches(state.feature_targets.get(key), target)
+    } else {
+        true
     }
 }
 
@@ -1571,7 +1581,7 @@ fn solution_unit_feature_closure(state: WorkspaceIndexState, pkg: Int, feature: 
         out
     } else {
         match feature_id_opt(state, pkg, feature) {
-            Some(id) => solution_unit_feature_enables_text(state, pkg, state.feature_enables.get(id).unwrap(), target, [..out, feature_name]),
+            Some(id) => solution_unit_feature_enables_text(state, pkg, state.feature_enables.get(id), target, [..out, feature_name]),
             None => [..out, feature_name],
         }
     }
@@ -1579,8 +1589,8 @@ fn solution_unit_feature_closure(state: WorkspaceIndexState, pkg: Int, feature: 
 
 fn solution_unit_features(state: WorkspaceIndexState, feature_ids: [Int], pkg: Int, target: String, out: [String]) -> [String] {
     feature_ids.fold(out, |out, feature_id| {
-        if state.feature_pkgs.get(feature_id).unwrap() == pkg {
-            solution_unit_feature_closure(state, pkg, state.feature_names.get(feature_id).unwrap(), target, out)
+        if state.feature_pkgs.get(feature_id) == pkg {
+            solution_unit_feature_closure(state, pkg, state.feature_names.get(feature_id), target, out)
         } else {
             out
         }
@@ -1588,15 +1598,16 @@ fn solution_unit_features(state: WorkspaceIndexState, feature_ids: [Int], pkg: I
 }
 
 fn solution_unit_root_default_feature(state: WorkspaceIndexState, result: SolveResult, pkg: Int, target: String, out: [String]) -> [String] {
-    if state.member_paths.get(pkg).unwrap() == "" {
+    if state.member_paths.get(pkg) == "" {
         out
     } else {
-        match result.selected.get(pkg) {
-            Some(_) => match feature_id_opt(state, pkg, "default") {
+        if result.selected.has(pkg) {
+            match feature_id_opt(state, pkg, "default") {
                 Some(_) => solution_unit_feature_closure(state, pkg, "default", target, out),
                 None => out,
-            },
-            None => out,
+            }
+        } else {
+            out
         }
     }
 }
@@ -1607,8 +1618,8 @@ fn solution_unit_features_text(state: WorkspaceIndexState, result: SolveResult, 
 
 fn solution_unit_seed_features(state: WorkspaceIndexState, feature_ids: [Int], pkg: Int) -> [String] {
     feature_ids.fold([], |out, feature_id| {
-        if state.feature_pkgs.get(feature_id).unwrap() == pkg {
-            append_string_unique(out, unit_feature_name(state.feature_names.get(feature_id).unwrap()))
+        if state.feature_pkgs.get(feature_id) == pkg {
+            append_string_unique(out, unit_feature_name(state.feature_names.get(feature_id)))
         } else {
             out
         }
@@ -1616,9 +1627,10 @@ fn solution_unit_seed_features(state: WorkspaceIndexState, feature_ids: [Int], p
 }
 
 fn sparse_row_feature_enables_or_empty(row: SparseIndexRow, feature: String) -> [String] {
-    match row.features.get(feature) {
-        Some(enables) => enables,
-        None => [],
+    if row.features.has(feature) {
+        row.features.get(feature)
+    } else {
+        []
     }
 }
 
@@ -1671,7 +1683,7 @@ fn sparse_row_filter_active_features(row: SparseIndexRow, target: String, featur
 
 fn solution_unit_sparse_features_text(state: WorkspaceIndexState, result: SolveResult, pkg: Int, target: String, rows: [SparseIndexRow], version: String) -> String {
     let seeds = solution_unit_seed_features(state, result.enabled_feature_ids, pkg);
-    match selected_sparse_row(rows, state.names.get(pkg).unwrap(), version) {
+    match selected_sparse_row(rows, state.names.get(pkg), version) {
         Some(row) => sparse_row_filter_active_features(row, target, append_strings_unique(sparse_row_unit_features(row, target, seeds, []), seeds)).join(","),
         None => seeds.join(","),
     }
@@ -1874,14 +1886,14 @@ fn solution_member_units_text(args: SolutionMemberUnitsText) -> String {
 }
 
 fn solution_units_text_for_selected_package(workspace: Tree, workspace_root: Path, rows: [SparseIndexRow], state: WorkspaceIndexState, index: Index, result: SolveResult, target: String, pkg: Int, version: String, out: String) -> String {
-    let member_path = state.member_paths.get(pkg).unwrap();
+    let member_path = state.member_paths.get(pkg);
     let features = if member_path == "" {
         solution_unit_sparse_features_text(state, result, pkg, target, rows, version)
     } else {
         solution_unit_features_text(state, result, pkg, target)
     };
     if member_path == "" {
-        let package = state.names.get(pkg).unwrap();
+        let package = state.names.get(pkg);
         let deps = solution_dep_names_text(state, index, result, pkg, target);
         append_solution_unit_row SolutionUnitRow {
             out,
@@ -1893,7 +1905,7 @@ fn solution_units_text_for_selected_package(workspace: Tree, workspace_root: Pat
             deps,
         }
     } else {
-        let package = state.names.get(pkg).unwrap();
+        let package = state.names.get(pkg);
         let manifest = member_manifest(workspace, workspace_root, member_path);
         let deps = solution_dep_names_text(state, index, result, pkg, target);
         solution_member_units_text SolutionMemberUnitsText {
@@ -1911,11 +1923,13 @@ fn solution_units_text_for_selected_package(workspace: Tree, workspace_root: Pat
 }
 
 fn solution_units_text_from_packages(workspace: Tree, workspace_root: Path, rows: [SparseIndexRow], state: WorkspaceIndexState, index: Index, result: SolveResult, target: String) -> String {
-    state.packages.fold("", |out, pkg| match result.selected.get(pkg) {
-        Some(version) if state.names.get(pkg).unwrap() != "__workspace__" =>
-            solution_units_text_for_selected_package(workspace, workspace_root, rows, state, index, result, target, pkg, workspace_selected_version_text(state, pkg, version), out),
-        Some(_) => out,
-        None => out,
+    state.packages.fold("", |out, pkg| {
+        if result.selected.has(pkg) && state.names.get(pkg) != "__workspace__" {
+            let version = result.selected.get(pkg);
+            solution_units_text_for_selected_package(workspace, workspace_root, rows, state, index, result, target, pkg, workspace_selected_version_text(state, pkg, version), out)
+        } else {
+            out
+        }
     })
 }
 
@@ -1923,12 +1937,15 @@ fn register_selected_sparse_row_features(row: SparseIndexRow, state: WorkspaceIn
     if row.yanked {
         state
     } else {
-        match state.package_ids.get(row.name) {
-            Some(pkg) => match result.selected.get(pkg) {
-                Some(_) => register_sparse_features(pkg, row, state),
-                None => state,
-            },
-            None => state,
+        if state.package_ids.has(row.name) {
+            let pkg = state.package_ids.get(row.name);
+            if result.selected.has(pkg) {
+                register_sparse_features(pkg, row, state)
+            } else {
+                state
+            }
+        } else {
+            state
         }
     }
 }
@@ -1962,9 +1979,10 @@ fn workspace_member_direct_sparse_enabled_features_text_limit(workspace: Tree, w
     let index = workspace_index_from_state(state);
     let result = solve(index, workspace_problem(), target);
     let state = register_selected_sparse_features(rows, state, result);
-    match state.package_ids.get(package) {
-        Some(pkg) => solution_unit_seed_features(state, result.enabled_feature_ids, pkg).join("\n"),
-        None => "",
+    if state.package_ids.has(package) {
+        solution_unit_seed_features(state, result.enabled_feature_ids, state.package_ids.get(package)).join("\n")
+    } else {
+        ""
     }
 }
 
@@ -1973,18 +1991,22 @@ fn workspace_member_direct_sparse_feature_target_debug_limit(workspace: Tree, wo
     let state = workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit);
     let index = workspace_index_from_state(state);
     let result = solve(index, workspace_problem(), target);
-    match state.package_ids.get(package) {
-        Some(pkg) => match result.selected.get(pkg) {
-            Some(version) => match selected_sparse_row(rows, state.names.get(pkg).unwrap(), workspace_selected_version_text(state, pkg, version)) {
+    if state.package_ids.has(package) {
+        let pkg = state.package_ids.get(package);
+        if result.selected.has(pkg) {
+            let version = result.selected.get(pkg);
+            match selected_sparse_row(rows, state.names.get(pkg), workspace_selected_version_text(state, pkg, version)) {
                 Some(row) => match sparse_feature_target(row, feature) {
                     Some(expr) => target + "\n" + expr + "\n" + bool_text(target_matches(expr, target)),
                     None => target + "\n<none>\ntrue",
                 },
                 None => target + "\n<missing-row>\nfalse",
-            },
-            None => target + "\n<not-selected>\nfalse",
-        },
-        None => target + "\n<missing-package>\nfalse",
+            }
+        } else {
+            target + "\n<not-selected>\nfalse"
+        }
+    } else {
+        target + "\n<missing-package>\nfalse"
     }
 }
 
@@ -1993,16 +2015,20 @@ fn append_selected_workspace_state_version(out: String, name: String, version: S
 }
 
 fn selected_workspace_state_versions_text_from(state: WorkspaceIndexState, packages: [Int], selected: Map<Int, Version>) -> String {
-    packages.fold("", |out, pkg| match selected.get(pkg) {
-        Some(version) => append_selected_workspace_state_version(out, state.names.get(pkg).unwrap(), workspace_selected_version_text(state, pkg, version)),
-        None => out,
+    packages.fold("", |out, pkg| {
+        if selected.has(pkg) {
+            let version = selected.get(pkg);
+            append_selected_workspace_state_version(out, state.names.get(pkg), workspace_selected_version_text(state, pkg, version))
+        } else {
+            out
+        }
     })
 }
 
 fn workspace_state_version_text(state: WorkspaceIndexState, pkg: Int) -> String {
     state.version_ids.fold(None, |found, version_id| {
-        if state.version_pkgs.get(version_id).unwrap() == pkg {
-            Some(state.version_values.get(version_id).unwrap())
+        if state.version_pkgs.get(version_id) == pkg {
+            Some(state.version_values.get(version_id))
         } else {
             found
         }
@@ -2011,8 +2037,8 @@ fn workspace_state_version_text(state: WorkspaceIndexState, pkg: Int) -> String 
 
 fn workspace_selected_version_text(state: WorkspaceIndexState, pkg: Int, selected: Version) -> String {
     state.version_ids.fold(None, |found, version_id| {
-        let row_text = state.version_values.get(version_id).unwrap();
-        if state.version_pkgs.get(version_id).unwrap() == pkg && VersionSet::from_req("=" + row_text).contains(selected) {
+        let row_text = state.version_values.get(version_id);
+        if state.version_pkgs.get(version_id) == pkg && VersionSet::from_req("=" + row_text).contains(selected) {
             Some(row_text)
         } else {
             found
