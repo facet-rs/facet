@@ -1220,9 +1220,11 @@ fn lower_function(
             &mut site_counter,
             &bindings,
             context,
-            &function.body.stmts,
-            None,
-            true,
+            GeneratorBodySource {
+                statements: &function.body.stmts,
+                tail: None,
+                top_level: true,
+            },
         )?;
         (None, Some(generator))
     } else {
@@ -1285,20 +1287,28 @@ fn lower_function(
 /// the `must_use` lint and the flat static runner. `top_level` marks the test
 /// body itself, whose unconditional leaf yields retain the historical
 /// `Op::Yield` codata marker node so flat tests keep their exact VIR shape.
-#[allow(clippy::too_many_arguments)]
+struct GeneratorBodySource<'a> {
+    statements: &'a [ast::Stmt],
+    tail: Option<&'a ast::Expr>,
+    top_level: bool,
+}
+
 fn lower_generator_body(
     nodes: &mut Vec<Node>,
     yielded_checks: &mut Vec<NodeId>,
     site_counter: &mut u32,
     bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
-    stmts: &[ast::Stmt],
-    tail: Option<&ast::Expr>,
-    top_level: bool,
+    source: GeneratorBodySource<'_>,
 ) -> Result<GeneratorBody, Diagnostics> {
+    let GeneratorBodySource {
+        statements,
+        tail,
+        top_level,
+    } = source;
     let mut bindings = bindings.clone();
     let mut steps = Vec::new();
-    for statement in stmts {
+    for statement in statements {
         match statement {
             ast::Stmt::Expression(statement) => {
                 return Err(expression_statement_diagnostic(statement.span));
@@ -1453,9 +1463,11 @@ fn lower_generator_match(
                 site_counter,
                 &arm_bindings,
                 context,
-                &block.stmts,
-                block.tail.as_ref(),
-                false,
+                GeneratorBodySource {
+                    statements: &block.stmts,
+                    tail: block.tail.as_ref(),
+                    top_level: false,
+                },
             )?,
             ast::MatchArmBody::Expr(expression) => {
                 let site = lower_yield_check_site(
@@ -1528,9 +1540,11 @@ fn lower_generator_if(
         site_counter,
         bindings,
         context,
-        &expression.consequent.stmts,
-        expression.consequent.tail.as_ref(),
-        false,
+        GeneratorBodySource {
+            statements: &expression.consequent.stmts,
+            tail: expression.consequent.tail.as_ref(),
+            top_level: false,
+        },
     )?;
     let alternative = match &expression.alternative {
         ast::IfBranch::Block(block) => lower_generator_body(
@@ -1539,9 +1553,11 @@ fn lower_generator_if(
             site_counter,
             bindings,
             context,
-            &block.stmts,
-            block.tail.as_ref(),
-            false,
+            GeneratorBodySource {
+                statements: &block.stmts,
+                tail: block.tail.as_ref(),
+                top_level: false,
+            },
         )?,
         ast::IfBranch::If(inner) => GeneratorBody {
             steps: vec![lower_generator_if(
