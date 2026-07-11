@@ -35,10 +35,12 @@ Cargo fixtures.
 ## Current checkpoint
 
 At the time of the latest authoritative integration checkpoint
-(`f00447dec`):
+(`910edfd1e`):
 
-- the canonical rung prefix is green through rung 050. The earlier integrated
-  full Vix run `dc0b8068-858a-4fc7-bce3-9fbad03a020c` passed 339/339 tests, and the
+- the canonical rung prefix is green through rung 050. Exact-root full Vix run
+  `4bc4084c-75ba-402f-b94e-8ab0e8a6a4b5` passed 404/404 tests with 33 skipped,
+  including the unchanged budgeted rung 050, range/molten certificates, live
+  Cargo oracles, and the continuous solver-readiness band through rung 088. The
   integrated full Weavy release run
   `8fce57b6-18d8-41e2-a206-2f1ef4f36a34` passed 228/228. Workspace all-target
   check, strict all-feature/all-target Clippy, formatting, and diff checks are
@@ -110,15 +112,22 @@ At the time of the latest authoritative integration checkpoint
   differential preserves identical value identities, duplicates, and order.
   Shared-demand extraction, molten-to-store publication, disjoint live/frozen
   handles, and production aggregate-freeze observability remain explicit seams;
-- the Rodin-readiness track is green through rungs 083 and 084. Ordinary Vix
-  `std/version.vix`, prepended by the readiness harness while the compiler lacks
-  an ambient prelude, defines full SemVer values and normalized interval-union
-  `VersionSet`s with release-line prerelease admission. Structural equality
-  includes build metadata while `version_precedence` ignores it. Exact-root
-  default run `5312e48e-8c9b-4388-88f3-880352cbf0e6` and interpreter run
-  `4e2d7d42-8097-46be-ac41-a378c2aaee7d` each passed all 10 Version, structural
-  order, string, and nested-aggregate call certificates. This advances the
-  readiness track only; it does not renumber the canonical prefix;
+- the Rodin-readiness track is continuously green through rungs 083-088.
+  Ordinary Vix `std/version.vix`, prepended by the readiness harness while the
+  compiler lacks an ambient prelude, defines full SemVer values and normalized
+  interval-union `VersionSet`s with release-line prerelease admission.
+  Structural equality includes build metadata while `version_precedence`
+  ignores it. Rung 085's `by_key` sorting now shares the general
+  `SemanticOrderingEmitter` used by `<=>`, including declaration-ordered enum
+  variants and lexicographic nested arrays, rather than flattening Version or
+  adding a special comparator. Rungs 086-088 exercise source-distinct typed
+  package identities, persistent domains, immutable narrowing, and typed
+  conflict values. Exact-root default run
+  `c138b5fd-bd9c-45ef-a111-cb115bb0c401` and interpreter run
+  `9dcb7203-6790-4c3f-8918-9afa9f456b5d` each passed all 16 Version, structural
+  order, package-row, domain, narrowing, and conflict certificates. The first
+  solver-semantic boundary is now rung 089's Vix-native `mini_solve`; this
+  readiness progress does not renumber the canonical prefix;
 - the live Cargo oracle is folded at `a1be1fa6e`. One shared materialized
   workspace is queried through `cargo metadata --offline`, preserving exact
   source/name/version package identities, target-projected normal/build graph
