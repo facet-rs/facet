@@ -1347,14 +1347,45 @@ impl<'a> ProgramContractBuilder<'a> {
                     lowering_diagnostic(node.span, "closure target has no exact call ABI")
                 })?;
                 let (callee_region, _) = builder.regions.closure(source.id, node.id, node.span)?;
-                let region = functions[function_index]
+                let callee = functions[function_index]
                     .frame
                     .regions
                     .get_mut(callee_region.0 as usize)
                     .ok_or_else(|| {
                         lowering_diagnostic(node.span, "closure callee region is absent")
                     })?;
-                region.shape = WeavyRegionShape::word(WeavyWordKind::Callable(call));
+                callee.shape = WeavyRegionShape::word(WeavyWordKind::Callable(call));
+
+                let shape = WeavyRegionShape::new(vec![
+                    WeavyWordKind::Callable(call).into(),
+                    WeavyWordKind::Scalar.into(),
+                ]);
+                let value_shape = WeavyValueShapeRef(builder.value_shapes.len() as u32);
+                builder.value_shapes.push(WeavyValueShapeContract {
+                    shape: shape.clone(),
+                    kind: WeavyValueShapeKind::Product {
+                        fields: vec![
+                            WeavyValueFieldUse::new(
+                                0,
+                                WeavyRegionShape::word(WeavyWordKind::Callable(call)),
+                            ),
+                            WeavyValueFieldUse::new(
+                                FrameSlot::word_size(),
+                                WeavyRegionShape::word(WeavyWordKind::Scalar),
+                            ),
+                        ],
+                    },
+                });
+                let closure_region = builder.regions.node(source.id, node.id, node.span)?;
+                let closure = functions[function_index]
+                    .frame
+                    .regions
+                    .get_mut(closure_region.0 as usize)
+                    .ok_or_else(|| {
+                        lowering_diagnostic(node.span, "closure value region is absent")
+                    })?;
+                closure.shape = shape;
+                closure.value_shape = Some(value_shape);
             }
         }
         Ok(WeavyProgramContract {
@@ -1602,7 +1633,7 @@ impl<'a> ProgramContractBuilder<'a> {
             })?,
         };
         let call_contract = if self.closure_targets.contains(&function.id) {
-            let call = self.call_contract_for_function(function, &entries, result, &regions)?;
+            let call = self.call_contract_for_function(&entries, result, &regions)?;
             Some(call)
         } else {
             None
@@ -1620,14 +1651,12 @@ impl<'a> ProgramContractBuilder<'a> {
 
     fn call_contract_for_function(
         &mut self,
-        function: FunctionContractSource<'_>,
         entries: &[WeavyRegionId],
         result: WeavyRegionId,
         regions: &[WeavyFrameRegion],
     ) -> Result<WeavyCallContractId, Diagnostics> {
-        let parameter_len = function.parameters.len();
         let call = WeavyCallContract {
-            entries: entries[..parameter_len]
+            entries: entries
                 .iter()
                 .map(|entry| regions[entry.0 as usize].clone())
                 .collect(),
@@ -4153,12 +4182,6 @@ fn lower_node(
                     "closure function does not satisfy the callable ABI",
                 ));
             }
-            if !target_layout.constant_slots.is_empty() {
-                return Err(lowering_diagnostic(
-                    node.span,
-                    "indirect closure constants require an environment",
-                ));
-            }
             let callee = lowering
                 .context
                 .function_ids
@@ -4826,16 +4849,34 @@ fn emit_checked_call_indirect(
     let return_label = sequence.array_return.ok_or_else(|| {
         lowering_diagnostic(node.span, "indirect call has no checked outcome return")
     })?;
+    let mut args = vec![ArgCopy {
+        src: input.region.start().byte_offset(),
+        dst: 0,
+        size: input
+            .region
+            .byte_size()
+            .ok_or_else(|| lowering_diagnostic(node.span, "indirect argument size overflow"))?,
+    }];
+    if let Some(target) = static_closure_target(mapper, sequence) {
+        let target_layout =
+            sequence.lowering.layouts.get(&target).ok_or_else(|| {
+                lowering_diagnostic(node.span, "closure target has no frame layout")
+            })?;
+        for (&constant, &destination) in &target_layout.constant_slots {
+            let source = sequence
+                .function
+                .layout
+                .constant_slot(constant, node.span)?;
+            args.push(ArgCopy {
+                src: source.byte_offset(),
+                dst: destination.byte_offset(),
+                size: FrameSlot::word_size(),
+            });
+        }
+    }
     outputs.code.push(WeavyOp::CallIndirect {
         callee: mapper.region.start().byte_offset(),
-        args: vec![ArgCopy {
-            src: input.region.start().byte_offset(),
-            dst: 0,
-            size: input
-                .region
-                .byte_size()
-                .ok_or_else(|| lowering_diagnostic(node.span, "indirect argument size overflow"))?,
-        }],
+        args,
         ret: call_outcome.region.start().byte_offset(),
     });
     let failures = outputs.code.label();
@@ -4864,6 +4905,25 @@ fn emit_checked_call_indirect(
         outputs.code,
     )?;
     outputs.code.bind(done, node.span)
+}
+
+fn static_closure_target(
+    mapper: &LoweredSlot,
+    sequence: &SequenceContext<'_, '_, '_>,
+) -> Option<FunctionId> {
+    sequence.nodes.values().copied().find_map(|candidate| {
+        let Op::Closure(target) = candidate.op else {
+            return None;
+        };
+        (candidate.ty == mapper.ty
+            && sequence
+                .function
+                .layout
+                .region(candidate.id, candidate.span)
+                .ok()
+                == Some(mapper.region))
+        .then_some(target)
+    })
 }
 
 fn propagate_checked_call_failure(
