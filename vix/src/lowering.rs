@@ -3717,7 +3717,6 @@ fn lower_checked_string_node(
             });
             emit_string_status_checks(
                 node,
-                StringFailureKind::MissingDelimiter,
                 site,
                 scratch,
                 assigned,
@@ -3744,7 +3743,6 @@ fn lower_checked_string_node(
             });
             emit_string_status_checks(
                 node,
-                StringFailureKind::Integer,
                 site,
                 scratch,
                 assigned,
@@ -3758,15 +3756,8 @@ fn lower_checked_string_node(
     }
 }
 
-#[derive(Clone, Copy)]
-enum StringFailureKind {
-    MissingDelimiter,
-    Integer,
-}
-
 fn emit_string_status_checks(
     node: &Node,
-    kind: StringFailureKind,
     site: u32,
     scratch: OutcomeScratch,
     assigned: AssignedOutcomeScratch,
@@ -3791,23 +3782,17 @@ fn emit_string_status_checks(
         if status == weavy::task::StringOpStatus::Ok {
             code.jump(success);
         } else {
-            let variant = match (kind, status) {
-                (
-                    StringFailureKind::MissingDelimiter,
-                    weavy::task::StringOpStatus::MissingDelimiter,
-                ) => ArrayOutcomeAbi::for_value(node.ty.clone()).string_missing_delimiter_variant,
-                (StringFailureKind::Integer, weavy::task::StringOpStatus::InvalidInteger) => {
+            let variant = match status {
+                weavy::task::StringOpStatus::MissingDelimiter => {
+                    ArrayOutcomeAbi::for_value(node.ty.clone()).string_missing_delimiter_variant
+                }
+                weavy::task::StringOpStatus::InvalidInteger => {
                     ArrayOutcomeAbi::for_value(node.ty.clone()).string_invalid_integer_variant
                 }
-                (StringFailureKind::Integer, weavy::task::StringOpStatus::IntegerOverflow) => {
+                weavy::task::StringOpStatus::IntegerOverflow => {
                     ArrayOutcomeAbi::for_value(node.ty.clone()).string_integer_overflow_variant
                 }
-                _ => {
-                    return Err(lowering_diagnostic(
-                        node.span,
-                        "invalid string operation status",
-                    ));
-                }
+                weavy::task::StringOpStatus::Ok => unreachable!("handled above"),
             };
             code.push(WeavyOp::ConstI64 {
                 dst: scratch.fields[0].byte_offset(),
