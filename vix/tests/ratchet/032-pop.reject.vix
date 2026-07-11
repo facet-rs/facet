@@ -1,5 +1,5 @@
 //! reject: unknown method pop
-//! at: 6
+//! at: 8
 
 // Rung 032 — pop does not exist; mutation-shaped names have no referent.
 #[test]
