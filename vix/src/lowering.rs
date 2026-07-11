@@ -3066,9 +3066,9 @@ impl FunctionLayout {
                 let region = FrameRegion::for_words(next_word, words).ok_or_else(|| {
                     lowering_diagnostic(span, "tail-call next-argument region overflow")
                 })?;
-                next_word = next_word.checked_add(words.as_usize()).ok_or_else(|| {
-                    lowering_diagnostic(span, "function frame size overflow")
-                })?;
+                next_word = next_word
+                    .checked_add(words.as_usize())
+                    .ok_or_else(|| lowering_diagnostic(span, "function frame size overflow"))?;
                 temps.push(TemporaryRegion {
                     region,
                     ty: parameter.ty.clone(),
@@ -5795,8 +5795,12 @@ fn lower_tail_self_call(
     require_input_count(node, parameters.len())?;
     // Stage 1: evaluate ALL next arguments into disjoint staging regions before
     // any parameter is overwritten.
-    let mut staging =
-        TemporaryCursor::new(function.layout, sequence.lowering.regions, function.id, node)?;
+    let mut staging = TemporaryCursor::new(
+        function.layout,
+        sequence.lowering.regions,
+        function.id,
+        node,
+    )?;
     let mut staged = Vec::with_capacity(parameters.len());
     for (index, parameter) in parameters.iter().enumerate() {
         let source = input_value(node, values, index)?;
@@ -5825,9 +5829,12 @@ fn lower_tail_self_call(
                 .lowering
                 .regions
                 .node(function.id, parameter.node, node.span)?;
-        outputs
-            .code
-            .extend(copy_lowered_value(node, next_arg, param_region, param_region_id)?);
+        outputs.code.extend(copy_lowered_value(
+            node,
+            next_arg,
+            param_region,
+            param_region_id,
+        )?);
     }
     // Backedge to the loop entry; the active source keeps it attributed to the
     // terminal self-call for the PC/source map.

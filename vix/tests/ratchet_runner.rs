@@ -5091,9 +5091,6 @@ fn assert_contiguous_sequences(events: &[vix::runtime::Event]) {
     }));
 }
 
-
-
-
 // ---------------------------------------------------------------------------
 // Rung 050 — verifier-visible self-tail loop (auxiliary certificates).
 //
@@ -5158,7 +5155,10 @@ impl LoweredProgram {
 }
 
 fn lower_program(source: &str) -> LoweredProgram {
-    let module = Compiler::new().compile(source).expect("source compiles").module;
+    let module = Compiler::new()
+        .compile(source)
+        .expect("source compiles")
+        .module;
     let partitioned = module.partition_test(&module.tests[0]);
     let mut cache = LoweringCache::default();
     let lowered = cache
