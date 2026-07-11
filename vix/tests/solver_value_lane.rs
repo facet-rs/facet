@@ -399,8 +399,8 @@ fn rung_091_mini_solve_exhaustion_is_none() {
 }
 
 #[test]
-fn rung_092_preserves_the_demanded_times_red_boundary() {
-    assert_eq!(unknown_name(&solver_lane(RUNG_092)), "demanded_times");
+fn rung_092_learning_prunes_with_function_provenance() {
+    all_pass(&solver_lane(RUNG_092), 2);
 }
 
 #[test]
