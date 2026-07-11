@@ -1,8 +1,8 @@
 use std::collections::BTreeMap;
 
-use weavy::task::{Task, ValueMemories, ValueMemory};
+use weavy::exec::StoreHandle;
+use weavy::task::{ValueMemories, ValueMemory};
 
-use super::abi::FrameSlot;
 use super::identity::{Digest, SchemaId, ValueId, hash_framed};
 
 /// Store-owned handle. It is valid for one runtime snapshot and is never
@@ -110,19 +110,10 @@ impl Store {
         self.entries.get(handle.0 as usize)
     }
 
-    /// Write a store-owned handle into a compiler-declared task slot without
-    /// exposing the handle's backing integer to the scheduler.
-    pub(crate) fn write_task_handle(
-        &self,
-        task: &mut Task,
-        slot: FrameSlot,
-        handle: Handle,
-    ) -> bool {
-        if self.entry(handle).is_none() {
-            return false;
-        }
-        task.write_i64(slot.byte_offset(), i64::from(handle.0));
-        true
+    /// Convert only a live store-owned handle to Weavy's opaque entry handle.
+    pub(crate) fn weavy_handle(&self, handle: Handle) -> Option<StoreHandle> {
+        self.entry(handle)?;
+        StoreHandle::new(handle.0 as usize)
     }
 
     /// Lend Weavy a non-owning memory table for the duration of one drive.

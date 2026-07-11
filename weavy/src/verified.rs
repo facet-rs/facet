@@ -1840,8 +1840,27 @@ impl Verifier<'_> {
                 )?;
             }
             Op::CopyValue { dst, src } => {
-                let source = self.structural_region(function_id, pc, function_index, *src)?;
-                let destination = self.structural_region(function_id, pc, function_index, *dst)?;
+                let regions = &self.contract.functions[function_index].frame.regions;
+                let source = regions.get(src.0 as usize).ok_or_else(|| {
+                    self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::StructuralRegionOutOfRange {
+                            region: *src,
+                            region_count: regions.len(),
+                        },
+                    )
+                })?;
+                let destination = regions.get(dst.0 as usize).ok_or_else(|| {
+                    self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::StructuralRegionOutOfRange {
+                            region: *dst,
+                            region_count: regions.len(),
+                        },
+                    )
+                })?;
                 if source.value_shape != destination.value_shape
                     || source.shape != destination.shape
                 {

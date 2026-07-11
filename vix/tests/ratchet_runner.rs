@@ -953,10 +953,11 @@ fn rung_007_enums_payloads_and_match_run_through_vir_and_weavy() {
         VariantPayload::Record(fields)
             if fields.iter().map(|field| field.name.as_str()).collect::<Vec<_>>() == ["w", "h"]
     ));
-    let enum_words = VirType::Enum(shape.clone())
-        .word_width()
-        .expect("Shape has a finite inline layout");
-    assert_eq!(enum_words, 3);
+    assert_eq!(
+        VirType::Enum(shape.clone()).word_width(),
+        Some(3),
+        "Shape has a finite inline layout"
+    );
     assert!(module.functions.iter().any(|function| {
         function
             .nodes
@@ -996,14 +997,9 @@ fn rung_007_enums_payloads_and_match_run_through_vir_and_weavy() {
             .iter()
             .position(|op| matches!(op, WeavyOp::Trace { id } if *id == trace_id))
             .expect("variant construction has a Weavy trace mark");
-        assert!(
-            entry[trace_pc + 1..trace_pc + 1 + enum_words]
-                .iter()
-                .all(|op| matches!(op, WeavyOp::ConstI64 { value: 0, .. }))
-        );
         assert!(matches!(
-            &entry[trace_pc + 1 + enum_words],
-            WeavyOp::ConstI64 { value, .. } if *value == i64::from(*variant)
+            &entry[trace_pc + 1],
+            WeavyOp::EnumConstruct { variant: lowered_variant, .. } if lowered_variant == variant
         ));
         assert!(lowered.program.fns.iter().any(|function| {
             function.code.iter().any(
@@ -1429,17 +1425,12 @@ fn rung_012_record_order_is_total_structural_and_declaration_ordered() {
             .get_or_lower(island)
             .expect("rung 012 lowers to Weavy");
         let entry = &lowered.program.fns[0];
-        let compared_fields = entry
+        let projected_fields = entry
             .code
             .iter()
-            .filter_map(|op| match op {
-                WeavyOp::LtI64 { a, b, .. } => Some((*a, *b)),
-                _ => None,
-            })
-            .collect::<Vec<_>>();
-        assert_eq!(compared_fields.len(), 2);
-        assert_eq!(compared_fields[1].0, compared_fields[0].0 + 8);
-        assert_eq!(compared_fields[1].1, compared_fields[0].1 + 8);
+            .filter(|op| matches!(op, WeavyOp::ProductProject { .. }))
+            .count();
+        assert_eq!(projected_fields, 4);
         assert!(
             entry
                 .code

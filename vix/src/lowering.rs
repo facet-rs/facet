@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
+use weavy::exec::Executable;
 use weavy::mem::Layout;
 use weavy::task::{
     ArgCopy, Fn as WeavyFn, FnId as WeavyFnId, Op as WeavyOp, Program as WeavyProgram,
@@ -99,6 +100,7 @@ pub struct LoweringArtifact {
     pub demand_preimage: DemandPreimage,
     pub program: WeavyProgram,
     pub contract: WeavyProgramContract,
+    pub executable: Executable,
     pub pc_nodes: Vec<Vec<NodeRef>>,
     pub constants: Vec<ValueConstant>,
 }
@@ -283,7 +285,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
             )?,
         );
     }
-    let regions = RegionAssignments::build(island, &layouts)?;
+    let regions = RegionAssignments::build(island, &layouts, &constant_closures)?;
     let context = LoweringContext {
         root_function: island.function,
         function_ids: &function_ids,
@@ -335,12 +337,19 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
         closure: recipe,
         arguments: Vec::new(),
     };
+    let verified = program.clone().verify(contract.clone()).map_err(|error| {
+        lowering_diagnostic(
+            output.span,
+            &format!("Weavy verifier rejected lowered program: {error:?}"),
+        )
+    })?;
     Ok(LoweringArtifact {
         recipe,
         demand_key: DemandKey::from_preimage(&demand_preimage),
         demand_preimage,
         program,
         contract,
+        executable: Executable::new(verified),
         pc_nodes,
         constants,
     })
@@ -505,6 +514,270 @@ struct ProgramContractBuilder<'a> {
     value_shape_keys: Vec<Type>,
 }
 
+fn lower_equality_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_node_type(node, Type::Bool)?;
+    let (a, b) = binary_values(node, values)?;
+    if a.ty != b.ty || !a.ty.equality_is_structural() {
+        return Err(lowering_diagnostic(
+            node.span,
+            "equality operands do not have one structural VIR type",
+        ));
+    }
+    if dst.words() != FrameWords::ONE {
+        return Err(lowering_diagnostic(
+            node.span,
+            "equality result is not one word",
+        ));
+    }
+    let mut temps = TemporaryCursor::new(
+        sequence.function.layout,
+        sequence.lowering.regions,
+        sequence.function.id,
+        node,
+    )?;
+    let accumulator = temps.take(&Type::Int, node.span)?;
+    let work = temps.take(&Type::Int, node.span)?;
+    let equal = temps.take(&Type::Int, node.span)?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: accumulator.region.start().byte_offset(),
+        value: 1,
+    });
+    emit_semantic_equality(
+        node,
+        &a.ty,
+        &a,
+        &b,
+        accumulator.region.start(),
+        work.region.start(),
+        equal.region.start(),
+        &mut temps,
+        outputs.code,
+    )?;
+    if matches!(node.op, Op::Ne) {
+        outputs.code.push(WeavyOp::ConstI64 {
+            dst: equal.region.start().byte_offset(),
+            value: 0,
+        });
+        outputs.code.push(WeavyOp::EqI64 {
+            dst: accumulator.region.start().byte_offset(),
+            a: accumulator.region.start().byte_offset(),
+            b: equal.region.start().byte_offset(),
+        });
+    }
+    outputs.code.push(WeavyOp::CopyI64 {
+        dst: dst.start().byte_offset(),
+        src: accumulator.region.start().byte_offset(),
+    });
+    temps.finish(node.span)?;
+    Ok(ValueRepresentation::Word)
+}
+
+fn emit_semantic_equality(
+    node: &Node,
+    ty: &Type,
+    a: &LoweredSlot,
+    b: &LoweredSlot,
+    accumulator: FrameSlot,
+    work: FrameSlot,
+    equal: FrameSlot,
+    temps: &mut TemporaryCursor<'_>,
+    code: &mut CodeBuilder,
+) -> Result<(), Diagnostics> {
+    match ty {
+        Type::Bool | Type::Int | Type::Check => {
+            code.push(WeavyOp::EqI64 {
+                dst: work.byte_offset(),
+                a: a.region.start().byte_offset(),
+                b: b.region.start().byte_offset(),
+            });
+            code.push(WeavyOp::MulI64 {
+                dst: accumulator.byte_offset(),
+                a: accumulator.byte_offset(),
+                b: work.byte_offset(),
+            });
+        }
+        Type::String => {
+            code.push(WeavyOp::CompareValueBytes {
+                dst: work.byte_offset(),
+                a: a.region.start().byte_offset(),
+                b: b.region.start().byte_offset(),
+            });
+            code.push(WeavyOp::ConstI64 {
+                dst: equal.byte_offset(),
+                value: i64::from(ORDERING_EQUAL_VARIANT),
+            });
+            code.push(WeavyOp::EqI64 {
+                dst: work.byte_offset(),
+                a: work.byte_offset(),
+                b: equal.byte_offset(),
+            });
+            code.push(WeavyOp::MulI64 {
+                dst: accumulator.byte_offset(),
+                a: accumulator.byte_offset(),
+                b: work.byte_offset(),
+            });
+        }
+        Type::Tuple(fields) => {
+            for (index, field) in fields.iter().enumerate() {
+                let left = temps.take(field, node.span)?;
+                let right = temps.take(field, node.span)?;
+                let field = u32::try_from(index)
+                    .map_err(|_| lowering_diagnostic(node.span, "product field index overflow"))?;
+                code.push(WeavyOp::ProductProject {
+                    dst: left.region_id,
+                    product: a.region_id,
+                    field,
+                });
+                code.push(WeavyOp::ProductProject {
+                    dst: right.region_id,
+                    product: b.region_id,
+                    field,
+                });
+                emit_semantic_equality(
+                    node,
+                    field_type(fields, index),
+                    &left,
+                    &right,
+                    accumulator,
+                    work,
+                    equal,
+                    temps,
+                    code,
+                )?;
+            }
+        }
+        Type::Record(record) => {
+            for (index, field) in record.fields.iter().enumerate() {
+                let left = temps.take(&field.ty, node.span)?;
+                let right = temps.take(&field.ty, node.span)?;
+                let field_index = u32::try_from(index)
+                    .map_err(|_| lowering_diagnostic(node.span, "record field index overflow"))?;
+                code.push(WeavyOp::ProductProject {
+                    dst: left.region_id,
+                    product: a.region_id,
+                    field: field_index,
+                });
+                code.push(WeavyOp::ProductProject {
+                    dst: right.region_id,
+                    product: b.region_id,
+                    field: field_index,
+                });
+                emit_semantic_equality(
+                    node,
+                    &field.ty,
+                    &left,
+                    &right,
+                    accumulator,
+                    work,
+                    equal,
+                    temps,
+                    code,
+                )?;
+            }
+        }
+        Type::Enum(enumeration) => {
+            for (variant_index, variant) in enumeration.variants.iter().enumerate() {
+                let variant_index = u32::try_from(variant_index)
+                    .map_err(|_| lowering_diagnostic(node.span, "enum variant index overflow"))?;
+                code.push(WeavyOp::EnumIsVariant {
+                    dst: work_region_id(work, temps, node.span)?,
+                    value: a.region_id,
+                    variant: variant_index,
+                });
+                code.push(WeavyOp::EnumIsVariant {
+                    dst: work_region_id(equal, temps, node.span)?,
+                    value: b.region_id,
+                    variant: variant_index,
+                });
+                code.push(WeavyOp::EqI64 {
+                    dst: work.byte_offset(),
+                    a: work.byte_offset(),
+                    b: equal.byte_offset(),
+                });
+                code.push(WeavyOp::MulI64 {
+                    dst: accumulator.byte_offset(),
+                    a: accumulator.byte_offset(),
+                    b: work.byte_offset(),
+                });
+                let next = code.label();
+                code.push(WeavyOp::EnumIsVariant {
+                    dst: work_region_id(work, temps, node.span)?,
+                    value: a.region_id,
+                    variant: variant_index,
+                });
+                code.jump_if_zero(work, next);
+                let fields: Vec<&Type> = match &variant.payload {
+                    VariantPayload::Unit => Vec::new(),
+                    VariantPayload::Tuple(fields) => fields.iter().collect(),
+                    VariantPayload::Record(fields) => {
+                        fields.iter().map(|field| &field.ty).collect()
+                    }
+                };
+                for (field_index, field) in fields.into_iter().enumerate() {
+                    let left = temps.take(field, node.span)?;
+                    let right = temps.take(field, node.span)?;
+                    let field_index = u32::try_from(field_index)
+                        .map_err(|_| lowering_diagnostic(node.span, "enum field index overflow"))?;
+                    code.push(WeavyOp::EnumProjectChecked {
+                        dst: left.region_id,
+                        value: a.region_id,
+                        variant: variant_index,
+                        field: field_index,
+                    });
+                    code.push(WeavyOp::EnumProjectChecked {
+                        dst: right.region_id,
+                        value: b.region_id,
+                        variant: variant_index,
+                        field: field_index,
+                    });
+                    emit_semantic_equality(
+                        node,
+                        field,
+                        &left,
+                        &right,
+                        accumulator,
+                        work,
+                        equal,
+                        temps,
+                        code,
+                    )?;
+                }
+                code.bind(next, node.span)?;
+            }
+        }
+        Type::Array(_) | Type::Function { .. } | Type::StreamCheck => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "equality lowering is not implemented for this VIR type",
+            ));
+        }
+    }
+    Ok(())
+}
+
+fn work_region_id(
+    slot: FrameSlot,
+    temps: &TemporaryCursor<'_>,
+    span: Span,
+) -> Result<WeavyRegionId, Diagnostics> {
+    temps
+        .regions
+        .iter()
+        .zip(temps.ids)
+        .find_map(|(region, id)| (region.region.start() == slot).then_some(*id))
+        .ok_or_else(|| lowering_diagnostic(span, "comparison work slot has no contract region"))
+}
+
+fn field_type<'a>(fields: &'a [Type], index: usize) -> &'a Type {
+    &fields[index]
+}
+
 #[derive(Clone, Copy)]
 struct FunctionContractSource<'a> {
     id: FunctionId,
@@ -571,6 +844,34 @@ impl<'a> ProgramContractBuilder<'a> {
             let source = builder.function_order[function_index];
             functions.push(builder.function_contract(source, function)?);
         }
+        for (function_index, source) in builder.function_order.iter().enumerate() {
+            for node in source
+                .nodes
+                .iter()
+                .filter(|node| matches!(node.op, Op::Closure(_)))
+            {
+                let Op::Closure(target) = node.op else {
+                    unreachable!();
+                };
+                let target_index = builder
+                    .function_order
+                    .iter()
+                    .position(|candidate| candidate.id == target)
+                    .ok_or_else(|| lowering_diagnostic(node.span, "closure target is absent"))?;
+                let call = functions[target_index].call_contract.ok_or_else(|| {
+                    lowering_diagnostic(node.span, "closure target has no exact call ABI")
+                })?;
+                let (callee_region, _) = builder.regions.closure(source.id, node.id, node.span)?;
+                let region = functions[function_index]
+                    .frame
+                    .regions
+                    .get_mut(callee_region.0 as usize)
+                    .ok_or_else(|| {
+                        lowering_diagnostic(node.span, "closure callee region is absent")
+                    })?;
+                region.shape = WeavyRegionShape::word(WeavyWordKind::Callable(call));
+            }
+        }
         Ok(WeavyProgramContract {
             functions,
             calls: builder.calls,
@@ -616,6 +917,64 @@ impl<'a> ProgramContractBuilder<'a> {
             ));
             regions.push(WeavyFrameRegion::new(
                 control.condition.byte_offset(),
+                WeavyRegionShape::word(WeavyWordKind::Scalar),
+            ));
+        }
+        for (&node, temps) in &layout.comparison_temps {
+            let assigned = self
+                .regions
+                .comparison_temps(function.id, node, function.span)?;
+            if assigned.len() != temps.len() {
+                return Err(lowering_diagnostic(
+                    function.span,
+                    "comparison temporary contract assignment has the wrong length",
+                ));
+            }
+            for (temp, region_id) in temps.iter().zip(assigned) {
+                if region_id.0 as usize != regions.len() {
+                    return Err(lowering_diagnostic(
+                        function.span,
+                        "comparison temporary contract order is not canonical",
+                    ));
+                }
+                regions.push(self.frame_region(temp.region.start(), &temp.ty)?);
+            }
+        }
+        for (&node, (callee, environment)) in &layout.closure_temps {
+            let node_source = function
+                .nodes
+                .iter()
+                .find(|candidate| candidate.id == node)
+                .ok_or_else(|| {
+                    lowering_diagnostic(function.span, "closure temporary names a missing VIR node")
+                })?;
+            let Type::Function { parameter, result } = &node_source.ty else {
+                return Err(lowering_diagnostic(
+                    node_source.span,
+                    "closure temporary is not attached to a function value",
+                ));
+            };
+            let (callee_id, environment_id) =
+                self.regions.closure(function.id, node, node_source.span)?;
+            if callee_id.0 as usize != regions.len() {
+                return Err(lowering_diagnostic(
+                    node_source.span,
+                    "closure callee region is not canonical",
+                ));
+            }
+            let call = self.call_contract_for_signature(parameter, result, node_source.span)?;
+            regions.push(WeavyFrameRegion::new(
+                callee.start().byte_offset(),
+                WeavyRegionShape::word(WeavyWordKind::Callable(call)),
+            ));
+            if environment_id.0 as usize != regions.len() {
+                return Err(lowering_diagnostic(
+                    node_source.span,
+                    "closure environment region is not canonical",
+                ));
+            }
+            regions.push(WeavyFrameRegion::new(
+                environment.start().byte_offset(),
                 WeavyRegionShape::word(WeavyWordKind::Scalar),
             ));
         }
@@ -1050,14 +1409,26 @@ struct LoweringContext<'a> {
 /// when a product has no fields.
 struct RegionAssignments {
     nodes: BTreeMap<FunctionId, BTreeMap<NodeId, WeavyRegionId>>,
+    control: BTreeMap<FunctionId, AssignedControlRegions>,
+    temps: BTreeMap<FunctionId, BTreeMap<NodeId, Vec<WeavyRegionId>>>,
+    closures: BTreeMap<FunctionId, BTreeMap<NodeId, (WeavyRegionId, WeavyRegionId)>>,
+}
+
+#[derive(Clone, Copy)]
+struct AssignedControlRegions {
+    condition: WeavyRegionId,
 }
 
 impl RegionAssignments {
     fn build(
         island: &Island,
         layouts: &BTreeMap<FunctionId, FunctionLayout>,
+        constant_closures: &BTreeMap<FunctionId, BTreeSet<NodeRef>>,
     ) -> Result<Self, Diagnostics> {
         let mut nodes = BTreeMap::new();
+        let mut control = BTreeMap::new();
+        let mut temps = BTreeMap::new();
+        let mut closures = BTreeMap::new();
         let mut insert = |function: FunctionId, body: &[Node], span: Span| {
             let layout = layouts.get(&function).ok_or_else(|| {
                 lowering_diagnostic(span, "missing function layout for region assignment")
@@ -1075,14 +1446,82 @@ impl RegionAssignments {
                     ));
                 }
             }
+            let mut next = body.len();
+            if layout.scratch.is_some() {
+                next = next.checked_add(1).ok_or_else(|| {
+                    lowering_diagnostic(span, "scratch region assignment overflow")
+                })?;
+            }
+            if layout.control_scratch.is_some() {
+                let condition = next.checked_add(1).ok_or_else(|| {
+                    lowering_diagnostic(span, "control region assignment overflow")
+                })?;
+                control.insert(
+                    function,
+                    AssignedControlRegions {
+                        condition: WeavyRegionId(u32::try_from(condition).map_err(|_| {
+                            lowering_diagnostic(span, "control region assignment exceeds u32")
+                        })?),
+                    },
+                );
+                next = condition.checked_add(1).ok_or_else(|| {
+                    lowering_diagnostic(span, "control region assignment overflow")
+                })?;
+            }
+            let mut assigned_temps = BTreeMap::new();
+            for (&node, regions) in &layout.comparison_temps {
+                let mut ids = Vec::with_capacity(regions.len());
+                for _ in regions {
+                    ids.push(WeavyRegionId(u32::try_from(next).map_err(|_| {
+                        lowering_diagnostic(span, "temporary region assignment exceeds u32")
+                    })?));
+                    next = next.checked_add(1).ok_or_else(|| {
+                        lowering_diagnostic(span, "temporary region assignment overflow")
+                    })?;
+                }
+                assigned_temps.insert(node, ids);
+            }
+            let mut assigned_closures = BTreeMap::new();
+            for &node in layout.closure_temps.keys() {
+                let callee = WeavyRegionId(u32::try_from(next).map_err(|_| {
+                    lowering_diagnostic(span, "closure temporary assignment exceeds u32")
+                })?);
+                next = next.checked_add(1).ok_or_else(|| {
+                    lowering_diagnostic(span, "closure temporary assignment overflow")
+                })?;
+                let environment = WeavyRegionId(u32::try_from(next).map_err(|_| {
+                    lowering_diagnostic(span, "closure temporary assignment exceeds u32")
+                })?);
+                next = next.checked_add(1).ok_or_else(|| {
+                    lowering_diagnostic(span, "closure temporary assignment overflow")
+                })?;
+                assigned_closures.insert(node, (callee, environment));
+            }
+            let constants = constant_closures.get(&function).ok_or_else(|| {
+                lowering_diagnostic(span, "missing constants for region assignment")
+            })?;
+            for constant in constants {
+                if constant.function != function {
+                    next = next.checked_add(1).ok_or_else(|| {
+                        lowering_diagnostic(span, "constant region assignment overflow")
+                    })?;
+                }
+            }
             nodes.insert(function, assigned);
+            temps.insert(function, assigned_temps);
+            closures.insert(function, assigned_closures);
             Ok(())
         };
         insert(island.function, &island.nodes, Span { start: 0, end: 0 })?;
         for function in &island.callees {
             insert(function.id, &function.nodes, function.span)?;
         }
-        Ok(Self { nodes })
+        Ok(Self {
+            nodes,
+            control,
+            temps,
+            closures,
+        })
     }
 
     fn node(
@@ -1097,14 +1536,61 @@ impl RegionAssignments {
             .copied()
             .ok_or_else(|| lowering_diagnostic(span, "VIR node has no assigned contract region"))
     }
+
+    fn control(
+        &self,
+        function: FunctionId,
+        span: Span,
+    ) -> Result<AssignedControlRegions, Diagnostics> {
+        self.control
+            .get(&function)
+            .copied()
+            .ok_or_else(|| lowering_diagnostic(span, "function has no assigned control region"))
+    }
+
+    fn comparison_temps(
+        &self,
+        function: FunctionId,
+        node: NodeId,
+        span: Span,
+    ) -> Result<&[WeavyRegionId], Diagnostics> {
+        self.temps
+            .get(&function)
+            .and_then(|nodes| nodes.get(&node))
+            .map(Vec::as_slice)
+            .ok_or_else(|| {
+                lowering_diagnostic(span, "comparison node has no assigned temporary regions")
+            })
+    }
+
+    fn closure(
+        &self,
+        function: FunctionId,
+        node: NodeId,
+        span: Span,
+    ) -> Result<(WeavyRegionId, WeavyRegionId), Diagnostics> {
+        self.closures
+            .get(&function)
+            .and_then(|nodes| nodes.get(&node))
+            .copied()
+            .ok_or_else(|| lowering_diagnostic(span, "closure node has no assigned typed regions"))
+    }
 }
 
 struct FunctionLayout {
     regions: BTreeMap<NodeId, FrameRegion>,
+    comparison_temps: BTreeMap<NodeId, Vec<TemporaryRegion>>,
+    closure_temps: BTreeMap<NodeId, (FrameRegion, FrameRegion)>,
     constant_slots: BTreeMap<NodeRef, FrameSlot>,
     scratch: Option<FrameSlot>,
     control_scratch: Option<ControlScratch>,
     frame_size: usize,
+}
+
+#[derive(Clone)]
+struct TemporaryRegion {
+    region: FrameRegion,
+    ty: Type,
 }
 
 #[derive(Clone, Copy)]
@@ -1178,7 +1664,61 @@ impl FunctionLayout {
         } else {
             None
         };
+        let mut comparison_temps = BTreeMap::new();
+        for node in nodes
+            .iter()
+            .filter(|node| matches!(node.op, Op::Eq | Op::Ne | Op::Compare))
+        {
+            let mut types = if matches!(node.op, Op::Eq | Op::Ne) {
+                vec![Type::Int, Type::Int, Type::Int]
+            } else if matches!(node.op, Op::Compare) {
+                vec![Type::Int, Type::Int]
+            } else {
+                Vec::new()
+            };
+            let operand = node
+                .inputs
+                .first()
+                .and_then(|input| nodes.iter().find(|candidate| candidate.id == *input))
+                .ok_or_else(|| {
+                    lowering_diagnostic(node.span, "comparison node has no first operand")
+                })?;
+            comparison_temporary_types(&operand.ty, &mut types);
+            let mut temps = Vec::with_capacity(types.len());
+            for ty in types {
+                let words = type_words(&ty, node.span)?;
+                let region = FrameRegion::for_words(next_word, words).ok_or_else(|| {
+                    lowering_diagnostic(node.span, "comparison temporary region overflow")
+                })?;
+                next_word = next_word.checked_add(words.as_usize()).ok_or_else(|| {
+                    lowering_diagnostic(node.span, "function frame size overflow")
+                })?;
+                temps.push(TemporaryRegion { region, ty });
+            }
+            comparison_temps.insert(node.id, temps);
+        }
+
         let mut constant_slots = BTreeMap::new();
+        let mut closure_temps = BTreeMap::new();
+        for node in nodes
+            .iter()
+            .filter(|node| matches!(node.op, Op::Closure(_)))
+        {
+            let callee = FrameRegion::for_words(next_word, FrameWords::ONE).ok_or_else(|| {
+                lowering_diagnostic(node.span, "closure callee temporary region overflow")
+            })?;
+            next_word = next_word
+                .checked_add(1)
+                .ok_or_else(|| lowering_diagnostic(node.span, "function frame size overflow"))?;
+            let environment =
+                FrameRegion::for_words(next_word, FrameWords::ONE).ok_or_else(|| {
+                    lowering_diagnostic(node.span, "closure environment temporary region overflow")
+                })?;
+            next_word = next_word
+                .checked_add(1)
+                .ok_or_else(|| lowering_diagnostic(node.span, "function frame size overflow"))?;
+            closure_temps.insert(node.id, (callee, environment));
+        }
         for &constant in constants {
             let slot = if constant.function == function {
                 let node = nodes
@@ -1214,6 +1754,8 @@ impl FunctionLayout {
             .ok_or_else(|| lowering_diagnostic(span, "function frame size overflow"))?;
         Ok(Self {
             regions,
+            comparison_temps,
+            closure_temps,
             constant_slots,
             scratch,
             control_scratch,
@@ -1233,6 +1775,70 @@ impl FunctionLayout {
             .get(&constant)
             .copied()
             .ok_or_else(|| lowering_diagnostic(span, "function closure is missing a constant"))
+    }
+
+    fn comparison_temps(
+        &self,
+        node: NodeId,
+        span: Span,
+    ) -> Result<&[TemporaryRegion], Diagnostics> {
+        self.comparison_temps
+            .get(&node)
+            .map(Vec::as_slice)
+            .ok_or_else(|| lowering_diagnostic(span, "comparison node has no temporary regions"))
+    }
+
+    fn closure_temps(
+        &self,
+        node: NodeId,
+        span: Span,
+    ) -> Result<(FrameRegion, FrameRegion), Diagnostics> {
+        self.closure_temps
+            .get(&node)
+            .copied()
+            .ok_or_else(|| lowering_diagnostic(span, "closure node has no typed temporary regions"))
+    }
+}
+
+fn comparison_temporary_types(ty: &Type, out: &mut Vec<Type>) {
+    match ty {
+        Type::Tuple(fields) => {
+            for field in fields {
+                out.push(field.clone());
+                out.push(field.clone());
+                comparison_temporary_types(field, out);
+            }
+        }
+        Type::Record(record) => {
+            for field in &record.fields {
+                out.push(field.ty.clone());
+                out.push(field.ty.clone());
+                comparison_temporary_types(&field.ty, out);
+            }
+        }
+        Type::Enum(enumeration) => {
+            for variant in &enumeration.variants {
+                let fields: Vec<&Type> = match &variant.payload {
+                    VariantPayload::Unit => Vec::new(),
+                    VariantPayload::Tuple(fields) => fields.iter().collect(),
+                    VariantPayload::Record(fields) => {
+                        fields.iter().map(|field| &field.ty).collect()
+                    }
+                };
+                for field in fields {
+                    out.push(field.clone());
+                    out.push(field.clone());
+                    comparison_temporary_types(field, out);
+                }
+            }
+        }
+        Type::Bool
+        | Type::Int
+        | Type::Check
+        | Type::String
+        | Type::Array(_)
+        | Type::Function { .. }
+        | Type::StreamCheck => {}
     }
 }
 
@@ -1528,7 +2134,8 @@ fn lower_node_sequence(
                 outputs,
                 active_variant,
             )?,
-            Op::Compare => lower_compare_node(node, dst, values, sequence, outputs)?,
+            Op::Compare => lower_compare_node(node, dst, dst_region_id, values, sequence, outputs)?,
+            Op::Eq | Op::Ne => lower_equality_node(node, dst, values, sequence, outputs)?,
             _ => {
                 let lowered = lower_node(
                     node,
@@ -1561,7 +2168,7 @@ fn lower_node_sequence(
 fn lower_ordered_match_node(
     node: &Node,
     dst: FrameRegion,
-    _dst_region: WeavyRegionId,
+    dst_region: WeavyRegionId,
     values: &BTreeMap<NodeId, LoweredSlot>,
     sequence: &SequenceContext<'_, '_, '_>,
     outputs: &mut SequenceOutputs<'_, '_>,
@@ -1606,7 +2213,9 @@ fn lower_ordered_match_node(
             lowering_diagnostic(node.span, "ordered-match body has no lowered value")
         })?;
         require_value(node, body, &node.ty, result_representation)?;
-        outputs.code.extend(copy_region(node, body.region, dst)?);
+        outputs
+            .code
+            .extend(copy_lowered_value(node, body, dst, dst_region)?);
         outputs.code.jump(end);
         outputs.code.bind(next, node.span)?;
     }
@@ -1625,7 +2234,7 @@ fn lower_ordered_match_node(
     require_value(node, fallback, &node.ty, result_representation)?;
     outputs
         .code
-        .extend(copy_region(node, fallback.region, dst)?);
+        .extend(copy_lowered_value(node, fallback, dst, dst_region)?);
     outputs.code.bind(end, node.span)?;
 
     Ok(result_representation)
@@ -1634,7 +2243,7 @@ fn lower_ordered_match_node(
 fn lower_if_node(
     node: &Node,
     dst: FrameRegion,
-    _dst_region: WeavyRegionId,
+    dst_region: WeavyRegionId,
     values: &BTreeMap<NodeId, LoweredSlot>,
     sequence: &SequenceContext<'_, '_, '_>,
     outputs: &mut SequenceOutputs<'_, '_>,
@@ -1673,9 +2282,12 @@ fn lower_if_node(
         lowering_diagnostic(node.span, "if consequent output has no lowered value")
     })?;
     require_value(node, consequent_output, &node.ty, result_representation)?;
-    outputs
-        .code
-        .extend(copy_region(node, consequent_output.region, dst)?);
+    outputs.code.extend(copy_lowered_value(
+        node,
+        consequent_output,
+        dst,
+        dst_region,
+    )?);
     outputs.code.jump(end);
 
     outputs.code.bind(alternative_label, node.span)?;
@@ -1691,9 +2303,12 @@ fn lower_if_node(
         lowering_diagnostic(node.span, "if alternative output has no lowered value")
     })?;
     require_value(node, alternative_output, &node.ty, result_representation)?;
-    outputs
-        .code
-        .extend(copy_region(node, alternative_output.region, dst)?);
+    outputs.code.extend(copy_lowered_value(
+        node,
+        alternative_output,
+        dst,
+        dst_region,
+    )?);
     outputs.code.bind(end, node.span)?;
 
     Ok(result_representation)
@@ -1702,7 +2317,7 @@ fn lower_if_node(
 fn lower_match_node(
     node: &Node,
     dst: FrameRegion,
-    _dst_region: WeavyRegionId,
+    dst_region: WeavyRegionId,
     values: &BTreeMap<NodeId, LoweredSlot>,
     sequence: &SequenceContext<'_, '_, '_>,
     outputs: &mut SequenceOutputs<'_, '_>,
@@ -1749,32 +2364,24 @@ fn lower_match_node(
     }
 
     let result_representation = representation_for_type(&node.ty, node.span)?;
-    let tag = scrutinee
-        .region
-        .word(0)
-        .ok_or_else(|| lowering_diagnostic(node.span, "enum tag lies outside its frame"))?;
+    let control = sequence
+        .lowering
+        .regions
+        .control(sequence.function.id, node.span)?;
+    let scratch = sequence
+        .function
+        .layout
+        .control_scratch
+        .ok_or_else(|| lowering_diagnostic(node.span, "Match has no control scratch region"))?;
     let end = outputs.code.label();
-    for (arm_index, arm) in arms.iter().enumerate() {
-        let is_last = arm_index + 1 == arms.len();
-        let next = if is_last {
-            None
-        } else {
-            let scratch = sequence.function.layout.control_scratch.ok_or_else(|| {
-                lowering_diagnostic(node.span, "Match has no control scratch region")
-            })?;
-            outputs.code.push(WeavyOp::ConstI64 {
-                dst: scratch.expected.byte_offset(),
-                value: i64::from(arm.variant),
-            });
-            outputs.code.push(WeavyOp::EqI64 {
-                dst: scratch.condition.byte_offset(),
-                a: tag.byte_offset(),
-                b: scratch.expected.byte_offset(),
-            });
-            let next = outputs.code.label();
-            outputs.code.jump_if_zero(scratch.condition, next);
-            Some(next)
-        };
+    for arm in arms {
+        let next = outputs.code.label();
+        outputs.code.push(WeavyOp::EnumIsVariant {
+            dst: control.condition,
+            value: scrutinee.region_id,
+            variant: arm.variant,
+        });
+        outputs.code.jump_if_zero(scratch.condition, next);
 
         let mut arm_values = values.clone();
         lower_node_sequence(
@@ -1788,12 +2395,11 @@ fn lower_match_node(
             lowering_diagnostic(node.span, "match arm output has no lowered value")
         })?;
         require_value(node, output, &node.ty, result_representation)?;
-        outputs.code.extend(copy_region(node, output.region, dst)?);
-
-        if let Some(next) = next {
-            outputs.code.jump(end);
-            outputs.code.bind(next, node.span)?;
-        }
+        outputs
+            .code
+            .extend(copy_lowered_value(node, output, dst, dst_region)?);
+        outputs.code.jump(end);
+        outputs.code.bind(next, node.span)?;
     }
     outputs.code.bind(end, node.span)?;
     Ok(result_representation)
@@ -1816,6 +2422,7 @@ struct CompareLeaf {
 fn lower_compare_node(
     node: &Node,
     dst: FrameRegion,
+    dst_region: WeavyRegionId,
     values: &BTreeMap<NodeId, LoweredSlot>,
     sequence: &SequenceContext<'_, '_, '_>,
     outputs: &mut SequenceOutputs<'_, '_>,
@@ -1844,9 +2451,17 @@ fn lower_compare_node(
         ));
     }
 
+    let mut temps = TemporaryCursor::new(
+        sequence.function.layout,
+        sequence.lowering.regions,
+        sequence.function.id,
+        node,
+    )?;
+    let ordering = temps.take(&Type::Int, node.span)?;
+    let test = temps.take(&Type::Int, node.span)?;
     let mut leaves = Vec::new();
-    collect_compare_leaves(&a.ty, a.region, b.region, node.span, &mut leaves)?;
-    let dst = dst.start();
+    collect_typed_compare_leaves(node, &a.ty, &a, &b, &mut temps, outputs.code, &mut leaves)?;
+    let dst = ordering.region.start();
     let end = outputs.code.label();
     if leaves.is_empty() {
         outputs.code.push(WeavyOp::ConstI64 {
@@ -1917,115 +2532,135 @@ fn lower_compare_node(
         }
     }
     outputs.code.bind(end, node.span)?;
+    let not_less = outputs.code.label();
+    let not_equal = outputs.code.label();
+    let done = outputs.code.label();
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: test.region.start().byte_offset(),
+        value: i64::from(ORDERING_LESS_VARIANT),
+    });
+    outputs.code.push(WeavyOp::EqI64 {
+        dst: test.region.start().byte_offset(),
+        a: dst.byte_offset(),
+        b: test.region.start().byte_offset(),
+    });
+    outputs.code.jump_if_zero(test.region.start(), not_less);
+    outputs.code.push(WeavyOp::EnumConstruct {
+        dst: dst_region,
+        variant: ORDERING_LESS_VARIANT as u32,
+        fields: Vec::new(),
+    });
+    outputs.code.jump(done);
+    outputs.code.bind(not_less, node.span)?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: test.region.start().byte_offset(),
+        value: i64::from(ORDERING_EQUAL_VARIANT),
+    });
+    outputs.code.push(WeavyOp::EqI64 {
+        dst: test.region.start().byte_offset(),
+        a: dst.byte_offset(),
+        b: test.region.start().byte_offset(),
+    });
+    outputs.code.jump_if_zero(test.region.start(), not_equal);
+    outputs.code.push(WeavyOp::EnumConstruct {
+        dst: dst_region,
+        variant: ORDERING_EQUAL_VARIANT as u32,
+        fields: Vec::new(),
+    });
+    outputs.code.jump(done);
+    outputs.code.bind(not_equal, node.span)?;
+    outputs.code.push(WeavyOp::EnumConstruct {
+        dst: dst_region,
+        variant: ORDERING_GREATER_VARIANT as u32,
+        fields: Vec::new(),
+    });
+    outputs.code.bind(done, node.span)?;
+    temps.finish(node.span)?;
     Ok(ValueRepresentation::InlineComposite)
 }
 
-fn collect_compare_leaves(
+fn collect_typed_compare_leaves(
+    node: &Node,
     ty: &Type,
-    a: FrameRegion,
-    b: FrameRegion,
-    span: Span,
+    a: &LoweredSlot,
+    b: &LoweredSlot,
+    temps: &mut TemporaryCursor<'_>,
+    code: &mut CodeBuilder,
     leaves: &mut Vec<CompareLeaf>,
 ) -> Result<(), Diagnostics> {
-    if a.words() != b.words() || a.words() != type_words(ty, span)? {
-        return Err(lowering_diagnostic(
-            span,
-            "comparison operands have incompatible frame regions",
-        ));
-    }
     match ty {
-        Type::Bool | Type::Int => {
-            leaves.push(CompareLeaf {
-                kind: CompareLeafKind::SignedWord,
-                a: a.start(),
-                b: b.start(),
-            });
+        Type::Bool | Type::Int => leaves.push(CompareLeaf {
+            kind: CompareLeafKind::SignedWord,
+            a: a.region.start(),
+            b: b.region.start(),
+        }),
+        Type::String => leaves.push(CompareLeaf {
+            kind: CompareLeafKind::ValueBytes,
+            a: a.region.start(),
+            b: b.region.start(),
+        }),
+        Type::Tuple(fields) => {
+            for (index, field) in fields.iter().enumerate() {
+                let left = temps.take(field, node.span)?;
+                let right = temps.take(field, node.span)?;
+                let field_index = u32::try_from(index)
+                    .map_err(|_| lowering_diagnostic(node.span, "tuple field index overflow"))?;
+                code.push(WeavyOp::ProductProject {
+                    dst: left.region_id,
+                    product: a.region_id,
+                    field: field_index,
+                });
+                code.push(WeavyOp::ProductProject {
+                    dst: right.region_id,
+                    product: b.region_id,
+                    field: field_index,
+                });
+                collect_typed_compare_leaves(node, field, &left, &right, temps, code, leaves)?;
+            }
         }
-        Type::String => {
-            leaves.push(CompareLeaf {
-                kind: CompareLeafKind::ValueBytes,
-                a: a.start(),
-                b: b.start(),
-            });
+        Type::Record(record) => {
+            for (index, field) in record.fields.iter().enumerate() {
+                let left = temps.take(&field.ty, node.span)?;
+                let right = temps.take(&field.ty, node.span)?;
+                let field_index = u32::try_from(index)
+                    .map_err(|_| lowering_diagnostic(node.span, "record field index overflow"))?;
+                code.push(WeavyOp::ProductProject {
+                    dst: left.region_id,
+                    product: a.region_id,
+                    field: field_index,
+                });
+                code.push(WeavyOp::ProductProject {
+                    dst: right.region_id,
+                    product: b.region_id,
+                    field: field_index,
+                });
+                collect_typed_compare_leaves(node, &field.ty, &left, &right, temps, code, leaves)?;
+            }
+        }
+        Type::Enum(_) => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "enum order needs variant-directed typed lowering",
+            ));
         }
         Type::Array(_) => {
             return Err(lowering_diagnostic(
-                span,
+                node.span,
                 "array comparison lowering is not implemented",
             ));
         }
         Type::Function { .. } => {
             return Err(lowering_diagnostic(
-                span,
+                node.span,
                 "function comparison requires stable closure identity",
-            ));
-        }
-        Type::Tuple(elements) => {
-            collect_compare_fields(elements.iter(), a, b, span, leaves)?;
-        }
-        Type::Record(record) => {
-            collect_compare_fields(
-                record.fields.iter().map(|field| &field.ty),
-                a,
-                b,
-                span,
-                leaves,
-            )?;
-        }
-        Type::Enum(enumeration)
-            if enumeration
-                .variants
-                .iter()
-                .all(|variant| variant.payload.is_empty()) =>
-        {
-            leaves.push(CompareLeaf {
-                kind: CompareLeafKind::SignedWord,
-                a: a.start(),
-                b: b.start(),
-            });
-        }
-        Type::Enum(_) => {
-            return Err(lowering_diagnostic(
-                span,
-                "payload enum comparison needs variant-directed lowering",
             ));
         }
         Type::Check | Type::StreamCheck => {
             return Err(lowering_diagnostic(
-                span,
+                node.span,
                 "comparison reached a non-orderable VIR type",
             ));
         }
-    }
-    Ok(())
-}
-
-fn collect_compare_fields<'a>(
-    fields: impl IntoIterator<Item = &'a Type>,
-    a: FrameRegion,
-    b: FrameRegion,
-    span: Span,
-    leaves: &mut Vec<CompareLeaf>,
-) -> Result<(), Diagnostics> {
-    let mut offset = 0usize;
-    for ty in fields {
-        let words = type_words(ty, span)?;
-        let a = a
-            .subregion(offset, words)
-            .ok_or_else(|| lowering_diagnostic(span, "comparison field lies outside operand"))?;
-        let b = b
-            .subregion(offset, words)
-            .ok_or_else(|| lowering_diagnostic(span, "comparison field lies outside operand"))?;
-        collect_compare_leaves(ty, a, b, span, leaves)?;
-        offset = offset
-            .checked_add(words.as_usize())
-            .ok_or_else(|| lowering_diagnostic(span, "comparison field offset overflow"))?;
-    }
-    if offset != a.words().as_usize() {
-        return Err(lowering_diagnostic(
-            span,
-            "comparison fields do not cover the operand",
-        ));
     }
     Ok(())
 }
@@ -2050,6 +2685,67 @@ struct LoweredNode {
     representation: ValueRepresentation,
 }
 
+struct TemporaryCursor<'a> {
+    regions: &'a [TemporaryRegion],
+    ids: &'a [WeavyRegionId],
+    next: usize,
+}
+
+impl<'a> TemporaryCursor<'a> {
+    fn new(
+        layout: &'a FunctionLayout,
+        assignments: &'a RegionAssignments,
+        function: FunctionId,
+        node: &Node,
+    ) -> Result<Self, Diagnostics> {
+        let regions = layout.comparison_temps(node.id, node.span)?;
+        let ids = assignments.comparison_temps(function, node.id, node.span)?;
+        if regions.len() != ids.len() {
+            return Err(lowering_diagnostic(
+                node.span,
+                "comparison temporary regions and contracts differ",
+            ));
+        }
+        Ok(Self {
+            regions,
+            ids,
+            next: 0,
+        })
+    }
+
+    fn take(&mut self, ty: &Type, span: Span) -> Result<LoweredSlot, Diagnostics> {
+        let region = self.regions.get(self.next).ok_or_else(|| {
+            lowering_diagnostic(span, "comparison lowering exhausted its temporary regions")
+        })?;
+        let region_id = *self.ids.get(self.next).ok_or_else(|| {
+            lowering_diagnostic(span, "comparison temporary region has no contract id")
+        })?;
+        self.next += 1;
+        if &region.ty != ty {
+            return Err(lowering_diagnostic(
+                span,
+                "comparison temporary type does not match projected field",
+            ));
+        }
+        Ok(LoweredSlot {
+            region: region.region,
+            region_id,
+            ty: ty.clone(),
+            representation: representation_for_type(ty, span)?,
+        })
+    }
+
+    fn finish(self, span: Span) -> Result<(), Diagnostics> {
+        if self.next != self.regions.len() {
+            return Err(lowering_diagnostic(
+                span,
+                "comparison lowering did not consume its permanent temporaries",
+            ));
+        }
+        Ok(())
+    }
+}
+
 struct FunctionLoweringContext<'a> {
     id: FunctionId,
     parameters: &'a [crate::vir::Parameter],
@@ -2064,7 +2760,7 @@ fn lower_node(
     function: &FunctionLoweringContext<'_>,
     context: &LoweringContext<'_>,
     constants: &mut BTreeMap<NodeRef, PendingValueConstant>,
-    active_variant: Option<u32>,
+    _active_variant: Option<u32>,
 ) -> Result<LoweredNode, Diagnostics> {
     let dst_region = dst;
     let dst_slot = dst.start();
@@ -2193,18 +2889,32 @@ fn lower_node(
             let callee = context.function_ids.get(callee).copied().ok_or_else(|| {
                 lowering_diagnostic(node.span, "closure function has no local ABI id")
             })?;
-            let environment = dst_region.word(1).ok_or_else(|| {
-                lowering_diagnostic(node.span, "closure environment offset overflow")
-            })?;
+            let (callee_region, environment_region) =
+                context.regions.closure(function.id, node.id, node.span)?;
+            let (callee_temp, environment_temp) =
+                function.layout.closure_temps(node.id, node.span)?;
             (
                 vec![
                     WeavyOp::ConstI64 {
-                        dst,
+                        dst: callee_temp.start().byte_offset(),
                         value: i64::from(callee),
                     },
                     WeavyOp::ConstI64 {
-                        dst: environment.byte_offset(),
+                        dst: environment_temp.start().byte_offset(),
                         value: 0,
+                    },
+                    WeavyOp::ProductConstruct {
+                        dst: dst_region_id,
+                        fields: vec![
+                            StructuralFieldSource {
+                                field: 0,
+                                source: callee_region,
+                            },
+                            StructuralFieldSource {
+                                field: 1,
+                                source: environment_region,
+                            },
+                        ],
                     },
                 ],
                 ValueRepresentation::InlineComposite,
@@ -2283,12 +2993,6 @@ fn lower_node(
             lower_variant_node(node, dst_region, dst_region_id, values, *variant)?
         }
         Op::VariantProject { variant, field } => {
-            if active_variant != Some(*variant) {
-                return Err(lowering_diagnostic(
-                    node.span,
-                    "variant payload projection lies outside its matching arm",
-                ));
-            }
             lower_variant_project_node(node, dst_region, dst_region_id, values, *variant, *field)?
         }
         Op::IsVariant { variant } => {
@@ -2350,34 +3054,10 @@ fn lower_node(
             ));
         }
         Op::Eq | Op::Ne => {
-            require_node_type(node, Type::Bool)?;
-            let (a, b) = binary_values(node, values)?;
-            if a.ty != b.ty {
-                return Err(lowering_diagnostic(
-                    node.span,
-                    "equality operands have different VIR types",
-                ));
-            }
-            if !a.ty.equality_is_structural() {
-                return Err(lowering_diagnostic(
-                    node.span,
-                    "equality is not defined for this VIR type",
-                ));
-            }
-            let operand_representation = representation_for_type(&a.ty, node.span)?;
-            require_value(node, &a, &a.ty, operand_representation)?;
-            require_value(node, &b, &a.ty, operand_representation)?;
-            (
-                lower_equality(
-                    node,
-                    dst_region,
-                    a.region,
-                    b.region,
-                    matches!(&node.op, Op::Eq),
-                    function.layout.scratch,
-                )?,
-                ValueRepresentation::Word,
-            )
+            return Err(lowering_diagnostic(
+                node.span,
+                "structured equality reached scalar node lowering",
+            ));
         }
         Op::Expect => {
             require_node_type(node, Type::Check)?;
@@ -2857,78 +3537,6 @@ fn lower_project_node(
     ))
 }
 
-fn lower_equality(
-    node: &Node,
-    dst: FrameRegion,
-    a: FrameRegion,
-    b: FrameRegion,
-    equal: bool,
-    scratch: Option<FrameSlot>,
-) -> Result<Vec<WeavyOp>, Diagnostics> {
-    if a.words() != b.words() || dst.words() != FrameWords::ONE {
-        return Err(lowering_diagnostic(
-            node.span,
-            "equality operands have incompatible frame regions",
-        ));
-    }
-    let width = a.words().as_usize();
-    let dst = dst.start().byte_offset();
-    if width == 0 {
-        return Ok(vec![WeavyOp::ConstI64 {
-            dst,
-            value: i64::from(equal),
-        }]);
-    }
-    let a0 = a
-        .word(0)
-        .ok_or_else(|| lowering_diagnostic(node.span, "equality word offset overflow"))?
-        .byte_offset();
-    let b0 = b
-        .word(0)
-        .ok_or_else(|| lowering_diagnostic(node.span, "equality operand is empty"))?
-        .byte_offset();
-    if width == 1 {
-        return Ok(vec![if equal {
-            WeavyOp::EqI64 { dst, a: a0, b: b0 }
-        } else {
-            WeavyOp::NeI64 { dst, a: a0, b: b0 }
-        }]);
-    }
-
-    let scratch = scratch
-        .ok_or_else(|| lowering_diagnostic(node.span, "composite equality has no scratch word"))?
-        .byte_offset();
-    let mut ops = vec![WeavyOp::EqI64 { dst, a: a0, b: b0 }];
-    for index in 1..width {
-        let a = a
-            .word(index)
-            .ok_or_else(|| lowering_diagnostic(node.span, "equality word offset overflow"))?
-            .byte_offset();
-        let b = b
-            .word(index)
-            .ok_or_else(|| lowering_diagnostic(node.span, "equality word offset overflow"))?
-            .byte_offset();
-        ops.push(WeavyOp::EqI64 { dst: scratch, a, b });
-        ops.push(WeavyOp::MulI64 {
-            dst,
-            a: dst,
-            b: scratch,
-        });
-    }
-    if !equal {
-        ops.push(WeavyOp::ConstI64 {
-            dst: scratch,
-            value: 0,
-        });
-        ops.push(WeavyOp::EqI64 {
-            dst,
-            a: dst,
-            b: scratch,
-        });
-    }
-    Ok(ops)
-}
-
 fn copy_region(
     node: &Node,
     source: FrameRegion,
@@ -2954,6 +3562,29 @@ fn copy_region(
             })
         })
         .collect()
+}
+
+fn copy_lowered_value(
+    node: &Node,
+    source: &LoweredSlot,
+    destination: FrameRegion,
+    destination_region: WeavyRegionId,
+) -> Result<Vec<WeavyOp>, Diagnostics> {
+    if source.region.words() != destination.words() {
+        return Err(lowering_diagnostic(
+            node.span,
+            "value merge has incompatible frame regions",
+        ));
+    }
+    match source.representation {
+        ValueRepresentation::Word => copy_region(node, source.region, destination),
+        ValueRepresentation::RealizedHandle | ValueRepresentation::InlineComposite => {
+            Ok(vec![WeavyOp::CopyValue {
+                dst: destination_region,
+                src: source.region_id,
+            }])
+        }
+    }
 }
 
 fn type_words(ty: &Type, span: Span) -> Result<FrameWords, Diagnostics> {

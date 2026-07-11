@@ -1,13 +1,12 @@
 use std::collections::BTreeMap;
 
-use weavy::task::{FnId, Task, TaskEvent as WeavyTaskEvent, TaskStep};
+use weavy::task::{FnId, TaskEvent as WeavyTaskEvent, TaskStep};
 
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics};
 use crate::lowering::{LoweringArtifact, LoweringAttribution};
 use crate::support::Span;
 use crate::vir::IslandId;
 
-use super::FrameSlot;
 use super::identity::{DemandKey, DemandPreimage, Location, LocationId, SchemaId, ValueId};
 use super::model::{
     DemandRecord, DemandState, MemoVerdict, Receipt, TaskId, TaskRecord, TaskState,
@@ -155,23 +154,25 @@ impl<S: EventSink> Runtime<S> {
                 continue;
             }
 
-            let mut task = Task::spawn(&lowered.program, FnId(0));
-            for &(slot, handle) in &constants {
-                if !self.store.write_task_handle(&mut task, slot, handle) {
-                    return Err(runtime_invariant(
-                        "constant handle missing while initializing task frame",
-                    ));
-                }
+            let mut task = lowered
+                .executable
+                .spawn(FnId(0))
+                .map_err(|fault| runtime_invariant(&format!("Weavy spawn fault: {fault:?}")))?;
+            for (constant, handle) in lowered.constants.iter().zip(constants) {
+                let handle = self.store.weavy_handle(handle).ok_or_else(|| {
+                    runtime_invariant("constant handle missing while initializing task frame")
+                })?;
+                task.write_entry_store_handle(constant.root.entry, constant.root.schema, handle)
+                    .map_err(|fault| {
+                        runtime_invariant(&format!("Weavy constant binding fault: {fault:?}"))
+                    })?;
             }
-            let step = self.store.with_value_memories(|value_memories| {
-                task.run_hosted_with_value_memories(
-                    &lowered.program,
-                    &mut [],
-                    &[],
-                    &mut [],
-                    value_memories,
-                )
-            });
+            let step = self
+                .store
+                .with_value_memories(|value_memories| {
+                    task.drive_hosted_with_value_memories(&mut [], &[], &mut [], value_memories)
+                })
+                .map_err(|fault| runtime_invariant(&format!("Weavy drive fault: {fault:?}")))?;
             match step {
                 TaskStep::Done => {}
                 TaskStep::Yielded => {
@@ -184,10 +185,13 @@ impl<S: EventSink> Runtime<S> {
                     return Err(runtime_invariant("pure island unexpectedly parked"));
                 }
             }
-            for event in &task.trace {
+            for event in task.trace() {
                 self.emit_weavy(task_id, *event, attribution)?;
             }
-            let passed = task.result_i64() != 0;
+            let passed = task
+                .result_i64()
+                .map_err(|fault| runtime_invariant(&format!("Weavy result fault: {fault:?}")))?
+                != 0;
             let interned = self
                 .store
                 .intern_realized(SchemaId::named("vix.Check.v1"), &[u8::from(passed)]);
@@ -221,7 +225,7 @@ impl<S: EventSink> Runtime<S> {
         }
     }
 
-    fn materialize_constants(&mut self, lowered: &LoweringArtifact) -> Vec<(FrameSlot, Handle)> {
+    fn materialize_constants(&mut self, lowered: &LoweringArtifact) -> Vec<Handle> {
         lowered
             .constants
             .iter()
@@ -230,7 +234,7 @@ impl<S: EventSink> Runtime<S> {
                     .store
                     .intern_realized(constant.store_schema, &constant.bytes);
                 self.observe_interned(interned);
-                (constant.root.slot, interned.handle)
+                interned.handle
             })
             .collect()
     }

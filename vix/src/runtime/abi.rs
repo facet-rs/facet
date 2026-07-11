@@ -93,17 +93,4 @@ impl FrameRegion {
         let byte_delta = u32::try_from(byte_delta).ok()?;
         self.start.0.checked_add(byte_delta).map(FrameSlot)
     }
-
-    pub(crate) fn subregion(self, offset_words: usize, words: FrameWords) -> Option<Self> {
-        let end = offset_words.checked_add(words.as_usize())?;
-        if end > self.words.as_usize() {
-            return None;
-        }
-        let byte_delta = offset_words.checked_mul(FrameSlot::WORD_BYTES)?;
-        let byte_delta = u32::try_from(byte_delta).ok()?;
-        Some(Self {
-            start: FrameSlot(self.start.0.checked_add(byte_delta)?),
-            words,
-        })
-    }
 }
