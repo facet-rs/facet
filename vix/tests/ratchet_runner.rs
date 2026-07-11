@@ -45,6 +45,7 @@ const RUNG_032: &str = include_str!("ratchet/032-pop.reject.vix");
 const RUNG_033: &str = include_str!("ratchet/033-multiset-conversion.vix");
 const RUNG_034: &str = include_str!("ratchet/034-multiset-filter.vix");
 const RUNG_035: &str = include_str!("ratchet/035-canonical-order.vix");
+const RUNG_036: &str = include_str!("ratchet/036-multiset-fold.vix");
 const RUNG_041: &str = include_str!("ratchet/041-maps.vix");
 const RUNG_042: &str = include_str!("ratchet/042-map-overwrite.vix");
 const RUNG_043: &str = include_str!("ratchet/043-map-keys-canonical.vix");
@@ -953,6 +954,57 @@ fn rung_035_sorted_observes_values_in_canonical_order() {
         assert!(lane.checks.iter().all(|check| check.passed));
         assert_eq!(lane.counters.pure_host_calls, 0);
         assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+#[test]
+fn rung_036_multiset_fold_runs_through_verified_execution_without_host_calls() {
+    let module = Compiler::new()
+        .compile(RUNG_036)
+        .expect("rung 036 compiles through the canonical surface");
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 036 lowers through verified Weavy execution");
+        assert!(lowered.program().fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+    }
+
+    let report = run_source(RUNG_036).expect("rung 036 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+        if std::env::var("WEAVY_JIT").as_deref() == Ok("0") {
+            assert!(
+                lane.events
+                    .iter()
+                    .filter_map(|event| match event.kind {
+                        EventKind::ExecutionLane { facts, .. } => Some(facts),
+                        _ => None,
+                    })
+                    .all(|facts| matches!(
+                        facts,
+                        vix::runtime::ExecutionFacts {
+                            selected: vix::runtime::ExecutionLaneFact::Interpreter,
+                            fallback: Some(
+                                vix::runtime::ExecutionFallbackFact::DisabledByEnvironment
+                            ),
+                            ..
+                        }
+                    ))
+            );
+        }
     }
 }
 
