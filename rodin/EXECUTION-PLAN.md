@@ -235,12 +235,16 @@ tests. They land in this dependency order:
    public Array handle. Builder creation/push/finish are non-copyable interior
    operations; the verifier prevents escape and the finished immutable Array
    is observationally identical to repeated by-value `+`.
-6. Shared wires used by several yielded Value checks are not cloned into
-   independent self-contained recipes. The partitioner extracts the shared
-   value demand, the completed aggregate crosses the island edge once through
-   scheduler-owned framed publication, and each check consumes the same
-   published `ValueId`. Rung 051 must therefore witness one million-element
-   construction once, not four fast recomputations.
+6. The rung-051 cost model extracts a value node when it has at least two
+   ValueCheck consumers and its representation is an aggregate
+   `RealizedHandle` (Array, Map, or Set). Cheap inline scalars remain inside the
+   check recipes, and source-level `let` syntax is not an extraction or identity
+   boundary. This is a partitioning heuristic that may grow with measured
+   economics, not a permanent language distinction. The extracted aggregate
+   demand crosses the island edge once through scheduler-owned framed
+   publication, and each check consumes the same published `ValueId`. Rung 051
+   must therefore witness one million-element construction once, not four fast
+   recomputations.
 7. The production certificate measures the inactive/active molten choice,
    store publication count, memo entries, scheduler contacts, wall time, and
    peak RSS together. Passing only the value assertions or only a core arena
