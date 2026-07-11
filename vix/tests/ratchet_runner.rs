@@ -5376,22 +5376,31 @@ fn tail_loop_interpreter_and_jit_agree() {
             .any(|event| matches!(event, TaskEvent::Mark(_))),
     );
 
-    let jit = JitProgram::compile_with_mode(&program, TraceMode::Production)
-        .expect("the tail loop compiles to native code on a JIT target");
-    let mut native = JitTask::spawn(&jit, FnId(0));
-    native.write_i64(0, 0);
-    native.write_i64(8, 10_000_000);
-    native.write_i64(16, 0);
-    native.run(&jit, &mut [], &[]);
-    assert_eq!(
-        native.result_i64(),
-        interpreted,
-        "interpreter and JIT agree on the tail-loop result",
-    );
-    assert_eq!(
-        native.trace, interpreter.trace,
-        "interpreter and JIT record the same (mark-free) Production trace",
-    );
+    // The JIT lane is present on native targets unless disabled by the
+    // environment (WEAVY_JIT=0); when it is, this run is interpreter-only and
+    // there is nothing to compare against.
+    match JitProgram::compile_with_mode(&program, TraceMode::Production) {
+        Some(jit) => {
+            let mut native = JitTask::spawn(&jit, FnId(0));
+            native.write_i64(0, 0);
+            native.write_i64(8, 10_000_000);
+            native.write_i64(16, 0);
+            native.run(&jit, &mut [], &[]);
+            assert_eq!(
+                native.result_i64(),
+                interpreted,
+                "interpreter and JIT agree on the tail-loop result",
+            );
+            assert_eq!(
+                native.trace, interpreter.trace,
+                "interpreter and JIT record the same (mark-free) Production trace",
+            );
+        }
+        None => assert!(
+            !weavy::jit::task_lane::available(),
+            "the JIT compiles the tail loop whenever the native lane is available",
+        ),
+    }
 }
 
 // Strongest currently-available counter evidence for the rung's budget intent:
