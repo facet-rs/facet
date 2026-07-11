@@ -8,7 +8,8 @@
 use std::path::Path;
 
 use vix::runtime::{
-    FramedField, FramedHasher, FramedNode, FramedValue, SchemaId, Store, ValueId,
+    DemandKey, DemandPreimage, FramedField, FramedHasher, FramedNode, FramedValue, Location,
+    RecipeId, SchemaId, Store, ValueId,
 };
 
 fn schema(name: &str) -> SchemaId {
@@ -107,6 +108,43 @@ fn scalar_leaf_dedupes_and_matches_node_identity() {
     // The realized scalar path computes exactly the framed leaf identity.
     let node = FramedNode::leaf(schema("scalar.t"), b"payload".to_vec());
     assert_eq!(first.identity, node.identity());
+}
+
+/// Certificate 3 — identity follows semantic content, never the physical
+/// resident/ABI layout stored beside it. Two interned entries with identical
+/// canonical framed content but deliberately different physical resident byte
+/// layouts share one identity and one handle (dedup); holding the physical bytes
+/// fixed while changing the semantic content moves the identity. This is exactly
+/// the invariant a raw-ABI-byte hash violates: layout exists to be changed for
+/// performance and must not reach identity.
+///
+/// r[verify machine.identity.framed-encoding]
+#[test]
+fn identity_is_layout_independent_and_content_sensitive() {
+    let s = schema("layout.subject");
+    let node = FramedNode::leaf(s, b"semantic".to_vec());
+    let mut store = Store::default();
+
+    // Same semantic value, two different physical resident encodings (padding,
+    // framing, and length are ABI concerns that must not enter identity).
+    let compact = store.intern_tree(&node, b"phys-compact");
+    let padded = store.intern_tree(&node, b"phys-padded-\x00\x00-and-longer");
+    assert_eq!(
+        compact.identity, padded.identity,
+        "identity ignores the physical resident layout"
+    );
+    assert_eq!(compact.handle, padded.handle);
+    assert!(padded.deduped, "distinct physical layouts of one value dedupe");
+    assert_eq!(compact.identity, node.identity());
+
+    // Hold the physical resident bytes fixed; change only the semantic content.
+    let other = FramedNode::leaf(s, b"different".to_vec());
+    let same_phys = store.intern_tree(&other, b"phys-compact");
+    assert_ne!(
+        compact.identity, same_phys.identity,
+        "identity follows semantic content, not the resident bytes"
+    );
+    assert!(!same_phys.deduped);
 }
 
 /// Certificate 4 — nested child identities are contributed by referent
@@ -225,6 +263,48 @@ fn only_the_identity_module_references_blake3() {
         offenders.is_empty(),
         "blake3 must only be reachable through the closed writer in identity.rs; offenders: {offenders:?}"
     );
+}
+
+/// Certificate 7 — epoch/domain separation. The framed value-identity epoch is
+/// an explicit new epoch, domain-separated from every auxiliary identity family
+/// (schema, recipe, demand, location). The same seed material routed into each
+/// family produces mutually distinct digests: a value's content digest can never
+/// be mistaken for a schema, recipe, demand, or location key, and the domain
+/// separator written at construction is load-bearing. A single global namespace
+/// (or the retired flat/raw-ABI encoding) would let these collide.
+///
+/// r[verify machine.identity.framed-encoding]
+#[test]
+fn identity_families_are_epoch_separated() {
+    let seed = "collide";
+
+    let value_content = FramedNode::leaf(schema("epoch.value"), seed.as_bytes().to_vec())
+        .identity()
+        .content;
+    let schema_family = SchemaId::named(seed).0;
+    let recipe_family = RecipeId::from_canonical_vir(seed.as_bytes()).0;
+    let demand_family = DemandKey::from_preimage(&DemandPreimage {
+        closure: RecipeId::from_canonical_vir(seed.as_bytes()),
+        arguments: Vec::new(),
+    })
+    .0;
+    let location_family = Location::for_test_island(seed, 0).id.0;
+
+    let families = [
+        value_content,
+        schema_family,
+        recipe_family,
+        demand_family,
+        location_family,
+    ];
+    for (i, a) in families.iter().enumerate() {
+        for b in &families[i + 1..] {
+            assert_ne!(
+                a, b,
+                "identity families must be epoch/domain separated, never a shared namespace"
+            );
+        }
+    }
 }
 
 /// A failure value routed through the store uses start/variant/field/child
