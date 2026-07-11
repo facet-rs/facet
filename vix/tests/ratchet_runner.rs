@@ -2623,7 +2623,25 @@ fn collection_addition() -> Stream<Check> {
     let xs = [1, 2];
     let ys = xs + 3;
     let zs = ys ++ [4, 5];
+    yield expect_eq(xs.len(), 2);
+    yield expect_eq(xs[1], 2);
+    yield expect_eq(ys[2], 3);
+    yield expect_eq(zs[0], 1);
+    yield expect_eq(zs[2], 3);
+    yield expect_eq(zs[4], 5);
     yield expect_eq(zs.len(), 5);
+}
+
+#[test]
+fn structural_collection_addition() -> Stream<Check> {
+    let empty: [(Int, Bool)] = [];
+    let xs = empty + (1, true);
+    let ys = xs + (2, false);
+    let zs = ys ++ [(3, true)];
+    yield expect_eq(empty.len(), 0);
+    yield expect_eq(xs[0], (1, true));
+    yield expect_eq(ys[1], (2, false));
+    yield expect_eq(zs[2], (3, true));
 }
 "#;
 
@@ -2680,22 +2698,16 @@ fn collection_addition() -> Stream<Check> {
         "ys ++ [4, 5]"
     );
 
-    let partitioned = module.partition_test(&module.tests[0]);
-    let mut lowering_cache = LoweringCache::default();
-    let error = match lowering_cache.get_or_lower(&partitioned.islands[0]) {
-        Ok(_) => panic!("collection addition lowering remains the next boundary"),
-        Err(vix::lowering::LoweringError::Diagnostics(diagnostics)) => diagnostics,
-        Err(vix::lowering::LoweringError::Machine(error)) => {
-            panic!("unexpected verifier failure: {error:?}")
-        }
-    };
-    assert_eq!(error.entries.len(), 1);
-    assert_eq!(error.entries[0].code, DiagnosticCode::LoweringUnsupported);
-    assert_eq!(error.entries[0].primary, append.span);
-    assert_eq!(
-        error.entries[0].message(),
-        "collection addition lowering is not implemented"
-    );
+    let report = run_source(SOURCE).expect("array + and ++ run through verified execution");
+    assert!(report.warnings.entries.is_empty());
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 11);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
 }
 
 #[test]

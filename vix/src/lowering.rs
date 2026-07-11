@@ -1140,21 +1140,19 @@ impl<'a> ProgramContractBuilder<'a> {
                 WeavyRegionShape::word(WeavyWordKind::Scalar),
             ));
         }
-        for (&node, temps) in &layout.comparison_temps {
-            let assigned = self
-                .regions
-                .comparison_temps(function.id, node, function.span)?;
+        for (&node, temps) in &layout.typed_temps {
+            let assigned = self.regions.typed_temps(function.id, node, function.span)?;
             if assigned.len() != temps.len() {
                 return Err(lowering_diagnostic(
                     function.span,
-                    "comparison temporary contract assignment has the wrong length",
+                    "typed temporary contract assignment has the wrong length",
                 ));
             }
             for (temp, region_id) in temps.iter().zip(assigned) {
                 if region_id.0 as usize != regions.len() {
                     return Err(lowering_diagnostic(
                         function.span,
-                        "comparison temporary contract order is not canonical",
+                        "typed temporary contract order is not canonical",
                     ));
                 }
                 regions.push(self.frame_region(temp.region.start(), &temp.ty)?);
@@ -1757,7 +1755,7 @@ impl RegionAssignments {
                 })?;
             }
             let mut assigned_temps = BTreeMap::new();
-            for (&node, regions) in &layout.comparison_temps {
+            for (&node, regions) in &layout.typed_temps {
                 let mut ids = Vec::with_capacity(regions.len());
                 for _ in regions {
                     ids.push(WeavyRegionId(u32::try_from(next).map_err(|_| {
@@ -1880,7 +1878,7 @@ impl RegionAssignments {
             .ok_or_else(|| lowering_diagnostic(span, "function has no assigned control region"))
     }
 
-    fn comparison_temps(
+    fn typed_temps(
         &self,
         function: FunctionId,
         node: NodeId,
@@ -1891,7 +1889,7 @@ impl RegionAssignments {
             .and_then(|nodes| nodes.get(&node))
             .map(Vec::as_slice)
             .ok_or_else(|| {
-                lowering_diagnostic(span, "comparison node has no assigned temporary regions")
+                lowering_diagnostic(span, "VIR node has no assigned typed temporary regions")
             })
     }
 
@@ -1947,7 +1945,7 @@ impl RegionAssignments {
 
 struct FunctionLayout {
     regions: BTreeMap<NodeId, FrameRegion>,
-    comparison_temps: BTreeMap<NodeId, Vec<TemporaryRegion>>,
+    typed_temps: BTreeMap<NodeId, Vec<TemporaryRegion>>,
     closure_temps: BTreeMap<NodeId, (FrameRegion, FrameRegion)>,
     constant_slots: BTreeMap<NodeRef, FrameSlot>,
     scratch: Option<FrameSlot>,
@@ -2043,38 +2041,47 @@ impl FunctionLayout {
         } else {
             None
         };
-        let mut comparison_temps = BTreeMap::new();
-        for node in nodes
-            .iter()
-            .filter(|node| matches!(node.op, Op::Eq | Op::Ne | Op::Compare))
-        {
+        let mut typed_temps = BTreeMap::new();
+        for node in nodes.iter().filter(|node| {
+            matches!(
+                node.op,
+                Op::Eq | Op::Ne | Op::Compare | Op::ArrayAppend | Op::ArrayConcat
+            )
+        }) {
             let mut types = if matches!(node.op, Op::Eq | Op::Ne) {
                 vec![Type::Int, Type::Int, Type::Int]
             } else if matches!(node.op, Op::Compare) {
                 vec![Type::Int, Type::Int]
+            } else if let Type::Array(element) = &node.ty {
+                vec![element.as_ref().clone()]
             } else {
-                Vec::new()
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "collection addition result is not an array",
+                ));
             };
-            let operand = node
-                .inputs
-                .first()
-                .and_then(|input| nodes.iter().find(|candidate| candidate.id == *input))
-                .ok_or_else(|| {
-                    lowering_diagnostic(node.span, "comparison node has no first operand")
-                })?;
-            comparison_temporary_types(&operand.ty, &mut types);
+            if matches!(node.op, Op::Eq | Op::Ne | Op::Compare) {
+                let operand = node
+                    .inputs
+                    .first()
+                    .and_then(|input| nodes.iter().find(|candidate| candidate.id == *input))
+                    .ok_or_else(|| {
+                        lowering_diagnostic(node.span, "comparison node has no first operand")
+                    })?;
+                comparison_temporary_types(&operand.ty, &mut types);
+            }
             let mut temps = Vec::with_capacity(types.len());
             for ty in types {
                 let words = type_words(&ty, node.span)?;
                 let region = FrameRegion::for_words(next_word, words).ok_or_else(|| {
-                    lowering_diagnostic(node.span, "comparison temporary region overflow")
+                    lowering_diagnostic(node.span, "typed temporary region overflow")
                 })?;
                 next_word = next_word.checked_add(words.as_usize()).ok_or_else(|| {
                     lowering_diagnostic(node.span, "function frame size overflow")
                 })?;
                 temps.push(TemporaryRegion { region, ty });
             }
-            comparison_temps.insert(node.id, temps);
+            typed_temps.insert(node.id, temps);
         }
 
         let mut constant_slots = BTreeMap::new();
@@ -2178,7 +2185,7 @@ impl FunctionLayout {
             .ok_or_else(|| lowering_diagnostic(span, "function frame size overflow"))?;
         Ok(Self {
             regions,
-            comparison_temps,
+            typed_temps,
             closure_temps,
             constant_slots,
             scratch,
@@ -2204,15 +2211,11 @@ impl FunctionLayout {
             .ok_or_else(|| lowering_diagnostic(span, "function closure is missing a constant"))
     }
 
-    fn comparison_temps(
-        &self,
-        node: NodeId,
-        span: Span,
-    ) -> Result<&[TemporaryRegion], Diagnostics> {
-        self.comparison_temps
+    fn typed_temps(&self, node: NodeId, span: Span) -> Result<&[TemporaryRegion], Diagnostics> {
+        self.typed_temps
             .get(&node)
             .map(Vec::as_slice)
-            .ok_or_else(|| lowering_diagnostic(span, "comparison node has no temporary regions"))
+            .ok_or_else(|| lowering_diagnostic(span, "VIR node has no typed temporary regions"))
     }
 
     fn closure_temps(
@@ -2566,14 +2569,8 @@ fn lower_node_sequence(
             Op::Call(callee) if sequence.function.layout.array_outcome.is_some() => {
                 lower_array_call_node(node, dst_region_id, values, *callee, sequence, outputs)?
             }
-            Op::Array | Op::ArrayIndex | Op::ArrayLen => {
+            Op::Array | Op::ArrayIndex | Op::ArrayLen | Op::ArrayAppend | Op::ArrayConcat => {
                 lower_checked_array_node(node, dst, values, sequence, outputs)?
-            }
-            Op::ArrayAppend | Op::ArrayConcat => {
-                return Err(lowering_diagnostic(
-                    node.span,
-                    "collection addition lowering is not implemented",
-                ));
             }
             Op::Match { .. } => {
                 lower_match_node(node, dst, dst_region_id, values, sequence, outputs)?
@@ -3156,12 +3153,12 @@ impl<'a> TemporaryCursor<'a> {
         function: FunctionId,
         node: &Node,
     ) -> Result<Self, Diagnostics> {
-        let regions = layout.comparison_temps(node.id, node.span)?;
-        let ids = assignments.comparison_temps(function, node.id, node.span)?;
+        let regions = layout.typed_temps(node.id, node.span)?;
+        let ids = assignments.typed_temps(function, node.id, node.span)?;
         if regions.len() != ids.len() {
             return Err(lowering_diagnostic(
                 node.span,
-                "comparison temporary regions and contracts differ",
+                "typed temporary regions and contracts differ",
             ));
         }
         Ok(Self {
@@ -3176,13 +3173,13 @@ impl<'a> TemporaryCursor<'a> {
             lowering_diagnostic(span, "comparison lowering exhausted its temporary regions")
         })?;
         let region_id = *self.ids.get(self.next).ok_or_else(|| {
-            lowering_diagnostic(span, "comparison temporary region has no contract id")
+            lowering_diagnostic(span, "typed temporary region has no contract id")
         })?;
         self.next += 1;
         if &region.ty != ty {
             return Err(lowering_diagnostic(
                 span,
-                "comparison temporary type does not match projected field",
+                "typed temporary does not match the requested value type",
             ));
         }
         Ok(LoweredSlot {
@@ -3999,6 +3996,7 @@ fn lower_checked_array_node(
                 node,
                 site,
                 index: index.region_id,
+                length: assigned.fields[2],
                 scratch,
                 assigned,
                 outcome,
@@ -4007,8 +4005,348 @@ fn lower_checked_array_node(
             })?;
             representation_for_type(element, node.span)
         }
+        Op::ArrayAppend => {
+            require_input_count(node, 2)?;
+            let array = input_value(node, values, 0)?;
+            let appended = input_value(node, values, 1)?;
+            let Type::Array(element) = &node.ty else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "array append result is not an array",
+                ));
+            };
+            require_value(node, &array, &node.ty, ValueRepresentation::RealizedHandle)?;
+            require_value(
+                node,
+                &appended,
+                element,
+                representation_for_type(element, node.span)?,
+            )?;
+            let element_schema = sequence.lowering.schemas.schema_for(element, node.span)?;
+            let width = element_byte_width(element, node.span)?;
+            let mut temps = TemporaryCursor::new(
+                sequence.function.layout,
+                sequence.lowering.regions,
+                sequence.function.id,
+                node,
+            )?;
+            let temp = temps.take(element, node.span)?;
+
+            outputs.code.push(WeavyOp::LoadArrayLen {
+                dst: scratch.fields[2].byte_offset(),
+                status: scratch.status.byte_offset(),
+                array: array.region.start().byte_offset(),
+                elem_schema_ref: i64::from(element_schema.0),
+            });
+            emit_array_status_machine_checks(
+                node,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            outputs.code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[0].byte_offset(),
+                value: 1,
+            });
+            outputs.code.push(WeavyOp::AddI64 {
+                dst: scratch.fields[1].byte_offset(),
+                a: scratch.fields[2].byte_offset(),
+                b: scratch.fields[0].byte_offset(),
+            });
+            outputs.code.push(WeavyOp::ArrayNew {
+                dst: dst.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                count_slot: scratch.fields[1].byte_offset(),
+                elem_width: width,
+                elem_schema_ref: i64::from(element_schema.0),
+            });
+            emit_array_status_machine_checks(
+                node,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            outputs.code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[0].byte_offset(),
+                value: 0,
+            });
+            emit_array_copy_loop(ArrayCopyLoopContext {
+                node,
+                site,
+                source: &array,
+                destination: dst,
+                source_index: scratch.fields[0],
+                source_index_region: assigned.fields[0],
+                destination_index: scratch.fields[0],
+                length: scratch.fields[2],
+                length_region: assigned.fields[2],
+                temp: &temp,
+                elem_width: width,
+                elem_schema_ref: element_schema,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                code: outputs.code,
+            })?;
+            outputs.code.push(WeavyOp::ArrayStore {
+                status: scratch.status.byte_offset(),
+                array: dst.start().byte_offset(),
+                index: scratch.fields[0].byte_offset(),
+                src: appended.region.start().byte_offset(),
+                elem_width: width,
+                elem_schema_ref: i64::from(element_schema.0),
+            });
+            emit_array_status_machine_checks(
+                node,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            temps.finish(node.span)?;
+            Ok(ValueRepresentation::RealizedHandle)
+        }
+        Op::ArrayConcat => {
+            require_input_count(node, 2)?;
+            let left = input_value(node, values, 0)?;
+            let right = input_value(node, values, 1)?;
+            let Type::Array(element) = &node.ty else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "array concatenation result is not an array",
+                ));
+            };
+            for array in [&left, &right] {
+                require_value(node, array, &node.ty, ValueRepresentation::RealizedHandle)?;
+            }
+            let element_schema = sequence.lowering.schemas.schema_for(element, node.span)?;
+            let width = element_byte_width(element, node.span)?;
+            let mut temps = TemporaryCursor::new(
+                sequence.function.layout,
+                sequence.lowering.regions,
+                sequence.function.id,
+                node,
+            )?;
+            let temp = temps.take(element, node.span)?;
+
+            for (array, length) in [(&left, scratch.fields[0]), (&right, scratch.fields[1])] {
+                outputs.code.push(WeavyOp::LoadArrayLen {
+                    dst: length.byte_offset(),
+                    status: scratch.status.byte_offset(),
+                    array: array.region.start().byte_offset(),
+                    elem_schema_ref: i64::from(element_schema.0),
+                });
+                emit_array_status_machine_checks(
+                    node,
+                    site,
+                    scratch,
+                    assigned,
+                    outcome,
+                    return_label,
+                    outputs.code,
+                )?;
+            }
+            outputs.code.push(WeavyOp::AddI64 {
+                dst: scratch.fields[2].byte_offset(),
+                a: scratch.fields[0].byte_offset(),
+                b: scratch.fields[1].byte_offset(),
+            });
+            outputs.code.push(WeavyOp::ArrayNew {
+                dst: dst.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                count_slot: scratch.fields[2].byte_offset(),
+                elem_width: width,
+                elem_schema_ref: i64::from(element_schema.0),
+            });
+            emit_array_status_machine_checks(
+                node,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            outputs.code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[2].byte_offset(),
+                value: 0,
+            });
+            emit_array_copy_loop(ArrayCopyLoopContext {
+                node,
+                site,
+                source: &left,
+                destination: dst,
+                source_index: scratch.fields[2],
+                source_index_region: assigned.fields[2],
+                destination_index: scratch.fields[2],
+                length: scratch.fields[0],
+                length_region: assigned.fields[0],
+                temp: &temp,
+                elem_width: width,
+                elem_schema_ref: element_schema,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                code: outputs.code,
+            })?;
+            outputs.code.push(WeavyOp::LoadArrayLen {
+                dst: scratch.fields[0].byte_offset(),
+                status: scratch.status.byte_offset(),
+                array: right.region.start().byte_offset(),
+                elem_schema_ref: i64::from(element_schema.0),
+            });
+            emit_array_status_machine_checks(
+                node,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            outputs.code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[1].byte_offset(),
+                value: 0,
+            });
+            emit_array_copy_loop(ArrayCopyLoopContext {
+                node,
+                site,
+                source: &right,
+                destination: dst,
+                source_index: scratch.fields[1],
+                source_index_region: assigned.fields[1],
+                destination_index: scratch.fields[2],
+                length: scratch.fields[0],
+                length_region: assigned.fields[0],
+                temp: &temp,
+                elem_width: width,
+                elem_schema_ref: element_schema,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                code: outputs.code,
+            })?;
+            temps.finish(node.span)?;
+            Ok(ValueRepresentation::RealizedHandle)
+        }
         _ => unreachable!("array lowering dispatched only array operations"),
     }
+}
+
+fn element_byte_width(element: &Type, span: Span) -> Result<u32, Diagnostics> {
+    let bytes = type_words(element, span)?
+        .as_usize()
+        .checked_mul(usize::try_from(FrameSlot::word_size()).expect("word size fits usize"))
+        .ok_or_else(|| lowering_diagnostic(span, "array element width overflow"))?;
+    u32::try_from(bytes).map_err(|_| lowering_diagnostic(span, "array element width overflow"))
+}
+
+struct ArrayCopyLoopContext<'a> {
+    node: &'a Node,
+    site: u32,
+    source: &'a LoweredSlot,
+    destination: FrameRegion,
+    source_index: FrameSlot,
+    source_index_region: WeavyRegionId,
+    destination_index: FrameSlot,
+    length: FrameSlot,
+    length_region: WeavyRegionId,
+    temp: &'a LoweredSlot,
+    elem_width: u32,
+    elem_schema_ref: WeavySchemaRef,
+    scratch: OutcomeScratch,
+    assigned: AssignedOutcomeScratch,
+    outcome: WeavyRegionId,
+    return_label: CodeLabel,
+    code: &'a mut CodeBuilder,
+}
+
+fn emit_array_copy_loop(context: ArrayCopyLoopContext<'_>) -> Result<(), Diagnostics> {
+    let ArrayCopyLoopContext {
+        node,
+        site,
+        source,
+        destination,
+        source_index,
+        source_index_region,
+        destination_index,
+        length,
+        length_region,
+        temp,
+        elem_width,
+        elem_schema_ref,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code,
+    } = context;
+    let loop_start = code.label();
+    let done = code.label();
+    code.bind(loop_start, node.span)?;
+    code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: source_index.byte_offset(),
+        b: length.byte_offset(),
+    });
+    code.jump_if_zero(scratch.condition, done);
+    code.push(WeavyOp::LoadArray {
+        dst: temp.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        index: source_index.byte_offset(),
+        elem_width,
+        elem_schema_ref: i64::from(elem_schema_ref.0),
+    });
+    emit_array_load_status_checks(ArrayLoadStatusContext {
+        node,
+        site,
+        index: source_index_region,
+        length: length_region,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code,
+    })?;
+    code.push(WeavyOp::ArrayStore {
+        status: scratch.status.byte_offset(),
+        array: destination.start().byte_offset(),
+        index: destination_index.byte_offset(),
+        src: temp.region.start().byte_offset(),
+        elem_width,
+        elem_schema_ref: i64::from(elem_schema_ref.0),
+    });
+    emit_array_status_machine_checks(node, site, scratch, assigned, outcome, return_label, code)?;
+    code.push(WeavyOp::ConstI64 {
+        dst: scratch.condition.byte_offset(),
+        value: 1,
+    });
+    code.push(WeavyOp::AddI64 {
+        dst: source_index.byte_offset(),
+        a: source_index.byte_offset(),
+        b: scratch.condition.byte_offset(),
+    });
+    if source_index != destination_index {
+        code.push(WeavyOp::AddI64 {
+            dst: destination_index.byte_offset(),
+            a: destination_index.byte_offset(),
+            b: scratch.condition.byte_offset(),
+        });
+    }
+    code.jump(loop_start);
+    code.bind(done, node.span)
 }
 
 fn emit_array_status_machine_checks(
@@ -4075,6 +4413,7 @@ struct ArrayLoadStatusContext<'a> {
     node: &'a Node,
     site: u32,
     index: WeavyRegionId,
+    length: WeavyRegionId,
     scratch: OutcomeScratch,
     assigned: AssignedOutcomeScratch,
     outcome: WeavyRegionId,
@@ -4087,6 +4426,7 @@ fn emit_array_load_status_checks(context: ArrayLoadStatusContext<'_>) -> Result<
         node,
         site,
         index,
+        length,
         scratch,
         assigned,
         outcome,
@@ -4123,7 +4463,7 @@ fn emit_array_load_status_checks(context: ArrayLoadStatusContext<'_>) -> Result<
                     },
                     StructuralFieldSource {
                         field: 2,
-                        source: assigned.fields[2],
+                        source: length,
                     },
                 ],
             });
