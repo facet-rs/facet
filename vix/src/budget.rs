@@ -53,6 +53,12 @@ pub enum Workload {
     /// watchdog polls is still rejected when its completion exceeded the wall
     /// budget; normal exit does not erase the elapsed-time verdict.
     Delay { duration_ns: u64 },
+    /// Spend `prepare_ns` in the *preparation* phase and then complete instantly.
+    /// It stands in for a program whose compilation/JIT baseline is large while
+    /// its execution is trivial. Under a correct readiness boundary the wall
+    /// clock does not start until preparation is done, so this workload passes
+    /// even under a wall budget far smaller than `prepare_ns`.
+    SlowPrepare { prepare_ns: u64 },
 }
 
 /// The child → parent half of the IPC protocol: what a completed workload
@@ -285,9 +291,9 @@ fn saturating_nanos(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
 
-/// The child entry point: read a workload request from stdin, execute it, and
-/// write the report to stdout as facet-json. Runaway workloads never reach the
-/// write; the parent watchdog terminates them. Never returns.
+/// The child entry point: read a workload request from stdin, prepare it,
+/// execute it, and write the report to stdout as facet-json. Runaway workloads
+/// never reach the write; the parent watchdog terminates them. Never returns.
 pub fn run_child_from_stdio() -> ! {
     let mut input = String::new();
     std::io::stdin()
@@ -295,7 +301,8 @@ pub fn run_child_from_stdio() -> ! {
         .expect("read workload request from stdin");
     let workload: Workload =
         facet_json::from_str(&input).expect("decode workload request from stdin");
-    let report = execute_workload(&workload);
+    let prepared = prepare_workload(&workload);
+    let report = execute_prepared(prepared);
     let encoded = facet_json::to_string(&report).expect("encode child report");
     let mut stdout = std::io::stdout();
     stdout
@@ -305,12 +312,53 @@ pub fn run_child_from_stdio() -> ! {
     std::process::exit(0);
 }
 
-/// Execute a workload in the child. Completing workloads return a report;
-/// runaway fixtures diverge and are terminated by the parent watchdog.
-#[must_use]
-pub fn execute_workload(workload: &Workload) -> ChildReport {
+/// A workload after its preparation phase: all parsing, checking, lowering,
+/// verification, and native compilation is done, so [`execute_prepared`] does
+/// only the work a budget is meant to gate. A runaway fixture carries no
+/// prepared state; its divergence is the execution.
+enum Prepared {
+    /// A source prepared through [`crate::ratchet::prepare_source`]. `Err` holds
+    /// a preparation failure (e.g. the source did not compile) surfaced at
+    /// execution as a failed report.
+    Source(Result<crate::ratchet::PreparedRun, String>),
+    /// An immediate completion.
+    Immediate,
+    /// A completion after the given delay, exercised in the execution phase.
+    Delay(Duration),
+    /// A runaway native loop.
+    SpinForever,
+    /// A resident-set fixture: allocate and hold `target_bytes` in execution.
+    GrowResident(usize),
+    /// A workload whose preparation was slow; execution is instant.
+    SlowPrepare,
+}
+
+/// Run a workload's preparation phase. All fixed compiler/JIT cost happens here,
+/// before the readiness boundary; nothing here is the tested program's work.
+fn prepare_workload(workload: &Workload) -> Prepared {
     match workload {
-        Workload::RunSource { source } => match crate::ratchet::run_source(source) {
+        Workload::RunSource { source } => Prepared::Source(
+            crate::ratchet::prepare_source(source).map_err(|error| format!("{error:?}")),
+        ),
+        Workload::Immediate => Prepared::Immediate,
+        Workload::Delay { duration_ns } => Prepared::Delay(Duration::from_nanos(*duration_ns)),
+        Workload::SpinForever => Prepared::SpinForever,
+        Workload::GrowResident { target_bytes } => {
+            Prepared::GrowResident(usize::try_from(*target_bytes).unwrap_or(usize::MAX))
+        }
+        Workload::SlowPrepare { prepare_ns } => {
+            std::thread::sleep(Duration::from_nanos(*prepare_ns));
+            Prepared::SlowPrepare
+        }
+    }
+}
+
+/// Execute a prepared workload. Completing workloads return a report; runaway
+/// fixtures diverge and are terminated by the parent watchdog.
+#[must_use]
+fn execute_prepared(prepared: Prepared) -> ChildReport {
+    match prepared {
+        Prepared::Source(Ok(run)) => match run.execute() {
             Ok(report) => ChildReport::RanSource {
                 passed: report.passed(),
             },
@@ -318,18 +366,19 @@ pub fn execute_workload(workload: &Workload) -> ChildReport {
                 message: format!("{error:?}"),
             },
         },
-        Workload::Immediate => ChildReport::Completed,
-        Workload::Delay { duration_ns } => {
-            std::thread::sleep(Duration::from_nanos(*duration_ns));
+        Prepared::Source(Err(message)) => ChildReport::Failed { message },
+        Prepared::Immediate | Prepared::SlowPrepare => ChildReport::Completed,
+        Prepared::Delay(duration) => {
+            std::thread::sleep(duration);
             ChildReport::Completed
         }
-        Workload::SpinForever => loop {
+        Prepared::SpinForever => loop {
             std::hint::spin_loop();
         },
-        Workload::GrowResident { target_bytes } => {
+        Prepared::GrowResident(target_bytes) => {
             // `vec![_; n]` writes every byte, faulting the pages resident. Hold
             // the buffer and spin so the parent observes the elevated RSS.
-            let mut held = vec![0xAB_u8; usize::try_from(*target_bytes).unwrap_or(usize::MAX)];
+            let mut held = vec![0xAB_u8; target_bytes];
             if let Some(first) = held.first_mut() {
                 *first = 1;
             }
