@@ -5024,7 +5024,7 @@ fn lower_node(
                     .closure(lowering.function.id, node.id, node.span)?;
             let (callee_temp, environment_temp) =
                 lowering.function.layout.closure_temps(node.id, node.span)?;
-            let environment = if node.inputs.first().is_some() {
+            let environment = if !node.inputs.is_empty() {
                 let capture = input_value(node, values, 0)?;
                 require_value(node, &capture, &Type::Int, ValueRepresentation::Word)?;
                 WeavyOp::CopyI64 {
