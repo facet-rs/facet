@@ -288,6 +288,10 @@ pub enum TaskFault {
         site: FaultSite,
         actual: i64,
     },
+    InvalidOrderedStatus {
+        site: FaultSite,
+        actual: i64,
+    },
     NativeFaultExit {
         function: FnId,
         code: i64,

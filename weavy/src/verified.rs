@@ -419,8 +419,14 @@ pub enum AccessRole {
     OrderedCursorSource,
     OrderedPresent,
     OrderedKeyDestination,
+    OrderedKeySource,
     OrderedValueDestination,
+    OrderedValueSource,
+    OrderedRowDestination,
     OrderedChildHandle,
+    OrderedOrderingSource,
+    OrderedReadyDestination,
+    OrderedLengthDestination,
 }
 
 /// Structural failure for a checked frame range.
@@ -904,8 +910,27 @@ pub enum ProgramDefect {
         expected: RegionShape,
         actual: RegionShape,
     },
+    OrderedRowWidth {
+        schema: SchemaRef,
+        expected: usize,
+        actual: u32,
+    },
+    OrderedRowShapeMismatch {
+        schema: SchemaRef,
+        expected: RegionShape,
+        actual: RegionShape,
+    },
     /// A value projection targeted a Set collection, which has no values.
     OrderedValueOnSet {
+        schema: SchemaRef,
+    },
+    OrderedInsertValueArity {
+        schema: SchemaRef,
+        kind: OrderedCollectionKind,
+        has_value: bool,
+        value_width: u32,
+    },
+    OrderedSetInsertMustDeduplicate {
         schema: SchemaRef,
     },
     ArraySchemaNotDense {
@@ -950,6 +975,7 @@ pub enum StructuralKind {
 enum OrderedPart {
     Key,
     Value,
+    Row,
 }
 
 /// A payload destination's schema paired with which row half it projects.
@@ -960,13 +986,6 @@ struct OrderedPayload {
 }
 
 impl OrderedPart {
-    fn role(self) -> AccessRole {
-        match self {
-            OrderedPart::Key => AccessRole::OrderedKeyDestination,
-            OrderedPart::Value => AccessRole::OrderedValueDestination,
-        }
-    }
-
     fn width_defect(self, schema: SchemaRef, expected: usize, actual: u32) -> ProgramDefect {
         match self {
             OrderedPart::Key => ProgramDefect::OrderedKeyWidth {
@@ -975,6 +994,11 @@ impl OrderedPart {
                 actual,
             },
             OrderedPart::Value => ProgramDefect::OrderedValueWidth {
+                schema,
+                expected,
+                actual,
+            },
+            OrderedPart::Row => ProgramDefect::OrderedRowWidth {
                 schema,
                 expected,
                 actual,
@@ -995,6 +1019,11 @@ impl OrderedPart {
                 actual,
             },
             OrderedPart::Value => ProgramDefect::OrderedValueShapeMismatch {
+                schema,
+                expected,
+                actual,
+            },
+            OrderedPart::Row => ProgramDefect::OrderedRowShapeMismatch {
                 schema,
                 expected,
                 actual,
@@ -2637,6 +2666,18 @@ impl Verifier<'_> {
                 status,
                 collection,
                 collection_schema_ref,
+            }
+            | Op::OrderedBeginInsert {
+                cursor,
+                status,
+                collection,
+                collection_schema_ref,
+            }
+            | Op::OrderedBeginIterate {
+                cursor,
+                status,
+                collection,
+                collection_schema_ref,
             } => {
                 self.ordered_collection(
                     function_id,
@@ -2698,6 +2739,7 @@ impl Verifier<'_> {
                         schema: key_schema,
                         part: OrderedPart::Key,
                     },
+                    AccessRole::OrderedKeyDestination,
                 )?;
                 self.require_handle_write(
                     function_id,
@@ -2758,8 +2800,267 @@ impl Verifier<'_> {
                         schema: value_schema,
                         part: OrderedPart::Value,
                     },
+                    AccessRole::OrderedValueDestination,
                 )?;
                 self.require_status_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::OrderedStatus,
+                )?;
+            }
+            Op::OrderedInsertInspect {
+                cursor,
+                present,
+                key,
+                status,
+                key_width,
+                collection_schema_ref,
+            } => {
+                let (_, key_schema) =
+                    self.ordered_collection_schemas(function_id, pc, *collection_schema_ref)?;
+                self.require_ordered_cursor_region(
+                    function_id,
+                    pc,
+                    function_index,
+                    frame,
+                    *cursor,
+                    AccessRole::OrderedCursorSource,
+                )?;
+                self.require_scalar_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *present,
+                    AccessRole::OrderedPresent,
+                )?;
+                self.require_ordered_payload_region(
+                    function_id,
+                    pc,
+                    frame,
+                    *key,
+                    *key_width,
+                    OrderedPayload {
+                        schema: key_schema,
+                        part: OrderedPart::Key,
+                    },
+                    AccessRole::OrderedKeyDestination,
+                )?;
+                self.require_status_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::OrderedStatus,
+                )?;
+            }
+            Op::OrderedInsertAdvance {
+                cursor,
+                ordering,
+                ready,
+                status,
+                collection_schema_ref,
+            } => {
+                self.ordered_collection_contract(function_id, pc, *collection_schema_ref)?;
+                self.require_ordered_cursor_region(
+                    function_id,
+                    pc,
+                    function_index,
+                    frame,
+                    *cursor,
+                    AccessRole::OrderedCursorSource,
+                )?;
+                self.require_scalar_read(
+                    function_id,
+                    pc,
+                    frame,
+                    *ordering,
+                    AccessRole::OrderedOrderingSource,
+                )?;
+                self.require_scalar_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *ready,
+                    AccessRole::OrderedReadyDestination,
+                )?;
+                self.require_status_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::OrderedStatus,
+                )?;
+            }
+            Op::OrderedInsertCommit {
+                dst,
+                cursor,
+                key,
+                value,
+                status,
+                key_width,
+                value_width,
+                collection_schema_ref,
+                replace,
+            } => {
+                let (collection, contract) =
+                    self.ordered_collection_contract(function_id, pc, *collection_schema_ref)?;
+                self.require_ordered_cursor_region(
+                    function_id,
+                    pc,
+                    function_index,
+                    frame,
+                    *cursor,
+                    AccessRole::OrderedCursorSource,
+                )?;
+                self.require_handle_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *dst,
+                    collection,
+                    AccessRole::Destination,
+                )?;
+                self.require_ordered_payload_region(
+                    function_id,
+                    pc,
+                    frame,
+                    *key,
+                    *key_width,
+                    OrderedPayload {
+                        schema: contract.key,
+                        part: OrderedPart::Key,
+                    },
+                    AccessRole::OrderedKeySource,
+                )?;
+                match (contract.kind, contract.value, value) {
+                    (OrderedCollectionKind::Map, Some(value_schema), Some(value)) => {
+                        self.require_ordered_payload_region(
+                            function_id,
+                            pc,
+                            frame,
+                            *value,
+                            *value_width,
+                            OrderedPayload {
+                                schema: value_schema,
+                                part: OrderedPart::Value,
+                            },
+                            AccessRole::OrderedValueSource,
+                        )?;
+                    }
+                    (OrderedCollectionKind::Set, None, None) if *value_width == 0 => {
+                        if !*replace {
+                            return Err(self.op(
+                                function_id,
+                                pc,
+                                ProgramDefect::OrderedSetInsertMustDeduplicate {
+                                    schema: collection,
+                                },
+                            ));
+                        }
+                    }
+                    (kind, _, value) => {
+                        return Err(self.op(
+                            function_id,
+                            pc,
+                            ProgramDefect::OrderedInsertValueArity {
+                                schema: collection,
+                                kind,
+                                has_value: value.is_some(),
+                                value_width: *value_width,
+                            },
+                        ));
+                    }
+                }
+                self.require_status_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::OrderedStatus,
+                )?;
+            }
+            Op::OrderedIterateRow {
+                cursor,
+                present,
+                row,
+                status,
+                row_width,
+                collection_schema_ref,
+            } => {
+                let (_, contract) =
+                    self.ordered_collection_contract(function_id, pc, *collection_schema_ref)?;
+                self.require_ordered_cursor_region(
+                    function_id,
+                    pc,
+                    function_index,
+                    frame,
+                    *cursor,
+                    AccessRole::OrderedCursorSource,
+                )?;
+                self.require_scalar_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *present,
+                    AccessRole::OrderedPresent,
+                )?;
+                self.require_ordered_payload_region(
+                    function_id,
+                    pc,
+                    frame,
+                    *row,
+                    *row_width,
+                    OrderedPayload {
+                        schema: contract.row,
+                        part: OrderedPart::Row,
+                    },
+                    AccessRole::OrderedRowDestination,
+                )?;
+                self.require_status_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::OrderedStatus,
+                )?;
+            }
+            Op::OrderedLen {
+                dst,
+                status,
+                collection,
+                collection_schema_ref,
+            } => {
+                self.ordered_collection(
+                    function_id,
+                    pc,
+                    frame,
+                    *collection,
+                    *collection_schema_ref,
+                )?;
+                self.require_scalar_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *dst,
+                    AccessRole::OrderedLengthDestination,
+                )?;
+                self.require_status_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::OrderedStatus,
+                )?;
+            }
+            Op::OrderedStatusIs {
+                dst,
+                status,
+                expected: _,
+            } => {
+                self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                self.require_status_read(
                     function_id,
                     pc,
                     frame,
@@ -3483,6 +3784,16 @@ impl Verifier<'_> {
         pc: usize,
         witness: i64,
     ) -> Result<(SchemaRef, SchemaRef), ProgramError> {
+        let (collection, contract) = self.ordered_collection_contract(function, pc, witness)?;
+        Ok((collection, contract.key))
+    }
+
+    fn ordered_collection_contract(
+        &self,
+        function: FnId,
+        pc: usize,
+        witness: i64,
+    ) -> Result<(SchemaRef, &OrderedCollectionContract), ProgramError> {
         let collection = usize::try_from(witness)
             .ok()
             .filter(|index| *index < self.contract.schemas.len())
@@ -3506,7 +3817,7 @@ impl Verifier<'_> {
                 ProgramDefect::OrderedCollectionSchemaNotCollection { schema: collection },
             ));
         };
-        Ok((collection, contract.key))
+        Ok((collection, contract))
     }
 
     /// The full collection schema table refs for a value projection: the
@@ -3517,29 +3828,7 @@ impl Verifier<'_> {
         pc: usize,
         witness: i64,
     ) -> Result<(SchemaRef, SchemaRef), ProgramError> {
-        let collection = usize::try_from(witness)
-            .ok()
-            .filter(|index| *index < self.contract.schemas.len())
-            .and_then(|index| u32::try_from(index).ok().map(SchemaRef))
-            .ok_or_else(|| {
-                self.op(
-                    function,
-                    pc,
-                    ProgramDefect::OrderedCollectionWitnessOutOfRange {
-                        witness,
-                        schema_count: self.contract.schemas.len(),
-                    },
-                )
-            })?;
-        let PayloadKind::OrderedCollection(contract) =
-            &self.contract.schemas[collection.0 as usize].payload
-        else {
-            return Err(self.op(
-                function,
-                pc,
-                ProgramDefect::OrderedCollectionSchemaNotCollection { schema: collection },
-            ));
-        };
+        let (collection, contract) = self.ordered_collection_contract(function, pc, witness)?;
         let Some(value) = contract.value else {
             return Err(self.op(
                 function,
@@ -3560,6 +3849,7 @@ impl Verifier<'_> {
         offset: u32,
         width: u32,
         payload: OrderedPayload,
+        role: AccessRole,
     ) -> Result<(), ProgramError> {
         let OrderedPayload { schema, part } = payload;
         let expected = &self.contract.schemas[schema.0 as usize];
@@ -3575,8 +3865,7 @@ impl Verifier<'_> {
         if expected_len == 0 || usize::try_from(width).ok() != Some(expected_len) {
             return Err(self.op(function, pc, part.width_defect(schema, expected_len, width)));
         }
-        let region_index =
-            self.exact_region(function, pc, frame, offset, expected_len, part.role())?;
+        let region_index = self.exact_region(function, pc, frame, offset, expected_len, role)?;
         let region = &self.contract.functions[function.0 as usize].frame.regions[region_index];
         if region.shape != expected.inline || region.value_shape != expected.value_shape {
             return Err(self.op(
@@ -3935,6 +4224,14 @@ impl Verifier<'_> {
                     | Op::OrderedBeginProbe { .. }
                     | Op::OrderedProbeKey { .. }
                     | Op::OrderedProbeValue { .. }
+                    | Op::OrderedBeginInsert { .. }
+                    | Op::OrderedInsertInspect { .. }
+                    | Op::OrderedInsertAdvance { .. }
+                    | Op::OrderedInsertCommit { .. }
+                    | Op::OrderedBeginIterate { .. }
+                    | Op::OrderedIterateRow { .. }
+                    | Op::OrderedLen { .. }
+                    | Op::OrderedStatusIs { .. }
                     | Op::Trace { .. } => pending.push(pc + 1),
                     Op::ArrayStoreWord { .. } => {
                         return Err(self.unsupported(

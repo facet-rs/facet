@@ -260,13 +260,14 @@ pub(crate) struct OrderedNode {
     value: Option<Vec<u8>>,
     left: Option<usize>,
     right: Option<usize>,
+    height: u8,
+    len: usize,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum OrderedCursorOperation {
     Probe,
     Insert,
-    Union,
     Iterate,
 }
 
@@ -274,9 +275,54 @@ pub(crate) enum OrderedCursorOperation {
 pub(crate) struct OrderedCursor {
     task_generation: u64,
     schema: i64,
-    operation: OrderedCursorOperation,
-    root: Option<usize>,
+    state: OrderedCursorState,
     consumed: bool,
+}
+
+#[derive(Clone, Debug)]
+enum OrderedCursorState {
+    Probe {
+        root: Option<usize>,
+    },
+    Insert {
+        root: Option<usize>,
+        current: Option<usize>,
+        path: Vec<OrderedPathStep>,
+        phase: OrderedInsertPhase,
+    },
+    Iterate {
+        stack: Vec<usize>,
+        done: bool,
+    },
+}
+
+impl OrderedCursorState {
+    fn operation(&self) -> OrderedCursorOperation {
+        match self {
+            Self::Probe { .. } => OrderedCursorOperation::Probe,
+            Self::Insert { .. } => OrderedCursorOperation::Insert,
+            Self::Iterate { .. } => OrderedCursorOperation::Iterate,
+        }
+    }
+}
+
+#[derive(Clone, Copy, Debug)]
+struct OrderedPathStep {
+    node: usize,
+    direction: OrderedDirection,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum OrderedDirection {
+    Left,
+    Right,
+}
+
+#[derive(Clone, Copy, Debug)]
+enum OrderedInsertPhase {
+    Inspect,
+    Advance(usize),
+    Ready(Option<usize>),
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -323,6 +369,12 @@ pub(crate) struct OrderedProbeStep {
     pub right: i64,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OrderedIterateStep {
+    pub present: bool,
+    pub row: Vec<u8>,
+}
+
 /// Map a cursor consumption error onto the closed [`OrderedOpStatus`] ABI.
 fn ordered_consume_status(err: OrderedCursorError) -> OrderedOpStatus {
     match err {
@@ -359,6 +411,10 @@ pub enum OrderedOpStatus {
     Stale = 5,
     /// The arena reported exhaustion for an otherwise valid request.
     AllocationFailed = 6,
+    /// A known-new insertion encountered a structurally equal key.
+    DuplicateKey = 7,
+    /// An advance operation received a word outside the closed ordering ABI.
+    InvalidOrdering = 8,
 }
 
 impl OrderedOpStatus {
@@ -371,6 +427,8 @@ impl OrderedOpStatus {
             4 => Some(Self::OperationMismatch),
             5 => Some(Self::Stale),
             6 => Some(Self::AllocationFailed),
+            7 => Some(Self::DuplicateKey),
+            8 => Some(Self::InvalidOrdering),
             _ => None,
         }
     }
@@ -404,6 +462,22 @@ impl MoltenArena {
         left: Option<usize>,
         right: Option<usize>,
     ) -> Result<usize, OrderedCursorError> {
+        for child in [left, right].into_iter().flatten() {
+            if self
+                .ordered_nodes
+                .get(child)
+                .is_none_or(|node| node.schema != schema)
+            {
+                return Err(OrderedCursorError::SchemaMismatch);
+            }
+        }
+        let height = 1u8
+            .checked_add(self.ordered_height(left).max(self.ordered_height(right)))
+            .ok_or(OrderedCursorError::Invalid)?;
+        let len = 1usize
+            .checked_add(self.ordered_len_at(left))
+            .and_then(|len| len.checked_add(self.ordered_len_at(right)))
+            .ok_or(OrderedCursorError::Invalid)?;
         self.ordered_nodes
             .try_reserve(1)
             .map_err(|_| OrderedCursorError::Invalid)?;
@@ -414,8 +488,104 @@ impl MoltenArena {
             value,
             left,
             right,
+            height,
+            len,
         });
         Ok(index)
+    }
+
+    fn ordered_height(&self, node: Option<usize>) -> u8 {
+        node.and_then(|index| self.ordered_nodes.get(index))
+            .map_or(0, |node| node.height)
+    }
+
+    fn ordered_len_at(&self, node: Option<usize>) -> usize {
+        node.and_then(|index| self.ordered_nodes.get(index))
+            .map_or(0, |node| node.len)
+    }
+
+    fn ordered_node_parts(
+        &self,
+        index: usize,
+    ) -> Result<(Vec<u8>, Option<Vec<u8>>, Option<usize>, Option<usize>), OrderedCursorError> {
+        let node = self
+            .ordered_nodes
+            .get(index)
+            .ok_or(OrderedCursorError::Invalid)?;
+        Ok((node.key.clone(), node.value.clone(), node.left, node.right))
+    }
+
+    fn alloc_balanced_ordered_node(
+        &mut self,
+        schema: i64,
+        key: Vec<u8>,
+        value: Option<Vec<u8>>,
+        left: Option<usize>,
+        right: Option<usize>,
+    ) -> Result<usize, OrderedCursorError> {
+        let skew = i16::from(self.ordered_height(left)) - i16::from(self.ordered_height(right));
+        if skew > 1 {
+            let left_index = left.ok_or(OrderedCursorError::Invalid)?;
+            let (left_key, left_value, left_left, left_right) =
+                self.ordered_node_parts(left_index)?;
+            if self.ordered_height(left_right) > self.ordered_height(left_left) {
+                let pivot = left_right.ok_or(OrderedCursorError::Invalid)?;
+                let (pivot_key, pivot_value, pivot_left, pivot_right) =
+                    self.ordered_node_parts(pivot)?;
+                let new_left =
+                    self.alloc_ordered_node(schema, left_key, left_value, left_left, pivot_left)?;
+                let new_right = self.alloc_ordered_node(schema, key, value, pivot_right, right)?;
+                return self.alloc_ordered_node(
+                    schema,
+                    pivot_key,
+                    pivot_value,
+                    Some(new_left),
+                    Some(new_right),
+                );
+            }
+            let new_right = self.alloc_ordered_node(schema, key, value, left_right, right)?;
+            return self.alloc_ordered_node(
+                schema,
+                left_key,
+                left_value,
+                left_left,
+                Some(new_right),
+            );
+        }
+        if skew < -1 {
+            let right_index = right.ok_or(OrderedCursorError::Invalid)?;
+            let (right_key, right_value, right_left, right_right) =
+                self.ordered_node_parts(right_index)?;
+            if self.ordered_height(right_left) > self.ordered_height(right_right) {
+                let pivot = right_left.ok_or(OrderedCursorError::Invalid)?;
+                let (pivot_key, pivot_value, pivot_left, pivot_right) =
+                    self.ordered_node_parts(pivot)?;
+                let new_left = self.alloc_ordered_node(schema, key, value, left, pivot_left)?;
+                let new_right = self.alloc_ordered_node(
+                    schema,
+                    right_key,
+                    right_value,
+                    pivot_right,
+                    right_right,
+                )?;
+                return self.alloc_ordered_node(
+                    schema,
+                    pivot_key,
+                    pivot_value,
+                    Some(new_left),
+                    Some(new_right),
+                );
+            }
+            let new_left = self.alloc_ordered_node(schema, key, value, left, right_left)?;
+            return self.alloc_ordered_node(
+                schema,
+                right_key,
+                right_value,
+                Some(new_left),
+                right_right,
+            );
+        }
+        self.alloc_ordered_node(schema, key, value, left, right)
     }
 
     /// Decode an ordered-collection root handle into an arena node index.
@@ -448,6 +618,48 @@ impl MoltenArena {
                 OrderedCursorError::Stale => OrderedOpStatus::Stale,
                 OrderedCursorError::Invalid => OrderedOpStatus::AllocationFailed,
             })
+    }
+
+    pub(crate) fn begin_ordered_insert(
+        &mut self,
+        collection: i64,
+        schema: i64,
+    ) -> Result<OrderedCursorToken, OrderedOpStatus> {
+        let root = self.ordered_root(collection)?;
+        self.begin_ordered_cursor(schema, OrderedCursorOperation::Insert, root)
+            .map_err(|err| match err {
+                OrderedCursorError::SchemaMismatch => OrderedOpStatus::SchemaMismatch,
+                OrderedCursorError::OperationMismatch => OrderedOpStatus::OperationMismatch,
+                OrderedCursorError::Stale => OrderedOpStatus::Stale,
+                OrderedCursorError::Invalid => OrderedOpStatus::AllocationFailed,
+            })
+    }
+
+    pub(crate) fn begin_ordered_iterate(
+        &mut self,
+        collection: i64,
+        schema: i64,
+    ) -> Result<OrderedCursorToken, OrderedOpStatus> {
+        let root = self.ordered_root(collection)?;
+        self.begin_ordered_cursor(schema, OrderedCursorOperation::Iterate, root)
+            .map_err(|err| match err {
+                OrderedCursorError::SchemaMismatch => OrderedOpStatus::SchemaMismatch,
+                OrderedCursorError::OperationMismatch => OrderedOpStatus::OperationMismatch,
+                OrderedCursorError::Stale => OrderedOpStatus::Stale,
+                OrderedCursorError::Invalid => OrderedOpStatus::AllocationFailed,
+            })
+    }
+
+    pub(crate) fn ordered_collection_len(
+        &self,
+        collection: i64,
+        schema: i64,
+    ) -> Result<i64, OrderedOpStatus> {
+        let root = self.ordered_root(collection)?;
+        if root.is_some_and(|index| self.ordered_nodes[index].schema != schema) {
+            return Err(OrderedOpStatus::SchemaMismatch);
+        }
+        i64::try_from(self.ordered_len_at(root)).map_err(|_| OrderedOpStatus::AllocationFailed)
     }
 
     /// Encode an arena node child into the collection handle the bytecode
@@ -503,6 +715,203 @@ impl MoltenArena {
         Ok((true, value))
     }
 
+    pub(crate) fn inspect_ordered_insert(
+        &mut self,
+        token: OrderedCursorToken,
+        schema: i64,
+    ) -> Result<OrderedProbeStep, OrderedOpStatus> {
+        let cursor_index = self
+            .ordered_cursor_index(token, schema, OrderedCursorOperation::Insert)
+            .map_err(ordered_consume_status)?;
+        let current = match &mut self.ordered_cursors[cursor_index].state {
+            OrderedCursorState::Insert { current, phase, .. }
+                if matches!(phase, OrderedInsertPhase::Inspect) =>
+            {
+                let current = *current;
+                *phase =
+                    current.map_or(OrderedInsertPhase::Ready(None), OrderedInsertPhase::Advance);
+                current
+            }
+            OrderedCursorState::Insert { .. } => {
+                return Err(OrderedOpStatus::OperationMismatch);
+            }
+            _ => unreachable!(),
+        };
+        let Some(index) = current else {
+            return Ok(OrderedProbeStep {
+                present: false,
+                key: Vec::new(),
+                left: ORDERED_EMPTY_HANDLE,
+                right: ORDERED_EMPTY_HANDLE,
+            });
+        };
+        let node = &self.ordered_nodes[index];
+        Ok(OrderedProbeStep {
+            present: true,
+            key: node.key.clone(),
+            left: Self::ordered_child_handle(node.left),
+            right: Self::ordered_child_handle(node.right),
+        })
+    }
+
+    pub(crate) fn advance_ordered_insert(
+        &mut self,
+        token: OrderedCursorToken,
+        schema: i64,
+        ordering: i64,
+    ) -> Result<bool, OrderedOpStatus> {
+        let direction = match ordering {
+            0 => Some(OrderedDirection::Left),
+            1 => None,
+            2 => Some(OrderedDirection::Right),
+            _ => return Err(OrderedOpStatus::InvalidOrdering),
+        };
+        let cursor_index = self
+            .ordered_cursor_index(token, schema, OrderedCursorOperation::Insert)
+            .map_err(ordered_consume_status)?;
+        let current = match &self.ordered_cursors[cursor_index].state {
+            OrderedCursorState::Insert {
+                phase: OrderedInsertPhase::Advance(current),
+                ..
+            } => *current,
+            OrderedCursorState::Insert { .. } => {
+                return Err(OrderedOpStatus::OperationMismatch);
+            }
+            _ => unreachable!(),
+        };
+        if direction.is_none() {
+            let OrderedCursorState::Insert { phase, .. } =
+                &mut self.ordered_cursors[cursor_index].state
+            else {
+                unreachable!()
+            };
+            *phase = OrderedInsertPhase::Ready(Some(current));
+            return Ok(true);
+        }
+        let direction = direction.unwrap();
+        let child = match direction {
+            OrderedDirection::Left => self.ordered_nodes[current].left,
+            OrderedDirection::Right => self.ordered_nodes[current].right,
+        };
+        let OrderedCursorState::Insert {
+            current: cursor_current,
+            path,
+            phase,
+            ..
+        } = &mut self.ordered_cursors[cursor_index].state
+        else {
+            unreachable!()
+        };
+        path.try_reserve(1)
+            .map_err(|_| OrderedOpStatus::AllocationFailed)?;
+        path.push(OrderedPathStep {
+            node: current,
+            direction,
+        });
+        *cursor_current = child;
+        *phase = OrderedInsertPhase::Inspect;
+        Ok(false)
+    }
+
+    pub(crate) fn commit_ordered_insert(
+        &mut self,
+        token: OrderedCursorToken,
+        schema: i64,
+        key: Vec<u8>,
+        value: Option<Vec<u8>>,
+        replace: bool,
+    ) -> Result<i64, OrderedOpStatus> {
+        let cursor_index = self
+            .ordered_cursor_index(token, schema, OrderedCursorOperation::Insert)
+            .map_err(ordered_consume_status)?;
+        let (root, path, existing) = match &self.ordered_cursors[cursor_index].state {
+            OrderedCursorState::Insert {
+                root,
+                path,
+                phase: OrderedInsertPhase::Ready(existing),
+                ..
+            } => (*root, path.clone(), *existing),
+            OrderedCursorState::Insert { .. } => {
+                return Err(OrderedOpStatus::OperationMismatch);
+            }
+            _ => unreachable!(),
+        };
+        self.ordered_cursors[cursor_index].consumed = true;
+        if existing.is_some() && !replace {
+            return Err(OrderedOpStatus::DuplicateKey);
+        }
+        let mut rebuilt = if let Some(existing) = existing {
+            let (_, _, left, right) = self
+                .ordered_node_parts(existing)
+                .map_err(ordered_consume_status)?;
+            self.alloc_ordered_node(schema, key, value, left, right)
+                .map_err(|_| OrderedOpStatus::AllocationFailed)?
+        } else {
+            self.alloc_ordered_node(schema, key, value, None, None)
+                .map_err(|_| OrderedOpStatus::AllocationFailed)?
+        };
+        for step in path.into_iter().rev() {
+            let (parent_key, parent_value, mut left, mut right) = self
+                .ordered_node_parts(step.node)
+                .map_err(ordered_consume_status)?;
+            match step.direction {
+                OrderedDirection::Left => left = Some(rebuilt),
+                OrderedDirection::Right => right = Some(rebuilt),
+            }
+            rebuilt = self
+                .alloc_balanced_ordered_node(schema, parent_key, parent_value, left, right)
+                .map_err(|_| OrderedOpStatus::AllocationFailed)?;
+        }
+        let _ = root;
+        Ok(Self::ordered_child_handle(Some(rebuilt)))
+    }
+
+    pub(crate) fn iterate_ordered_row(
+        &mut self,
+        token: OrderedCursorToken,
+        schema: i64,
+    ) -> Result<OrderedIterateStep, OrderedOpStatus> {
+        let cursor_index = self
+            .ordered_cursor_index(token, schema, OrderedCursorOperation::Iterate)
+            .map_err(ordered_consume_status)?;
+        let next = match &mut self.ordered_cursors[cursor_index].state {
+            OrderedCursorState::Iterate { stack, done } => {
+                let Some(next) = stack.pop() else {
+                    *done = true;
+                    self.ordered_cursors[cursor_index].consumed = true;
+                    return Ok(OrderedIterateStep {
+                        present: false,
+                        row: Vec::new(),
+                    });
+                };
+                next
+            }
+            _ => unreachable!(),
+        };
+        let (key, value, _, right) = self
+            .ordered_node_parts(next)
+            .map_err(ordered_consume_status)?;
+        let mut right_spine = Vec::new();
+        self.ordered_left_spine(right, &mut right_spine)
+            .map_err(ordered_consume_status)?;
+        let OrderedCursorState::Iterate { stack, .. } =
+            &mut self.ordered_cursors[cursor_index].state
+        else {
+            unreachable!()
+        };
+        stack
+            .try_reserve(right_spine.len())
+            .map_err(|_| OrderedOpStatus::AllocationFailed)?;
+        stack.extend(right_spine);
+        let mut row = key;
+        if let Some(value) = value {
+            row.try_reserve(value.len())
+                .map_err(|_| OrderedOpStatus::AllocationFailed)?;
+            row.extend(value);
+        }
+        Ok(OrderedIterateStep { present: true, row })
+    }
+
     pub(crate) fn begin_ordered_cursor(
         &mut self,
         schema: i64,
@@ -519,12 +928,25 @@ impl MoltenArena {
         self.ordered_cursors
             .try_reserve(1)
             .map_err(|_| OrderedCursorError::Invalid)?;
+        let state = match operation {
+            OrderedCursorOperation::Probe => OrderedCursorState::Probe { root },
+            OrderedCursorOperation::Insert => OrderedCursorState::Insert {
+                root,
+                current: root,
+                path: Vec::new(),
+                phase: OrderedInsertPhase::Inspect,
+            },
+            OrderedCursorOperation::Iterate => {
+                let mut stack = Vec::new();
+                self.ordered_left_spine(root, &mut stack)?;
+                OrderedCursorState::Iterate { stack, done: false }
+            }
+        };
         let index = self.ordered_cursors.len();
         self.ordered_cursors.push(OrderedCursor {
             task_generation: self.task_generation,
             schema,
-            operation,
-            root,
+            state,
             consumed: false,
         });
         Ok(OrderedCursorToken {
@@ -539,12 +961,28 @@ impl MoltenArena {
         schema: i64,
         operation: OrderedCursorOperation,
     ) -> Result<Option<usize>, OrderedCursorError> {
+        let index = self.ordered_cursor_index(token, schema, operation)?;
+        let cursor = &mut self.ordered_cursors[index];
+        cursor.consumed = true;
+        match cursor.state {
+            OrderedCursorState::Probe { root } => Ok(root),
+            OrderedCursorState::Insert { root, .. } => Ok(root),
+            OrderedCursorState::Iterate { .. } => Ok(None),
+        }
+    }
+
+    fn ordered_cursor_index(
+        &self,
+        token: OrderedCursorToken,
+        schema: i64,
+        operation: OrderedCursorOperation,
+    ) -> Result<usize, OrderedCursorError> {
         if token.task_generation != self.task_generation {
             return Err(OrderedCursorError::Invalid);
         }
         let cursor = self
             .ordered_cursors
-            .get_mut(token.index)
+            .get(token.index)
             .ok_or(OrderedCursorError::Invalid)?;
         if cursor.task_generation != self.task_generation || cursor.consumed {
             return Err(OrderedCursorError::Stale);
@@ -552,11 +990,28 @@ impl MoltenArena {
         if cursor.schema != schema {
             return Err(OrderedCursorError::SchemaMismatch);
         }
-        if cursor.operation != operation {
+        if cursor.state.operation() != operation {
             return Err(OrderedCursorError::OperationMismatch);
         }
-        cursor.consumed = true;
-        Ok(cursor.root)
+        Ok(token.index)
+    }
+
+    fn ordered_left_spine(
+        &self,
+        mut node: Option<usize>,
+        out: &mut Vec<usize>,
+    ) -> Result<(), OrderedCursorError> {
+        while let Some(index) = node {
+            let current = self
+                .ordered_nodes
+                .get(index)
+                .ok_or(OrderedCursorError::Invalid)?;
+            out.try_reserve(1)
+                .map_err(|_| OrderedCursorError::Invalid)?;
+            out.push(index);
+            node = current.left;
+        }
+        Ok(())
     }
     /// Reserve a zeroed array-elements payload and return its task-local molten
     /// handle. Elements are written afterwards through checked array-store ops;
@@ -779,6 +1234,68 @@ pub(crate) unsafe extern "C" fn ordered_begin_probe_abi(
     }
 }
 
+pub(crate) unsafe extern "C" fn ordered_begin_insert_abi(
+    arena: *mut core::ffi::c_void,
+    collection: i64,
+    schema: i64,
+    out_index: *mut i64,
+    out_generation: *mut i64,
+) -> i64 {
+    if out_index.is_null() || out_generation.is_null() {
+        return OrderedOpStatus::InvalidHandle as i64;
+    }
+    unsafe {
+        *out_index = ORDERED_CURSOR_POISON;
+        *out_generation = 0;
+    }
+    if arena.is_null() {
+        return OrderedOpStatus::InvalidHandle as i64;
+    }
+    let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
+    match arena.begin_ordered_insert(collection, schema) {
+        Ok(token) => {
+            let (index, generation) = token.into_words();
+            unsafe {
+                *out_index = index;
+                *out_generation = generation;
+            }
+            OrderedOpStatus::Ok as i64
+        }
+        Err(status) => status as i64,
+    }
+}
+
+pub(crate) unsafe extern "C" fn ordered_begin_iterate_abi(
+    arena: *mut core::ffi::c_void,
+    collection: i64,
+    schema: i64,
+    out_index: *mut i64,
+    out_generation: *mut i64,
+) -> i64 {
+    if out_index.is_null() || out_generation.is_null() {
+        return OrderedOpStatus::InvalidHandle as i64;
+    }
+    unsafe {
+        *out_index = ORDERED_CURSOR_POISON;
+        *out_generation = 0;
+    }
+    if arena.is_null() {
+        return OrderedOpStatus::InvalidHandle as i64;
+    }
+    let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
+    match arena.begin_ordered_iterate(collection, schema) {
+        Ok(token) => {
+            let (index, generation) = token.into_words();
+            unsafe {
+                *out_index = index;
+                *out_generation = generation;
+            }
+            OrderedOpStatus::Ok as i64
+        }
+        Err(status) => status as i64,
+    }
+}
+
 /// # Safety
 /// `arena` must point to a live [`MoltenArena`] for the duration of the call and
 /// must not be mutably aliased elsewhere. `out_present`, `out_left`, and
@@ -825,13 +1342,15 @@ pub(crate) unsafe extern "C" fn ordered_probe_key_abi(
     let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
     match arena.probe_ordered_key(token, schema) {
         Ok(step) => {
+            if step.present && step.key.len() != out_key.len() {
+                return OrderedOpStatus::SchemaMismatch as i64;
+            }
             unsafe {
                 *out_present = i64::from(step.present);
                 *out_left = step.left;
                 *out_right = step.right;
             }
-            let copy = step.key.len().min(out_key.len());
-            out_key[..copy].copy_from_slice(&step.key[..copy]);
+            out_key[..step.key.len()].copy_from_slice(&step.key);
             OrderedOpStatus::Ok as i64
         }
         Err(status) => status as i64,
@@ -874,11 +1393,193 @@ pub(crate) unsafe extern "C" fn ordered_probe_value_abi(
     let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
     match arena.probe_ordered_value(token, schema) {
         Ok((present, value)) => {
+            if present && value.len() != out_value.len() {
+                return OrderedOpStatus::SchemaMismatch as i64;
+            }
             unsafe {
                 *out_present = i64::from(present);
             }
-            let copy = value.len().min(out_value.len());
-            out_value[..copy].copy_from_slice(&value[..copy]);
+            out_value[..value.len()].copy_from_slice(&value);
+            OrderedOpStatus::Ok as i64
+        }
+        Err(status) => status as i64,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe extern "C" fn ordered_insert_inspect_abi(
+    arena: *mut core::ffi::c_void,
+    index: i64,
+    generation: i64,
+    schema: i64,
+    key_width: usize,
+    out_present: *mut i64,
+    out_key: *mut u8,
+) -> i64 {
+    if out_present.is_null() || (out_key.is_null() && key_width != 0) {
+        return OrderedOpStatus::InvalidHandle as i64;
+    }
+    unsafe { *out_present = 0 };
+    let out_key = if key_width == 0 {
+        &mut [][..]
+    } else {
+        unsafe { core::slice::from_raw_parts_mut(out_key, key_width) }
+    };
+    out_key.fill(0);
+    if arena.is_null() {
+        return OrderedOpStatus::InvalidHandle as i64;
+    }
+    let Some(token) = OrderedCursorToken::from_words(index, generation) else {
+        return OrderedOpStatus::InvalidHandle as i64;
+    };
+    let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
+    match arena.inspect_ordered_insert(token, schema) {
+        Ok(step) => {
+            if step.present && step.key.len() != out_key.len() {
+                return OrderedOpStatus::SchemaMismatch as i64;
+            }
+            unsafe { *out_present = i64::from(step.present) };
+            out_key[..step.key.len()].copy_from_slice(&step.key);
+            OrderedOpStatus::Ok as i64
+        }
+        Err(status) => status as i64,
+    }
+}
+
+pub(crate) unsafe extern "C" fn ordered_insert_advance_abi(
+    arena: *mut core::ffi::c_void,
+    index: i64,
+    generation: i64,
+    schema: i64,
+    ordering: i64,
+    out_ready: *mut i64,
+) -> i64 {
+    if out_ready.is_null() {
+        return OrderedOpStatus::InvalidHandle as i64;
+    }
+    unsafe { *out_ready = 0 };
+    if arena.is_null() {
+        return OrderedOpStatus::InvalidHandle as i64;
+    }
+    let Some(token) = OrderedCursorToken::from_words(index, generation) else {
+        return OrderedOpStatus::InvalidHandle as i64;
+    };
+    let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
+    match arena.advance_ordered_insert(token, schema, ordering) {
+        Ok(ready) => {
+            unsafe { *out_ready = i64::from(ready) };
+            OrderedOpStatus::Ok as i64
+        }
+        Err(status) => status as i64,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe extern "C" fn ordered_insert_commit_abi(
+    arena: *mut core::ffi::c_void,
+    index: i64,
+    generation: i64,
+    schema: i64,
+    key: *const u8,
+    key_width: usize,
+    value: *const u8,
+    value_width: usize,
+    has_value: i64,
+    replace: i64,
+    out_collection: *mut i64,
+) -> i64 {
+    if out_collection.is_null()
+        || (key.is_null() && key_width != 0)
+        || (has_value != 0 && value.is_null() && value_width != 0)
+    {
+        return OrderedOpStatus::InvalidHandle as i64;
+    }
+    unsafe { *out_collection = ORDERED_CURSOR_POISON };
+    if arena.is_null() {
+        return OrderedOpStatus::InvalidHandle as i64;
+    }
+    let Some(token) = OrderedCursorToken::from_words(index, generation) else {
+        return OrderedOpStatus::InvalidHandle as i64;
+    };
+    let key = if key_width == 0 {
+        Vec::new()
+    } else {
+        unsafe { core::slice::from_raw_parts(key, key_width) }.to_vec()
+    };
+    let value = (has_value != 0).then(|| {
+        if value_width == 0 {
+            Vec::new()
+        } else {
+            unsafe { core::slice::from_raw_parts(value, value_width) }.to_vec()
+        }
+    });
+    let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
+    match arena.commit_ordered_insert(token, schema, key, value, replace != 0) {
+        Ok(collection) => {
+            unsafe { *out_collection = collection };
+            OrderedOpStatus::Ok as i64
+        }
+        Err(status) => status as i64,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe extern "C" fn ordered_iterate_row_abi(
+    arena: *mut core::ffi::c_void,
+    index: i64,
+    generation: i64,
+    schema: i64,
+    row_width: usize,
+    out_present: *mut i64,
+    out_row: *mut u8,
+) -> i64 {
+    if out_present.is_null() || (out_row.is_null() && row_width != 0) {
+        return OrderedOpStatus::InvalidHandle as i64;
+    }
+    unsafe { *out_present = 0 };
+    let out_row = if row_width == 0 {
+        &mut [][..]
+    } else {
+        unsafe { core::slice::from_raw_parts_mut(out_row, row_width) }
+    };
+    out_row.fill(0);
+    if arena.is_null() {
+        return OrderedOpStatus::InvalidHandle as i64;
+    }
+    let Some(token) = OrderedCursorToken::from_words(index, generation) else {
+        return OrderedOpStatus::InvalidHandle as i64;
+    };
+    let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
+    match arena.iterate_ordered_row(token, schema) {
+        Ok(step) => {
+            if step.present && step.row.len() != out_row.len() {
+                return OrderedOpStatus::SchemaMismatch as i64;
+            }
+            unsafe { *out_present = i64::from(step.present) };
+            out_row[..step.row.len()].copy_from_slice(&step.row);
+            OrderedOpStatus::Ok as i64
+        }
+        Err(status) => status as i64,
+    }
+}
+
+pub(crate) unsafe extern "C" fn ordered_len_abi(
+    arena: *mut core::ffi::c_void,
+    collection: i64,
+    schema: i64,
+    out_len: *mut i64,
+) -> i64 {
+    if out_len.is_null() {
+        return OrderedOpStatus::InvalidHandle as i64;
+    }
+    unsafe { *out_len = 0 };
+    if arena.is_null() {
+        return OrderedOpStatus::InvalidHandle as i64;
+    }
+    let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
+    match arena.ordered_collection_len(collection, schema) {
+        Ok(len) => {
+            unsafe { *out_len = len };
             OrderedOpStatus::Ok as i64
         }
         Err(status) => status as i64,
@@ -1357,6 +2058,71 @@ pub enum Op {
         status: u32,
         value_width: u32,
         collection_schema_ref: i64,
+    },
+    /// Begin a persistent insert-or-replace handshake over one collection.
+    OrderedBeginInsert {
+        cursor: u32,
+        status: u32,
+        collection: u32,
+        collection_schema_ref: i64,
+    },
+    /// Expose the current insertion candidate key, or an empty insertion site.
+    OrderedInsertInspect {
+        cursor: u32,
+        present: u32,
+        key: u32,
+        status: u32,
+        key_width: u32,
+        collection_schema_ref: i64,
+    },
+    /// Advance an insertion cursor using the verified structural ordering word.
+    OrderedInsertAdvance {
+        cursor: u32,
+        ordering: u32,
+        ready: u32,
+        status: u32,
+        collection_schema_ref: i64,
+    },
+    /// Commit a new persistent root after the insertion path is resolved.
+    OrderedInsertCommit {
+        dst: u32,
+        cursor: u32,
+        key: u32,
+        value: Option<u32>,
+        status: u32,
+        key_width: u32,
+        value_width: u32,
+        collection_schema_ref: i64,
+        replace: bool,
+    },
+    /// Begin canonical in-order iteration over an ordered collection.
+    OrderedBeginIterate {
+        cursor: u32,
+        status: u32,
+        collection: u32,
+        collection_schema_ref: i64,
+    },
+    /// Yield the next complete row in canonical key order.
+    OrderedIterateRow {
+        cursor: u32,
+        present: u32,
+        row: u32,
+        status: u32,
+        row_width: u32,
+        collection_schema_ref: i64,
+    },
+    /// Read the persistent collection's stored cardinality.
+    OrderedLen {
+        dst: u32,
+        status: u32,
+        collection: u32,
+        collection_schema_ref: i64,
+    },
+    /// Validate and compare a word in the closed ordered-operation status ABI.
+    OrderedStatusIs {
+        dst: u32,
+        status: u32,
+        expected: OrderedOpStatus,
     },
 }
 
@@ -2029,13 +2795,16 @@ impl Task {
                         Some(token) => {
                             match self.molten.probe_ordered_key(token, collection_schema_ref) {
                                 Ok(step) => {
-                                    present_value = i64::from(step.present);
-                                    left_value = step.left;
-                                    right_value = step.right;
-                                    let copy = step.key.len().min(key_width);
-                                    self.arena[key_at..key_at + copy]
-                                        .copy_from_slice(&step.key[..copy]);
-                                    OrderedOpStatus::Ok
+                                    if step.present && step.key.len() != key_width {
+                                        OrderedOpStatus::SchemaMismatch
+                                    } else {
+                                        present_value = i64::from(step.present);
+                                        left_value = step.left;
+                                        right_value = step.right;
+                                        self.arena[key_at..key_at + step.key.len()]
+                                            .copy_from_slice(&step.key);
+                                        OrderedOpStatus::Ok
+                                    }
                                 }
                                 Err(status) => status,
                             }
@@ -2069,11 +2838,14 @@ impl Task {
                                 .probe_ordered_value(token, collection_schema_ref)
                             {
                                 Ok((present_flag, bytes)) => {
-                                    present_value = i64::from(present_flag);
-                                    let copy = bytes.len().min(value_width);
-                                    self.arena[value_at..value_at + copy]
-                                        .copy_from_slice(&bytes[..copy]);
-                                    OrderedOpStatus::Ok
+                                    if present_flag && bytes.len() != value_width {
+                                        OrderedOpStatus::SchemaMismatch
+                                    } else {
+                                        present_value = i64::from(present_flag);
+                                        self.arena[value_at..value_at + bytes.len()]
+                                            .copy_from_slice(&bytes);
+                                        OrderedOpStatus::Ok
+                                    }
                                 }
                                 Err(status) => status,
                             }
@@ -2081,6 +2853,237 @@ impl Task {
                     };
                     write_i64_at(&mut self.arena, base + present as usize, present_value);
                     write_i64_at(&mut self.arena, base + status as usize, op_status as i64);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::OrderedBeginInsert {
+                    cursor,
+                    status,
+                    collection,
+                    collection_schema_ref,
+                } => {
+                    let collection = read_i64_at(&self.arena, base + collection as usize);
+                    let begun = self
+                        .molten
+                        .begin_ordered_insert(collection, collection_schema_ref);
+                    let mut index = ORDERED_CURSOR_POISON;
+                    let mut generation = 0i64;
+                    let op_status = match begun {
+                        Ok(token) => {
+                            (index, generation) = token.into_words();
+                            OrderedOpStatus::Ok
+                        }
+                        Err(status) => status,
+                    };
+                    write_i64_at(&mut self.arena, base + cursor as usize, index);
+                    write_i64_at(&mut self.arena, base + cursor as usize + 8, generation);
+                    write_i64_at(&mut self.arena, base + status as usize, op_status as i64);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::OrderedBeginIterate {
+                    cursor,
+                    status,
+                    collection,
+                    collection_schema_ref,
+                } => {
+                    let collection = read_i64_at(&self.arena, base + collection as usize);
+                    let begun = self
+                        .molten
+                        .begin_ordered_iterate(collection, collection_schema_ref);
+                    let mut index = ORDERED_CURSOR_POISON;
+                    let mut generation = 0i64;
+                    let op_status = match begun {
+                        Ok(token) => {
+                            (index, generation) = token.into_words();
+                            OrderedOpStatus::Ok
+                        }
+                        Err(status) => status,
+                    };
+                    write_i64_at(&mut self.arena, base + cursor as usize, index);
+                    write_i64_at(&mut self.arena, base + cursor as usize + 8, generation);
+                    write_i64_at(&mut self.arena, base + status as usize, op_status as i64);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::OrderedInsertInspect {
+                    cursor,
+                    present,
+                    key,
+                    status,
+                    key_width,
+                    collection_schema_ref,
+                } => {
+                    let index = read_i64_at(&self.arena, base + cursor as usize);
+                    let generation = read_i64_at(&self.arena, base + cursor as usize + 8);
+                    let key_at = base + key as usize;
+                    let key_width = key_width as usize;
+                    self.arena[key_at..key_at + key_width].fill(0);
+                    let mut present_value = 0i64;
+                    let op_status = match OrderedCursorToken::from_words(index, generation) {
+                        None => OrderedOpStatus::InvalidHandle,
+                        Some(token) => match self
+                            .molten
+                            .inspect_ordered_insert(token, collection_schema_ref)
+                        {
+                            Ok(step) if !step.present || step.key.len() == key_width => {
+                                present_value = i64::from(step.present);
+                                self.arena[key_at..key_at + step.key.len()]
+                                    .copy_from_slice(&step.key);
+                                OrderedOpStatus::Ok
+                            }
+                            Ok(_) => OrderedOpStatus::SchemaMismatch,
+                            Err(status) => status,
+                        },
+                    };
+                    write_i64_at(&mut self.arena, base + present as usize, present_value);
+                    write_i64_at(&mut self.arena, base + status as usize, op_status as i64);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::OrderedInsertAdvance {
+                    cursor,
+                    ordering,
+                    ready,
+                    status,
+                    collection_schema_ref,
+                } => {
+                    let index = read_i64_at(&self.arena, base + cursor as usize);
+                    let generation = read_i64_at(&self.arena, base + cursor as usize + 8);
+                    let ordering = read_i64_at(&self.arena, base + ordering as usize);
+                    let mut ready_value = 0;
+                    let op_status = match OrderedCursorToken::from_words(index, generation) {
+                        None => OrderedOpStatus::InvalidHandle,
+                        Some(token) => match self.molten.advance_ordered_insert(
+                            token,
+                            collection_schema_ref,
+                            ordering,
+                        ) {
+                            Ok(ready) => {
+                                ready_value = i64::from(ready);
+                                OrderedOpStatus::Ok
+                            }
+                            Err(status) => status,
+                        },
+                    };
+                    write_i64_at(&mut self.arena, base + ready as usize, ready_value);
+                    write_i64_at(&mut self.arena, base + status as usize, op_status as i64);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::OrderedInsertCommit {
+                    dst,
+                    cursor,
+                    key,
+                    value,
+                    status,
+                    key_width,
+                    value_width,
+                    collection_schema_ref,
+                    replace,
+                } => {
+                    let index = read_i64_at(&self.arena, base + cursor as usize);
+                    let generation = read_i64_at(&self.arena, base + cursor as usize + 8);
+                    let key = self.arena
+                        [base + key as usize..base + key as usize + key_width as usize]
+                        .to_vec();
+                    let value = value.map(|value| {
+                        self.arena
+                            [base + value as usize..base + value as usize + value_width as usize]
+                            .to_vec()
+                    });
+                    let mut collection = ORDERED_CURSOR_POISON;
+                    let op_status = match OrderedCursorToken::from_words(index, generation) {
+                        None => OrderedOpStatus::InvalidHandle,
+                        Some(token) => match self.molten.commit_ordered_insert(
+                            token,
+                            collection_schema_ref,
+                            key,
+                            value,
+                            replace,
+                        ) {
+                            Ok(handle) => {
+                                collection = handle;
+                                OrderedOpStatus::Ok
+                            }
+                            Err(status) => status,
+                        },
+                    };
+                    write_i64_at(&mut self.arena, base + dst as usize, collection);
+                    write_i64_at(&mut self.arena, base + status as usize, op_status as i64);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::OrderedIterateRow {
+                    cursor,
+                    present,
+                    row,
+                    status,
+                    row_width,
+                    collection_schema_ref,
+                } => {
+                    let index = read_i64_at(&self.arena, base + cursor as usize);
+                    let generation = read_i64_at(&self.arena, base + cursor as usize + 8);
+                    let row_at = base + row as usize;
+                    let row_width = row_width as usize;
+                    self.arena[row_at..row_at + row_width].fill(0);
+                    let mut present_value = 0;
+                    let op_status = match OrderedCursorToken::from_words(index, generation) {
+                        None => OrderedOpStatus::InvalidHandle,
+                        Some(token) => match self
+                            .molten
+                            .iterate_ordered_row(token, collection_schema_ref)
+                        {
+                            Ok(step) if !step.present || step.row.len() == row_width => {
+                                present_value = i64::from(step.present);
+                                self.arena[row_at..row_at + step.row.len()]
+                                    .copy_from_slice(&step.row);
+                                OrderedOpStatus::Ok
+                            }
+                            Ok(_) => OrderedOpStatus::SchemaMismatch,
+                            Err(status) => status,
+                        },
+                    };
+                    write_i64_at(&mut self.arena, base + present as usize, present_value);
+                    write_i64_at(&mut self.arena, base + status as usize, op_status as i64);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::OrderedLen {
+                    dst,
+                    status,
+                    collection,
+                    collection_schema_ref,
+                } => {
+                    let collection = read_i64_at(&self.arena, base + collection as usize);
+                    let mut len = 0;
+                    let op_status = match self
+                        .molten
+                        .ordered_collection_len(collection, collection_schema_ref)
+                    {
+                        Ok(value) => {
+                            len = value;
+                            OrderedOpStatus::Ok
+                        }
+                        Err(status) => status,
+                    };
+                    write_i64_at(&mut self.arena, base + dst as usize, len);
+                    write_i64_at(&mut self.arena, base + status as usize, op_status as i64);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::OrderedStatusIs {
+                    dst,
+                    status,
+                    expected,
+                } => {
+                    let actual = read_i64_at(&self.arena, base + status as usize);
+                    let Some(actual) = OrderedOpStatus::from_word(actual) else {
+                        let Some(verified) = verified else {
+                            panic!("ordered status validation requires VerifiedProgram");
+                        };
+                        return Err(TaskFault::InvalidOrderedStatus {
+                            site: fault_site(verified, fn_id, pc)?,
+                            actual,
+                        });
+                    };
+                    write_i64_at(
+                        &mut self.arena,
+                        base + dst as usize,
+                        i64::from(actual == expected),
+                    );
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
                 Op::Await { dst, input } => {
@@ -2801,10 +3804,10 @@ mod tests {
             Err(OrderedCursorError::SchemaMismatch)
         );
         let cursor = arena
-            .begin_ordered_cursor(7, OrderedCursorOperation::Union, Some(leaf))
+            .begin_ordered_cursor(7, OrderedCursorOperation::Iterate, Some(leaf))
             .expect("cursor allocation");
         assert_eq!(
-            arena.consume_ordered_cursor(cursor, 7, OrderedCursorOperation::Iterate),
+            arena.consume_ordered_cursor(cursor, 7, OrderedCursorOperation::Insert),
             Err(OrderedCursorError::OperationMismatch)
         );
         let mut other = MoltenArena::default();

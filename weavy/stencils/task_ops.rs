@@ -109,6 +109,51 @@ pub struct Ctx {
         *mut i64,
         *mut u8,
     ) -> i64,
+    ordered_begin_insert:
+        unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *mut i64, *mut i64) -> i64,
+    ordered_insert_inspect: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        i64,
+        usize,
+        *mut i64,
+        *mut u8,
+    ) -> i64,
+    ordered_insert_advance: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        i64,
+        i64,
+        *mut i64,
+    ) -> i64,
+    ordered_insert_commit: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        i64,
+        *const u8,
+        usize,
+        *const u8,
+        usize,
+        i64,
+        i64,
+        *mut i64,
+    ) -> i64,
+    ordered_begin_iterate:
+        unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *mut i64, *mut i64) -> i64,
+    ordered_iterate_row: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        i64,
+        usize,
+        *mut i64,
+        *mut u8,
+    ) -> i64,
+    ordered_len:
+        unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *mut i64) -> i64,
 }
 
 /// Raw ABI descriptor; MUST match `crate::task::RawValueMemory`.
@@ -130,6 +175,7 @@ const EXIT_COMPARE_RIGHT_UNRESIDENT: i64 = 8;
 const EXIT_INVALID_ENUM_SELECTOR: i64 = 9;
 const EXIT_ENUM_PROJECTION_MISMATCH: i64 = 10;
 const EXIT_INVALID_ARRAY_STATUS: i64 = 11;
+const EXIT_INVALID_ORDERED_STATUS: i64 = 12;
 
 const LENT_MOLTEN_MIN: i64 = i64::MIN / 2;
 
@@ -692,6 +738,202 @@ pub unsafe extern "C" fn weavy_task_ordered_probe_value(cx: *mut Ctx) {
     );
     write_i64(c.frame, present, present_out);
     write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_begin_insert(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let cursor = *c.prog;
+    let status = *c.prog.add(1);
+    let collection = *c.prog.add(2);
+    let schema = *c.prog.add(3) as i64;
+    c.prog = c.prog.add(4);
+    let mut index = -1i64;
+    let mut generation = 0i64;
+    let op_status = (c.ordered_begin_insert)(
+        c.molten,
+        read_i64(c.frame, collection),
+        schema,
+        &raw mut index,
+        &raw mut generation,
+    );
+    write_i64(c.frame, cursor, index);
+    write_i64(c.frame, cursor + 8, generation);
+    write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_insert_inspect(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let cursor = *c.prog;
+    let present = *c.prog.add(1);
+    let key = *c.prog.add(2);
+    let status = *c.prog.add(3);
+    let key_width = *c.prog.add(4) as usize;
+    let schema = *c.prog.add(5) as i64;
+    c.prog = c.prog.add(6);
+    let mut present_out = 0i64;
+    let op_status = (c.ordered_insert_inspect)(
+        c.molten,
+        read_i64(c.frame, cursor),
+        read_i64(c.frame, cursor + 8),
+        schema,
+        key_width,
+        &raw mut present_out,
+        c.frame.add(key as usize),
+    );
+    write_i64(c.frame, present, present_out);
+    write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_insert_advance(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let cursor = *c.prog;
+    let ordering = *c.prog.add(1);
+    let ready = *c.prog.add(2);
+    let status = *c.prog.add(3);
+    let schema = *c.prog.add(4) as i64;
+    c.prog = c.prog.add(5);
+    let mut ready_out = 0i64;
+    let op_status = (c.ordered_insert_advance)(
+        c.molten,
+        read_i64(c.frame, cursor),
+        read_i64(c.frame, cursor + 8),
+        schema,
+        read_i64(c.frame, ordering),
+        &raw mut ready_out,
+    );
+    write_i64(c.frame, ready, ready_out);
+    write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_insert_commit(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let cursor = *c.prog.add(1);
+    let key = *c.prog.add(2);
+    let value = *c.prog.add(3);
+    let status = *c.prog.add(4);
+    let key_width = *c.prog.add(5) as usize;
+    let value_width = *c.prog.add(6) as usize;
+    let schema = *c.prog.add(7) as i64;
+    let replace = *c.prog.add(8) as i64;
+    c.prog = c.prog.add(9);
+    let has_value = i64::from(value != u64::MAX);
+    let value_ptr = if has_value == 0 {
+        core::ptr::null()
+    } else {
+        c.frame.add(value as usize).cast_const()
+    };
+    let mut collection = -1i64;
+    let op_status = (c.ordered_insert_commit)(
+        c.molten,
+        read_i64(c.frame, cursor),
+        read_i64(c.frame, cursor + 8),
+        schema,
+        c.frame.add(key as usize).cast_const(),
+        key_width,
+        value_ptr,
+        value_width,
+        has_value,
+        replace,
+        &raw mut collection,
+    );
+    write_i64(c.frame, dst, collection);
+    write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_begin_iterate(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let cursor = *c.prog;
+    let status = *c.prog.add(1);
+    let collection = *c.prog.add(2);
+    let schema = *c.prog.add(3) as i64;
+    c.prog = c.prog.add(4);
+    let mut index = -1i64;
+    let mut generation = 0i64;
+    let op_status = (c.ordered_begin_iterate)(
+        c.molten,
+        read_i64(c.frame, collection),
+        schema,
+        &raw mut index,
+        &raw mut generation,
+    );
+    write_i64(c.frame, cursor, index);
+    write_i64(c.frame, cursor + 8, generation);
+    write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_iterate_row(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let cursor = *c.prog;
+    let present = *c.prog.add(1);
+    let row = *c.prog.add(2);
+    let status = *c.prog.add(3);
+    let row_width = *c.prog.add(4) as usize;
+    let schema = *c.prog.add(5) as i64;
+    c.prog = c.prog.add(6);
+    let mut present_out = 0i64;
+    let op_status = (c.ordered_iterate_row)(
+        c.molten,
+        read_i64(c.frame, cursor),
+        read_i64(c.frame, cursor + 8),
+        schema,
+        row_width,
+        &raw mut present_out,
+        c.frame.add(row as usize),
+    );
+    write_i64(c.frame, present, present_out);
+    write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_len(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let status = *c.prog.add(1);
+    let collection = *c.prog.add(2);
+    let schema = *c.prog.add(3) as i64;
+    c.prog = c.prog.add(4);
+    let mut len = 0i64;
+    let op_status = (c.ordered_len)(
+        c.molten,
+        read_i64(c.frame, collection),
+        schema,
+        &raw mut len,
+    );
+    write_i64(c.frame, dst, len);
+    write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_status_is(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let status = *c.prog.add(1);
+    let expected = *c.prog.add(2) as i64;
+    let pc = *c.prog.add(3);
+    let actual = read_i64(c.frame, status);
+    if !(1..=8).contains(&actual) {
+        *c.await_index = pc;
+        *c.resume = actual as u64;
+        *c.exit = EXIT_INVALID_ORDERED_STATUS;
+        return;
+    }
+    c.prog = c.prog.add(4);
+    write_i64(c.frame, dst, i64::from(actual == expected));
     cont!(cx);
 }
 

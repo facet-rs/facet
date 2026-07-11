@@ -91,6 +91,44 @@ struct Ctx {
         *mut i64,
         *mut u8,
     ) -> i64,
+    ordered_begin_insert:
+        unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *mut i64, *mut i64) -> i64,
+    ordered_insert_inspect: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        i64,
+        usize,
+        *mut i64,
+        *mut u8,
+    ) -> i64,
+    ordered_insert_advance:
+        unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, i64, i64, *mut i64) -> i64,
+    ordered_insert_commit: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        i64,
+        *const u8,
+        usize,
+        *const u8,
+        usize,
+        i64,
+        i64,
+        *mut i64,
+    ) -> i64,
+    ordered_begin_iterate:
+        unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *mut i64, *mut i64) -> i64,
+    ordered_iterate_row: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        i64,
+        usize,
+        *mut i64,
+        *mut u8,
+    ) -> i64,
+    ordered_len: unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *mut i64) -> i64,
 }
 
 const EXIT_AWAIT_PARKED: i64 = 1;
@@ -104,6 +142,7 @@ const EXIT_COMPARE_RIGHT_UNRESIDENT: i64 = 8;
 const EXIT_INVALID_ENUM_SELECTOR: i64 = 9;
 const EXIT_ENUM_PROJECTION_MISMATCH: i64 = 10;
 const EXIT_INVALID_ARRAY_STATUS: i64 = 11;
+const EXIT_INVALID_ORDERED_STATUS: i64 = 12;
 
 /// Whether the task JIT lane is usable on this target.
 pub fn available() -> bool {
@@ -376,6 +415,38 @@ fn compile_fn(
                 task_stencils::ORDERED_PROBE_VALUE,
                 Continuations::Fallthrough(task_stencils::ORDERED_PROBE_VALUE_CONT),
             ),
+            Op::OrderedBeginInsert { .. } => (
+                task_stencils::ORDERED_BEGIN_INSERT,
+                Continuations::Fallthrough(task_stencils::ORDERED_BEGIN_INSERT_CONT),
+            ),
+            Op::OrderedInsertInspect { .. } => (
+                task_stencils::ORDERED_INSERT_INSPECT,
+                Continuations::Fallthrough(task_stencils::ORDERED_INSERT_INSPECT_CONT),
+            ),
+            Op::OrderedInsertAdvance { .. } => (
+                task_stencils::ORDERED_INSERT_ADVANCE,
+                Continuations::Fallthrough(task_stencils::ORDERED_INSERT_ADVANCE_CONT),
+            ),
+            Op::OrderedInsertCommit { .. } => (
+                task_stencils::ORDERED_INSERT_COMMIT,
+                Continuations::Fallthrough(task_stencils::ORDERED_INSERT_COMMIT_CONT),
+            ),
+            Op::OrderedBeginIterate { .. } => (
+                task_stencils::ORDERED_BEGIN_ITERATE,
+                Continuations::Fallthrough(task_stencils::ORDERED_BEGIN_ITERATE_CONT),
+            ),
+            Op::OrderedIterateRow { .. } => (
+                task_stencils::ORDERED_ITERATE_ROW,
+                Continuations::Fallthrough(task_stencils::ORDERED_ITERATE_ROW_CONT),
+            ),
+            Op::OrderedLen { .. } => (
+                task_stencils::ORDERED_LEN,
+                Continuations::Fallthrough(task_stencils::ORDERED_LEN_CONT),
+            ),
+            Op::OrderedStatusIs { .. } => (
+                task_stencils::ORDERED_STATUS_IS,
+                Continuations::Fallthrough(task_stencils::ORDERED_STATUS_IS_CONT),
+            ),
             Op::ArrayStoreWord { .. } | Op::ArrayStore { .. } => (
                 task_stencils::ARRAY_STORE_WORD,
                 Continuations::Fallthrough(task_stencils::ARRAY_STORE_WORD_CONT),
@@ -518,6 +589,13 @@ fn compile_fn(
             Op::OrderedBeginProbe { .. } => 4,
             Op::OrderedProbeKey { .. } => 8,
             Op::OrderedProbeValue { .. } => 6,
+            Op::OrderedBeginInsert { .. } => 4,
+            Op::OrderedInsertInspect { .. } => 6,
+            Op::OrderedInsertAdvance { .. } => 5,
+            Op::OrderedInsertCommit { .. } => 9,
+            Op::OrderedBeginIterate { .. } => 4,
+            Op::OrderedIterateRow { .. } => 6,
+            Op::OrderedLen { .. } | Op::OrderedStatusIs { .. } => 4,
             Op::ArrayStoreWord { .. } | Op::LoadArray { .. } | Op::ArrayStore { .. } => 6,
             Op::LoadArrayWord { .. } => 5,
             Op::LoadArrayLen { .. } => 4,
@@ -810,6 +888,136 @@ fn compile_fn(
                     u64::from(*status),
                     u64::from(*value_width),
                     *collection_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::OrderedBeginInsert {
+                cursor,
+                status,
+                collection,
+                collection_schema_ref,
+            }
+            | Op::OrderedBeginIterate {
+                cursor,
+                status,
+                collection,
+                collection_schema_ref,
+            } => {
+                for v in [
+                    u64::from(*cursor),
+                    u64::from(*status),
+                    u64::from(*collection),
+                    *collection_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::OrderedInsertInspect {
+                cursor,
+                present,
+                key,
+                status,
+                key_width,
+                collection_schema_ref,
+            } => {
+                for v in [
+                    u64::from(*cursor),
+                    u64::from(*present),
+                    u64::from(*key),
+                    u64::from(*status),
+                    u64::from(*key_width),
+                    *collection_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::OrderedInsertAdvance {
+                cursor,
+                ordering,
+                ready,
+                status,
+                collection_schema_ref,
+            } => {
+                for v in [
+                    u64::from(*cursor),
+                    u64::from(*ordering),
+                    u64::from(*ready),
+                    u64::from(*status),
+                    *collection_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::OrderedInsertCommit {
+                dst,
+                cursor,
+                key,
+                value,
+                status,
+                key_width,
+                value_width,
+                collection_schema_ref,
+                replace,
+            } => {
+                for v in [
+                    u64::from(*dst),
+                    u64::from(*cursor),
+                    u64::from(*key),
+                    value.map_or(u64::MAX, u64::from),
+                    u64::from(*status),
+                    u64::from(*key_width),
+                    u64::from(*value_width),
+                    *collection_schema_ref as u64,
+                    u64::from(*replace),
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::OrderedIterateRow {
+                cursor,
+                present,
+                row,
+                status,
+                row_width,
+                collection_schema_ref,
+            } => {
+                for v in [
+                    u64::from(*cursor),
+                    u64::from(*present),
+                    u64::from(*row),
+                    u64::from(*status),
+                    u64::from(*row_width),
+                    *collection_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::OrderedLen {
+                dst,
+                status,
+                collection,
+                collection_schema_ref,
+            } => {
+                for v in [
+                    u64::from(*dst),
+                    u64::from(*status),
+                    u64::from(*collection),
+                    *collection_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::OrderedStatusIs {
+                dst,
+                status,
+                expected,
+            } => {
+                for v in [
+                    u64::from(*dst),
+                    u64::from(*status),
+                    *expected as u64,
+                    i as u64,
                 ] {
                     layout.push_prog_word(root.prog_index, v);
                 }
@@ -1202,6 +1410,13 @@ impl JitTask {
                 ordered_begin_probe: crate::task::ordered_begin_probe_abi,
                 ordered_probe_key: crate::task::ordered_probe_key_abi,
                 ordered_probe_value: crate::task::ordered_probe_value_abi,
+                ordered_begin_insert: crate::task::ordered_begin_insert_abi,
+                ordered_insert_inspect: crate::task::ordered_insert_inspect_abi,
+                ordered_insert_advance: crate::task::ordered_insert_advance_abi,
+                ordered_insert_commit: crate::task::ordered_insert_commit_abi,
+                ordered_begin_iterate: crate::task::ordered_begin_iterate_abi,
+                ordered_iterate_row: crate::task::ordered_iterate_row_abi,
+                ordered_len: crate::task::ordered_len_abi,
             };
             // SAFETY: `frame.resume` is a chain offset of this compiled
             // function; the copied code uses the extern "C" fn(*mut Ctx)
@@ -1410,6 +1625,16 @@ impl JitTask {
                     };
                     let pc = usize::try_from(index_scratch).expect("verified pc fits usize");
                     return Err(TaskFault::InvalidArrayStatus {
+                        site: fault_site(verified, frame.fn_id, pc)?,
+                        actual: resume_scratch as i64,
+                    });
+                }
+                EXIT_INVALID_ORDERED_STATUS => {
+                    let Some(verified) = verified else {
+                        panic!("ordered status validation requires VerifiedProgram");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("verified pc fits usize");
+                    return Err(TaskFault::InvalidOrderedStatus {
                         site: fault_site(verified, frame.fn_id, pc)?,
                         actual: resume_scratch as i64,
                     });
