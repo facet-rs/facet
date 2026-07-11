@@ -3392,7 +3392,14 @@ fn build_pair_second_closure(
     });
     context.leave_function();
     Ok(LoweredValue {
-        node: push_node(nodes, span, ty.clone(), EffectFacts::PURE, Vec::new(), Op::Closure(id)),
+        node: push_node(
+            nodes,
+            span,
+            ty.clone(),
+            EffectFacts::PURE,
+            Vec::new(),
+            Op::Closure(id),
+        ),
         ty,
     })
 }
@@ -5385,8 +5392,7 @@ fn push_equality_condition(
         Type::Map { key, value } => {
             let key_array = Type::array(key.as_ref().clone());
             let value_array = Type::array(value.as_ref().clone());
-            let keys_left =
-                push_project(nodes, span, left.node, key_array.clone(), Op::MapKeys);
+            let keys_left = push_project(nodes, span, left.node, key_array.clone(), Op::MapKeys);
             let keys_right = push_project(nodes, span, right.node, key_array, Op::MapKeys);
             let keys_equal = push_eq(nodes, span, keys_left, keys_right);
             // The value projections and their comparison form the `then` region
