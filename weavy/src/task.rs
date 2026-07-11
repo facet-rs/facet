@@ -270,6 +270,96 @@ impl StringConcatFault {
     }
 }
 
+/// Why a [`Op::Publish`] could not append its descriptor.
+///
+/// Copying the record bytes is otherwise infallible: task admission bounds the
+/// record region inside the frame, so the only failure is a log allocation the
+/// system cannot satisfy. It maps to a typed [`crate::exec::TaskFault`], never to
+/// a dropped, truncated, or partially written descriptor.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum PublicationFault {
+    /// The append-only log could not reserve room for the descriptor.
+    AllocationFailed,
+}
+
+impl PublicationFault {
+    /// The closed i64 status the JIT ABI helper reports to its stencil.
+    #[cfg_attr(not(feature = "jit"), allow(dead_code))]
+    const OK_STATUS: i64 = 0;
+    #[cfg_attr(not(feature = "jit"), allow(dead_code))]
+    const ALLOCATION_STATUS: i64 = 1;
+}
+
+/// One published descriptor's provenance, record type witness, and byte span
+/// into the owning [`PublicationLog`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct PublishedRecord {
+    /// Opaque, front-end-assigned provenance key. Never interpreted here.
+    pub(crate) site: u64,
+    /// The `record_schema_ref` witness copied verbatim from the op. Task
+    /// admission has already proven it names a valid publication-record schema;
+    /// the read-only reader resolves it to type the bytes.
+    pub(crate) schema_ref: i64,
+    start: usize,
+    len: usize,
+}
+
+/// A task-owned, append-only log of published descriptors.
+///
+/// Descriptors accumulate in publication order across every taken path and are
+/// never mutated or removed once written. The log is owned by exactly one task
+/// and dies with it; its bytes are copies, so nothing here aliases the frame,
+/// the molten arena, or any lent value memory. It is exposed read-only through
+/// the task's completion surface after the root returns.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub(crate) struct PublicationLog {
+    records: Vec<PublishedRecord>,
+    bytes: Vec<u8>,
+}
+
+impl PublicationLog {
+    /// Copy `record` into the log under `site`/`schema_ref`, appending one
+    /// descriptor. Fails only when the log cannot grow to hold the copy; on
+    /// failure nothing is appended.
+    fn publish(
+        &mut self,
+        site: u64,
+        schema_ref: i64,
+        record: &[u8],
+    ) -> Result<(), PublicationFault> {
+        self.records
+            .try_reserve(1)
+            .map_err(|_| PublicationFault::AllocationFailed)?;
+        self.bytes
+            .try_reserve(record.len())
+            .map_err(|_| PublicationFault::AllocationFailed)?;
+        let start = self.bytes.len();
+        self.bytes.extend_from_slice(record);
+        self.records.push(PublishedRecord {
+            site,
+            schema_ref,
+            start,
+            len: record.len(),
+        });
+        Ok(())
+    }
+
+    /// Number of descriptors published so far, in publication order.
+    #[must_use]
+    pub(crate) fn len(&self) -> usize {
+        self.records.len()
+    }
+
+    /// The descriptor at `index` in publication order: its provenance key,
+    /// record schema witness, and exact copied bytes.
+    #[must_use]
+    pub(crate) fn get(&self, index: usize) -> Option<(&PublishedRecord, &[u8])> {
+        let record = self.records.get(index)?;
+        let bytes = &self.bytes[record.start..record.start + record.len];
+        Some((record, bytes))
+    }
+}
+
 /// A task-private molten arena: mutable, in-flight, not interned.
 ///
 /// It is owned by exactly one [`Task`] and dies with it, so a discarded task
@@ -1896,6 +1986,37 @@ pub(crate) unsafe extern "C" fn string_concat_abi(
     }
 }
 
+/// # Safety
+/// `log` must point to a live [`PublicationLog`] and must not be otherwise
+/// aliased for the duration of the call. `record` must point to `record_len`
+/// bytes readable for the call (the task frame's record region); it may be null
+/// only when `record_len` is zero. The bytes are copied before return, so the
+/// pointer need not stay valid afterward. Returns [`PublicationFault::OK_STATUS`]
+/// on a successful append and [`PublicationFault::ALLOCATION_STATUS`] when the
+/// log could not grow — in which case nothing is appended.
+#[cfg_attr(not(feature = "jit"), allow(dead_code))]
+pub(crate) unsafe extern "C" fn publish_abi(
+    log: *mut core::ffi::c_void,
+    site: u64,
+    schema_ref: i64,
+    record: *const u8,
+    record_len: usize,
+) -> i64 {
+    if log.is_null() || (record.is_null() && record_len != 0) {
+        return PublicationFault::ALLOCATION_STATUS;
+    }
+    let log = unsafe { &mut *log.cast::<PublicationLog>() };
+    let bytes = if record_len == 0 {
+        &[]
+    } else {
+        unsafe { core::slice::from_raw_parts(record, record_len) }
+    };
+    match log.publish(site, schema_ref, bytes) {
+        Ok(()) => PublicationFault::OK_STATUS,
+        Err(PublicationFault::AllocationFailed) => PublicationFault::ALLOCATION_STATUS,
+    }
+}
+
 /// Identifies a function in a [`Program`]'s function table.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
 pub struct FnId(pub u32);
@@ -2153,6 +2274,25 @@ pub enum Op {
     /// with the precise side, and an allocation the arena cannot satisfy faults
     /// rather than fabricating a handle.
     StringConcat { dst: u32, a: u32, b: u32 },
+    /// Append one descriptor to the task's verified append-only publication log.
+    ///
+    /// The complete `record_width`-byte value at `frame[record..]` is copied by
+    /// value into task-owned storage, tagged with the opaque provenance key
+    /// `site` and the record schema witnessed by `record_schema_ref`. The schema
+    /// must be a [`crate::PayloadKind::PublicationRecord`] whose inline shape is a
+    /// scalar run — the log therefore holds only owned scalar bytes and can never
+    /// carry a store or molten handle out of the task (no handle leakage). `site`
+    /// is never interpreted by the machine: it is stable front-end provenance
+    /// identity, not a check outcome. Publishing is a pure control-flow effect on
+    /// a taken path with no host observer and no callback; the completed ordered
+    /// log is exposed read-only after the task is done. An allocation the log
+    /// cannot satisfy faults rather than dropping or truncating a descriptor.
+    Publish {
+        site: u64,
+        record: u32,
+        record_width: u32,
+        record_schema_ref: i64,
+    },
     /// `frame[dst] = f64::from_bits(bits)` — the immediate carries the
     /// BIT PATTERN (keeps `Op: Eq`; the machine is type-blind about a
     /// 64-bit store anyway — the op exists so lowerings and readers
@@ -2371,6 +2511,7 @@ struct FrameRecord {
 pub struct Task {
     arena: Vec<u8>,
     molten: MoltenArena,
+    publications: PublicationLog,
     frames: Vec<FrameRecord>,
     /// Root return bytes once [`TaskStep::Done`].
     pub result: Vec<u8>,
@@ -2394,6 +2535,7 @@ impl Task {
         let mut task = Task {
             arena: Vec::new(),
             molten: MoltenArena::default(),
+            publications: PublicationLog::default(),
             frames: Vec::new(),
             result: Vec::new(),
             trace: Vec::new(),
@@ -2428,6 +2570,12 @@ impl Task {
     #[must_use]
     pub fn result_i64(&self) -> i64 {
         i64::from_le_bytes(self.result[..8].try_into().expect("8-byte result"))
+    }
+
+    /// The task's append-only publication log, read-only.
+    #[must_use]
+    pub(crate) fn publications(&self) -> &PublicationLog {
+        &self.publications
     }
 
     fn alloc_frame(&mut self, layout: Layout) -> usize {
@@ -2907,6 +3055,27 @@ impl Task {
                         }
                     };
                     write_i64_at(&mut self.arena, base + dst as usize, handle);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::Publish {
+                    site,
+                    record,
+                    record_width,
+                    record_schema_ref,
+                } => {
+                    let start = base + record as usize;
+                    let end = start + record_width as usize;
+                    let bytes = self.arena[start..end].to_vec();
+                    if let Err(PublicationFault::AllocationFailed) =
+                        self.publications.publish(site, record_schema_ref, &bytes)
+                    {
+                        let Some(verified) = verified else {
+                            panic!("legacy raw Publish allocation failed");
+                        };
+                        return Err(TaskFault::PublicationAllocationFailed {
+                            site: fault_site(verified, fn_id, pc)?,
+                        });
+                    }
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
                 Op::Trace { id } => {

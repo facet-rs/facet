@@ -164,6 +164,10 @@ pub struct Ctx {
         i64,
         *mut i64,
     ) -> i64,
+    /// The task's append-only publication log, reached only through the ABI
+    /// function below so both lanes share one log semantics.
+    publications: *mut core::ffi::c_void,
+    publish: unsafe extern "C" fn(*mut core::ffi::c_void, u64, i64, *const u8, usize) -> i64,
 }
 
 /// Raw ABI descriptor; MUST match `crate::task::RawValueMemory`.
@@ -189,6 +193,7 @@ const EXIT_INVALID_ORDERED_STATUS: i64 = 12;
 const EXIT_STRING_CONCAT_LEFT_UNRESIDENT: i64 = 13;
 const EXIT_STRING_CONCAT_RIGHT_UNRESIDENT: i64 = 14;
 const EXIT_STRING_CONCAT_ALLOCATION: i64 = 15;
+const EXIT_PUBLICATION_ALLOCATION: i64 = 16;
 
 const LENT_MOLTEN_MIN: i64 = i64::MIN / 2;
 
@@ -1121,6 +1126,30 @@ pub unsafe extern "C" fn weavy_task_string_concat(cx: *mut Ctx) {
             *c.await_index = pc;
             *c.exit = EXIT_STRING_CONCAT_ALLOCATION;
         }
+    }
+}
+
+/// PUBLISH — immediates: [site, record_off, record_width, schema_ref, pc].
+/// Copies the `record_width`-byte record at `frame[record_off]` into the task's
+/// append-only log under the opaque provenance `site` and the record schema
+/// witness. An allocation the log cannot satisfy exits to the driver with the
+/// publication-allocation fault; nothing partial is written.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_publish(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let site = *c.prog;
+    let record_off = *c.prog.add(1);
+    let record_width = *c.prog.add(2) as usize;
+    let schema_ref = *c.prog.add(3) as i64;
+    let pc = *c.prog.add(4);
+    c.prog = c.prog.add(5);
+    let src = c.frame.add(record_off as usize) as *const u8;
+    let status = (c.publish)(c.publications, site, schema_ref, src, record_width);
+    if status == 0 {
+        cont!(cx);
+    } else {
+        *c.await_index = pc;
+        *c.exit = EXIT_PUBLICATION_ALLOCATION;
     }
 }
 

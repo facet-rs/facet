@@ -12,7 +12,9 @@
 use std::sync::Arc;
 
 use crate::jit::task_lane::{JitExecutable, JitTask};
-use crate::task::{FnId, HostFn, Op, Task, TaskEvent, TaskStep, TraceMode, ValueMemories};
+use crate::task::{
+    FnId, HostFn, Op, PublicationLog, Task, TaskEvent, TaskStep, TraceMode, ValueMemories,
+};
 use crate::{
     CallContractId, CallSiteFacts, DriveRequirements, FrameRegion, FunctionContract, RegionId,
     SchemaRef, ValueShapeKind, ValueShapeRef, VerifiedProgram, WordKind,
@@ -184,6 +186,61 @@ impl StructuralResult<'_> {
     }
 }
 
+/// One descriptor in a completed task's append-only publication log.
+///
+/// The view is read-only and lives only as long as the borrow of the task. Its
+/// bytes are an owned copy the task made when the publish op ran, so nothing
+/// here aliases the frame, the molten arena, or any lent value memory. The
+/// record type is a verifier-owned publication-record schema; the provenance
+/// key is opaque front-end identity the machine never interprets.
+pub struct PublishedDescriptor<'a> {
+    site: u64,
+    schema: SchemaRef,
+    value_shape: Option<ValueShapeRef>,
+    bytes: &'a [u8],
+}
+
+impl<'a> PublishedDescriptor<'a> {
+    /// The opaque, front-end-assigned provenance key the publish op carried.
+    #[must_use]
+    pub fn provenance_key(&self) -> u64 {
+        self.site
+    }
+
+    /// The publication-record schema that types this descriptor's bytes.
+    #[must_use]
+    pub fn record_schema(&self) -> SchemaRef {
+        self.schema
+    }
+
+    /// The structural value shape of the captured frame value, if the record
+    /// schema declared one.
+    #[must_use]
+    pub fn value_shape(&self) -> Option<ValueShapeRef> {
+        self.value_shape
+    }
+
+    /// The exact captured bytes, copied by value at publish time.
+    #[must_use]
+    pub fn bytes(&self) -> &'a [u8] {
+        self.bytes
+    }
+
+    /// One captured scalar word, read little-endian at `offset` within the
+    /// record. The record schema admits only scalar words, so any in-range,
+    /// word-sized read names a captured scalar; an out-of-range read returns
+    /// `None`.
+    #[must_use]
+    pub fn word(&self, offset: u32) -> Option<i64> {
+        let start = usize::try_from(offset).ok()?;
+        let end = start.checked_add(size_of::<i64>())?;
+        let bytes = self.bytes.get(start..end)?;
+        Some(i64::from_le_bytes(
+            bytes.try_into().expect("checked publication word"),
+        ))
+    }
+}
+
 /// Dynamic task fault. Static program invalidity remains [`crate::ProgramError`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TaskFault {
@@ -280,6 +337,9 @@ pub enum TaskFault {
     StringConcatAllocationFailed {
         site: FaultSite,
     },
+    PublicationAllocationFailed {
+        site: FaultSite,
+    },
     InvalidEnumSelector {
         site: FaultSite,
         value_shape: ValueShapeRef,
@@ -320,6 +380,10 @@ pub enum TaskFault {
         state: ExecTaskState,
     },
     DriveAfterDone,
+    PublicationIndexOutOfRange {
+        index: usize,
+        count: usize,
+    },
 }
 
 /// A verified program prepared for execution.
@@ -662,6 +726,50 @@ impl ExecTask<'_> {
             value_shape,
             shape,
         })
+    }
+
+    /// Number of descriptors the task published, available once the task is
+    /// done and never poisoned. Preserves the result lifecycle: a task that
+    /// faulted surfaces [`TaskFault::PoisonedResult`], one still running
+    /// surfaces [`TaskFault::ResultBeforeDone`].
+    pub fn publication_count(&self) -> Result<usize, TaskFault> {
+        self.check_result_available()?;
+        Ok(self.publications().len())
+    }
+
+    /// The descriptor at `index` in publication order, as a read-only,
+    /// contract-typed view. Gated by the same result lifecycle as
+    /// [`ExecTask::publication_count`].
+    pub fn publication(&self, index: usize) -> Result<PublishedDescriptor<'_>, TaskFault> {
+        self.check_result_available()?;
+        let log = self.publications();
+        let (record, bytes) = log
+            .get(index)
+            .ok_or(TaskFault::PublicationIndexOutOfRange {
+                index,
+                count: log.len(),
+            })?;
+        // Publish admission proved the stored witness names a valid
+        // publication-record schema, and the log copies that witness verbatim.
+        let schema_index = usize::try_from(record.schema_ref)
+            .ok()
+            .filter(|index| *index < self.executable.verified.contract().schemas.len())
+            .expect("publish admission proved record schema witness");
+        let schema = SchemaRef(schema_index as u32);
+        let value_shape = self.executable.verified.contract().schemas[schema_index].value_shape;
+        Ok(PublishedDescriptor {
+            site: record.site,
+            schema,
+            value_shape,
+            bytes,
+        })
+    }
+
+    fn publications(&self) -> &PublicationLog {
+        match &self.lane {
+            Lane::Interpreter(task) => task.publications(),
+            Lane::Native(task) => task.publications(),
+        }
     }
 
     fn check_not_poisoned(&self) -> Result<(), TaskFault> {
@@ -3154,6 +3262,243 @@ mod tests {
                 native.expect_err("unresident string concat operand"),
                 interp
             );
+        }
+    }
+
+    /// A generator-shaped program: entry `n` at word 0 drives control flow. It
+    /// always publishes one descriptor `(n, marker)` under site `0xAAAA`, then
+    /// publishes a second `(n, marker)` under site `0xBBBB` only on the
+    /// nonzero-`n` path. The returned scalar is `n`. The record is a two-scalar
+    /// product built with `ProductConstruct`, exactly as a real lowering would
+    /// assemble a descriptor before publishing it.
+    fn publication_program() -> (Program, ProgramContract) {
+        let pair_shape = RegionShape::new(vec![
+            AllowedKinds::new(WordKind::Scalar),
+            AllowedKinds::new(WordKind::Scalar),
+        ]);
+        let value_shapes = vec![ValueShapeContract {
+            shape: pair_shape.clone(),
+            kind: ValueShapeKind::Product {
+                fields: vec![
+                    ValueFieldUse::new(0, RegionShape::word(WordKind::Scalar)),
+                    ValueFieldUse::new(8, RegionShape::word(WordKind::Scalar)),
+                ],
+            },
+        }];
+        (
+            Program {
+                fns: vec![function(
+                    5,
+                    vec![
+                        Op::ConstI64 { dst: 8, value: 7 },
+                        Op::ProductConstruct {
+                            dst: RegionId(2),
+                            fields: vec![
+                                StructuralFieldSource {
+                                    field: 0,
+                                    source: RegionId(0),
+                                },
+                                StructuralFieldSource {
+                                    field: 1,
+                                    source: RegionId(1),
+                                },
+                            ],
+                        },
+                        Op::Publish {
+                            site: 0xAAAA,
+                            record: 16,
+                            record_width: 16,
+                            record_schema_ref: 0,
+                        },
+                        Op::CopyI64 { dst: 32, src: 0 },
+                        Op::JumpIfZero {
+                            value: 0,
+                            target: 6,
+                        },
+                        Op::Publish {
+                            site: 0xBBBB,
+                            record: 16,
+                            record_width: 16,
+                            record_schema_ref: 0,
+                        },
+                        Op::Ret { src: 32, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    5,
+                    vec![
+                        word_region(0, WordKind::Scalar),
+                        word_region(8, WordKind::Scalar),
+                        structural_region(16, pair_shape.clone(), ValueShapeRef(0)),
+                        word_region(32, WordKind::Scalar),
+                    ],
+                    &[0],
+                    3,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![SchemaContract {
+                    inline: pair_shape,
+                    value_shape: Some(ValueShapeRef(0)),
+                    payload: PayloadKind::PublicationRecord,
+                }],
+                value_shapes,
+            },
+        )
+    }
+
+    /// Drive `publication_program` with entry `n` on one lane, returning the
+    /// completed log as `(site, schema_ref, bytes)` in publication order.
+    type LanePublications = Vec<(u64, i64, Vec<u8>)>;
+
+    fn interpreter_publications(verified: &VerifiedProgram, n: i64) -> LanePublications {
+        let mut task = Task::spawn_with_mode(verified.program(), FnId(0), TraceMode::Innards);
+        task.write_i64(0, n);
+        let step = task
+            .run_verified_with_value_memories(
+                verified,
+                &mut [],
+                &[],
+                &mut [],
+                ValueMemories::empty(),
+            )
+            .expect("publication program runs");
+        assert_eq!(step, TaskStep::Done);
+        let log = task.publications();
+        (0..log.len())
+            .map(|index| {
+                let (record, bytes) = log.get(index).expect("descriptor in range");
+                (record.site, record.schema_ref, bytes.to_vec())
+            })
+            .collect()
+    }
+
+    fn native_publications(verified: Arc<VerifiedProgram>, n: i64) -> Option<LanePublications> {
+        let jit = JitExecutable::compile(verified, TraceMode::Innards)?;
+        let mut task = JitTask::spawn_verified(&jit, FnId(0));
+        task.write_i64(0, n);
+        let step = task
+            .run_verified_with_value_memories(&jit, &mut [], &[], &mut [], ValueMemories::empty())
+            .expect("publication program runs on native");
+        assert_eq!(step, TaskStep::Done);
+        let log = task.publications();
+        Some(
+            (0..log.len())
+                .map(|index| {
+                    let (record, bytes) = log.get(index).expect("descriptor in range");
+                    (record.site, record.schema_ref, bytes.to_vec())
+                })
+                .collect(),
+        )
+    }
+
+    #[test]
+    fn public_publication_log_captures_branch_multiplicity_and_copies() {
+        let executable = Executable::new(verify(publication_program()));
+
+        // Nonzero n takes the second publish: two descriptors, each an exact
+        // copy of the captured (n, marker) frame value.
+        let mut task = executable.spawn(FnId(0)).expect("entry shape");
+        task.write_entry_i64(0, 3).unwrap();
+        assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
+        assert_eq!(task.result_i64(), Ok(3));
+        assert_eq!(task.publication_count(), Ok(2));
+
+        let first = task.publication(0).expect("first descriptor");
+        assert_eq!(first.provenance_key(), 0xAAAA);
+        assert_eq!(first.record_schema(), SchemaRef(0));
+        assert_eq!(first.value_shape(), Some(ValueShapeRef(0)));
+        let mut expected = 3i64.to_le_bytes().to_vec();
+        expected.extend_from_slice(&7i64.to_le_bytes());
+        assert_eq!(first.bytes(), expected.as_slice());
+        assert_eq!(first.word(0), Some(3));
+        assert_eq!(first.word(8), Some(7));
+        assert_eq!(first.word(16), None);
+
+        let second = task.publication(1).expect("second descriptor");
+        assert_eq!(second.provenance_key(), 0xBBBB);
+        assert_eq!(second.bytes(), expected.as_slice());
+
+        assert!(matches!(
+            task.publication(2),
+            Err(TaskFault::PublicationIndexOutOfRange { index: 2, count: 2 })
+        ));
+    }
+
+    #[test]
+    fn public_publication_log_records_single_descriptor_on_zero_branch() {
+        let executable = Executable::new(verify(publication_program()));
+        let mut task = executable.spawn(FnId(0)).expect("entry shape");
+        task.write_entry_i64(0, 0).unwrap();
+        assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
+        assert_eq!(task.publication_count(), Ok(1));
+        let only = task.publication(0).expect("only descriptor");
+        assert_eq!(only.provenance_key(), 0xAAAA);
+        assert_eq!(only.word(0), Some(0));
+        assert_eq!(only.word(8), Some(7));
+    }
+
+    #[test]
+    fn public_publication_log_is_empty_when_nothing_is_published() {
+        let executable = Executable::new(verify(scalar_add_program()));
+        let mut task = executable.spawn(FnId(0)).expect("entry shape");
+        task.write_entry_i64(0, 20).unwrap();
+        task.write_entry_i64(1, 22).unwrap();
+        assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
+        assert_eq!(task.publication_count(), Ok(0));
+        assert!(matches!(
+            task.publication(0),
+            Err(TaskFault::PublicationIndexOutOfRange { index: 0, count: 0 })
+        ));
+    }
+
+    #[test]
+    fn public_publication_preserves_result_lifecycle() {
+        let executable = Executable::new(verify(publication_program()));
+
+        // Before the task is done the log is not observable.
+        let task = executable.spawn(FnId(0)).expect("entry shape");
+        assert!(matches!(
+            task.publication_count(),
+            Err(TaskFault::ResultBeforeDone {
+                state: ExecTaskState::NotStarted,
+            })
+        ));
+
+        // A poisoned task surfaces its original fault through the log surface,
+        // never a stale or partial log.
+        let mut task = executable.spawn(FnId(0)).expect("entry shape");
+        // Missing the required entry poisons the task on drive.
+        let poison = task.drive(&mut [], &[]).expect_err("missing entry poisons");
+        assert!(matches!(poison, TaskFault::EntryMissing { .. }));
+        assert!(matches!(
+            task.publication_count(),
+            Err(TaskFault::PoisonedResult { .. })
+        ));
+        assert!(matches!(
+            task.publication(0),
+            Err(TaskFault::PoisonedResult { .. })
+        ));
+    }
+
+    #[test]
+    fn publication_log_matches_across_native_and_interpreter_lanes() {
+        let verified = Arc::new(verify(publication_program()));
+        for n in [0i64, 1, 5, -4] {
+            let interp = interpreter_publications(&verified, n);
+            // Site keys and captured bytes are exactly as published.
+            let expected_first = {
+                let mut bytes = n.to_le_bytes().to_vec();
+                bytes.extend_from_slice(&7i64.to_le_bytes());
+                bytes
+            };
+            assert_eq!(interp[0], (0xAAAA, 0, expected_first.clone()));
+            assert_eq!(interp.len(), if n == 0 { 1 } else { 2 });
+            if let Some(native) = native_publications(Arc::clone(&verified), n) {
+                assert_eq!(native, interp, "lane publication logs diverged at n={n}");
+            }
         }
     }
 

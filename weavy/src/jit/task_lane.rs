@@ -139,6 +139,8 @@ struct Ctx {
         i64,
         *mut i64,
     ) -> i64,
+    publications: *mut core::ffi::c_void,
+    publish: unsafe extern "C" fn(*mut core::ffi::c_void, u64, i64, *const u8, usize) -> i64,
 }
 
 const EXIT_AWAIT_PARKED: i64 = 1;
@@ -156,6 +158,7 @@ const EXIT_INVALID_ORDERED_STATUS: i64 = 12;
 const EXIT_STRING_CONCAT_LEFT_UNRESIDENT: i64 = 13;
 const EXIT_STRING_CONCAT_RIGHT_UNRESIDENT: i64 = 14;
 const EXIT_STRING_CONCAT_ALLOCATION: i64 = 15;
+const EXIT_PUBLICATION_ALLOCATION: i64 = 16;
 
 /// Whether the task JIT lane is usable on this target.
 pub fn available() -> bool {
@@ -492,6 +495,10 @@ fn compile_fn(
                 task_stencils::STRING_CONCAT,
                 Continuations::Fallthrough(task_stencils::STRING_CONCAT_CONT),
             ),
+            Op::Publish { .. } => (
+                task_stencils::PUBLISH,
+                Continuations::Fallthrough(task_stencils::PUBLISH_CONT),
+            ),
             Op::Await { .. } => (
                 task_stencils::AWAIT,
                 Continuations::Fallthrough(task_stencils::AWAIT_CONT),
@@ -624,6 +631,7 @@ fn compile_fn(
             Op::ArrayStatusIs { .. } => 4,
             Op::CompareValueBytes { .. } => 4,
             Op::StringConcat { .. } => 4,
+            Op::Publish { .. } => 5,
             Op::Await { .. } => 3,
             Op::Call { .. } | Op::CallIndirect { .. } => 1,
             Op::Ret { .. } => 2,
@@ -1166,6 +1174,20 @@ fn compile_fn(
                 }
                 layout.push_prog_word(root.prog_index, i as u64);
             }
+            Op::Publish {
+                site,
+                record,
+                record_width,
+                record_schema_ref,
+            } => {
+                // [site, record_off, record_width, schema_ref, pc] — the schema
+                // ref rides as a raw i64 witness the log stores verbatim.
+                layout.push_prog_word(root.prog_index, *site);
+                layout.push_prog_word(root.prog_index, u64::from(*record));
+                layout.push_prog_word(root.prog_index, u64::from(*record_width));
+                layout.push_prog_word(root.prog_index, *record_schema_ref as u64);
+                layout.push_prog_word(root.prog_index, i as u64);
+            }
             Op::Await { dst, input } => {
                 // [resume_off = own start, index, dst] — idempotent
                 // suspend point, the proven protocol. Awaits are never
@@ -1275,6 +1297,7 @@ struct JitFrame {
 pub struct JitTask {
     arena: Vec<u8>,
     molten: crate::task::MoltenArena,
+    publications: crate::task::PublicationLog,
     frames: Vec<JitFrame>,
     pub result: Vec<u8>,
     pub trace: Vec<TaskEvent>,
@@ -1287,6 +1310,7 @@ impl JitTask {
         let mut task = JitTask {
             arena: Vec::new(),
             molten: crate::task::MoltenArena::default(),
+            publications: crate::task::PublicationLog::default(),
             frames: Vec::new(),
             result: Vec::new(),
             trace: Vec::new(),
@@ -1315,6 +1339,12 @@ impl JitTask {
 
     pub fn result_i64(&self) -> i64 {
         i64::from_le_bytes(self.result[..8].try_into().expect("8-byte result"))
+    }
+
+    /// The task's append-only publication log, read-only.
+    #[must_use]
+    pub(crate) fn publications(&self) -> &crate::task::PublicationLog {
+        &self.publications
     }
 
     /// Write an i64 into the CURRENT frame at `offset` — used for
@@ -1454,6 +1484,8 @@ impl JitTask {
                 ordered_iterate_row: crate::task::ordered_iterate_row_abi,
                 ordered_len: crate::task::ordered_len_abi,
                 string_concat: crate::task::string_concat_abi,
+                publications: (&raw mut self.publications).cast::<core::ffi::c_void>(),
+                publish: crate::task::publish_abi,
             };
             // SAFETY: `frame.resume` is a chain offset of this compiled
             // function; the copied code uses the extern "C" fn(*mut Ctx)
@@ -1635,6 +1667,15 @@ impl JitTask {
                     };
                     let pc = usize::try_from(index_scratch).expect("pc");
                     return Err(TaskFault::StringConcatAllocationFailed {
+                        site: fault_site(verified, frame.fn_id, pc)?,
+                    });
+                }
+                EXIT_PUBLICATION_ALLOCATION => {
+                    let Some(verified) = verified else {
+                        panic!("legacy raw Publish allocation failed");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("pc");
+                    return Err(TaskFault::PublicationAllocationFailed {
                         site: fault_site(verified, frame.fn_id, pc)?,
                     });
                 }

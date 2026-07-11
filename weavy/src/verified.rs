@@ -220,9 +220,22 @@ pub struct ValueShapeContract {
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum PayloadKind {
     Inline,
-    OpaqueBytes { byte_comparable: bool },
-    DenseArray { element: SchemaRef },
+    OpaqueBytes {
+        byte_comparable: bool,
+    },
+    DenseArray {
+        element: SchemaRef,
+    },
     OrderedCollection(OrderedCollectionContract),
+    /// A descriptor record type for the append-only publication substrate.
+    ///
+    /// The schema's `inline` shape must be a nonempty scalar run: a published
+    /// descriptor is copied by value into task-owned storage, so admitting only
+    /// scalar words keeps handles (store or molten) out of the completed log.
+    /// The schema's optional `value_shape` types the captured frame value; the
+    /// schema identity itself is the record type, distinct from the opaque
+    /// per-site provenance key carried on each [`crate::task::Op::Publish`].
+    PublicationRecord,
 }
 
 /// The value arity represented by one persistent ordered-collection page.
@@ -427,6 +440,7 @@ pub enum AccessRole {
     OrderedOrderingSource,
     OrderedReadyDestination,
     OrderedLengthDestination,
+    PublicationRecordSource,
 }
 
 /// Structural failure for a checked frame range.
@@ -953,6 +967,36 @@ pub enum ProgramDefect {
     ArrayElementWitnessOutOfRange {
         witness: i64,
         schema_count: usize,
+    },
+    /// A [`crate::task::Op::Publish`] static schema witness was not a valid
+    /// schema index.
+    PublicationSchemaWitnessOutOfRange {
+        witness: i64,
+        schema_count: usize,
+    },
+    /// A publish op's witnessed schema was not a publication-record schema.
+    PublicationSchemaNotRecord {
+        schema: SchemaRef,
+    },
+    /// A publication-record schema's inline shape was not a nonempty scalar run,
+    /// so a published descriptor could carry a handle out of the task.
+    PublicationRecordSchemaNotScalar {
+        schema: SchemaRef,
+        inline: RegionShape,
+    },
+    /// A publish op's static record width did not match its record schema's
+    /// exact inline byte length.
+    PublicationRecordWidth {
+        schema: SchemaRef,
+        expected: usize,
+        actual: u32,
+    },
+    /// A publish op's record region shape or structural value shape did not match
+    /// its record schema exactly.
+    PublicationRecordShapeMismatch {
+        schema: SchemaRef,
+        expected: RegionShape,
+        actual: RegionShape,
     },
     UnsupportedOp {
         op: UnsupportedOp,
@@ -1685,6 +1729,22 @@ impl Verifier<'_> {
                     schema: schema_ref,
                     inline: schema.inline.clone(),
                 }));
+            }
+            if matches!(schema.payload, PayloadKind::PublicationRecord) {
+                let scalar_run = !schema.inline.words.is_empty()
+                    && schema
+                        .inline
+                        .words
+                        .iter()
+                        .all(|word| word.is_exactly(WordKind::Scalar));
+                if !scalar_run {
+                    return Err(
+                        self.global(ProgramDefect::PublicationRecordSchemaNotScalar {
+                            schema: schema_ref,
+                            inline: schema.inline.clone(),
+                        }),
+                    );
+                }
             }
             if let PayloadKind::DenseArray { element } = schema.payload {
                 let Ok(index) = usize::try_from(element.0) else {
@@ -2553,6 +2613,55 @@ impl Verifier<'_> {
                         function_id,
                         pc,
                         ProgramDefect::SchemaNotByteComparable { schema: dst_schema },
+                    ));
+                }
+            }
+            Op::Publish {
+                site: _,
+                record,
+                record_width,
+                record_schema_ref,
+            } => {
+                let schema = self.publication_record_schema(function_id, pc, *record_schema_ref)?;
+                let expected = &self.contract.schemas[schema.0 as usize];
+                let expected_len = expected.inline.checked_byte_len().ok_or_else(|| {
+                    self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::ShapeSizeOverflow {
+                            owner: ShapeOwner::SchemaInline(schema),
+                        },
+                    )
+                })?;
+                if expected_len == 0 || usize::try_from(*record_width).ok() != Some(expected_len) {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::PublicationRecordWidth {
+                            schema,
+                            expected: expected_len,
+                            actual: *record_width,
+                        },
+                    ));
+                }
+                let region_index = self.exact_region(
+                    function_id,
+                    pc,
+                    frame,
+                    *record,
+                    expected_len,
+                    AccessRole::PublicationRecordSource,
+                )?;
+                let region = &self.contract.functions[function_index].frame.regions[region_index];
+                if region.shape != expected.inline || region.value_shape != expected.value_shape {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::PublicationRecordShapeMismatch {
+                            schema,
+                            expected: expected.inline.clone(),
+                            actual: region.shape.clone(),
+                        },
                     ));
                 }
             }
@@ -3854,6 +3963,41 @@ impl Verifier<'_> {
         Ok(witness)
     }
 
+    /// Resolve a publish op's static schema witness to a publication-record
+    /// schema, rejecting an out-of-range witness or a non-record schema.
+    fn publication_record_schema(
+        &self,
+        function: FnId,
+        pc: usize,
+        witness: i64,
+    ) -> Result<SchemaRef, ProgramError> {
+        let schema = usize::try_from(witness)
+            .ok()
+            .filter(|index| *index < self.contract.schemas.len())
+            .and_then(|index| u32::try_from(index).ok().map(SchemaRef))
+            .ok_or_else(|| {
+                self.op(
+                    function,
+                    pc,
+                    ProgramDefect::PublicationSchemaWitnessOutOfRange {
+                        witness,
+                        schema_count: self.contract.schemas.len(),
+                    },
+                )
+            })?;
+        if !matches!(
+            self.contract.schemas[schema.0 as usize].payload,
+            PayloadKind::PublicationRecord
+        ) {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::PublicationSchemaNotRecord { schema },
+            ));
+        }
+        Ok(schema)
+    }
+
     fn ordered_collection_schemas(
         &self,
         function: FnId,
@@ -4293,6 +4437,7 @@ impl Verifier<'_> {
                     | Op::Await { .. }
                     | Op::CompareValueBytes { .. }
                     | Op::StringConcat { .. }
+                    | Op::Publish { .. }
                     | Op::ConstF64 { .. }
                     | Op::AddF64 { .. }
                     | Op::MulF64 { .. }
@@ -7919,5 +8064,180 @@ mod tests {
                 },
             ),
         );
+    }
+
+    /// One publish program: `Publish` at pc 0, returning an untouched scalar so
+    /// the record region alone carries the case's shape. Frame word 0 is the
+    /// result; the record region lives from word 1 on.
+    fn publish_program(
+        publish: Op,
+        regions: Vec<FrameRegion>,
+        schemas: Vec<SchemaContract>,
+        value_shapes: Vec<ValueShapeContract>,
+    ) -> (Program, ProgramContract) {
+        let words = regions
+            .iter()
+            .map(|region| (region.offset as usize / WORD_SIZE) + region.shape.words.len().max(1))
+            .max()
+            .unwrap_or(1);
+        (
+            Program {
+                fns: vec![function(words, vec![publish, Op::Ret { src: 0, size: 8 }])],
+            },
+            ProgramContract {
+                functions: vec![function_contract(words, regions, &[], 0, None)],
+                calls: vec![],
+                schemas,
+                value_shapes,
+            },
+        )
+    }
+
+    fn publish_record(width: u32, schema_ref: i64) -> Op {
+        Op::Publish {
+            site: 0xF00D,
+            record: 8,
+            record_width: width,
+            record_schema_ref: schema_ref,
+        }
+    }
+
+    #[test]
+    fn publish_admits_a_scalar_record_and_rejects_malformed_contracts() {
+        let scalar = || RegionShape::word(WordKind::Scalar);
+        let record_regions = || {
+            vec![
+                word_region(0, WordKind::Scalar),
+                word_region(8, WordKind::Scalar),
+            ]
+        };
+
+        // Baseline: a one-word scalar publication record is admitted. The opaque
+        // site key is never interpreted; the record schema types the bytes.
+        let (program, contract) = publish_program(
+            publish_record(8, 0),
+            record_regions(),
+            vec![schema(scalar(), PayloadKind::PublicationRecord)],
+            vec![],
+        );
+        program
+            .verify(contract)
+            .expect("a scalar publication record is admitted");
+
+        // An out-of-range schema witness is rejected.
+        let (program, contract) = publish_program(
+            publish_record(8, 99),
+            record_regions(),
+            vec![schema(scalar(), PayloadKind::PublicationRecord)],
+            vec![],
+        );
+        assert_eq!(
+            program.verify(contract).expect_err("witness out of range"),
+            op_error(
+                0,
+                ProgramDefect::PublicationSchemaWitnessOutOfRange {
+                    witness: 99,
+                    schema_count: 1,
+                },
+            ),
+        );
+
+        // A witness that names a non-publication schema is rejected.
+        let (program, contract) = publish_program(
+            publish_record(8, 0),
+            record_regions(),
+            vec![schema(scalar(), PayloadKind::Inline)],
+            vec![],
+        );
+        assert_eq!(
+            program.verify(contract).expect_err("schema not a record"),
+            op_error(
+                0,
+                ProgramDefect::PublicationSchemaNotRecord {
+                    schema: SchemaRef(0),
+                },
+            ),
+        );
+
+        // A publication-record schema whose inline shape hides a handle word is
+        // rejected globally: a published descriptor must never carry a store or
+        // molten handle out of the task (no handle leakage).
+        let handle_inline = RegionShape::new(vec![
+            WordKind::Scalar.into(),
+            WordKind::Handle(SchemaRef(0)).into(),
+        ]);
+        let (program, contract) = publish_program(
+            publish_record(16, 0),
+            vec![
+                word_region(0, WordKind::Scalar),
+                region(8, handle_inline.clone()),
+            ],
+            vec![schema(
+                handle_inline.clone(),
+                PayloadKind::PublicationRecord,
+            )],
+            vec![],
+        );
+        assert_eq!(
+            program
+                .verify(contract)
+                .expect_err("handle in a publication record"),
+            global_error(ProgramDefect::PublicationRecordSchemaNotScalar {
+                schema: SchemaRef(0),
+                inline: handle_inline,
+            }),
+        );
+
+        // A record width that disagrees with the schema's inline length is
+        // rejected before any region is bound.
+        let (program, contract) = publish_program(
+            publish_record(16, 0),
+            record_regions(),
+            vec![schema(scalar(), PayloadKind::PublicationRecord)],
+            vec![],
+        );
+        assert_eq!(
+            program.verify(contract).expect_err("record width mismatch"),
+            op_error(
+                0,
+                ProgramDefect::PublicationRecordWidth {
+                    schema: SchemaRef(0),
+                    expected: 8,
+                    actual: 16,
+                },
+            ),
+        );
+
+        // A record region whose structural value shape disagrees with the
+        // schema is rejected: raw bytes never publish without the exact
+        // verifier-owned region/value-shape contract.
+        let value_shapes = vec![ValueShapeContract {
+            shape: scalar(),
+            kind: ValueShapeKind::Product {
+                fields: vec![field(0, scalar())],
+            },
+        }];
+        let (program, contract) = publish_program(
+            publish_record(8, 0),
+            record_regions(),
+            vec![structural_schema(
+                scalar(),
+                ValueShapeRef(0),
+                PayloadKind::PublicationRecord,
+            )],
+            value_shapes,
+        );
+        let error = program
+            .verify(contract)
+            .expect_err("record structural shape mismatch");
+        assert!(matches!(
+            error.defect,
+            ProgramDefect::PublicationRecordShapeMismatch {
+                schema: SchemaRef(0),
+                ..
+            }
+        ));
+        assert_eq!(error.function, Some(FnId(0)));
+        assert_eq!(error.pc, Some(0));
     }
 }
