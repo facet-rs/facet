@@ -1,4 +1,4 @@
-use super::identity::{DemandKey, ValueId};
+use super::identity::{DemandKey, RecipeId, ValueId};
 use super::store::Handle;
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
@@ -38,6 +38,18 @@ pub struct TaskRecord {
     pub id: TaskId,
     pub demand: DemandKey,
     pub state: TaskState,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum FailureValue {
+    IndexOutOfBounds {
+        recipe: RecipeId,
+        site: u32,
+        index: i64,
+        length: i64,
+        subject: Option<ValueId>,
+    },
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
