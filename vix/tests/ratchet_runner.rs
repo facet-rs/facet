@@ -34,6 +34,7 @@ const RUNG_023: &str = include_str!("ratchet/023-option.vix");
 const RUNG_024: &str = include_str!("ratchet/024-user-result.vix");
 const RUNG_025: &str = include_str!("ratchet/025-ordering-enum.vix");
 const RUNG_026: &str = include_str!("ratchet/026-arrays.vix");
+const RUNG_027: &str = include_str!("ratchet/027-array-map.vix");
 const RUNG_032: &str = include_str!("ratchet/032-pop.reject.vix");
 const RUNG_041: &str = include_str!("ratchet/041-maps.vix");
 const RUNG_042: &str = include_str!("ratchet/042-map-overwrite.vix");
@@ -2438,6 +2439,26 @@ fn rung_026_arrays_run_through_verified_execution_without_publication() {
                     ))
             );
         }
+    }
+}
+
+#[test]
+fn rung_027_array_map_runs_through_verified_execution_without_publication() {
+    let report = run_source(RUNG_027).expect("rung 027 compiles and runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 4);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+        assert!(lane.events.iter().all(|event| match event.kind {
+            EventKind::StoreAlloc { identity, .. } => {
+                identity.schema == SchemaId::named("vix.Check.v1")
+            }
+            _ => true,
+        }));
     }
 }
 
