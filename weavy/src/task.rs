@@ -299,6 +299,38 @@ impl OrderedCursorToken {
     pub(crate) fn into_words(self) -> (i64, i64) {
         (self.index as i64, self.task_generation as i64)
     }
+
+    /// Reconstruct a token from its two opaque frame words. A negative index
+    /// (e.g. the poison sentinel written to a failed begin) never names a
+    /// cursor, so it yields `None` and the operation reports `InvalidHandle`.
+    /// A fabricated generation is caught by the arena's live generation check.
+    pub(crate) fn from_words(index: i64, generation: i64) -> Option<Self> {
+        Some(Self {
+            index: usize::try_from(index).ok()?,
+            task_generation: generation as u64,
+        })
+    }
+}
+
+/// One resolved probe step: whether the cursor named a node, that node's key
+/// bytes, and the left/right child collection handles for the bytecode to
+/// descend into after a structural comparison.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct OrderedProbeStep {
+    pub present: bool,
+    pub key: Vec<u8>,
+    pub left: i64,
+    pub right: i64,
+}
+
+/// Map a cursor consumption error onto the closed [`OrderedOpStatus`] ABI.
+fn ordered_consume_status(err: OrderedCursorError) -> OrderedOpStatus {
+    match err {
+        OrderedCursorError::Invalid => OrderedOpStatus::InvalidHandle,
+        OrderedCursorError::Stale => OrderedOpStatus::Stale,
+        OrderedCursorError::SchemaMismatch => OrderedOpStatus::SchemaMismatch,
+        OrderedCursorError::OperationMismatch => OrderedOpStatus::OperationMismatch,
+    }
 }
 
 /// The canonical empty ordered-collection root handle: it names no arena node.
@@ -416,6 +448,40 @@ impl MoltenArena {
                 OrderedCursorError::Stale => OrderedOpStatus::Stale,
                 OrderedCursorError::Invalid => OrderedOpStatus::AllocationFailed,
             })
+    }
+
+    /// Encode an arena node child into the collection handle the bytecode
+    /// descends into: absent children are the canonical empty collection.
+    fn ordered_child_handle(child: Option<usize>) -> i64 {
+        child.map_or(ORDERED_EMPTY_HANDLE, |index| index as i64 + 1)
+    }
+
+    /// Consume a single-use Probe cursor and resolve one probe step: whether it
+    /// named a node, and if so that node's key bytes and its left/right child
+    /// collection handles. The cursor is spent whether or not a node was named.
+    pub(crate) fn probe_ordered_key(
+        &mut self,
+        token: OrderedCursorToken,
+        schema: i64,
+    ) -> Result<OrderedProbeStep, OrderedOpStatus> {
+        let root = self
+            .consume_ordered_cursor(token, schema, OrderedCursorOperation::Probe)
+            .map_err(ordered_consume_status)?;
+        let Some(index) = root else {
+            return Ok(OrderedProbeStep {
+                present: false,
+                key: Vec::new(),
+                left: ORDERED_EMPTY_HANDLE,
+                right: ORDERED_EMPTY_HANDLE,
+            });
+        };
+        let node = &self.ordered_nodes[index];
+        Ok(OrderedProbeStep {
+            present: true,
+            key: node.key.clone(),
+            left: Self::ordered_child_handle(node.left),
+            right: Self::ordered_child_handle(node.right),
+        })
     }
 
     pub(crate) fn begin_ordered_cursor(
@@ -688,6 +754,65 @@ pub(crate) unsafe extern "C" fn ordered_begin_probe_abi(
                 *out_index = index;
                 *out_generation = generation;
             }
+            OrderedOpStatus::Ok as i64
+        }
+        Err(status) => status as i64,
+    }
+}
+
+/// # Safety
+/// `arena` must point to a live [`MoltenArena`] for the duration of the call and
+/// must not be mutably aliased elsewhere. `out_present`, `out_left`, and
+/// `out_right` must each be non-null and writable for one `i64`. `out_key` must
+/// be non-null and writable for `key_width` bytes when `key_width > 0`. None of
+/// the outputs may alias each other or memory inside `arena`. Every output is
+/// cleared before the operation, so a failure never leaves stale key bytes.
+#[allow(clippy::too_many_arguments)]
+pub(crate) unsafe extern "C" fn ordered_probe_key_abi(
+    arena: *mut core::ffi::c_void,
+    index: i64,
+    generation: i64,
+    schema: i64,
+    key_width: usize,
+    out_present: *mut i64,
+    out_left: *mut i64,
+    out_right: *mut i64,
+    out_key: *mut u8,
+) -> i64 {
+    if out_present.is_null()
+        || out_left.is_null()
+        || out_right.is_null()
+        || (out_key.is_null() && key_width != 0)
+    {
+        return OrderedOpStatus::InvalidHandle as i64;
+    }
+    unsafe {
+        *out_present = 0;
+        *out_left = ORDERED_EMPTY_HANDLE;
+        *out_right = ORDERED_EMPTY_HANDLE;
+    }
+    let out_key = if key_width == 0 {
+        &mut [][..]
+    } else {
+        unsafe { core::slice::from_raw_parts_mut(out_key, key_width) }
+    };
+    out_key.fill(0);
+    if arena.is_null() {
+        return OrderedOpStatus::InvalidHandle as i64;
+    }
+    let Some(token) = OrderedCursorToken::from_words(index, generation) else {
+        return OrderedOpStatus::InvalidHandle as i64;
+    };
+    let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
+    match arena.probe_ordered_key(token, schema) {
+        Ok(step) => {
+            unsafe {
+                *out_present = i64::from(step.present);
+                *out_left = step.left;
+                *out_right = step.right;
+            }
+            let copy = step.key.len().min(out_key.len());
+            out_key[..copy].copy_from_slice(&step.key[..copy]);
             OrderedOpStatus::Ok as i64
         }
         Err(status) => status as i64,
@@ -1129,6 +1254,26 @@ pub enum Op {
         cursor: u32,
         status: u32,
         collection: u32,
+        collection_schema_ref: i64,
+    },
+    /// Consume a Probe cursor and expose one probe step of the closed handshake.
+    ///
+    /// `frame[cursor]` is the two-word opaque cursor token. On a live cursor,
+    /// `frame[present]` receives `1` when the cursor named a node (and `key`
+    /// receives that node's `key_width` key bytes, `left`/`right` its child
+    /// collection handles) or `0` at an empty position (a probe miss). The
+    /// bytecode then compares its search key against `key` and descends into
+    /// `left` or `right`. `frame[status]` receives [`OrderedOpStatus`]; a
+    /// forged, stale, cross-task, cross-schema, or cross-operation cursor
+    /// yields the precise status with `present = 0` and `key` zeroed.
+    OrderedProbeKey {
+        cursor: u32,
+        present: u32,
+        key: u32,
+        left: u32,
+        right: u32,
+        status: u32,
+        key_width: u32,
         collection_schema_ref: i64,
     },
 }
@@ -1776,6 +1921,47 @@ impl Task {
                     };
                     write_i64_at(&mut self.arena, base + cursor as usize, index);
                     write_i64_at(&mut self.arena, base + cursor as usize + 8, generation);
+                    write_i64_at(&mut self.arena, base + status as usize, op_status as i64);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::OrderedProbeKey {
+                    cursor,
+                    present,
+                    key,
+                    left,
+                    right,
+                    status,
+                    key_width,
+                    collection_schema_ref,
+                } => {
+                    let index = read_i64_at(&self.arena, base + cursor as usize);
+                    let generation = read_i64_at(&self.arena, base + cursor as usize + 8);
+                    let key_at = base + key as usize;
+                    let key_width = key_width as usize;
+                    self.arena[key_at..key_at + key_width].fill(0);
+                    let mut present_value = 0i64;
+                    let mut left_value = ORDERED_EMPTY_HANDLE;
+                    let mut right_value = ORDERED_EMPTY_HANDLE;
+                    let op_status = match OrderedCursorToken::from_words(index, generation) {
+                        None => OrderedOpStatus::InvalidHandle,
+                        Some(token) => {
+                            match self.molten.probe_ordered_key(token, collection_schema_ref) {
+                                Ok(step) => {
+                                    present_value = i64::from(step.present);
+                                    left_value = step.left;
+                                    right_value = step.right;
+                                    let copy = step.key.len().min(key_width);
+                                    self.arena[key_at..key_at + copy]
+                                        .copy_from_slice(&step.key[..copy]);
+                                    OrderedOpStatus::Ok
+                                }
+                                Err(status) => status,
+                            }
+                        }
+                    };
+                    write_i64_at(&mut self.arena, base + present as usize, present_value);
+                    write_i64_at(&mut self.arena, base + left as usize, left_value);
+                    write_i64_at(&mut self.arena, base + right as usize, right_value);
                     write_i64_at(&mut self.arena, base + status as usize, op_status as i64);
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
@@ -2550,6 +2736,55 @@ mod tests {
         assert_eq!(
             arena.begin_ordered_probe(999, 9),
             Err(OrderedOpStatus::InvalidHandle)
+        );
+    }
+
+    #[test]
+    fn probe_ordered_key_exposes_nodes_and_spends_the_cursor() {
+        let mut arena = MoltenArena::default();
+        let left = arena
+            .alloc_ordered_node(9, vec![1], Some(vec![10]), None, None)
+            .unwrap();
+        let right = arena
+            .alloc_ordered_node(9, vec![3], Some(vec![30]), None, None)
+            .unwrap();
+        let root = arena
+            .alloc_ordered_node(9, vec![2], Some(vec![20]), Some(left), Some(right))
+            .unwrap();
+
+        // Probe at the root exposes its key and the two child collection handles.
+        let cursor = arena.begin_ordered_probe(root as i64 + 1, 9).unwrap();
+        let step = arena.probe_ordered_key(cursor, 9).expect("root probe");
+        assert!(step.present);
+        assert_eq!(step.key, vec![2]);
+        assert_eq!(step.left, left as i64 + 1);
+        assert_eq!(step.right, right as i64 + 1);
+        // The cursor is single-use: a second probe of the same token is stale.
+        assert_eq!(
+            arena.probe_ordered_key(cursor, 9),
+            Err(OrderedOpStatus::Stale)
+        );
+
+        // Descending a child handle reaches a leaf whose children are empty.
+        let cursor = arena.begin_ordered_probe(step.left, 9).unwrap();
+        let leaf = arena.probe_ordered_key(cursor, 9).expect("leaf probe");
+        assert_eq!(leaf.key, vec![1]);
+        assert_eq!(leaf.left, ORDERED_EMPTY_HANDLE);
+        assert_eq!(leaf.right, ORDERED_EMPTY_HANDLE);
+
+        // The empty collection probes to a miss without exposing a key.
+        let cursor = arena.begin_ordered_probe(ORDERED_EMPTY_HANDLE, 9).unwrap();
+        let miss = arena.probe_ordered_key(cursor, 9).expect("empty probe");
+        assert!(!miss.present);
+        assert!(miss.key.is_empty());
+
+        // A forged token (poison index) and a cross-schema consume are typed
+        // statuses, never panics.
+        assert!(OrderedCursorToken::from_words(ORDERED_CURSOR_POISON, 0).is_none());
+        let cursor = arena.begin_ordered_probe(root as i64 + 1, 9).unwrap();
+        assert_eq!(
+            arena.probe_ordered_key(cursor, 8),
+            Err(OrderedOpStatus::SchemaMismatch)
         );
     }
 

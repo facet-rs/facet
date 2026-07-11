@@ -416,6 +416,10 @@ pub enum AccessRole {
     OrderedCollectionHandle,
     OrderedStatus,
     OrderedCursorDestination,
+    OrderedCursorSource,
+    OrderedPresent,
+    OrderedKeyDestination,
+    OrderedChildHandle,
 }
 
 /// Structural failure for a checked frame range.
@@ -870,6 +874,20 @@ pub enum ProgramDefect {
     /// duplicated by a raw word copy.
     OpaqueWordNotCopyable {
         role: AccessRole,
+    },
+    /// A probe key destination's static width did not match its key schema's
+    /// exact inline byte length.
+    OrderedKeyWidth {
+        schema: SchemaRef,
+        expected: usize,
+        actual: u32,
+    },
+    /// A probe key destination's region shape did not match its key schema's
+    /// inline shape or structural value shape exactly.
+    OrderedKeyShapeMismatch {
+        schema: SchemaRef,
+        expected: RegionShape,
+        actual: RegionShape,
     },
     ArraySchemaNotDense {
         schema: SchemaRef,
@@ -2557,13 +2575,72 @@ impl Verifier<'_> {
                     *status,
                     AccessRole::OrderedStatus,
                 )?;
-                self.require_ordered_cursor_write(
+                self.require_ordered_cursor_region(
                     function_id,
                     pc,
                     function_index,
                     frame,
                     *cursor,
                     AccessRole::OrderedCursorDestination,
+                )?;
+            }
+            Op::OrderedProbeKey {
+                cursor,
+                present,
+                key,
+                left,
+                right,
+                status,
+                key_width,
+                collection_schema_ref,
+            } => {
+                let (collection_schema, key_schema) =
+                    self.ordered_collection_schemas(function_id, pc, *collection_schema_ref)?;
+                self.require_ordered_cursor_region(
+                    function_id,
+                    pc,
+                    function_index,
+                    frame,
+                    *cursor,
+                    AccessRole::OrderedCursorSource,
+                )?;
+                self.require_scalar_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *present,
+                    AccessRole::OrderedPresent,
+                )?;
+                self.require_ordered_key_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *key,
+                    *key_width,
+                    key_schema,
+                )?;
+                self.require_handle_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *left,
+                    collection_schema,
+                    AccessRole::OrderedChildHandle,
+                )?;
+                self.require_handle_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *right,
+                    collection_schema,
+                    AccessRole::OrderedChildHandle,
+                )?;
+                self.require_status_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::OrderedStatus,
                 )?;
             }
         }
@@ -3276,9 +3353,121 @@ impl Verifier<'_> {
         Ok(witness)
     }
 
-    /// A cursor destination must name a whole two-word region that is exactly
+    fn ordered_collection_schemas(
+        &self,
+        function: FnId,
+        pc: usize,
+        witness: i64,
+    ) -> Result<(SchemaRef, SchemaRef), ProgramError> {
+        let collection = usize::try_from(witness)
+            .ok()
+            .filter(|index| *index < self.contract.schemas.len())
+            .and_then(|index| u32::try_from(index).ok().map(SchemaRef))
+            .ok_or_else(|| {
+                self.op(
+                    function,
+                    pc,
+                    ProgramDefect::OrderedCollectionWitnessOutOfRange {
+                        witness,
+                        schema_count: self.contract.schemas.len(),
+                    },
+                )
+            })?;
+        let PayloadKind::OrderedCollection(contract) =
+            &self.contract.schemas[collection.0 as usize].payload
+        else {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::OrderedCollectionSchemaNotCollection { schema: collection },
+            ));
+        };
+        Ok((collection, contract.key))
+    }
+
+    /// A probe key destination must be a whole region whose shape and structural
+    /// value shape are exactly the collection's key schema, at its exact width.
+    fn require_ordered_key_write(
+        &self,
+        function: FnId,
+        pc: usize,
+        frame: &ValidatedFrame,
+        offset: u32,
+        key_width: u32,
+        key_schema: SchemaRef,
+    ) -> Result<(), ProgramError> {
+        let expected = &self.contract.schemas[key_schema.0 as usize];
+        let expected_len = expected.inline.checked_byte_len().ok_or_else(|| {
+            self.op(
+                function,
+                pc,
+                ProgramDefect::ShapeSizeOverflow {
+                    owner: ShapeOwner::SchemaInline(key_schema),
+                },
+            )
+        })?;
+        if expected_len == 0 || usize::try_from(key_width).ok() != Some(expected_len) {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::OrderedKeyWidth {
+                    schema: key_schema,
+                    expected: expected_len,
+                    actual: key_width,
+                },
+            ));
+        }
+        let region_index = self.exact_region(
+            function,
+            pc,
+            frame,
+            offset,
+            expected_len,
+            AccessRole::OrderedKeyDestination,
+        )?;
+        let region = &self.contract.functions[function.0 as usize].frame.regions[region_index];
+        if region.shape != expected.inline || region.value_shape != expected.value_shape {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::OrderedKeyShapeMismatch {
+                    schema: key_schema,
+                    expected: expected.inline.clone(),
+                    actual: region.shape.clone(),
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    /// A child collection handle destination must be exactly `Handle(schema)`.
+    fn require_handle_write(
+        &self,
+        function: FnId,
+        pc: usize,
+        frame: &ValidatedFrame,
+        offset: u32,
+        schema: SchemaRef,
+        role: AccessRole,
+    ) -> Result<(), ProgramError> {
+        let kinds = self.word_kinds(function, pc, frame, offset, role)?;
+        if !kinds.is_exactly(WordKind::Handle(schema)) {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::KindMismatch {
+                    role,
+                    required: KindRequirement::Handle,
+                    allowed: kinds.clone(),
+                },
+            ));
+        }
+        Ok(())
+    }
+
+    /// A cursor region must name a whole two-word region that is exactly
     /// internal opaque cursor words and carries no structural value shape.
-    fn require_ordered_cursor_write(
+    fn require_ordered_cursor_region(
         &self,
         function: FnId,
         pc: usize,
@@ -3596,6 +3785,7 @@ impl Verifier<'_> {
                     | Op::LoadArrayLen { .. }
                     | Op::ArrayStatusIs { .. }
                     | Op::OrderedBeginProbe { .. }
+                    | Op::OrderedProbeKey { .. }
                     | Op::Trace { .. } => pending.push(pc + 1),
                     Op::ArrayStoreWord { .. } => {
                         return Err(self.unsupported(
@@ -6973,6 +7163,104 @@ mod tests {
             function_error(ProgramDefect::OpaqueRegionEscapes {
                 owner: ShapeOwner::FrameRegion(RegionId(1)),
             }),
+        );
+    }
+
+    fn ordered_probe_key_program(
+        regions: Vec<FrameRegion>,
+        key_width: u32,
+    ) -> (Program, ProgramContract) {
+        (
+            Program {
+                fns: vec![function(
+                    7,
+                    vec![
+                        Op::OrderedProbeKey {
+                            cursor: 0,
+                            present: 16,
+                            key: 24,
+                            left: 32,
+                            right: 40,
+                            status: 48,
+                            key_width,
+                            collection_schema_ref: 3,
+                        },
+                        Op::Ret { src: 48, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(7, regions, &[], 5, None)],
+                calls: vec![],
+                schemas: ordered_probe_schemas(),
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    #[test]
+    fn ordered_probe_key_types_every_handshake_operand() {
+        let regions = || {
+            vec![
+                region(0, RegionShape::new(vec![WordKind::Opaque.into(); 2])),
+                word_region(16, WordKind::Scalar),
+                word_region(24, WordKind::Scalar),
+                word_region(32, WordKind::Handle(SchemaRef(3))),
+                word_region(40, WordKind::Handle(SchemaRef(3))),
+                word_region(48, WordKind::Status),
+            ]
+        };
+
+        // Baseline: opaque cursor source, scalar present, a key matching the key
+        // schema, child handles typed to the collection, and a status.
+        let (program, contract) = ordered_probe_key_program(regions(), 8);
+        program
+            .verify(contract)
+            .expect("a well-typed probe key is admitted");
+
+        // The key destination width must equal the key schema's inline width.
+        let (program, contract) = ordered_probe_key_program(regions(), 16);
+        assert_eq!(
+            program.verify(contract).expect_err("wrong key width"),
+            op_error(
+                0,
+                ProgramDefect::OrderedKeyWidth {
+                    schema: SchemaRef(0),
+                    expected: 8,
+                    actual: 16,
+                },
+            ),
+        );
+
+        // A child handle must be exactly the collection handle schema.
+        let mut wrong_child = regions();
+        wrong_child[3] = word_region(32, WordKind::Handle(SchemaRef(0)));
+        let (program, contract) = ordered_probe_key_program(wrong_child, 8);
+        assert_eq!(
+            program.verify(contract).expect_err("wrong child schema"),
+            op_error(
+                0,
+                ProgramDefect::KindMismatch {
+                    role: AccessRole::OrderedChildHandle,
+                    required: KindRequirement::Handle,
+                    allowed: kinds(WordKind::Handle(SchemaRef(0))),
+                },
+            ),
+        );
+
+        // The cursor source must be exactly two internal opaque words.
+        let mut wrong_cursor = regions();
+        wrong_cursor[0] = region(0, RegionShape::new(vec![WordKind::Scalar.into(); 2]));
+        let (program, contract) = ordered_probe_key_program(wrong_cursor, 8);
+        assert_eq!(
+            program.verify(contract).expect_err("cursor must be opaque"),
+            op_error(
+                0,
+                ProgramDefect::OrderedCursorRegionShape {
+                    region: RegionId(0),
+                    shape: RegionShape::new(vec![WordKind::Scalar.into(); 2]),
+                },
+            ),
         );
     }
 

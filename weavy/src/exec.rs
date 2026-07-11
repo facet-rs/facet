@@ -1807,6 +1807,162 @@ mod tests {
         )
     }
 
+    fn ordered_map_schemas() -> Vec<SchemaContract> {
+        use crate::{OrderedCollectionContract, OrderedCollectionKind};
+        vec![
+            SchemaContract {
+                inline: RegionShape::word(WordKind::Scalar),
+                value_shape: None,
+                payload: PayloadKind::Inline,
+            },
+            SchemaContract {
+                inline: RegionShape::word(WordKind::Scalar),
+                value_shape: None,
+                payload: PayloadKind::Inline,
+            },
+            SchemaContract {
+                inline: RegionShape::new(vec![
+                    AllowedKinds::new(WordKind::Scalar),
+                    AllowedKinds::new(WordKind::Scalar),
+                ]),
+                value_shape: None,
+                payload: PayloadKind::Inline,
+            },
+            SchemaContract {
+                inline: RegionShape::word(WordKind::Handle(SchemaRef(3))),
+                value_shape: None,
+                payload: PayloadKind::OrderedCollection(OrderedCollectionContract {
+                    kind: OrderedCollectionKind::Map,
+                    key: SchemaRef(0),
+                    value: Some(SchemaRef(1)),
+                    row: SchemaRef(2),
+                    fanout: 4,
+                }),
+            },
+        ]
+    }
+
+    fn ordered_probe_program(code: Vec<Op>, entries: &[u32]) -> (Program, ProgramContract) {
+        let collection = WordKind::Handle(SchemaRef(3));
+        (
+            Program {
+                fns: vec![function(8, code)],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    8,
+                    vec![
+                        word_region(0, collection),
+                        FrameRegion::new(
+                            8,
+                            RegionShape::new(vec![AllowedKinds::new(WordKind::Opaque); 2]),
+                        ),
+                        word_region(24, WordKind::Status),
+                        word_region(32, WordKind::Scalar),
+                        word_region(40, WordKind::Scalar),
+                        word_region(48, collection),
+                        word_region(56, collection),
+                    ],
+                    entries,
+                    2,
+                    None,
+                )],
+                calls: vec![],
+                schemas: ordered_map_schemas(),
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    fn probe_key_op() -> Op {
+        Op::OrderedProbeKey {
+            cursor: 8,
+            present: 32,
+            key: 40,
+            left: 48,
+            right: 56,
+            status: 24,
+            key_width: 8,
+            collection_schema_ref: 3,
+        }
+    }
+
+    #[test]
+    fn ordered_probe_key_handshake_matches_across_lanes() {
+        use crate::task::OrderedOpStatus;
+
+        let begin = Op::OrderedBeginProbe {
+            cursor: 8,
+            status: 24,
+            collection: 0,
+            collection_schema_ref: 3,
+        };
+        // Each case returns the probe status word; the interpreter and native
+        // lanes must agree on every closed-handshake outcome.
+        let cases: [(&str, (Program, ProgramContract), i64, OrderedOpStatus); 3] = [
+            (
+                "empty handshake miss",
+                ordered_probe_program(
+                    vec![begin.clone(), probe_key_op(), Op::Ret { src: 24, size: 8 }],
+                    &[0],
+                ),
+                0,
+                OrderedOpStatus::Ok,
+            ),
+            (
+                "forged cursor",
+                ordered_probe_program(vec![probe_key_op(), Op::Ret { src: 24, size: 8 }], &[]),
+                -1,
+                OrderedOpStatus::InvalidHandle,
+            ),
+            (
+                "stale double probe",
+                ordered_probe_program(
+                    vec![
+                        begin.clone(),
+                        probe_key_op(),
+                        probe_key_op(),
+                        Op::Ret { src: 24, size: 8 },
+                    ],
+                    &[0],
+                ),
+                0,
+                OrderedOpStatus::Stale,
+            ),
+        ];
+        for (name, program, cursor_seed, expected) in cases {
+            let verified = Arc::new(verify(program));
+            // collection handle @0 (empty), cursor index @8, generation @16.
+            let interp = run_interpreter(
+                &verified,
+                |task| {
+                    task.write_i64(0, 0);
+                    task.write_i64(8, cursor_seed);
+                    task.write_i64(16, 0);
+                },
+                ValueMemories::empty(),
+            )
+            .unwrap_or_else(|fault| panic!("{name}: {fault:?}"));
+            assert_eq!(interp.0, TaskStep::Done, "{name}");
+            assert_eq!(
+                i64::from_le_bytes(interp.1[..8].try_into().unwrap()),
+                expected as i64,
+                "{name} interpreter status"
+            );
+            if let Some(native) = run_native(
+                Arc::clone(&verified),
+                |task| {
+                    task.write_i64(0, 0);
+                    task.write_i64(8, cursor_seed);
+                    task.write_i64(16, 0);
+                },
+                ValueMemories::empty(),
+            ) {
+                assert_eq!(native.expect("native probe"), interp, "{name}");
+            }
+        }
+    }
+
     #[test]
     fn ordered_begin_probe_matches_across_public_executable_lanes() {
         use crate::task::OrderedOpStatus;

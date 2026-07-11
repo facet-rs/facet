@@ -89,6 +89,17 @@ pub struct Ctx {
     ) -> i64,
     ordered_begin_probe:
         unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *mut i64, *mut i64) -> i64,
+    ordered_probe_key: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        i64,
+        usize,
+        *mut i64,
+        *mut i64,
+        *mut i64,
+        *mut u8,
+    ) -> i64,
 }
 
 /// Raw ABI descriptor; MUST match `crate::task::RawValueMemory`.
@@ -601,6 +612,45 @@ pub unsafe extern "C" fn weavy_task_ordered_begin_probe(cx: *mut Ctx) {
     );
     write_i64(c.frame, cursor, index);
     write_i64(c.frame, cursor + 8, generation);
+    write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+/// Consume a Probe cursor and expose one probe step — immediates:
+/// [cursor, present, key, left, right, status, key_width, schema]. The ABI
+/// clears and fills the `key_width` key bytes in the frame; this stencil
+/// writes the present flag, the child collection handles, and the status.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_probe_key(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let cursor = *c.prog;
+    let present = *c.prog.add(1);
+    let key = *c.prog.add(2);
+    let left = *c.prog.add(3);
+    let right = *c.prog.add(4);
+    let status = *c.prog.add(5);
+    let key_width = *c.prog.add(6) as usize;
+    let schema = *c.prog.add(7) as i64;
+    c.prog = c.prog.add(8);
+    let index = read_i64(c.frame, cursor);
+    let generation = read_i64(c.frame, cursor + 8);
+    let mut present_out = 0i64;
+    let mut left_out = 0i64;
+    let mut right_out = 0i64;
+    let op_status = (c.ordered_probe_key)(
+        c.molten,
+        index,
+        generation,
+        schema,
+        key_width,
+        &raw mut present_out,
+        &raw mut left_out,
+        &raw mut right_out,
+        c.frame.add(key as usize),
+    );
+    write_i64(c.frame, present, present_out);
+    write_i64(c.frame, left, left_out);
+    write_i64(c.frame, right, right_out);
     write_i64(c.frame, status, op_status);
     cont!(cx);
 }
