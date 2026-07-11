@@ -1007,6 +1007,29 @@ fn out_of_bounds() -> Stream<Check> {
 }
 "#;
 
+    const MISSING_KEY_SOURCE: &str = r#"
+#[test]
+fn missing_key() -> Stream<Check> {
+    let values: Map<String, Int> = %{};
+    yield expect_eq(values.get("missing"), 0);
+}
+"#;
+
+    const DUPLICATE_KEY_SOURCE: &str = r#"
+#[test]
+fn duplicate_key() -> Stream<Check> {
+    let values = %{"present" => 1} + ("present", 2);
+    yield expect_eq(values.len(), 0);
+}
+"#;
+
+    #[derive(Clone, Copy)]
+    enum ExpectedLanguageFailure {
+        IndexOutOfBounds,
+        MissingKey,
+        DuplicateKey,
+    }
+
     fn with_lowered(source: &str, inspect: impl FnOnce(&LoweringArtifact, &LoweringAttribution)) {
         let module = Compiler::new().compile(source).expect("source compiles");
         let partitioned = module.partition_test(&module.tests[0]);
@@ -1223,9 +1246,20 @@ fn out_of_bounds() -> Stream<Check> {
     #[test]
     // r[verify machine.error.failure-source-site-identity]
     fn language_failure_memo_hit_rebuilds_current_attribution_without_reexecution() {
-        let module = Compiler::new()
-            .compile(OUT_OF_BOUNDS_SOURCE)
-            .expect("source compiles");
+        for (source, expected) in [
+            (
+                OUT_OF_BOUNDS_SOURCE,
+                ExpectedLanguageFailure::IndexOutOfBounds,
+            ),
+            (MISSING_KEY_SOURCE, ExpectedLanguageFailure::MissingKey),
+            (DUPLICATE_KEY_SOURCE, ExpectedLanguageFailure::DuplicateKey),
+        ] {
+            assert_language_failure_memo_hit(source, expected);
+        }
+    }
+
+    fn assert_language_failure_memo_hit(source: &str, expected: ExpectedLanguageFailure) {
+        let module = Compiler::new().compile(source).expect("source compiles");
         let partitioned = module.partition_test(&module.tests[0]);
         let island = &partitioned.islands[0];
         let first_attribution = attribution_for(island);
@@ -1254,12 +1288,7 @@ fn out_of_bounds() -> Stream<Check> {
             .failure_context
             .clone()
             .expect("first report resolves the indexing source");
-        let first_site = match first_failure {
-            FailureValue::IndexOutOfBounds { site, .. } => site,
-            FailureValue::MissingKey { .. } | FailureValue::DuplicateKey { .. } => {
-                panic!("the array failure test received a collection failure")
-            }
-        };
+        let first_site = expected_failure_site(&first_failure, expected);
         assert_eq!(
             first_context.span,
             first_attribution
@@ -1268,7 +1297,7 @@ fn out_of_bounds() -> Stream<Check> {
                 .span
         );
 
-        let shifted_source = format!("\n\n{OUT_OF_BOUNDS_SOURCE}");
+        let shifted_source = format!("\n\n{source}");
         let shifted_module = Compiler::new()
             .compile(&shifted_source)
             .expect("shifted source compiles");
@@ -1329,6 +1358,20 @@ fn out_of_bounds() -> Stream<Check> {
                 .count(),
             1
         );
+    }
+
+    fn expected_failure_site(failure: &FailureValue, expected: ExpectedLanguageFailure) -> u32 {
+        match (expected, failure) {
+            (
+                ExpectedLanguageFailure::IndexOutOfBounds,
+                FailureValue::IndexOutOfBounds { site, .. },
+            )
+            | (ExpectedLanguageFailure::MissingKey, FailureValue::MissingKey { site, .. })
+            | (ExpectedLanguageFailure::DuplicateKey, FailureValue::DuplicateKey { site, .. }) => {
+                *site
+            }
+            _ => panic!("language failure kind does not match the production source: {failure:?}"),
+        }
     }
 
     #[test]
