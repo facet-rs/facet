@@ -352,6 +352,32 @@ impl<S: EventSink> Runtime<S> {
                         failure_context: report_context,
                     });
                 }
+                Ok(DecodedResult::MissingKey { site }) => {
+                    let failure = FailureValue::MissingKey {
+                        recipe: lowered.recipe,
+                        site,
+                    };
+                    return Ok(self.complete_language_failure(
+                        task_id,
+                        location,
+                        lowered,
+                        attribution,
+                        failure,
+                    )?);
+                }
+                Ok(DecodedResult::DuplicateKey { site }) => {
+                    let failure = FailureValue::DuplicateKey {
+                        recipe: lowered.recipe,
+                        site,
+                    };
+                    return Ok(self.complete_language_failure(
+                        task_id,
+                        location,
+                        lowered,
+                        attribution,
+                        failure,
+                    )?);
+                }
                 Err(fault) => {
                     let fallback = result_shape_attribution(
                         &fault,
@@ -558,6 +584,47 @@ impl<S: EventSink> Runtime<S> {
         error
     }
 
+    fn complete_language_failure(
+        &mut self,
+        task: TaskId,
+        location: &Location,
+        lowered: &LoweringArtifact,
+        attribution: &LoweringAttribution,
+        failure: FailureValue,
+    ) -> Result<Evaluation, Box<MachineError>> {
+        let report_context = failure_context(&failure, lowered, attribution);
+        let interned = self.store.intern_failure(failure.clone(), &[]);
+        self.observe_interned(interned);
+        self.memo.insert(
+            location.id,
+            MemoEntry {
+                location: location.clone(),
+                key: lowered.demand_key,
+                preimage: lowered.demand_preimage.clone(),
+                result: interned.handle,
+                receipt: None,
+            },
+        );
+        if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
+            demand.result = Some(interned.handle);
+        }
+        self.transition_task(task, TaskState::Completed)?;
+        self.transition_demand(lowered.demand_key, DemandState::Failed)?;
+        self.emit(EventKind::LanguageFailed {
+            task,
+            key: lowered.demand_key,
+            failure: failure.clone(),
+        });
+        Ok(Evaluation {
+            handle: interned.handle,
+            identity: interned.identity,
+            passed: false,
+            memo: MemoVerdict::Miss,
+            failure: Some(failure),
+            failure_context: report_context,
+        })
+    }
+
     fn constant_attribution(
         &self,
         node: crate::vir::NodeRef,
@@ -663,7 +730,11 @@ fn failure_context(
 ) -> Option<FailureContext> {
     // r[impl machine.error.failure-source-site-identity]
     match failure {
-        FailureValue::IndexOutOfBounds { recipe, site, .. } if *recipe == lowered.recipe => {
+        FailureValue::IndexOutOfBounds { recipe, site, .. }
+        | FailureValue::MissingKey { recipe, site }
+        | FailureValue::DuplicateKey { recipe, site }
+            if *recipe == lowered.recipe =>
+        {
             let source = attribution.source_for_trace(*site)?;
             Some(FailureContext {
                 function: source.function,
@@ -672,7 +743,9 @@ fn failure_context(
                 demand_chain: vec![lowered.demand_key],
             })
         }
-        FailureValue::IndexOutOfBounds { .. } => None,
+        FailureValue::IndexOutOfBounds { .. }
+        | FailureValue::MissingKey { .. }
+        | FailureValue::DuplicateKey { .. } => None,
     }
 }
 
@@ -682,6 +755,12 @@ enum DecodedResult {
         site: u32,
         index: i64,
         length: i64,
+    },
+    MissingKey {
+        site: u32,
+    },
+    DuplicateKey {
+        site: u32,
     },
     ArrayMachine {
         site: u32,
@@ -743,6 +822,20 @@ fn decode_result(
             },
         ))?;
         return Ok(DecodedResult::ArrayMachine { site, status });
+    }
+    if selector == abi.missing_key_variant || selector == abi.duplicate_key_variant {
+        let site = u32::try_from(result.enum_scalar_field(selector, 0)?).map_err(|_| {
+            Box::new(TaskFault::InvalidResultShape {
+                entry: FnId(0),
+                region: lowered.executable().program().contract().functions[0].result,
+                size: 0,
+            })
+        })?;
+        return Ok(if selector == abi.missing_key_variant {
+            DecodedResult::MissingKey { site }
+        } else {
+            DecodedResult::DuplicateKey { site }
+        });
     }
     Err(Box::new(TaskFault::InvalidResultShape {
         entry: FnId(0),

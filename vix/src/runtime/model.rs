@@ -54,6 +54,14 @@ pub enum FailureValue {
         length: i64,
         subject: Option<ValueId>,
     },
+    MissingKey {
+        recipe: RecipeId,
+        site: u32,
+    },
+    DuplicateKey {
+        recipe: RecipeId,
+        site: u32,
+    },
 }
 
 /// Context rebuilt while reporting a language failure. It is deliberately not

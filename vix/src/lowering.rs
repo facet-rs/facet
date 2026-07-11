@@ -93,6 +93,8 @@ pub struct ArrayOutcomeAbi {
     pub ok_variant: u32,
     pub index_out_of_bounds_variant: u32,
     pub array_machine_variant: u32,
+    pub missing_key_variant: u32,
+    pub duplicate_key_variant: u32,
 }
 
 impl ArrayOutcomeAbi {
@@ -114,11 +116,21 @@ impl ArrayOutcomeAbi {
                         name: "ArrayMachine".to_owned(),
                         payload: VariantPayload::Tuple(vec![Type::Int, Type::Int]),
                     },
+                    EnumVariant {
+                        name: "MissingKey".to_owned(),
+                        payload: VariantPayload::Tuple(vec![Type::Int]),
+                    },
+                    EnumVariant {
+                        name: "DuplicateKey".to_owned(),
+                        payload: VariantPayload::Tuple(vec![Type::Int]),
+                    },
                 ],
             }),
             ok_variant: 0,
             index_out_of_bounds_variant: 1,
             array_machine_variant: 2,
+            missing_key_variant: 3,
+            duplicate_key_variant: 4,
         }
     }
 }
