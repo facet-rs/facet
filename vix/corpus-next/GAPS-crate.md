@@ -75,9 +75,10 @@ expected to parse or run today.
   zero-argument helper functions and calls remain in the old shape because v2
   bans zero-arg `!` but does not specify zero-arg function invocation. PROPOSAL:
   ratify constants for pure zero-input helpers, or a unit argument spelling.
-- `vix/corpus-next/crate.vix:235` and `:1616`: impossible/malformed cases still
-  use empty-map `.get(...).unwrap()` to raise an error. PROPOSAL: ratify queue item
-  C3 as a typed failure surface with a receipted message.
+- `vix/corpus-next/crate.vix` impossible/malformed cases now raise via `fail`
+  (`MissingWorkspaceField`, `MalformedBuildScriptDirective`); the old empty-map
+  `.get(...).unwrap()` error-raise is gone — see the "RESOLVED (round 11)" note
+  below. Queue item C3 (typed failure surface) is closed.
 - `vix/corpus-next/crate.vix:643`: `compile_rust_unit` still has four near-identical
   `rustc!` arms because path-valued `--emit=` fragments are not values. PROPOSAL:
   add typed argv fragments for `--emit` records, or let `rustc!` accept typed

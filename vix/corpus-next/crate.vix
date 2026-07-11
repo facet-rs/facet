@@ -346,9 +346,10 @@ fn profile_package_spec_from_root(source: Tree) where {
         Some(profiles) => match name == "release" {
             true => match profiles.release {
                 Some(profile) => match profile.package {
-                    Some(packages) => match packages.get(package_name) {
-                        Some(spec) => spec,
-                        None => empty_profile_spec(),
+                    Some(packages) => if packages.has(package_name) {
+                        packages.get(package_name)
+                    } else {
+                        empty_profile_spec()
                     },
                     None => empty_profile_spec(),
                 },
@@ -356,9 +357,10 @@ fn profile_package_spec_from_root(source: Tree) where {
             },
             false => match profiles.dev {
                 Some(profile) => match profile.package {
-                    Some(packages) => match packages.get(package_name) {
-                        Some(spec) => spec,
-                        None => empty_profile_spec(),
+                    Some(packages) => if packages.has(package_name) {
+                        packages.get(package_name)
+                    } else {
+                        empty_profile_spec()
                     },
                     None => empty_profile_spec(),
                 },
@@ -906,13 +908,13 @@ pub fn crate_lock_root_version(graph: Tree) -> String {
 fn resolved_unit(graph: ResolvedGraph) where {
     ix: Int,
 } -> ResolvedUnit {
-    graph.units.get(ix).unwrap()
+    graph.units.get(ix)
 }
 
 fn unit_target(targets: UnitTargetTable) where {
     pkg: Int,
 } -> UnitTarget {
-    targets.targets.get(pkg).unwrap()
+    targets.targets.get(pkg)
 }
 
 fn unit_artifact_path(unit: ResolvedUnit) where {
@@ -1109,10 +1111,7 @@ pub fn crate_resolved_bin(target: Target) where {
 fn selected_contains(selected: Map<Int, Version>) where {
     pkg: Int,
 } -> Bool {
-    match selected.get(pkg) {
-        Some(_) => true,
-        None => false,
-    }
+    selected.has(pkg)
 }
 
 fn guard_is_parent_in_graph(index: Index) where {
@@ -1120,11 +1119,12 @@ fn guard_is_parent_in_graph(index: Index) where {
     clause_id: Int,
     parent: Int,
 } -> Bool {
-    match index.guard_clause_ids.get(guard_id).unwrap() == clause_id
-        && index.guard_pkgs.get(guard_id).unwrap() == parent {
-        true => match index.guard_version_values.get(guard_id) {
-            Some(_) => false,
-            None => index.guard_kinds.get(guard_id).unwrap() == 0,
+    match index.guard_clause_ids.get(guard_id) == clause_id
+        && index.guard_pkgs.get(guard_id) == parent {
+        true => if index.guard_version_values.has(guard_id) {
+            false
+        } else {
+            index.guard_kinds.get(guard_id) == 0
         },
         false => false,
     }
@@ -1147,8 +1147,8 @@ fn solution_dependency_clause(index: Index) where {
     match gate_active_id index where { clause_id, target }
         && selected_contains result.selected where { pkg: parent }
         && clause_has_parent_guard index where { parent, clause_id, guard_ids: index.guard_ids }
-        && index.consequent_tags.get(clause_id).unwrap() == "in_graph" {
-        true => selected_contains result.selected where { pkg: index.consequent_pkgs.get(clause_id).unwrap() },
+        && index.consequent_tags.get(clause_id) == "in_graph" {
+        true => selected_contains result.selected where { pkg: index.consequent_pkgs.get(clause_id) },
         false => false,
     }
 }
@@ -1159,7 +1159,7 @@ fn solution_dep_ids(index: Index) where {
     target: String,
 } -> [Int] {
     index.clause_ids.fold([], |out, clause_id| match solution_dependency_clause index where { result, parent, clause_id, target } {
-        true => [..out, index.consequent_pkgs.get(clause_id).unwrap()],
+        true => [..out, index.consequent_pkgs.get(clause_id)],
         false => out,
     })
 }
