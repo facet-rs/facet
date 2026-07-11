@@ -731,7 +731,7 @@ struct ProgramContractBuilder<'a> {
     schemas: Vec<WeavySchemaContract>,
     schema_ready: Vec<bool>,
     value_shapes: Vec<WeavyValueShapeContract>,
-    value_shape_keys: Vec<Type>,
+    value_shape_types: Vec<(Type, WeavyValueShapeRef)>,
 }
 
 fn empty_schema() -> WeavySchemaContract {
@@ -1324,7 +1324,7 @@ impl<'a> ProgramContractBuilder<'a> {
             schemas: vec![empty_schema(); schemas_preassigned.types.len()],
             schema_ready: vec![false; schemas_preassigned.types.len()],
             value_shapes: Vec::new(),
-            value_shape_keys: Vec::new(),
+            value_shape_types: Vec::new(),
         };
         for ty in builder.schemas_preassigned.types.clone() {
             builder.schema_for_type(&ty, Span { start: 0, end: 0 })?;
@@ -1362,28 +1362,21 @@ impl<'a> ProgramContractBuilder<'a> {
                     })?;
                 callee.shape = WeavyRegionShape::word(WeavyWordKind::Callable(call));
 
-                let shape = WeavyRegionShape::new(vec![
-                    WeavyWordKind::Callable(call).into(),
-                    WeavyWordKind::Scalar.into(),
-                ]);
-                let value_shape = builder
-                    .value_shape_keys
-                    .iter()
-                    .position(|candidate| candidate == &node.ty)
-                    .map(|index| WeavyValueShapeRef(index as u32))
-                    .ok_or_else(|| {
-                        lowering_diagnostic(
-                            node.span,
-                            "closure semantic value shape was not interned",
-                        )
-                    })?;
-                let declared_shape = &builder.value_shapes[value_shape.0 as usize].shape;
-                if declared_shape != &shape {
+                let Type::Function { parameter, result } = &node.ty else {
+                    return Err(lowering_diagnostic(
+                        node.span,
+                        "closure node does not have a function type",
+                    ));
+                };
+                let semantic_call =
+                    builder.call_contract_for_signature(parameter, result, node.span)?;
+                if !builder.call_contract_extends_signature(call, semantic_call) {
                     return Err(lowering_diagnostic(
                         node.span,
                         "closure target ABI disagrees with its semantic function type",
                     ));
                 }
+                let (shape, value_shape) = builder.intern_callable_value_shape(call);
                 let closure_region = builder.regions.node(source.id, node.id, node.span)?;
                 let closure = functions[function_index]
                     .frame
@@ -9044,7 +9037,7 @@ fn schema_order() -> Stream<Check> {
             schemas: vec![empty_schema(); assignments.types.len()],
             schema_ready: vec![false; assignments.types.len()],
             value_shapes: Vec::new(),
-            value_shape_keys: Vec::new(),
+            value_shape_types: Vec::new(),
         };
         for ty in assignments.types.clone() {
             builder
