@@ -3334,10 +3334,37 @@ fn lower_binary(
     }
     let right = lower_value(nodes, bindings, context, &binary.right)?;
     let (ty, op) = match binary.op.value.as_str() {
-        "+" => {
-            require_type(&left, &Type::Int, expr_span(&binary.left))?;
-            require_type(&right, &Type::Int, expr_span(&binary.right))?;
-            (Type::Int, Op::Add)
+        "+" => match &left.ty {
+            Type::Int => {
+                require_type(&right, &Type::Int, expr_span(&binary.right))?;
+                (Type::Int, Op::Add)
+            }
+            Type::Array(element) => {
+                require_type(&right, element, expr_span(&binary.right))?;
+                (left.ty.clone(), Op::ArrayAppend)
+            }
+            _ => {
+                return Err(type_mismatch(
+                    expr_span(&binary.left),
+                    "Int or [T]",
+                    left.ty.name(),
+                ));
+            }
+        },
+        "++" => {
+            let Type::Array(element) = &left.ty else {
+                return Err(type_mismatch(
+                    expr_span(&binary.left),
+                    "[T]",
+                    left.ty.name(),
+                ));
+            };
+            require_type(
+                &right,
+                &Type::Array(element.clone()),
+                expr_span(&binary.right),
+            )?;
+            (left.ty.clone(), Op::ArrayConcat)
         }
         "-" => {
             require_type(&left, &Type::Int, expr_span(&binary.left))?;

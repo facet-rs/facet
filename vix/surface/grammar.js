@@ -177,7 +177,7 @@ module.exports = grammar({
         [PREC.or, "||"],
         [PREC.and, "&&"],
         [PREC.compare, choice("<=>", "==", "!=", "<", "<=", ">", ">=")],
-        [PREC.add, choice("+", "-")],
+        [PREC.add, choice("++", "+", "-")],
         [PREC.mul, choice("*", "/")],
       ];
       return choice(

@@ -457,7 +457,12 @@ fn island_contains_array_ops(island: &Island) -> bool {
         .nodes
         .iter()
         .chain(island.callees.iter().flat_map(|function| &function.nodes))
-        .any(|node| matches!(node.op, Op::Array | Op::ArrayIndex | Op::ArrayLen))
+        .any(|node| {
+            matches!(
+                node.op,
+                Op::Array | Op::ArrayIndex | Op::ArrayLen | Op::ArrayAppend | Op::ArrayConcat
+            )
+        })
 }
 
 fn program_error_attribution(
@@ -2564,6 +2569,12 @@ fn lower_node_sequence(
             Op::Array | Op::ArrayIndex | Op::ArrayLen => {
                 lower_checked_array_node(node, dst, values, sequence, outputs)?
             }
+            Op::ArrayAppend | Op::ArrayConcat => {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "collection addition lowering is not implemented",
+                ));
+            }
             Op::Match { .. } => {
                 lower_match_node(node, dst, dst_region_id, values, sequence, outputs)?
             }
@@ -3464,6 +3475,12 @@ fn lower_node(
             return Err(lowering_diagnostic(
                 node.span,
                 "array length lowering is not implemented",
+            ));
+        }
+        Op::ArrayAppend | Op::ArrayConcat => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "collection addition lowering is not implemented",
             ));
         }
         Op::Variant { variant } => {

@@ -409,6 +409,10 @@ pub enum Op {
     ArrayIndex,
     /// Read the dense array's value-level arity.
     ArrayLen,
+    /// Add one element to a dense array, producing a fresh value.
+    ArrayAppend,
+    /// Concatenate two dense arrays, producing a fresh value.
+    ArrayConcat,
 }
 
 /// One SSA-like operation. Dependencies are explicit node ids; no Rust
@@ -895,6 +899,8 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::Array => op.push(25),
         Op::ArrayIndex => op.push(26),
         Op::ArrayLen => op.push(27),
+        Op::ArrayAppend => op.push(28),
+        Op::ArrayConcat => op.push(29),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());

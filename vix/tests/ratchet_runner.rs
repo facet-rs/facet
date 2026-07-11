@@ -2614,6 +2614,89 @@ fn computed_array_and_dynamic_index() -> Stream<Check> {
     );
 }
 
+#[test]
+fn collection_addition_has_distinct_typed_array_grains() {
+    const SOURCE: &str = r#"
+#[test]
+fn collection_addition() -> Stream<Check> {
+    let xs = [1, 2];
+    let ys = xs + 3;
+    let zs = ys ++ [4, 5];
+    yield expect_eq(zs.len(), 5);
+}
+"#;
+
+    let module = Compiler::new()
+        .compile(SOURCE)
+        .expect("array + and ++ compile to VIR");
+    let function = module
+        .functions
+        .iter()
+        .find(|function| function.name == "collection_addition")
+        .expect("test function exists");
+    let append = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::ArrayAppend))
+        .expect("one-item + becomes ArrayAppend");
+    let concat = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::ArrayConcat))
+        .expect("whole-collection ++ becomes ArrayConcat");
+    let [append_array, appended_element] = append.inputs.as_slice() else {
+        panic!("ArrayAppend has one array and one element input");
+    };
+    let [concat_left, concat_right] = concat.inputs.as_slice() else {
+        panic!("ArrayConcat has two array inputs");
+    };
+
+    assert!(matches!(
+        function.nodes[append_array.0 as usize].op,
+        VirOp::Array
+    ));
+    assert!(matches!(
+        function.nodes[appended_element.0 as usize].op,
+        VirOp::Int(3)
+    ));
+    assert_eq!(*concat_left, append.id);
+    assert!(matches!(
+        function.nodes[concat_right.0 as usize].op,
+        VirOp::Array
+    ));
+    for node in [append, concat] {
+        assert_eq!(node.ty, VirType::array(VirType::Int));
+        assert_eq!(node.effect.kind, EffectKind::Pure);
+        assert!(!node.effect.fallible);
+        assert!(!node.effect.placed);
+    }
+    assert_eq!(
+        &SOURCE[append.span.start as usize..append.span.end as usize],
+        "xs + 3"
+    );
+    assert_eq!(
+        &SOURCE[concat.span.start as usize..concat.span.end as usize],
+        "ys ++ [4, 5]"
+    );
+
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut lowering_cache = LoweringCache::default();
+    let error = match lowering_cache.get_or_lower(&partitioned.islands[0]) {
+        Ok(_) => panic!("collection addition lowering remains the next boundary"),
+        Err(vix::lowering::LoweringError::Diagnostics(diagnostics)) => diagnostics,
+        Err(vix::lowering::LoweringError::Machine(error)) => {
+            panic!("unexpected verifier failure: {error:?}")
+        }
+    };
+    assert_eq!(error.entries.len(), 1);
+    assert_eq!(error.entries[0].code, DiagnosticCode::LoweringUnsupported);
+    assert_eq!(error.entries[0].primary, append.span);
+    assert_eq!(
+        error.entries[0].message(),
+        "collection addition lowering is not implemented"
+    );
+}
+
 fn reject_header(source: &str) -> (&str, usize) {
     let mut message = None;
     let mut line = None;
