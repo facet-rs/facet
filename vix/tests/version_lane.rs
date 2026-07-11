@@ -94,18 +94,40 @@ fn rung_083_version_parse_runs_through_production_path() {
     assert_eq!(report.plain.checks, report.chaos.checks);
 }
 
-/// Green target for rung 084: the VersionSet interval algebra
-/// (contains / intersect / is_empty) runs through the production path. Ignored
-/// until the substrate lands; drop the `#[ignore]` to advance the lane.
+/// Rung 084: VersionSet interval algebra (contains / intersect / is_empty)
+/// runs through the same production source path as rung 083.
 #[test]
-#[ignore = "readiness lane: green once the vix-native VersionSet substrate lands"]
 fn rung_084_version_sets_runs_through_production_path() {
-    let report = run_source(RUNG_084).expect("rung 084 compiles and runs in production");
+    let report = run_source(&lane_source(RUNG_084)).expect("rung 084 compiles and runs in production");
     assert!(
         report.passed(),
         "rung 084 checks pass: {:?}",
         report.plain.checks
     );
+    assert!(report.agrees(), "plain and chaos lanes agree");
+    assert_eq!(report.plain.checks.len(), 6);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+}
+
+#[test]
+fn version_build_identity_and_cargo_prerelease_admission_run_through_production_path() {
+    let report = run_source(&lane_source(
+        r#"
+#[test]
+fn cargo_semver_edges() -> Stream<Check> {
+    let a = parse_version("1.2.3+first");
+    let b = parse_version("1.2.3+second");
+    yield expect(a != b);
+    yield expect_eq(version_precedence(a) where { right: b }, Ordering::Equal);
+    yield expect(!parse_req("^1.2.3").contains(parse_version("2.0.0-alpha")));
+    yield expect(!parse_req("^1.2.3").contains(parse_version("1.2.3-alpha")));
+    yield expect(parse_req(">=1.2.3-alpha").contains(parse_version("1.2.3-beta")));
+    yield expect(!parse_req(">=1.2.3-alpha").contains(parse_version("1.2.4-alpha")));
+}
+"#,
+    ))
+    .expect("Cargo prerelease edges compile and run in production");
+    assert!(report.passed(), "checks pass: {:?}", report.plain.checks);
     assert!(report.agrees(), "plain and chaos lanes agree");
     assert_eq!(report.plain.checks.len(), 6);
     assert_eq!(report.plain.checks, report.chaos.checks);
