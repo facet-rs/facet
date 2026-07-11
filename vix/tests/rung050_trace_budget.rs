@@ -79,7 +79,10 @@ fn substrate() -> Stream<Check> {
 "#;
     let report = run_source(SOURCE).expect("trace-check substrate runs in-process");
     assert!(report.agrees(), "plain and chaos agree: {report:?}");
-    assert!(report.passed(), "value check and trace checks all pass: {report:?}");
+    assert!(
+        report.passed(),
+        "value check and trace checks all pass: {report:?}"
+    );
     assert_eq!(
         report.plain.checks.len(),
         4,
@@ -100,7 +103,10 @@ fn over_budget() -> Stream<Check> {
 }
 "#;
     let report = run_source(SOURCE).expect("over-budget trace substrate compiles and runs");
-    assert!(report.agrees(), "plain and chaos agree on the check family: {report:?}");
+    assert!(
+        report.agrees(),
+        "plain and chaos agree on the check family: {report:?}"
+    );
     assert!(
         !report.passed(),
         "a store-intern budget of 0 is exceeded by the value check's interned constant",
@@ -137,7 +143,10 @@ fn value_only() -> Stream<Check> {
     );
 
     let at = run_source(&at_bound).expect("at-bound source runs");
-    assert!(at.passed(), "a bound at the observed intern count passes: {at:?}");
+    assert!(
+        at.passed(),
+        "a bound at the observed intern count passes: {at:?}"
+    );
 
     let below = run_source(&below_bound).expect("below-bound source runs");
     assert!(
@@ -169,10 +178,12 @@ fn with_trace() -> Stream<Check> {
     let value_only = run_source(VALUE_ONLY).expect("value-only runs");
     let with_trace = run_source(WITH_TRACE).expect("value-plus-trace runs");
 
-    assert!(with_trace.passed(), "the generous trace budgets pass: {with_trace:?}");
+    assert!(
+        with_trace.passed(),
+        "the generous trace budgets pass: {with_trace:?}"
+    );
     assert_eq!(
-        value_only.plain.counters.scheduler_requests,
-        with_trace.plain.counters.scheduler_requests,
+        value_only.plain.counters.scheduler_requests, with_trace.plain.counters.scheduler_requests,
         "trace checks issue no scheduler request",
     );
     assert_eq!(
@@ -210,7 +221,10 @@ fn untaken_trace() -> Stream<Check> {
 "#;
     let report = run_source(SOURCE).expect("conditional trace-site source runs");
     assert!(report.agrees(), "plain and chaos agree: {report:?}");
-    assert!(report.passed(), "the taken checks pass and the untaken trace site is silent: {report:?}");
+    assert!(
+        report.passed(),
+        "the taken checks pass and the untaken trace site is silent: {report:?}"
+    );
     assert_eq!(
         report.plain.checks.len(),
         2,
@@ -305,10 +319,9 @@ fn tight_rss() -> Stream<Check> {
         }
         BudgetOutcome::RssEnforcementUnsupported { .. } => {
             // Acceptable only on a platform this runner cannot soundly observe.
-            assert!(
-                !cfg!(any(target_os = "macos", target_os = "linux")),
-                "macOS and Linux must enforce RSS, not report the seam: {outcome:?}",
-            );
+            // macOS and Linux must enforce RSS, never report the seam.
+            #[cfg(any(target_os = "macos", target_os = "linux"))]
+            panic!("macOS and Linux must enforce RSS, not report the seam: {outcome:?}");
         }
         other => panic!("expected an RSS kill or the typed platform seam, got {other:?}"),
     }

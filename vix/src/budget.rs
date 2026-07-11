@@ -151,14 +151,14 @@ pub fn run_under_budget(child_exe: &Path, budget: &Budget, workload: &Workload) 
 
     // Hand the child its request and close stdin so the child reaches EOF and
     // begins execution.
-    if let Some(mut stdin) = child.stdin.take() {
-        if let Err(error) = stdin.write_all(request.as_bytes()) {
-            let _ = child.kill();
-            let _ = child.wait();
-            return BudgetOutcome::ChildError {
-                detail: format!("writing workload request: {error}"),
-            };
-        }
+    if let Some(mut stdin) = child.stdin.take()
+        && let Err(error) = stdin.write_all(request.as_bytes())
+    {
+        let _ = child.kill();
+        let _ = child.wait();
+        return BudgetOutcome::ChildError {
+            detail: format!("writing workload request: {error}"),
+        };
     }
 
     let pid = child.id();
@@ -191,15 +191,15 @@ pub fn run_under_budget(child_exe: &Path, budget: &Budget, workload: &Workload) 
         if let Some(limit) = budget.rss_bytes {
             // A transient `None` (the child is between fork and exec, or has
             // just exited) simply skips this poll; `try_wait` above owns exit.
-            if let Some(observed) = resident_bytes(pid) {
-                if observed > limit {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return BudgetOutcome::OverRss {
-                        budget_bytes: limit,
-                        observed_bytes: observed,
-                    };
-                }
+            if let Some(observed) = resident_bytes(pid)
+                && observed > limit
+            {
+                let _ = child.kill();
+                let _ = child.wait();
+                return BudgetOutcome::OverRss {
+                    budget_bytes: limit,
+                    observed_bytes: observed,
+                };
             }
         }
 

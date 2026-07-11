@@ -1174,10 +1174,7 @@ fn rung_031_split_last_compiles_to_generator_codata() {
     assert_eq!(shifted_owned.len(), owned.len());
     for (base, shifted) in owned.iter().zip(&shifted_owned) {
         assert_eq!(
-            canonical_recipe(
-                function,
-                base.site.value_check().expect("value-check site")
-            ),
+            canonical_recipe(function, base.site.value_check().expect("value-check site")),
             canonical_recipe(
                 shifted_function,
                 shifted.site.value_check().expect("value-check site")
@@ -1200,7 +1197,10 @@ fn rung_031_split_last_compiles_to_generator_codata() {
             )
         })
         .map(|owned| {
-            canonical_recipe(function, owned.site.value_check().expect("value-check site"))
+            canonical_recipe(
+                function,
+                owned.site.value_check().expect("value-check site"),
+            )
         })
         .collect::<Vec<_>>();
     assert_eq!(some_recipes.len(), 3);
@@ -1443,7 +1443,7 @@ fn faulting_scrutinee() -> Stream<Check> {
         }) => {
             assert_eq!(test, "faulting_scrutinee");
             assert!(
-                matches!(failure, FailureValue::IndexOutOfBounds { .. }),
+                matches!(*failure, FailureValue::IndexOutOfBounds { .. }),
                 "the scrutinee's out-of-bounds index is preserved as a typed failure: {failure:?}",
             );
             assert!(

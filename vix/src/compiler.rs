@@ -1119,9 +1119,9 @@ fn duration_nanos(text: &str, span: Span) -> Result<u64, Diagnostics> {
             ));
         }
     };
-    magnitude.checked_mul(per_unit).ok_or_else(|| {
-        type_mismatch(span, "a representable duration", format!("`{text}`"))
-    })
+    magnitude
+        .checked_mul(per_unit)
+        .ok_or_else(|| type_mismatch(span, "a representable duration", format!("`{text}`")))
 }
 
 /// Convert a byte-size literal to a byte count with checked arithmetic. Binary
@@ -1485,17 +1485,15 @@ fn lower_generator_body(
                     // historical `Op::Yield` codata marker so flat tests keep
                     // their exact VIR shape. A trace site publishes no codata
                     // island, so it emits no marker node.
-                    if top_level {
-                        if let CheckRecipe::Value { check } = &site.recipe {
-                            push_node(
-                                nodes,
-                                statement.span,
-                                Type::StreamCheck,
-                                EffectFacts::CODATA,
-                                vec![*check],
-                                Op::Yield,
-                            );
-                        }
+                    if top_level && let CheckRecipe::Value { check } = &site.recipe {
+                        push_node(
+                            nodes,
+                            statement.span,
+                            Type::StreamCheck,
+                            EffectFacts::CODATA,
+                            vec![*check],
+                            Op::Yield,
+                        );
                     }
                     steps.push(GeneratorStep::Yield(site));
                 }
@@ -2002,10 +2000,13 @@ fn trace_bound(call: &ast::Call) -> Result<i64, Diagnostics> {
             "expression",
         ));
     };
-    number
-        .value
-        .parse::<i64>()
-        .map_err(|_| type_mismatch(number.span, "Int", format!("number literal `{}`", number.value)))
+    number.value.parse::<i64>().map_err(|_| {
+        type_mismatch(
+            number.span,
+            "Int",
+            format!("number literal `{}`", number.value),
+        )
+    })
 }
 
 #[derive(Clone)]
