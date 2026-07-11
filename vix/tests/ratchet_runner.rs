@@ -2386,7 +2386,7 @@ fn rung_026_reaches_vir_and_is_red_at_array_lowering() {
     let error = run_source(RUNG_026)
         .expect_err("rung 026 is deliberately red at production array lowering");
     let vix::ratchet::RunError::Diagnostics(diagnostics) = error else {
-        panic!("rung 026 must remain a lowering diagnostic");
+        panic!("rung 026 boundary changed: {error:?}");
     };
     assert_eq!(diagnostics.entries.len(), 1);
     let diagnostic = &diagnostics.entries[0];
