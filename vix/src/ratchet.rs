@@ -301,13 +301,6 @@ impl PreparedRun {
     }
 }
 
-/// Prepare and execute `source` in one call: the ordinary in-process production
-/// path. The outer budget runner instead splits these two phases across the
-/// readiness handshake so only execution is measured.
-pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
-    prepare_source(source)?.execute()
-}
-
 /// Evaluate one value-check island as an ordinary pure demand and record its
 /// provenance-keyed outcome. Provenance is the site's stable `YieldSiteId`, and
 /// with no dynamic keys the demand location is byte-identical to the historical

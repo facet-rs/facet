@@ -418,6 +418,28 @@ fn tight_wall() -> Stream<Check> {
     );
 }
 
+/// A child that exits before readiness, or emits a non-protocol line in place
+/// of readiness, is typed red. Neither shape may be mistaken for a completed
+/// budget certificate.
+#[test]
+fn early_or_malformed_child_protocol_is_typed_red() {
+    const SOURCE: &str = r#"
+#[test { budget_wall: 1s }]
+fn protocol() -> Stream<Check> {
+    yield expect(true);
+}
+"#;
+    let budget = budget_of(SOURCE);
+    for child in [Path::new("/usr/bin/true"), Path::new("/bin/echo")] {
+        let outcome = run_under_budget(child, &budget, &Workload::Immediate);
+        assert!(
+            matches!(outcome, BudgetOutcome::ChildError { .. }),
+            "{child:?} must be a typed protocol failure: {outcome:?}",
+        );
+        assert!(!outcome.passed(), "protocol failure is red: {outcome:?}");
+    }
+}
+
 /// A unit-bearing literal is accepted only inside an attribute value. In an
 /// ordinary value position it is a typed error, never a silently-parsed number.
 #[test]

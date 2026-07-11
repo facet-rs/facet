@@ -61,6 +61,26 @@ pub enum Workload {
     SlowPrepare { prepare_ns: u64 },
 }
 
+/// The parent → child protocol. Preparation is requested first; execution is
+/// separately released only after the child publishes [`ChildEvent::Ready`].
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum ParentCommand {
+    Prepare { workload: Workload },
+    Execute,
+}
+
+/// The child → parent protocol. `Ready` is a real synchronization point: by
+/// the time it is emitted, parsing, checking, lowering, verification, and
+/// native compilation have completed, while execution is still blocked on the
+/// parent's typed `Execute` release.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum ChildEvent {
+    Ready,
+    Completed { report: ChildReport },
+}
+
 /// The child → parent half of the IPC protocol: what a completed workload
 /// reports. A killed workload sends nothing; its outcome is the kill itself.
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -98,7 +118,15 @@ pub enum BudgetOutcome {
     /// The child exceeded the resident-set ceiling and was killed.
     OverRss {
         budget_bytes: u64,
+        /// Absolute child RSS captured while it was waiting at the readiness
+        /// boundary. Compiler/JIT/runtime baseline is deliberately not charged
+        /// to the program's O(1)-space execution.
+        ready_baseline_bytes: u64,
+        /// Absolute RSS observed at the execution peak that breached the
+        /// declared execution-owned delta budget.
         observed_bytes: u64,
+        /// `observed_bytes - ready_baseline_bytes`, the charged execution peak.
+        execution_peak_bytes: u64,
     },
     /// The child could not be spawned, exited abnormally, or its report could
     /// not be decoded.
@@ -178,15 +206,6 @@ pub fn run_under_budget(child_exe: &Path, budget: &Budget, workload: &Workload) 
         };
     }
 
-    let request = match facet_json::to_string(workload) {
-        Ok(request) => request,
-        Err(error) => {
-            return BudgetOutcome::ChildError {
-                detail: format!("encoding workload request: {error}"),
-            };
-        }
-    };
-
     let mut child = match Command::new(child_exe)
         .stdin(Stdio::piped())
         .stdout(Stdio::piped())
@@ -200,20 +219,66 @@ pub fn run_under_budget(child_exe: &Path, budget: &Budget, workload: &Workload) 
         }
     };
 
-    // Hand the child its request and close stdin so the child reaches EOF and
-    // begins execution.
-    if let Some(mut stdin) = child.stdin.take()
-        && let Err(error) = stdin.write_all(request.as_bytes())
-    {
+    let pid = child.id();
+    let Some(mut stdin) = child.stdin.take() else {
         let _ = child.kill();
         let _ = child.wait();
         return BudgetOutcome::ChildError {
-            detail: format!("writing workload request: {error}"),
+            detail: "spawned child did not provide stdin".to_owned(),
         };
+    };
+    let Some(stdout) = child.stdout.take() else {
+        let _ = child.kill();
+        let _ = child.wait();
+        return BudgetOutcome::ChildError {
+            detail: "spawned child did not provide stdout".to_owned(),
+        };
+    };
+    let mut stdout = BufReader::new(stdout);
+
+    if let Err(detail) = write_parent_command(
+        &mut stdin,
+        &ParentCommand::Prepare {
+            workload: workload.clone(),
+        },
+    ) {
+        return kill_with_child_error(&mut child, detail);
     }
 
-    let pid = child.id();
+    match read_child_event(&mut stdout) {
+        Ok(ChildEvent::Ready) => {}
+        Ok(ChildEvent::Completed { .. }) => {
+            return kill_with_child_error(
+                &mut child,
+                "child completed before publishing readiness".to_owned(),
+            );
+        }
+        Err(detail) => return kill_with_child_error(&mut child, detail),
+    }
+
+    // The child cannot execute until it reads `Execute`, so this sample is the
+    // documented readiness baseline rather than an arbitrary spawn-time RSS.
+    let ready_baseline = if budget.rss_bytes.is_some() {
+        match resident_bytes(pid) {
+            Some(bytes) => bytes,
+            None => {
+                return kill_with_child_error(
+                    &mut child,
+                    "observing child RSS at readiness boundary".to_owned(),
+                );
+            }
+        }
+    } else {
+        0
+    };
+
+    // The wall clock begins with the typed execution release, after every
+    // parse/check/lower/verify/JIT action has reached the ready boundary.
     let start = Instant::now();
+    if let Err(detail) = write_parent_command(&mut stdin, &ParentCommand::Execute) {
+        return kill_with_child_error(&mut child, detail);
+    }
+    drop(stdin);
     loop {
         let elapsed = start.elapsed();
         match child.try_wait() {
@@ -226,7 +291,7 @@ pub fn run_under_budget(child_exe: &Path, budget: &Budget, workload: &Workload) 
                         elapsed_ns: saturating_nanos(elapsed),
                     };
                 }
-                return finished(&mut child, status);
+                return finished(&mut child, &mut stdout, status);
             }
             Ok(None) => {}
             Err(error) => {
@@ -253,13 +318,15 @@ pub fn run_under_budget(child_exe: &Path, budget: &Budget, workload: &Workload) 
             // A transient `None` (the child is between fork and exec, or has
             // just exited) simply skips this poll; `try_wait` above owns exit.
             if let Some(observed) = resident_bytes(pid)
-                && observed > limit
+                && observed.saturating_sub(ready_baseline) > limit
             {
                 let _ = child.kill();
                 let _ = child.wait();
                 return BudgetOutcome::OverRss {
                     budget_bytes: limit,
+                    ready_baseline_bytes: ready_baseline,
                     observed_bytes: observed,
+                    execution_peak_bytes: observed.saturating_sub(ready_baseline),
                 };
             }
         }
@@ -269,21 +336,22 @@ pub fn run_under_budget(child_exe: &Path, budget: &Budget, workload: &Workload) 
 }
 
 /// Collect a normally-exited child's report from stdout.
-fn finished(child: &mut Child, status: ExitStatus) -> BudgetOutcome {
-    let mut output = String::new();
-    if let Some(mut stdout) = child.stdout.take() {
-        let _ = stdout.read_to_string(&mut output);
-    }
+fn finished(
+    _child: &mut Child,
+    stdout: &mut BufReader<ChildStdout>,
+    status: ExitStatus,
+) -> BudgetOutcome {
     if !status.success() {
         return BudgetOutcome::ChildError {
-            detail: format!("child exited with {status}; stdout: {output:?}"),
+            detail: format!("child exited with {status}"),
         };
     }
-    match facet_json::from_str::<ChildReport>(&output) {
-        Ok(report) => BudgetOutcome::Within { report },
-        Err(error) => BudgetOutcome::ChildError {
-            detail: format!("decoding child report: {error}; stdout: {output:?}"),
+    match read_child_event(stdout) {
+        Ok(ChildEvent::Completed { report }) => BudgetOutcome::Within { report },
+        Ok(ChildEvent::Ready) => BudgetOutcome::ChildError {
+            detail: "child exited after a duplicate readiness event".to_owned(),
         },
+        Err(detail) => BudgetOutcome::ChildError { detail },
     }
 }
 
@@ -291,25 +359,77 @@ fn saturating_nanos(duration: Duration) -> u64 {
     u64::try_from(duration.as_nanos()).unwrap_or(u64::MAX)
 }
 
-/// The child entry point: read a workload request from stdin, prepare it,
-/// execute it, and write the report to stdout as facet-json. Runaway workloads
-/// never reach the write; the parent watchdog terminates them. Never returns.
+/// The child entry point. It prepares a typed workload, publishes `Ready`, then
+/// waits for the parent's typed execution release. Runaway workloads never
+/// publish `Completed`; the parent watchdog terminates them. Never returns.
 pub fn run_child_from_stdio() -> ! {
-    let mut input = String::new();
-    std::io::stdin()
-        .read_to_string(&mut input)
-        .expect("read workload request from stdin");
-    let workload: Workload =
-        facet_json::from_str(&input).expect("decode workload request from stdin");
+    let stdin = std::io::stdin();
+    let mut input = BufReader::new(stdin.lock());
+    let command = read_parent_command(&mut input).expect("decode workload preparation command");
+    let ParentCommand::Prepare { workload } = command else {
+        panic!("first parent command must prepare workload");
+    };
     let prepared = prepare_workload(&workload);
+    let stdout = std::io::stdout();
+    let mut output = stdout.lock();
+    write_child_event(&mut output, &ChildEvent::Ready).expect("write readiness event");
+    let command = read_parent_command(&mut input).expect("decode workload execution command");
+    if command != ParentCommand::Execute {
+        panic!("second parent command must release execution");
+    }
     let report = execute_prepared(prepared);
-    let encoded = facet_json::to_string(&report).expect("encode child report");
-    let mut stdout = std::io::stdout();
-    stdout
-        .write_all(encoded.as_bytes())
-        .expect("write child report to stdout");
-    stdout.flush().expect("flush child report");
+    write_child_event(&mut output, &ChildEvent::Completed { report })
+        .expect("write child completion event");
     std::process::exit(0);
+}
+
+fn write_parent_command(writer: &mut ChildStdin, command: &ParentCommand) -> Result<(), String> {
+    write_frame(writer, command).map_err(|error| format!("writing parent command: {error}"))
+}
+
+fn write_child_event(
+    writer: &mut impl Write,
+    event: &ChildEvent,
+) -> Result<(), String> {
+    write_frame(writer, event).map_err(|error| format!("writing child event: {error}"))
+}
+
+fn write_frame<T: for<'a> facet::Facet<'a>>(
+    writer: &mut impl Write,
+    value: &T,
+) -> Result<(), String> {
+    let encoded = facet_json::to_string(value).map_err(|error| error.to_string())?;
+    writer.write_all(encoded.as_bytes()).map_err(|error| error.to_string())?;
+    writer.write_all(b"\n").map_err(|error| error.to_string())?;
+    writer.flush().map_err(|error| error.to_string())
+}
+
+fn read_parent_command(reader: &mut impl BufRead) -> Result<ParentCommand, String> {
+    read_frame(reader, "parent command")
+}
+
+fn read_child_event(reader: &mut impl BufRead) -> Result<ChildEvent, String> {
+    read_frame(reader, "child event")
+}
+
+fn read_frame<T: for<'a> facet::Facet<'a>>(
+    reader: &mut impl BufRead,
+    kind: &str,
+) -> Result<T, String> {
+    let mut line = String::new();
+    let bytes = reader
+        .read_line(&mut line)
+        .map_err(|error| format!("reading {kind}: {error}"))?;
+    if bytes == 0 {
+        return Err(format!("child exited before {kind}"));
+    }
+    facet_json::from_str(&line).map_err(|error| format!("decoding {kind}: {error}"))
+}
+
+fn kill_with_child_error(child: &mut Child, detail: String) -> BudgetOutcome {
+    let _ = child.kill();
+    let _ = child.wait();
+    BudgetOutcome::ChildError { detail }
 }
 
 /// A workload after its preparation phase: all parsing, checking, lowering,
