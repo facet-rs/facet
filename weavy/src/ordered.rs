@@ -214,12 +214,14 @@ fn rotate_left<K: Clone, V: Clone>(node: Arc<Node<K, V>>) -> Arc<Node<K, V>> {
         return node;
     };
     let Node::Branch {
-        left: pivot_left, ..
+        left: pivot_left,
+        right: pivot_right,
+        ..
     } = right.as_ref()
     else {
         return node;
     };
-    if Node::height(pivot_left) > 0 {
+    if Node::height(pivot_left) > Node::height(pivot_right) {
         return rotate_left_right(node);
     }
     rotate_left_single(node)
@@ -230,12 +232,14 @@ fn rotate_right<K: Clone, V: Clone>(node: Arc<Node<K, V>>) -> Arc<Node<K, V>> {
         return node;
     };
     let Node::Branch {
-        right: pivot_right, ..
+        left: pivot_left,
+        right: pivot_right,
+        ..
     } = left.as_ref()
     else {
         return node;
     };
-    if Node::height(pivot_right) > 0 {
+    if Node::height(pivot_right) > Node::height(pivot_left) {
         return rotate_right_left(node);
     }
     rotate_right_single(node)
@@ -476,5 +480,15 @@ mod tests {
         let map = PersistentMap::default().add(7, Poison).unwrap();
         assert!(map.has(&7));
         assert!(!map.has(&8));
+    }
+
+    #[test]
+    fn accumulator_keeps_a_logarithmic_spine() {
+        let mut map = PersistentMap::default();
+        for key in 0..200_000 {
+            map = map.add(key, key * 2).expect("distinct key");
+        }
+        assert_eq!(map.get(&123_456), Some(&246_912));
+        assert!(Node::height(&map.root) < 32, "AVL height is logarithmic");
     }
 }
