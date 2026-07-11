@@ -1488,6 +1488,7 @@ enum PreludeReceiverType {
     Array,
     Map,
     Set,
+    Stream,
 }
 
 impl PreludeReceiverType {
@@ -1496,6 +1497,7 @@ impl PreludeReceiverType {
             Type::Array(_) => Some(Self::Array),
             Type::Map { .. } => Some(Self::Map),
             Type::Set(_) => Some(Self::Set),
+            Type::Stream { .. } => Some(Self::Stream),
             _ => None,
         }
     }
@@ -1505,6 +1507,7 @@ impl PreludeReceiverType {
 enum PreludeMethod {
     ArrayLen,
     ArrayMap,
+    ArrayStream,
     MapGet,
     MapHas,
     MapLen,
@@ -1513,6 +1516,7 @@ enum PreludeMethod {
     SetHas,
     SetLen,
     SetValues,
+    StreamCollect,
 }
 
 #[derive(Clone, Copy)]
@@ -1541,6 +1545,12 @@ impl PreludeMethodRegistry {
                 name: "map",
                 arity: 1,
                 method: PreludeMethod::ArrayMap,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Array,
+                name: "stream",
+                arity: 0,
+                method: PreludeMethod::ArrayStream,
             },
             PreludeMethodEntry {
                 receiver: PreludeReceiverType::Map,
@@ -1589,6 +1599,12 @@ impl PreludeMethodRegistry {
                 name: "values",
                 arity: 0,
                 method: PreludeMethod::SetValues,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Stream,
+                name: "collect",
+                arity: 0,
+                method: PreludeMethod::StreamCollect,
             },
         ],
     };
@@ -2053,6 +2069,23 @@ fn lower_method_call(
                 ty,
             })
         }
+        PreludeMethod::ArrayStream => {
+            let Type::Array(element) = &receiver.ty else {
+                unreachable!("array stream registry entry has an array receiver")
+            };
+            let ty = Type::stream(Type::Int, element.as_ref().clone());
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::CODATA,
+                    vec![receiver.node],
+                    Op::ArrayStream,
+                ),
+                ty,
+            })
+        }
         PreludeMethod::MapGet | PreludeMethod::MapHas | PreludeMethod::MapWith => {
             let (key, value) = receiver
                 .ty
@@ -2169,6 +2202,27 @@ fn lower_method_call(
                     EffectFacts::PURE,
                     vec![receiver.node],
                     Op::SetValues,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::StreamCollect => {
+            let (key, value) = receiver
+                .ty
+                .stream_types()
+                .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
+            let ty = Type::map(key.clone(), value.clone());
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts {
+                        fallible: true,
+                        ..EffectFacts::PURE
+                    },
+                    vec![receiver.node],
+                    Op::StreamCollect,
                 ),
                 ty,
             })

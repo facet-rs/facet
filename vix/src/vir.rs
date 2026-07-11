@@ -215,6 +215,12 @@ pub enum Type {
     },
     /// A canonically ordered set value with no observable payload column.
     Set(Box<Type>),
+    /// Keyed codata recipe. A stream node has no realized payload in a Weavy
+    /// frame; a terminal operation such as `collect` lowers the recipe.
+    Stream {
+        key: Box<Type>,
+        value: Box<Type>,
+    },
 }
 
 impl Type {
@@ -247,6 +253,14 @@ impl Type {
     }
 
     #[must_use]
+    pub fn stream(key: Type, value: Type) -> Self {
+        Self::Stream {
+            key: Box::new(key),
+            value: Box::new(value),
+        }
+    }
+
+    #[must_use]
     pub fn array_element(&self) -> Option<&Type> {
         match self {
             Self::Array(element) => Some(element),
@@ -266,6 +280,14 @@ impl Type {
     pub fn set_element(&self) -> Option<&Type> {
         match self {
             Self::Set(element) => Some(element),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn stream_types(&self) -> Option<(&Type, &Type)> {
+        match self {
+            Self::Stream { key, value } => Some((key, value)),
             _ => None,
         }
     }
@@ -303,6 +325,9 @@ impl Type {
             Self::Array(element) => format!("[{}]", element.name()),
             Self::Map { key, value } => format!("Map<{}, {}>", key.name(), value.name()),
             Self::Set(element) => format!("Set<{}>", element.name()),
+            Self::Stream { key, value } => {
+                format!("Stream<{}, {}>", key.name(), value.name())
+            }
         }
     }
 
@@ -318,6 +343,7 @@ impl Type {
             | Self::Array(_)
             | Self::Map { .. }
             | Self::Set(_) => Some(1),
+            Self::Stream { .. } => Some(0),
             Self::Function { .. } => Some(2),
             Self::StreamCheck => None,
             Self::Tuple(elements) => elements.iter().try_fold(0usize, |width, element| {
@@ -352,7 +378,7 @@ impl Type {
                 .variants
                 .iter()
                 .all(|variant| variant.payload.equality_is_structural()),
-            Self::Check | Self::StreamCheck => false,
+            Self::Check | Self::StreamCheck | Self::Stream { .. } => false,
         }
     }
 
@@ -382,7 +408,7 @@ impl Type {
                             .all(|field| field.ty.structural_order_is_defined()),
                     })
             }
-            Self::Check | Self::StreamCheck => false,
+            Self::Check | Self::StreamCheck | Self::Stream { .. } => false,
         }
     }
 }
@@ -500,6 +526,10 @@ pub enum Op {
     SetHas,
     SetLen,
     SetValues,
+    /// View authored array positions as stable stream keys.
+    ArrayStream,
+    /// Materialize a keyed codata recipe as its canonical Map value.
+    StreamCollect,
     /// Concatenate two immutable strings.
     StringConcat,
 }
@@ -1099,6 +1129,8 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
                 ArrayMapGrainKey::InputPosition => 0,
             });
         }
+        Op::ArrayStream => op.push(46),
+        Op::StreamCollect => op.push(47),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());
@@ -1165,6 +1197,12 @@ pub(crate) fn canonical_type(ty: &Type) -> Vec<u8> {
         Type::Set(element) => {
             let mut bytes = b"set".to_vec();
             frame(&mut bytes, &canonical_type(element));
+            bytes
+        }
+        Type::Stream { key, value } => {
+            let mut bytes = b"stream".to_vec();
+            frame(&mut bytes, &canonical_type(key));
+            frame(&mut bytes, &canonical_type(value));
             bytes
         }
         Type::Enum(enumeration) => {

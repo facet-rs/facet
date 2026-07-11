@@ -540,6 +540,7 @@ fn type_contains_array(ty: &Type) -> bool {
         }
         Type::Map { key, value } => type_contains_array(key) || type_contains_array(value),
         Type::Set(element) => type_contains_array(element),
+        Type::Stream { key, value } => type_contains_array(key) || type_contains_array(value),
         Type::Bool | Type::Int | Type::Check | Type::StreamCheck | Type::String => false,
     }
 }
@@ -798,6 +799,11 @@ impl SchemaAssignments {
 }
 
 fn collect_schema_types(ty: &Type, out: &mut Vec<Type>) {
+    if let Type::Stream { key, value } = ty {
+        collect_schema_types(key, out);
+        collect_schema_types(value, out);
+        return;
+    }
     out.push(ty.clone());
     match ty {
         Type::Function { parameter, result } => {
@@ -832,6 +838,7 @@ fn collect_schema_types(ty: &Type, out: &mut Vec<Type>) {
             );
         }
         Type::Set(element) => collect_schema_types(element, out),
+        Type::Stream { .. } => unreachable!("stream schemas return before insertion"),
         Type::Bool | Type::Int | Type::Check | Type::StreamCheck | Type::String => {}
     }
 }
@@ -1214,7 +1221,11 @@ impl SemanticEqualityEmitter<'_, '_, '_> {
                 self.code.jump(next);
                 self.code.bind(done, node.span)?;
             }
-            Type::Map { .. } | Type::Set(_) | Type::Function { .. } | Type::StreamCheck => {
+            Type::Map { .. }
+            | Type::Set(_)
+            | Type::Function { .. }
+            | Type::StreamCheck
+            | Type::Stream { .. } => {
                 return Err(lowering_diagnostic(
                     node.span,
                     "equality lowering is not implemented for this VIR type",
@@ -1628,7 +1639,6 @@ impl<'a> ProgramContractBuilder<'a> {
         slot: FrameSlot,
         ty: &Type,
     ) -> Result<WeavyFrameRegion, Diagnostics> {
-        self.schema_for_type(ty, Span { start: 0, end: 0 })?;
         let shape = self.shape_for_type(ty, Span { start: 0, end: 0 })?;
         let mut region = WeavyFrameRegion::new(slot.byte_offset(), shape);
         if let Some(value_shape) = self.value_shape_for_type(ty, Span { start: 0, end: 0 })? {
@@ -1664,6 +1674,7 @@ impl<'a> ProgramContractBuilder<'a> {
             Type::Array(_) | Type::Map { .. } | Type::Set(_) => Ok(WeavyRegionShape::word(
                 WeavyWordKind::Handle(self.schema_for_type(ty, span)?),
             )),
+            Type::Stream { .. } => Ok(WeavyRegionShape::default()),
         }
     }
 
@@ -1762,9 +1773,11 @@ impl<'a> ProgramContractBuilder<'a> {
         span: Span,
     ) -> Result<Option<WeavyValueShapeRef>, Diagnostics> {
         match ty {
-            Type::Function { .. } | Type::Tuple(_) | Type::Record(_) | Type::Enum(_) => {
-                Ok(Some(self.intern_value_shape_for_type(ty, span)?))
-            }
+            Type::Function { .. }
+            | Type::Tuple(_)
+            | Type::Record(_)
+            | Type::Enum(_)
+            | Type::Stream { .. } => Ok(Some(self.intern_value_shape_for_type(ty, span)?)),
             Type::Bool
             | Type::Int
             | Type::Check
@@ -1813,6 +1826,7 @@ impl<'a> ProgramContractBuilder<'a> {
                 fields: self.value_fields(record.fields.iter().map(|field| &field.ty), span)?,
             },
             Type::Enum(enumeration) => self.enum_value_shape_kind(enumeration, span)?,
+            Type::Stream { .. } => WeavyValueShapeKind::Product { fields: Vec::new() },
             _ => {
                 return Err(lowering_diagnostic(
                     span,
@@ -2870,7 +2884,8 @@ fn comparison_temporary_types(ty: &Type, out: &mut Vec<Type>) {
         | Type::Map { .. }
         | Type::Set(_)
         | Type::Function { .. }
-        | Type::StreamCheck => {}
+        | Type::StreamCheck
+        | Type::Stream { .. } => {}
     }
 }
 
@@ -3740,7 +3755,7 @@ fn collect_typed_compare_leaves(
                 "function comparison requires stable closure identity",
             ));
         }
-        Type::Check | Type::StreamCheck => {
+        Type::Check | Type::StreamCheck | Type::Stream { .. } => {
             return Err(lowering_diagnostic(
                 node.span,
                 "comparison reached a non-orderable VIR type",
@@ -3835,6 +3850,7 @@ enum ValueRepresentation {
     Word,
     RealizedHandle,
     InlineComposite,
+    CodataRecipe,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -4211,6 +4227,12 @@ fn lower_node(
             return Err(lowering_diagnostic(
                 node.span,
                 "array map lowering is not implemented",
+            ));
+        }
+        Op::ArrayStream | Op::StreamCollect => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "stream recipe lowering is not implemented",
             ));
         }
         Op::ArrayAppend | Op::ArrayConcat => {
@@ -7269,6 +7291,10 @@ fn copy_lowered_value(
             dst: destination_region,
             src: source.region_id,
         }]),
+        ValueRepresentation::CodataRecipe => Err(lowering_diagnostic(
+            node.span,
+            "codata recipes cannot be copied as frame values",
+        )),
     }
 }
 
@@ -7286,6 +7312,7 @@ fn representation_for_type(ty: &Type, span: Span) -> Result<ValueRepresentation,
             Ok(ValueRepresentation::InlineComposite)
         }
         Type::Array(_) | Type::Map { .. } | Type::Set(_) => Ok(ValueRepresentation::RealizedHandle),
+        Type::Stream { .. } => Ok(ValueRepresentation::CodataRecipe),
         Type::StreamCheck => Err(lowering_diagnostic(
             span,
             "Stream<Check> has no island-interior word representation",
