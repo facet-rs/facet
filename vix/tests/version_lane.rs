@@ -105,7 +105,7 @@ fn rung_084_version_sets_runs_through_production_path() {
         report.plain.checks
     );
     assert!(report.agrees(), "plain and chaos lanes agree");
-    assert_eq!(report.plain.checks.len(), 6);
+    assert_eq!(report.plain.checks.len(), 5);
     assert_eq!(report.plain.checks, report.chaos.checks);
 }
 

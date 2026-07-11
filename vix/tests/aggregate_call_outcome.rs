@@ -1,6 +1,5 @@
-//! Red certificate for the checked-call ABI of an aggregate that contains an
-//! array. The result must retain its structural value-shape when it crosses the
-//! hidden array outcome, rather than being treated as a bare handle word.
+//! Checked-call ABI for an aggregate that contains an array. The result retains
+//! its structural value-shape when it crosses the hidden array outcome.
 
 use vix::ratchet::run_source;
 
@@ -14,10 +13,11 @@ fn t() -> Stream<Check> {
 "#;
 
 #[test]
-fn aggregate_array_call_outcome_is_an_exact_red_boundary() {
-    let error = run_source(SOURCE).expect_err("aggregate return currently reaches the typed ABI bug");
-    assert!(
-        format!("{error:?}").contains("StructuralFieldSourceMismatch"),
-        "expected the checked-call structural-field boundary, got {error:?}"
-    );
+fn aggregate_array_call_outcome_retains_its_structural_value_shape() {
+    let report = run_source(SOURCE).expect("aggregate return compiles and runs through the checked ABI");
+    assert!(report.passed(), "checks pass: {:?}", report.plain.checks);
+    assert!(report.agrees(), "plain and chaos lanes agree");
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    assert_eq!(report.plain.counters.pure_host_calls, 0);
 }

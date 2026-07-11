@@ -2387,8 +2387,8 @@ impl<'a> ProgramContractBuilder<'a> {
                     .byte_offset(),
                 shape.clone(),
             );
-            if self.field_requires_nested_ref(&shape) {
-                field = field.with_value_shape(self.intern_value_shape_for_type(ty, span)?);
+            if let Some(value_shape) = self.value_shape_for_type(ty, span)? {
+                field = field.with_value_shape(value_shape);
             }
             offset_words = offset_words
                 .checked_add(shape.words.len())
@@ -2420,9 +2420,8 @@ impl<'a> ProgramContractBuilder<'a> {
                         .byte_offset(),
                     shape.clone(),
                 );
-                if self.field_requires_nested_ref(&shape) {
-                    field =
-                        field.with_value_shape(self.intern_value_shape_for_type(element.ty, span)?);
+                if let Some(value_shape) = self.value_shape_for_type(element.ty, span)? {
+                    field = field.with_value_shape(value_shape);
                 }
                 fields.push(field);
             }
@@ -2435,10 +2434,6 @@ impl<'a> ProgramContractBuilder<'a> {
             },
             variants,
         })
-    }
-
-    fn field_requires_nested_ref(&self, shape: &WeavyRegionShape) -> bool {
-        !(shape.words.len() == 1 && shape.words[0].as_slice().len() == 1)
     }
 
     fn call_contract_for_signature(
