@@ -222,6 +222,26 @@ pub enum PayloadKind {
     Inline,
     OpaqueBytes { byte_comparable: bool },
     DenseArray { element: SchemaRef },
+    OrderedCollection(OrderedCollectionContract),
+}
+
+/// The value arity represented by one persistent ordered-collection page.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OrderedCollectionKind {
+    Map,
+    Set,
+}
+
+/// Closed, verifier-owned witnesses for an immutable persistent ordered
+/// collection. `key` is compared structurally by the lowering admitted for
+/// this exact schema; Map rows must be the complete `key`/`value` product.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct OrderedCollectionContract {
+    pub kind: OrderedCollectionKind,
+    pub key: SchemaRef,
+    pub value: Option<SchemaRef>,
+    pub row: SchemaRef,
+    pub fanout: u16,
 }
 
 /// Static inline and dynamic payload facts for one program-local schema.
@@ -471,6 +491,9 @@ pub enum ShapeOwner {
 pub enum ReferenceSite {
     Word { owner: ShapeOwner, word: usize },
     DenseArrayElement { schema: SchemaRef },
+    OrderedCollectionKey { schema: SchemaRef },
+    OrderedCollectionValue { schema: SchemaRef },
+    OrderedCollectionRow { schema: SchemaRef },
     ArrayElementWitness,
 }
 
@@ -797,6 +820,20 @@ pub enum ProgramDefect {
     DynamicSchemaInlineMismatch {
         schema: SchemaRef,
         inline: RegionShape,
+    },
+    OrderedCollectionFanout {
+        schema: SchemaRef,
+        fanout: u16,
+    },
+    OrderedCollectionValueArity {
+        schema: SchemaRef,
+        kind: OrderedCollectionKind,
+        has_value: bool,
+    },
+    OrderedCollectionRowShape {
+        schema: SchemaRef,
+        expected: RegionShape,
+        actual: RegionShape,
     },
     ArraySchemaNotDense {
         schema: SchemaRef,
@@ -1468,7 +1505,9 @@ impl Verifier<'_> {
             }
             if matches!(
                 schema.payload,
-                PayloadKind::OpaqueBytes { .. } | PayloadKind::DenseArray { .. }
+                PayloadKind::OpaqueBytes { .. }
+                    | PayloadKind::DenseArray { .. }
+                    | PayloadKind::OrderedCollection(_)
             ) && schema.inline != RegionShape::word(WordKind::Handle(schema_ref))
             {
                 return Err(self.global(ProgramDefect::DynamicSchemaInlineMismatch {
@@ -1489,6 +1528,60 @@ impl Verifier<'_> {
                         site: ReferenceSite::DenseArrayElement { schema: schema_ref },
                         schema: element,
                         schema_count: self.contract.schemas.len(),
+                    }));
+                }
+            }
+            if let PayloadKind::OrderedCollection(collection) = &schema.payload {
+                if collection.fanout < 2 {
+                    return Err(self.global(ProgramDefect::OrderedCollectionFanout {
+                        schema: schema_ref,
+                        fanout: collection.fanout,
+                    }));
+                }
+                let resolve = |reference: SchemaRef, site: ReferenceSite| {
+                    self.contract
+                        .schemas
+                        .get(reference.0 as usize)
+                        .ok_or_else(|| {
+                            self.global(ProgramDefect::SchemaReferenceOutOfRange {
+                                site,
+                                schema: reference,
+                                schema_count: self.contract.schemas.len(),
+                            })
+                        })
+                };
+                let key = resolve(
+                    collection.key,
+                    ReferenceSite::OrderedCollectionKey { schema: schema_ref },
+                )?;
+                let row = resolve(
+                    collection.row,
+                    ReferenceSite::OrderedCollectionRow { schema: schema_ref },
+                )?;
+                let expected = match (collection.kind, collection.value) {
+                    (OrderedCollectionKind::Map, Some(value)) => {
+                        let value = resolve(
+                            value,
+                            ReferenceSite::OrderedCollectionValue { schema: schema_ref },
+                        )?;
+                        RegionShape::new(
+                            [key.inline.words.clone(), value.inline.words.clone()].concat(),
+                        )
+                    }
+                    (OrderedCollectionKind::Set, None) => key.inline.clone(),
+                    (kind, value) => {
+                        return Err(self.global(ProgramDefect::OrderedCollectionValueArity {
+                            schema: schema_ref,
+                            kind,
+                            has_value: value.is_some(),
+                        }));
+                    }
+                };
+                if row.inline != expected {
+                    return Err(self.global(ProgramDefect::OrderedCollectionRowShape {
+                        schema: schema_ref,
+                        expected,
+                        actual: row.inline.clone(),
                     }));
                 }
             }
@@ -6491,5 +6584,55 @@ mod tests {
                 "{name}"
             );
         }
+    }
+
+    #[test]
+    fn ordered_collection_contract_requires_exact_rows_and_arity() {
+        let scalar = RegionShape::word(WordKind::Scalar);
+        let row = RegionShape::new(vec![WordKind::Scalar.into(), WordKind::Scalar.into()]);
+        let schema = |inline, payload| SchemaContract {
+            inline,
+            value_shape: None,
+            payload,
+        };
+        let (program, mut contract) = scalar_program();
+        contract.schemas = vec![
+            schema(scalar.clone(), PayloadKind::Inline),
+            schema(scalar.clone(), PayloadKind::Inline),
+            schema(row.clone(), PayloadKind::Inline),
+            schema(
+                RegionShape::word(WordKind::Handle(SchemaRef(3))),
+                PayloadKind::OrderedCollection(OrderedCollectionContract {
+                    kind: OrderedCollectionKind::Map,
+                    key: SchemaRef(0),
+                    value: Some(SchemaRef(1)),
+                    row: SchemaRef(2),
+                    fanout: 8,
+                }),
+            ),
+        ];
+        program
+            .clone()
+            .verify(contract.clone())
+            .expect("closed map row contract is admitted");
+
+        let PayloadKind::OrderedCollection(collection) = &mut contract.schemas[3].payload else {
+            unreachable!();
+        };
+        collection.value = None;
+        assert_eq!(
+            program
+                .verify(contract)
+                .expect_err("map needs a value schema"),
+            ProgramError {
+                function: None,
+                pc: None,
+                defect: ProgramDefect::OrderedCollectionValueArity {
+                    schema: SchemaRef(3),
+                    kind: OrderedCollectionKind::Map,
+                    has_value: false,
+                },
+            }
+        );
     }
 }
