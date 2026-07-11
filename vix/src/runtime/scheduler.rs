@@ -865,6 +865,14 @@ fn fault_site() -> Stream<Check> {
 }
 "#;
 
+    const OUT_OF_BOUNDS_SOURCE: &str = r#"
+#[test]
+fn out_of_bounds() -> Stream<Check> {
+    let values = [10, 20];
+    yield expect_eq(values[7], 0);
+}
+"#;
+
     fn with_lowered(source: &str, inspect: impl FnOnce(&LoweringArtifact, &LoweringAttribution)) {
         let module = Compiler::new().compile(source).expect("source compiles");
         let partitioned = module.partition_test(&module.tests[0]);
@@ -1012,5 +1020,112 @@ fn fault_site() -> Stream<Check> {
             );
             assert_eq!(error.attribution, Some(output));
         });
+    }
+
+    #[test]
+    fn language_failure_memo_hit_rebuilds_current_attribution_without_reexecution() {
+        let module = Compiler::new()
+            .compile(OUT_OF_BOUNDS_SOURCE)
+            .expect("source compiles");
+        let partitioned = module.partition_test(&module.tests[0]);
+        let island = &partitioned.islands[0];
+        let first_attribution = attribution_for(island);
+        let location = Location::for_test_island(&partitioned.name, island.id.0);
+        let mut cache = LoweringCache::default();
+        let mut runtime = Runtime::new(EventLog::default());
+
+        let (first, demand_key) = {
+            let artifact = cache
+                .get_or_lower(island)
+                .expect("first compilation lowers through the verified executable");
+            let demand_key = artifact.demand_key;
+            let evaluation = runtime
+                .evaluate(
+                    island.id,
+                    &location,
+                    artifact,
+                    &first_attribution,
+                    ChaosPolicy::default(),
+                )
+                .expect("first demand becomes a typed language failure");
+            (evaluation, demand_key)
+        };
+        let first_failure = first.failure.clone().expect("outcome is recorded");
+        let first_context = first
+            .failure_context
+            .clone()
+            .expect("first report resolves the indexing source");
+        let first_site = match first_failure {
+            FailureValue::IndexOutOfBounds { site, .. } => site,
+        };
+        assert_eq!(
+            first_context.span,
+            first_attribution
+                .source_for_trace(first_site)
+                .expect("failure site is a source trace")
+                .span
+        );
+
+        let shifted_source = format!("\n\n{OUT_OF_BOUNDS_SOURCE}");
+        let shifted_module = Compiler::new()
+            .compile(&shifted_source)
+            .expect("shifted source compiles");
+        let shifted_partitioned = shifted_module.partition_test(&shifted_module.tests[0]);
+        let shifted_island = &shifted_partitioned.islands[0];
+        let shifted_attribution = attribution_for(shifted_island);
+        assert_eq!(shifted_island.id, island.id);
+
+        let second = {
+            let artifact = cache
+                .get_or_lower(shifted_island)
+                .expect("span-only recompilation reuses the verified artifact");
+            runtime
+                .evaluate(
+                    shifted_island.id,
+                    &location,
+                    artifact,
+                    &shifted_attribution,
+                    ChaosPolicy::default(),
+                )
+                .expect("second demand is an exact memo hit")
+        };
+        let second_context = second
+            .failure_context
+            .as_ref()
+            .expect("memo report resolves its current source");
+
+        assert_eq!(second.memo, MemoVerdict::Exact);
+        assert_eq!(first.identity, second.identity);
+        assert_eq!(first.failure, second.failure);
+        assert_eq!(
+            second_context.span,
+            shifted_attribution
+                .source_for_trace(first_site)
+                .expect("stable site resolves through the shifted attribution")
+                .span
+        );
+        assert_ne!(first_context.span, second_context.span);
+        assert_eq!(second_context.demand_chain, [demand_key]);
+        assert_eq!(runtime.counters().task_spawns, 1);
+        assert_eq!(runtime.counters().memo_misses, 1);
+        assert_eq!(runtime.counters().memo_hits_exact, 1);
+        assert_eq!(
+            runtime
+                .sink()
+                .events()
+                .iter()
+                .filter(|event| matches!(event.kind, EventKind::TaskSpawned { .. }))
+                .count(),
+            1
+        );
+        assert_eq!(
+            runtime
+                .sink()
+                .events()
+                .iter()
+                .filter(|event| matches!(event.kind, EventKind::LanguageFailed { .. }))
+                .count(),
+            1
+        );
     }
 }
