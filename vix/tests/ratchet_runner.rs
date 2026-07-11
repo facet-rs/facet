@@ -61,6 +61,7 @@ const RUNG_046: &str = include_str!("ratchet/046-paths.vix");
 const RUNG_047: &str = include_str!("ratchet/047-string-to-path.reject.vix");
 const RUNG_048: &str = include_str!("ratchet/048-closures-capture.vix");
 const RUNG_049: &str = include_str!("ratchet/049-recursion.vix");
+const RUNG_050: &str = include_str!("ratchet/050-deep-tail-recursion.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
 const RUNG_145: &str = include_str!("ratchet/145-push.reject.vix");
 const RUNG_146: &str = include_str!("ratchet/146-insert.reject.vix");
@@ -3996,6 +3997,14 @@ fn rung_049_plain_recursion_uses_stable_verified_call_abi() {
         assert_eq!(lane.counters.pure_host_calls, 0);
         assert_eq!(lane.receipt_count, 0);
     }
+}
+
+#[test]
+fn rung_050_remains_red_until_trace_checks_and_outer_budgets_land() {
+    let diagnostics = Compiler::new()
+        .compile(RUNG_050)
+        .expect_err("canonical rung 050 remains blocked by concurrent TraceCheck/budget work");
+    assert!(!diagnostics.entries.is_empty());
 }
 
 #[test]
