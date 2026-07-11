@@ -1145,35 +1145,37 @@ pub unsafe extern "C" fn weavy_task_string_concat(cx: *mut Ctx) {
 #[no_mangle]
 pub unsafe extern "C" fn weavy_task_string_contains(cx: *mut Ctx) {
     let c = &mut *cx;
-    let dst = *c.prog; let text = *c.prog.add(1); let needle = *c.prog.add(2);
-    c.prog = c.prog.add(3);
+    let dst = *c.prog; let text = *c.prog.add(1); let needle = *c.prog.add(2); let pc = *c.prog.add(3);
+    c.prog = c.prog.add(4);
     let mut value = 0;
-    (c.string_contains)(c.store_value_memories, c.store_value_memory_count, c.lent_molten_value_memories, c.lent_molten_value_memory_count, c.molten, read_i64(c.frame, text), read_i64(c.frame, needle), &raw mut value);
-    write_i64(c.frame, dst, value);
-    cont!(cx);
+    let result = (c.string_contains)(c.store_value_memories, c.store_value_memory_count, c.lent_molten_value_memories, c.lent_molten_value_memory_count, c.molten, read_i64(c.frame, text), read_i64(c.frame, needle), &raw mut value);
+    if result == 0 { write_i64(c.frame, dst, value); cont!(cx); }
+    *c.await_index = pc; *c.resume = if result == 4 { read_i64(c.frame, text) as u64 } else { read_i64(c.frame, needle) as u64 };
+    *c.exit = if result == 4 { EXIT_STRING_CONCAT_LEFT_UNRESIDENT } else if result == 5 { EXIT_STRING_CONCAT_RIGHT_UNRESIDENT } else { EXIT_STRING_CONCAT_ALLOCATION };
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn weavy_task_string_split_once(cx: *mut Ctx) {
     let c = &mut *cx;
-    let left = *c.prog; let right = *c.prog.add(1); let status = *c.prog.add(2); let text = *c.prog.add(3); let delimiter = *c.prog.add(4);
-    c.prog = c.prog.add(5);
+    let left = *c.prog; let right = *c.prog.add(1); let status = *c.prog.add(2); let text = *c.prog.add(3); let delimiter = *c.prog.add(4); let pc = *c.prog.add(5);
+    c.prog = c.prog.add(6);
     let mut left_value = 0; let mut right_value = 0;
     let result = (c.string_split_once)(c.store_value_memories, c.store_value_memory_count, c.lent_molten_value_memories, c.lent_molten_value_memory_count, c.molten, read_i64(c.frame, text), read_i64(c.frame, delimiter), &raw mut left_value, &raw mut right_value);
-    write_i64(c.frame, status, result);
-    if result == 0 { write_i64(c.frame, left, left_value); write_i64(c.frame, right, right_value); }
-    cont!(cx);
+    if result <= 3 { write_i64(c.frame, status, result); if result == 0 { write_i64(c.frame, left, left_value); write_i64(c.frame, right, right_value); } cont!(cx); }
+    *c.await_index = pc; *c.resume = if result == 4 { read_i64(c.frame, text) as u64 } else { read_i64(c.frame, delimiter) as u64 };
+    *c.exit = if result == 4 { EXIT_STRING_CONCAT_LEFT_UNRESIDENT } else if result == 5 { EXIT_STRING_CONCAT_RIGHT_UNRESIDENT } else { EXIT_STRING_CONCAT_ALLOCATION };
 }
 
 #[no_mangle]
 pub unsafe extern "C" fn weavy_task_string_parse_int(cx: *mut Ctx) {
     let c = &mut *cx;
-    let dst = *c.prog; let status = *c.prog.add(1); let text = *c.prog.add(2);
-    c.prog = c.prog.add(3);
+    let dst = *c.prog; let status = *c.prog.add(1); let text = *c.prog.add(2); let pc = *c.prog.add(3);
+    c.prog = c.prog.add(4);
     let mut value = 0;
     let result = (c.string_parse_int)(c.store_value_memories, c.store_value_memory_count, c.lent_molten_value_memories, c.lent_molten_value_memory_count, c.molten, read_i64(c.frame, text), &raw mut value);
-    write_i64(c.frame, status, result); write_i64(c.frame, dst, value);
-    cont!(cx);
+    if result <= 3 { write_i64(c.frame, status, result); write_i64(c.frame, dst, value); cont!(cx); }
+    *c.await_index = pc; *c.resume = read_i64(c.frame, text) as u64;
+    *c.exit = if result == 4 { EXIT_STRING_CONCAT_LEFT_UNRESIDENT } else { EXIT_STRING_CONCAT_ALLOCATION };
 }
 
 #[no_mangle]

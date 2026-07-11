@@ -678,9 +678,9 @@ fn compile_fn(
             Op::ArrayStatusIs { .. } => 4,
             Op::CompareValueBytes { .. } => 4,
             Op::StringConcat { .. } => 4,
-            Op::StringContains { .. } | Op::StringParseInt { .. } => 3,
+            Op::StringContains { .. } | Op::StringParseInt { .. } => 4,
             Op::StringStatusIs { .. } => 4,
-            Op::StringSplitOnce { .. } => 5,
+            Op::StringSplitOnce { .. } => 6,
             Op::Publish { .. } => 5,
             Op::Await { .. } => 3,
             Op::Call { .. } | Op::CallIndirect { .. } => 1,
@@ -1228,6 +1228,7 @@ fn compile_fn(
                 for value in [dst, text, needle] {
                     layout.push_prog_word(root.prog_index, u64::from(*value));
                 }
+                layout.push_prog_word(root.prog_index, i as u64);
             }
             Op::StringSplitOnce {
                 left,
@@ -1239,11 +1240,13 @@ fn compile_fn(
                 for value in [left, right, status, text, delimiter] {
                     layout.push_prog_word(root.prog_index, u64::from(*value));
                 }
+                layout.push_prog_word(root.prog_index, i as u64);
             }
             Op::StringParseInt { dst, status, text } => {
                 for value in [dst, status, text] {
                     layout.push_prog_word(root.prog_index, u64::from(*value));
                 }
+                layout.push_prog_word(root.prog_index, i as u64);
             }
             Op::StringStatusIs {
                 dst,

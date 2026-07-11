@@ -2066,7 +2066,7 @@ pub(crate) unsafe extern "C" fn string_contains_abi(
         || (store.is_null() && store_len != 0)
         || (lent.is_null() && lent_len != 0)
     {
-        return 2;
+        return 6;
     }
     let store = if store_len == 0 {
         &[]
@@ -2088,7 +2088,9 @@ pub(crate) unsafe extern "C" fn string_contains_abi(
             unsafe { *out = i64::from(found) };
             0
         }
-        Err(_) => 2,
+        Err(StringConcatFault::LeftUnresident(_)) => 4,
+        Err(StringConcatFault::RightUnresident(_)) => 5,
+        Err(StringConcatFault::AllocationFailed) => 6,
     }
 }
 
@@ -2110,7 +2112,7 @@ pub(crate) unsafe extern "C" fn string_split_once_abi(
         || (store.is_null() && store_len != 0)
         || (lent.is_null() && lent_len != 0)
     {
-        return StringOpStatus::InvalidInteger as i64;
+        return 6;
     }
     let store = if store_len == 0 {
         &[]
@@ -2136,7 +2138,9 @@ pub(crate) unsafe extern "C" fn string_split_once_abi(
             status as i64
         }
         Ok((status, _, _)) => status as i64,
-        Err(_) => StringOpStatus::InvalidInteger as i64,
+        Err(StringConcatFault::LeftUnresident(_)) => 4,
+        Err(StringConcatFault::RightUnresident(_)) => 5,
+        Err(StringConcatFault::AllocationFailed) => 6,
     }
 }
 
@@ -2155,7 +2159,7 @@ pub(crate) unsafe extern "C" fn string_parse_int_abi(
         || (store.is_null() && store_len != 0)
         || (lent.is_null() && lent_len != 0)
     {
-        return StringOpStatus::InvalidInteger as i64;
+        return 6;
     }
     let store = if store_len == 0 {
         &[]
@@ -2177,7 +2181,9 @@ pub(crate) unsafe extern "C" fn string_parse_int_abi(
             unsafe { *out = value };
             status as i64
         }
-        Err(_) => StringOpStatus::InvalidInteger as i64,
+        Err(StringConcatFault::LeftUnresident(_)) => 4,
+        Err(StringConcatFault::RightUnresident(_)) => 5,
+        Err(StringConcatFault::AllocationFailed) => 6,
     }
 }
 
