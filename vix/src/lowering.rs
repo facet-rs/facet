@@ -1378,6 +1378,12 @@ impl<'a> ProgramContractBuilder<'a> {
                 Op::Closure(callee) => Some(callee),
                 _ => None,
             })
+            .chain(function_order.iter().flat_map(|function| {
+                function.nodes.iter().filter_map(move |node| {
+                    matches!(node.op, Op::Call(callee) if callee == function.id)
+                        .then_some(function.id)
+                })
+            }))
             .collect();
 
         let mut builder = Self {
@@ -4694,7 +4700,6 @@ fn lower_node(
             (vec![op], representation_for_type(&node.ty, node.span)?)
         }
         Op::Closure(callee) => {
-            require_input_count(node, 0)?;
             if !matches!(node.ty, Type::Function { .. }) || dst_region.words().as_usize() != 2 {
                 return Err(lowering_diagnostic(
                     node.span,
@@ -4715,12 +4720,24 @@ fn lower_node(
             let Type::Function { parameter, result } = &node.ty else {
                 unreachable!("closure type was checked above")
             };
-            let [target_parameter] = target.parameters.as_slice() else {
+            let Some(target_parameter) = target.parameters.first() else {
                 return Err(lowering_diagnostic(
                     node.span,
-                    "closure function does not have exactly one parameter",
+                    "closure function does not have its callable parameter",
                 ));
             };
+            if node.inputs.len() != target.parameters.len().saturating_sub(1) {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "closure capture count does not match its callable ABI",
+                ));
+            }
+            if node.inputs.len() > 1 {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "closure environment currently carries exactly one captured word",
+                ));
+            }
             if &target_parameter.ty != parameter.as_ref()
                 || &target.return_type != result.as_ref()
                 || target_layout
@@ -4748,16 +4765,26 @@ fn lower_node(
                     .closure(lowering.function.id, node.id, node.span)?;
             let (callee_temp, environment_temp) =
                 lowering.function.layout.closure_temps(node.id, node.span)?;
+            let environment = if node.inputs.first().is_some() {
+                let capture = input_value(node, values, 0)?;
+                require_value(node, &capture, &Type::Int, ValueRepresentation::Word)?;
+                WeavyOp::CopyI64 {
+                    dst: environment_temp.start().byte_offset(),
+                    src: capture.region.start().byte_offset(),
+                }
+            } else {
+                WeavyOp::ConstI64 {
+                    dst: environment_temp.start().byte_offset(),
+                    value: 0,
+                }
+            };
             (
                 vec![
                     WeavyOp::ConstI64 {
                         dst: callee_temp.start().byte_offset(),
                         value: i64::from(callee),
                     },
-                    WeavyOp::ConstI64 {
-                        dst: environment_temp.start().byte_offset(),
-                        value: 0,
-                    },
+                    environment,
                     WeavyOp::ProductConstruct {
                         dst: dst_region_id,
                         fields: vec![
@@ -5550,9 +5577,46 @@ fn emit_checked_call_indirect(
             .byte_size()
             .ok_or_else(|| lowering_diagnostic(node.span, "indirect argument size overflow"))?,
     }];
-    if let Some(target) = static_closure_target(mapper, sequence) {
+    if let Some(closure) = sequence.nodes.values().copied().find(|candidate| {
+        matches!(candidate.op, Op::Closure(_))
+            && candidate.ty == mapper.ty
+            && sequence
+                .function
+                .layout
+                .region(candidate.id, candidate.span)
+                .ok()
+                == Some(mapper.region)
+    }) {
+        let Op::Closure(target_id) = closure.op else {
+            unreachable!("selected closure node")
+        };
+        let target = sequence
+            .lowering
+            .functions
+            .get(&target_id)
+            .copied()
+            .ok_or_else(|| {
+                lowering_diagnostic(node.span, "closure target is absent from the island")
+            })?;
+        if target.parameters.len() > 1 {
+            if target.parameters.len() != 2 {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "closure environment currently carries exactly one captured word",
+                ));
+            }
+            let capture = *closure.inputs.first().ok_or_else(|| {
+                lowering_diagnostic(node.span, "capturing closure has no environment source")
+            })?;
+            let environment = sequence.function.layout.region(capture, closure.span)?;
+            args.push(ArgCopy {
+                src: environment.start().byte_offset(),
+                dst: FrameSlot::word_size(),
+                size: FrameSlot::word_size(),
+            });
+        }
         let target_layout =
-            sequence.lowering.layouts.get(&target).ok_or_else(|| {
+            sequence.lowering.layouts.get(&target_id).ok_or_else(|| {
                 lowering_diagnostic(node.span, "closure target has no frame layout")
             })?;
         for (&constant, &destination) in &target_layout.constant_slots {
@@ -5598,25 +5662,6 @@ fn emit_checked_call_indirect(
         outputs.code,
     )?;
     outputs.code.bind(done, node.span)
-}
-
-fn static_closure_target(
-    mapper: &LoweredSlot,
-    sequence: &SequenceContext<'_, '_, '_>,
-) -> Option<FunctionId> {
-    sequence.nodes.values().copied().find_map(|candidate| {
-        let Op::Closure(target) = candidate.op else {
-            return None;
-        };
-        (candidate.ty == mapper.ty
-            && sequence
-                .function
-                .layout
-                .region(candidate.id, candidate.span)
-                .ok()
-                == Some(mapper.region))
-        .then_some(target)
-    })
 }
 
 fn propagate_checked_call_failure(
@@ -9977,16 +10022,22 @@ fn lower_call_value_node(
         parameter,
         representation_for_type(parameter, node.span)?,
     )?;
+    let mut args = vec![ArgCopy {
+        src: argument.region.start().byte_offset(),
+        dst: 0,
+        size: argument
+            .region
+            .byte_size()
+            .ok_or_else(|| lowering_diagnostic(node.span, "argument size overflow"))?,
+    }];
+    args.push(ArgCopy {
+        src: callee.region.start().byte_offset() + FrameSlot::word_size(),
+        dst: FrameSlot::word_size(),
+        size: FrameSlot::word_size(),
+    });
     Ok(WeavyOp::CallIndirect {
         callee: callee.region.start().byte_offset(),
-        args: vec![ArgCopy {
-            src: argument.region.start().byte_offset(),
-            dst: 0,
-            size: argument
-                .region
-                .byte_size()
-                .ok_or_else(|| lowering_diagnostic(node.span, "argument size overflow"))?,
-        }],
+        args,
         ret: dst.start().byte_offset(),
     })
 }
