@@ -589,7 +589,7 @@ fn accepted_rungs_verify_and_execute_through_one_executable() {
     const ACCEPTED: &[&str] = &[
         RUNG_001, RUNG_002, RUNG_003, RUNG_004, RUNG_005, RUNG_006, RUNG_007, RUNG_008, RUNG_009,
         RUNG_010, RUNG_011, RUNG_012, RUNG_014, RUNG_015, RUNG_016, RUNG_017, RUNG_019, RUNG_020,
-        RUNG_021, RUNG_022, RUNG_023, RUNG_024, RUNG_025,
+        RUNG_021, RUNG_022, RUNG_023, RUNG_024, RUNG_025, RUNG_026, RUNG_027,
     ];
 
     for source in ACCEPTED {
@@ -2447,6 +2447,34 @@ fn rung_026_arrays_run_through_verified_execution_without_publication() {
 
 #[test]
 fn rung_027_array_map_runs_through_verified_execution_without_publication() {
+    let module = Compiler::new()
+        .compile(RUNG_027)
+        .expect("rung 027 compiles to graph VIR");
+    let partitioned = module.partition_test(&module.tests[0]);
+    assert_eq!(partitioned.islands.len(), 4);
+    let mut cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let [decision] = island.array_map_partitions.as_slice() else {
+            panic!("each rung 027 check has one ArrayMap decision")
+        };
+        assert_eq!(decision.shape, ArrayMapExecutionShape::FusedProjection);
+        let lowered = cache
+            .get_or_lower(island)
+            .expect("rung 027 fused island verifies");
+        let map_pcs = pcs_for_node(lowered, 0, decision.node);
+        assert_eq!(map_pcs.len(), 1, "fused ArrayMap emits attribution only");
+        assert!(matches!(
+            lowered.program().fns[0].code[map_pcs[0]],
+            WeavyOp::Trace { .. }
+        ));
+        assert!(map_pcs.iter().all(|pc| !matches!(
+            lowered.program().fns[0].code[*pc],
+            WeavyOp::ArrayNew { .. }
+                | WeavyOp::ArrayStore { .. }
+                | WeavyOp::CallIndirect { .. }
+        )));
+    }
+
     let report = run_source(RUNG_027).expect("rung 027 compiles and runs through Executable");
     assert!(report.passed());
     assert!(report.agrees());
@@ -2462,6 +2490,26 @@ fn rung_027_array_map_runs_through_verified_execution_without_publication() {
             }
             _ => true,
         }));
+        if std::env::var("WEAVY_JIT").as_deref() == Ok("0") {
+            assert!(
+                lane.events
+                    .iter()
+                    .filter_map(|event| match event.kind {
+                        EventKind::ExecutionLane { facts, .. } => Some(facts),
+                        _ => None,
+                    })
+                    .all(|facts| matches!(
+                        facts,
+                        vix::runtime::ExecutionFacts {
+                            selected: vix::runtime::ExecutionLaneFact::Interpreter,
+                            fallback: Some(
+                                vix::runtime::ExecutionFallbackFact::DisabledByEnvironment
+                            ),
+                            ..
+                        }
+                    ))
+            );
+        }
     }
 }
 
