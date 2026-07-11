@@ -49,6 +49,7 @@ const RUNG_034: &str = include_str!("ratchet/034-multiset-filter.vix");
 const RUNG_035: &str = include_str!("ratchet/035-canonical-order.vix");
 const RUNG_036: &str = include_str!("ratchet/036-multiset-fold.vix");
 const RUNG_037: &str = include_str!("ratchet/037-filter-map-flat-map.vix");
+const RUNG_039: &str = include_str!("ratchet/039-indexed-roundtrip.vix");
 const RUNG_041: &str = include_str!("ratchet/041-maps.vix");
 const RUNG_042: &str = include_str!("ratchet/042-map-overwrite.vix");
 const RUNG_043: &str = include_str!("ratchet/043-map-keys-canonical.vix");
@@ -1241,6 +1242,77 @@ fn rung_037_filter_map_and_flat_map_run_through_verified_production_path() {
     assert!(report.passed());
     assert!(report.agrees());
     assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+// Rung 039 — filtering a position-keyed stream carries the surviving source
+// positions through to the collected Map: `%{0 => 50, 2 => 40, 3 => 20}`. The
+// filter remains a codata recipe until an explicit collect materializes the
+// keyed Map through the verified production path, with no host call and no
+// dense-array substitute that would renumber the survivors.
+#[test]
+fn rung_039_indexed_roundtrip_carries_survivor_positions_through_collect() {
+    let module = Compiler::new()
+        .compile(RUNG_039)
+        .expect("rung 039 compiles through the canonical surface");
+    let function = module
+        .functions
+        .iter()
+        .find(|function| function.name == "indexed_roundtrip")
+        .expect("rung 039 test function exists");
+
+    // The survivor filter is a distinct key-preserving codata recipe over the
+    // position-keyed array stream: Stream<Int, Int>.
+    let filter = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamFilter))
+        .expect("filter remains a distinct codata recipe until collection");
+    assert_eq!(filter.ty, VirType::stream(VirType::Int, VirType::Int));
+    assert_eq!(filter.effect.kind, EffectKind::Codata);
+
+    // Collect materializes the position-keyed Map, not a renumbered dense array.
+    let collect = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamCollect))
+        .expect("collect is the explicit stream materialization boundary");
+    assert_eq!(collect.ty, VirType::map(VirType::Int, VirType::Int));
+
+    // Every lowered frame stays inside the verified machine: no host calls, and
+    // collection materializes rows through the ordered collection substrate.
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 039 lowers through verified Weavy execution");
+        assert!(lowered.program().fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+        assert!(
+            lowered
+                .program()
+                .fns
+                .iter()
+                .flat_map(|function| &function.code)
+                .any(|op| matches!(op, WeavyOp::OrderedInsertCommit { .. })),
+            "collect materializes survivors through the ordered collection substrate",
+        );
+    }
+
+    let report = run_source(RUNG_039).expect("rung 039 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 1);
     assert_eq!(report.plain.checks, report.chaos.checks);
     for lane in [&report.plain, &report.chaos] {
         assert!(lane.checks.iter().all(|check| check.passed));
