@@ -530,6 +530,9 @@ pub enum Op {
     SetValues,
     /// View authored array positions as stable stream keys.
     ArrayStream,
+    /// Keep rows whose values satisfy a typed predicate without renumbering
+    /// their stable keys.
+    StreamFilter,
     /// Materialize a keyed codata recipe as its canonical Map value.
     StreamCollect,
     /// Concatenate two immutable strings.
@@ -1134,6 +1137,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::ArrayStream => op.push(46),
         Op::StreamCollect => op.push(47),
         Op::ArrayFold => op.push(48),
+        Op::StreamFilter => op.push(49),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());

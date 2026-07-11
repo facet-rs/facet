@@ -42,6 +42,7 @@ const RUNG_028: &str = include_str!("ratchet/028-array-enumerate.vix");
 const RUNG_029: &str = include_str!("ratchet/029-array-fold.vix");
 const RUNG_032: &str = include_str!("ratchet/032-pop.reject.vix");
 const RUNG_033: &str = include_str!("ratchet/033-multiset-conversion.vix");
+const RUNG_034: &str = include_str!("ratchet/034-multiset-filter.vix");
 const RUNG_041: &str = include_str!("ratchet/041-maps.vix");
 const RUNG_042: &str = include_str!("ratchet/042-map-overwrite.vix");
 const RUNG_043: &str = include_str!("ratchet/043-map-keys-canonical.vix");
@@ -722,6 +723,35 @@ fn rung_033_array_stream_preserves_position_keys() {
     assert!(report.passed());
     assert!(report.agrees());
     assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+#[test]
+fn rung_034_stream_filter_preserves_survivor_keys() {
+    let compilation = Compiler::new()
+        .compile(RUNG_034)
+        .expect("rung 034 compiles to a typed filter recipe");
+    let function = compilation
+        .functions
+        .iter()
+        .find(|function| function.name == "multiset_filter")
+        .expect("rung 034 test function exists");
+    let filter = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamFilter))
+        .expect("filter remains a distinct codata recipe until collection");
+    assert_eq!(filter.ty, VirType::stream(VirType::Int, VirType::Int));
+    assert_eq!(filter.effect.kind, EffectKind::Codata);
+
+    let report = run_source(RUNG_034).expect("rung 034 executes through verified production path");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 4);
     assert_eq!(report.plain.checks, report.chaos.checks);
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.pure_host_calls, 0);

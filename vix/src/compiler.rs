@@ -1522,6 +1522,7 @@ enum PreludeMethod {
     SetHas,
     SetLen,
     SetValues,
+    StreamFilter,
     StreamCollect,
 }
 
@@ -1611,6 +1612,12 @@ impl PreludeMethodRegistry {
                 name: "values",
                 arity: 0,
                 method: PreludeMethod::SetValues,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Stream,
+                name: "filter",
+                arity: 1,
+                method: PreludeMethod::StreamFilter,
             },
             PreludeMethodEntry {
                 receiver: PreludeReceiverType::Stream,
@@ -2256,6 +2263,44 @@ fn lower_method_call(
                     EffectFacts::PURE,
                     vec![receiver.node],
                     Op::SetValues,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::StreamFilter => {
+            let (_, value) = receiver
+                .ty
+                .stream_types()
+                .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
+            let predicate = match &call.args.args[0] {
+                ast::Expr::Closure(closure) => {
+                    lower_closure_with_parameter(nodes, bindings, context, closure, value)?
+                }
+                expression => lower_value_expected(nodes, bindings, context, expression, None)?,
+            };
+            let Type::Function { parameter, result } = &predicate.ty else {
+                return Err(type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    format!("fn({}) -> Bool", value.name()),
+                    predicate.ty.name(),
+                ));
+            };
+            if parameter.as_ref() != value || result.as_ref() != &Type::Bool {
+                return Err(type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    format!("fn({}) -> Bool", value.name()),
+                    predicate.ty.name(),
+                ));
+            }
+            let ty = receiver.ty.clone();
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::CODATA,
+                    vec![receiver.node, predicate.node],
+                    Op::StreamFilter,
                 ),
                 ty,
             })

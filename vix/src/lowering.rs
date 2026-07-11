@@ -4323,6 +4323,29 @@ fn lower_node(
             require_node_type(node, Type::stream(Type::Int, element.as_ref().clone()))?;
             (Vec::new(), ValueRepresentation::CodataRecipe)
         }
+        Op::StreamFilter => {
+            require_input_count(node, 2)?;
+            let source = input_value(node, values, 0)?;
+            let predicate = input_value(node, values, 1)?;
+            let Type::Stream { value, .. } = &source.ty else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "stream filter source is not keyed codata",
+                ));
+            };
+            require_value(node, &source, &node.ty, ValueRepresentation::CodataRecipe)?;
+            let predicate_ty = Type::Function {
+                parameter: Box::new(value.as_ref().clone()),
+                result: Box::new(Type::Bool),
+            };
+            require_value(
+                node,
+                &predicate,
+                &predicate_ty,
+                ValueRepresentation::InlineComposite,
+            )?;
+            (Vec::new(), ValueRepresentation::CodataRecipe)
+        }
         Op::StreamCollect => {
             return Err(lowering_diagnostic(
                 node.span,
