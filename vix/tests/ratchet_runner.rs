@@ -1,12 +1,13 @@
 use vix::compiler::Compiler;
 use vix::diagnostic::{DiagnosticCode, DiagnosticSeverity};
 use vix::lowering::{LoweringCache, attribution_for, source_map_for};
-use vix::ratchet::run_source;
+use vix::ratchet::{RunError, run_source};
 use vix::runtime::{DemandState, EventKind, MemoVerdict, SchemaId, TaskState};
 use vix::surface::{SurfaceParser, ast};
 use vix::vir::{
-    ArrayMapExecutionShape, ArrayMapGrainKey, EffectKind, FunctionId, NodeRef, Op as VirOp,
-    Type as VirType, VariantPayload,
+    ArrayMapExecutionShape, ArrayMapGrainKey, EffectKind, FunctionId, GeneratorControl,
+    GeneratorStep, NodeRef, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, Op as VirOp, Type as VirType,
+    VariantPayload, canonical_recipe,
 };
 use weavy::task::Op as WeavyOp;
 use weavy::{PayloadKind, RegionShape, ValueShapeKind, WordKind};
@@ -909,7 +910,154 @@ fn rung_031_split_last_compiles_to_generator_codata() {
         .compile(RUNG_031)
         .expect("rung 031 compiles into generator/codata VIR");
     assert_eq!(module.tests.len(), 1);
-    assert_eq!(module.tests[0].name, "split_last");
+    let test = &module.tests[0];
+    assert_eq!(test.name, "split_last");
+    let function = &module.functions[test.function.0 as usize];
+    let generator = &test.generator;
+
+    // The generator lowers to two ordered steps: a real Match dispatch on
+    // `xs.split_last()`, then one later unconditional empty-array check.
+    assert_eq!(generator.steps.len(), 2);
+    let GeneratorStep::Match { scrutinee, arms } = &generator.steps[0] else {
+        panic!("first generator step is the split_last match")
+    };
+    // The scrutinee is the real optional-partition dispatch value, not a folded
+    // constant.
+    assert_eq!(
+        function.nodes[scrutinee.0 as usize].op,
+        VirOp::ArraySplitLast
+    );
+    assert_eq!(arms.len(), 2);
+
+    // Taken arms own their sites: three in Some, one in None. Untaken arms
+    // publish nothing, so no phantom passing checks exist.
+    let some_arm = arms
+        .iter()
+        .find(|arm| arm.variant == OPTION_SOME_VARIANT)
+        .expect("Some arm exists");
+    let none_arm = arms
+        .iter()
+        .find(|arm| arm.variant == OPTION_NONE_VARIANT)
+        .expect("None arm exists");
+    assert_eq!(some_arm.body.steps.len(), 3, "three Some-arm yield sites");
+    assert_eq!(none_arm.body.steps.len(), 1, "one None-arm yield site");
+    assert!(
+        !some_arm.bindings.is_empty(),
+        "the Some arm owns its (last, rest) payload projections",
+    );
+    assert!(
+        none_arm.bindings.is_empty(),
+        "the None arm binds no payload",
+    );
+
+    // The second step is the later unconditional empty-array check.
+    assert!(matches!(&generator.steps[1], GeneratorStep::Yield(_)));
+
+    // Control ownership over every published site.
+    let owned = generator.owned_sites();
+    assert_eq!(owned.len(), 5, "five static yield sites total");
+    let unconditional = owned.iter().filter(|owned| owned.owner.is_empty()).count();
+    assert_eq!(
+        unconditional, 1,
+        "exactly one later unconditional empty-array check",
+    );
+    let some_sites = owned
+        .iter()
+        .filter(|owned| {
+            matches!(
+                owned.owner.as_slice(),
+                [GeneratorControl::MatchArm {
+                    variant: OPTION_SOME_VARIANT,
+                    ..
+                }]
+            )
+        })
+        .count();
+    let none_sites = owned
+        .iter()
+        .filter(|owned| {
+            matches!(
+                owned.owner.as_slice(),
+                [GeneratorControl::MatchArm {
+                    variant: OPTION_NONE_VARIANT,
+                    ..
+                }]
+            )
+        })
+        .count();
+    assert_eq!(some_sites, 3);
+    assert_eq!(none_sites, 1);
+    // Every conditional site is owned by the same real split_last dispatch.
+    for owned in &owned {
+        if let [
+            GeneratorControl::MatchArm {
+                scrutinee: owner_scrutinee,
+                ..
+            },
+        ] = owned.owner.as_slice()
+        {
+            assert_eq!(*owner_scrutinee, *scrutinee);
+        }
+    }
+
+    // Each site is a parameterized pure check recipe (`Op::Expect` over captured
+    // values), never an evaluated boolean or a host call.
+    for owned in &owned {
+        let check = &function.nodes[owned.site.check.0 as usize];
+        assert_eq!(check.op, VirOp::Expect);
+        assert_eq!(check.ty, VirType::Check);
+    }
+
+    // The generator's sites are branch-dependent: the runtime seam.
+    assert!(generator.has_conditional_sites());
+
+    // Stable, span-insensitive recipe identity. A span-shifted copy of the same
+    // source produces byte-identical per-site recipe identities.
+    let shifted_source = format!("// generator-codata span shift\n\n{RUNG_031}");
+    let shifted = Compiler::new()
+        .compile(&shifted_source)
+        .expect("span-shifted rung 031 compiles");
+    let shifted_function = &shifted.functions[shifted.tests[0].function.0 as usize];
+    let shifted_owned = shifted.tests[0].generator.owned_sites();
+    assert_eq!(shifted_owned.len(), owned.len());
+    for (base, shifted) in owned.iter().zip(&shifted_owned) {
+        assert_eq!(
+            canonical_recipe(function, base.site.check),
+            canonical_recipe(shifted_function, shifted.site.check),
+            "recipe identity is span-insensitive",
+        );
+    }
+
+    // The three Some-arm recipes are distinct parameterized checks (different
+    // captured values), proving the recipe is not a collapsed boolean.
+    let some_recipes = owned
+        .iter()
+        .filter(|owned| {
+            matches!(
+                owned.owner.as_slice(),
+                [GeneratorControl::MatchArm {
+                    variant: OPTION_SOME_VARIANT,
+                    ..
+                }]
+            )
+        })
+        .map(|owned| canonical_recipe(function, owned.site.check))
+        .collect::<Vec<_>>();
+    assert_eq!(some_recipes.len(), 3);
+    assert_ne!(some_recipes[0], some_recipes[1]);
+    assert_ne!(some_recipes[1], some_recipes[2]);
+    assert_ne!(some_recipes[0], some_recipes[2]);
+}
+
+// The static runner still executes flat generators, but a branch-dependent
+// generator hits the explicit typed runtime seam rather than silently dropping
+// the checks its untaken arm would never publish.
+#[test]
+fn rung_031_generator_reaches_explicit_runtime_seam() {
+    match run_source(RUNG_031) {
+        Err(RunError::UnsupportedGenerator { test }) => assert_eq!(test, "split_last"),
+        other => panic!("expected explicit generator runtime seam, got {other:?}"),
+    }
 }
 
 #[test]

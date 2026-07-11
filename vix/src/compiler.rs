@@ -8,9 +8,10 @@ use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
 use crate::vir::{
     ArrayMapGrain, ArrayMapGrainKey, ControlRegion, EffectFacts, EnumType, EnumVariant, Function,
-    FunctionId, MatchArm as VirMatchArm, Module, Node, NodeId, OPTION_NONE_VARIANT,
-    OPTION_SOME_VARIANT, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm,
-    Parameter, ParameterId, ParameterKind, RecordField, RecordType, Test, Type, VariantPayload,
+    FunctionId, GeneratorArm, GeneratorBody, GeneratorStep, MatchArm as VirMatchArm, Module, Node,
+    NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT, ORDERING_GREATER_VARIANT,
+    ORDERING_LESS_VARIANT, Op, OrderedMatchArm, Parameter, ParameterId, ParameterKind, RecordField,
+    RecordType, Test, Type, VariantPayload, YieldSite, YieldSiteId,
 };
 
 pub struct Compiler {
@@ -808,9 +809,12 @@ fn lower_module(source: &ast::SourceFile) -> Result<Module, Diagnostics> {
             module.tests.push(Test {
                 name: function.name.value.clone(),
                 function: signature.id,
+                generator: lowered
+                    .generator
+                    .expect("test function lowering produces a generator body"),
             });
         }
-        module.functions.push(lowered);
+        module.functions.push(lowered.function);
     }
     let closures = context.closures.into_inner().functions;
     for (id, function) in closures {
@@ -1161,11 +1165,17 @@ fn lower_declared_type(
     }
 }
 
+struct LoweredFunction {
+    function: Function,
+    /// Present for `#[test]` functions: the lowered generator/codata body.
+    generator: Option<GeneratorBody>,
+}
+
 fn lower_function(
     signature: &FunctionSignature,
     function: &ast::FnItem,
     context: &ModuleContext<'_>,
-) -> Result<Function, Diagnostics> {
+) -> Result<LoweredFunction, Diagnostics> {
     let mut nodes = Vec::new();
     let mut yielded_checks = Vec::new();
     let mut bindings = BTreeMap::new();
@@ -1196,71 +1206,362 @@ fn lower_function(
         });
     }
 
-    for statement in &function.body.stmts {
-        match statement {
-            ast::Stmt::Expression(statement) => {
-                return Err(expression_statement_diagnostic(statement.span));
-            }
-            ast::Stmt::Yield(statement) if signature.is_test => {
-                let check = lower_check(&mut nodes, &bindings, context, &statement.value)?;
-                yielded_checks.push(check);
-                push_node(
-                    &mut nodes,
-                    statement.span,
-                    Type::StreamCheck,
-                    EffectFacts::CODATA,
-                    vec![check],
-                    Op::Yield,
-                );
-            }
-            ast::Stmt::Yield(statement) => {
-                return Err(Diagnostics::one(Diagnostic::unsupported(
-                    statement.span,
-                    "yield outside a Stream<Check> test",
-                )));
-            }
-            ast::Stmt::Let(statement) => {
-                lower_let_statement(&mut nodes, &mut bindings, context, statement)?;
-            }
-        }
-    }
-
-    let output = match (&function.body.tail, signature.is_test) {
-        (Some(tail), true) => {
+    let (output, generator) = if signature.is_test {
+        if let Some(tail) = &function.body.tail {
             return Err(Diagnostics::one(Diagnostic::unsupported(
                 expr_span(tail),
                 "test tail expression",
             )));
         }
-        (None, true) => None,
-        (Some(tail), false) => {
-            let value = lower_value_expected(
-                &mut nodes,
-                &bindings,
-                context,
-                tail,
-                Some(&signature.return_type),
-            )?;
-            require_type(&value, &signature.return_type, expr_span(tail))?;
-            Some(value.node)
+        let mut site_counter = 0u32;
+        let generator = lower_generator_body(
+            &mut nodes,
+            &mut yielded_checks,
+            &mut site_counter,
+            &bindings,
+            context,
+            &function.body.stmts,
+            None,
+            true,
+        )?;
+        (None, Some(generator))
+    } else {
+        for statement in &function.body.stmts {
+            match statement {
+                ast::Stmt::Expression(statement) => {
+                    return Err(expression_statement_diagnostic(statement.span));
+                }
+                ast::Stmt::Yield(statement) => {
+                    return Err(Diagnostics::one(Diagnostic::unsupported(
+                        statement.span,
+                        "yield outside a Stream<Check> test",
+                    )));
+                }
+                ast::Stmt::Let(statement) => {
+                    lower_let_statement(&mut nodes, &mut bindings, context, statement)?;
+                }
+            }
         }
-        (None, false) => {
-            return Err(Diagnostics::one(Diagnostic::unsupported(
-                function.body.span,
-                "function without a tail value",
-            )));
-        }
+        let output = match &function.body.tail {
+            Some(tail) => {
+                let value = lower_value_expected(
+                    &mut nodes,
+                    &bindings,
+                    context,
+                    tail,
+                    Some(&signature.return_type),
+                )?;
+                require_type(&value, &signature.return_type, expr_span(tail))?;
+                Some(value.node)
+            }
+            None => {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    function.body.span,
+                    "function without a tail value",
+                )));
+            }
+        };
+        (output, None)
     };
 
-    Ok(Function {
-        id: signature.id,
-        name: function.name.value.clone(),
-        span: function.span,
-        parameters,
-        return_type: signature.return_type.clone(),
+    Ok(LoweredFunction {
+        function: Function {
+            id: signature.id,
+            name: function.name.value.clone(),
+            span: function.span,
+            parameters,
+            return_type: signature.return_type.clone(),
+            nodes,
+            output,
+            yielded_checks,
+        },
+        generator,
+    })
+}
+
+/// Lower an ordered sequence of generator statements (a test body or the body
+/// of a taken control arm) into a [`GeneratorBody`]. Value nodes are appended
+/// to `nodes`; every published check node is recorded in `yielded_checks` for
+/// the `must_use` lint and the flat static runner. `top_level` marks the test
+/// body itself, whose unconditional leaf yields retain the historical
+/// `Op::Yield` codata marker node so flat tests keep their exact VIR shape.
+///
+/// r[impl machine.test.generator-codata]
+#[allow(clippy::too_many_arguments)]
+fn lower_generator_body(
+    nodes: &mut Vec<Node>,
+    yielded_checks: &mut Vec<NodeId>,
+    site_counter: &mut u32,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    stmts: &[ast::Stmt],
+    tail: Option<&ast::Expr>,
+    top_level: bool,
+) -> Result<GeneratorBody, Diagnostics> {
+    let mut bindings = bindings.clone();
+    let mut steps = Vec::new();
+    for statement in stmts {
+        match statement {
+            ast::Stmt::Expression(statement) => {
+                return Err(expression_statement_diagnostic(statement.span));
+            }
+            ast::Stmt::Let(statement) => {
+                lower_let_statement(nodes, &mut bindings, context, statement)?;
+            }
+            ast::Stmt::Yield(statement) => match &statement.value {
+                ast::Expr::Match(expression) => {
+                    steps.push(lower_generator_match(
+                        nodes,
+                        yielded_checks,
+                        site_counter,
+                        &bindings,
+                        context,
+                        expression,
+                    )?);
+                }
+                ast::Expr::If(expression) => {
+                    steps.push(lower_generator_if(
+                        nodes,
+                        yielded_checks,
+                        site_counter,
+                        &bindings,
+                        context,
+                        expression,
+                    )?);
+                }
+                value => {
+                    let site = lower_yield_check_site(
+                        nodes,
+                        yielded_checks,
+                        site_counter,
+                        &bindings,
+                        context,
+                        value,
+                        statement.span,
+                    )?;
+                    if top_level {
+                        push_node(
+                            nodes,
+                            statement.span,
+                            Type::StreamCheck,
+                            EffectFacts::CODATA,
+                            vec![site.check],
+                            Op::Yield,
+                        );
+                    }
+                    steps.push(GeneratorStep::Yield(site));
+                }
+            },
+        }
+    }
+    if let Some(tail) = tail {
+        let site = lower_yield_check_site(
+            nodes,
+            yielded_checks,
+            site_counter,
+            &bindings,
+            context,
+            tail,
+            expr_span(tail),
+        )?;
+        steps.push(GeneratorStep::Yield(site));
+    }
+    Ok(GeneratorBody { steps })
+}
+
+/// Lower one leaf `yield <check>` into a static [`YieldSite`]. The check is a
+/// pure parameterized recipe (`Op::Expect` over captured values), never an
+/// evaluated boolean or a host call.
+fn lower_yield_check_site(
+    nodes: &mut Vec<Node>,
+    yielded_checks: &mut Vec<NodeId>,
+    site_counter: &mut u32,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    value: &ast::Expr,
+    span: Span,
+) -> Result<YieldSite, Diagnostics> {
+    let check = lower_check(nodes, bindings, context, value)?;
+    yielded_checks.push(check);
+    let id = YieldSiteId(*site_counter);
+    *site_counter = site_counter
+        .checked_add(1)
+        .expect("yield site count fits u32");
+    Ok(YieldSite { id, check, span })
+}
+
+/// Lower a yielded `match` into a generator [`GeneratorStep::Match`]: real
+/// variant dispatch on a scrutinee value whose taken arm is a nested generator
+/// body. Untaken arms contribute no yield sites, so there are no phantom checks.
+///
+/// r[impl machine.test.generator-step]
+fn lower_generator_match(
+    nodes: &mut Vec<Node>,
+    yielded_checks: &mut Vec<NodeId>,
+    site_counter: &mut u32,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    expression: &ast::MatchExpr,
+) -> Result<GeneratorStep, Diagnostics> {
+    let scrutinee = lower_value(nodes, bindings, context, &expression.scrutinee)?;
+    let Type::Enum(enumeration) = scrutinee.ty.clone() else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            expr_span(&expression.scrutinee),
+            "generator match on a non-enum scrutinee",
+        )));
+    };
+    if !expression
+        .arms
+        .arms
+        .iter()
+        .all(|arm| enum_pattern(&arm.pattern).is_some() && arm.guard.is_none())
+    {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            expression.arms.span,
+            "generator match requires exhaustive enum arms without guards",
+        )));
+    }
+
+    let mut seen = BTreeSet::new();
+    let mut arms = Vec::with_capacity(expression.arms.arms.len());
+    for arm in &expression.arms.arms {
+        let pattern = enum_pattern(&arm.pattern).expect("generator match arm shape checked above");
+        let (variant_index, variant, variant_span) =
+            find_enum_pattern_variant(&enumeration, pattern)?;
+        if !seen.insert(variant_index) {
+            return Err(variant_diagnostic(
+                DiagnosticCode::DuplicateVariant,
+                variant_span,
+                &enumeration.name,
+                &variant.name,
+            ));
+        }
+        let first_binding_node = nodes.len();
+        let mut arm_bindings = bindings.clone();
+        bind_enum_pattern(
+            nodes,
+            &mut arm_bindings,
+            &scrutinee,
+            &enumeration,
+            variant_index,
+            variant,
+            pattern,
+        )?;
+        let binding_nodes = (first_binding_node..nodes.len())
+            .map(|index| NodeId(u32::try_from(index).expect("VIR node index fits u32")))
+            .collect();
+        let body = match &arm.body {
+            ast::MatchArmBody::Block(block) => lower_generator_body(
+                nodes,
+                yielded_checks,
+                site_counter,
+                &arm_bindings,
+                context,
+                &block.stmts,
+                block.tail.as_ref(),
+                false,
+            )?,
+            ast::MatchArmBody::Expr(expression) => {
+                let site = lower_yield_check_site(
+                    nodes,
+                    yielded_checks,
+                    site_counter,
+                    &arm_bindings,
+                    context,
+                    expression,
+                    expr_span(expression),
+                )?;
+                GeneratorBody {
+                    steps: vec![GeneratorStep::Yield(site)],
+                }
+            }
+        };
+        arms.push(GeneratorArm {
+            variant: u32::try_from(variant_index).map_err(|_| {
+                variant_diagnostic(
+                    DiagnosticCode::VariantPayloadMismatch,
+                    enum_pattern_span(pattern),
+                    &enumeration.name,
+                    &variant.name,
+                )
+            })?,
+            bindings: binding_nodes,
+            body,
+        });
+    }
+
+    let missing = enumeration
+        .variants
+        .iter()
+        .enumerate()
+        .filter(|(index, _)| !seen.contains(index))
+        .map(|(_, variant)| variant.name.clone())
+        .collect::<Vec<_>>();
+    if !missing.is_empty() {
+        return Err(Diagnostics::one(Diagnostic {
+            code: DiagnosticCode::NonExhaustiveMatch,
+            primary: expression.arms.span,
+            labels: Vec::new(),
+            payload: DiagnosticPayload::Match { missing },
+        }));
+    }
+
+    Ok(GeneratorStep::Match {
+        scrutinee: scrutinee.node,
+        arms,
+    })
+}
+
+/// Lower a yielded `if` into a generator [`GeneratorStep::If`]: real two-way
+/// dispatch on a Bool condition whose taken branch is a nested generator body.
+///
+/// r[impl machine.test.generator-step]
+fn lower_generator_if(
+    nodes: &mut Vec<Node>,
+    yielded_checks: &mut Vec<NodeId>,
+    site_counter: &mut u32,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    expression: &ast::IfExpr,
+) -> Result<GeneratorStep, Diagnostics> {
+    let condition = lower_value(nodes, bindings, context, &expression.condition)?;
+    require_type(&condition, &Type::Bool, expr_span(&expression.condition))?;
+    let consequent = lower_generator_body(
         nodes,
-        output,
         yielded_checks,
+        site_counter,
+        bindings,
+        context,
+        &expression.consequent.stmts,
+        expression.consequent.tail.as_ref(),
+        false,
+    )?;
+    let alternative = match &expression.alternative {
+        ast::IfBranch::Block(block) => lower_generator_body(
+            nodes,
+            yielded_checks,
+            site_counter,
+            bindings,
+            context,
+            &block.stmts,
+            block.tail.as_ref(),
+            false,
+        )?,
+        ast::IfBranch::If(inner) => GeneratorBody {
+            steps: vec![lower_generator_if(
+                nodes,
+                yielded_checks,
+                site_counter,
+                bindings,
+                context,
+                inner,
+            )?],
+        },
+    };
+    Ok(GeneratorStep::If {
+        condition: condition.node,
+        consequent,
+        alternative,
     })
 }
 

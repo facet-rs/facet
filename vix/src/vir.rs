@@ -178,6 +178,164 @@ pub struct OrderedMatchArm {
     pub body: ControlRegion,
 }
 
+/// Stable identifier for a static yield site within a test generator.
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct YieldSiteId(pub u32);
+
+/// One static yield site: a parameterized pure check recipe together with the
+/// typed values it captures. A site publishes a check descriptor only when its
+/// owning control arm is taken at runtime; untaken arms publish nothing, so no
+/// phantom passing checks exist.
+///
+/// `check` roots a pure `Op::Expect` recipe in the enclosing function's node
+/// list, and that recipe's transitive inputs are the captured values. Recipe
+/// identity is span-insensitive (see [`canonical_recipe`]); `span` is source
+/// provenance only and never enters identity.
+///
+/// r[impl machine.test.generator-yield-site]
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct YieldSite {
+    pub id: YieldSiteId,
+    pub check: NodeId,
+    pub span: Span,
+}
+
+/// One arm of a generator [`GeneratorStep::Match`]. The arm body is itself a
+/// generator body; the sites inside it are owned by this arm and publish only
+/// when the arm is taken.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct GeneratorArm {
+    pub variant: u32,
+    /// Nodes binding the arm pattern's payload projections.
+    pub bindings: Vec<NodeId>,
+    pub body: GeneratorBody,
+}
+
+/// One ordered step in a test generator: either a static yield site or real
+/// control whose arms are themselves generator bodies.
+///
+/// r[impl machine.test.generator-step]
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum GeneratorStep {
+    /// Publish one static yield site unconditionally at this position.
+    Yield(YieldSite),
+    /// Real variant dispatch on a scrutinee value; only the taken arm publishes
+    /// its owned sites. Arms are exhaustive over the scrutinee enum.
+    Match {
+        scrutinee: NodeId,
+        arms: Vec<GeneratorArm>,
+    },
+    /// Real two-way dispatch on a Bool condition value.
+    If {
+        condition: NodeId,
+        consequent: GeneratorBody,
+        alternative: GeneratorBody,
+    },
+}
+
+/// The lowered body of a `#[test] -> Stream<Check>` generator: an ordered
+/// sequence of control/yield steps over the enclosing function's pure nodes.
+/// A flat generator (only `Yield` steps) is exactly the historical static
+/// yield list the runner already executes; branch-dependent steps are the
+/// dynamic codata boundary this checkpoint introduces.
+///
+/// r[impl machine.test.generator-codata]
+#[derive(facet::Facet, Clone, Debug, Default, PartialEq, Eq)]
+pub struct GeneratorBody {
+    pub steps: Vec<GeneratorStep>,
+}
+
+/// One control edge on the path from the generator root to a yield site. An
+/// empty owner path means the site publishes unconditionally.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GeneratorControl {
+    MatchArm { scrutinee: NodeId, variant: u32 },
+    IfConsequent { condition: NodeId },
+    IfAlternative { condition: NodeId },
+}
+
+/// A yield site paired with the control path that owns it.
+#[derive(Clone, Debug)]
+pub struct OwnedYieldSite<'a> {
+    pub owner: Vec<GeneratorControl>,
+    pub site: &'a YieldSite,
+}
+
+impl GeneratorBody {
+    /// Every yield site in control/source order, each paired with the control
+    /// path that owns it.
+    #[must_use]
+    pub fn owned_sites(&self) -> Vec<OwnedYieldSite<'_>> {
+        let mut out = Vec::new();
+        self.collect_owned_sites(&mut Vec::new(), &mut out);
+        out
+    }
+
+    fn collect_owned_sites<'a>(
+        &'a self,
+        path: &mut Vec<GeneratorControl>,
+        out: &mut Vec<OwnedYieldSite<'a>>,
+    ) {
+        for step in &self.steps {
+            match step {
+                GeneratorStep::Yield(site) => out.push(OwnedYieldSite {
+                    owner: path.clone(),
+                    site,
+                }),
+                GeneratorStep::Match { scrutinee, arms } => {
+                    for arm in arms {
+                        path.push(GeneratorControl::MatchArm {
+                            scrutinee: *scrutinee,
+                            variant: arm.variant,
+                        });
+                        arm.body.collect_owned_sites(path, out);
+                        path.pop();
+                    }
+                }
+                GeneratorStep::If {
+                    condition,
+                    consequent,
+                    alternative,
+                } => {
+                    path.push(GeneratorControl::IfConsequent {
+                        condition: *condition,
+                    });
+                    consequent.collect_owned_sites(path, out);
+                    path.pop();
+                    path.push(GeneratorControl::IfAlternative {
+                        condition: *condition,
+                    });
+                    alternative.collect_owned_sites(path, out);
+                    path.pop();
+                }
+            }
+        }
+    }
+
+    /// Whether any yield site is owned by a branch rather than published
+    /// unconditionally. The static runner can only execute flat generators; a
+    /// conditional generator is the explicit runtime seam.
+    #[must_use]
+    pub fn has_conditional_sites(&self) -> bool {
+        self.owned_sites()
+            .iter()
+            .any(|owned| !owned.owner.is_empty())
+    }
+
+    /// The unconditional top-level sites, in order — the flat static-runner view.
+    #[must_use]
+    pub fn unconditional_sites(&self) -> Vec<&YieldSite> {
+        self.steps
+            .iter()
+            .filter_map(|step| match step {
+                GeneratorStep::Yield(site) => Some(site),
+                _ => None,
+            })
+            .collect()
+    }
+}
+
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum ArrayMapGrainKey {
@@ -597,6 +755,8 @@ pub struct Function {
 pub struct Test {
     pub name: String,
     pub function: FunctionId,
+    /// The lowered generator/codata body of this test.
+    pub generator: GeneratorBody,
 }
 
 #[derive(facet::Facet, Clone, Debug, Default, PartialEq, Eq)]
@@ -1173,6 +1333,84 @@ fn canonical_control_region(region: &ControlRegion) -> Vec<u8> {
     }
     frame(&mut encoded, &region.output.0.to_le_bytes());
     encoded
+}
+
+/// Span-insensitive identity of the pure check recipe rooted at `root` in
+/// `function`. The recipe's transitive nodes are renumbered into local
+/// dependency order, so the identity depends only on the recipe's structure and
+/// its captured value shapes — never on source spans or the root's absolute
+/// position in the function.
+///
+/// r[impl machine.test.recipe-identity]
+#[must_use]
+pub fn canonical_recipe(function: &Function, root: NodeId) -> Vec<u8> {
+    let mut needed = BTreeSet::new();
+    collect_dependencies(function, root, &mut needed);
+    // Ascending `NodeId` is topological (SSA append order), so a plain index
+    // gives a deterministic local numbering independent of absolute position.
+    let local: BTreeMap<NodeId, u32> = needed
+        .iter()
+        .enumerate()
+        .map(|(index, id)| {
+            (
+                *id,
+                u32::try_from(index).expect("recipe node count fits u32"),
+            )
+        })
+        .collect();
+    let mut bytes = Vec::new();
+    frame(&mut bytes, b"vix.vir.recipe.site.v1");
+    for id in &needed {
+        let node = localize_node(&function.nodes[id.0 as usize], &local);
+        frame(&mut bytes, &canonical_node(&node, &BTreeMap::new()));
+    }
+    frame(
+        &mut bytes,
+        &local
+            .get(&root)
+            .expect("recipe root is one of its own dependencies")
+            .to_le_bytes(),
+    );
+    bytes
+}
+
+fn localize_node(node: &Node, local: &BTreeMap<NodeId, u32>) -> Node {
+    let map = |id: NodeId| NodeId(local.get(&id).copied().unwrap_or(id.0));
+    let mut localized = node.clone();
+    localized.id = map(node.id);
+    localized.inputs = node.inputs.iter().map(|&input| map(input)).collect();
+    localize_control_regions(&mut localized.op, &map);
+    localized
+}
+
+fn localize_control_regions(op: &mut Op, map: &impl Fn(NodeId) -> NodeId) {
+    let localize_region = |region: &mut ControlRegion, map: &dyn Fn(NodeId) -> NodeId| {
+        region.nodes = region.nodes.iter().map(|&node| map(node)).collect();
+        region.output = map(region.output);
+    };
+    match op {
+        Op::Match { arms } => {
+            for arm in arms {
+                arm.nodes = arm.nodes.iter().map(|&node| map(node)).collect();
+                arm.output = map(arm.output);
+            }
+        }
+        Op::If {
+            consequent,
+            alternative,
+        } => {
+            localize_region(consequent, map);
+            localize_region(alternative, map);
+        }
+        Op::OrderedMatch { arms, fallback } => {
+            for arm in arms {
+                localize_region(&mut arm.condition, map);
+                localize_region(&mut arm.body, map);
+            }
+            localize_region(fallback, map);
+        }
+        _ => {}
+    }
 }
 
 pub(crate) fn canonical_type(ty: &Type) -> Vec<u8> {

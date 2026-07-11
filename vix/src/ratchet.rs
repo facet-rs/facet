@@ -12,6 +12,16 @@ use crate::runtime::{
 pub enum RunError {
     Diagnostics(Diagnostics),
     Machine(Box<MachineError>),
+    /// A test compiled into a generator whose yield sites are branch-dependent
+    /// (owned by a taken control arm). The static runner can only publish a flat
+    /// list of unconditional top-level checks; folding conditional codata into
+    /// demand-driven descriptors is a later runtime checkpoint. This is the
+    /// explicit typed seam, not a silent partial run.
+    ///
+    /// r[impl machine.test.generator-runtime-seam]
+    UnsupportedGenerator {
+        test: String,
+    },
 }
 
 impl From<Diagnostics> for RunError {
@@ -92,6 +102,23 @@ impl RatchetReport {
 /// r[impl machine.scheduler.replay-is-semantics]
 pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
     let compilation = Compiler::new().compile(source)?;
+
+    // The static runner partitions a flat list of unconditional top-level
+    // yields. A generator whose sites are owned by a taken control arm cannot be
+    // faithfully executed that way yet: publishing a taken arm's checks (and
+    // suppressing the untaken arm's) is the deferred runtime fold. Refuse
+    // explicitly rather than silently dropping branch-dependent checks.
+    if let Some(test) = compilation
+        .module
+        .tests
+        .iter()
+        .find(|test| test.generator.has_conditional_sites())
+    {
+        return Err(RunError::UnsupportedGenerator {
+            test: test.name.clone(),
+        });
+    }
+
     let mut cache = LoweringCache::default();
 
     let plain = run_lane(&compilation.module, &mut cache, ChaosPolicy::default())?;
