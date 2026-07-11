@@ -24,6 +24,8 @@ ast({
   method_call: { as: "MethodCall" },
   index_expr: { as: "Index" },
   array_expr: { as: "Array" },
+  map_expr: { as: "Map" },
+  set_expr: { as: "Set" },
   record_expr: { as: "Record" },
   variant_expr: { as: "Variant" },
   match_expr: { as: "Match" },

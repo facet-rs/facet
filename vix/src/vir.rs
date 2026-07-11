@@ -196,6 +196,13 @@ pub enum Type {
     /// A dense array whose authored positions are values, not type parameters.
     /// Its length is carried by each value rather than the type.
     Array(Box<Type>),
+    /// A canonically ordered keyed value represented independently of insertion history.
+    Map {
+        key: Box<Type>,
+        value: Box<Type>,
+    },
+    /// A canonically ordered set value with no observable payload column.
+    Set(Box<Type>),
 }
 
 impl Type {
@@ -215,9 +222,38 @@ impl Type {
     }
 
     #[must_use]
+    pub fn map(key: Type, value: Type) -> Self {
+        Self::Map {
+            key: Box::new(key),
+            value: Box::new(value),
+        }
+    }
+
+    #[must_use]
+    pub fn set(element: Type) -> Self {
+        Self::Set(Box::new(element))
+    }
+
+    #[must_use]
     pub fn array_element(&self) -> Option<&Type> {
         match self {
             Self::Array(element) => Some(element),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn map_types(&self) -> Option<(&Type, &Type)> {
+        match self {
+            Self::Map { key, value } => Some((key, value)),
+            _ => None,
+        }
+    }
+
+    #[must_use]
+    pub fn set_element(&self) -> Option<&Type> {
+        match self {
+            Self::Set(element) => Some(element),
             _ => None,
         }
     }
@@ -253,6 +289,8 @@ impl Type {
             Self::Record(record) => record.name.clone(),
             Self::Enum(enumeration) => enumeration.name.clone(),
             Self::Array(element) => format!("[{}]", element.name()),
+            Self::Map { key, value } => format!("Map<{}, {}>", key.name(), value.name()),
+            Self::Set(element) => format!("Set<{}>", element.name()),
         }
     }
 
@@ -261,7 +299,13 @@ impl Type {
     #[must_use]
     pub fn word_width(&self) -> Option<usize> {
         match self {
-            Self::Bool | Self::Int | Self::Check | Self::String | Self::Array(_) => Some(1),
+            Self::Bool
+            | Self::Int
+            | Self::Check
+            | Self::String
+            | Self::Array(_)
+            | Self::Map { .. }
+            | Self::Set(_) => Some(1),
             Self::Function { .. } => Some(2),
             Self::StreamCheck => None,
             Self::Tuple(elements) => elements.iter().try_fold(0usize, |width, element| {
@@ -284,7 +328,7 @@ impl Type {
     pub fn equality_is_structural(&self) -> bool {
         match self {
             Self::Bool | Self::Int | Self::String => true,
-            Self::Array(_) => false,
+            Self::Array(_) | Self::Map { .. } | Self::Set(_) => false,
             Self::Function { .. } => false,
             Self::Tuple(elements) => elements.iter().all(Self::equality_is_structural),
             Self::Record(record) => record
@@ -304,7 +348,7 @@ impl Type {
     pub fn structural_order_is_defined(&self) -> bool {
         match self {
             Self::Bool | Self::Int | Self::String => true,
-            Self::Array(_) => false,
+            Self::Array(_) | Self::Map { .. } | Self::Set(_) => false,
             Self::Function { .. } => false,
             Self::Tuple(elements) => elements.iter().all(Self::structural_order_is_defined),
             Self::Record(record) => record
@@ -413,6 +457,29 @@ pub enum Op {
     ArrayAppend,
     /// Concatenate two dense arrays, producing a fresh value.
     ArrayConcat,
+    /// Construct a canonical map from alternating key/value inputs.
+    Map,
+    /// Construct a canonical set from element inputs.
+    Set,
+    /// Add one new map row, failing on a duplicate key.
+    MapAdd,
+    /// Combine two disjoint maps, failing on an overlapping key.
+    MapConcat,
+    /// Insert or replace one map row deliberately.
+    MapWith,
+    /// Address one map value by key, failing on absence.
+    MapGet,
+    /// Test map membership without demanding the value.
+    MapHas,
+    MapLen,
+    MapKeys,
+    /// Add one element to a set.
+    SetAdd,
+    /// Combine two sets.
+    SetConcat,
+    SetHas,
+    SetLen,
+    SetValues,
 }
 
 /// One SSA-like operation. Dependencies are explicit node ids; no Rust
@@ -901,6 +968,20 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::ArrayLen => op.push(27),
         Op::ArrayAppend => op.push(28),
         Op::ArrayConcat => op.push(29),
+        Op::Map => op.push(30),
+        Op::Set => op.push(31),
+        Op::MapAdd => op.push(32),
+        Op::MapConcat => op.push(33),
+        Op::MapWith => op.push(34),
+        Op::MapGet => op.push(35),
+        Op::MapHas => op.push(36),
+        Op::MapLen => op.push(37),
+        Op::MapKeys => op.push(38),
+        Op::SetAdd => op.push(39),
+        Op::SetConcat => op.push(40),
+        Op::SetHas => op.push(41),
+        Op::SetLen => op.push(42),
+        Op::SetValues => op.push(43),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());
@@ -955,6 +1036,17 @@ pub(crate) fn canonical_type(ty: &Type) -> Vec<u8> {
         }
         Type::Array(element) => {
             let mut bytes = b"array".to_vec();
+            frame(&mut bytes, &canonical_type(element));
+            bytes
+        }
+        Type::Map { key, value } => {
+            let mut bytes = b"map".to_vec();
+            frame(&mut bytes, &canonical_type(key));
+            frame(&mut bytes, &canonical_type(value));
+            bytes
+        }
+        Type::Set(element) => {
+            let mut bytes = b"set".to_vec();
             frame(&mut bytes, &canonical_type(element));
             bytes
         }

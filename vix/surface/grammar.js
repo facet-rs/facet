@@ -140,6 +140,8 @@ module.exports = grammar({
         $.method_call,
         $.index_expr,
         $.array_expr,
+        $.map_expr,
+        $.set_expr,
         $.field_access,
         $.variant_expr,
         $.record_expr,
@@ -222,6 +224,9 @@ module.exports = grammar({
         seq(field("receiver", $._expr), "[", field("index", $._expr), "]"),
       ),
     array_expr: ($) => seq("[", sepBy(",", field("elem", $._expr)), "]"),
+    map_expr: ($) => seq("%", "{", sepBy(",", field("row", $.map_row)), "}"),
+    map_row: ($) => seq(field("key", $._expr), "=>", field("value", $._expr)),
+    set_expr: ($) => seq("%", "[", sepBy(",", field("elem", $._expr)), "]"),
     arg_list: ($) => seq("(", sepBy(",", field("arg", $._expr)), ")"),
     where_args: ($) => seq("where", "{", sepBy(",", field("field", $.named_value)), "}"),
     variant_path: ($) =>

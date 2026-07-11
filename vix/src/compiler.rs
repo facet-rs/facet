@@ -639,6 +639,37 @@ impl<'a> TypeResolver<'a> {
                     self.resolve_type_with(&generic.args[0], substitutions)?,
                 ))
             }
+            ast::Type::Generic(generic) if path_is(&generic.base, "Map") => {
+                if generic.args.len() != 2 {
+                    return Err(invalid_arity(generic.span, 2, generic.args.len()));
+                }
+                let key = self.resolve_type_with(&generic.args[0], substitutions)?;
+                if !key.structural_order_is_defined() {
+                    return Err(type_mismatch(
+                        type_span(&generic.args[0]),
+                        "structurally ordered map key",
+                        key.name(),
+                    ));
+                }
+                Ok(Type::map(
+                    key,
+                    self.resolve_type_with(&generic.args[1], substitutions)?,
+                ))
+            }
+            ast::Type::Generic(generic) if path_is(&generic.base, "Set") => {
+                if generic.args.len() != 1 {
+                    return Err(invalid_arity(generic.span, 1, generic.args.len()));
+                }
+                let element = self.resolve_type_with(&generic.args[0], substitutions)?;
+                if !element.structural_order_is_defined() {
+                    return Err(type_mismatch(
+                        type_span(&generic.args[0]),
+                        "structurally ordered set element",
+                        element.name(),
+                    ));
+                }
+                Ok(Type::set(element))
+            }
             ast::Type::Path(path) => {
                 let name = path_name(path);
                 if let Some(ty) = self.resolved.get(&name) {
@@ -1045,6 +1076,37 @@ fn lower_declared_type(
                 return Err(invalid_arity(generic.span, 1, generic.args.len()));
             }
             Ok(Type::option(lower_declared_type(&generic.args[0], types)?))
+        }
+        ast::Type::Generic(generic) if path_is(&generic.base, "Map") => {
+            if generic.args.len() != 2 {
+                return Err(invalid_arity(generic.span, 2, generic.args.len()));
+            }
+            let key = lower_declared_type(&generic.args[0], types)?;
+            if !key.structural_order_is_defined() {
+                return Err(type_mismatch(
+                    type_span(&generic.args[0]),
+                    "structurally ordered map key",
+                    key.name(),
+                ));
+            }
+            Ok(Type::map(
+                key,
+                lower_declared_type(&generic.args[1], types)?,
+            ))
+        }
+        ast::Type::Generic(generic) if path_is(&generic.base, "Set") => {
+            if generic.args.len() != 1 {
+                return Err(invalid_arity(generic.span, 1, generic.args.len()));
+            }
+            let element = lower_declared_type(&generic.args[0], types)?;
+            if !element.structural_order_is_defined() {
+                return Err(type_mismatch(
+                    type_span(&generic.args[0]),
+                    "structurally ordered set element",
+                    element.name(),
+                ));
+            }
+            Ok(Type::set(element))
         }
         ast::Type::Path(path) => types
             .get(&path_name(path))
