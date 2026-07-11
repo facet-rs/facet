@@ -88,13 +88,19 @@ At the time of the latest authoritative integration checkpoint
   declared 5-second wall, so budgeted end-to-end execution—not call-frame
   recursion—is the remaining boundary. Ordinary recursion remains the rung-049
   call-frame path;
-- the persistent AVL core has a 200k insertion scaling oracle, but neither the
-  rung-051 array certificate nor the end-to-end rung-138 Map proof is yet
-  established. The explicit framed value-identity epoch, compact inline
-  sequence writer, semantic tree, and `Store::intern_tree` identity monopoly
-  are folded at `e5e82357b`. Range/fold driving, shared-demand extraction,
-  molten-to-store publication, non-colliding live/frozen handles, and
-  production arena observability remain explicit seams;
+- the persistent AVL core has a 200k insertion scaling oracle, but the
+  end-to-end rung-138 Map proof is not yet established. The explicit framed
+  value-identity epoch, compact inline sequence writer, semantic tree, and
+  `Store::intern_tree` identity monopoly are folded at `e5e82357b`.
+  Verifier-visible in-frame `range` construction and the strictly recognized
+  molten one-item-append fold are folded at `1c50c3b58`; exact-root default run
+  `5227e53d-f423-456d-b8a6-5e280eb4fa80` and interpreter run
+  `eecb2780-334b-4874-af20-902519bf2f87` each passed 11/11 focused checks.
+  Growing the input from 16 to 4096 leaves scheduler requests, store interns,
+  memo misses, and per-element marks unchanged, while the bounded forced-copy
+  differential preserves identical value identities, duplicates, and order.
+  Shared-demand extraction, molten-to-store publication, disjoint live/frozen
+  handles, and production aggregate-freeze observability remain explicit seams;
 - the live Cargo oracle is folded at `a1be1fa6e`. One shared materialized
   workspace is queried through `cargo metadata --offline`, preserving exact
   source/name/version package identities, target-projected normal/build graph
@@ -382,6 +388,14 @@ Rung 051 lands through these forward checkpoints:
    forced-copy fold selection, bytes hashed, and peak molten bytes/nodes. The
    wall/RSS watchdog and TraceCheck substrate then assert those facts in the
    unchanged canonical rung.
+
+Checkpoint 1 is folded at `e5e82357b`; checkpoints 2 and 4 are folded at
+`1c50c3b58`. Checkpoint 4 recognizes only a single-consumption append fold and
+leaves every other fold on the semantic path. The standing rung-051 boundary is
+therefore checkpoints 3 and 5-8: extract one shared aggregate demand, resolve
+its molten result without leaking a handle, publish it once through the Store's
+framed identity authority, and bind every ValueCheck consumer to that one
+published value.
 
 Before any composite dynamic key or completed aggregate crosses that boundary,
 the runtime Store must intern it through the canonical framed value walk:
