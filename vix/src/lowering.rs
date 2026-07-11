@@ -6,8 +6,8 @@ use std::fmt::Write;
 use weavy::exec::Executable;
 use weavy::mem::Layout;
 use weavy::task::{
-    ArgCopy, Fn as WeavyFn, FnId as WeavyFnId, Op as WeavyOp, Program as WeavyProgram,
-    StructuralFieldSource,
+    ArgCopy, ArrayOpStatus, Fn as WeavyFn, FnId as WeavyFnId, Op as WeavyOp,
+    Program as WeavyProgram, StructuralFieldSource,
 };
 use weavy::{
     CallContract as WeavyCallContract, CallContractId as WeavyCallContractId,
@@ -367,6 +367,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
         trace_ids: &trace_ids,
         layouts: &layouts,
         regions: &regions,
+        schemas: &schemas,
     };
 
     let mut pending_constants = BTreeMap::new();
@@ -1657,6 +1658,7 @@ struct LoweringContext<'a> {
     trace_ids: &'a BTreeMap<NodeRef, u32>,
     layouts: &'a BTreeMap<FunctionId, FunctionLayout>,
     regions: &'a RegionAssignments,
+    schemas: &'a SchemaAssignments,
 }
 
 /// The contract and the instruction stream share this canonical region order.
@@ -2545,6 +2547,9 @@ fn lower_node_sequence(
         let representation = match &node.op {
             Op::Call(callee) if sequence.function.layout.array_outcome.is_some() => {
                 lower_array_call_node(node, dst_region_id, values, *callee, sequence, outputs)?
+            }
+            Op::Array | Op::ArrayIndex | Op::ArrayLen => {
+                lower_checked_array_node(node, dst, values, sequence, outputs)?
             }
             Op::Match { .. } => {
                 lower_match_node(node, dst, dst_region_id, values, sequence, outputs)?
@@ -3789,6 +3794,302 @@ fn lower_array_call_node(
     });
     outputs.code.bind(done, node.span)?;
     Ok(representation_for_type(&node.ty, node.span)?)
+}
+
+fn lower_checked_array_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(node.span, "array operation has no typed outcome scratch")
+    })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(node.span, "array operation has no typed outcome return")
+    })?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .copied()
+        .ok_or_else(|| {
+            lowering_diagnostic(node.span, "array operation has no stable trace site")
+        })?;
+
+    match node.op {
+        Op::Array => {
+            let Type::Array(element) = &node.ty else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "array literal has non-array type",
+                ));
+            };
+            let element_schema = sequence.lowering.schemas.schema_for(element, node.span)?;
+            let width = type_words(element, node.span)?.as_usize()
+                * usize::try_from(FrameSlot::word_size()).expect("word size fits usize");
+            outputs.code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[2].byte_offset(),
+                value: i64::try_from(node.inputs.len())
+                    .map_err(|_| lowering_diagnostic(node.span, "array literal count overflow"))?,
+            });
+            outputs.code.push(WeavyOp::ArrayNew {
+                dst: dst.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                count_slot: scratch.fields[2].byte_offset(),
+                elem_width: u32::try_from(width)
+                    .map_err(|_| lowering_diagnostic(node.span, "array element width overflow"))?,
+                elem_schema_ref: i64::from(element_schema.0),
+            });
+            emit_array_status_machine_checks(
+                node,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            for (index, input) in node.inputs.iter().enumerate() {
+                let value = values.get(input).ok_or_else(|| {
+                    lowering_diagnostic(node.span, "array element is not topologically prior")
+                })?;
+                require_value(
+                    node,
+                    value,
+                    element,
+                    representation_for_type(element, node.span)?,
+                )?;
+                outputs.code.push(WeavyOp::ConstI64 {
+                    dst: scratch.fields[2].byte_offset(),
+                    value: i64::try_from(index)
+                        .map_err(|_| lowering_diagnostic(node.span, "array index overflow"))?,
+                });
+                outputs.code.push(WeavyOp::ArrayStore {
+                    status: scratch.status.byte_offset(),
+                    array: dst.start().byte_offset(),
+                    index: scratch.fields[2].byte_offset(),
+                    src: value.region.start().byte_offset(),
+                    elem_width: u32::try_from(width).map_err(|_| {
+                        lowering_diagnostic(node.span, "array element width overflow")
+                    })?,
+                    elem_schema_ref: i64::from(element_schema.0),
+                });
+                emit_array_status_machine_checks(
+                    node,
+                    site,
+                    scratch,
+                    assigned,
+                    outcome,
+                    return_label,
+                    outputs.code,
+                )?;
+            }
+            Ok(ValueRepresentation::RealizedHandle)
+        }
+        Op::ArrayLen => {
+            require_input_count(node, 1)?;
+            let array = input_value(node, values, 0)?;
+            let Type::Array(element) = &array.ty else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "array length input is not an array",
+                ));
+            };
+            let element_schema = sequence.lowering.schemas.schema_for(element, node.span)?;
+            outputs.code.push(WeavyOp::LoadArrayLen {
+                dst: dst.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                array: array.region.start().byte_offset(),
+                elem_schema_ref: i64::from(element_schema.0),
+            });
+            emit_array_status_machine_checks(
+                node,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            Ok(ValueRepresentation::Word)
+        }
+        Op::ArrayIndex => {
+            require_input_count(node, 2)?;
+            let array = input_value(node, values, 0)?;
+            let index = input_value(node, values, 1)?;
+            let Type::Array(element) = &array.ty else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "array index input is not an array",
+                ));
+            };
+            require_value(node, &index, &Type::Int, ValueRepresentation::Word)?;
+            let element_schema = sequence.lowering.schemas.schema_for(element, node.span)?;
+            let width = type_words(element, node.span)?.as_usize()
+                * usize::try_from(FrameSlot::word_size()).expect("word size fits usize");
+            outputs.code.push(WeavyOp::LoadArrayLen {
+                dst: scratch.fields[2].byte_offset(),
+                status: scratch.status.byte_offset(),
+                array: array.region.start().byte_offset(),
+                elem_schema_ref: i64::from(element_schema.0),
+            });
+            emit_array_status_machine_checks(
+                node,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            outputs.code.push(WeavyOp::LoadArray {
+                dst: dst.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                array: array.region.start().byte_offset(),
+                index: index.region.start().byte_offset(),
+                elem_width: u32::try_from(width)
+                    .map_err(|_| lowering_diagnostic(node.span, "array element width overflow"))?,
+                elem_schema_ref: i64::from(element_schema.0),
+            });
+            emit_array_load_status_checks(
+                node,
+                site,
+                index.region_id,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            Ok(representation_for_type(element, node.span)?)
+        }
+        _ => unreachable!("array lowering dispatched only array operations"),
+    }
+}
+
+fn emit_array_status_machine_checks(
+    node: &Node,
+    site: u32,
+    scratch: OutcomeScratch,
+    assigned: AssignedOutcomeScratch,
+    outcome: WeavyRegionId,
+    return_label: CodeLabel,
+    code: &mut CodeBuilder,
+) -> Result<(), Diagnostics> {
+    let success = code.label();
+    for expected in [
+        ArrayOpStatus::Ok,
+        ArrayOpStatus::InvalidHandle,
+        ArrayOpStatus::MalformedPayload,
+        ArrayOpStatus::WidthMismatch,
+        ArrayOpStatus::SchemaMismatch,
+        ArrayOpStatus::OutOfRange,
+        ArrayOpStatus::Overflow,
+        ArrayOpStatus::AllocationFailed,
+        ArrayOpStatus::Uninitialized,
+    ] {
+        let next = code.label();
+        code.push(WeavyOp::ArrayStatusIs {
+            dst: scratch.condition.byte_offset(),
+            status: scratch.status.byte_offset(),
+            expected,
+        });
+        code.jump_if_zero(scratch.condition, next);
+        if expected == ArrayOpStatus::Ok {
+            code.jump(success);
+        } else {
+            code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[0].byte_offset(),
+                value: i64::from(site),
+            });
+            code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[1].byte_offset(),
+                value: expected as i64,
+            });
+            code.push(WeavyOp::EnumConstruct {
+                dst: outcome,
+                variant: 2,
+                fields: vec![
+                    StructuralFieldSource {
+                        field: 0,
+                        source: assigned.fields[0],
+                    },
+                    StructuralFieldSource {
+                        field: 1,
+                        source: assigned.fields[1],
+                    },
+                ],
+            });
+            code.jump(return_label);
+        }
+        code.bind(next, node.span)?;
+    }
+    code.bind(success, node.span)
+}
+
+fn emit_array_load_status_checks(
+    node: &Node,
+    site: u32,
+    index: WeavyRegionId,
+    scratch: OutcomeScratch,
+    assigned: AssignedOutcomeScratch,
+    outcome: WeavyRegionId,
+    return_label: CodeLabel,
+    code: &mut CodeBuilder,
+) -> Result<(), Diagnostics> {
+    let success = code.label();
+    for expected in [ArrayOpStatus::Ok, ArrayOpStatus::OutOfRange] {
+        let next = code.label();
+        code.push(WeavyOp::ArrayStatusIs {
+            dst: scratch.condition.byte_offset(),
+            status: scratch.status.byte_offset(),
+            expected,
+        });
+        code.jump_if_zero(scratch.condition, next);
+        if expected == ArrayOpStatus::Ok {
+            code.jump(success);
+        } else {
+            code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[0].byte_offset(),
+                value: i64::from(site),
+            });
+            code.push(WeavyOp::EnumConstruct {
+                dst: outcome,
+                variant: 1,
+                fields: vec![
+                    StructuralFieldSource {
+                        field: 0,
+                        source: assigned.fields[0],
+                    },
+                    StructuralFieldSource {
+                        field: 1,
+                        source: index,
+                    },
+                    StructuralFieldSource {
+                        field: 2,
+                        source: assigned.fields[2],
+                    },
+                ],
+            });
+            code.jump(return_label);
+        }
+        code.bind(next, node.span)?;
+    }
+    emit_array_status_machine_checks(node, site, scratch, assigned, outcome, return_label, code)?;
+    code.bind(success, node.span)
 }
 
 fn lower_call_value_node(
