@@ -43,12 +43,29 @@ pub enum MachineOperation {
 pub enum RuntimeFault {
     MissingMemoStoreHandle,
     MissingConstantStoreHandle,
-    MissingDemandRecord { key: DemandKey },
+    MissingDemandRecord {
+        key: DemandKey,
+    },
     MissingTaskRecord,
     PureIslandYielded,
-    PureIslandParked { input: u32 },
-    MissingFrameAttribution { function: FnId },
-    MissingTraceAttribution { trace: u32 },
+    PureIslandParked {
+        input: u32,
+    },
+    MissingFrameAttribution {
+        function: FnId,
+    },
+    MissingTraceAttribution {
+        trace: u32,
+    },
+    ArrayMachineStatus {
+        site: u32,
+        status: weavy::task::ArrayOpStatus,
+    },
+    LanguageFailurePending {
+        site: u32,
+        index: i64,
+        length: i64,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
