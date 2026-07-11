@@ -2395,7 +2395,7 @@ fn lower_closure_typed(
         let parameter_id = ParameterId(0);
         let parameter_node = push_node(
             &mut closure_nodes,
-            pattern_span(&closure.pattern),
+            closure.span,
             parameter_ty.clone(),
             EffectFacts::PURE,
             Vec::new(),
@@ -2406,10 +2406,10 @@ fn lower_closure_typed(
             ty: parameter_ty.clone(),
         };
         let mut closure_bindings = BTreeMap::new();
-        bind_irrefutable_pattern(
+        bind_closure_patterns(
             &mut closure_nodes,
             &mut closure_bindings,
-            &closure.pattern,
+            &closure.patterns,
             &parameter_value,
         )?;
 
@@ -2471,6 +2471,59 @@ fn lower_closure_typed(
         ),
         ty,
     })
+}
+
+fn bind_closure_patterns(
+    nodes: &mut Vec<Node>,
+    bindings: &mut BTreeMap<String, LoweredValue>,
+    patterns: &[ast::Pattern],
+    parameter: &LoweredValue,
+) -> Result<(), Diagnostics> {
+    if let [pattern] = patterns {
+        return bind_irrefutable_pattern(nodes, bindings, pattern, parameter);
+    }
+    let Type::Tuple(fields) = &parameter.ty else {
+        return Err(type_mismatch(
+            patterns
+                .first()
+                .map(pattern_span)
+                .unwrap_or(Span { start: 0, end: 0 }),
+            format!("{} closure parameters", patterns.len()),
+            parameter.ty.name(),
+        ));
+    };
+    if fields.len() != patterns.len() {
+        return Err(type_mismatch(
+            patterns
+                .first()
+                .map(pattern_span)
+                .unwrap_or(Span { start: 0, end: 0 }),
+            format!("{} closure parameters", patterns.len()),
+            parameter.ty.name(),
+        ));
+    }
+    for (index, (pattern, ty)) in patterns.iter().zip(fields).enumerate() {
+        let index = u32::try_from(index).map_err(|_| {
+            type_mismatch(
+                pattern_span(pattern),
+                "closure field index",
+                index.to_string(),
+            )
+        })?;
+        let field = LoweredValue {
+            node: push_node(
+                nodes,
+                pattern_span(pattern),
+                ty.clone(),
+                EffectFacts::PURE,
+                vec![parameter.node],
+                Op::Project { index },
+            ),
+            ty: ty.clone(),
+        };
+        bind_irrefutable_pattern(nodes, bindings, pattern, &field)?;
+    }
+    Ok(())
 }
 
 fn lower_if(

@@ -158,6 +158,7 @@ module.exports = grammar({
       seq(
         "|",
         field("pattern", $._pattern),
+        repeat(seq(",", field("pattern", $._pattern))),
         optional(seq(":", field("type", $._type))),
         "|",
         field("body", $._closure_body),
