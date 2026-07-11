@@ -1,5 +1,5 @@
 use vix::compiler::Compiler;
-use vix::diagnostic::DiagnosticCode;
+use vix::diagnostic::{DiagnosticCode, DiagnosticSeverity};
 use vix::lowering::{LoweringCache, attribution_for, source_map_for};
 use vix::ratchet::run_source;
 use vix::runtime::{DemandState, EventKind, MemoVerdict, SchemaId, TaskState};
@@ -34,6 +34,7 @@ const RUNG_023: &str = include_str!("ratchet/023-option.vix");
 const RUNG_024: &str = include_str!("ratchet/024-user-result.vix");
 const RUNG_025: &str = include_str!("ratchet/025-ordering-enum.vix");
 const RUNG_026: &str = include_str!("ratchet/026-arrays.vix");
+const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
 
 fn frame_index(functions: &[FunctionId], function: FunctionId) -> usize {
     functions
@@ -2697,6 +2698,26 @@ fn collection_addition() -> Stream<Check> {
     );
 }
 
+#[test]
+fn unused_collection_result_is_a_typed_warning() {
+    let (expected_message, expected_line) = warning_header(RUNG_144);
+    let compilation = Compiler::new()
+        .compile(RUNG_144)
+        .expect("warning rungs remain valid programs");
+
+    assert_eq!(compilation.warnings.entries.len(), 1);
+    let warning = &compilation.warnings.entries[0];
+    assert_eq!(warning.code, DiagnosticCode::UnusedMustUse);
+    assert_eq!(warning.code.severity(), DiagnosticSeverity::Warning);
+    assert_eq!(warning.message(), expected_message);
+    assert_eq!(source_line(RUNG_144, warning.primary.start), expected_line);
+    assert_eq!(
+        &RUNG_144[warning.primary.start as usize..warning.primary.end as usize],
+        "xs + 4"
+    );
+    assert_eq!(compilation.module.functions.len(), 1);
+}
+
 fn reject_header(source: &str) -> (&str, usize) {
     let mut message = None;
     let mut line = None;
@@ -2711,6 +2732,23 @@ fn reject_header(source: &str) -> (&str, usize) {
     (
         message.expect("reject rung declares a message"),
         line.expect("reject rung declares a line"),
+    )
+}
+
+fn warning_header(source: &str) -> (&str, usize) {
+    let mut message = None;
+    let mut line = None;
+    for header in source.lines().take_while(|line| line.starts_with("//!")) {
+        if let Some(value) = header.strip_prefix("//! warn: ") {
+            message = Some(value);
+        }
+        if let Some(value) = header.strip_prefix("//! at: ") {
+            line = Some(value.parse::<usize>().expect("warning line is an integer"));
+        }
+    }
+    (
+        message.expect("warning rung declares a message"),
+        line.expect("warning rung declares a line"),
     )
 }
 

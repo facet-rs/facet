@@ -25,6 +25,24 @@ pub enum DiagnosticCode {
     VariantPayloadMismatch,
     NonExhaustiveMatch,
     ExpressionStatement,
+    UnusedMustUse,
+}
+
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u8)]
+pub enum DiagnosticSeverity {
+    Error,
+    Warning,
+}
+
+impl DiagnosticCode {
+    #[must_use]
+    pub const fn severity(self) -> DiagnosticSeverity {
+        match self {
+            Self::UnusedMustUse => DiagnosticSeverity::Warning,
+            _ => DiagnosticSeverity::Error,
+        }
+    }
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -68,6 +86,9 @@ pub enum DiagnosticPayload {
         missing: Vec<String>,
     },
     ExpressionStatement,
+    UnusedResult {
+        operation: String,
+    },
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -118,11 +139,14 @@ impl Diagnostic {
             },
             DiagnosticPayload::Match { .. } => "non-exhaustive match".to_owned(),
             DiagnosticPayload::ExpressionStatement => "expression statement".to_owned(),
+            DiagnosticPayload::UnusedResult { operation } => {
+                format!("unused result of `{operation}`")
+            }
         }
     }
 }
 
-#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[derive(facet::Facet, Clone, Debug, Default, PartialEq, Eq)]
 pub struct Diagnostics {
     pub entries: Vec<Diagnostic>,
 }

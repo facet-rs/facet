@@ -17,6 +17,20 @@ pub struct Compiler {
     parser: SurfaceParser,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Compilation {
+    pub module: Module,
+    pub warnings: Diagnostics,
+}
+
+impl core::ops::Deref for Compilation {
+    type Target = Module;
+
+    fn deref(&self) -> &Self::Target {
+        &self.module
+    }
+}
+
 impl Compiler {
     #[must_use]
     pub fn new() -> Self {
@@ -26,9 +40,11 @@ impl Compiler {
     }
 
     /// Parse, check, and lower to architecture-neutral VIR.
-    pub fn compile(&self, source: &str) -> Result<Module, Diagnostics> {
+    pub fn compile(&self, source: &str) -> Result<Compilation, Diagnostics> {
         let ast = self.parser.parse(source)?;
-        lower_module(&ast)
+        let module = lower_module(&ast)?;
+        let warnings = lint_module(&module);
+        Ok(Compilation { module, warnings })
     }
 }
 
@@ -36,6 +52,38 @@ impl Default for Compiler {
     fn default() -> Self {
         Self::new()
     }
+}
+
+fn lint_module(module: &Module) -> Diagnostics {
+    let mut entries = Vec::new();
+    for function in &module.functions {
+        let mut consumed = BTreeSet::new();
+        for node in &function.nodes {
+            consumed.extend(node.inputs.iter().copied());
+        }
+        consumed.extend(function.output);
+        consumed.extend(function.yielded_checks.iter().copied());
+        for node in &function.nodes {
+            let operation = match node.op {
+                Op::ArrayAppend => "+",
+                Op::ArrayConcat => "++",
+                _ if node.ty == Type::Check => "Check",
+                _ => continue,
+            };
+            if consumed.contains(&node.id) {
+                continue;
+            }
+            entries.push(Diagnostic {
+                code: DiagnosticCode::UnusedMustUse,
+                primary: node.span,
+                labels: Vec::new(),
+                payload: DiagnosticPayload::UnusedResult {
+                    operation: operation.to_owned(),
+                },
+            });
+        }
+    }
+    Diagnostics { entries }
 }
 
 #[derive(Clone)]

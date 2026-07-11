@@ -61,6 +61,7 @@ pub struct SuiteRun {
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct RatchetReport {
+    pub warnings: Diagnostics,
     pub plain: SuiteRun,
     pub chaos: SuiteRun,
     pub lowering_cache: LoweringCacheCounters,
@@ -90,18 +91,19 @@ impl RatchetReport {
 /// r[impl machine.scheduler.chaos-kill-oracle]
 /// r[impl machine.scheduler.replay-is-semantics]
 pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
-    let module = Compiler::new().compile(source)?;
+    let compilation = Compiler::new().compile(source)?;
     let mut cache = LoweringCache::default();
 
-    let plain = run_lane(&module, &mut cache, ChaosPolicy::default())?;
+    let plain = run_lane(&compilation.module, &mut cache, ChaosPolicy::default())?;
     let chaos = run_lane(
-        &module,
+        &compilation.module,
         &mut cache,
         ChaosPolicy {
             kill_first_running_task: true,
         },
     )?;
     Ok(RatchetReport {
+        warnings: compilation.warnings,
         plain,
         chaos,
         lowering_cache: cache.counters(),
