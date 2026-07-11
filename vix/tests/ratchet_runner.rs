@@ -882,28 +882,34 @@ fn rung_038_selection_and_decomposition_compiles() {
     let function = &module.functions[test.function.0 as usize];
 
     // `find_min`/`find_max` are structural-order selections over the retained
-    // stream: each returns `Option<Int>` while the stream is not consumed.
-    let selections = function
+    // stream: each is a distinct op returning `Option<Int>` while the stream is
+    // not consumed.
+    let find_min = function
         .nodes
         .iter()
-        .filter(|node| node.ty == VirType::option(VirType::Int))
-        .count();
-    assert!(
-        selections >= 2,
-        "find_min and find_max each select an Option<Int> from the retained stream"
-    );
+        .find(|node| matches!(node.op, VirOp::StreamFindMin))
+        .expect("find_min is a distinct selection op");
+    let find_max = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamFindMax))
+        .expect("find_max is a distinct selection op");
+    assert_eq!(find_min.ty, VirType::option(VirType::Int));
+    assert_eq!(find_max.ty, VirType::option(VirType::Int));
 
     // `split_min` decomposes the stream into the selected value and the ordered
     // rest, keeping duplicate equal values: `Option<(Int, Stream<Int, Int>)>`.
-    let decomposition = function.nodes.iter().any(|node| {
-        node.ty
-            == VirType::option(VirType::Tuple(vec![
-                VirType::Int,
-                VirType::stream(VirType::Int, VirType::Int),
-            ]))
-    });
-    assert!(
-        decomposition,
+    let split_min = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamSplitMin))
+        .expect("split_min is a distinct decomposition op");
+    assert_eq!(
+        split_min.ty,
+        VirType::option(VirType::Tuple(vec![
+            VirType::Int,
+            VirType::stream(VirType::Int, VirType::Int),
+        ])),
         "split_min returns the selected value paired with the ordered stream rest"
     );
 
@@ -954,6 +960,60 @@ fn selection() -> Stream<Check> {
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.pure_host_calls, 0);
         assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+// `split_min` compiles to a typed decomposition, but a stream has no runtime
+// value representation yet: it is `CodataRecipe`, resolved structurally at
+// `collect`/`find`/`len`/`contains`, never a runtime value. So a `Stream`-valued
+// rest cannot be built as an `Option` payload. Driven flat (variant-only, no
+// generator `match`), the decomposition reaches an explicit typed lowering seam
+// rather than silently substituting a dense array or inventing a second codata
+// protocol. The provenance-keyed codata bridge introduces the keyed rest value
+// this needs.
+#[test]
+fn rung_038_split_min_reaches_explicit_lowering_seam() {
+    const SOURCE: &str = r#"
+#[test]
+fn decompose() -> Stream<Check> {
+    let ms = [5, 3, 9, 3].stream();
+    yield expect_some(ms.split_min());
+    let empty: [Int] = [];
+    yield expect_none(empty.stream().split_min());
+}
+"#;
+    let compilation = Compiler::new()
+        .compile(SOURCE)
+        .expect("split_min compiles to typed decomposition VIR");
+    let split_min = compilation.functions[0]
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamSplitMin))
+        .expect("split_min lowers to a distinct decomposition op");
+    assert_eq!(
+        split_min.ty,
+        VirType::option(VirType::Tuple(vec![
+            VirType::Int,
+            VirType::stream(VirType::Int, VirType::Int),
+        ]))
+    );
+
+    match run_source(SOURCE) {
+        Err(RunError::Diagnostics(diagnostics)) => {
+            let seam = diagnostics
+                .entries
+                .iter()
+                .find(|entry| entry.code == DiagnosticCode::LoweringUnsupported)
+                .expect("split_min decomposition reaches an explicit lowering seam");
+            let vix::diagnostic::DiagnosticPayload::Unsupported { construct } = &seam.payload else {
+                panic!("unexpected lowering seam payload: {:?}", seam.payload);
+            };
+            assert!(
+                construct.contains("split_min"),
+                "the lowering seam names split_min: {construct}"
+            );
+        }
+        other => panic!("expected explicit split_min lowering seam, got {other:?}"),
     }
 }
 

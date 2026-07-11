@@ -6962,10 +6962,15 @@ fn lower_checked_stream_contains_node(
     representation_for_type(&Type::Bool, node.span)
 }
 
-/// `split_min`: remove exactly the least row (stable key tie-break) and return
-/// the selected value paired with the ordered rest. The rest is rebuilt through
-/// the verified ordered-collection substrate — the still-open provenance-keyed
-/// codata bridge will fold this decomposition into keyed rest codata.
+/// `split_min` removes exactly the least row (stable key tie-break) and returns
+/// the selected value paired with the ordered rest `Stream<K, V>`. In the
+/// current substrate a stream is `CodataRecipe` — resolved structurally at
+/// `collect`/`find`/`len`/`contains`, never a runtime value — so a
+/// `Stream`-valued rest cannot be constructed as a runtime `Option` payload
+/// yet. Rather than substitute a dense array or a second generator protocol,
+/// the decomposition stops at this explicit typed lowering seam. The parallel
+/// provenance-keyed codata bridge introduces the keyed rest value this needs;
+/// once it lands, this node folds onto it and the unchanged rung 038 executes.
 fn lower_checked_stream_split_min_node(
     node: &Node,
     _dst_region_id: WeavyRegionId,
