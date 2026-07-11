@@ -5327,13 +5327,15 @@ fn tail_loop_executes_ten_million_iterations_in_the_selected_lane() {
     task.write_entry_i64(1, 10_000_000).expect("limit");
     task.write_entry_i64(2, 0).expect("acc");
 
+    // A pure tail loop runs to completion in a single drive: it never parks on
+    // demand and never yields codata.
     let mut ready: [bool; 0] = [];
-    loop {
-        match task.drive(&mut ready, &[]).expect("tail loop drives") {
-            TaskStep::Done => break,
-            step => panic!("a pure tail loop must not park or yield: {step:?}"),
-        }
-    }
+    let step = task.drive(&mut ready, &[]).expect("tail loop drives");
+    assert_eq!(
+        step,
+        TaskStep::Done,
+        "a pure tail loop completes in one drive without parking or yielding",
+    );
     assert_eq!(
         task.result_i64().expect("scalar result"),
         49_999_995_000_000,
