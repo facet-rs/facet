@@ -1846,6 +1846,11 @@ enum PreludeMethod {
     SetValues,
     StreamFilter,
     StreamCollect,
+    StreamFindMin,
+    StreamFindMax,
+    StreamSplitMin,
+    StreamLen,
+    StreamContains,
 }
 
 #[derive(Clone, Copy)]
@@ -1988,6 +1993,36 @@ impl PreludeMethodRegistry {
                 name: "collect",
                 arity: 0,
                 method: PreludeMethod::StreamCollect,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Stream,
+                name: "find_min",
+                arity: 1,
+                method: PreludeMethod::StreamFindMin,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Stream,
+                name: "find_max",
+                arity: 1,
+                method: PreludeMethod::StreamFindMax,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Stream,
+                name: "split_min",
+                arity: 0,
+                method: PreludeMethod::StreamSplitMin,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Stream,
+                name: "len",
+                arity: 0,
+                method: PreludeMethod::StreamLen,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Stream,
+                name: "contains",
+                arity: 1,
+                method: PreludeMethod::StreamContains,
             },
         ],
     };
@@ -2843,6 +2878,115 @@ fn lower_method_call(
                     Op::StreamCollect,
                 ),
                 ty,
+            })
+        }
+        PreludeMethod::StreamFindMin | PreludeMethod::StreamFindMax => {
+            let (_, value) = receiver
+                .ty
+                .stream_types()
+                .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
+            if !value.structural_order_is_defined() {
+                return Err(type_mismatch(
+                    call.span,
+                    "Stream<K, V: Ord>",
+                    receiver.ty.name(),
+                ));
+            }
+            let value = value.clone();
+            let predicate = match &call.args.args[0] {
+                ast::Expr::Closure(closure) => {
+                    lower_closure_with_parameter(nodes, bindings, context, closure, &value)?
+                }
+                expression => lower_value_expected(nodes, bindings, context, expression, None)?,
+            };
+            let Type::Function { parameter, result } = &predicate.ty else {
+                return Err(type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    format!("fn({}) -> Bool", value.name()),
+                    predicate.ty.name(),
+                ));
+            };
+            if parameter.as_ref() != &value || result.as_ref() != &Type::Bool {
+                return Err(type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    format!("fn({}) -> Bool", value.name()),
+                    predicate.ty.name(),
+                ));
+            }
+            let op = match entry.method {
+                PreludeMethod::StreamFindMin => Op::StreamFindMin,
+                PreludeMethod::StreamFindMax => Op::StreamFindMax,
+                _ => unreachable!("stream selection dispatch is closed"),
+            };
+            let ty = Type::option(value);
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    vec![receiver.node, predicate.node],
+                    op,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::StreamSplitMin => {
+            let (key, value) = receiver
+                .ty
+                .stream_types()
+                .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
+            if !value.structural_order_is_defined() {
+                return Err(type_mismatch(
+                    call.span,
+                    "Stream<K, V: Ord>",
+                    receiver.ty.name(),
+                ));
+            }
+            let rest_ty = Type::stream(key.clone(), value.clone());
+            let payload = Type::Tuple(vec![value.clone(), rest_ty]);
+            let ty = Type::option(payload);
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    vec![receiver.node],
+                    Op::StreamSplitMin,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::StreamLen => Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                Type::Int,
+                EffectFacts::PURE,
+                vec![receiver.node],
+                Op::StreamLen,
+            ),
+            ty: Type::Int,
+        }),
+        PreludeMethod::StreamContains => {
+            let (_, value) = receiver
+                .ty
+                .stream_types()
+                .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
+            let value = value.clone();
+            let candidate = lower_value(nodes, bindings, context, &call.args.args[0])?;
+            require_type(&candidate, &value, expr_span(&call.args.args[0]))?;
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    Type::Bool,
+                    EffectFacts::PURE,
+                    vec![receiver.node, candidate.node],
+                    Op::StreamContains,
+                ),
+                ty: Type::Bool,
             })
         }
     }

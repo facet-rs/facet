@@ -699,6 +699,20 @@ pub enum Op {
     StreamFilter,
     /// Materialize a keyed codata recipe as its canonical Map value.
     StreamCollect,
+    /// Select the structurally-least value whose row satisfies a typed
+    /// predicate, breaking ties by the stable stream key, retaining the stream.
+    StreamFindMin,
+    /// Select the structurally-greatest value whose row satisfies a typed
+    /// predicate, breaking ties by the stable stream key, retaining the stream.
+    StreamFindMax,
+    /// Remove exactly the structurally-least row (stable key tie-break) from a
+    /// keyed codata recipe, yielding the selected value and the ordered rest.
+    StreamSplitMin,
+    /// Count the rows a keyed codata recipe would realize.
+    StreamLen,
+    /// Test whether a keyed codata recipe holds a row whose value is
+    /// structurally equal to a given value.
+    StreamContains,
     /// Concatenate two immutable strings.
     StringConcat,
 }
@@ -1310,6 +1324,11 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::ArrayAny => op.push(53),
         Op::ArrayContains => op.push(54),
         Op::ArraySorted => op.push(55),
+        Op::StreamFindMin => op.push(56),
+        Op::StreamFindMax => op.push(57),
+        Op::StreamSplitMin => op.push(58),
+        Op::StreamLen => op.push(59),
+        Op::StreamContains => op.push(60),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());

@@ -4544,6 +4544,30 @@ fn lower_node(
                 "stream collect did not reach checked lowering",
             ));
         }
+        Op::StreamFindMin | Op::StreamFindMax => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "stream selection did not reach checked lowering",
+            ));
+        }
+        Op::StreamSplitMin => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "stream split_min did not reach checked lowering",
+            ));
+        }
+        Op::StreamLen => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "stream len did not reach checked lowering",
+            ));
+        }
+        Op::StreamContains => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "stream contains did not reach checked lowering",
+            ));
+        }
         Op::ArrayAppend | Op::ArrayConcat => {
             return Err(lowering_diagnostic(
                 node.span,
