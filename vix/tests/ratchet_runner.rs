@@ -696,6 +696,30 @@ fn rung_029_array_fold_runs_in_authored_position_order() {
     }
 }
 
+const PURE_STRING_CONCAT: &str = r#"
+#[test]
+fn concat() -> Stream<Check> {
+    let hello = "hel" + "lo";
+    yield expect_eq(hello, "hello");
+    yield expect_eq(hello + " world", "hello world");
+    yield expect_eq(("a" + "b") + ("c" + "d"), "abcd");
+}
+"#;
+
+#[test]
+fn pure_string_concatenation_runs_through_verified_path() {
+    let report =
+        run_source(PURE_STRING_CONCAT).expect("string concatenation executes through Weavy");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
 #[test]
 fn rung_030_array_predicates_run_through_verified_production_path() {
     let report = run_source(RUNG_030).expect("rung 030 executes through verified production path");
