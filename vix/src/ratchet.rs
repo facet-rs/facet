@@ -464,12 +464,23 @@ fn run_lane(
             let lowered = cache.get_or_lower(&value.island)?;
             let attribution = attribution_for(&value.island);
             let location = Location::for_test_value(&partitioned.name, &value.id.stable_segment());
+            let arguments = value
+                .island
+                .value_inputs
+                .iter()
+                .map(|input| {
+                    published_values
+                        .get(input)
+                        .cloned()
+                        .expect("value islands are ordered after their dependencies")
+                })
+                .collect::<Vec<_>>();
             let evaluation = runtime.evaluate(
                 value.island.id,
                 &location,
                 lowered,
                 &attribution,
-                &[],
+                &arguments,
                 ChaosPolicy {
                     kill_first_running_task: kill_available,
                 },

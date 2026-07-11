@@ -387,7 +387,12 @@ fn lowered_ops(source: &str) -> Vec<WeavyOp> {
     let partitioned = module.partition_test(&module.tests[0]);
     let mut cache = LoweringCache::default();
     let mut ops = Vec::new();
-    for island in &partitioned.islands {
+    for island in partitioned
+        .values
+        .iter()
+        .map(|value| &value.island)
+        .chain(partitioned.islands.iter())
+    {
         let lowered = cache.get_or_lower(island).expect("island lowers");
         for function in &lowered.program().fns {
             ops.extend(function.code.iter().cloned());

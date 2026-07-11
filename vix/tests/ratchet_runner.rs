@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::path::Path;
 
 use vix::budget::{BudgetOutcome, ChildReport, run_source_under_declared_budget};
@@ -3701,9 +3702,15 @@ fn rung_026_arrays_run_through_verified_execution_without_publication() {
         assert!(lane.checks.iter().all(|check| check.passed));
         assert_eq!(lane.counters.pure_host_calls, 0);
         assert_eq!(lane.receipt_count, 0);
+        let published_schemas = lane
+            .values
+            .iter()
+            .map(|value| value.identity.schema)
+            .collect::<BTreeSet<_>>();
         assert!(lane.events.iter().all(|event| match event.kind {
             EventKind::StoreAlloc { identity, .. } => {
                 identity.schema == SchemaId::named("vix.Check.v1")
+                    || published_schemas.contains(&identity.schema)
             }
             _ => true,
         }));
@@ -3767,9 +3774,15 @@ fn rung_027_array_map_runs_through_verified_execution_without_publication() {
         assert!(lane.checks.iter().all(|check| check.passed));
         assert_eq!(lane.counters.pure_host_calls, 0);
         assert_eq!(lane.receipt_count, 0);
+        let published_schemas = lane
+            .values
+            .iter()
+            .map(|value| value.identity.schema)
+            .collect::<BTreeSet<_>>();
         assert!(lane.events.iter().all(|event| match event.kind {
             EventKind::StoreAlloc { identity, .. } => {
                 identity.schema == SchemaId::named("vix.Check.v1")
+                    || published_schemas.contains(&identity.schema)
             }
             _ => true,
         }));
@@ -4152,7 +4165,21 @@ fn general_array_map() -> Stream<Check> {
     };
 
     let partitioned = module.partition_test(&module.tests[0]);
-    let island = &partitioned.islands[0];
+    let island = partitioned
+        .values
+        .iter()
+        .map(|value| &value.island)
+        .chain(partitioned.islands.iter())
+        .find(|island| {
+            island.array_map_partitions.iter().any(|decision| {
+                decision.node
+                    == (NodeRef {
+                        function: helper.id,
+                        node: map.id,
+                    })
+            })
+        })
+        .expect("helper ArrayMap belongs to one partitioned island");
     let decision = island
         .array_map_partitions
         .iter()
@@ -4223,9 +4250,15 @@ fn general_array_map() -> Stream<Check> {
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.pure_host_calls, 0);
         assert_eq!(lane.receipt_count, 0);
+        let published_schemas = lane
+            .values
+            .iter()
+            .map(|value| value.identity.schema)
+            .collect::<BTreeSet<_>>();
         assert!(lane.events.iter().all(|event| match event.kind {
             EventKind::StoreAlloc { identity, .. } => {
                 identity.schema == SchemaId::named("vix.Check.v1")
+                    || published_schemas.contains(&identity.schema)
             }
             _ => true,
         }));
@@ -4494,9 +4527,15 @@ fn computed_array_and_dynamic_index() -> Stream<Check> {
         assert!(lane.checks.iter().all(|check| check.passed));
         assert_eq!(lane.counters.pure_host_calls, 0);
         assert_eq!(lane.receipt_count, 0);
+        let published_schemas = lane
+            .values
+            .iter()
+            .map(|value| value.identity.schema)
+            .collect::<BTreeSet<_>>();
         assert!(lane.events.iter().all(|event| match event.kind {
             EventKind::StoreAlloc { identity, .. } => {
                 identity.schema == SchemaId::named("vix.Check.v1")
+                    || published_schemas.contains(&identity.schema)
             }
             _ => true,
         }));

@@ -1498,8 +1498,12 @@ fn realize_array<'task>(
     }
     let array_schema = semantic_schema_id(&Type::Array(Box::new(element.clone())));
     let element_schema = semantic_schema_id(element);
-    if matches!(element, Type::Bool | Type::Int) {
-        if width != 8 {
+    if !type_contains_handle(element) {
+        let expected_width = element
+            .word_width()
+            .and_then(|words| words.checked_mul(8))
+            .ok_or_else(|| invalid_realized_result(lowered, bytes.len()))?;
+        if width != expected_width {
             return Err(invalid_realized_result(lowered, bytes.len()));
         }
         return Ok((
@@ -1552,6 +1556,38 @@ fn realize_array<'task>(
         bytes.to_vec(),
         framed_bytes,
     ))
+}
+
+fn type_contains_handle(ty: &Type) -> bool {
+    match ty {
+        Type::String | Type::Path | Type::Array(_) | Type::Map { .. } | Type::Set(_) => true,
+        Type::Tuple(elements) => elements.iter().any(type_contains_handle),
+        Type::Record(record) => record
+            .fields
+            .iter()
+            .any(|field| type_contains_handle(&field.ty)),
+        Type::Enum(enumeration) => {
+            enumeration
+                .variants
+                .iter()
+                .any(|variant| match &variant.payload {
+                    crate::vir::VariantPayload::Unit => false,
+                    crate::vir::VariantPayload::Tuple(elements) => {
+                        elements.iter().any(type_contains_handle)
+                    }
+                    crate::vir::VariantPayload::Record(fields) => {
+                        fields.iter().any(|field| type_contains_handle(&field.ty))
+                    }
+                })
+        }
+        Type::Function { .. } => true,
+        Type::Bool
+        | Type::Int
+        | Type::Check
+        | Type::StreamCheck
+        | Type::Stream { .. }
+        | Type::Order(_) => false,
+    }
 }
 
 fn read_payload_word(bytes: &[u8], offset: usize) -> Option<i64> {
@@ -1654,12 +1690,12 @@ fn decode_result(
         })
     })?;
     if selector == abi.ok_variant {
-        if lowered.output_type == Type::Check {
-            return Ok(DecodedResult::OkScalar(
-                result.enum_scalar_field(selector, 0)? != 0,
-            ));
+        if matches!(lowered.output_type, Type::Array(_)) {
+            return Ok(DecodedResult::OkValue);
         }
-        return Ok(DecodedResult::OkValue);
+        return Ok(DecodedResult::OkScalar(
+            result.enum_scalar_field(selector, 0)? != 0,
+        ));
     }
     if selector == abi.index_out_of_bounds_variant {
         let site = u32::try_from(result.enum_scalar_field(selector, 0)?).map_err(|_| {

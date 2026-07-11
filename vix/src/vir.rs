@@ -1144,18 +1144,25 @@ impl Module {
             .map(|owned| owned.site)
             .collect();
         ordered.sort_by_key(|site| site.id.0);
-        let mut consumer_counts = BTreeMap::<NodeId, usize>::new();
-        for check in ordered.iter().filter_map(|site| site.value_check()) {
+        let mut consumer_sets = BTreeMap::<NodeId, BTreeSet<YieldSiteId>>::new();
+        for site in &ordered {
+            let Some(check) = site.value_check() else {
+                continue;
+            };
             let mut dependencies = BTreeSet::new();
             collect_dependencies(function, check, &mut dependencies);
             for dependency in dependencies {
-                *consumer_counts.entry(dependency).or_default() += 1;
+                consumer_sets.entry(dependency).or_default().insert(site.id);
             }
         }
         let mut shared = function
             .nodes
             .iter()
-            .filter(|node| consumer_counts.get(&node.id).copied().unwrap_or(0) >= 2)
+            .filter(|node| {
+                consumer_sets
+                    .get(&node.id)
+                    .is_some_and(|sites| sites.len() >= 2)
+            })
             .filter(|node| matches!(node.ty, Type::Array(_) | Type::Map { .. } | Type::Set(_)))
             .collect::<Vec<_>>();
         let candidate_ids = shared.iter().map(|node| node.id).collect::<BTreeSet<_>>();
@@ -1167,6 +1174,7 @@ impl Module {
                 let mut dependencies = BTreeSet::new();
                 collect_dependencies(function, other, &mut dependencies);
                 dependencies.contains(&candidate.id)
+                    && consumer_sets.get(&other) == consumer_sets.get(&candidate.id)
             })
         });
         shared.sort_by_key(|node| ValueIslandId {
@@ -1207,7 +1215,11 @@ impl Module {
                     node.id,
                     IslandId(u32::try_from(ordinal).expect("value island index fits u32")),
                     IslandPurpose::Value,
-                    &BTreeMap::new(),
+                    &shared_ids
+                        .iter()
+                        .filter(|(candidate, _)| **candidate != node.id)
+                        .map(|(candidate, value)| (*candidate, *value))
+                        .collect(),
                 ),
             })
             .collect::<Vec<_>>();
@@ -1560,7 +1572,12 @@ impl PartitionedTest {
     #[must_use]
     pub fn render(&self) -> String {
         let mut out = format!("partition {}\n", self.name);
-        for island in &self.islands {
+        for island in self
+            .values
+            .iter()
+            .map(|value| &value.island)
+            .chain(self.islands.iter())
+        {
             let _ = writeln!(out, "island {} {}", island.id.0, island.function_name);
             for decision in &island.array_map_partitions {
                 let _ = writeln!(
