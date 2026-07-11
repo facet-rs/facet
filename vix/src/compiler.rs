@@ -2160,7 +2160,7 @@ fn lower_value_expected(
             ty: Type::String,
         }),
         ast::Expr::Path(value) => {
-            validate_path_literal(value.value.value.as_str(), value.span)?;
+            validate_path_literal(value.value.as_str(), value.span)?;
             Ok(LoweredValue {
                 node: push_node(
                     nodes,
@@ -2168,7 +2168,7 @@ fn lower_value_expected(
                     Type::Path,
                     EffectFacts::PURE,
                     Vec::new(),
-                    Op::Path(value.value.value.clone()),
+                    Op::Path(value.value.clone()),
                 ),
                 ty: Type::Path,
             })

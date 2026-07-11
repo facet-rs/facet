@@ -276,7 +276,7 @@ module.exports = grammar({
     tuple_expr: ($) =>
       seq("(", field("elem", $._expr), ",", sepBy(",", field("elem", $._expr)), ")"),
     paren: ($) => seq("(", field("inner", $._expr), ")"),
-    path_expr: ($) => seq("p", field("value", $.string)),
+    path_expr: () => /p"([^"\\]|\\.)*"/,
 
     match_expr: ($) =>
       seq("match", field("scrutinee", $._expr), field("arms", $.match_arm_list)),

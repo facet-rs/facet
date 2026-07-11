@@ -43,7 +43,7 @@ ast({
   tuple_pattern: { as: "Tuple" },
   record_pattern: { as: "Record" },
   tuple_expr: { as: "Tuple" },
-  path_expr: { as: "Path" },
+  path_expr: { as: "Path", decode: "path" },
   generic_type: { as: "Generic" },
   array_type: { as: "Array" },
   tuple_type: { as: "Tuple" },

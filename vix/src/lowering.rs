@@ -10360,20 +10360,15 @@ fn lower_call_value_node(
             .byte_size()
             .ok_or_else(|| lowering_diagnostic(node.span, "argument size overflow"))?,
     }];
-    let Some((_, extra)) = static_closure_call_args(
+    if let Some((_, extra)) = static_closure_call_args(
         &callee,
         lowering.nodes,
         lowering.function.layout,
         lowering.context,
         node.span,
-    )?
-    else {
-        return Err(lowering_diagnostic(
-            node.span,
-            "direct CallValue has no static closure construction node",
-        ));
-    };
-    args.extend(extra);
+    )? {
+        args.extend(extra);
+    }
     Ok(WeavyOp::CallIndirect {
         callee: callee.region.start().byte_offset(),
         args,
