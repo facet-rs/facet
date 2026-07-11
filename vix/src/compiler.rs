@@ -2083,6 +2083,7 @@ enum PreludeMethod {
     StringContains,
     StringSplitOnce,
     StringParseInt,
+    StringIsNumeric,
     ArraySorted,
     ArrayStream,
     IntRem,
@@ -2179,6 +2180,12 @@ impl PreludeMethodRegistry {
                 name: "parse_int",
                 arity: 0,
                 method: PreludeMethod::StringParseInt,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::String,
+                name: "is_numeric",
+                arity: 0,
+                method: PreludeMethod::StringIsNumeric,
             },
             PreludeMethodEntry {
                 receiver: PreludeReceiverType::Array,
@@ -2748,6 +2755,81 @@ fn method_positional_args(call: &ast::MethodCall) -> &[ast::Expr] {
     call.args.as_ref().map_or(&[][..], |args| &args.args)
 }
 
+/// Uniform function-call dispatch: `recv.method(args)` → `method(recv) where {
+/// p0: args[0], .. }`. The callee must have exactly one positional parameter
+/// (the receiver) whose type matches the receiver; the method's positional
+/// arguments fill the callee's `where` parameters in declaration order. Builds
+/// the same `Op::Call` shape as a direct call: positional input first, then the
+/// named parameters in signature order.
+fn lower_uniform_call(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::MethodCall,
+    receiver: LoweredValue,
+    signature: &FunctionSignature,
+) -> Result<LoweredValue, Diagnostics> {
+    if signature.is_test {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "calling a test function as a method",
+        )));
+    }
+    if let Some(named) = &call.named_args {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            named.span,
+            "named method arguments",
+        )));
+    }
+    let positional: Vec<_> = signature
+        .parameters
+        .iter()
+        .filter(|parameter| parameter.kind == ParameterKind::Positional)
+        .collect();
+    let [receiver_parameter] = positional.as_slice() else {
+        return Err(type_mismatch(
+            call.name.span,
+            "a method with one receiver parameter",
+            &call.name.value,
+        ));
+    };
+    require_type(&receiver, &receiver_parameter.ty, expr_span(&call.receiver))?;
+
+    let named_parameters: Vec<_> = signature
+        .parameters
+        .iter()
+        .filter(|parameter| parameter.kind == ParameterKind::Named)
+        .collect();
+    let arguments = method_positional_args(call);
+    if arguments.len() != named_parameters.len() {
+        return Err(invalid_arity(
+            call.span,
+            named_parameters.len(),
+            arguments.len(),
+        ));
+    }
+
+    let mut inputs = Vec::with_capacity(signature.parameters.len());
+    inputs.push(receiver.node);
+    for (parameter, argument) in named_parameters.into_iter().zip(arguments) {
+        let value = lower_value_expected(nodes, bindings, context, argument, Some(&parameter.ty))?;
+        require_type(&value, &parameter.ty, expr_span(argument))?;
+        inputs.push(value.node);
+    }
+
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            call.span,
+            signature.return_type.clone(),
+            EffectFacts::PURE,
+            inputs,
+            Op::Call(signature.id),
+        ),
+        ty: signature.return_type.clone(),
+    })
+}
+
 fn lower_method_call(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
@@ -2757,6 +2839,15 @@ fn lower_method_call(
     let receiver = lower_value(nodes, bindings, context, &call.receiver)?;
     let Some(entry) = PreludeMethodRegistry::STANDARD.resolve(&receiver.ty, &call.name.value)
     else {
+        // Uniform function-call syntax: `recv.method(args)` on a value with no
+        // builtin method of that name resolves to the free function `method`
+        // whose sole positional parameter is the receiver, with the method's
+        // positional arguments bound to the function's `where` parameters in
+        // declaration order. This is the general dispatch the version-set
+        // methods (`contains`, `intersect`, `is_empty`) ride on.
+        if let Some(signature) = context.signatures.get(&call.name.value) {
+            return lower_uniform_call(nodes, bindings, context, call, receiver, signature);
+        }
         return Err(Diagnostics::one(Diagnostic {
             code: DiagnosticCode::UnknownMethod,
             primary: call.name.span,
@@ -3075,6 +3166,17 @@ fn lower_method_call(
                 Op::StringParseInt,
             ),
             ty: Type::Int,
+        }),
+        PreludeMethod::StringIsNumeric => Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                Type::Bool,
+                EffectFacts::PURE,
+                vec![receiver.node],
+                Op::StringIsNumeric,
+            ),
+            ty: Type::Bool,
         }),
         PreludeMethod::ArrayStream => {
             let Type::Array(element) = &receiver.ty else {

@@ -2634,6 +2634,12 @@ impl Verifier<'_> {
                 }
                 self.require_byte_comparable_schema(function_id, pc, text_schema)?;
             }
+            Op::StringIsNumeric { dst, text } => {
+                self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                let text_schema =
+                    self.read_handle(function_id, pc, frame, *text, AccessRole::CompareLeft)?;
+                self.require_byte_comparable_schema(function_id, pc, text_schema)?;
+            }
             Op::StringSplitOnce {
                 left,
                 right,
@@ -4616,6 +4622,7 @@ impl Verifier<'_> {
                     | Op::CompareValueBytes { .. }
                     | Op::StringConcat { .. }
                     | Op::StringContains { .. }
+                    | Op::StringIsNumeric { .. }
                     | Op::StringSplitOnce { .. }
                     | Op::StringParseInt { .. }
                     | Op::StringStatusIs { .. }

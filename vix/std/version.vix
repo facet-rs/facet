@@ -1,32 +1,23 @@
-// vix standard library.
-
-// The result of a three-way comparison. `<=>` is structural and not
-// overridable; the machine derives `< <= > >=` from it. Variant order is
-// Less(0) / Equal(1) / Greater(2) — the operator derivation depends on it.
-pub enum Ordering {
-    Less,
-    Equal,
-    Greater,
-}
-
-// Version.
+// Cargo SemVer values and normalized requirement intervals, entirely in Vix.
 //
-// A version is a records-at-offsets value, not a host primitive: `.major` is an
-// ordinary field read, parsing is vix code over the string primitives, and the
-// declaration order makes structural order line up with SemVer precedence.
-// Build metadata is retained as value data; `same_precedence` ignores it.
+// `Version` retains every semver component. Its ordinary structural equality
+// therefore includes build metadata (the `semver::Version` rule), while
+// `version_precedence` is the semver/Cargo precedence relation and intentionally
+// stops before `build`. Requirement endpoints and VersionSet membership always
+// use the latter; no handle, hash, display reparse, or comparator callback is an
+// ordering authority.
 
-pub enum PreIdent {
+enum PreIdent {
     Numeric(Int),
     Alpha(String),
 }
 
-pub enum PreTag {
+enum PreTag {
     Prerelease([PreIdent]),
     Release,
 }
 
-pub struct Version {
+struct Version {
     major: Int,
     minor: Int,
     patch: Int,
@@ -34,57 +25,159 @@ pub struct Version {
     build: Option<String>,
 }
 
-pub fn parse_version(s: String) -> Version {
-    let core = s.before("+");
-    let build = build_metadata s;
-    let release = core.before("-");
-    let pre = prerelease_tag core;
-    // Pad so 1- and 2-component versions ("2", "2.35") parse too: take the
-    // component before each of the first three dots.
-    let padded = release + ".0.0";
-    let major = padded.before(".").parse_int();
-    let after_major = padded.after(".");
-    let minor = after_major.before(".").parse_int();
-    let after_minor = after_major.after(".");
-    let patch = after_minor.before(".").parse_int();
+// A requirement admits a prerelease only when its comparator explicitly names
+// the same release line with a prerelease. The list is canonical (sorted and
+// duplicate-free) whenever it crosses the VersionSet boundary.
+struct ReleaseLine {
+    major: Int,
+    minor: Int,
+    patch: Int,
+}
+
+enum LowerBound {
+    NegativeInfinity,
+    Inclusive(Version),
+    Exclusive(Version),
+}
+
+enum UpperBound {
+    Exclusive(Version),
+    Inclusive(Version),
+    PositiveInfinity,
+}
+
+struct Interval {
+    lower: LowerBound,
+    upper: UpperBound,
+    prerelease_lines: [ReleaseLine],
+}
+
+// Invariant: rows are in ascending, disjoint precedence order. Every row is
+// non-empty. A row's prerelease lines are sorted and unique. A single Cargo
+// VersionReq is a conjunction and therefore normalizes to zero or one row;
+// `intersect` preserves the invariant for normalized inputs.
+struct VersionSet {
+    intervals: [Interval],
+}
+
+pub fn parse_version(text: String) -> Version {
+    let core = strip_build(text);
+    let release = release_core(core);
     Version {
-        major: major,
-        minor: minor,
-        patch: patch,
-        pre: pre,
-        build: build,
+        major: component(release) where { index: 0 },
+        minor: component(release) where { index: 1 },
+        patch: component(release) where { index: 2 },
+        pre: prerelease_tag(core),
+        build: build_metadata(text),
     }
 }
 
-fn prerelease_tag(s: String) -> PreTag {
-    match s.contains("-") {
-        true => PreTag::Prerelease(parse_pre_idents (s.after("-")) where { out: [] }),
-        false => PreTag::Release,
+// Full structural equality includes `build`; semver precedence does not.
+pub fn version_precedence(left: Version) where { right: Version } -> Ordering {
+    match left.major <=> right.major {
+        Ordering::Equal => match left.minor <=> right.minor {
+            Ordering::Equal => match left.patch <=> right.patch {
+                Ordering::Equal => left.pre <=> right.pre,
+                Ordering::Less => Ordering::Less,
+                Ordering::Greater => Ordering::Greater,
+            },
+            Ordering::Less => Ordering::Less,
+            Ordering::Greater => Ordering::Greater,
+        },
+        Ordering::Less => Ordering::Less,
+        Ordering::Greater => Ordering::Greater,
     }
 }
 
-fn build_metadata(s: String) -> Option<String> {
-    match s.contains("+") {
-        true => Some(s.after("+")),
-        false => none_string(),
+fn precedence_less(left: Version) where { right: Version } -> Bool {
+    version_precedence(left) where { right } == Ordering::Less
+}
+
+fn precedence_equal(left: Version) where { right: Version } -> Bool {
+    version_precedence(left) where { right } == Ordering::Equal
+}
+
+fn strip_build(text: String) -> String {
+    if text.contains("+") {
+        let (core, _build) = text.split_once("+");
+        core
+    } else {
+        text
     }
 }
 
-fn none_string() -> Option<String> {
+fn build_metadata(text: String) -> Option<String> {
+    if text.contains("+") {
+        let (_core, build) = text.split_once("+");
+        Some(build)
+    } else {
+        None
+    }
+}
+
+fn no_build() -> Option<String> {
     None
 }
 
-fn parse_pre_idents(s: String) where { out: [PreIdent] } -> [PreIdent] {
-    if s == "" {
-        out
-    } else if s.contains(".") {
-        parse_pre_idents (s.after(".")) where { out: out.push(parse_pre_ident(s.before("."))) }
+fn release_core(core: String) -> String {
+    if core.contains("-") {
+        let (release, _pre) = core.split_once("-");
+        release
     } else {
-        out.push(parse_pre_ident s)
+        core
     }
 }
 
-fn parse_pre_ident(s: String) -> PreIdent {
+fn prerelease_tag(core: String) -> PreTag {
+    if core.contains("-") {
+        let (_release, pre) = core.split_once("-");
+        PreTag::Prerelease(parse_idents(pre))
+    } else {
+        PreTag::Release
+    }
+}
+
+fn component(release: String) where { index: Int } -> Int {
+    let field = nth_field(release) where { index };
+    if field == "" { 0 } else { field.parse_int() }
+}
+
+fn nth_field(s: String) where { index: Int } -> String {
+    if index == 0 {
+        head(s)
+    } else {
+        nth_field(tail(s)) where { index: index - 1 }
+    }
+}
+
+fn head(s: String) -> String {
+    if s.contains(".") {
+        let (first, _rest) = s.split_once(".");
+        first
+    } else {
+        s
+    }
+}
+
+fn tail(s: String) -> String {
+    if s.contains(".") {
+        let (_first, rest) = s.split_once(".");
+        rest
+    } else {
+        ""
+    }
+}
+
+fn parse_idents(pre: String) -> [PreIdent] {
+    if pre.contains(".") {
+        let (first, rest) = pre.split_once(".");
+        [parse_ident(first)] ++ parse_idents(rest)
+    } else {
+        [parse_ident(pre)]
+    }
+}
+
+fn parse_ident(s: String) -> PreIdent {
     if s.is_numeric() {
         PreIdent::Numeric(s.parse_int())
     } else {
@@ -92,13 +185,359 @@ fn parse_pre_ident(s: String) -> PreIdent {
     }
 }
 
-// Equal SemVer precedence is not value equality: build metadata is ignored here.
-pub fn same_precedence(a: Version) where { b: Version } -> Bool {
-    a.major == b.major && a.minor == b.minor && a.patch == b.patch && a.pre == b.pre
+fn release_version(major: Int) where { minor: Int, patch: Int } -> Version {
+    Version { major, minor, patch, pre: PreTag::Release, build: no_build() }
 }
 
-// a <= b by SemVer 2.0 precedence. Structural `<` carries the strict ordering;
-// `same_precedence` covers equal-precedence versions with different build data.
-pub fn version_lte(a: Version) where { b: Version } -> Bool {
-    a < b || same_precedence a where { b }
+fn next_major(version: Version) -> Version {
+    release_version(version.major + 1) where { minor: 0, patch: 0 }
+}
+
+fn next_minor(version: Version) -> Version {
+    release_version(version.major) where { minor: version.minor + 1, patch: 0 }
+}
+
+fn next_patch(version: Version) -> Version {
+    release_version(version.major) where { minor: version.minor, patch: version.patch + 1 }
+}
+
+fn caret_upper(version: Version) -> Version {
+    if version.major > 0 {
+        next_major(version)
+    } else if version.minor > 0 {
+        next_minor(version)
+    } else {
+        next_patch(version)
+    }
+}
+
+fn line_of(version: Version) -> ReleaseLine {
+    ReleaseLine { major: version.major, minor: version.minor, patch: version.patch }
+}
+
+fn is_prerelease(version: Version) -> Bool {
+    match version.pre {
+        PreTag::Prerelease(identifiers) => true,
+        PreTag::Release => false,
+    }
+}
+
+fn canonical_lines(lines: [ReleaseLine]) -> [ReleaseLine] {
+    unique_lines(lines.sorted()) where { out: [] }
+}
+
+fn empty_lines() -> [ReleaseLine] {
+    []
+}
+
+fn empty_intervals() -> [Interval] {
+    []
+}
+
+fn unique_lines(lines: [ReleaseLine]) where { out: [ReleaseLine] } -> [ReleaseLine] {
+    match lines.split_last() {
+        None => out,
+        Some((last, rest)) => {
+            let next = if out.contains(last) { out } else { out + last };
+            unique_lines(rest) where { out: next }
+        },
+    }
+}
+
+fn lines_union(left: [ReleaseLine]) where { right: [ReleaseLine] } -> [ReleaseLine] {
+    canonical_lines(left ++ right)
+}
+
+fn lines_intersection(left: [ReleaseLine]) where { right: [ReleaseLine] } -> [ReleaseLine] {
+    matching_lines(left) where { right, out: [] }
+}
+
+fn matching_lines(left: [ReleaseLine]) where { right: [ReleaseLine], out: [ReleaseLine] } -> [ReleaseLine] {
+    match left.split_last() {
+        None => canonical_lines(out),
+        Some((last, rest)) => {
+            let next = if right.contains(last) { out + last } else { out };
+            matching_lines(rest) where { right, out: next }
+        },
+    }
+}
+
+fn admission_for(version: Version) -> [ReleaseLine] {
+    if is_prerelease(version) { [line_of(version)] } else { [] }
+}
+
+fn lower_allows(bound: LowerBound) where { version: Version } -> Bool {
+    match bound {
+        LowerBound::NegativeInfinity => true,
+        LowerBound::Inclusive(edge) => !precedence_less(version) where { right: edge },
+        LowerBound::Exclusive(edge) => precedence_less(edge) where { right: version },
+    }
+}
+
+fn upper_allows(bound: UpperBound) where { version: Version } -> Bool {
+    match bound {
+        UpperBound::PositiveInfinity => true,
+        UpperBound::Exclusive(edge) => precedence_less(version) where { right: edge },
+        UpperBound::Inclusive(edge) => !precedence_less(edge) where { right: version },
+    }
+}
+
+fn prerelease_allowed(interval: Interval) where { version: Version } -> Bool {
+    if is_prerelease(version) {
+        interval.prerelease_lines.contains(line_of(version))
+    } else {
+        true
+    }
+}
+
+fn interval_contains(interval: Interval) where { version: Version } -> Bool {
+    lower_allows(interval.lower) where { version }
+        && upper_allows(interval.upper) where { version }
+        && prerelease_allowed(interval) where { version }
+}
+
+pub fn contains(set: VersionSet) where { version: Version } -> Bool {
+    contains_intervals(set.intervals) where { version }
+}
+
+fn contains_intervals(intervals: [Interval]) where { version: Version } -> Bool {
+    match intervals.split_last() {
+        None => false,
+        Some((last, rest)) => interval_contains(last) where { version }
+            || contains_intervals(rest) where { version },
+    }
+}
+
+fn lower_after_or_equal(left: LowerBound) where { right: LowerBound } -> Bool {
+    match left {
+        LowerBound::NegativeInfinity => match right {
+            LowerBound::NegativeInfinity => true,
+            LowerBound::Inclusive(version) => false,
+            LowerBound::Exclusive(version) => false,
+        },
+        LowerBound::Inclusive(left_version) => match right {
+            LowerBound::NegativeInfinity => true,
+            LowerBound::Inclusive(right_version) => {
+                !precedence_less(left_version) where { right: right_version }
+            },
+            LowerBound::Exclusive(right_version) => {
+                precedence_less(right_version) where { right: left_version }
+            },
+        },
+        LowerBound::Exclusive(left_version) => match right {
+            LowerBound::NegativeInfinity => true,
+            LowerBound::Inclusive(right_version) => {
+                !precedence_less(left_version) where { right: right_version }
+            },
+            LowerBound::Exclusive(right_version) => {
+                !precedence_less(left_version) where { right: right_version }
+            },
+        },
+    }
+}
+
+fn upper_before_or_equal(left: UpperBound) where { right: UpperBound } -> Bool {
+    match left {
+        UpperBound::PositiveInfinity => match right {
+            UpperBound::PositiveInfinity => true,
+            UpperBound::Exclusive(version) => false,
+            UpperBound::Inclusive(version) => false,
+        },
+        UpperBound::Exclusive(left_version) => match right {
+            UpperBound::PositiveInfinity => true,
+            UpperBound::Exclusive(right_version) => {
+                !precedence_less(right_version) where { right: left_version }
+            },
+            UpperBound::Inclusive(right_version) => {
+                !precedence_less(right_version) where { right: left_version }
+            },
+        },
+        UpperBound::Inclusive(left_version) => match right {
+            UpperBound::PositiveInfinity => true,
+            UpperBound::Exclusive(right_version) => {
+                precedence_less(left_version) where { right: right_version }
+            },
+            UpperBound::Inclusive(right_version) => {
+                !precedence_less(right_version) where { right: left_version }
+            },
+        },
+    }
+}
+
+fn max_lower(left: LowerBound) where { right: LowerBound } -> LowerBound {
+    if lower_after_or_equal(left) where { right } { left } else { right }
+}
+
+fn min_upper(left: UpperBound) where { right: UpperBound } -> UpperBound {
+    if upper_before_or_equal(left) where { right } { left } else { right }
+}
+
+fn lower_is_inclusive(bound: LowerBound) -> Bool {
+    match bound {
+        LowerBound::Inclusive(version) => true,
+        LowerBound::NegativeInfinity => false,
+        LowerBound::Exclusive(version) => false,
+    }
+}
+
+fn upper_is_inclusive(bound: UpperBound) -> Bool {
+    match bound {
+        UpperBound::Inclusive(version) => true,
+        UpperBound::PositiveInfinity => false,
+        UpperBound::Exclusive(version) => false,
+    }
+}
+
+fn interval_is_empty(interval: Interval) -> Bool {
+    match interval.lower {
+        LowerBound::NegativeInfinity => false,
+        LowerBound::Inclusive(lower) => upper_excludes_lower(interval.upper) where { lower, lower_inclusive: true },
+        LowerBound::Exclusive(lower) => upper_excludes_lower(interval.upper) where { lower, lower_inclusive: false },
+    }
+}
+
+fn upper_excludes_lower(upper: UpperBound) where { lower: Version, lower_inclusive: Bool } -> Bool {
+    match upper {
+        UpperBound::PositiveInfinity => false,
+        UpperBound::Exclusive(edge) => !precedence_less(lower) where { right: edge },
+        UpperBound::Inclusive(edge) => {
+            precedence_less(edge) where { right: lower }
+                || (precedence_equal(lower) where { right: edge } && !lower_inclusive)
+        },
+    }
+}
+
+fn intersect_interval(left: Interval) where { right: Interval, req_admission: Bool } -> [Interval] {
+    let lower = max_lower(left.lower) where { right: right.lower };
+    let upper = min_upper(left.upper) where { right: right.upper };
+    let prerelease_lines = if req_admission {
+        lines_union(left.prerelease_lines) where { right: right.prerelease_lines }
+    } else {
+        lines_intersection(left.prerelease_lines) where { right: right.prerelease_lines }
+    };
+    let candidate = Interval { lower, upper, prerelease_lines };
+    if interval_is_empty(candidate) { [] } else { [candidate] }
+}
+
+fn intersect_intervals(left: [Interval]) where { right: [Interval], req_admission: Bool } -> [Interval] {
+    match left.split_last() {
+        None => [],
+        Some((last, rest)) => intersect_one(last) where { right, req_admission }
+            ++ intersect_intervals(rest) where { right, req_admission },
+    }
+}
+
+fn intersect_one(left: Interval) where { right: [Interval], req_admission: Bool } -> [Interval] {
+    match right.split_last() {
+        None => [],
+        Some((last, rest)) => intersect_interval(left) where { right: last, req_admission }
+            ++ intersect_one(left) where { right: rest, req_admission },
+    }
+}
+
+pub fn intersect(left: VersionSet) where { right: VersionSet } -> VersionSet {
+    VersionSet { intervals: intersect_intervals(left.intervals) where { right: right.intervals, req_admission: false } }
+}
+
+pub fn is_empty(set: VersionSet) -> Bool {
+    set.intervals.len() == 0
+}
+
+pub fn empty() -> VersionSet {
+    VersionSet { intervals: empty_intervals() }
+}
+
+pub fn universe() -> VersionSet {
+    VersionSet {
+        intervals: [Interval {
+            lower: LowerBound::NegativeInfinity,
+            upper: UpperBound::PositiveInfinity,
+            prerelease_lines: empty_lines(),
+        }],
+    }
+}
+
+fn interval_set(lower: LowerBound) where { upper: UpperBound, version: Version } -> VersionSet {
+    let interval = Interval {
+        lower,
+        upper,
+        prerelease_lines: canonical_lines(admission_for(version)),
+    };
+    if interval_is_empty(interval) { empty() } else { VersionSet { intervals: [interval] } }
+}
+
+fn remove_spaces(text: String) -> String {
+    if text.contains(" ") {
+        let (before, after) = text.split_once(" ");
+        remove_spaces(before + after)
+    } else {
+        text
+    }
+}
+
+pub fn parse_req(text: String) -> VersionSet {
+    let compact = remove_spaces(text);
+    parse_compound_req(compact)
+}
+
+fn parse_compound_req(text: String) -> VersionSet {
+    if text.contains(",") {
+        let (first, rest) = text.split_once(",");
+        let left = parse_comparator(first);
+        let right = parse_compound_req(rest);
+        VersionSet {
+            intervals: intersect_intervals(left.intervals) where { right: right.intervals, req_admission: true },
+        }
+    } else {
+        parse_comparator(text)
+    }
+}
+
+fn parse_comparator(text: String) -> VersionSet {
+    if text == "*" {
+        universe()
+    } else if text.contains(">=") {
+        let (_op, value) = text.split_once(">=");
+        let version = parse_version(value);
+        interval_set(LowerBound::Inclusive(version)) where { upper: UpperBound::PositiveInfinity, version }
+    } else if text.contains("<=") {
+        let (_op, value) = text.split_once("<=");
+        let version = parse_version(value);
+        interval_set(LowerBound::NegativeInfinity) where { upper: UpperBound::Inclusive(version), version }
+    } else if text.contains(">")== false && text.contains("<")== false && text.contains("^") {
+        let (_op, value) = text.split_once("^");
+        let version = parse_version(value);
+        interval_set(LowerBound::Inclusive(version)) where { upper: UpperBound::Exclusive(caret_upper(version)), version }
+    } else if text.contains("~") {
+        let (_op, value) = text.split_once("~");
+        let version = parse_version(value);
+        let upper = if release_core(value).contains(".") { next_minor(version) } else { next_major(version) };
+        interval_set(LowerBound::Inclusive(version)) where { upper: UpperBound::Exclusive(upper), version }
+    } else if text.contains(">") {
+        let (_op, value) = text.split_once(">");
+        let version = parse_version(value);
+        interval_set(LowerBound::Exclusive(version)) where { upper: UpperBound::PositiveInfinity, version }
+    } else if text.contains("<") {
+        let (_op, value) = text.split_once("<");
+        let version = parse_version(value);
+        interval_set(LowerBound::NegativeInfinity) where { upper: UpperBound::Exclusive(version), version }
+    } else if text.contains("=") {
+        let (_op, value) = text.split_once("=");
+        exact_req(value)
+    } else {
+        let version = parse_version(text);
+        interval_set(LowerBound::Inclusive(version)) where { upper: UpperBound::Exclusive(caret_upper(version)), version }
+    }
+}
+
+fn exact_req(text: String) -> VersionSet {
+    let version = parse_version(text);
+    let release = release_core(strip_build(text));
+    if !release.contains(".") {
+        interval_set(LowerBound::Inclusive(version)) where { upper: UpperBound::Exclusive(next_major(version)), version }
+    } else if !tail(release).contains(".") {
+        interval_set(LowerBound::Inclusive(version)) where { upper: UpperBound::Exclusive(next_minor(version)), version }
+    } else {
+        interval_set(LowerBound::Inclusive(version)) where { upper: UpperBound::Inclusive(version), version }
+    }
 }
