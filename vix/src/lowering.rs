@@ -1335,7 +1335,8 @@ impl<'a> ProgramContractBuilder<'a> {
             let source = builder.function_order[function_index];
             functions.push(builder.function_contract(source, function)?);
         }
-        for (function_index, source) in builder.function_order.iter().enumerate() {
+        let function_order = builder.function_order.clone();
+        for (function_index, source) in function_order.iter().enumerate() {
             for node in source
                 .nodes
                 .iter()
@@ -1829,12 +1830,12 @@ impl<'a> ProgramContractBuilder<'a> {
         ty: &Type,
         span: Span,
     ) -> Result<WeavyValueShapeRef, Diagnostics> {
-        if let Some(index) = self
-            .value_shape_keys
+        if let Some((_, value_shape)) = self
+            .value_shape_types
             .iter()
-            .position(|candidate| candidate == ty)
+            .find(|(candidate, _)| candidate == ty)
         {
-            return Ok(WeavyValueShapeRef(index as u32));
+            return Ok(*value_shape);
         }
         let shape = self.shape_for_type(ty, span)?;
         let kind = match ty {
@@ -1866,11 +1867,45 @@ impl<'a> ProgramContractBuilder<'a> {
                 ));
             }
         };
-        let value_shape = WeavyValueShapeRef(self.value_shapes.len() as u32);
-        self.value_shape_keys.push(ty.clone());
-        self.value_shapes
-            .push(WeavyValueShapeContract { shape, kind });
+        let value_shape = self.intern_value_shape(WeavyValueShapeContract { shape, kind });
+        self.value_shape_types.push((ty.clone(), value_shape));
         Ok(value_shape)
+    }
+
+    fn intern_callable_value_shape(
+        &mut self,
+        call: WeavyCallContractId,
+    ) -> (WeavyRegionShape, WeavyValueShapeRef) {
+        let callable = WeavyRegionShape::word(WeavyWordKind::Callable(call));
+        let environment = WeavyRegionShape::word(WeavyWordKind::Scalar);
+        let shape = WeavyRegionShape::new(vec![
+            WeavyWordKind::Callable(call).into(),
+            WeavyWordKind::Scalar.into(),
+        ]);
+        let kind = WeavyValueShapeKind::Product {
+            fields: vec![
+                WeavyValueFieldUse::new(0, callable),
+                WeavyValueFieldUse::new(FrameSlot::word_size(), environment),
+            ],
+        };
+        let value_shape = self.intern_value_shape(WeavyValueShapeContract {
+            shape: shape.clone(),
+            kind,
+        });
+        (shape, value_shape)
+    }
+
+    fn intern_value_shape(&mut self, value_shape: WeavyValueShapeContract) -> WeavyValueShapeRef {
+        if let Some(index) = self
+            .value_shapes
+            .iter()
+            .position(|candidate| candidate == &value_shape)
+        {
+            return WeavyValueShapeRef(index as u32);
+        }
+        let reference = WeavyValueShapeRef(self.value_shapes.len() as u32);
+        self.value_shapes.push(value_shape);
+        reference
     }
 
     fn value_fields<'t>(
@@ -1965,6 +2000,16 @@ impl<'a> ProgramContractBuilder<'a> {
             entries: vec![entry],
             result: result_region,
         }))
+    }
+
+    fn call_contract_extends_signature(
+        &self,
+        concrete: WeavyCallContractId,
+        semantic: WeavyCallContractId,
+    ) -> bool {
+        let concrete = &self.calls[concrete.0 as usize];
+        let semantic = &self.calls[semantic.0 as usize];
+        concrete.entries.starts_with(&semantic.entries) && concrete.result == semantic.result
     }
 
     fn intern_call(&mut self, call: WeavyCallContract) -> WeavyCallContractId {
