@@ -23,6 +23,7 @@ ast({
     fields: { name: { enum: "Member" } },
   },
   method_call: { as: "MethodCall" },
+  where_call: { as: "WhereCall" },
   index_expr: { as: "Index" },
   array_expr: { as: "Array" },
   map_expr: { as: "Map" },

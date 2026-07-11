@@ -532,6 +532,7 @@ fn nodes_contain_checked_collection_ops(nodes: &[Node]) -> bool {
                 | Op::ArrayAny
                 | Op::ArrayContains
                 | Op::ArraySorted
+                | Op::Range
                 | Op::ArrayAppend
                 | Op::ArrayConcat
                 | Op::Map
@@ -2773,6 +2774,7 @@ impl FunctionLayout {
                     | Op::ArrayAny
                     | Op::ArrayContains
                     | Op::ArraySorted
+                    | Op::Range
                     | Op::Map
                     | Op::MapAdd
                     | Op::MapConcat
@@ -3948,6 +3950,7 @@ fn lower_node_sequence(
                 lower_checked_array_node(node, dst, values, sequence, outputs)?
             }
             Op::ArraySorted => lower_array_sorted_node(node, dst, values, sequence, outputs)?,
+            Op::Range => lower_range_node(node, dst, values, sequence, outputs)?,
             Op::ArrayFold => {
                 lower_checked_array_fold_node(node, dst, dst_region_id, values, sequence, outputs)?
             }
@@ -5511,6 +5514,12 @@ fn lower_node(
                 "array sorting did not reach checked lowering",
             ));
         }
+        Op::Range => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "range did not reach checked lowering",
+            ));
+        }
         Op::Map
         | Op::Set
         | Op::MapAdd
@@ -6570,6 +6579,144 @@ fn lower_fused_array_map_projection(
         }
         _ => unreachable!("fused map projection is index or length"),
     }
+}
+
+/// Lower `range where { from, to }` to one in-frame dense fill.
+///
+/// The element count `to - from` is computed once; `ArrayNew` allocates exactly
+/// that many `Int` slots as one task-local molten array and interns it once when
+/// the value crosses the island edge. The fill loop writes `from + i` into slot
+/// `i` using the same cheap interior vocabulary as rung 050's tail loop — a
+/// `LtI64` guard, whole-element `ArrayStore`, and an `AddI64` backedge — with no
+/// per-iteration trace mark, scheduler contact, store operation, or identity.
+///
+/// A half-open empty range (`from == to`) is the empty array. Reversed bounds
+/// (`from > to`) and a width that overflows the representable element count feed
+/// a negative or unrepresentable count to `ArrayNew`, which faults with a typed
+/// `ArrayOpStatus` — the deliberately unspecified edge is a typed red seam, not
+/// a silent clamp.
+fn lower_range_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_input_count(node, 2)?;
+    require_node_type(node, Type::array(Type::Int))?;
+    let from = input_value(node, values, 0)?;
+    let to = input_value(node, values, 1)?;
+    require_value(node, &from, &Type::Int, ValueRepresentation::Word)?;
+    require_value(node, &to, &Type::Int, ValueRepresentation::Word)?;
+    let scratch = sequence
+        .function
+        .layout
+        .outcome_scratch
+        .ok_or_else(|| lowering_diagnostic(node.span, "range has no checked outcome scratch"))?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence
+        .array_return
+        .ok_or_else(|| lowering_diagnostic(node.span, "range has no checked outcome return"))?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(node.span, "range has no stable trace site"))?;
+    let element_schema = sequence.lowering.schemas.schema_for(&Type::Int, node.span)?;
+    let width = element_byte_width(&Type::Int, node.span)?;
+    let mut temps = TemporaryCursor::new(
+        sequence.function.layout,
+        sequence.lowering.regions,
+        sequence.function.id,
+        node,
+    )?;
+    let element_slot = temps.take(&Type::Int, node.span)?;
+
+    // count = to - from. A reversed range makes this negative; an overflowing
+    // width makes it unrepresentable. Both reach `ArrayNew` as an out-of-range
+    // count and fault below.
+    outputs.code.push(WeavyOp::SubI64 {
+        dst: scratch.fields[2].byte_offset(),
+        a: to.region.start().byte_offset(),
+        b: from.region.start().byte_offset(),
+    });
+    outputs.code.push(WeavyOp::ArrayNew {
+        dst: dst.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        count_slot: scratch.fields[2].byte_offset(),
+        elem_width: width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+
+    // Fill loop: out[i] = from + i for i in 0..count.
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 0,
+    });
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[1].byte_offset(),
+        value: 1,
+    });
+    let loop_start = outputs.code.label();
+    let done = outputs.code.label();
+    outputs.code.bind(loop_start, node.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[2].byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, done);
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: element_slot.region.start().byte_offset(),
+        a: from.region.start().byte_offset(),
+        b: scratch.fields[0].byte_offset(),
+    });
+    outputs.code.push(WeavyOp::ArrayStore {
+        status: scratch.status.byte_offset(),
+        array: dst.start().byte_offset(),
+        index: scratch.fields[0].byte_offset(),
+        src: element_slot.region.start().byte_offset(),
+        elem_width: width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: scratch.fields[0].byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[1].byte_offset(),
+    });
+    outputs.code.jump(loop_start);
+    outputs.code.bind(done, node.span)?;
+    temps.finish(node.span)?;
+    Ok(ValueRepresentation::RealizedHandle)
 }
 
 fn lower_checked_array_fold_node(

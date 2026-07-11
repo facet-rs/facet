@@ -2,7 +2,7 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 
-use crate::compiler::Compiler;
+use crate::compiler::{Compiler, CompilerConfig};
 use crate::diagnostic::Diagnostics;
 use crate::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
 use crate::runtime::{
@@ -210,7 +210,18 @@ impl RatchetReport {
 /// r[impl machine.scheduler.chaos-kill-oracle]
 /// r[impl machine.scheduler.replay-is-semantics]
 pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
-    let compilation = Compiler::new().compile(source)?;
+    run_source_with_config(source, CompilerConfig::default())
+}
+
+/// Run every declared test twice under explicit shape-selection configuration.
+/// The forced-copy molten differential compiles the same source with
+/// `force_molten_copy` set and proves the produced value identities match the
+/// default molten run.
+pub fn run_source_with_config(
+    source: &str,
+    config: CompilerConfig,
+) -> Result<RatchetReport, RunError> {
+    let compilation = Compiler::with_config(config).compile(source)?;
 
     let mut cache = LoweringCache::default();
 
