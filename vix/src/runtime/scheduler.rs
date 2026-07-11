@@ -307,6 +307,19 @@ impl<S: EventSink> Runtime<S> {
                         error,
                     )));
                 }
+                Ok(DecodedResult::OrderedMachine { site, status }) => {
+                    let error = MachineError::runtime(
+                        MachineOperation::Result,
+                        RuntimeFault::OrderedMachineStatus { site, status },
+                        self.output_attribution(lowered, attribution),
+                        Some(lowered.demand_key),
+                    );
+                    return Err(Box::new(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )));
+                }
                 // r[impl machine.error.index-out-of-bounds]
                 Ok(DecodedResult::IndexOutOfBounds {
                     site,
@@ -766,6 +779,10 @@ enum DecodedResult {
         site: u32,
         status: weavy::task::ArrayOpStatus,
     },
+    OrderedMachine {
+        site: u32,
+        status: weavy::task::OrderedOpStatus,
+    },
 }
 
 fn decode_result(
@@ -823,6 +840,24 @@ fn decode_result(
         ))?;
         return Ok(DecodedResult::ArrayMachine { site, status });
     }
+    if selector == abi.ordered_machine_variant {
+        let site = u32::try_from(result.enum_scalar_field(selector, 0)?).map_err(|_| {
+            Box::new(TaskFault::InvalidResultShape {
+                entry: FnId(0),
+                region: lowered.executable().program().contract().functions[0].result,
+                size: 0,
+            })
+        })?;
+        let raw_status = result.enum_scalar_field(selector, 1)?;
+        let status = weavy::task::OrderedOpStatus::from_word(raw_status).ok_or(Box::new(
+            TaskFault::InvalidResultShape {
+                entry: FnId(0),
+                region: lowered.executable().program().contract().functions[0].result,
+                size: 0,
+            },
+        ))?;
+        return Ok(DecodedResult::OrderedMachine { site, status });
+    }
     if selector == abi.missing_key_variant || selector == abi.duplicate_key_variant {
         let site = u32::try_from(result.enum_scalar_field(selector, 0)?).map_err(|_| {
             Box::new(TaskFault::InvalidResultShape {
@@ -870,7 +905,8 @@ fn task_fault_site(fault: &TaskFault) -> Option<&FaultSite> {
         | TaskFault::UnresidentCompareValueBytes { site, .. }
         | TaskFault::InvalidEnumSelector { site, .. }
         | TaskFault::EnumProjectionMismatch { site, .. }
-        | TaskFault::InvalidArrayStatus { site, .. } => Some(site),
+        | TaskFault::InvalidArrayStatus { site, .. }
+        | TaskFault::InvalidOrderedStatus { site, .. } => Some(site),
         TaskFault::PoisonedReDrive { original } | TaskFault::PoisonedResult { original } => {
             task_fault_site(original)
         }
@@ -916,6 +952,7 @@ fn result_shape_attribution(
         | TaskFault::InvalidEnumSelector { .. }
         | TaskFault::EnumProjectionMismatch { .. }
         | TaskFault::InvalidArrayStatus { .. }
+        | TaskFault::InvalidOrderedStatus { .. }
         | TaskFault::NativeFaultExit { .. }
         | TaskFault::InvalidFaultSite { .. }
         | TaskFault::PoisonedReDrive { .. }

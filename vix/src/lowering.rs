@@ -6,13 +6,15 @@ use std::fmt::Write;
 use weavy::exec::Executable;
 use weavy::mem::Layout;
 use weavy::task::{
-    ArgCopy, ArrayOpStatus, Fn as WeavyFn, FnId as WeavyFnId, Op as WeavyOp,
+    ArgCopy, ArrayOpStatus, Fn as WeavyFn, FnId as WeavyFnId, Op as WeavyOp, OrderedOpStatus,
     Program as WeavyProgram, StructuralFieldSource,
 };
 use weavy::{
     CallContract as WeavyCallContract, CallContractId as WeavyCallContractId,
     FrameContract as WeavyFrameContract, FrameRegion as WeavyFrameRegion,
-    FunctionContract as WeavyFunctionContract, PayloadKind as WeavyPayloadKind,
+    FunctionContract as WeavyFunctionContract,
+    OrderedCollectionContract as WeavyOrderedCollectionContract,
+    OrderedCollectionKind as WeavyOrderedCollectionKind, PayloadKind as WeavyPayloadKind,
     ProgramContract as WeavyProgramContract, RegionId as WeavyRegionId,
     RegionShape as WeavyRegionShape, SchemaContract as WeavySchemaContract,
     SchemaRef as WeavySchemaRef, ValueFieldUse as WeavyValueFieldUse,
@@ -95,6 +97,7 @@ pub struct ArrayOutcomeAbi {
     pub array_machine_variant: u32,
     pub missing_key_variant: u32,
     pub duplicate_key_variant: u32,
+    pub ordered_machine_variant: u32,
 }
 
 impl ArrayOutcomeAbi {
@@ -124,6 +127,10 @@ impl ArrayOutcomeAbi {
                         name: "DuplicateKey".to_owned(),
                         payload: VariantPayload::Tuple(vec![Type::Int]),
                     },
+                    EnumVariant {
+                        name: "OrderedMachine".to_owned(),
+                        payload: VariantPayload::Tuple(vec![Type::Int, Type::Int]),
+                    },
                 ],
             }),
             ok_variant: 0,
@@ -131,6 +138,7 @@ impl ArrayOutcomeAbi {
             array_machine_variant: 2,
             missing_key_variant: 3,
             duplicate_key_variant: 4,
+            ordered_machine_variant: 5,
         }
     }
 }
@@ -1205,6 +1213,29 @@ impl<'a> ProgramContractBuilder<'a> {
                 regions.push(self.frame_region(temp.region.start(), &temp.ty)?);
             }
         }
+        for (&node, cursors) in &layout.ordered_cursors {
+            let assigned = self
+                .regions
+                .ordered_cursors(function.id, node, function.span)?;
+            if assigned.len() != cursors.len() {
+                return Err(lowering_diagnostic(
+                    function.span,
+                    "ordered cursor contract assignment has the wrong length",
+                ));
+            }
+            for (cursor, region_id) in cursors.iter().zip(assigned) {
+                if region_id.0 as usize != regions.len() {
+                    return Err(lowering_diagnostic(
+                        function.span,
+                        "ordered cursor contract order is not canonical",
+                    ));
+                }
+                regions.push(WeavyFrameRegion::new(
+                    cursor.start().byte_offset(),
+                    WeavyRegionShape::new(vec![WeavyWordKind::Opaque.into(); 2]),
+                ));
+            }
+        }
         for (&node, (callee, environment)) in &layout.closure_temps {
             let node_source = function
                 .nodes
@@ -1499,15 +1530,25 @@ impl<'a> ProgramContractBuilder<'a> {
             Type::Array(element) => WeavyPayloadKind::DenseArray {
                 element: self.schema_for_type(element, span)?,
             },
-            Type::Map { key, value } => WeavyPayloadKind::DenseArray {
-                element: self.schema_for_type(
-                    &Type::Tuple(vec![key.as_ref().clone(), value.as_ref().clone()]),
-                    span,
-                )?,
-            },
-            Type::Set(element) => WeavyPayloadKind::DenseArray {
-                element: self.schema_for_type(element, span)?,
-            },
+            Type::Map { key, value } => {
+                let row = Type::Tuple(vec![key.as_ref().clone(), value.as_ref().clone()]);
+                WeavyPayloadKind::OrderedCollection(WeavyOrderedCollectionContract {
+                    kind: WeavyOrderedCollectionKind::Map,
+                    key: self.schema_for_type(key, span)?,
+                    value: Some(self.schema_for_type(value, span)?),
+                    row: self.schema_for_type(&row, span)?,
+                    fanout: 2,
+                })
+            }
+            Type::Set(element) => {
+                WeavyPayloadKind::OrderedCollection(WeavyOrderedCollectionContract {
+                    kind: WeavyOrderedCollectionKind::Set,
+                    key: self.schema_for_type(element, span)?,
+                    value: None,
+                    row: self.schema_for_type(element, span)?,
+                    fanout: 2,
+                })
+            }
             _ => WeavyPayloadKind::Inline,
         };
         self.schemas[index] = WeavySchemaContract {
@@ -1787,6 +1828,7 @@ struct RegionAssignments {
     nodes: BTreeMap<FunctionId, BTreeMap<NodeId, WeavyRegionId>>,
     control: BTreeMap<FunctionId, AssignedControlRegions>,
     temps: BTreeMap<FunctionId, BTreeMap<NodeId, Vec<WeavyRegionId>>>,
+    ordered_cursors: BTreeMap<FunctionId, BTreeMap<NodeId, Vec<WeavyRegionId>>>,
     closures: BTreeMap<FunctionId, BTreeMap<NodeId, (WeavyRegionId, WeavyRegionId)>>,
     array_map_temps: BTreeMap<FunctionId, BTreeMap<NodeId, (WeavyRegionId, WeavyRegionId)>>,
     outcomes: BTreeMap<FunctionId, WeavyRegionId>,
@@ -1815,6 +1857,7 @@ impl RegionAssignments {
         let mut nodes = BTreeMap::new();
         let mut control = BTreeMap::new();
         let mut temps = BTreeMap::new();
+        let mut ordered_cursors = BTreeMap::new();
         let mut closures = BTreeMap::new();
         let mut array_map_temps = BTreeMap::new();
         let mut outcomes = BTreeMap::new();
@@ -1871,6 +1914,19 @@ impl RegionAssignments {
                     })?;
                 }
                 assigned_temps.insert(node, ids);
+            }
+            let mut assigned_ordered_cursors = BTreeMap::new();
+            for (&node, cursors) in &layout.ordered_cursors {
+                let mut ids = Vec::with_capacity(cursors.len());
+                for _ in cursors {
+                    ids.push(WeavyRegionId(u32::try_from(next).map_err(|_| {
+                        lowering_diagnostic(span, "ordered cursor assignment exceeds u32")
+                    })?));
+                    next = next.checked_add(1).ok_or_else(|| {
+                        lowering_diagnostic(span, "ordered cursor assignment overflow")
+                    })?;
+                }
+                assigned_ordered_cursors.insert(node, ids);
             }
             let mut assigned_closures = BTreeMap::new();
             for &node in layout.closure_temps.keys() {
@@ -1957,6 +2013,7 @@ impl RegionAssignments {
             }
             nodes.insert(function, assigned);
             temps.insert(function, assigned_temps);
+            ordered_cursors.insert(function, assigned_ordered_cursors);
             closures.insert(function, assigned_closures);
             array_map_temps.insert(function, assigned_array_map_temps);
             Ok(())
@@ -1969,6 +2026,7 @@ impl RegionAssignments {
             nodes,
             control,
             temps,
+            ordered_cursors,
             closures,
             array_map_temps,
             outcomes,
@@ -2029,6 +2087,19 @@ impl RegionAssignments {
             .ok_or_else(|| lowering_diagnostic(span, "closure node has no assigned typed regions"))
     }
 
+    fn ordered_cursors(
+        &self,
+        function: FunctionId,
+        node: NodeId,
+        span: Span,
+    ) -> Result<&[WeavyRegionId], Diagnostics> {
+        self.ordered_cursors
+            .get(&function)
+            .and_then(|nodes| nodes.get(&node))
+            .map(Vec::as_slice)
+            .ok_or_else(|| lowering_diagnostic(span, "collection node has no ordered cursors"))
+    }
+
     fn array_map_temps(
         &self,
         function: FunctionId,
@@ -2082,6 +2153,7 @@ impl RegionAssignments {
 struct FunctionLayout {
     regions: BTreeMap<NodeId, FrameRegion>,
     typed_temps: BTreeMap<NodeId, Vec<TemporaryRegion>>,
+    ordered_cursors: BTreeMap<NodeId, Vec<FrameRegion>>,
     closure_temps: BTreeMap<NodeId, (FrameRegion, FrameRegion)>,
     array_map_temps: BTreeMap<NodeId, (TemporaryRegion, TemporaryRegion)>,
     constant_slots: BTreeMap<NodeRef, FrameSlot>,
@@ -2237,6 +2309,40 @@ impl FunctionLayout {
                 temps.push(TemporaryRegion { region, ty });
             }
             typed_temps.insert(node.id, temps);
+        }
+
+        let mut ordered_cursors = BTreeMap::new();
+        for node in nodes.iter().filter(|node| {
+            matches!(
+                node.op,
+                Op::Map
+                    | Op::MapAdd
+                    | Op::MapConcat
+                    | Op::MapWith
+                    | Op::MapGet
+                    | Op::MapHas
+                    | Op::MapKeys
+                    | Op::Set
+                    | Op::SetAdd
+                    | Op::SetConcat
+                    | Op::SetHas
+                    | Op::SetValues
+            )
+        }) {
+            let count = usize::from(matches!(node.op, Op::MapConcat | Op::SetConcat)) + 1;
+            let mut cursors = Vec::with_capacity(count);
+            for _ in 0..count {
+                let region = FrameRegion::for_words(
+                    next_word,
+                    FrameWords::from_usize(2).expect("two cursor words"),
+                )
+                .ok_or_else(|| lowering_diagnostic(node.span, "ordered cursor region overflow"))?;
+                next_word = next_word.checked_add(2).ok_or_else(|| {
+                    lowering_diagnostic(node.span, "function frame size overflow")
+                })?;
+                cursors.push(region);
+            }
+            ordered_cursors.insert(node.id, cursors);
         }
 
         let mut constant_slots = BTreeMap::new();
@@ -2405,6 +2511,7 @@ impl FunctionLayout {
         Ok(Self {
             regions,
             typed_temps,
+            ordered_cursors,
             closure_temps,
             array_map_temps,
             constant_slots,
@@ -2438,6 +2545,13 @@ impl FunctionLayout {
             .ok_or_else(|| lowering_diagnostic(span, "VIR node has no typed temporary regions"))
     }
 
+    fn ordered_cursors(&self, node: NodeId, span: Span) -> Result<&[FrameRegion], Diagnostics> {
+        self.ordered_cursors
+            .get(&node)
+            .map(Vec::as_slice)
+            .ok_or_else(|| lowering_diagnostic(span, "VIR node has no ordered cursor regions"))
+    }
+
     fn closure_temps(
         &self,
         node: NodeId,
@@ -2465,19 +2579,15 @@ fn collection_temporary_types(
     nodes: &[Node],
 ) -> Result<Option<Vec<Type>>, Diagnostics> {
     let collection = match node.op {
-        Op::Map
-        | Op::MapAdd
-        | Op::MapConcat
-        | Op::MapWith
-        | Op::MapGet
-        | Op::MapHas
-        | Op::MapKeys => node
+        Op::Map => node.ty.clone(),
+        Op::MapAdd | Op::MapConcat | Op::MapWith | Op::MapGet | Op::MapHas | Op::MapKeys => node
             .inputs
             .first()
             .and_then(|input| nodes.iter().find(|candidate| candidate.id == *input))
             .map(|input| input.ty.clone())
             .unwrap_or_else(|| node.ty.clone()),
-        Op::Set | Op::SetAdd | Op::SetConcat | Op::SetHas | Op::SetValues => node
+        Op::Set => node.ty.clone(),
+        Op::SetAdd | Op::SetConcat | Op::SetHas | Op::SetValues => node
             .inputs
             .first()
             .and_then(|input| nodes.iter().find(|candidate| candidate.id == *input))
@@ -2485,11 +2595,23 @@ fn collection_temporary_types(
             .unwrap_or_else(|| node.ty.clone()),
         _ => return Ok(None),
     };
-    let mut types = vec![Type::Int, Type::Int, Type::Int, collection.clone()];
+    let mut types = vec![
+        Type::Int,
+        Type::Int,
+        Type::Int,
+        collection.clone(),
+        collection.clone(),
+        collection.clone(),
+    ];
     match collection {
         Type::Map { key, value } => {
             let row = Type::Tuple(vec![key.as_ref().clone(), value.as_ref().clone()]);
-            types.extend([row.clone(), row, key.as_ref().clone(), key.as_ref().clone()]);
+            types.extend([
+                row,
+                key.as_ref().clone(),
+                key.as_ref().clone(),
+                value.as_ref().clone(),
+            ]);
             comparison_temporary_types(&key, &mut types);
         }
         Type::Set(element) => {
@@ -3574,6 +3696,29 @@ impl<'a> TemporaryCursor<'a> {
             ty: ty.clone(),
             representation: representation_for_type(ty, span)?,
         })
+    }
+
+    fn checkpoint(&self) -> usize {
+        self.next
+    }
+
+    fn rewind(&mut self, checkpoint: usize, span: Span) -> Result<(), Diagnostics> {
+        if checkpoint > self.regions.len() {
+            return Err(lowering_diagnostic(
+                span,
+                "typed temporary checkpoint is out of range",
+            ));
+        }
+        self.next = checkpoint;
+        Ok(())
+    }
+
+    fn drain(&mut self, span: Span) -> Result<(), Diagnostics> {
+        while self.next < self.regions.len() {
+            let ty = self.regions[self.next].ty.clone();
+            self.take(&ty, span)?;
+        }
+        Ok(())
     }
 
     fn finish(self, span: Span) -> Result<(), Diagnostics> {
@@ -5200,7 +5345,7 @@ fn lower_checked_array_node(
 fn lower_checked_collection_node(
     node: &Node,
     dst: FrameRegion,
-    dst_region: WeavyRegionId,
+    _dst_region: WeavyRegionId,
     values: &BTreeMap<NodeId, LoweredSlot>,
     sequence: &SequenceContext<'_, '_, '_>,
     outputs: &mut SequenceOutputs<'_, '_>,
@@ -5235,87 +5380,342 @@ fn lower_checked_collection_node(
         .copied()
         .ok_or_else(|| lowering_diagnostic(node.span, "collection operation has no trace site"))?;
 
+    let collection_ty = if matches!(node.op, Op::Map | Op::Set) {
+        node.ty.clone()
+    } else {
+        node.inputs
+            .first()
+            .and_then(|input| values.get(input))
+            .map(|value| value.ty.clone())
+            .ok_or_else(|| lowering_diagnostic(node.span, "collection receiver is unavailable"))?
+    };
+    let collection_schema = sequence
+        .lowering
+        .schemas
+        .schema_for(&collection_ty, node.span)?;
+
     match node.op {
-        Op::MapLen | Op::SetLen => {
-            require_input_count(node, 1)?;
-            let collection = input_value(node, values, 0)?;
-            let element = collection_element_type(&collection.ty, node.span)?;
-            let schema = sequence.lowering.schemas.schema_for(&element, node.span)?;
-            outputs.code.push(WeavyOp::LoadArrayLen {
+        Op::Map | Op::Set => {
+            outputs.code.push(WeavyOp::OrderedEmpty {
                 dst: dst.start().byte_offset(),
-                status: scratch.status.byte_offset(),
-                array: collection.region.start().byte_offset(),
-                elem_schema_ref: i64::from(schema.0),
+                collection_schema_ref: i64::from(collection_schema.0),
             });
-            emit_array_status_machine_checks(
+            let mut temps = ordered_collection_temps(node, &collection_ty, sequence)?;
+            let cursor = ordered_cursor(node, sequence, 0)?;
+            let comparison = temps.cursor.checkpoint();
+            match &collection_ty {
+                Type::Map { key, value } => {
+                    if node.inputs.len() % 2 != 0 {
+                        return Err(lowering_diagnostic(
+                            node.span,
+                            "map literal does not contain key/value pairs",
+                        ));
+                    }
+                    for pair in node.inputs.chunks_exact(2) {
+                        let key_value = values.get(&pair[0]).ok_or_else(|| {
+                            lowering_diagnostic(node.span, "map literal key is unavailable")
+                        })?;
+                        let value_value = values.get(&pair[1]).ok_or_else(|| {
+                            lowering_diagnostic(node.span, "map literal value is unavailable")
+                        })?;
+                        require_value(
+                            node,
+                            key_value,
+                            key,
+                            representation_for_type(key, node.span)?,
+                        )?;
+                        require_value(
+                            node,
+                            value_value,
+                            value,
+                            representation_for_type(value, node.span)?,
+                        )?;
+                        temps.cursor.rewind(comparison, node.span)?;
+                        emit_ordered_insert(OrderedInsertLowering {
+                            node,
+                            site,
+                            collection: dst.start(),
+                            destination: dst.start(),
+                            key: key_value,
+                            value: Some(value_value),
+                            key_ty: key,
+                            collection_schema,
+                            cursor,
+                            candidate: &temps.candidate,
+                            ordering: &temps.ordering,
+                            ready: &temps.ready,
+                            present: &temps.present,
+                            duplicate: DuplicateDisposition::LanguageFailure,
+                            comparison_checkpoint: comparison,
+                            temps: &mut temps.cursor,
+                            scratch,
+                            assigned,
+                            outcome,
+                            return_label,
+                            code: outputs.code,
+                        })?;
+                    }
+                }
+                Type::Set(element) => {
+                    for input in &node.inputs {
+                        let element_value = values.get(input).ok_or_else(|| {
+                            lowering_diagnostic(node.span, "set literal element is unavailable")
+                        })?;
+                        require_value(
+                            node,
+                            element_value,
+                            element,
+                            representation_for_type(element, node.span)?,
+                        )?;
+                        temps.cursor.rewind(comparison, node.span)?;
+                        emit_ordered_insert(OrderedInsertLowering {
+                            node,
+                            site,
+                            collection: dst.start(),
+                            destination: dst.start(),
+                            key: element_value,
+                            value: None,
+                            key_ty: element,
+                            collection_schema,
+                            cursor,
+                            candidate: &temps.candidate,
+                            ordering: &temps.ordering,
+                            ready: &temps.ready,
+                            present: &temps.present,
+                            duplicate: DuplicateDisposition::Success,
+                            comparison_checkpoint: comparison,
+                            temps: &mut temps.cursor,
+                            scratch,
+                            assigned,
+                            outcome,
+                            return_label,
+                            code: outputs.code,
+                        })?;
+                    }
+                }
+                _ => unreachable!(),
+            }
+            temps.cursor.drain(node.span)?;
+            temps.cursor.finish(node.span)?;
+            Ok(ValueRepresentation::RealizedHandle)
+        }
+        Op::MapAdd | Op::MapWith | Op::SetAdd => {
+            let expected = if matches!(node.op, Op::SetAdd) { 2 } else { 3 };
+            require_input_count(node, expected)?;
+            let collection = input_value(node, values, 0)?;
+            require_value(
+                node,
+                &collection,
+                &collection_ty,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            let key = input_value(node, values, 1)?;
+            let (key_ty, value, duplicate) = match &collection_ty {
+                Type::Map { key: key_ty, value } => {
+                    let value_slot = input_value(node, values, 2)?;
+                    require_value(
+                        node,
+                        &value_slot,
+                        value,
+                        representation_for_type(value, node.span)?,
+                    )?;
+                    (
+                        key_ty.as_ref(),
+                        Some(value_slot),
+                        if matches!(node.op, Op::MapWith) {
+                            DuplicateDisposition::Machine
+                        } else {
+                            DuplicateDisposition::LanguageFailure
+                        },
+                    )
+                }
+                Type::Set(element) => (element.as_ref(), None, DuplicateDisposition::Success),
+                _ => unreachable!(),
+            };
+            require_value(
+                node,
+                &key,
+                key_ty,
+                representation_for_type(key_ty, node.span)?,
+            )?;
+            let mut temps = ordered_collection_temps(node, &collection_ty, sequence)?;
+            let comparison = temps.cursor.checkpoint();
+            emit_ordered_insert(OrderedInsertLowering {
                 node,
                 site,
+                collection: collection.region.start(),
+                destination: dst.start(),
+                key: &key,
+                value: value.as_ref(),
+                key_ty,
+                collection_schema,
+                cursor: ordered_cursor(node, sequence, 0)?,
+                candidate: &temps.candidate,
+                ordering: &temps.ordering,
+                ready: &temps.ready,
+                present: &temps.present,
+                duplicate,
+                comparison_checkpoint: comparison,
+                temps: &mut temps.cursor,
                 scratch,
                 assigned,
                 outcome,
                 return_label,
-                outputs.code,
-            )?;
-            Ok(ValueRepresentation::Word)
+                code: outputs.code,
+            })?;
+            temps.cursor.drain(node.span)?;
+            temps.cursor.finish(node.span)?;
+            Ok(ValueRepresentation::RealizedHandle)
         }
-        Op::MapHas | Op::MapGet | Op::SetHas => {
+        Op::MapConcat | Op::SetConcat => {
+            require_input_count(node, 2)?;
+            let left = input_value(node, values, 0)?;
+            let right = input_value(node, values, 1)?;
+            require_value(
+                node,
+                &left,
+                &collection_ty,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            require_value(
+                node,
+                &right,
+                &collection_ty,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            outputs.code.push(WeavyOp::CopyI64 {
+                dst: dst.start().byte_offset(),
+                src: left.region.start().byte_offset(),
+            });
+            let mut temps = ordered_collection_temps(node, &collection_ty, sequence)?;
+            let comparison = temps.cursor.checkpoint();
+            let iterate_cursor = ordered_cursor(node, sequence, 1)?;
+            outputs.code.push(WeavyOp::OrderedBeginIterate {
+                cursor: iterate_cursor.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                collection: right.region.start().byte_offset(),
+                collection_schema_ref: i64::from(collection_schema.0),
+            });
+            emit_ordered_status_checks(OrderedStatusLowering {
+                node,
+                site,
+                duplicate: DuplicateDisposition::Machine,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                code: outputs.code,
+            })?;
+            let next = outputs.code.label();
+            let done = outputs.code.label();
+            outputs.code.bind(next, node.span)?;
+            outputs.code.push(WeavyOp::OrderedIterateRow {
+                cursor: iterate_cursor.start().byte_offset(),
+                present: temps.present.region.start().byte_offset(),
+                row: temps.row.region.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                row_width: element_byte_width(
+                    &collection_element_type(&collection_ty, node.span)?,
+                    node.span,
+                )?,
+                collection_schema_ref: i64::from(collection_schema.0),
+            });
+            emit_ordered_status_checks(OrderedStatusLowering {
+                node,
+                site,
+                duplicate: DuplicateDisposition::Machine,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                code: outputs.code,
+            })?;
+            outputs
+                .code
+                .jump_if_zero(temps.present.region.start(), done);
+            let (key, value, key_ty, duplicate) = match &collection_ty {
+                Type::Map { key, .. } => {
+                    outputs.code.push(WeavyOp::ProductProject {
+                        dst: temps.projected_key.region_id,
+                        product: temps.row.region_id,
+                        field: 0,
+                    });
+                    outputs.code.push(WeavyOp::ProductProject {
+                        dst: temps.projected_value.region_id,
+                        product: temps.row.region_id,
+                        field: 1,
+                    });
+                    (
+                        &temps.projected_key,
+                        Some(&temps.projected_value),
+                        key.as_ref(),
+                        DuplicateDisposition::LanguageFailure,
+                    )
+                }
+                Type::Set(element) => (
+                    &temps.row,
+                    None,
+                    element.as_ref(),
+                    DuplicateDisposition::Success,
+                ),
+                _ => unreachable!(),
+            };
+            temps.cursor.rewind(comparison, node.span)?;
+            emit_ordered_insert(OrderedInsertLowering {
+                node,
+                site,
+                collection: dst.start(),
+                destination: dst.start(),
+                key,
+                value,
+                key_ty,
+                collection_schema,
+                cursor: ordered_cursor(node, sequence, 0)?,
+                candidate: &temps.candidate,
+                ordering: &temps.ordering,
+                ready: &temps.ready,
+                present: &temps.present,
+                duplicate,
+                comparison_checkpoint: comparison,
+                temps: &mut temps.cursor,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                code: outputs.code,
+            })?;
+            outputs.code.jump(next);
+            outputs.code.bind(done, node.span)?;
+            temps.cursor.drain(node.span)?;
+            temps.cursor.finish(node.span)?;
+            Ok(ValueRepresentation::RealizedHandle)
+        }
+        Op::MapGet | Op::MapHas | Op::SetHas => {
             require_input_count(node, 2)?;
             let collection = input_value(node, values, 0)?;
             let sought = input_value(node, values, 1)?;
-            let element = collection_element_type(&collection.ty, node.span)?;
-            let key = match &collection.ty {
+            require_value(
+                node,
+                &collection,
+                &collection_ty,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            let key_ty = match &collection_ty {
                 Type::Map { key, .. } => key.as_ref(),
                 Type::Set(element) => element.as_ref(),
-                _ => {
-                    return Err(lowering_diagnostic(
-                        node.span,
-                        "membership receiver is not a collection",
-                    ));
-                }
+                _ => unreachable!(),
             };
-            require_value(node, &sought, key, representation_for_type(key, node.span)?)?;
-            let schema = sequence.lowering.schemas.schema_for(&element, node.span)?;
-            let width = element_byte_width(&element, node.span)?;
-            let mut temps = TemporaryCursor::new(
-                sequence.function.layout,
-                sequence.lowering.regions,
-                sequence.function.id,
+            require_value(
                 node,
+                &sought,
+                key_ty,
+                representation_for_type(key_ty, node.span)?,
             )?;
-            let order = temps.take(&Type::Int, node.span)?;
-            let _ = temps.take(&Type::Int, node.span)?;
-            let _ = temps.take(&Type::Int, node.span)?;
-            let _old = temps.take(&collection.ty, node.span)?;
-            let row = temps.take(&element, node.span)?;
-            let _ = temps.take(&element, node.span)?;
-            let row_key = if matches!(collection.ty, Type::Map { .. }) {
-                Some(temps.take(key, node.span)?)
-            } else {
-                None
-            };
-            let _ = if matches!(collection.ty, Type::Map { .. }) {
-                Some(temps.take(key, node.span)?)
-            } else {
-                None
-            };
-            outputs.code.push(WeavyOp::LoadArrayLen {
-                dst: scratch.fields[0].byte_offset(),
-                status: scratch.status.byte_offset(),
-                array: collection.region.start().byte_offset(),
-                elem_schema_ref: i64::from(schema.0),
-            });
-            emit_array_status_machine_checks(
-                node,
-                site,
-                scratch,
-                assigned,
-                outcome,
-                return_label,
-                outputs.code,
-            )?;
-            outputs.code.push(WeavyOp::ConstI64 {
-                dst: scratch.fields[1].byte_offset(),
-                value: 0,
+            let mut temps = ordered_collection_temps(node, &collection_ty, sequence)?;
+            let comparison = temps.cursor.checkpoint();
+            outputs.code.push(WeavyOp::CopyI64 {
+                dst: temps.current.region.start().byte_offset(),
+                src: collection.region.start().byte_offset(),
             });
             if !matches!(node.op, Op::MapGet) {
                 outputs.code.push(WeavyOp::ConstI64 {
@@ -5324,89 +5724,142 @@ fn lower_checked_collection_node(
                 });
             }
             let scan = outputs.code.label();
-            let next = outputs.code.label();
+            let choose_right = outputs.code.label();
             let absent = outputs.code.label();
+            let found = outputs.code.label();
             let done = outputs.code.label();
             outputs.code.bind(scan, node.span)?;
-            outputs.code.push(WeavyOp::LtI64 {
-                dst: scratch.condition.byte_offset(),
-                a: scratch.fields[1].byte_offset(),
-                b: scratch.fields[0].byte_offset(),
-            });
-            outputs.code.jump_if_zero(scratch.condition, absent);
-            outputs.code.push(WeavyOp::LoadArray {
-                dst: row.region.start().byte_offset(),
+            let cursor = ordered_cursor(node, sequence, 0)?;
+            outputs.code.push(WeavyOp::OrderedBeginProbe {
+                cursor: cursor.start().byte_offset(),
                 status: scratch.status.byte_offset(),
-                array: collection.region.start().byte_offset(),
-                index: scratch.fields[1].byte_offset(),
-                elem_width: width,
-                elem_schema_ref: i64::from(schema.0),
+                collection: temps.current.region.start().byte_offset(),
+                collection_schema_ref: i64::from(collection_schema.0),
             });
-            emit_array_status_machine_checks(
+            emit_ordered_status_checks(OrderedStatusLowering {
                 node,
                 site,
+                duplicate: DuplicateDisposition::Machine,
                 scratch,
                 assigned,
                 outcome,
                 return_label,
-                outputs.code,
-            )?;
-            let compared = if let Some(row_key) = &row_key {
-                outputs.code.push(WeavyOp::ProductProject {
-                    dst: row_key.region_id,
-                    product: row.region_id,
-                    field: 0,
-                });
-                row_key
-            } else {
-                &row
-            };
+                code: outputs.code,
+            })?;
+            outputs.code.push(WeavyOp::OrderedProbeKey {
+                cursor: cursor.start().byte_offset(),
+                present: temps.present.region.start().byte_offset(),
+                key: temps.candidate.region.start().byte_offset(),
+                left: temps.left.region.start().byte_offset(),
+                right: temps.right.region.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                key_width: element_byte_width(key_ty, node.span)?,
+                collection_schema_ref: i64::from(collection_schema.0),
+            });
+            emit_ordered_status_checks(OrderedStatusLowering {
+                node,
+                site,
+                duplicate: DuplicateDisposition::Machine,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                code: outputs.code,
+            })?;
+            outputs
+                .code
+                .jump_if_zero(temps.present.region.start(), absent);
+            temps.cursor.rewind(comparison, node.span)?;
             emit_structural_order(
                 node,
-                key,
-                compared,
+                key_ty,
                 &sought,
-                order.region.start(),
+                &temps.candidate,
+                temps.ordering.region.start(),
                 scratch.condition,
-                &mut temps,
+                &mut temps.cursor,
                 outputs.code,
             )?;
             outputs.code.push(WeavyOp::ConstI64 {
-                dst: scratch.fields[2].byte_offset(),
+                dst: scratch.fields[0].byte_offset(),
                 value: i64::from(ORDERING_EQUAL_VARIANT),
             });
             outputs.code.push(WeavyOp::EqI64 {
                 dst: scratch.condition.byte_offset(),
-                a: order.region.start().byte_offset(),
-                b: scratch.fields[2].byte_offset(),
+                a: temps.ordering.region.start().byte_offset(),
+                b: scratch.fields[0].byte_offset(),
             });
-            outputs.code.jump_if_zero(scratch.condition, next);
-            match node.op {
-                Op::MapGet => {
-                    outputs.code.push(WeavyOp::ProductProject {
-                        dst: dst_region,
-                        product: row.region_id,
-                        field: 1,
-                    });
-                }
-                Op::MapHas | Op::SetHas => outputs.code.push(WeavyOp::ConstI64 {
-                    dst: dst.start().byte_offset(),
-                    value: 1,
-                }),
-                _ => unreachable!(),
-            }
-            outputs.code.jump(done);
-            outputs.code.bind(next, node.span)?;
+            outputs.code.jump_if_zero(scratch.condition, choose_right);
+            outputs.code.jump(found);
+            outputs.code.bind(choose_right, node.span)?;
             outputs.code.push(WeavyOp::ConstI64 {
-                dst: scratch.fields[2].byte_offset(),
-                value: 1,
+                dst: scratch.fields[0].byte_offset(),
+                value: i64::from(ORDERING_LESS_VARIANT),
             });
-            outputs.code.push(WeavyOp::AddI64 {
-                dst: scratch.fields[1].byte_offset(),
-                a: scratch.fields[1].byte_offset(),
-                b: scratch.fields[2].byte_offset(),
+            outputs.code.push(WeavyOp::EqI64 {
+                dst: scratch.condition.byte_offset(),
+                a: temps.ordering.region.start().byte_offset(),
+                b: scratch.fields[0].byte_offset(),
+            });
+            let descend_right = outputs.code.label();
+            outputs.code.jump_if_zero(scratch.condition, descend_right);
+            outputs.code.push(WeavyOp::CopyI64 {
+                dst: temps.current.region.start().byte_offset(),
+                src: temps.left.region.start().byte_offset(),
             });
             outputs.code.jump(scan);
+            outputs.code.bind(descend_right, node.span)?;
+            outputs.code.push(WeavyOp::CopyI64 {
+                dst: temps.current.region.start().byte_offset(),
+                src: temps.right.region.start().byte_offset(),
+            });
+            outputs.code.jump(scan);
+            outputs.code.bind(found, node.span)?;
+            if matches!(node.op, Op::MapGet) {
+                outputs.code.push(WeavyOp::OrderedBeginProbe {
+                    cursor: cursor.start().byte_offset(),
+                    status: scratch.status.byte_offset(),
+                    collection: temps.current.region.start().byte_offset(),
+                    collection_schema_ref: i64::from(collection_schema.0),
+                });
+                emit_ordered_status_checks(OrderedStatusLowering {
+                    node,
+                    site,
+                    duplicate: DuplicateDisposition::Machine,
+                    scratch,
+                    assigned,
+                    outcome,
+                    return_label,
+                    code: outputs.code,
+                })?;
+                outputs.code.push(WeavyOp::OrderedProbeValue {
+                    cursor: cursor.start().byte_offset(),
+                    present: temps.present.region.start().byte_offset(),
+                    value: dst.start().byte_offset(),
+                    status: scratch.status.byte_offset(),
+                    value_width: element_byte_width(&node.ty, node.span)?,
+                    collection_schema_ref: i64::from(collection_schema.0),
+                });
+                emit_ordered_status_checks(OrderedStatusLowering {
+                    node,
+                    site,
+                    duplicate: DuplicateDisposition::Machine,
+                    scratch,
+                    assigned,
+                    outcome,
+                    return_label,
+                    code: outputs.code,
+                })?;
+                outputs
+                    .code
+                    .jump_if_zero(temps.present.region.start(), absent);
+            } else {
+                outputs.code.push(WeavyOp::ConstI64 {
+                    dst: dst.start().byte_offset(),
+                    value: 1,
+                });
+            }
+            outputs.code.jump(done);
             outputs.code.bind(absent, node.span)?;
             if matches!(node.op, Op::MapGet) {
                 outputs.code.push(WeavyOp::ConstI64 {
@@ -5424,14 +5877,514 @@ fn lower_checked_collection_node(
                 outputs.code.jump(return_label);
             }
             outputs.code.bind(done, node.span)?;
-            temps.finish(node.span)?;
+            temps.cursor.drain(node.span)?;
+            temps.cursor.finish(node.span)?;
             representation_for_type(&node.ty, node.span)
+        }
+        Op::MapLen | Op::SetLen => {
+            require_input_count(node, 1)?;
+            let collection = input_value(node, values, 0)?;
+            require_value(
+                node,
+                &collection,
+                &collection_ty,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            outputs.code.push(WeavyOp::OrderedLen {
+                dst: dst.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                collection: collection.region.start().byte_offset(),
+                collection_schema_ref: i64::from(collection_schema.0),
+            });
+            emit_ordered_status_checks(OrderedStatusLowering {
+                node,
+                site,
+                duplicate: DuplicateDisposition::Machine,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                code: outputs.code,
+            })?;
+            Ok(ValueRepresentation::Word)
+        }
+        Op::MapKeys | Op::SetValues => {
+            require_input_count(node, 1)?;
+            let collection = input_value(node, values, 0)?;
+            require_value(
+                node,
+                &collection,
+                &collection_ty,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            let Type::Array(output_element) = &node.ty else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "collection projection result is not an array",
+                ));
+            };
+            let output_schema = sequence
+                .lowering
+                .schemas
+                .schema_for(output_element, node.span)?;
+            let output_width = element_byte_width(output_element, node.span)?;
+            let row_ty = collection_element_type(&collection_ty, node.span)?;
+            let row_width = element_byte_width(&row_ty, node.span)?;
+            let mut temps = ordered_collection_temps(node, &collection_ty, sequence)?;
+            outputs.code.push(WeavyOp::OrderedLen {
+                dst: scratch.fields[0].byte_offset(),
+                status: scratch.status.byte_offset(),
+                collection: collection.region.start().byte_offset(),
+                collection_schema_ref: i64::from(collection_schema.0),
+            });
+            emit_ordered_status_checks(OrderedStatusLowering {
+                node,
+                site,
+                duplicate: DuplicateDisposition::Machine,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                code: outputs.code,
+            })?;
+            outputs.code.push(WeavyOp::ArrayNew {
+                dst: dst.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                count_slot: scratch.fields[0].byte_offset(),
+                elem_width: output_width,
+                elem_schema_ref: i64::from(output_schema.0),
+            });
+            emit_array_status_machine_checks(
+                node,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            let cursor = ordered_cursor(node, sequence, 0)?;
+            outputs.code.push(WeavyOp::OrderedBeginIterate {
+                cursor: cursor.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                collection: collection.region.start().byte_offset(),
+                collection_schema_ref: i64::from(collection_schema.0),
+            });
+            emit_ordered_status_checks(OrderedStatusLowering {
+                node,
+                site,
+                duplicate: DuplicateDisposition::Machine,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                code: outputs.code,
+            })?;
+            outputs.code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[1].byte_offset(),
+                value: 0,
+            });
+            let next = outputs.code.label();
+            let done = outputs.code.label();
+            outputs.code.bind(next, node.span)?;
+            outputs.code.push(WeavyOp::OrderedIterateRow {
+                cursor: cursor.start().byte_offset(),
+                present: temps.present.region.start().byte_offset(),
+                row: temps.row.region.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                row_width,
+                collection_schema_ref: i64::from(collection_schema.0),
+            });
+            emit_ordered_status_checks(OrderedStatusLowering {
+                node,
+                site,
+                duplicate: DuplicateDisposition::Machine,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                code: outputs.code,
+            })?;
+            outputs
+                .code
+                .jump_if_zero(temps.present.region.start(), done);
+            let source = if matches!(node.op, Op::MapKeys) {
+                outputs.code.push(WeavyOp::ProductProject {
+                    dst: temps.projected_key.region_id,
+                    product: temps.row.region_id,
+                    field: 0,
+                });
+                &temps.projected_key
+            } else {
+                &temps.row
+            };
+            outputs.code.push(WeavyOp::ArrayStore {
+                status: scratch.status.byte_offset(),
+                array: dst.start().byte_offset(),
+                index: scratch.fields[1].byte_offset(),
+                src: source.region.start().byte_offset(),
+                elem_width: output_width,
+                elem_schema_ref: i64::from(output_schema.0),
+            });
+            emit_array_status_machine_checks(
+                node,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            outputs.code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[2].byte_offset(),
+                value: 1,
+            });
+            outputs.code.push(WeavyOp::AddI64 {
+                dst: scratch.fields[1].byte_offset(),
+                a: scratch.fields[1].byte_offset(),
+                b: scratch.fields[2].byte_offset(),
+            });
+            outputs.code.jump(next);
+            outputs.code.bind(done, node.span)?;
+            temps.cursor.drain(node.span)?;
+            temps.cursor.finish(node.span)?;
+            Ok(ValueRepresentation::RealizedHandle)
+        }
+        _ => unreachable!("collection lowering dispatched only Map/Set operations"),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum DuplicateDisposition {
+    LanguageFailure,
+    Success,
+    Machine,
+}
+
+struct OrderedCollectionTemps<'a> {
+    cursor: TemporaryCursor<'a>,
+    ordering: LoweredSlot,
+    ready: LoweredSlot,
+    present: LoweredSlot,
+    current: LoweredSlot,
+    left: LoweredSlot,
+    right: LoweredSlot,
+    row: LoweredSlot,
+    candidate: LoweredSlot,
+    projected_key: LoweredSlot,
+    projected_value: LoweredSlot,
+}
+
+fn ordered_collection_temps<'a>(
+    node: &Node,
+    collection: &Type,
+    sequence: &'a SequenceContext<'_, '_, '_>,
+) -> Result<OrderedCollectionTemps<'a>, Diagnostics> {
+    let mut cursor = TemporaryCursor::new(
+        sequence.function.layout,
+        sequence.lowering.regions,
+        sequence.function.id,
+        node,
+    )?;
+    let ordering = cursor.take(&Type::Int, node.span)?;
+    let ready = cursor.take(&Type::Int, node.span)?;
+    let present = cursor.take(&Type::Int, node.span)?;
+    let current = cursor.take(collection, node.span)?;
+    let left = cursor.take(collection, node.span)?;
+    let right = cursor.take(collection, node.span)?;
+    match collection {
+        Type::Map { key, value } => {
+            let row_ty = Type::Tuple(vec![key.as_ref().clone(), value.as_ref().clone()]);
+            let row = cursor.take(&row_ty, node.span)?;
+            let candidate = cursor.take(key, node.span)?;
+            let projected_key = cursor.take(key, node.span)?;
+            let projected_value = cursor.take(value, node.span)?;
+            Ok(OrderedCollectionTemps {
+                cursor,
+                ordering,
+                ready,
+                present,
+                current,
+                left,
+                right,
+                row,
+                candidate,
+                projected_key,
+                projected_value,
+            })
+        }
+        Type::Set(element) => {
+            let row = cursor.take(element, node.span)?;
+            let candidate = cursor.take(element, node.span)?;
+            Ok(OrderedCollectionTemps {
+                cursor,
+                ordering,
+                ready,
+                present,
+                current,
+                left,
+                right,
+                projected_key: row.clone(),
+                projected_value: row.clone(),
+                row,
+                candidate,
+            })
         }
         _ => Err(lowering_diagnostic(
             node.span,
-            "map/set lowering is not implemented",
+            "ordered temporary receiver is not Map or Set",
         )),
     }
+}
+
+fn ordered_cursor(
+    node: &Node,
+    sequence: &SequenceContext<'_, '_, '_>,
+    index: usize,
+) -> Result<FrameRegion, Diagnostics> {
+    sequence
+        .function
+        .layout
+        .ordered_cursors(node.id, node.span)?
+        .get(index)
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(node.span, "ordered cursor index is unavailable"))
+}
+
+struct OrderedInsertLowering<'a, 'temps, 'code> {
+    node: &'a Node,
+    site: u32,
+    collection: FrameSlot,
+    destination: FrameSlot,
+    key: &'a LoweredSlot,
+    value: Option<&'a LoweredSlot>,
+    key_ty: &'a Type,
+    collection_schema: WeavySchemaRef,
+    cursor: FrameRegion,
+    candidate: &'a LoweredSlot,
+    ordering: &'a LoweredSlot,
+    ready: &'a LoweredSlot,
+    present: &'a LoweredSlot,
+    duplicate: DuplicateDisposition,
+    comparison_checkpoint: usize,
+    temps: &'a mut TemporaryCursor<'temps>,
+    scratch: OutcomeScratch,
+    assigned: AssignedOutcomeScratch,
+    outcome: WeavyRegionId,
+    return_label: CodeLabel,
+    code: &'code mut CodeBuilder,
+}
+
+fn emit_ordered_insert(context: OrderedInsertLowering<'_, '_, '_>) -> Result<(), Diagnostics> {
+    let OrderedInsertLowering {
+        node,
+        site,
+        collection,
+        destination,
+        key,
+        value,
+        key_ty,
+        collection_schema,
+        cursor,
+        candidate,
+        ordering,
+        ready,
+        present,
+        duplicate,
+        comparison_checkpoint,
+        temps,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code,
+    } = context;
+    code.push(WeavyOp::OrderedBeginInsert {
+        cursor: cursor.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        collection: collection.byte_offset(),
+        collection_schema_ref: i64::from(collection_schema.0),
+    });
+    emit_ordered_status_checks(OrderedStatusLowering {
+        node,
+        site,
+        duplicate: DuplicateDisposition::Machine,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code,
+    })?;
+    let inspect = code.label();
+    let commit = code.label();
+    code.bind(inspect, node.span)?;
+    code.push(WeavyOp::OrderedInsertInspect {
+        cursor: cursor.start().byte_offset(),
+        present: present.region.start().byte_offset(),
+        key: candidate.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        key_width: element_byte_width(key_ty, node.span)?,
+        collection_schema_ref: i64::from(collection_schema.0),
+    });
+    emit_ordered_status_checks(OrderedStatusLowering {
+        node,
+        site,
+        duplicate: DuplicateDisposition::Machine,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code,
+    })?;
+    code.jump_if_zero(present.region.start(), commit);
+    temps.rewind(comparison_checkpoint, node.span)?;
+    emit_structural_order(
+        node,
+        key_ty,
+        key,
+        candidate,
+        ordering.region.start(),
+        scratch.condition,
+        temps,
+        code,
+    )?;
+    code.push(WeavyOp::OrderedInsertAdvance {
+        cursor: cursor.start().byte_offset(),
+        ordering: ordering.region.start().byte_offset(),
+        ready: ready.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        collection_schema_ref: i64::from(collection_schema.0),
+    });
+    emit_ordered_status_checks(OrderedStatusLowering {
+        node,
+        site,
+        duplicate: DuplicateDisposition::Machine,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code,
+    })?;
+    code.jump_if_zero(ready.region.start(), inspect);
+    code.bind(commit, node.span)?;
+    code.push(WeavyOp::OrderedInsertCommit {
+        dst: destination.byte_offset(),
+        cursor: cursor.start().byte_offset(),
+        key: key.region.start().byte_offset(),
+        value: value.map(|value| value.region.start().byte_offset()),
+        status: scratch.status.byte_offset(),
+        key_width: element_byte_width(key_ty, node.span)?,
+        value_width: value
+            .map(|value| element_byte_width(&value.ty, node.span))
+            .transpose()?
+            .unwrap_or(0),
+        collection_schema_ref: i64::from(collection_schema.0),
+        replace: matches!(
+            duplicate,
+            DuplicateDisposition::Machine | DuplicateDisposition::Success
+        ),
+    });
+    emit_ordered_status_checks(OrderedStatusLowering {
+        node,
+        site,
+        duplicate,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code,
+    })
+}
+
+struct OrderedStatusLowering<'a, 'code> {
+    node: &'a Node,
+    site: u32,
+    duplicate: DuplicateDisposition,
+    scratch: OutcomeScratch,
+    assigned: AssignedOutcomeScratch,
+    outcome: WeavyRegionId,
+    return_label: CodeLabel,
+    code: &'code mut CodeBuilder,
+}
+
+fn emit_ordered_status_checks(context: OrderedStatusLowering<'_, '_>) -> Result<(), Diagnostics> {
+    let OrderedStatusLowering {
+        node,
+        site,
+        duplicate,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code,
+    } = context;
+    let success = code.label();
+    for expected in [
+        OrderedOpStatus::Ok,
+        OrderedOpStatus::InvalidHandle,
+        OrderedOpStatus::SchemaMismatch,
+        OrderedOpStatus::OperationMismatch,
+        OrderedOpStatus::Stale,
+        OrderedOpStatus::AllocationFailed,
+        OrderedOpStatus::DuplicateKey,
+        OrderedOpStatus::InvalidOrdering,
+    ] {
+        let next = code.label();
+        code.push(WeavyOp::OrderedStatusIs {
+            dst: scratch.condition.byte_offset(),
+            status: scratch.status.byte_offset(),
+            expected,
+        });
+        code.jump_if_zero(scratch.condition, next);
+        if expected == OrderedOpStatus::Ok
+            || (expected == OrderedOpStatus::DuplicateKey
+                && matches!(duplicate, DuplicateDisposition::Success))
+        {
+            code.jump(success);
+        } else if expected == OrderedOpStatus::DuplicateKey
+            && matches!(duplicate, DuplicateDisposition::LanguageFailure)
+        {
+            code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[0].byte_offset(),
+                value: i64::from(site),
+            });
+            code.push(WeavyOp::EnumConstruct {
+                dst: outcome,
+                variant: ArrayOutcomeAbi::for_value(node.ty.clone()).duplicate_key_variant,
+                fields: vec![StructuralFieldSource {
+                    field: 0,
+                    source: assigned.fields[0],
+                }],
+            });
+            code.jump(return_label);
+        } else {
+            code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[0].byte_offset(),
+                value: i64::from(site),
+            });
+            code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[1].byte_offset(),
+                value: expected as i64,
+            });
+            code.push(WeavyOp::EnumConstruct {
+                dst: outcome,
+                variant: ArrayOutcomeAbi::for_value(node.ty.clone()).ordered_machine_variant,
+                fields: vec![
+                    StructuralFieldSource {
+                        field: 0,
+                        source: assigned.fields[0],
+                    },
+                    StructuralFieldSource {
+                        field: 1,
+                        source: assigned.fields[1],
+                    },
+                ],
+            });
+            code.jump(return_label);
+        }
+        code.bind(next, node.span)?;
+    }
+    code.bind(success, node.span)
 }
 
 fn collection_element_type(collection: &Type, span: Span) -> Result<Type, Diagnostics> {
@@ -6232,6 +7185,7 @@ fn schema_order() -> Stream<Check> {
             nodes: BTreeMap::new(),
             control: BTreeMap::new(),
             temps: BTreeMap::new(),
+            ordered_cursors: BTreeMap::new(),
             closures: BTreeMap::new(),
             array_map_temps: BTreeMap::new(),
             outcomes: BTreeMap::new(),
