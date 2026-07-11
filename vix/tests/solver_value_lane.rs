@@ -107,7 +107,9 @@ fn rung_088_conflict_value_runs_with_typed_version_sets() {
 
 #[test]
 fn typed_package_universe_keeps_same_name_sources_distinct() {
-    all_pass(&version_lane(r#"
+    all_pass(
+        &version_lane(
+            r#"
 struct PackageSource { canonical: String }
 struct PackageId { source: PackageSource, name: String }
 struct Dependency { package: PackageId, requirement: VersionSet, optional: Bool, cfg: Option<String> }
@@ -125,7 +127,8 @@ fn sources_are_domain_identity() -> Stream<Check> {
     yield expect_eq(universe.rows.get(registry).len(), 1);
     yield expect_eq(universe.rows.get(git).len(), 0);
 }
-"#),
+"#,
+        ),
         4,
     );
 }
