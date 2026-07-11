@@ -129,3 +129,30 @@ fn sources_are_domain_identity() -> Stream<Check> {
         4,
     );
 }
+
+#[test]
+fn sorted_by_key_nested_enum_array_key_preserves_red_lowering_boundary() {
+    let error = match run_source(
+        r#"
+enum Tag { Before, After([Int]) }
+struct Row { key: Tag, name: String }
+#[test]
+fn t() -> Stream<Check> {
+    let rows = [
+        Row { key: Tag::After([1, 3]), name: "third" },
+        Row { key: Tag::Before, name: "first" },
+        Row { key: Tag::After([1, 2]), name: "second" },
+    ];
+    let sorted = rows.sorted where { order: by_key(|row| row.key) };
+    yield expect_eq(sorted[0].name, "first");
+    yield expect_eq(sorted[1].name, "second");
+    yield expect_eq(sorted[2].name, "third");
+}
+"#,
+    ) {
+        Err(RunError::Diagnostics(diagnostics)) => diagnostics.entries.into_iter().next().expect("one diagnostic"),
+        other => panic!("expected the preserved sorter lowering boundary, got {other:?}"),
+    };
+    assert_eq!(error.code, DiagnosticCode::LoweringUnsupported);
+    assert_eq!(error.message(), "enum order needs variant-directed typed lowering");
+}
