@@ -551,12 +551,9 @@ fn type_contains_array(ty: &Type) -> bool {
         Type::Stream { key, value } => type_contains_array(key) || type_contains_array(value),
         // An `Order<T>` is never a realized frame value.
         Type::Order(_) => false,
-        Type::Bool
-        | Type::Int
-        | Type::Check
-        | Type::StreamCheck
-        | Type::String
-        | Type::Path => false,
+        Type::Bool | Type::Int | Type::Check | Type::StreamCheck | Type::String | Type::Path => {
+            false
+        }
     }
 }
 
@@ -860,12 +857,7 @@ fn collect_schema_types(ty: &Type, out: &mut Vec<Type>) {
         Type::Set(element) => collect_schema_types(element, out),
         Type::Stream { .. } => unreachable!("stream schemas return before insertion"),
         Type::Order(_) => unreachable!("order recipes return before insertion"),
-        Type::Bool
-        | Type::Int
-        | Type::Check
-        | Type::StreamCheck
-        | Type::String
-        | Type::Path => {}
+        Type::Bool | Type::Int | Type::Check | Type::StreamCheck | Type::String | Type::Path => {}
     }
 }
 
@@ -4830,7 +4822,12 @@ fn lower_node(
         Op::PathJoin => {
             require_node_type(node, Type::Path)?;
             let (base, suffix) = binary_values(node, values)?;
-            require_value(node, &base, &Type::Path, ValueRepresentation::RealizedHandle)?;
+            require_value(
+                node,
+                &base,
+                &Type::Path,
+                ValueRepresentation::RealizedHandle,
+            )?;
             require_value(
                 node,
                 &suffix,
@@ -4847,10 +4844,22 @@ fn lower_node(
             )
         }
         Op::PathToString => {
-            return Err(lowering_diagnostic(
-                node.span,
-                "Path to String rendering lowering is not implemented",
-            ));
+            require_node_type(node, Type::String)?;
+            require_input_count(node, 1)?;
+            let path = input_value(node, values, 0)?;
+            require_value(
+                node,
+                &path,
+                &Type::Path,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            (
+                vec![WeavyOp::ByteProject {
+                    dst,
+                    source: path.region.start().byte_offset(),
+                }],
+                ValueRepresentation::RealizedHandle,
+            )
         }
         Op::Variant { variant } => {
             lower_variant_node(node, dst_region, dst_region_id, values, *variant)?

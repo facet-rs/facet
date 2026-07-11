@@ -249,6 +249,13 @@ pub(crate) enum StringConcatFault {
     AllocationFailed,
 }
 
+/// Why an [`Op::ByteProject`] could not produce a resident result value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum ByteProjectFault {
+    SourceUnresident(i64),
+    AllocationFailed,
+}
+
 impl StringConcatFault {
     /// The closed i64 status the JIT ABI helper reports to its stencil.
     #[cfg_attr(not(feature = "jit"), allow(dead_code))]
@@ -266,6 +273,19 @@ impl StringConcatFault {
             StringConcatFault::LeftUnresident(_) => Self::LEFT_STATUS,
             StringConcatFault::RightUnresident(_) => Self::RIGHT_STATUS,
             StringConcatFault::AllocationFailed => Self::ALLOCATION_STATUS,
+        }
+    }
+}
+
+impl ByteProjectFault {
+    const OK_STATUS: i64 = 0;
+    const SOURCE_STATUS: i64 = 1;
+    const ALLOCATION_STATUS: i64 = 2;
+
+    fn status(self) -> i64 {
+        match self {
+            Self::SourceUnresident(_) => Self::SOURCE_STATUS,
+            Self::AllocationFailed => Self::ALLOCATION_STATUS,
         }
     }
 }
@@ -1282,6 +1302,31 @@ impl MoltenArena {
         });
         Ok(handle)
     }
+
+    fn project_value_bytes(
+        &mut self,
+        memories: MemoryView<'_>,
+        source: i64,
+    ) -> Result<i64, ByteProjectFault> {
+        let source = handle_bytes(memories, self, source)
+            .map_err(|_| ByteProjectFault::SourceUnresident(source))?
+            .to_vec();
+        let handle =
+            task_molten_handle(self.buffers.len()).ok_or(ByteProjectFault::AllocationFailed)?;
+        let mut bytes = Vec::new();
+        bytes
+            .try_reserve_exact(source.len())
+            .map_err(|_| ByteProjectFault::AllocationFailed)?;
+        bytes.extend_from_slice(&source);
+        self.buffers
+            .try_reserve_exact(1)
+            .map_err(|_| ByteProjectFault::AllocationFailed)?;
+        self.buffers.push(MoltenBuffer {
+            bytes,
+            initialized: Vec::new(),
+        });
+        Ok(handle)
+    }
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -1986,6 +2031,49 @@ pub(crate) unsafe extern "C" fn string_concat_abi(
     }
 }
 
+#[cfg_attr(not(feature = "jit"), allow(dead_code))]
+pub(crate) unsafe extern "C" fn byte_project_abi(
+    store_value_memories: *const RawValueMemory,
+    store_value_memory_count: usize,
+    lent_molten_value_memories: *const RawValueMemory,
+    lent_molten_value_memory_count: usize,
+    arena: *mut core::ffi::c_void,
+    source: i64,
+    out_handle: *mut i64,
+) -> i64 {
+    if out_handle.is_null() {
+        return ByteProjectFault::AllocationFailed.status();
+    }
+    unsafe { *out_handle = ARRAY_POISON_HANDLE };
+    if arena.is_null()
+        || (store_value_memories.is_null() && store_value_memory_count != 0)
+        || (lent_molten_value_memories.is_null() && lent_molten_value_memory_count != 0)
+    {
+        return ByteProjectFault::AllocationFailed.status();
+    }
+    let store = if store_value_memory_count == 0 {
+        &[]
+    } else {
+        unsafe { core::slice::from_raw_parts(store_value_memories, store_value_memory_count) }
+    };
+    let molten = if lent_molten_value_memory_count == 0 {
+        &[]
+    } else {
+        unsafe {
+            core::slice::from_raw_parts(lent_molten_value_memories, lent_molten_value_memory_count)
+        }
+    };
+    let memories = MemoryView::Raw(RawValueMemories { store, molten });
+    let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
+    match arena.project_value_bytes(memories, source) {
+        Ok(handle) => {
+            unsafe { *out_handle = handle };
+            ByteProjectFault::OK_STATUS
+        }
+        Err(fault) => fault.status(),
+    }
+}
+
 /// # Safety
 /// `log` must point to a live [`PublicationLog`] and must not be otherwise
 /// aliased for the duration of the call. `record` must point to `record_len`
@@ -2274,6 +2362,9 @@ pub enum Op {
     /// with the precise side, and an allocation the arena cannot satisfy faults
     /// rather than fabricating a handle.
     StringConcat { dst: u32, a: u32, b: u32 },
+    /// Copy one resident opaque byte run into a fresh molten value under a
+    /// distinct, verifier-witnessed destination schema.
+    ByteProject { dst: u32, source: u32 },
     /// Append one descriptor to the task's verified append-only publication log.
     ///
     /// The complete `record_width`-byte value at `frame[record..]` is copied by
@@ -3049,6 +3140,26 @@ impl Task {
                                 panic!("legacy raw StringConcat operand is not resident");
                             };
                             return Err(string_concat_fault(
+                                fault_site(verified, fn_id, pc)?,
+                                fault,
+                            ));
+                        }
+                    };
+                    write_i64_at(&mut self.arena, base + dst as usize, handle);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::ByteProject { dst, source } => {
+                    let source_handle = read_i64_at(&self.arena, base + source as usize);
+                    let handle = match self
+                        .molten
+                        .project_value_bytes(MemoryView::from(value_memories), source_handle)
+                    {
+                        Ok(handle) => handle,
+                        Err(fault) => {
+                            let Some(verified) = verified else {
+                                panic!("legacy raw ByteProject source is not resident");
+                            };
+                            return Err(byte_project_fault(
                                 fault_site(verified, fn_id, pc)?,
                                 fault,
                             ));
@@ -4122,6 +4233,15 @@ fn string_concat_fault(site: FaultSite, fault: StringConcatFault) -> TaskFault {
             handle,
         },
         StringConcatFault::AllocationFailed => TaskFault::StringConcatAllocationFailed { site },
+    }
+}
+
+fn byte_project_fault(site: FaultSite, fault: ByteProjectFault) -> TaskFault {
+    match fault {
+        ByteProjectFault::SourceUnresident(handle) => {
+            TaskFault::UnresidentByteProjectSource { site, handle }
+        }
+        ByteProjectFault::AllocationFailed => TaskFault::ByteProjectionAllocationFailed { site },
     }
 }
 

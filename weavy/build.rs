@@ -283,6 +283,7 @@ const TASK_NAMES: &[(&str, &str)] = &[
     ("ARRAY_STATUS_IS", "weavy_task_array_status_is"),
     ("COMPARE_VALUE_BYTES", "weavy_task_compare_value_bytes"),
     ("STRING_CONCAT", "weavy_task_string_concat"),
+    ("BYTE_PROJECT", "weavy_task_byte_project"),
     ("PUBLISH", "weavy_task_publish"),
     ("AWAIT", "weavy_task_await"),
     ("CALL", "weavy_task_call"),

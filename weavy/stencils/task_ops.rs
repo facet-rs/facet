@@ -164,6 +164,15 @@ pub struct Ctx {
         i64,
         *mut i64,
     ) -> i64,
+    byte_project: unsafe extern "C" fn(
+        *const RawValueMemory,
+        usize,
+        *const RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        *mut i64,
+    ) -> i64,
     /// The task's append-only publication log, reached only through the ABI
     /// function below so both lanes share one log semantics.
     publications: *mut core::ffi::c_void,
@@ -194,6 +203,8 @@ const EXIT_STRING_CONCAT_LEFT_UNRESIDENT: i64 = 13;
 const EXIT_STRING_CONCAT_RIGHT_UNRESIDENT: i64 = 14;
 const EXIT_STRING_CONCAT_ALLOCATION: i64 = 15;
 const EXIT_PUBLICATION_ALLOCATION: i64 = 16;
+const EXIT_BYTE_PROJECT_SOURCE_UNRESIDENT: i64 = 17;
+const EXIT_BYTE_PROJECT_ALLOCATION: i64 = 18;
 
 const LENT_MOLTEN_MIN: i64 = i64::MIN / 2;
 
@@ -1125,6 +1136,45 @@ pub unsafe extern "C" fn weavy_task_string_concat(cx: *mut Ctx) {
         _ => {
             *c.await_index = pc;
             *c.exit = EXIT_STRING_CONCAT_ALLOCATION;
+        }
+    }
+}
+
+/// Copy one resident byte run into a fresh molten value — immediates:
+/// [dst, source, pc]. The verifier separately witnesses both source and
+/// destination opaque-byte schemas, so this stencil only performs by-value
+/// byte residency and allocation.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_byte_project(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let source = *c.prog.add(1);
+    let pc = *c.prog.add(2);
+    c.prog = c.prog.add(3);
+    let source_handle = read_i64(c.frame, source);
+    let mut handle = i64::MIN;
+    let status = (c.byte_project)(
+        c.store_value_memories,
+        c.store_value_memory_count,
+        c.lent_molten_value_memories,
+        c.lent_molten_value_memory_count,
+        c.molten,
+        source_handle,
+        &raw mut handle,
+    );
+    match status {
+        0 => {
+            write_i64(c.frame, dst, handle);
+            cont!(cx);
+        }
+        1 => {
+            *c.await_index = pc;
+            *c.resume = source_handle as u64;
+            *c.exit = EXIT_BYTE_PROJECT_SOURCE_UNRESIDENT;
+        }
+        _ => {
+            *c.await_index = pc;
+            *c.exit = EXIT_BYTE_PROJECT_ALLOCATION;
         }
     }
 }

@@ -337,6 +337,13 @@ pub enum TaskFault {
     StringConcatAllocationFailed {
         site: FaultSite,
     },
+    UnresidentByteProjectSource {
+        site: FaultSite,
+        handle: i64,
+    },
+    ByteProjectionAllocationFailed {
+        site: FaultSite,
+    },
     PublicationAllocationFailed {
         site: FaultSite,
     },
@@ -1288,6 +1295,59 @@ mod tests {
                         byte_comparable: true,
                     },
                 }],
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    fn byte_project_program() -> (Program, ProgramContract) {
+        let path = SchemaRef(0);
+        let string = SchemaRef(1);
+        (
+            Program {
+                fns: vec![function(
+                    4,
+                    vec![
+                        Op::ByteProject { dst: 8, source: 0 },
+                        Op::CompareValueBytes {
+                            dst: 24,
+                            a: 8,
+                            b: 16,
+                        },
+                        Op::Ret { src: 24, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    4,
+                    vec![
+                        word_region(0, WordKind::Handle(path)),
+                        word_region(8, WordKind::Handle(string)),
+                        word_region(16, WordKind::Handle(string)),
+                        word_region(24, WordKind::Scalar),
+                    ],
+                    &[0, 2],
+                    3,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![
+                    SchemaContract {
+                        inline: RegionShape::word(WordKind::Handle(path)),
+                        value_shape: None,
+                        payload: PayloadKind::OpaqueBytes {
+                            byte_comparable: true,
+                        },
+                    },
+                    SchemaContract {
+                        inline: RegionShape::word(WordKind::Handle(string)),
+                        value_shape: None,
+                        payload: PayloadKind::OpaqueBytes {
+                            byte_comparable: true,
+                        },
+                    },
+                ],
                 value_shapes: vec![],
             },
         )
@@ -3262,6 +3322,47 @@ mod tests {
                 native.expect_err("unresident string concat operand"),
                 interp
             );
+        }
+    }
+
+    #[test]
+    fn byte_project_copies_across_distinct_schemas_across_lanes() {
+        let verified = Arc::new(verify(byte_project_program()));
+        let store = [
+            ValueMemory::from_slice(b"crates/taxon/Cargo.toml"),
+            ValueMemory::from_slice(b"crates/taxon/Cargo.toml"),
+        ];
+        let memories = ValueMemories {
+            store: &store,
+            molten: &[],
+        };
+        let interp = run_interpreter(
+            &verified,
+            |task: &mut Task| {
+                task.write_i64(0, 0);
+                task.write_i64(16, 1);
+            },
+            memories,
+        )
+        .expect("byte projection runs in the interpreter");
+        assert_eq!(interp.1, 1i64.to_le_bytes().to_vec());
+        let native = run_native(
+            Arc::clone(&verified),
+            |task: &mut JitTask| {
+                task.write_i64(0, 0);
+                task.write_i64(16, 1);
+            },
+            memories,
+        );
+        if cfg!(weavy_jit_active) {
+            assert_eq!(
+                native
+                    .expect("native byte projection is available when the JIT is active")
+                    .expect("byte projection runs natively"),
+                interp,
+            );
+        } else {
+            assert!(native.is_none(), "disabled JIT must not run a native lane");
         }
     }
 

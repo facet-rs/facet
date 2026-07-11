@@ -139,6 +139,15 @@ struct Ctx {
         i64,
         *mut i64,
     ) -> i64,
+    byte_project: unsafe extern "C" fn(
+        *const crate::task::RawValueMemory,
+        usize,
+        *const crate::task::RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        *mut i64,
+    ) -> i64,
     publications: *mut core::ffi::c_void,
     publish: unsafe extern "C" fn(*mut core::ffi::c_void, u64, i64, *const u8, usize) -> i64,
 }
@@ -159,6 +168,8 @@ const EXIT_STRING_CONCAT_LEFT_UNRESIDENT: i64 = 13;
 const EXIT_STRING_CONCAT_RIGHT_UNRESIDENT: i64 = 14;
 const EXIT_STRING_CONCAT_ALLOCATION: i64 = 15;
 const EXIT_PUBLICATION_ALLOCATION: i64 = 16;
+const EXIT_BYTE_PROJECT_SOURCE_UNRESIDENT: i64 = 17;
+const EXIT_BYTE_PROJECT_ALLOCATION: i64 = 18;
 
 /// Whether the task JIT lane is usable on this target.
 pub fn available() -> bool {
@@ -495,6 +506,10 @@ fn compile_fn(
                 task_stencils::STRING_CONCAT,
                 Continuations::Fallthrough(task_stencils::STRING_CONCAT_CONT),
             ),
+            Op::ByteProject { .. } => (
+                task_stencils::BYTE_PROJECT,
+                Continuations::Fallthrough(task_stencils::BYTE_PROJECT_CONT),
+            ),
             Op::Publish { .. } => (
                 task_stencils::PUBLISH,
                 Continuations::Fallthrough(task_stencils::PUBLISH_CONT),
@@ -631,6 +646,7 @@ fn compile_fn(
             Op::ArrayStatusIs { .. } => 4,
             Op::CompareValueBytes { .. } => 4,
             Op::StringConcat { .. } => 4,
+            Op::ByteProject { .. } => 3,
             Op::Publish { .. } => 5,
             Op::Await { .. } => 3,
             Op::Call { .. } | Op::CallIndirect { .. } => 1,
@@ -1174,6 +1190,12 @@ fn compile_fn(
                 }
                 layout.push_prog_word(root.prog_index, i as u64);
             }
+            Op::ByteProject { dst, source } => {
+                for v in [dst, source] {
+                    layout.push_prog_word(root.prog_index, u64::from(*v));
+                }
+                layout.push_prog_word(root.prog_index, i as u64);
+            }
             Op::Publish {
                 site,
                 record,
@@ -1484,6 +1506,7 @@ impl JitTask {
                 ordered_iterate_row: crate::task::ordered_iterate_row_abi,
                 ordered_len: crate::task::ordered_len_abi,
                 string_concat: crate::task::string_concat_abi,
+                byte_project: crate::task::byte_project_abi,
                 publications: (&raw mut self.publications).cast::<core::ffi::c_void>(),
                 publish: crate::task::publish_abi,
             };
@@ -1667,6 +1690,25 @@ impl JitTask {
                     };
                     let pc = usize::try_from(index_scratch).expect("pc");
                     return Err(TaskFault::StringConcatAllocationFailed {
+                        site: fault_site(verified, frame.fn_id, pc)?,
+                    });
+                }
+                EXIT_BYTE_PROJECT_SOURCE_UNRESIDENT => {
+                    let Some(verified) = verified else {
+                        panic!("legacy raw ByteProject source is not resident");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("pc");
+                    return Err(TaskFault::UnresidentByteProjectSource {
+                        site: fault_site(verified, frame.fn_id, pc)?,
+                        handle: resume_scratch as i64,
+                    });
+                }
+                EXIT_BYTE_PROJECT_ALLOCATION => {
+                    let Some(verified) = verified else {
+                        panic!("legacy raw ByteProject allocation failed");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("pc");
+                    return Err(TaskFault::ByteProjectionAllocationFailed {
                         site: fault_site(verified, frame.fn_id, pc)?,
                     });
                 }

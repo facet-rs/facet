@@ -56,6 +56,7 @@ const RUNG_042: &str = include_str!("ratchet/042-map-overwrite.vix");
 const RUNG_043: &str = include_str!("ratchet/043-map-keys-canonical.vix");
 const RUNG_044: &str = include_str!("ratchet/044-sets.vix");
 const RUNG_046: &str = include_str!("ratchet/046-paths.vix");
+const RUNG_047: &str = include_str!("ratchet/047-string-to-path.reject.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
 const RUNG_145: &str = include_str!("ratchet/145-push.reject.vix");
 const RUNG_146: &str = include_str!("ratchet/146-insert.reject.vix");
@@ -1176,6 +1177,18 @@ fn rung_036_multiset_fold_runs_through_verified_execution_without_host_calls() {
     }
 }
 
+#[test]
+fn rung_047_string_to_path_remains_rejected_at_the_declared_boundary() {
+    let (expected_message, _) = reject_header(RUNG_047);
+    let diagnostics = Compiler::new()
+        .compile(RUNG_047)
+        .expect_err("rung 047 must reject implicit String-to-Path conversion");
+    assert_eq!(diagnostics.entries.len(), 1);
+    let diagnostic = &diagnostics.entries[0];
+    assert_eq!(diagnostic.code, DiagnosticCode::StringIsNotPath);
+    assert_eq!(diagnostic.message(), expected_message);
+}
+
 // Rung 037 — filter_map preserves source keys for `Some` rows; flat_map composes
 // outer/inner keys deterministically. Both remain codata recipes until an explicit
 // collect materializes an ordered Map through the verified production path, with no
@@ -1401,6 +1414,12 @@ fn rung_046_paths_join_and_render_through_verified_execution() {
                 .code
                 .iter()
                 .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+        assert!(lowered.program().fns.iter().any(|function| {
+            function
+                .code
+                .iter()
+                .any(|op| matches!(op, WeavyOp::ByteProject { .. }))
         }));
     }
 

@@ -2616,6 +2616,33 @@ impl Verifier<'_> {
                     ));
                 }
             }
+            Op::ByteProject { dst, source } => {
+                let dst_schema =
+                    self.read_handle(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                let source_schema =
+                    self.read_handle(function_id, pc, frame, *source, AccessRole::Source)?;
+                for schema in [source_schema, dst_schema] {
+                    let schema_index = usize::try_from(schema.0).map_err(|_| {
+                        self.op(
+                            function_id,
+                            pc,
+                            ProgramDefect::SchemaNotByteComparable { schema },
+                        )
+                    })?;
+                    if !matches!(
+                        self.contract.schemas[schema_index].payload,
+                        PayloadKind::OpaqueBytes {
+                            byte_comparable: true
+                        }
+                    ) {
+                        return Err(self.op(
+                            function_id,
+                            pc,
+                            ProgramDefect::SchemaNotByteComparable { schema },
+                        ));
+                    }
+                }
+            }
             Op::Publish {
                 site: _,
                 record,
@@ -4437,6 +4464,7 @@ impl Verifier<'_> {
                     | Op::Await { .. }
                     | Op::CompareValueBytes { .. }
                     | Op::StringConcat { .. }
+                    | Op::ByteProject { .. }
                     | Op::Publish { .. }
                     | Op::ConstF64 { .. }
                     | Op::AddF64 { .. }
@@ -5645,6 +5673,78 @@ mod tests {
             .0
             .verify(multi_entry_placement.1)
             .expect("function call contracts preserve exact multi-entry argument placement");
+    }
+
+    #[test]
+    fn byte_project_requires_byte_comparable_source_and_destination_schemas() {
+        let path = SchemaRef(0);
+        let string = SchemaRef(1);
+        let fixture = || {
+            (
+                Program {
+                    fns: vec![function(
+                        2,
+                        vec![
+                            Op::ByteProject { dst: 8, source: 0 },
+                            Op::Ret { src: 8, size: 8 },
+                        ],
+                    )],
+                },
+                ProgramContract {
+                    functions: vec![function_contract(
+                        2,
+                        vec![
+                            word_region(0, WordKind::Handle(path)),
+                            word_region(8, WordKind::Handle(string)),
+                        ],
+                        &[0],
+                        1,
+                        None,
+                    )],
+                    calls: vec![],
+                    schemas: vec![
+                        schema(
+                            RegionShape::word(WordKind::Handle(path)),
+                            PayloadKind::OpaqueBytes {
+                                byte_comparable: true,
+                            },
+                        ),
+                        schema(
+                            RegionShape::word(WordKind::Handle(string)),
+                            PayloadKind::OpaqueBytes {
+                                byte_comparable: true,
+                            },
+                        ),
+                    ],
+                    value_shapes: vec![],
+                },
+            )
+        };
+
+        let (program, contract) = fixture();
+        program
+            .verify(contract)
+            .expect("distinct opaque Path and String schemas admit byte projection");
+
+        let (program, mut contract) = fixture();
+        contract.schemas[0].payload = PayloadKind::OpaqueBytes {
+            byte_comparable: false,
+        };
+        assert_eq!(
+            program.verify(contract).expect_err("path payload mismatch"),
+            op_error(0, ProgramDefect::SchemaNotByteComparable { schema: path }),
+        );
+
+        let (program, mut contract) = fixture();
+        contract.schemas[1].payload = PayloadKind::OpaqueBytes {
+            byte_comparable: false,
+        };
+        assert_eq!(
+            program
+                .verify(contract)
+                .expect_err("string payload mismatch"),
+            op_error(0, ProgramDefect::SchemaNotByteComparable { schema: string }),
+        );
     }
 
     #[test]

@@ -5635,7 +5635,11 @@ fn invalid_arity(span: Span, expected: usize, found: usize) -> Diagnostics {
 
 fn require_type(value: &LoweredValue, expected: &Type, span: Span) -> Result<(), Diagnostics> {
     if &value.ty != expected {
-        return Err(type_mismatch(span, expected.name(), value.ty.name()));
+        let mut diagnostic = type_mismatch(span, expected.name(), value.ty.name());
+        if matches!((expected, &value.ty), (Type::Path, Type::String)) {
+            diagnostic.entries[0].code = DiagnosticCode::StringIsNotPath;
+        }
+        return Err(diagnostic);
     }
     Ok(())
 }
