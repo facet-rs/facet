@@ -4020,12 +4020,31 @@ fn rung_050_deep_tail_recursion_runs_under_its_declared_budget() {
         Path::new(env!("CARGO_BIN_EXE_vix-budget-child")),
         RUNG_050,
     );
-    assert_eq!(
+    assert!(matches!(
         outcome,
         BudgetOutcome::Within {
-            report: ChildReport::RanSource { passed: true },
-        },
-    );
+            report: ChildReport::RanSource { passed: true, .. },
+        }
+    ));
+}
+
+/// The ordinary ratchet path is production execution, not an innards
+/// diagnostic capture. The self-tail pollpoint remains in lowered code for
+/// attribution, but must not retain one `WeavyMark` per iteration.
+#[test]
+fn rung_050_ratchet_execution_strips_per_iteration_marks() {
+    let report = run_source(RUNG_050).expect("rung 050 runs through the production ratchet");
+    for lane in [&report.plain, &report.chaos] {
+        let marks = lane
+            .events
+            .iter()
+            .filter(|event| matches!(event.kind, EventKind::WeavyMark { .. }))
+            .count();
+        assert_eq!(
+            marks, 0,
+            "production ratchet retains no per-iteration innards marks: {marks}",
+        );
+    }
 }
 
 #[test]
@@ -5369,6 +5388,64 @@ fn tail_loop_executes_ten_million_iterations_in_the_selected_lane() {
             .iter()
             .any(|event| matches!(event, weavy::task::TaskEvent::Mark(_))),
         "Production-mode tail loop records no instrumentation marks",
+    );
+}
+
+/// Innards remains an explicit diagnostic lane: it retains source-attributed
+/// marks while preserving the structural frame trace that production also
+/// reports. The ordinary lowering path must never select this mode implicitly.
+#[test]
+fn tail_loop_innards_diagnostic_lane_retains_marks() {
+    use weavy::exec::Executable;
+    use weavy::task::{FnId, TaskEvent, TaskStep, TraceMode};
+
+    let module = Compiler::new()
+        .compile(TAIL_LOOP_SOURCE)
+        .expect("source compiles")
+        .module;
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(&partitioned.islands[0])
+        .expect("source lowers to Weavy");
+    let count_up = module
+        .functions
+        .iter()
+        .find(|function| function.name == "count_up")
+        .expect("count_up exists")
+        .id;
+    let frame = attribution_for(&partitioned.islands[0])
+        .functions
+        .iter()
+        .position(|function| *function == count_up)
+        .expect("count_up has a frame");
+    let verified = lowered
+        .program()
+        .clone()
+        .verify(lowered.contract().clone())
+        .expect("lowered tail loop re-verifies");
+    let executable = Executable::with_trace_mode(verified, TraceMode::Innards);
+    let mut task = executable
+        .spawn(FnId(frame as u32))
+        .expect("count_up spawns as a verified entry");
+    task.write_entry_i64(0, 0).expect("n");
+    task.write_entry_i64(1, 5).expect("limit");
+    task.write_entry_i64(2, 0).expect("acc");
+    let mut ready: [bool; 0] = [];
+    assert_eq!(
+        task.drive(&mut ready, &[]).expect("tail loop drives"),
+        TaskStep::Done
+    );
+    assert!(
+        task.trace()
+            .iter()
+            .any(|event| matches!(event, TaskEvent::Mark(_))),
+        "the explicit innards lane retains source-attributed marks",
+    );
+    assert!(
+        matches!(task.trace().first(), Some(TaskEvent::FrameEntered(_)))
+            && matches!(task.trace().last(), Some(TaskEvent::FrameExited(_))),
+        "diagnostic marks do not replace structural frame events",
     );
 }
 

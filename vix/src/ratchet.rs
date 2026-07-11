@@ -204,9 +204,34 @@ impl RatchetReport {
     }
 }
 
-/// Run every declared test twice. The chaos lane discards the first running
-/// task at an edge safepoint and must publish the same identities.
+/// A source that is parsed, checked, lowered, verified, and natively compiled,
+/// ready to execute. Every island the two lanes will demand is already lowered —
+/// and therefore JIT-compiled, since [`crate::lowering::LoweringArtifact`] holds
+/// an eagerly-compiled [`weavy::exec::Executable`] — and cached, so
+/// [`PreparedRun::execute`] performs no compilation and does only the asymptotic
+/// evaluation a budget is meant to gate.
 ///
+/// This is the readiness boundary the outer budget runner measures against:
+/// preparation is a fixed, O(1) compiler/JIT cost that is not the tested
+/// program's work, so it is completed *before* the wall clock starts.
+pub struct PreparedRun {
+    compilation: crate::compiler::Compilation,
+    cache: LoweringCache,
+}
+
+/// Execution lifecycle boundaries exposed to the outer budget runner. Each
+/// `Runtime` owns store, memo, demand, task, and event-log state; observing
+/// these points distinguishes fixed lane scaffolding from growth retained while
+/// a lane executes.
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ExecutionPhase {
+    PlainRuntimeReady,
+    PlainCompleted,
+    ChaosRuntimeReady,
+    ChaosCompleted,
+}
+
 /// r[impl machine.scheduler.chaos-kill-oracle]
 /// r[impl machine.scheduler.replay-is-semantics]
 pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
@@ -221,24 +246,92 @@ pub fn run_source_with_config(
     source: &str,
     config: CompilerConfig,
 ) -> Result<RatchetReport, RunError> {
-    let compilation = Compiler::with_config(config).compile(source)?;
+    prepare_source_with_config(source, config)?.execute()
+}
 
+/// Parse, check, lower, verify, and natively compile `source` without running
+/// any test. When this returns `Ok`, all compilation is complete and the
+/// returned [`PreparedRun`] is ready to execute with no further compilation.
+///
+/// r[impl machine.scheduler.replay-is-semantics]
+pub fn prepare_source(source: &str) -> Result<PreparedRun, RunError> {
+    prepare_source_with_config(source, CompilerConfig::default())
+}
+
+/// The configurable form of [`prepare_source`]. This keeps shape-selection
+/// experiments on the same readiness boundary as the ordinary production path.
+pub fn prepare_source_with_config(
+    source: &str,
+    config: CompilerConfig,
+) -> Result<PreparedRun, RunError> {
+    let compilation = Compiler::with_config(config).compile(source)?;
     let mut cache = LoweringCache::default();
 
-    let plain = run_lane(&compilation.module, &mut cache, ChaosPolicy::default())?;
-    let chaos = run_lane(
-        &compilation.module,
-        &mut cache,
-        ChaosPolicy {
-            kill_first_running_task: true,
-        },
-    )?;
-    Ok(RatchetReport {
-        warnings: compilation.warnings,
-        plain,
-        chaos,
-        lowering_cache: cache.counters(),
-    })
+    // Lower every island the lanes will demand so its native code is compiled
+    // and cached now, before execution. `get_or_lower` keys on canonical recipe
+    // content, so these exact entries are reused as cache hits during execution.
+    for test in &compilation.module.tests {
+        // A conditional generator runs as its own verified task island.
+        if test.generator.has_conditional_sites() {
+            let generator = compilation.module.generator_task_island(test)?;
+            cache.get_or_lower(&generator)?;
+        }
+        // Every value-check island. A trace site reads the frozen counter
+        // snapshot and lowers nothing, so it is skipped here.
+        let partitioned = compilation.module.partition_test(test);
+        for site in &partitioned.sites {
+            if let PartitionedRecipe::Value { island } = &site.recipe {
+                cache.get_or_lower(&partitioned.islands[*island])?;
+            }
+        }
+    }
+
+    Ok(PreparedRun { compilation, cache })
+}
+
+impl PreparedRun {
+    /// Run every declared test twice over the warm cache. The chaos lane discards
+    /// the first running task at an edge safepoint and must publish the same
+    /// identities. No compilation happens here: every `get_or_lower` is a hit.
+    ///
+    /// r[impl machine.scheduler.chaos-kill-oracle]
+    /// r[impl machine.scheduler.replay-is-semantics]
+    pub fn execute(self) -> Result<RatchetReport, RunError> {
+        self.execute_with_observer(|_| {})
+    }
+
+    /// Execute with lifecycle observations made while each lane's runtime is
+    /// still live. This is intentionally a production-path seam: observers see
+    /// no per-iteration callbacks and cannot hide retained execution state.
+    pub fn execute_with_observer(
+        mut self,
+        mut observe: impl FnMut(ExecutionPhase),
+    ) -> Result<RatchetReport, RunError> {
+        let plain = run_lane(
+            &self.compilation.module,
+            &mut self.cache,
+            ChaosPolicy::default(),
+            ExecutionPhase::PlainRuntimeReady,
+            ExecutionPhase::PlainCompleted,
+            &mut observe,
+        )?;
+        let chaos = run_lane(
+            &self.compilation.module,
+            &mut self.cache,
+            ChaosPolicy {
+                kill_first_running_task: true,
+            },
+            ExecutionPhase::ChaosRuntimeReady,
+            ExecutionPhase::ChaosCompleted,
+            &mut observe,
+        )?;
+        Ok(RatchetReport {
+            warnings: self.compilation.warnings,
+            plain,
+            chaos,
+            lowering_cache: self.cache.counters(),
+        })
+    }
 }
 
 /// Evaluate one value-check island as an ordinary pure demand and record its
@@ -273,8 +366,12 @@ fn run_lane(
     module: &crate::vir::Module,
     cache: &mut LoweringCache,
     chaos: ChaosPolicy,
+    ready_phase: ExecutionPhase,
+    completed_phase: ExecutionPhase,
+    observe: &mut impl FnMut(ExecutionPhase),
 ) -> Result<SuiteRun, RunError> {
     let mut runtime = Runtime::new(EventLog::default());
+    observe(ready_phase);
     let mut checks = Vec::new();
     // Trace checks are deferred until every selected value check completes; they
     // are evaluated once, together, against the frozen completed-run snapshot.
@@ -412,6 +509,7 @@ fn run_lane(
     let all_tasks_terminal = runtime
         .tasks()
         .all(|task| matches!(task.state, TaskState::Completed | TaskState::Discarded));
+    observe(completed_phase);
     let events = runtime.into_sink().into_events();
     Ok(SuiteRun {
         checks,
