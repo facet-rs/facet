@@ -1325,7 +1325,7 @@ mod tests {
                         word_region(0, WordKind::Handle(schema)),
                         word_region(8, WordKind::Handle(schema)),
                         word_region(16, WordKind::Handle(schema)),
-                        word_region(24, WordKind::Scalar),
+                        word_region(24, WordKind::Status),
                         word_region(32, WordKind::Scalar),
                     ],
                     &[0, 1],
