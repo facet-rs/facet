@@ -557,8 +557,11 @@ fn real_workspace_metadata_baseline_is_counted() -> Result<(), String> {
 
     assert_eq!(workspace_members.len(), 147);
     assert_eq!(vix_member_count, 147);
-    assert_eq!(total_oracle_deps, 1135);
-    assert_eq!(before_workspace_allowlist_failures, 765);
+    // vix gained one dependency (libc) for the outer budget runner's
+    // cross-process resident-set observation. It is a workspace-inherited
+    // dependency, so it also adds one to the workspace-allowlist count.
+    assert_eq!(total_oracle_deps, 1136);
+    assert_eq!(before_workspace_allowlist_failures, 766);
     assert_eq!(target_cfg_represented, 55);
 
     Ok(())

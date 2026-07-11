@@ -31,6 +31,10 @@ impl FrameSlot {
     pub const fn byte_offset(self) -> u32 {
         self.0
     }
+
+    pub(crate) const fn word_index(self) -> usize {
+        self.0 as usize / Self::WORD_BYTES
+    }
 }
 
 /// Typed width of an inline value in the Weavy frame ABI.
