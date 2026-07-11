@@ -1558,9 +1558,9 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::SetLen => op.push(42),
         Op::SetValues => op.push(43),
         Op::StringConcat => op.push(44),
-        Op::StringContains => op.push(61),
-        Op::StringSplitOnce => op.push(62),
-        Op::StringParseInt => op.push(63),
+        Op::StringContains => op.push(62),
+        Op::StringSplitOnce => op.push(63),
+        Op::StringParseInt => op.push(64),
         Op::ArrayMap { grain } => {
             op.push(45);
             op.push(match grain.key {

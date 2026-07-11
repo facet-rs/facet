@@ -755,6 +755,42 @@ impl<S: EventSink> Runtime<S> {
                         failure,
                     );
                 }
+                Ok(DecodedResult::MissingDelimiter { site }) => {
+                    let failure = FailureValue::MissingDelimiter {
+                        recipe: lowered.recipe,
+                        site,
+                    };
+                    return self.complete_generator_language_failure(
+                        task_id,
+                        lowered,
+                        attribution,
+                        failure,
+                    );
+                }
+                Ok(DecodedResult::InvalidInteger { site }) => {
+                    let failure = FailureValue::InvalidInteger {
+                        recipe: lowered.recipe,
+                        site,
+                    };
+                    return self.complete_generator_language_failure(
+                        task_id,
+                        lowered,
+                        attribution,
+                        failure,
+                    );
+                }
+                Ok(DecodedResult::IntegerOverflow { site }) => {
+                    let failure = FailureValue::IntegerOverflow {
+                        recipe: lowered.recipe,
+                        site,
+                    };
+                    return self.complete_generator_language_failure(
+                        task_id,
+                        lowered,
+                        attribution,
+                        failure,
+                    );
+                }
                 Ok(DecodedResult::ArrayMachine { site, status }) => {
                     let error = MachineError::runtime(
                         MachineOperation::Result,
