@@ -2733,7 +2733,11 @@ impl FunctionLayout {
             for node in nodes.iter().filter(|node| {
                 matches!(
                     node.op,
-                    Op::Call(_) | Op::CallValue | Op::ArrayMap { .. } | Op::ArrayFold
+                    Op::Call(_)
+                        | Op::CallValue
+                        | Op::ArrayMap { .. }
+                        | Op::ArrayFold
+                        | Op::StreamCollect
                 )
             }) {
                 let value_ty = match &node.op {
@@ -2744,6 +2748,7 @@ impl FunctionLayout {
                             lowering_diagnostic(node.span, "array map result is not an array")
                         })?
                         .clone(),
+                    Op::StreamCollect => Type::Bool,
                     _ => node.ty.clone(),
                 };
                 let ty = ArrayOutcomeAbi::for_value(value_ty).ty;
@@ -5900,16 +5905,47 @@ fn lower_array_stream_collect_node(
         sequence.nodes.get(&stream_id).copied().ok_or_else(|| {
             lowering_diagnostic(node.span, "stream collect input has no VIR recipe")
         })?;
-    if !matches!(recipe.op, Op::ArrayStream) {
-        return Err(lowering_diagnostic(
-            node.span,
-            "stream collect recipe source is not implemented",
-        ));
-    }
-    require_input_count(recipe, 1)?;
-    let source = values.get(&recipe.inputs[0]).cloned().ok_or_else(|| {
-        lowering_diagnostic(node.span, "array stream source is not topologically prior")
-    })?;
+    let (array_stream, predicate) = match recipe.op {
+        Op::ArrayStream => (recipe, None),
+        Op::StreamFilter => {
+            require_input_count(recipe, 2)?;
+            let upstream = input_value(recipe, values, 0)?;
+            require_value(
+                recipe,
+                &upstream,
+                &recipe.ty,
+                ValueRepresentation::CodataRecipe,
+            )?;
+            let predicate = input_value(recipe, values, 1)?;
+            let array_stream = sequence
+                .nodes
+                .get(&recipe.inputs[0])
+                .copied()
+                .ok_or_else(|| {
+                    lowering_diagnostic(node.span, "stream filter input has no VIR recipe")
+                })?;
+            if !matches!(array_stream.op, Op::ArrayStream) {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "nested stream filter source is not implemented",
+                ));
+            }
+            (array_stream, Some(predicate))
+        }
+        _ => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "stream collect recipe source is not implemented",
+            ));
+        }
+    };
+    require_input_count(array_stream, 1)?;
+    let source = values
+        .get(&array_stream.inputs[0])
+        .cloned()
+        .ok_or_else(|| {
+            lowering_diagnostic(node.span, "array stream source is not topologically prior")
+        })?;
     let Type::Array(element) = &source.ty else {
         return Err(lowering_diagnostic(
             node.span,
@@ -5924,6 +5960,18 @@ fn lower_array_stream_collect_node(
         &Type::array(element.as_ref().clone()),
         ValueRepresentation::RealizedHandle,
     )?;
+    if let Some(predicate) = &predicate {
+        let predicate_ty = Type::Function {
+            parameter: Box::new(element.as_ref().clone()),
+            result: Box::new(Type::Bool),
+        };
+        require_value(
+            node,
+            predicate,
+            &predicate_ty,
+            ValueRepresentation::InlineComposite,
+        )?;
+    }
     let collection_ty = Type::map(Type::Int, element.as_ref().clone());
     require_node_type(node, collection_ty.clone())?;
 
@@ -6009,6 +6057,27 @@ fn lower_array_stream_collect_node(
         return_label,
         outputs.code,
     )?;
+    let skip_insert = predicate.as_ref().map(|_| outputs.code.label());
+    if let Some(predicate) = &predicate {
+        let predicate_result = LoweredSlot {
+            region: FrameRegion::for_words(scratch.condition.word_index(), FrameWords::ONE)
+                .expect("outcome condition scratch is one frame word"),
+            region_id: assigned.condition,
+            ty: Type::Bool,
+            representation: ValueRepresentation::Word,
+        };
+        emit_checked_call_indirect(
+            node,
+            predicate,
+            &temps.projected_value,
+            &predicate_result,
+            sequence,
+            outputs,
+        )?;
+        outputs
+            .code
+            .jump_if_zero(scratch.condition, skip_insert.expect("filter skip label"));
+    }
     let key = LoweredSlot {
         region: FrameRegion::for_words(scratch.fields[0].word_index(), FrameWords::ONE)
             .expect("scratch scalar is one frame word"),
@@ -6040,6 +6109,9 @@ fn lower_array_stream_collect_node(
         return_label,
         code: outputs.code,
     })?;
+    if let Some(skip_insert) = skip_insert {
+        outputs.code.bind(skip_insert, node.span)?;
+    }
     outputs.code.push(WeavyOp::ConstI64 {
         dst: scratch.fields[2].byte_offset(),
         value: 1,
