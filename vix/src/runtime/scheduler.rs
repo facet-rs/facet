@@ -7,10 +7,10 @@ use weavy::exec::{
 use weavy::task::{FnId, TaskEvent as WeavyTaskEvent, TaskStep};
 
 use crate::lowering::{LoweringArtifact, LoweringAttribution};
-use crate::vir::{IslandId, Type};
+use crate::vir::{IslandId, Type, VariantPayload};
 
-use super::identity::FramedNode;
 use super::identity::{DemandKey, DemandPreimage, Location, LocationId, SchemaId, ValueId};
+use super::identity::{FramedField, FramedNode, FramedValue};
 use super::model::{
     DemandRecord, DemandState, FailureContext, FailureValue, MemoVerdict, Receipt, TaskId,
     TaskRecord, TaskState,
@@ -1518,33 +1518,20 @@ fn realize_array<'task>(
             data.len(),
         ));
     }
-    if !matches!(element, Type::String | Type::Path | Type::Array(_)) || width != 8 {
+    let expected_width = element
+        .word_width()
+        .and_then(|words| words.checked_mul(8))
+        .ok_or_else(|| invalid_realized_result(lowered, bytes.len()))?;
+    if width != expected_width {
         return Err(invalid_realized_result(lowered, bytes.len()));
     }
     let mut children = Vec::with_capacity(count);
     let mut framed_bytes = 0usize;
     for index in 0..count {
         let offset = HEADER + index * width;
-        let child = resolver
-            .resolve_nested(bytes, offset)
-            .ok_or_else(|| invalid_realized_result(lowered, bytes.len()))?;
-        let identity = match child {
-            ResolvedTaskValue::Store(handle) => {
-                store
-                    .entry_by_weavy_handle(handle)
-                    .ok_or_else(|| invalid_realized_result(lowered, bytes.len()))?
-                    .identity
-            }
-            ResolvedTaskValue::TaskMolten(_) => {
-                let (node, _, nested_bytes) =
-                    realize_resolved(resolver, child, element, store, lowered)?;
-                framed_bytes = framed_bytes.saturating_add(nested_bytes);
-                node.identity()
-            }
-            ResolvedTaskValue::LentMolten { .. } => {
-                return Err(invalid_realized_result(lowered, bytes.len()));
-            }
-        };
+        let (identity, nested_bytes) =
+            realize_inline_identity(resolver, bytes, offset, element, store, lowered)?;
+        framed_bytes = framed_bytes.saturating_add(nested_bytes);
         children.push(identity);
     }
     Ok((
@@ -1554,6 +1541,162 @@ fn realize_array<'task>(
             children,
         },
         bytes.to_vec(),
+        framed_bytes,
+    ))
+}
+
+fn realize_inline_identity<'task>(
+    resolver: &TaskValueResolver<'task>,
+    container: &'task [u8],
+    offset: usize,
+    ty: &Type,
+    store: &Store,
+    lowered: &LoweringArtifact,
+) -> Result<(ValueId, usize), TaskFault> {
+    match ty {
+        Type::String | Type::Path | Type::Array(_) | Type::Map { .. } | Type::Set(_) => {
+            let child = resolver
+                .resolve_nested(container, offset)
+                .ok_or_else(|| invalid_realized_result(lowered, container.len()))?;
+            match child {
+                ResolvedTaskValue::Store(handle) => Ok((
+                    store
+                        .entry_by_weavy_handle(handle)
+                        .ok_or_else(|| invalid_realized_result(lowered, container.len()))?
+                        .identity,
+                    0,
+                )),
+                ResolvedTaskValue::TaskMolten(_) => {
+                    let (node, _, framed_bytes) =
+                        realize_resolved(resolver, child, ty, store, lowered)?;
+                    Ok((node.identity(), framed_bytes))
+                }
+                ResolvedTaskValue::LentMolten { .. } => {
+                    Err(invalid_realized_result(lowered, container.len()))
+                }
+            }
+        }
+        Type::Tuple(elements) => realize_composite_identity(
+            resolver,
+            container,
+            offset,
+            ty,
+            0,
+            elements.iter(),
+            RealizeEnvironment { store, lowered },
+        ),
+        Type::Record(record) => realize_composite_identity(
+            resolver,
+            container,
+            offset,
+            ty,
+            0,
+            record.fields.iter().map(|field| &field.ty),
+            RealizeEnvironment { store, lowered },
+        ),
+        Type::Enum(enumeration) => {
+            let tag = u64::try_from(
+                read_payload_word(container, offset)
+                    .ok_or_else(|| invalid_realized_result(lowered, container.len()))?,
+            )
+            .map_err(|_| invalid_realized_result(lowered, container.len()))?;
+            let variant = enumeration
+                .variants
+                .get(
+                    usize::try_from(tag)
+                        .map_err(|_| invalid_realized_result(lowered, container.len()))?,
+                )
+                .ok_or_else(|| invalid_realized_result(lowered, container.len()))?;
+            let fields = match &variant.payload {
+                VariantPayload::Unit => Vec::new(),
+                VariantPayload::Tuple(elements) => elements.iter().collect(),
+                VariantPayload::Record(fields) => fields.iter().map(|field| &field.ty).collect(),
+            };
+            realize_composite_identity(
+                resolver,
+                container,
+                offset + 8,
+                ty,
+                tag,
+                fields.into_iter(),
+                RealizeEnvironment { store, lowered },
+            )
+        }
+        Type::Bool | Type::Int | Type::Check => {
+            let width = ty
+                .word_width()
+                .and_then(|words| words.checked_mul(8))
+                .ok_or_else(|| invalid_realized_result(lowered, container.len()))?;
+            let bytes = container
+                .get(offset..offset + width)
+                .ok_or_else(|| invalid_realized_result(lowered, container.len()))?;
+            Ok((
+                FramedNode::leaf(semantic_schema_id(ty), bytes.to_vec()).identity(),
+                width,
+            ))
+        }
+        Type::Function { .. } | Type::StreamCheck | Type::Stream { .. } | Type::Order(_) => {
+            Err(invalid_realized_result(lowered, container.len()))
+        }
+    }
+}
+
+#[derive(Clone, Copy)]
+struct RealizeEnvironment<'a> {
+    store: &'a Store,
+    lowered: &'a LoweringArtifact,
+}
+
+fn realize_composite_identity<'task, 'ty>(
+    resolver: &TaskValueResolver<'task>,
+    container: &'task [u8],
+    offset: usize,
+    ty: &Type,
+    tag: u64,
+    field_types: impl Iterator<Item = &'ty Type>,
+    environment: RealizeEnvironment<'_>,
+) -> Result<(ValueId, usize), TaskFault> {
+    let mut cursor = offset;
+    let mut framed_bytes = 0usize;
+    let mut fields = Vec::new();
+    for field_ty in field_types {
+        let width = field_ty
+            .word_width()
+            .and_then(|words| words.checked_mul(8))
+            .ok_or_else(|| invalid_realized_result(environment.lowered, container.len()))?;
+        let value = if type_contains_handle(field_ty) {
+            let (identity, nested_bytes) = realize_inline_identity(
+                resolver,
+                container,
+                cursor,
+                field_ty,
+                environment.store,
+                environment.lowered,
+            )?;
+            framed_bytes = framed_bytes.saturating_add(nested_bytes);
+            FramedValue::Optional(Some(identity))
+        } else {
+            let bytes = container
+                .get(cursor..cursor + width)
+                .ok_or_else(|| invalid_realized_result(environment.lowered, container.len()))?;
+            framed_bytes = framed_bytes.saturating_add(bytes.len());
+            FramedValue::Bytes(bytes.to_vec())
+        };
+        fields.push(FramedField {
+            schema: semantic_schema_id(field_ty),
+            value,
+        });
+        cursor = cursor
+            .checked_add(width)
+            .ok_or_else(|| invalid_realized_result(environment.lowered, container.len()))?;
+    }
+    Ok((
+        FramedNode::Variant {
+            schema: semantic_schema_id(ty),
+            tag,
+            fields,
+        }
+        .identity(),
         framed_bytes,
     ))
 }

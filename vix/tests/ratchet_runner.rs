@@ -643,6 +643,17 @@ fn accepted_rungs_verify_and_execute_through_one_executable() {
     }
 }
 
+fn assert_ordered_freeze_red(source: &str, aggregate: &str) {
+    let RunError::Diagnostics(diagnostics) = run_source(source)
+        .expect_err("a qualifying shared ordered aggregate must not silently recompute")
+    else {
+        panic!("shared {aggregate} publication must be a typed diagnostic")
+    };
+    let message = diagnostics.entries[0].message();
+    assert!(message.contains(aggregate), "{message}");
+    assert!(message.contains("rung-138"), "{message}");
+}
+
 #[test]
 fn rung_028_array_stream_collects_position_keyed_rows() {
     let compilation = Compiler::new()
@@ -668,37 +679,7 @@ fn rung_028_array_stream_collects_position_keyed_rows() {
     assert_eq!(collect.ty, VirType::map(VirType::Int, VirType::String));
     assert!(collect.effect.fallible);
 
-    let partitioned = compilation.partition_test(&compilation.tests[0]);
-    let mut cache = LoweringCache::default();
-    let lowered = cache
-        .get_or_lower(&partitioned.islands[0])
-        .expect("rung 028 verifies before production execution");
-    assert!(
-        lowered
-            .program()
-            .fns
-            .iter()
-            .flat_map(|function| &function.code)
-            .any(|op| matches!(op, WeavyOp::OrderedInsertCommit { .. }))
-    );
-    assert!(
-        lowered
-            .program()
-            .fns
-            .iter()
-            .flat_map(|function| &function.code)
-            .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
-    );
-
-    let report = run_source(RUNG_028).expect("rung 028 executes through verified production path");
-    assert!(report.passed());
-    assert!(report.agrees());
-    assert_eq!(report.plain.checks.len(), 2);
-    assert_eq!(report.plain.checks, report.chaos.checks);
-    for lane in [&report.plain, &report.chaos] {
-        assert_eq!(lane.counters.pure_host_calls, 0);
-        assert_eq!(lane.receipt_count, 0);
-    }
+    assert_ordered_freeze_red(RUNG_028, "Map");
 }
 
 #[test]
@@ -838,15 +819,7 @@ fn rung_033_array_stream_preserves_position_keys() {
         .expect("collect materializes the position-keyed map");
     assert_eq!(collect.ty, VirType::map(VirType::Int, VirType::Int));
 
-    let report = run_source(RUNG_033).expect("rung 033 executes through verified production path");
-    assert!(report.passed());
-    assert!(report.agrees());
-    assert_eq!(report.plain.checks.len(), 3);
-    assert_eq!(report.plain.checks, report.chaos.checks);
-    for lane in [&report.plain, &report.chaos] {
-        assert_eq!(lane.counters.pure_host_calls, 0);
-        assert_eq!(lane.receipt_count, 0);
-    }
+    assert_ordered_freeze_red(RUNG_033, "Map");
 }
 
 #[test]
@@ -867,15 +840,7 @@ fn rung_034_stream_filter_preserves_survivor_keys() {
     assert_eq!(filter.ty, VirType::stream(VirType::Int, VirType::Int));
     assert_eq!(filter.effect.kind, EffectKind::Codata);
 
-    let report = run_source(RUNG_034).expect("rung 034 executes through verified production path");
-    assert!(report.passed());
-    assert!(report.agrees());
-    assert_eq!(report.plain.checks.len(), 4);
-    assert_eq!(report.plain.checks, report.chaos.checks);
-    for lane in [&report.plain, &report.chaos] {
-        assert_eq!(lane.counters.pure_host_calls, 0);
-        assert_eq!(lane.receipt_count, 0);
-    }
+    assert_ordered_freeze_red(RUNG_034, "Map");
 }
 
 // Rung 038 — deterministic selection (`find_min`/`find_max`) and decomposition
@@ -3738,32 +3703,36 @@ fn rung_026_arrays_run_through_verified_execution_without_publication() {
 }
 
 #[test]
-fn rung_027_array_map_runs_through_verified_execution_without_publication() {
+fn rung_027_array_map_runs_through_shared_publication() {
     let module = Compiler::new()
         .compile(RUNG_027)
         .expect("rung 027 compiles to graph VIR");
     let partitioned = module.partition_test(&module.tests[0]);
     assert_eq!(partitioned.islands.len(), 4);
+    assert_eq!(partitioned.values.len(), 1);
     let mut cache = LoweringCache::default();
-    for island in &partitioned.islands {
-        let [decision] = island.array_map_partitions.as_slice() else {
-            panic!("each rung 027 check has one ArrayMap decision")
-        };
-        assert_eq!(decision.shape, ArrayMapExecutionShape::FusedProjection);
-        let lowered = cache
-            .get_or_lower(island)
-            .expect("rung 027 fused island verifies");
-        let map_pcs = pcs_for_node(lowered, 0, decision.node);
-        assert_eq!(map_pcs.len(), 1, "fused ArrayMap emits attribution only");
-        assert!(matches!(
-            lowered.program().fns[0].code[map_pcs[0]],
-            WeavyOp::Trace { .. }
-        ));
-        assert!(map_pcs.iter().all(|pc| !matches!(
+    let value_island = &partitioned.values[0].island;
+    let [decision] = value_island.array_map_partitions.as_slice() else {
+        panic!("the shared rung 027 value island owns one ArrayMap decision")
+    };
+    assert_eq!(decision.shape, ArrayMapExecutionShape::MaterializedLoop);
+    let lowered = cache
+        .get_or_lower(value_island)
+        .expect("rung 027 fused value island verifies");
+    let map_pcs = pcs_for_node(lowered, 0, decision.node);
+    assert!(
+        map_pcs
+            .iter()
+            .any(|pc| matches!(lowered.program().fns[0].code[*pc], WeavyOp::ArrayNew { .. })),
+        "the shared value island materializes its published dense array",
+    );
+    assert!(
+        map_pcs.iter().any(|pc| matches!(
             lowered.program().fns[0].code[*pc],
-            WeavyOp::ArrayNew { .. } | WeavyOp::ArrayStore { .. } | WeavyOp::CallIndirect { .. }
-        )));
-    }
+            WeavyOp::ArrayStore { .. }
+        )),
+        "the materialization loop fills the published dense array",
+    );
 
     let report = run_source(RUNG_027).expect("rung 027 compiles and runs through Executable");
     assert!(report.passed());
@@ -4844,58 +4813,15 @@ fn map_and_set_surface_has_distinct_typed_vir_grains() {
             && !node.effect.fallible
     }));
 
-    let partitioned = map_compilation.partition_test(&map_compilation.tests[0]);
-    let mut lowering_cache = LoweringCache::default();
-    let lowered = lowering_cache
-        .get_or_lower(&partitioned.islands[0])
-        .expect("map surface lowers through verified ordered execution");
-    assert!(
-        lowered
-            .contract()
-            .schemas
-            .iter()
-            .any(|schema| matches!(schema.payload, weavy::PayloadKind::OrderedCollection(_)))
-    );
-    assert!(
-        lowered
-            .program()
-            .fns
-            .iter()
-            .flat_map(|function| &function.code)
-            .any(|op| matches!(
-                op,
-                WeavyOp::OrderedBeginInsert { .. }
-                    | WeavyOp::OrderedProbeKey { .. }
-                    | WeavyOp::OrderedLen { .. }
-            ))
-    );
-    assert!(
-        lowered
-            .program()
-            .fns
-            .iter()
-            .flat_map(|function| &function.code)
-            .all(|op| !matches!(op, WeavyOp::LoadArray { .. } | WeavyOp::LoadArrayLen { .. }))
-    );
+    assert_ordered_freeze_red(RUNG_041, "Map");
+    assert_ordered_freeze_red(RUNG_042, "Map");
+    assert_ordered_freeze_red(RUNG_044, "Set");
 
-    for (rung, source, expected_checks) in [
-        ("041", RUNG_041, 5usize),
-        ("042", RUNG_042, 3),
-        ("043", RUNG_043, 1),
-        ("044", RUNG_044, 5),
-    ] {
-        let report = run_source(source).unwrap_or_else(|error| {
-            panic!("rung {rung} executes through ordered substrate: {error:?}")
-        });
-        assert!(report.passed());
-        assert!(report.agrees());
-        assert_eq!(report.plain.checks.len(), expected_checks);
-        assert_eq!(report.plain.checks, report.chaos.checks);
-        for lane in [&report.plain, &report.chaos] {
-            assert_eq!(lane.counters.pure_host_calls, 0);
-            assert_eq!(lane.receipt_count, 0);
-        }
-    }
+    let report =
+        run_source(RUNG_043).expect("single-consumer map executes through ordered substrate");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 1);
 }
 
 #[test]
