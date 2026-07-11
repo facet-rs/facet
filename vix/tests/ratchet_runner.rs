@@ -1,8 +1,8 @@
 use vix::compiler::Compiler;
 use vix::diagnostic::{DiagnosticCode, DiagnosticSeverity};
 use vix::lowering::{LoweringCache, attribution_for, source_map_for};
-use vix::ratchet::run_source;
-use vix::runtime::{DemandState, EventKind, MemoVerdict, SchemaId, TaskState};
+use vix::ratchet::{RunError, run_source};
+use vix::runtime::{DemandState, EventKind, FailureValue, MemoVerdict, SchemaId, TaskState};
 use vix::surface::{SurfaceParser, ast};
 use vix::vir::{
     ArrayMapExecutionShape, ArrayMapGrainKey, EffectKind, FunctionId, GeneratorControl,
@@ -1063,7 +1063,9 @@ fn rung_031_generator_task_is_verified_control_and_publish_only() {
     let module = Compiler::new()
         .compile(RUNG_031)
         .expect("rung 031 compiles into generator/codata VIR");
-    let island = module.generator_task_island(&module.tests[0]);
+    let island = module
+        .generator_task_island(&module.tests[0])
+        .expect("rung 031 generator task builds without a control-flow scrutinee boundary");
 
     // VIR certificate: the generator island carries real control (Match) over the
     // real scrutinee (ArraySplitLast) and publishes sites, but lowers no check
@@ -1178,6 +1180,119 @@ fn taken_none() -> Stream<Check> {
         "None-arm site plus the later unconditional site; the Some arm publishes nothing",
     );
     assert_eq!(report.plain.checks, report.chaos.checks);
+}
+
+// A scrutinee that itself embeds control flow is beyond the zero-dynamic-key
+// checkpoint. Valid source must never panic the builder: it yields a typed
+// diagnostic boundary and the runner surfaces a typed RunError.
+#[test]
+fn rung_031_generator_control_flow_scrutinee_is_a_typed_boundary() {
+    const SOURCE: &str = r#"
+#[test]
+fn control_scrutinee() -> Stream<Check> {
+    let xs = [1, 2, 3];
+    let ys: [Int] = [];
+    let flag = true;
+    yield match (if flag { xs } else { ys }).split_last() {
+        Some((last, rest)) => {
+            yield expect_eq(last, 3);
+            yield expect_eq(rest, [1, 2]);
+        },
+        None => expect(false),
+    };
+}
+"#;
+    let module = Compiler::new()
+        .compile(SOURCE)
+        .expect("a control-flow scrutinee still compiles to VIR");
+    module
+        .generator_task_island(&module.tests[0])
+        .expect_err("a control-flow scrutinee is a typed boundary, not a panic");
+    match run_source(SOURCE) {
+        Err(RunError::Diagnostics(_)) => {}
+        other => panic!("expected a typed diagnostic boundary, got {other:?}"),
+    }
+}
+
+// A generator scrutinee may call a pure helper. Its synthetic transitive callees
+// are collected exactly as a check island's, so the Call target is never absent.
+#[test]
+fn rung_031_generator_scrutinee_may_call_a_pure_helper() {
+    const SOURCE: &str = r#"
+fn classify(n: Int) -> Option<Int> {
+    if n > 0 {
+        Some(n)
+    } else {
+        None
+    }
+}
+
+#[test]
+fn helper_scrutinee() -> Stream<Check> {
+    yield match classify(5) {
+        Some(v) => {
+            yield expect_eq(v, 5);
+        },
+        None => expect(false),
+    };
+    yield expect(true);
+}
+"#;
+    let module = Compiler::new().compile(SOURCE).expect("source compiles");
+    let island = module
+        .generator_task_island(&module.tests[0])
+        .expect("helper-scrutinee generator builds");
+    assert!(
+        !island.callees.is_empty(),
+        "the pure helper is collected as a synthetic generator callee",
+    );
+    let report = run_source(SOURCE).expect("helper-scrutinee generator executes");
+    assert!(report.agrees(), "plain and chaos agree: {report:?}");
+    assert!(
+        report.passed(),
+        "taken Some check and the unconditional check pass: {report:?}"
+    );
+    assert_eq!(report.plain.checks.len(), 2);
+}
+
+// A language failure raised while computing the generator's scrutinee control
+// stays on the typed language plane — it is not reclassified as a machine fault.
+#[test]
+fn rung_031_generator_scrutinee_language_failure_is_a_language_boundary() {
+    const SOURCE: &str = r#"
+fn risky(xs: [Int]) -> Option<Int> {
+    Some(xs[10])
+}
+
+#[test]
+fn faulting_scrutinee() -> Stream<Check> {
+    let xs = [1];
+    yield match risky(xs) {
+        Some(v) => {
+            yield expect_eq(v, 0);
+        },
+        None => expect(false),
+    };
+}
+"#;
+    match run_source(SOURCE) {
+        Err(RunError::GeneratorLanguageFailure {
+            test,
+            failure,
+            context,
+        }) => {
+            assert_eq!(test, "faulting_scrutinee");
+            assert!(
+                matches!(failure, FailureValue::IndexOutOfBounds { .. }),
+                "the scrutinee's out-of-bounds index is preserved as a typed failure: {failure:?}",
+            );
+            assert!(
+                context.is_some(),
+                "the language failure carries its source context",
+            );
+        }
+        other => panic!("expected a typed generator language failure, got {other:?}"),
+    }
 }
 
 #[test]

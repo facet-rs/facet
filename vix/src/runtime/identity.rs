@@ -91,21 +91,32 @@ impl Location {
         }
     }
 
-    /// Location of a test's generator task: the codata construction that runs
-    /// control and publishes taken sites. It is distinct from the per-site check
-    /// locations it selects.
+    /// Provenance-keyed location of one evaluated check: the site's check
+    /// location extended by the identities of its dynamic iteration keys. With no
+    /// dynamic keys (the zero-dynamic-key base case, and every flat island) this
+    /// is byte-identical to [`Location::for_test_island`]. The digest folds each
+    /// key's schema and content identity — never a handle integer or ABI word —
+    /// so equal values at distinct keys stay distinct provenance.
     #[must_use]
-    pub fn for_generator(test_name: &str) -> Self {
-        let segments = vec![
+    pub fn for_test_provenance(test_name: &str, site: u32, dynamic_keys: &[ValueId]) -> Self {
+        let mut segments = vec![
             "test".to_owned(),
             test_name.to_owned(),
-            "generator".to_owned(),
+            "check".to_owned(),
+            site.to_string(),
         ];
-        let fields = segments.iter().map(String::as_bytes).collect::<Vec<_>>();
-        Self {
-            id: LocationId(hash_framed(b"vix.location.v1", &fields)),
-            segments,
+        let id = {
+            let mut fields = segments.iter().map(String::as_bytes).collect::<Vec<_>>();
+            for key in dynamic_keys {
+                fields.push(&key.schema.0.0);
+                fields.push(&key.content.0);
+            }
+            LocationId(hash_framed(b"vix.location.v1", &fields))
+        };
+        for key in dynamic_keys {
+            segments.push(format!("key:{}:{}", key.schema.0.hex(), key.content.hex()));
         }
+        Self { id, segments }
     }
 }
 

@@ -7,7 +7,7 @@ use crate::diagnostic::Diagnostics;
 use crate::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
 use crate::runtime::{
     ChaosPolicy, Counters, DemandState, Evaluation, Event, EventLog, FailureContext, FailureValue,
-    Location, MachineError, Runtime, TaskState, ValueId,
+    GeneratorOutcome, Location, MachineError, Runtime, TaskState, ValueId,
 };
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -33,17 +33,26 @@ pub enum RunError {
         test: String,
         site: u32,
     },
+    /// A generator's scrutinee control language-failed before deciding a branch.
+    /// This stays on the typed language plane, carrying the failure value and its
+    /// source context; it is never reclassified as a machine invariant.
+    GeneratorLanguageFailure {
+        test: String,
+        failure: FailureValue,
+        context: Option<FailureContext>,
+    },
 }
 
 /// The stable provenance key of a published check: the yield site's selector
-/// plus its dynamic iteration keys. The dynamic tail is empty in the
-/// zero-dynamic-key base case and is the extension point for keyed dynamic
-/// iteration (055-059). Completed check elements are keyed by this, never by
-/// publication arrival order.
+/// plus the canonical runtime identities of its dynamic iteration keys. The
+/// dynamic tail is empty in the zero-dynamic-key base case and is the extension
+/// point for keyed dynamic iteration (055-059); each future key is a framed
+/// [`ValueId`], never a handle integer or ABI word. Completed check elements are
+/// keyed by this, never by publication arrival order.
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
 pub struct ProvenanceKey {
     pub site: u32,
-    pub dynamic_keys: Vec<i64>,
+    pub dynamic_keys: Vec<ValueId>,
 }
 
 impl ProvenanceKey {
@@ -184,13 +193,11 @@ fn run_lane(
         // descriptor then becomes an ordinary pure check demand. A flat generator
         // keeps the historical unconditional path with byte-identical behaviour.
         let taken = if test.generator.has_conditional_sites() {
-            let generator = module.generator_task_island(test);
+            let generator = module.generator_task_island(test)?;
             let lowered = cache.get_or_lower(&generator)?;
             let attribution = attribution_for(&generator);
-            let location = Location::for_generator(&test.name);
-            let published = runtime.drive_generator(
+            let outcome = runtime.drive_generator(
                 generator.id,
-                &location,
                 lowered,
                 &attribution,
                 ChaosPolicy {
@@ -198,6 +205,16 @@ fn run_lane(
                 },
             )?;
             kill_available = false;
+            let published = match outcome {
+                GeneratorOutcome::Sites(published) => published,
+                GeneratorOutcome::LanguageFailure { failure, context } => {
+                    return Err(RunError::GeneratorLanguageFailure {
+                        test: test.name.clone(),
+                        failure,
+                        context,
+                    });
+                }
+            };
             let mut seen = BTreeSet::new();
             let mut sites = Vec::with_capacity(published.len());
             for raw in published {
@@ -232,7 +249,14 @@ fn run_lane(
                     })?;
                     let lowered = cache.get_or_lower(island)?;
                     let attribution = attribution_for(island);
-                    let location = Location::for_test_island(&partitioned.name, island.id.0);
+                    // Zero-dynamic-key base case: the empty dynamic tail makes this
+                    // location byte-identical to the flat check location.
+                    let provenance = ProvenanceKey::site(site);
+                    let location = Location::for_test_provenance(
+                        &partitioned.name,
+                        site,
+                        &provenance.dynamic_keys,
+                    );
                     let evaluation: Evaluation = runtime.evaluate(
                         island.id,
                         &location,
@@ -241,7 +265,7 @@ fn run_lane(
                         ChaosPolicy::default(),
                     )?;
                     checks.push(CheckRun {
-                        provenance: ProvenanceKey::site(site),
+                        provenance,
                         identity: evaluation.identity,
                         passed: evaluation.passed,
                         failure: evaluation.failure,

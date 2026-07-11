@@ -42,6 +42,20 @@ pub struct Evaluation {
     pub failure_context: Option<FailureContext>,
 }
 
+/// The outcome of driving one generator task to completion.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum GeneratorOutcome {
+    /// The taken sites' raw provenance selectors, in publication order.
+    Sites(Vec<u64>),
+    /// The generator's scrutinee control language-failed before deciding a
+    /// branch. A language failure, never a machine invariant. The typed failure
+    /// is boxed so the common `Sites` path stays small.
+    LanguageFailure {
+        failure: Box<FailureValue>,
+        context: Option<FailureContext>,
+    },
+}
+
 /// The scheduler owns passive maps and admission bookkeeping; Weavy owns the
 /// executable task and any suspension state.
 ///
@@ -445,19 +459,21 @@ impl<S: EventSink> Runtime<S> {
         }
     }
 
-    /// Drive one generator task to `Done` and return the taken sites' raw
-    /// provenance selectors in publication order. The generator runs only real
-    /// `Match`/`If` control and publishes; it never evaluates a check operand.
-    /// Publication arrival order is a live schedule artifact — the caller re-keys
-    /// the completed check family by provenance.
+    /// Drive one generator task to `Done` and return its outcome: either the
+    /// taken sites' raw provenance selectors in publication order, or a language
+    /// failure raised while constructing the generator's control. The generator
+    /// runs only real `Match`/`If` control and publishes; it never evaluates a
+    /// check operand. Publication arrival order is a live schedule artifact — the
+    /// caller re-keys the completed check family by provenance. A scrutinee
+    /// language failure stays on the language plane; only a machine invariant
+    /// violation is a `MachineError`.
     pub fn drive_generator(
         &mut self,
         island: IslandId,
-        location: &Location,
         lowered: &LoweringArtifact,
         attribution: &LoweringAttribution,
         chaos: ChaosPolicy,
-    ) -> Result<Vec<u64>, Box<MachineError>> {
+    ) -> Result<GeneratorOutcome, Box<MachineError>> {
         self.emit(EventKind::Demanded {
             key: lowered.demand_key,
         });
@@ -474,7 +490,6 @@ impl<S: EventSink> Runtime<S> {
             from: DemandState::Absent,
             to: DemandState::Queued,
         });
-        let _ = location;
         let constants = self.materialize_constants(lowered);
         let mut kill_armed = chaos.kill_first_running_task;
         loop {
@@ -614,15 +629,113 @@ impl<S: EventSink> Runtime<S> {
                     )));
                 }
             }
-            // The generator's scrutinee control must complete cleanly (`Ok`); its
-            // placeholder value is unused. A non-`Ok` array outcome means a
-            // scrutinee faulted, so no descriptor is drained.
+            // The generator's placeholder value is unused; its taken sites live in
+            // the publication log. `Ok` drains them; a typed collection language
+            // failure while constructing control stays on the language plane; a
+            // machine-invariant status is a machine fault.
             match decode_result(&task, lowered) {
-                Ok(DecodedResult::Ok(_)) => {}
-                Ok(_) => {
+                Ok(DecodedResult::Ok(_)) => {
+                    let count = match task.publication_count() {
+                        Ok(count) => count,
+                        Err(fault) => {
+                            let error = self.task_fault(
+                                MachineOperation::Result,
+                                fault,
+                                lowered,
+                                attribution,
+                                None,
+                            );
+                            return Err(Box::new(self.terminate_machine_fault(
+                                task_id,
+                                lowered.demand_key,
+                                error,
+                            )));
+                        }
+                    };
+                    let mut sites = Vec::with_capacity(count);
+                    for index in 0..count {
+                        match task.publication(index) {
+                            Ok(descriptor) => sites.push(descriptor.provenance_key()),
+                            Err(fault) => {
+                                let error = self.task_fault(
+                                    MachineOperation::Result,
+                                    fault,
+                                    lowered,
+                                    attribution,
+                                    None,
+                                );
+                                return Err(Box::new(self.terminate_machine_fault(
+                                    task_id,
+                                    lowered.demand_key,
+                                    error,
+                                )));
+                            }
+                        }
+                    }
+                    self.transition_task(task_id, TaskState::Completed)?;
+                    self.transition_demand(lowered.demand_key, DemandState::Ready)?;
+                    return Ok(GeneratorOutcome::Sites(sites));
+                }
+                Ok(DecodedResult::IndexOutOfBounds {
+                    site,
+                    index,
+                    length,
+                }) => {
+                    let failure = FailureValue::IndexOutOfBounds {
+                        recipe: lowered.recipe,
+                        site,
+                        index,
+                        length,
+                        subject: None,
+                    };
+                    return self.complete_generator_language_failure(
+                        task_id,
+                        lowered,
+                        attribution,
+                        failure,
+                    );
+                }
+                Ok(DecodedResult::MissingKey { site }) => {
+                    let failure = FailureValue::MissingKey {
+                        recipe: lowered.recipe,
+                        site,
+                    };
+                    return self.complete_generator_language_failure(
+                        task_id,
+                        lowered,
+                        attribution,
+                        failure,
+                    );
+                }
+                Ok(DecodedResult::DuplicateKey { site }) => {
+                    let failure = FailureValue::DuplicateKey {
+                        recipe: lowered.recipe,
+                        site,
+                    };
+                    return self.complete_generator_language_failure(
+                        task_id,
+                        lowered,
+                        attribution,
+                        failure,
+                    );
+                }
+                Ok(DecodedResult::ArrayMachine { site, status }) => {
                     let error = MachineError::runtime(
                         MachineOperation::Result,
-                        RuntimeFault::GeneratorResultNotOk,
+                        RuntimeFault::ArrayMachineStatus { site, status },
+                        self.output_attribution(lowered, attribution),
+                        Some(lowered.demand_key),
+                    );
+                    return Err(Box::new(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )));
+                }
+                Ok(DecodedResult::OrderedMachine { site, status }) => {
+                    let error = MachineError::runtime(
+                        MachineOperation::Result,
+                        RuntimeFault::OrderedMachineStatus { site, status },
                         self.output_attribution(lowered, attribution),
                         Some(lowered.demand_key),
                     );
@@ -647,50 +760,31 @@ impl<S: EventSink> Runtime<S> {
                     )));
                 }
             }
-            let count = match task.publication_count() {
-                Ok(count) => count,
-                Err(fault) => {
-                    let error = self.task_fault(
-                        MachineOperation::Result,
-                        fault,
-                        lowered,
-                        attribution,
-                        None,
-                    );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
-                }
-            };
-            let mut sites = Vec::with_capacity(count);
-            for index in 0..count {
-                match task.publication(index) {
-                    Ok(descriptor) => sites.push(descriptor.provenance_key()),
-                    Err(fault) => {
-                        let error = self.task_fault(
-                            MachineOperation::Result,
-                            fault,
-                            lowered,
-                            attribution,
-                            None,
-                        );
-                        return Err(Box::new(self.terminate_machine_fault(
-                            task_id,
-                            lowered.demand_key,
-                            error,
-                        )));
-                    }
-                }
-            }
-            if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
-                demand.result = None;
-            }
-            self.transition_task(task_id, TaskState::Completed)?;
-            self.transition_demand(lowered.demand_key, DemandState::Ready)?;
-            return Ok(sites);
         }
+    }
+
+    /// Complete a generator task whose scrutinee control language-failed: intern
+    /// the typed failure by its semantic identity, mark the generator demand
+    /// failed, and surface it on the language plane. It is never reclassified as
+    /// a machine invariant.
+    fn complete_generator_language_failure(
+        &mut self,
+        task: TaskId,
+        lowered: &LoweringArtifact,
+        attribution: &LoweringAttribution,
+        failure: FailureValue,
+    ) -> Result<GeneratorOutcome, Box<MachineError>> {
+        let context = failure_context(&failure, lowered, attribution);
+        let interned = self.store.intern_failure(failure.clone(), &[]);
+        self.observe_interned(interned);
+        self.transition_task(task, TaskState::Completed)?;
+        self.transition_demand(lowered.demand_key, DemandState::Failed)?;
+        self.emit(EventKind::LanguageFailed {
+            task,
+            key: lowered.demand_key,
+            failure: failure.clone(),
+        });
+        Ok(GeneratorOutcome::LanguageFailure { failure, context })
     }
 
     fn materialize_constants(&mut self, lowered: &LoweringArtifact) -> Vec<Handle> {

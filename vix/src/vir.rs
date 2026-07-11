@@ -3,6 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
+use crate::diagnostic::{Diagnostic, Diagnostics};
 use crate::support::Span;
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -941,25 +942,42 @@ impl Module {
     /// the zero-dynamic-key base case of the general provenance-keyed protocol:
     /// control chooses which sites publish, and each published descriptor is the
     /// site's stable [`YieldSiteId`] selector.
-    #[must_use]
-    pub fn generator_task_island(&self, test: &Test) -> Island {
+    ///
+    /// Returns a typed diagnostic — never a panic — when a scrutinee or condition
+    /// embeds VIR control flow, which the general (non zero-dynamic-key) protocol
+    /// will remap. Pure helper calls in scrutinees/conditions are supported: their
+    /// synthetic transitive callees and array-map partitions are collected exactly
+    /// as [`Module::partition_test`] collects a check island's.
+    pub fn generator_task_island(&self, test: &Test) -> Result<Island, Diagnostics> {
         let source = &self.functions[test.function.0 as usize];
         let mut builder = GeneratorTaskBuilder {
             source,
             nodes: Vec::new(),
         };
-        let output = builder.lower_body(&test.generator, source.span);
+        let output = builder.lower_body(&test.generator, source.span)?;
         let nodes = builder.nodes;
-        let array_map_partitions = collect_array_map_partitions(test.function, &nodes, output);
-        Island {
+        let mut seen = BTreeSet::from([test.function]);
+        let mut callees = Vec::new();
+        collect_callees(self, &nodes, &mut seen, &mut callees);
+        let mut array_map_partitions = collect_array_map_partitions(test.function, &nodes, output);
+        for callee in &callees {
+            if let Some(output) = callee.output {
+                array_map_partitions.extend(collect_array_map_partitions(
+                    callee.id,
+                    &callee.nodes,
+                    output,
+                ));
+            }
+        }
+        Ok(Island {
             id: IslandId(0),
             function: test.function,
             function_name: format!("{}$generator", test.name),
             nodes,
             output,
-            callees: Vec::new(),
+            callees,
             array_map_partitions,
-        }
+        })
     }
 }
 
@@ -1008,37 +1026,44 @@ impl GeneratorTaskBuilder<'_> {
     /// function, returning its remapped id. Values are copied fresh each time so
     /// the generator frame is a self-contained, verifier-admitted program; the
     /// runtime memo/dedup collapses any repeated pure computation by identity.
-    fn copy_value(&mut self, id: NodeId) -> NodeId {
+    ///
+    /// A scrutinee/condition that embeds a VIR control region (`If`/`Match`/
+    /// `OrderedMatch`) is not remapped in this zero-dynamic-key checkpoint; it
+    /// yields a typed diagnostic rather than a panic, so no valid source can
+    /// crash the builder.
+    fn copy_value(&mut self, id: NodeId) -> Result<NodeId, Diagnostics> {
         let node = &self.source.nodes[id.0 as usize];
-        assert!(
-            !matches!(
-                node.op,
-                Op::If { .. } | Op::Match { .. } | Op::OrderedMatch { .. }
-            ),
-            "zero-dynamic-key generator scrutinees do not embed VIR control regions",
-        );
+        if matches!(
+            node.op,
+            Op::If { .. } | Op::Match { .. } | Op::OrderedMatch { .. }
+        ) {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                node.span,
+                "generator scrutinee or condition embeds control flow",
+            )));
+        }
         let inputs = node
             .inputs
             .iter()
             .map(|&input| self.copy_value(input))
-            .collect::<Vec<_>>();
-        self.push(
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(self.push(
             node.span,
             node.ty.clone(),
             node.effect,
             inputs,
             node.op.clone(),
-        )
+        ))
     }
 
-    fn lower_body(&mut self, body: &GeneratorBody, span: Span) -> NodeId {
+    fn lower_body(&mut self, body: &GeneratorBody, span: Span) -> Result<NodeId, Diagnostics> {
         for step in &body.steps {
-            self.lower_step(step);
+            self.lower_step(step)?;
         }
-        self.scalar_zero(span)
+        Ok(self.scalar_zero(span))
     }
 
-    fn lower_step(&mut self, step: &GeneratorStep) {
+    fn lower_step(&mut self, step: &GeneratorStep) -> Result<(), Diagnostics> {
         match step {
             GeneratorStep::Yield(site) => {
                 self.push(
@@ -1051,12 +1076,12 @@ impl GeneratorTaskBuilder<'_> {
             }
             GeneratorStep::Match { scrutinee, arms } => {
                 let span = self.source.nodes[scrutinee.0 as usize].span;
-                let scrutinee = self.copy_value(*scrutinee);
+                let scrutinee = self.copy_value(*scrutinee)?;
                 let mut match_arms = Vec::with_capacity(arms.len());
                 for arm in arms {
                     let start = self.nodes.len();
                     for step in &arm.body.steps {
-                        self.lower_step(step);
+                        self.lower_step(step)?;
                     }
                     let output = self.scalar_zero(span);
                     match_arms.push(MatchArm {
@@ -1079,9 +1104,9 @@ impl GeneratorTaskBuilder<'_> {
                 alternative,
             } => {
                 let span = self.source.nodes[condition.0 as usize].span;
-                let condition = self.copy_value(*condition);
-                let consequent = self.lower_control_region(consequent, span);
-                let alternative = self.lower_control_region(alternative, span);
+                let condition = self.copy_value(*condition)?;
+                let consequent = self.lower_control_region(consequent, span)?;
+                let alternative = self.lower_control_region(alternative, span)?;
                 self.push(
                     span,
                     Type::Int,
@@ -1094,18 +1119,23 @@ impl GeneratorTaskBuilder<'_> {
                 );
             }
         }
+        Ok(())
     }
 
-    fn lower_control_region(&mut self, body: &GeneratorBody, span: Span) -> ControlRegion {
+    fn lower_control_region(
+        &mut self,
+        body: &GeneratorBody,
+        span: Span,
+    ) -> Result<ControlRegion, Diagnostics> {
         let start = self.nodes.len();
         for step in &body.steps {
-            self.lower_step(step);
+            self.lower_step(step)?;
         }
         let output = self.scalar_zero(span);
-        ControlRegion {
+        Ok(ControlRegion {
             nodes: self.range_from(start),
             output,
-        }
+        })
     }
 }
 
