@@ -6,10 +6,10 @@ use crate::compiler::{Compiler, CompilerConfig};
 use crate::diagnostic::Diagnostics;
 use crate::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
 use crate::runtime::{
-    ChaosPolicy, Counters, DemandState, Evaluation, Event, EventLog, FailureContext, FailureValue,
-    GeneratorOutcome, Location, MachineError, Runtime, TaskState, ValueId,
+    ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog, FailureContext,
+    FailureValue, GeneratorOutcome, Location, MachineError, Runtime, TaskState, ValueId,
 };
-use crate::vir::{PartitionedRecipe, TraceCheck};
+use crate::vir::{FunctionId, PartitionedRecipe, TraceCheck};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunError {
@@ -126,11 +126,12 @@ pub struct TraceFailure {
 /// checks read it without demanding any operand, issuing any scheduler request,
 /// or interning anything — so a trace check never counts its own reporting work
 /// against the very quantities it inspects.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct TraceSnapshot {
     scheduler_requests: u64,
     memo_entries: u64,
     store_interns: u64,
+    function_calls: BTreeMap<FunctionId, u64>,
 }
 
 impl TraceSnapshot {
@@ -140,10 +141,17 @@ impl TraceSnapshot {
             TraceCheck::SchedulerRequestsAtMost { bound } => (self.scheduler_requests, bound),
             TraceCheck::MemoEntriesAtMost { bound } => (self.memo_entries, bound),
             TraceCheck::StoreInternsAtMost { bound } => (self.store_interns, bound),
+            TraceCheck::FunctionCallsExactly { function, times } => (
+                self.function_calls.get(&function).copied().unwrap_or(0),
+                times,
+            ),
         };
-        // `bound` is a non-negative surface literal; compare in i128 so a large
-        // observed count can never wrap past the ceiling.
-        let passed = i128::from(observed) <= i128::from(bound);
+        // Bounds and exact demand counts are surface literals; compare in i128
+        // so an observed counter cannot wrap past either contract.
+        let passed = match check {
+            TraceCheck::FunctionCallsExactly { .. } => i128::from(observed) == i128::from(bound),
+            _ => i128::from(observed) <= i128::from(bound),
+        };
         CheckRun {
             provenance,
             identity: None,
@@ -508,10 +516,17 @@ fn run_lane(
     // it mutates no runtime state, so a trace check never adds to the scheduler
     // requests, memo entries, or store interns it inspects.
     let counters = runtime.counters();
+    let mut function_calls = BTreeMap::new();
+    for event in runtime.sink().events() {
+        if let EventKind::WeavyFrameEntered { function, .. } = event.kind {
+            *function_calls.entry(function).or_insert(0) += 1;
+        }
+    }
     let snapshot = TraceSnapshot {
         scheduler_requests: counters.scheduler_requests,
         memo_entries: runtime.memo_entries(),
         store_interns: counters.store_interns,
+        function_calls,
     };
     for (provenance, trace) in deferred_traces {
         checks.push(snapshot.evaluate(provenance, trace));

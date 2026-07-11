@@ -1946,6 +1946,11 @@ fn lower_check(
                 bound: trace_bound(call)?,
             }));
         }
+        "demanded_times" => {
+            return Ok(CheckRecipe::Trace(trace_function_calls(
+                nodes, bindings, context, call,
+            )?));
+        }
         _ => {}
     }
     let condition = match call.callee.value.as_str() {
@@ -2037,6 +2042,46 @@ fn trace_bound(call: &ast::Call) -> Result<i64, Diagnostics> {
             format!("number literal `{}`", number.value),
         )
     })
+}
+
+fn trace_function_calls(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::Call,
+) -> Result<TraceCheck, Diagnostics> {
+    check_arity(call, 2)?;
+    let callable = lower_value(nodes, bindings, context, &call.args.args[0])?;
+    let function = nodes
+        .iter()
+        .find(|node| node.id == callable.node)
+        .and_then(|node| match node.op {
+            Op::Closure(function) => Some(function),
+            _ => None,
+        })
+        .ok_or_else(|| {
+            type_mismatch(
+                expr_span(&call.args.args[0]),
+                "a direct one-argument function reference",
+                callable.ty.name(),
+            )
+        })?;
+    let argument = &call.args.args[1];
+    let ast::Expr::Number(number) = argument else {
+        return Err(type_mismatch(
+            expr_span(argument),
+            "an integer demand count literal",
+            "expression",
+        ));
+    };
+    let times = number.value.parse::<i64>().map_err(|_| {
+        type_mismatch(
+            number.span,
+            "Int",
+            format!("number literal `{}`", number.value),
+        )
+    })?;
+    Ok(TraceCheck::FunctionCallsExactly { function, times })
 }
 
 #[derive(Clone)]

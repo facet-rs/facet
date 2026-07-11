@@ -250,6 +250,9 @@ pub enum TraceCheck {
     MemoEntriesAtMost { bound: i64 },
     /// Store interns during the test are at most `bound`.
     StoreInternsAtMost { bound: i64 },
+    /// A callable's verified frame was entered exactly `times` times. This is
+    /// function-identity provenance, independent of scheduler or memo layout.
+    FunctionCallsExactly { function: FunctionId, times: i64 },
 }
 
 /// One arm of a generator [`GeneratorStep::Match`]. The arm body is itself a
