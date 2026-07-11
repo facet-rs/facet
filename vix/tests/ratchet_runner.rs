@@ -5090,3 +5090,344 @@ fn assert_contiguous_sequences(events: &[vix::runtime::Event]) {
         event.sequence == u64::try_from(index).expect("event count fits u64")
     }));
 }
+
+
+
+
+// ---------------------------------------------------------------------------
+// Rung 050 — verifier-visible self-tail loop (auxiliary certificates).
+//
+// Canonical rung 050 stays red until the separately-owned TraceCheck/budget
+// syntax lands. These certificates cover the machine slice it depends on: a
+// terminal self-call lowers to an in-place loop backedge (no Weavy Call, no new
+// frame), ordinary and non-self recursion keep the Weavy Call, and the loop runs
+// identically and cheaply in the interpreter and JIT with no per-iteration
+// scheduler/memo/host machinery.
+//
+// r[impl machine.safepoint.two-classes]
+// ---------------------------------------------------------------------------
+
+const TAIL_LOOP_SOURCE: &str = r#"
+fn count_up(n: Int) where { limit: Int, acc: Int } -> Int {
+    if n == limit { acc } else { count_up(n + 1) where { limit, acc: acc + n } }
+}
+
+#[test]
+fn drive() -> Stream<Check> {
+    yield expect_eq(count_up(0) where { limit: 5, acc: 0 }, 10);
+}
+"#;
+
+/// A tail call whose callee is a *different* function stays an ordinary Weavy
+/// Call: only terminal self-calls become loops.
+const TAIL_TO_OTHER_SOURCE: &str = r#"
+fn inc(n: Int) -> Int { n + 1 }
+fn wrap(n: Int) -> Int { inc(n) }
+
+#[test]
+fn drive() -> Stream<Check> {
+    yield expect_eq(wrap(41), 42);
+}
+"#;
+
+struct LoweredProgram {
+    program: weavy::task::Program,
+    pc_nodes: Vec<Vec<NodeRef>>,
+    frames: Vec<FunctionId>,
+    module: vix::vir::Module,
+}
+
+impl LoweredProgram {
+    fn frame_of(&self, name: &str) -> usize {
+        let id = self
+            .module
+            .functions
+            .iter()
+            .find(|function| function.name == name)
+            .expect("named function exists")
+            .id;
+        self.frames
+            .iter()
+            .position(|frame| *frame == id)
+            .expect("function has a lowered frame")
+    }
+
+    fn code(&self, name: &str) -> &[WeavyOp] {
+        &self.program.fns[self.frame_of(name)].code
+    }
+}
+
+fn lower_program(source: &str) -> LoweredProgram {
+    let module = Compiler::new().compile(source).expect("source compiles").module;
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(&partitioned.islands[0])
+        .expect("source lowers to Weavy");
+    let program = lowered.program().clone();
+    let pc_nodes = lowered.pc_nodes.clone();
+    let frames = attribution_for(&partitioned.islands[0]).functions;
+    LoweredProgram {
+        program,
+        pc_nodes,
+        frames,
+        module,
+    }
+}
+
+/// A backedge is a `Jump` whose target is at or before its own instruction —
+/// the only shape that closes a loop within one function.
+fn backedges(code: &[WeavyOp]) -> Vec<usize> {
+    code.iter()
+        .enumerate()
+        .filter_map(|(pc, op)| match op {
+            WeavyOp::Jump { target } if (*target as usize) <= pc => Some(pc),
+            _ => None,
+        })
+        .collect()
+}
+
+fn has_weavy_call(code: &[WeavyOp]) -> bool {
+    code.iter()
+        .any(|op| matches!(op, WeavyOp::Call { .. } | WeavyOp::CallIndirect { .. }))
+}
+
+/// The standalone one-function Weavy program for a tail-recursive function.
+/// After the transform a tail-recursive function contains no `Call`, so it is
+/// self-contained and can be spawned directly at `FnId(0)`.
+fn standalone_tail_loop(name: &str) -> weavy::task::Program {
+    let lowered = lower_program(TAIL_LOOP_SOURCE);
+    let frame = lowered.frame_of(name);
+    assert!(
+        !has_weavy_call(&lowered.program.fns[frame].code),
+        "a standalone tail loop must contain no Weavy Call",
+    );
+    weavy::task::Program {
+        fns: vec![lowered.program.fns[frame].clone()],
+    }
+}
+
+// r[impl machine.safepoint.two-classes]
+#[test]
+fn tail_self_call_lowers_to_a_loop_backedge() {
+    let lowered = lower_program(TAIL_LOOP_SOURCE);
+    let frame = lowered.frame_of("count_up");
+    let code = &lowered.program.fns[frame].code;
+
+    // The recursion is a loop, not a frame-allocating call.
+    assert!(
+        !has_weavy_call(code),
+        "a terminal self-call must not lower to a Weavy Call",
+    );
+
+    // Exactly one backedge, returning to the loop entry (pc 0).
+    let edges = backedges(code);
+    assert_eq!(edges.len(), 1, "one loop backedge");
+    let backedge_pc = edges[0];
+    assert!(
+        matches!(code[backedge_pc], WeavyOp::Jump { target: 0 }),
+        "the backedge targets the loop entry",
+    );
+
+    // The backedge stays attributed (PC -> VIR node) to the terminal self-call.
+    let owner = lowered.pc_nodes[frame][backedge_pc];
+    let count_up = lowered
+        .module
+        .functions
+        .iter()
+        .find(|function| function.name == "count_up")
+        .expect("count_up exists");
+    assert_eq!(owner.function, count_up.id);
+    let node = count_up
+        .nodes
+        .iter()
+        .find(|node| node.id == owner.node)
+        .expect("backedge attributes to a VIR node");
+    assert!(
+        matches!(node.op, VirOp::Call(callee) if callee == count_up.id),
+        "the backedge attributes to the terminal self-call node",
+    );
+}
+
+// r[impl machine.safepoint.two-classes]
+#[test]
+fn non_tail_self_recursion_keeps_a_weavy_call() {
+    // rung 049: `fib(n - 1) + fib(n - 2)` — the calls are operands of `+`, not
+    // tail values, so each remains a Weavy Call and no loop forms.
+    let lowered = lower_program(RUNG_049);
+    let code = lowered.code("fib");
+    assert!(
+        has_weavy_call(code),
+        "non-tail self-recursion still lowers to a Weavy Call",
+    );
+    assert!(
+        backedges(code).is_empty(),
+        "non-tail self-recursion forms no loop backedge",
+    );
+}
+
+// r[impl machine.safepoint.two-classes]
+#[test]
+fn tail_call_to_another_function_keeps_a_weavy_call() {
+    // `wrap` ends in `inc(n)` — a tail call, but to a different function, so it
+    // keeps the Weavy Call path.
+    let lowered = lower_program(TAIL_TO_OTHER_SOURCE);
+    let code = lowered.code("wrap");
+    assert!(
+        has_weavy_call(code),
+        "a tail call to another function stays a Weavy Call",
+    );
+    assert!(
+        backedges(code).is_empty(),
+        "a non-self tail call forms no loop backedge",
+    );
+}
+
+// The 10,000,000-iteration result, driven through the verified Executable in the
+// lane the environment selects (native by default; the interpreter under
+// WEAVY_JIT=0). Production trace mode keeps the interior pollpoints inert.
+//
+// r[impl machine.safepoint.two-classes]
+#[test]
+fn tail_loop_executes_ten_million_iterations_in_the_selected_lane() {
+    use weavy::exec::Executable;
+    use weavy::task::{FnId, TaskStep, TraceMode};
+
+    let module = Compiler::new()
+        .compile(TAIL_LOOP_SOURCE)
+        .expect("source compiles")
+        .module;
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(&partitioned.islands[0])
+        .expect("source lowers to Weavy");
+    let count_up = module
+        .functions
+        .iter()
+        .find(|function| function.name == "count_up")
+        .expect("count_up exists")
+        .id;
+    let frame = attribution_for(&partitioned.islands[0])
+        .functions
+        .iter()
+        .position(|function| *function == count_up)
+        .expect("count_up has a frame");
+
+    let verified = lowered
+        .program()
+        .clone()
+        .verify(lowered.contract().clone())
+        .expect("lowered tail loop re-verifies");
+    let executable = Executable::with_trace_mode(verified, TraceMode::Production);
+    let mut task = executable
+        .spawn(FnId(frame as u32))
+        .expect("count_up spawns as a verified entry");
+    task.write_entry_i64(0, 0).expect("n");
+    task.write_entry_i64(1, 10_000_000).expect("limit");
+    task.write_entry_i64(2, 0).expect("acc");
+
+    let mut ready: [bool; 0] = [];
+    loop {
+        match task.drive(&mut ready, &[]).expect("tail loop drives") {
+            TaskStep::Done => break,
+            step => panic!("a pure tail loop must not park or yield: {step:?}"),
+        }
+    }
+    assert_eq!(
+        task.result_i64().expect("scalar result"),
+        49_999_995_000_000,
+        "sum of 0..10_000_000 through the self-tail loop",
+    );
+    // The backedge appends no per-iteration instrumentation mark.
+    assert!(
+        !task
+            .trace()
+            .iter()
+            .any(|event| matches!(event, weavy::task::TaskEvent::Mark(_))),
+        "Production-mode tail loop records no instrumentation marks",
+    );
+}
+
+// The interpreter and JIT lanes agree on the 10,000,000-iteration result in one
+// process, and neither records a per-iteration mark.
+//
+// r[impl machine.safepoint.two-classes]
+#[test]
+fn tail_loop_interpreter_and_jit_agree() {
+    use weavy::jit::task_lane::{JitProgram, JitTask};
+    use weavy::task::{FnId, Task, TaskEvent, TraceMode};
+
+    let program = standalone_tail_loop("count_up");
+
+    let mut interpreter = Task::spawn_with_mode(&program, FnId(0), TraceMode::Production);
+    interpreter.write_i64(0, 0);
+    interpreter.write_i64(8, 10_000_000);
+    interpreter.write_i64(16, 0);
+    interpreter.run(&program, &mut [], &[]);
+    let interpreted = interpreter.result_i64();
+    assert_eq!(interpreted, 49_999_995_000_000);
+    assert!(
+        !interpreter
+            .trace
+            .iter()
+            .any(|event| matches!(event, TaskEvent::Mark(_))),
+    );
+
+    let jit = JitProgram::compile_with_mode(&program, TraceMode::Production)
+        .expect("the tail loop compiles to native code on a JIT target");
+    let mut native = JitTask::spawn(&jit, FnId(0));
+    native.write_i64(0, 0);
+    native.write_i64(8, 10_000_000);
+    native.write_i64(16, 0);
+    native.run(&jit, &mut [], &[]);
+    assert_eq!(
+        native.result_i64(),
+        interpreted,
+        "interpreter and JIT agree on the tail-loop result",
+    );
+    assert_eq!(
+        native.trace, interpreter.trace,
+        "interpreter and JIT record the same (mark-free) Production trace",
+    );
+}
+
+// Strongest currently-available counter evidence for the rung's budget intent:
+// the backedge performs no per-iteration machinery, so the task event trace does
+// not grow with iteration count. Canonical rung 050 asserts this through
+// TraceCheck budgets (scheduler_requests/memo_entries), which are separately
+// owned; the machine-level invariant is that the loop's trace length is constant
+// in the iteration count and carries no marks.
+//
+// r[impl machine.safepoint.two-classes]
+#[test]
+fn tail_loop_backedge_adds_no_per_iteration_machinery() {
+    use weavy::task::{FnId, Task, TaskEvent, TraceMode};
+
+    let program = standalone_tail_loop("count_up");
+    let run = |iterations: i64| {
+        let mut task = Task::spawn_with_mode(&program, FnId(0), TraceMode::Production);
+        task.write_i64(0, 0);
+        task.write_i64(8, iterations);
+        task.write_i64(16, 0);
+        task.run(&program, &mut [], &[]);
+        let marks = task
+            .trace
+            .iter()
+            .filter(|event| matches!(event, TaskEvent::Mark(_)))
+            .count();
+        (task.result_i64(), task.trace.len(), marks)
+    };
+
+    let (small_result, small_len, small_marks) = run(1_000);
+    let (large_result, large_len, large_marks) = run(1_000_000);
+
+    assert_eq!(small_result, 499_500);
+    assert_eq!(large_result, 499_999_500_000);
+    assert_eq!(small_marks, 0, "no instrumentation marks at any scale");
+    assert_eq!(large_marks, 0, "no instrumentation marks at any scale");
+    assert_eq!(
+        small_len, large_len,
+        "the tail-loop task trace length is constant in the iteration count",
+    );
+}
