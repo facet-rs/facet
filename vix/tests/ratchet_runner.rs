@@ -2,7 +2,7 @@ use vix::compiler::Compiler;
 use vix::diagnostic::DiagnosticCode;
 use vix::lowering::{LoweringCache, attribution_for, source_map_for};
 use vix::ratchet::run_source;
-use vix::runtime::{DemandState, EventKind, MemoVerdict, TaskState};
+use vix::runtime::{DemandState, EventKind, MemoVerdict, SchemaId, TaskState};
 use vix::surface::{SurfaceParser, ast};
 use vix::vir::{EffectKind, FunctionId, NodeRef, Op as VirOp, Type as VirType, VariantPayload};
 use weavy::task::Op as WeavyOp;
@@ -2382,25 +2382,23 @@ fn rung_025_ordering_is_an_ordinary_matchable_enum() {
 }
 
 #[test]
-fn rung_026_reaches_vir_and_is_red_at_array_lowering() {
-    let error = run_source(RUNG_026)
-        .expect_err("rung 026 is deliberately red at production array lowering");
-    let vix::ratchet::RunError::Diagnostics(diagnostics) = error else {
-        panic!("rung 026 boundary changed: {error:?}");
-    };
-    assert_eq!(diagnostics.entries.len(), 1);
-    let diagnostic = &diagnostics.entries[0];
-    assert_eq!(diagnostic.code, DiagnosticCode::LoweringUnsupported);
-    assert_eq!(
-        &RUNG_026[diagnostic.primary.start as usize..diagnostic.primary.end as usize],
-        "[10, 20, 30]"
-    );
-    assert_eq!(
-        diagnostic.payload,
-        vix::diagnostic::DiagnosticPayload::Unsupported {
-            construct: "array literal lowering is not implemented".to_owned(),
-        }
-    );
+fn rung_026_arrays_run_through_verified_execution_without_publication() {
+    let report = run_source(RUNG_026).expect("rung 026 compiles and runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+        assert!(lane.events.iter().all(|event| match event.kind {
+            EventKind::StoreAlloc { identity, .. } => {
+                identity.schema == SchemaId::named("vix.Check.v1")
+            }
+            _ => true,
+        }));
+    }
 }
 
 #[test]
@@ -2434,7 +2432,7 @@ fn oob() -> Stream<Check> {
 }
 
 #[test]
-fn array_vir_is_general_before_lowering_is_implemented() {
+fn array_vir_wiring_and_dynamic_index_run_through_verified_execution() {
     const SOURCE: &str = r#"
 fn double(x: Int) -> Int {
     x * 2
@@ -2548,6 +2546,23 @@ fn computed_array_and_dynamic_index() -> Stream<Check> {
         &SOURCE[array_length.span.start as usize..array_length.span.end as usize],
         "xs.len()"
     );
+
+    let report = run_source(SOURCE).expect("computed arrays execute through the verified runtime");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+        assert!(lane.events.iter().all(|event| match event.kind {
+            EventKind::StoreAlloc { identity, .. } => {
+                identity.schema == SchemaId::named("vix.Check.v1")
+            }
+            _ => true,
+        }));
+    }
 
     let diagnostics = Compiler::new()
         .compile("#[test] fn empty() -> Stream<Check> { let xs = []; yield expect(true); }")
