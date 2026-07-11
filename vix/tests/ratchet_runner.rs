@@ -48,6 +48,9 @@ const RUNG_033: &str = include_str!("ratchet/033-multiset-conversion.vix");
 const RUNG_034: &str = include_str!("ratchet/034-multiset-filter.vix");
 const RUNG_035: &str = include_str!("ratchet/035-canonical-order.vix");
 const RUNG_036: &str = include_str!("ratchet/036-multiset-fold.vix");
+const RUNG_037: &str = include_str!("ratchet/037-filter-map-flat-map.vix");
+const RUNG_039: &str = include_str!("ratchet/039-indexed-roundtrip.vix");
+const RUNG_040: &str = include_str!("ratchet/040-sorted-by.vix");
 const RUNG_041: &str = include_str!("ratchet/041-maps.vix");
 const RUNG_042: &str = include_str!("ratchet/042-map-overwrite.vix");
 const RUNG_043: &str = include_str!("ratchet/043-map-keys-canonical.vix");
@@ -1379,6 +1382,215 @@ fn rung_036_multiset_fold_runs_through_verified_execution_without_host_calls() {
     assert!(report.passed());
     assert!(report.agrees());
     assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+        if std::env::var("WEAVY_JIT").as_deref() == Ok("0") {
+            assert!(
+                lane.events
+                    .iter()
+                    .filter_map(|event| match event.kind {
+                        EventKind::ExecutionLane { facts, .. } => Some(facts),
+                        _ => None,
+                    })
+                    .all(|facts| matches!(
+                        facts,
+                        vix::runtime::ExecutionFacts {
+                            selected: vix::runtime::ExecutionLaneFact::Interpreter,
+                            fallback: Some(
+                                vix::runtime::ExecutionFallbackFact::DisabledByEnvironment
+                            ),
+                            ..
+                        }
+                    ))
+            );
+        }
+    }
+}
+
+// Rung 037 — filter_map preserves source keys for `Some` rows; flat_map composes
+// outer/inner keys deterministically. Both remain codata recipes until an explicit
+// collect materializes an ordered Map through the verified production path, with no
+// host call and no dense-array substitute for the keyed collection.
+#[test]
+fn rung_037_filter_map_and_flat_map_run_through_verified_production_path() {
+    let module = Compiler::new()
+        .compile(RUNG_037)
+        .expect("rung 037 compiles through the canonical surface");
+    let function = module
+        .functions
+        .iter()
+        .find(|function| function.name == "filter_map_flat_map")
+        .expect("rung 037 test function exists");
+
+    // filter_map is a distinct key-preserving codata recipe: Stream<Int, Int>.
+    let filter_map = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamFilterMap))
+        .expect("filter_map is a distinct codata recipe");
+    assert_eq!(filter_map.ty, VirType::stream(VirType::Int, VirType::Int));
+    assert_eq!(filter_map.effect.kind, EffectKind::Codata);
+
+    // flat_map composes the outer position key with the inner position key into a
+    // tuple key: Stream<(Int, Int), Int>.
+    let flat_map = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamFlatMap))
+        .expect("flat_map is a distinct codata recipe");
+    assert_eq!(
+        flat_map.ty,
+        VirType::stream(
+            VirType::Tuple(vec![VirType::Int, VirType::Int]),
+            VirType::Int,
+        ),
+    );
+    assert_eq!(flat_map.effect.kind, EffectKind::Codata);
+
+    // Every lowered frame stays inside the verified machine: no host calls.
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 037 lowers through verified Weavy execution");
+        assert!(lowered.program().fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+        assert!(
+            lowered
+                .program()
+                .fns
+                .iter()
+                .flat_map(|function| &function.code)
+                .any(|op| matches!(op, WeavyOp::OrderedInsertCommit { .. })),
+            "collect materializes rows through the ordered collection substrate",
+        );
+    }
+
+    let report = run_source(RUNG_037).expect("rung 037 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+// Rung 039 — filtering a position-keyed stream carries the surviving source
+// positions through to the collected Map: `%{0 => 50, 2 => 40, 3 => 20}`. The
+// filter remains a codata recipe until an explicit collect materializes the
+// keyed Map through the verified production path, with no host call and no
+// dense-array substitute that would renumber the survivors.
+#[test]
+fn rung_039_indexed_roundtrip_carries_survivor_positions_through_collect() {
+    let module = Compiler::new()
+        .compile(RUNG_039)
+        .expect("rung 039 compiles through the canonical surface");
+    let function = module
+        .functions
+        .iter()
+        .find(|function| function.name == "indexed_roundtrip")
+        .expect("rung 039 test function exists");
+
+    // The survivor filter is a distinct key-preserving codata recipe over the
+    // position-keyed array stream: Stream<Int, Int>.
+    let filter = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamFilter))
+        .expect("filter remains a distinct codata recipe until collection");
+    assert_eq!(filter.ty, VirType::stream(VirType::Int, VirType::Int));
+    assert_eq!(filter.effect.kind, EffectKind::Codata);
+
+    // Collect materializes the position-keyed Map, not a renumbered dense array.
+    let collect = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamCollect))
+        .expect("collect is the explicit stream materialization boundary");
+    assert_eq!(collect.ty, VirType::map(VirType::Int, VirType::Int));
+
+    // Every lowered frame stays inside the verified machine: no host calls, and
+    // collection materializes rows through the ordered collection substrate.
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 039 lowers through verified Weavy execution");
+        assert!(lowered.program().fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+        assert!(
+            lowered
+                .program()
+                .fns
+                .iter()
+                .flat_map(|function| &function.code)
+                .any(|op| matches!(op, WeavyOp::OrderedInsertCommit { .. })),
+            "collect materializes survivors through the ordered collection substrate",
+        );
+    }
+
+    let report = run_source(RUNG_039).expect("rung 039 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+// Rung 040 — `.sorted where { order: by_key(|x| x.weight) }` sorts the collected
+// values by the caller-supplied `Order<Row>`. `by_key(f)` is an ordinary typed
+// Vix recipe: it compares the structural order of the extracted key `f(x)`, and
+// breaks equal keys by the structural order of the whole source row. The two
+// weight-2 rows "b" and "a" therefore settle as `a` before `b` (structural row
+// order), yielding the unchanged expected order `c, a, b`. Sorting lowers
+// entirely through the verified machine with no host call.
+#[test]
+fn rung_040_sorted_with_order_runs_through_verified_production_path() {
+    let module = Compiler::new()
+        .compile(RUNG_040)
+        .expect("rung 040 compiles through the canonical surface");
+
+    // Every lowered frame stays inside the verified machine: no host calls, and
+    // the caller's Order sorts through the same structural sort substrate as the
+    // zero-argument `.sorted()` path.
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 040 lowers through verified Weavy execution");
+        assert!(lowered.program().fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+    }
+
+    let report = run_source(RUNG_040).expect("rung 040 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
     assert_eq!(report.plain.checks, report.chaos.checks);
     for lane in [&report.plain, &report.chaos] {
         assert!(lane.checks.iter().all(|check| check.passed));

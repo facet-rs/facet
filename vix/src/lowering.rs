@@ -564,6 +564,8 @@ fn type_contains_array(ty: &Type) -> bool {
         Type::Map { key, value } => type_contains_array(key) || type_contains_array(value),
         Type::Set(element) => type_contains_array(element),
         Type::Stream { key, value } => type_contains_array(key) || type_contains_array(value),
+        // An `Order<T>` is never a realized frame value.
+        Type::Order(_) => false,
         Type::Bool | Type::Int | Type::Check | Type::StreamCheck | Type::String => false,
     }
 }
@@ -870,6 +872,11 @@ fn collect_schema_types(ty: &Type, out: &mut Vec<Type>) {
         collect_schema_types(value, out);
         return;
     }
+    // An `Order<T>` recipe never becomes a schema; it is consumed at compile
+    // time and never realized in a frame.
+    if matches!(ty, Type::Order(_)) {
+        return;
+    }
     out.push(ty.clone());
     match ty {
         Type::Function { parameter, result } => {
@@ -905,6 +912,7 @@ fn collect_schema_types(ty: &Type, out: &mut Vec<Type>) {
         }
         Type::Set(element) => collect_schema_types(element, out),
         Type::Stream { .. } => unreachable!("stream schemas return before insertion"),
+        Type::Order(_) => unreachable!("order recipes return before insertion"),
         Type::Bool | Type::Int | Type::Check | Type::StreamCheck | Type::String => {}
     }
 }
@@ -1291,7 +1299,8 @@ impl SemanticEqualityEmitter<'_, '_, '_> {
             | Type::Set(_)
             | Type::Function { .. }
             | Type::StreamCheck
-            | Type::Stream { .. } => {
+            | Type::Stream { .. }
+            | Type::Order(_) => {
                 return Err(lowering_diagnostic(
                     node.span,
                     "equality lowering is not implemented for this VIR type",
@@ -1770,6 +1779,10 @@ impl<'a> ProgramContractBuilder<'a> {
                 WeavyWordKind::Handle(self.schema_for_type(ty, span)?),
             )),
             Type::Stream { .. } => Ok(WeavyRegionShape::default()),
+            Type::Order(_) => Err(lowering_diagnostic(
+                span,
+                "Order<T> has no contract frame shape",
+            )),
         }
     }
 
@@ -1883,6 +1896,10 @@ impl<'a> ProgramContractBuilder<'a> {
             Type::StreamCheck => Err(lowering_diagnostic(
                 span,
                 "Stream<Check> has no contract value shape",
+            )),
+            Type::Order(_) => Err(lowering_diagnostic(
+                span,
+                "Order<T> has no contract value shape",
             )),
         }
     }
@@ -2874,7 +2891,7 @@ impl FunctionLayout {
                             lowering_diagnostic(node.span, "array map result is not an array")
                         })?
                         .clone(),
-                    Op::StreamCollect => Type::Bool,
+                    Op::StreamCollect => stream_collect_call_outcome_type(node, nodes)?,
                     _ => node.ty.clone(),
                 };
                 let ty = ArrayOutcomeAbi::for_value(value_ty).ty;
@@ -3058,6 +3075,92 @@ fn array_contains_temporary_types(node: &Node, nodes: &[Node]) -> Result<Vec<Typ
     Ok(types)
 }
 
+/// The immediate codata recipe feeding a `StreamCollect`, resolved within a
+/// function's node slice.
+fn stream_collect_source<'n>(node: &'n Node, nodes: &'n [Node]) -> Result<&'n Node, Diagnostics> {
+    let stream_id = *node
+        .inputs
+        .first()
+        .ok_or_else(|| lowering_diagnostic(node.span, "stream collect has no source recipe"))?;
+    nodes
+        .iter()
+        .find(|candidate| candidate.id == stream_id)
+        .ok_or_else(|| lowering_diagnostic(node.span, "stream collect source recipe is missing"))
+}
+
+/// Extra persistent temporaries a `StreamCollect` needs beyond the ordered
+/// collection scaffolding. A `filter_map` collect loads each source value and
+/// the optional transform result, so it reserves one slot for each.
+fn stream_collect_extra_temporary_types(
+    node: &Node,
+    nodes: &[Node],
+) -> Result<Vec<Type>, Diagnostics> {
+    if !matches!(node.op, Op::StreamCollect) {
+        return Ok(Vec::new());
+    }
+    let source = stream_collect_source(node, nodes)?;
+    let upstream_value = |span| -> Result<Type, Diagnostics> {
+        let upstream = source
+            .inputs
+            .first()
+            .and_then(|input| nodes.iter().find(|candidate| candidate.id == *input))
+            .ok_or_else(|| lowering_diagnostic(span, "stream transform has no upstream recipe"))?;
+        let (_, source_value) = upstream
+            .ty
+            .stream_types()
+            .ok_or_else(|| lowering_diagnostic(span, "stream transform upstream is not codata"))?;
+        Ok(source_value.clone())
+    };
+    match source.op {
+        Op::StreamFilterMap => {
+            let source_value = upstream_value(node.span)?;
+            let (_, collected) = node.ty.map_types().ok_or_else(|| {
+                lowering_diagnostic(node.span, "filter_map collect result is not a map")
+            })?;
+            Ok(vec![source_value, Type::option(collected.clone())])
+        }
+        Op::StreamFlatMap => {
+            let source_value = upstream_value(node.span)?;
+            let (_, collected) = node.ty.map_types().ok_or_else(|| {
+                lowering_diagnostic(node.span, "flat_map collect result is not a map")
+            })?;
+            // outer value, inner dense array, then the four nested-loop counters
+            // (outer index, outer length, inner index, inner length).
+            Ok(vec![
+                source_value,
+                Type::array(collected.clone()),
+                Type::Int,
+                Type::Int,
+                Type::Int,
+                Type::Int,
+            ])
+        }
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// The value type carried by a `StreamCollect`'s single indirect call outcome.
+/// A `filter_map` transform returns `Option<W>`; every other recipe uses a
+/// boolean predicate outcome (unused when there is no predicate at all).
+fn stream_collect_call_outcome_type(node: &Node, nodes: &[Node]) -> Result<Type, Diagnostics> {
+    let source = stream_collect_source(node, nodes)?;
+    match source.op {
+        Op::StreamFilterMap => {
+            let (_, collected) = node.ty.map_types().ok_or_else(|| {
+                lowering_diagnostic(node.span, "filter_map collect result is not a map")
+            })?;
+            Ok(Type::option(collected.clone()))
+        }
+        Op::StreamFlatMap => {
+            let (_, collected) = node.ty.map_types().ok_or_else(|| {
+                lowering_diagnostic(node.span, "flat_map collect result is not a map")
+            })?;
+            Ok(Type::array(collected.clone()))
+        }
+        _ => Ok(Type::Bool),
+    }
+}
+
 fn collection_temporary_types(
     node: &Node,
     nodes: &[Node],
@@ -3102,6 +3205,7 @@ fn collection_temporary_types(
                 key.as_ref().clone(),
                 value.as_ref().clone(),
             ]);
+            types.extend(stream_collect_extra_temporary_types(node, nodes)?);
             comparison_temporary_types(&key, &mut types);
         }
         Type::Set(element) => {
@@ -3164,7 +3268,8 @@ fn comparison_temporary_types(ty: &Type, out: &mut Vec<Type>) {
         | Type::Set(_)
         | Type::Function { .. }
         | Type::StreamCheck
-        | Type::Stream { .. } => {}
+        | Type::Stream { .. }
+        | Type::Order(_) => {}
     }
 }
 
@@ -4088,7 +4193,7 @@ fn collect_typed_compare_leaves(
                 "function comparison requires stable closure identity",
             ));
         }
-        Type::Check | Type::StreamCheck | Type::Stream { .. } => {
+        Type::Check | Type::StreamCheck | Type::Stream { .. } | Type::Order(_) => {
             return Err(lowering_diagnostic(
                 node.span,
                 "comparison reached a non-orderable VIR type",
@@ -4631,6 +4736,80 @@ fn lower_node(
                 node,
                 &predicate,
                 &predicate_ty,
+                ValueRepresentation::InlineComposite,
+            )?;
+            (Vec::new(), ValueRepresentation::CodataRecipe)
+        }
+        Op::StreamFilterMap => {
+            require_input_count(node, 2)?;
+            let source = input_value(node, values, 0)?;
+            let mapper = input_value(node, values, 1)?;
+            let Type::Stream {
+                value: source_value,
+                ..
+            } = &source.ty
+            else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "stream filter_map source is not keyed codata",
+                ));
+            };
+            let Type::Stream {
+                value: output_value,
+                ..
+            } = &node.ty
+            else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "stream filter_map result is not keyed codata",
+                ));
+            };
+            require_value(node, &source, &source.ty, ValueRepresentation::CodataRecipe)?;
+            let mapper_ty = Type::Function {
+                parameter: Box::new(source_value.as_ref().clone()),
+                result: Box::new(Type::option(output_value.as_ref().clone())),
+            };
+            require_value(
+                node,
+                &mapper,
+                &mapper_ty,
+                ValueRepresentation::InlineComposite,
+            )?;
+            (Vec::new(), ValueRepresentation::CodataRecipe)
+        }
+        Op::StreamFlatMap => {
+            require_input_count(node, 2)?;
+            let source = input_value(node, values, 0)?;
+            let mapper = input_value(node, values, 1)?;
+            let Type::Stream {
+                value: source_value,
+                ..
+            } = &source.ty
+            else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "stream flat_map source is not keyed codata",
+                ));
+            };
+            let Type::Stream {
+                value: output_value,
+                ..
+            } = &node.ty
+            else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "stream flat_map result is not keyed codata",
+                ));
+            };
+            require_value(node, &source, &source.ty, ValueRepresentation::CodataRecipe)?;
+            let mapper_ty = Type::Function {
+                parameter: Box::new(source_value.as_ref().clone()),
+                result: Box::new(Type::array(output_value.as_ref().clone())),
+            };
+            require_value(
+                node,
+                &mapper,
+                &mapper_ty,
                 ValueRepresentation::InlineComposite,
             )?;
             (Vec::new(), ValueRepresentation::CodataRecipe)
@@ -7031,6 +7210,41 @@ fn lower_array_sorted_node(
     Ok(ValueRepresentation::RealizedHandle)
 }
 
+/// How a `StreamCollect` derives each row's value from the source array value.
+/// Every transform keeps the source position as the collected key.
+enum StreamCollectTransform {
+    /// The source value is the collected value.
+    Identity,
+    /// A `V -> Bool` predicate; rows failing it are dropped.
+    Filter(LoweredSlot),
+    /// A `V -> Option<W>` transform; `Some(w)` keeps the source key with value
+    /// `w`, `None` drops the row.
+    FilterMap(LoweredSlot),
+}
+
+/// Resolve the base `ArrayStream` beneath a stream transform recipe. Only a
+/// single transform layer over a dense array stream is supported today.
+fn stream_transform_base<'n>(
+    node: &Node,
+    recipe: &Node,
+    sequence: &SequenceContext<'n, '_, '_>,
+) -> Result<&'n Node, Diagnostics> {
+    let array_stream = sequence
+        .nodes
+        .get(&recipe.inputs[0])
+        .copied()
+        .ok_or_else(|| {
+            lowering_diagnostic(node.span, "stream transform input has no VIR recipe")
+        })?;
+    if !matches!(array_stream.op, Op::ArrayStream) {
+        return Err(lowering_diagnostic(
+            node.span,
+            "nested stream transform source is not implemented",
+        ));
+    }
+    Ok(array_stream)
+}
+
 fn lower_array_stream_collect_node(
     node: &Node,
     dst: FrameRegion,
@@ -7050,32 +7264,36 @@ fn lower_array_stream_collect_node(
         sequence.nodes.get(&stream_id).copied().ok_or_else(|| {
             lowering_diagnostic(node.span, "stream collect input has no VIR recipe")
         })?;
-    let (array_stream, predicate) = match recipe.op {
-        Op::ArrayStream => (recipe, None),
+    if matches!(recipe.op, Op::StreamFlatMap) {
+        return lower_stream_flat_map_collect_node(node, dst, values, sequence, outputs, recipe);
+    }
+    let (array_stream, transform) = match recipe.op {
+        Op::ArrayStream => (recipe, StreamCollectTransform::Identity),
         Op::StreamFilter => {
             require_input_count(recipe, 2)?;
             let upstream = input_value(recipe, values, 0)?;
             require_value(
                 recipe,
                 &upstream,
-                &recipe.ty,
+                &upstream.ty,
                 ValueRepresentation::CodataRecipe,
             )?;
             let predicate = input_value(recipe, values, 1)?;
-            let array_stream = sequence
-                .nodes
-                .get(&recipe.inputs[0])
-                .copied()
-                .ok_or_else(|| {
-                    lowering_diagnostic(node.span, "stream filter input has no VIR recipe")
-                })?;
-            if !matches!(array_stream.op, Op::ArrayStream) {
-                return Err(lowering_diagnostic(
-                    node.span,
-                    "nested stream filter source is not implemented",
-                ));
-            }
-            (array_stream, Some(predicate))
+            let array_stream = stream_transform_base(node, recipe, sequence)?;
+            (array_stream, StreamCollectTransform::Filter(predicate))
+        }
+        Op::StreamFilterMap => {
+            require_input_count(recipe, 2)?;
+            let upstream = input_value(recipe, values, 0)?;
+            require_value(
+                recipe,
+                &upstream,
+                &upstream.ty,
+                ValueRepresentation::CodataRecipe,
+            )?;
+            let mapper = input_value(recipe, values, 1)?;
+            let array_stream = stream_transform_base(node, recipe, sequence)?;
+            (array_stream, StreamCollectTransform::FilterMap(mapper))
         }
         _ => {
             return Err(lowering_diagnostic(
@@ -7097,28 +7315,65 @@ fn lower_array_stream_collect_node(
             "array stream source is not a dense array",
         ));
     };
-    let stream_ty = Type::stream(Type::Int, element.as_ref().clone());
-    require_value(node, stream, &stream_ty, ValueRepresentation::CodataRecipe)?;
+    let element = element.as_ref().clone();
+    require_value(node, stream, &recipe.ty, ValueRepresentation::CodataRecipe)?;
     require_value(
         node,
         &source,
-        &Type::array(element.as_ref().clone()),
+        &Type::array(element.clone()),
         ValueRepresentation::RealizedHandle,
     )?;
-    if let Some(predicate) = &predicate {
-        let predicate_ty = Type::Function {
-            parameter: Box::new(element.as_ref().clone()),
-            result: Box::new(Type::Bool),
-        };
-        require_value(
-            node,
-            predicate,
-            &predicate_ty,
-            ValueRepresentation::InlineComposite,
-        )?;
+    let collection_ty = node.ty.clone();
+    let (collection_key, collection_value) = collection_ty
+        .map_types()
+        .ok_or_else(|| lowering_diagnostic(node.span, "stream collect result is not a map"))?;
+    if collection_key != &Type::Int {
+        return Err(lowering_diagnostic(
+            node.span,
+            "stream collect does not preserve integer source keys",
+        ));
     }
-    let collection_ty = Type::map(Type::Int, element.as_ref().clone());
-    require_node_type(node, collection_ty.clone())?;
+    let collection_value = collection_value.clone();
+    match &transform {
+        StreamCollectTransform::Identity => {
+            if collection_value != element {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "array stream collect changes the source value type",
+                ));
+            }
+        }
+        StreamCollectTransform::Filter(predicate) => {
+            if collection_value != element {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "stream filter collect changes the source value type",
+                ));
+            }
+            let predicate_ty = Type::Function {
+                parameter: Box::new(element.clone()),
+                result: Box::new(Type::Bool),
+            };
+            require_value(
+                node,
+                predicate,
+                &predicate_ty,
+                ValueRepresentation::InlineComposite,
+            )?;
+        }
+        StreamCollectTransform::FilterMap(mapper) => {
+            let mapper_ty = Type::Function {
+                parameter: Box::new(element.clone()),
+                result: Box::new(Type::option(collection_value.clone())),
+            };
+            require_value(
+                node,
+                mapper,
+                &mapper_ty,
+                ValueRepresentation::InlineComposite,
+            )?;
+        }
+    }
 
     let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
         lowering_diagnostic(node.span, "stream collect has no typed outcome scratch")
@@ -7147,9 +7402,23 @@ fn lower_array_stream_collect_node(
         .lowering
         .schemas
         .schema_for(&collection_ty, node.span)?;
-    let element_schema = sequence.lowering.schemas.schema_for(element, node.span)?;
-    let element_width = element_byte_width(element, node.span)?;
+    let element_schema = sequence.lowering.schemas.schema_for(&element, node.span)?;
+    let element_width = element_byte_width(&element, node.span)?;
     let mut temps = ordered_collection_temps(node, &collection_ty, sequence)?;
+    // filter_map loads the source value into its own slot, calls the mapper, and
+    // projects the `Some` payload into the collected value. These two extra
+    // persistent temporaries are provisioned right after the ordered scaffolding
+    // (see `stream_collect_extra_temporary_types`).
+    let filter_map_slots = match &transform {
+        StreamCollectTransform::FilterMap(_) => {
+            let source_value = temps.cursor.take(&element, node.span)?;
+            let mapped = temps
+                .cursor
+                .take(&Type::option(collection_value.clone()), node.span)?;
+            Some((source_value, mapped))
+        }
+        _ => None,
+    };
     let comparison = temps.cursor.checkpoint();
     let cursor = ordered_cursor(node, sequence, 0)?;
 
@@ -7185,8 +7454,14 @@ fn lower_array_stream_collect_node(
         b: scratch.fields[1].byte_offset(),
     });
     outputs.code.jump_if_zero(scratch.condition, done);
+    // Identity and filter keep source == collected, so the loaded value lands
+    // directly in the collected slot. filter_map loads into its own source slot.
+    let load_target = match &filter_map_slots {
+        Some((source_value, _)) => source_value,
+        None => &temps.projected_value,
+    };
     outputs.code.push(WeavyOp::LoadArray {
-        dst: temps.projected_value.region.start().byte_offset(),
+        dst: load_target.region.start().byte_offset(),
         status: scratch.status.byte_offset(),
         array: source.region.start().byte_offset(),
         index: scratch.fields[0].byte_offset(),
@@ -7202,26 +7477,60 @@ fn lower_array_stream_collect_node(
         return_label,
         outputs.code,
     )?;
-    let skip_insert = predicate.as_ref().map(|_| outputs.code.label());
-    if let Some(predicate) = &predicate {
-        let predicate_result = LoweredSlot {
-            region: FrameRegion::for_words(scratch.condition.word_index(), FrameWords::ONE)
-                .expect("outcome condition scratch is one frame word"),
-            region_id: assigned.condition,
-            ty: Type::Bool,
-            representation: ValueRepresentation::Word,
-        };
-        emit_checked_call_indirect(
-            node,
-            predicate,
-            &temps.projected_value,
-            &predicate_result,
-            sequence,
-            outputs,
-        )?;
-        outputs
-            .code
-            .jump_if_zero(scratch.condition, skip_insert.expect("filter skip label"));
+    let skip_insert = match &transform {
+        StreamCollectTransform::Identity => None,
+        StreamCollectTransform::Filter(_) | StreamCollectTransform::FilterMap(_) => {
+            Some(outputs.code.label())
+        }
+    };
+    match (&transform, &filter_map_slots) {
+        (StreamCollectTransform::Identity, _) => {}
+        (StreamCollectTransform::Filter(predicate), _) => {
+            let predicate_result = LoweredSlot {
+                region: FrameRegion::for_words(scratch.condition.word_index(), FrameWords::ONE)
+                    .expect("outcome condition scratch is one frame word"),
+                region_id: assigned.condition,
+                ty: Type::Bool,
+                representation: ValueRepresentation::Word,
+            };
+            emit_checked_call_indirect(
+                node,
+                predicate,
+                &temps.projected_value,
+                &predicate_result,
+                sequence,
+                outputs,
+            )?;
+            outputs
+                .code
+                .jump_if_zero(scratch.condition, skip_insert.expect("filter skip label"));
+        }
+        (StreamCollectTransform::FilterMap(mapper), Some((source_value, mapped))) => {
+            // Map the source value to Option<W>; `None` drops the row, `Some(w)`
+            // projects `w` into the collected slot while the source key is kept.
+            emit_checked_call_indirect(node, mapper, source_value, mapped, sequence, outputs)?;
+            outputs.code.push(WeavyOp::EnumIsVariant {
+                dst: assigned.condition,
+                value: mapped.region_id,
+                variant: OPTION_SOME_VARIANT,
+            });
+            outputs.code.jump_if_zero(
+                scratch.condition,
+                skip_insert.expect("filter_map skip label"),
+            );
+            outputs.code.push(WeavyOp::EnumProjectChecked {
+                dst: temps.projected_value.region_id,
+                value: mapped.region_id,
+                variant: OPTION_SOME_VARIANT,
+                field: 0,
+            });
+        }
+        (StreamCollectTransform::FilterMap(_), None) => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "filter_map collect has no provisioned mapper temporaries",
+            ));
+        }
     }
     let key = LoweredSlot {
         region: FrameRegion::for_words(scratch.fields[0].word_index(), FrameWords::ONE)
@@ -7268,6 +7577,288 @@ fn lower_array_stream_collect_node(
     });
     outputs.code.jump(next);
     outputs.code.bind(done, node.span)?;
+    temps.cursor.drain(node.span)?;
+    temps.cursor.finish(node.span)?;
+    Ok(ValueRepresentation::RealizedHandle)
+}
+
+/// Lower a `flat_map` collect: for each outer source row, call the mapper to
+/// produce a dense inner array, then stream every inner position into the
+/// ordered map under a composed `(outer_key, inner_key)` tuple key. Collisions
+/// (a duplicate composed key) fail through the declared language failure
+/// semantics, exactly like any other keyed insertion.
+fn lower_stream_flat_map_collect_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+    recipe: &Node,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_input_count(recipe, 2)?;
+    let stream = values.get(&node.inputs[0]).ok_or_else(|| {
+        lowering_diagnostic(
+            node.span,
+            "flat_map collect recipe is not topologically prior",
+        )
+    })?;
+    let mapper = input_value(recipe, values, 1)?;
+    let array_stream = stream_transform_base(node, recipe, sequence)?;
+    require_input_count(array_stream, 1)?;
+    let source = values
+        .get(&array_stream.inputs[0])
+        .cloned()
+        .ok_or_else(|| {
+            lowering_diagnostic(
+                node.span,
+                "flat_map source array is not topologically prior",
+            )
+        })?;
+    let Type::Array(element) = &source.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "flat_map source stream is not a dense array",
+        ));
+    };
+    let element = element.as_ref().clone();
+    require_value(node, stream, &recipe.ty, ValueRepresentation::CodataRecipe)?;
+    require_value(
+        node,
+        &source,
+        &Type::array(element.clone()),
+        ValueRepresentation::RealizedHandle,
+    )?;
+    let collection_ty = node.ty.clone();
+    let (collection_key, collection_value) = collection_ty
+        .map_types()
+        .ok_or_else(|| lowering_diagnostic(node.span, "flat_map collect result is not a map"))?;
+    let composed_key = Type::Tuple(vec![Type::Int, Type::Int]);
+    if collection_key != &composed_key {
+        return Err(lowering_diagnostic(
+            node.span,
+            "flat_map does not compose position keys into a pair",
+        ));
+    }
+    let inner_value = collection_value.clone();
+    let mapper_ty = Type::Function {
+        parameter: Box::new(element.clone()),
+        result: Box::new(Type::array(inner_value.clone())),
+    };
+    require_value(
+        node,
+        &mapper,
+        &mapper_ty,
+        ValueRepresentation::InlineComposite,
+    )?;
+
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(node.span, "flat_map collect has no typed outcome scratch")
+    })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(node.span, "flat_map collect has no typed outcome return")
+    })?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(node.span, "flat_map collect has no trace site"))?;
+    let collection_schema = sequence
+        .lowering
+        .schemas
+        .schema_for(&collection_ty, node.span)?;
+    let element_schema = sequence.lowering.schemas.schema_for(&element, node.span)?;
+    let element_width = element_byte_width(&element, node.span)?;
+    let inner_schema = sequence
+        .lowering
+        .schemas
+        .schema_for(&inner_value, node.span)?;
+    let inner_width = element_byte_width(&inner_value, node.span)?;
+
+    let mut temps = ordered_collection_temps(node, &collection_ty, sequence)?;
+    // Persistent temporaries, provisioned in this exact order by
+    // `stream_collect_extra_temporary_types`.
+    let outer_value = temps.cursor.take(&element, node.span)?;
+    let inner_array = temps
+        .cursor
+        .take(&Type::array(inner_value.clone()), node.span)?;
+    let outer_index = temps.cursor.take(&Type::Int, node.span)?;
+    let outer_len = temps.cursor.take(&Type::Int, node.span)?;
+    let inner_index = temps.cursor.take(&Type::Int, node.span)?;
+    let inner_len = temps.cursor.take(&Type::Int, node.span)?;
+    let comparison = temps.cursor.checkpoint();
+    let cursor = ordered_cursor(node, sequence, 0)?;
+
+    outputs.code.push(WeavyOp::OrderedEmpty {
+        dst: dst.start().byte_offset(),
+        collection_schema_ref: i64::from(collection_schema.0),
+    });
+    outputs.code.push(WeavyOp::LoadArrayLen {
+        dst: outer_len.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: outer_index.region.start().byte_offset(),
+        value: 0,
+    });
+    let outer_next = outputs.code.label();
+    let outer_done = outputs.code.label();
+    outputs.code.bind(outer_next, node.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: outer_index.region.start().byte_offset(),
+        b: outer_len.region.start().byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, outer_done);
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: outer_value.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        index: outer_index.region.start().byte_offset(),
+        elem_width: element_width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    // Materialize the inner dense array for this outer row.
+    emit_checked_call_indirect(node, &mapper, &outer_value, &inner_array, sequence, outputs)?;
+    outputs.code.push(WeavyOp::LoadArrayLen {
+        dst: inner_len.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: inner_array.region.start().byte_offset(),
+        elem_schema_ref: i64::from(inner_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: inner_index.region.start().byte_offset(),
+        value: 0,
+    });
+    let inner_next = outputs.code.label();
+    let inner_done = outputs.code.label();
+    outputs.code.bind(inner_next, node.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: inner_index.region.start().byte_offset(),
+        b: inner_len.region.start().byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, inner_done);
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: temps.projected_value.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: inner_array.region.start().byte_offset(),
+        index: inner_index.region.start().byte_offset(),
+        elem_width: inner_width,
+        elem_schema_ref: i64::from(inner_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    // Compose the tuple key (outer_index, inner_index) structurally, so the key
+    // region keeps its declared product shape instead of raw word writes.
+    outputs.code.push(WeavyOp::ProductConstruct {
+        dst: temps.projected_key.region_id,
+        fields: vec![
+            StructuralFieldSource {
+                field: 0,
+                source: outer_index.region_id,
+            },
+            StructuralFieldSource {
+                field: 1,
+                source: inner_index.region_id,
+            },
+        ],
+    });
+    temps.cursor.rewind(comparison, node.span)?;
+    emit_ordered_insert(OrderedInsertLowering {
+        node,
+        site,
+        collection: dst.start(),
+        destination: dst.start(),
+        key: &temps.projected_key,
+        value: Some(&temps.projected_value),
+        key_ty: &composed_key,
+        collection_schema,
+        cursor,
+        candidate: &temps.candidate,
+        ordering: &temps.ordering,
+        ready: &temps.ready,
+        present: &temps.present,
+        duplicate: DuplicateDisposition::LanguageFailure,
+        comparison_checkpoint: comparison,
+        temps: &mut temps.cursor,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code: outputs.code,
+    })?;
+    // inner_index += 1
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 1,
+    });
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: inner_index.region.start().byte_offset(),
+        a: inner_index.region.start().byte_offset(),
+        b: scratch.fields[0].byte_offset(),
+    });
+    outputs.code.jump(inner_next);
+    outputs.code.bind(inner_done, node.span)?;
+    // outer_index += 1
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 1,
+    });
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: outer_index.region.start().byte_offset(),
+        a: outer_index.region.start().byte_offset(),
+        b: scratch.fields[0].byte_offset(),
+    });
+    outputs.code.jump(outer_next);
+    outputs.code.bind(outer_done, node.span)?;
     temps.cursor.drain(node.span)?;
     temps.cursor.finish(node.span)?;
     Ok(ValueRepresentation::RealizedHandle)
@@ -9039,6 +9630,10 @@ fn representation_for_type(ty: &Type, span: Span) -> Result<ValueRepresentation,
         Type::StreamCheck => Err(lowering_diagnostic(
             span,
             "Stream<Check> has no island-interior word representation",
+        )),
+        Type::Order(_) => Err(lowering_diagnostic(
+            span,
+            "Order<T> has no island-interior word representation",
         )),
     }
 }

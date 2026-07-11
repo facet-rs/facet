@@ -350,7 +350,7 @@ impl<'a> TypeResolver<'a> {
             }
             ast::Expr::MethodCall(expression) => {
                 self.resolve_expr_types(&expression.receiver)?;
-                for argument in &expression.args.args {
+                for argument in method_positional_args(expression) {
                     self.resolve_expr_types(argument)?;
                 }
                 if let Some(named) = &expression.named_args {
@@ -1736,17 +1736,12 @@ fn lower_check(
             let right =
                 lower_value_expected(nodes, bindings, context, &call.args.args[1], Some(&left.ty))?;
             require_same_type(&left, &right, call.span)?;
-            push_node(
+            push_equality_condition(
                 nodes,
                 call.span,
-                Type::Bool,
-                EffectFacts::PURE,
-                vec![left.node, right.node],
-                if call.callee.value == "expect_eq" {
-                    Op::Eq
-                } else {
-                    Op::Ne
-                },
+                &left,
+                &right,
+                call.callee.value == "expect_ne",
             )
         }
         "expect_some" | "expect_none" => {
@@ -1845,6 +1840,8 @@ enum PreludeMethod {
     SetLen,
     SetValues,
     StreamFilter,
+    StreamFilterMap,
+    StreamFlatMap,
     StreamCollect,
 }
 
@@ -1985,6 +1982,18 @@ impl PreludeMethodRegistry {
             },
             PreludeMethodEntry {
                 receiver: PreludeReceiverType::Stream,
+                name: "filter_map",
+                arity: 1,
+                method: PreludeMethod::StreamFilterMap,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Stream,
+                name: "flat_map",
+                arity: 1,
+                method: PreludeMethod::StreamFlatMap,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Stream,
                 name: "collect",
                 arity: 0,
                 method: PreludeMethod::StreamCollect,
@@ -2037,7 +2046,14 @@ fn lower_value_expected(
             lower_none(nodes, identifier.span, expected)
         }
         ast::Expr::Identifier(identifier) => {
-            lookup_binding(bindings, &identifier.value, identifier.span)
+            if let Some(value) = bindings.get(&identifier.value) {
+                Ok(value.clone())
+            } else {
+                lower_function_reference(nodes, context, identifier)
+            }
+        }
+        ast::Expr::Call(call) if call.callee.value == "by_key" => {
+            lower_by_key(nodes, bindings, context, call, expected)
         }
         ast::Expr::Call(call) if call.callee.value == "Some" => {
             lower_some(nodes, bindings, context, call, expected)
@@ -2370,6 +2386,13 @@ fn lower_array_index(
     })
 }
 
+/// The positional arguments of a method call. The parenless named-argument
+/// form (`receiver.name where { .. }`) carries no argument list, so it reads as
+/// an empty positional slice.
+fn method_positional_args(call: &ast::MethodCall) -> &[ast::Expr] {
+    call.args.as_ref().map_or(&[][..], |args| &args.args)
+}
+
 fn lower_method_call(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
@@ -2388,10 +2411,15 @@ fn lower_method_call(
             },
         }));
     };
-    if call.args.args.len() != entry.arity {
-        return Err(invalid_arity(call.span, entry.arity, call.args.args.len()));
+    let positional = method_positional_args(call);
+    if positional.len() != entry.arity {
+        return Err(invalid_arity(call.span, entry.arity, positional.len()));
     }
-    if let Some(named) = &call.named_args {
+    // `sorted` is the sole method that accepts a named argument: an explicit
+    // `Order<T>` recipe. Every other method rejects named arguments.
+    if let Some(named) = &call.named_args
+        && !matches!(entry.method, PreludeMethod::ArraySorted)
+    {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             named.span,
             "named method arguments",
@@ -2414,7 +2442,7 @@ fn lower_method_call(
             let Type::Array(element) = &receiver.ty else {
                 unreachable!("array map registry entry has an array receiver")
             };
-            let mapper = match &call.args.args[0] {
+            let mapper = match &positional[0] {
                 ast::Expr::Closure(closure) => {
                     lower_closure_with_parameter(nodes, bindings, context, closure, element)?
                 }
@@ -2422,14 +2450,14 @@ fn lower_method_call(
             };
             let Type::Function { parameter, result } = &mapper.ty else {
                 return Err(type_mismatch(
-                    expr_span(&call.args.args[0]),
+                    expr_span(&positional[0]),
                     format!("fn({}) -> _", element.name()),
                     mapper.ty.name(),
                 ));
             };
             if parameter.as_ref() != element.as_ref() {
                 return Err(type_mismatch(
-                    expr_span(&call.args.args[0]),
+                    expr_span(&positional[0]),
                     format!("fn({}) -> _", element.name()),
                     mapper.ty.name(),
                 ));
@@ -2456,9 +2484,9 @@ fn lower_method_call(
             let Type::Array(element) = &receiver.ty else {
                 unreachable!("array fold registry entry has an array receiver")
             };
-            let initial = lower_value(nodes, bindings, context, &call.args.args[0])?;
+            let initial = lower_value(nodes, bindings, context, &positional[0])?;
             let parameter_ty = Type::Tuple(vec![initial.ty.clone(), element.as_ref().clone()]);
-            let folder = match &call.args.args[1] {
+            let folder = match &positional[1] {
                 ast::Expr::Closure(closure) => {
                     lower_closure_with_parameter(nodes, bindings, context, closure, &parameter_ty)?
                 }
@@ -2466,14 +2494,14 @@ fn lower_method_call(
             };
             let Type::Function { parameter, result } = &folder.ty else {
                 return Err(type_mismatch(
-                    expr_span(&call.args.args[1]),
+                    expr_span(&positional[1]),
                     format!("fn({}) -> {}", parameter_ty.name(), initial.ty.name()),
                     folder.ty.name(),
                 ));
             };
             if parameter.as_ref() != &parameter_ty || result.as_ref() != &initial.ty {
                 return Err(type_mismatch(
-                    expr_span(&call.args.args[1]),
+                    expr_span(&positional[1]),
                     format!("fn({}) -> {}", parameter_ty.name(), initial.ty.name()),
                     folder.ty.name(),
                 ));
@@ -2519,31 +2547,39 @@ fn lower_method_call(
             let Type::Array(element) = &receiver.ty else {
                 unreachable!("array sorted registry entry has an array receiver")
             };
-            if !element.structural_order_is_defined() {
-                return Err(type_mismatch(
-                    call.span,
-                    "Array<T: Ord>",
-                    receiver.ty.name(),
-                ));
+            let element = element.as_ref().clone();
+            match &call.named_args {
+                Some(named) => {
+                    lower_sorted_with_order(nodes, bindings, context, &receiver, &element, named)
+                }
+                None => {
+                    if !element.structural_order_is_defined() {
+                        return Err(type_mismatch(
+                            call.span,
+                            "Array<T: Ord>",
+                            receiver.ty.name(),
+                        ));
+                    }
+                    let ty = receiver.ty.clone();
+                    Ok(LoweredValue {
+                        node: push_node(
+                            nodes,
+                            call.span,
+                            ty.clone(),
+                            EffectFacts::PURE,
+                            vec![receiver.node],
+                            Op::ArraySorted,
+                        ),
+                        ty,
+                    })
+                }
             }
-            let ty = receiver.ty.clone();
-            Ok(LoweredValue {
-                node: push_node(
-                    nodes,
-                    call.span,
-                    ty.clone(),
-                    EffectFacts::PURE,
-                    vec![receiver.node],
-                    Op::ArraySorted,
-                ),
-                ty,
-            })
         }
         PreludeMethod::ArrayAll | PreludeMethod::ArrayAny => {
             let Type::Array(element) = &receiver.ty else {
                 unreachable!("array predicate registry entry has an array receiver")
             };
-            let predicate = match &call.args.args[0] {
+            let predicate = match &positional[0] {
                 ast::Expr::Closure(closure) => {
                     lower_closure_with_parameter(nodes, bindings, context, closure, element)?
                 }
@@ -2551,14 +2587,14 @@ fn lower_method_call(
             };
             let Type::Function { parameter, result } = &predicate.ty else {
                 return Err(type_mismatch(
-                    expr_span(&call.args.args[0]),
+                    expr_span(&positional[0]),
                     format!("fn({}) -> Bool", element.name()),
                     predicate.ty.name(),
                 ));
             };
             if parameter.as_ref() != element.as_ref() || result.as_ref() != &Type::Bool {
                 return Err(type_mismatch(
-                    expr_span(&call.args.args[0]),
+                    expr_span(&positional[0]),
                     format!("fn({}) -> Bool", element.name()),
                     predicate.ty.name(),
                 ));
@@ -2585,8 +2621,8 @@ fn lower_method_call(
                 unreachable!("array contains registry entry has an array receiver")
             };
             let element = element.as_ref().clone();
-            let value = lower_value(nodes, bindings, context, &call.args.args[0])?;
-            require_type(&value, &element, expr_span(&call.args.args[0]))?;
+            let value = lower_value(nodes, bindings, context, &positional[0])?;
+            require_type(&value, &element, expr_span(&positional[0]))?;
             Ok(LoweredValue {
                 node: push_node(
                     nodes,
@@ -2617,8 +2653,8 @@ fn lower_method_call(
             })
         }
         PreludeMethod::IntRem => {
-            let divisor = lower_value(nodes, bindings, context, &call.args.args[0])?;
-            require_type(&divisor, &Type::Int, expr_span(&call.args.args[0]))?;
+            let divisor = lower_value(nodes, bindings, context, &positional[0])?;
+            require_type(&divisor, &Type::Int, expr_span(&positional[0]))?;
             let quotient = push_node(
                 nodes,
                 call.span,
@@ -2654,8 +2690,8 @@ fn lower_method_call(
                 .map_types()
                 .map(|(key, value)| (key.clone(), value.clone()))
                 .ok_or_else(|| type_mismatch(call.span, "Map<K, V>", receiver.ty.name()))?;
-            let lowered_key = lower_value(nodes, bindings, context, &call.args.args[0])?;
-            require_type(&lowered_key, &key, expr_span(&call.args.args[0]))?;
+            let lowered_key = lower_value(nodes, bindings, context, &positional[0])?;
+            require_type(&lowered_key, &key, expr_span(&positional[0]))?;
             let (ty, effect, inputs, op) = match entry.method {
                 PreludeMethod::MapGet => (
                     value,
@@ -2673,8 +2709,8 @@ fn lower_method_call(
                     Op::MapHas,
                 ),
                 PreludeMethod::MapWith => {
-                    let lowered_value = lower_value(nodes, bindings, context, &call.args.args[1])?;
-                    require_type(&lowered_value, &value, expr_span(&call.args.args[1]))?;
+                    let lowered_value = lower_value(nodes, bindings, context, &positional[1])?;
+                    require_type(&lowered_value, &value, expr_span(&positional[1]))?;
                     (
                         receiver.ty.clone(),
                         EffectFacts::PURE,
@@ -2742,8 +2778,8 @@ fn lower_method_call(
                 .set_element()
                 .cloned()
                 .ok_or_else(|| type_mismatch(call.span, "Set<T>", receiver.ty.name()))?;
-            let candidate = lower_value(nodes, bindings, context, &call.args.args[0])?;
-            require_type(&candidate, &element, expr_span(&call.args.args[0]))?;
+            let candidate = lower_value(nodes, bindings, context, &positional[0])?;
+            require_type(&candidate, &element, expr_span(&positional[0]))?;
             Ok(LoweredValue {
                 node: push_node(
                     nodes,
@@ -2791,7 +2827,7 @@ fn lower_method_call(
                 .ty
                 .stream_types()
                 .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
-            let predicate = match &call.args.args[0] {
+            let predicate = match &positional[0] {
                 ast::Expr::Closure(closure) => {
                     lower_closure_with_parameter(nodes, bindings, context, closure, value)?
                 }
@@ -2799,14 +2835,14 @@ fn lower_method_call(
             };
             let Type::Function { parameter, result } = &predicate.ty else {
                 return Err(type_mismatch(
-                    expr_span(&call.args.args[0]),
+                    expr_span(&positional[0]),
                     format!("fn({}) -> Bool", value.name()),
                     predicate.ty.name(),
                 ));
             };
             if parameter.as_ref() != value || result.as_ref() != &Type::Bool {
                 return Err(type_mismatch(
-                    expr_span(&call.args.args[0]),
+                    expr_span(&positional[0]),
                     format!("fn({}) -> Bool", value.name()),
                     predicate.ty.name(),
                 ));
@@ -2820,6 +2856,104 @@ fn lower_method_call(
                     EffectFacts::CODATA,
                     vec![receiver.node, predicate.node],
                     Op::StreamFilter,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::StreamFilterMap => {
+            let (key, value) = receiver
+                .ty
+                .stream_types()
+                .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
+            let key = key.clone();
+            let value = value.clone();
+            let transform = match &positional[0] {
+                ast::Expr::Closure(closure) => {
+                    lower_closure_with_parameter(nodes, bindings, context, closure, &value)?
+                }
+                expression => lower_value_expected(nodes, bindings, context, expression, None)?,
+            };
+            let Type::Function { parameter, result } = &transform.ty else {
+                return Err(type_mismatch(
+                    expr_span(&positional[0]),
+                    format!("fn({}) -> Option<_>", value.name()),
+                    transform.ty.name(),
+                ));
+            };
+            if parameter.as_ref() != &value {
+                return Err(type_mismatch(
+                    expr_span(&positional[0]),
+                    format!("fn({}) -> Option<_>", value.name()),
+                    transform.ty.name(),
+                ));
+            }
+            let output = result.option_inner().ok_or_else(|| {
+                type_mismatch(
+                    expr_span(&positional[0]),
+                    format!("fn({}) -> Option<_>", value.name()),
+                    transform.ty.name(),
+                )
+            })?;
+            let ty = Type::stream(key, output.clone());
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::CODATA,
+                    vec![receiver.node, transform.node],
+                    Op::StreamFilterMap,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::StreamFlatMap => {
+            let (key, value) = receiver
+                .ty
+                .stream_types()
+                .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
+            let key = key.clone();
+            let value = value.clone();
+            let ast::Expr::Closure(closure) = &positional[0] else {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    expr_span(&positional[0]),
+                    "flat_map expects a closure returning an array stream",
+                )));
+            };
+            // The closure is lowered as an array-returning frame `fn(V) -> [W]`;
+            // its inner stream keys are the dense positions of that array.
+            let transform = lower_array_stream_closure(nodes, bindings, context, closure, &value)?;
+            let Type::Function { parameter, result } = &transform.ty else {
+                return Err(type_mismatch(
+                    expr_span(&positional[0]),
+                    format!("fn({}) -> Stream<_, _>", value.name()),
+                    transform.ty.name(),
+                ));
+            };
+            if parameter.as_ref() != &value {
+                return Err(type_mismatch(
+                    expr_span(&positional[0]),
+                    format!("fn({}) -> Stream<_, _>", value.name()),
+                    transform.ty.name(),
+                ));
+            }
+            let inner_value = result.array_element().ok_or_else(|| {
+                type_mismatch(
+                    expr_span(&positional[0]),
+                    format!("fn({}) -> Stream<_, _>", value.name()),
+                    transform.ty.name(),
+                )
+            })?;
+            let composed_key = Type::Tuple(vec![key, Type::Int]);
+            let ty = Type::stream(composed_key, inner_value.clone());
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::CODATA,
+                    vec![receiver.node, transform.node],
+                    Op::StreamFlatMap,
                 ),
                 ty,
             })
@@ -2995,8 +3129,279 @@ fn lower_closure_with_parameter(
     lower_closure_typed(nodes, context, closure, parameter_ty, None)
 }
 
+/// Lower a `flat_map` closure `|v| <array>.stream()` to an array-returning
+/// callable value of type `fn(V) -> [W]`. The terminal `.stream()` is a codata
+/// view that `flat_map` re-derives with fresh position keys at collection time,
+/// so the frame itself returns the dense array.
+fn lower_array_stream_closure(
+    nodes: &mut Vec<Node>,
+    _outer_bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    closure: &ast::ClosureExpr,
+    parameter: &Type,
+) -> Result<LoweredValue, Diagnostics> {
+    let parameter_ty = match &closure.ty {
+        Some(declared) => {
+            let declared = lower_declared_type(declared, context.types)?;
+            if &declared != parameter {
+                return Err(type_mismatch(
+                    type_span(declared_type_ref(closure)),
+                    parameter.name(),
+                    declared.name(),
+                ));
+            }
+            declared
+        }
+        None => parameter.clone(),
+    };
+    lower_closure_typed_with_body_kind(
+        nodes,
+        context,
+        closure,
+        parameter_ty,
+        None,
+        ClosureBodyKind::ArrayStreamSource,
+    )
+}
+
 fn declared_type_ref(closure: &ast::ClosureExpr) -> &ast::Type {
     closure.ty.as_ref().expect("declared closure type")
+}
+
+/// Lower `by_key(|x| <key>)` to an `Order<T>` value.
+///
+/// The subject `T` comes from the expected `Order<T>` type at the call site, so
+/// the key-extraction closure is typed and closed over exactly `T`. The result
+/// is an ordinary Vix recipe: a closure `fn(T) -> (K, T)` that pairs the
+/// extracted key with the source value. Structural comparison of that pair
+/// sorts by `K` and breaks equal keys by the structural order of the source, so
+/// the order is total and equality-consistent. The value is typed `Order<T>`;
+/// its physical representation is the keyed closure a consuming `sorted` reads.
+fn lower_by_key(
+    nodes: &mut Vec<Node>,
+    _bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::Call,
+    expected: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    let Some(Type::Order(subject)) = expected else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "by_key is only valid where an Order<T> value is expected",
+        )));
+    };
+    if let Some(named) = &call.named_args {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            named.span,
+            "named arguments on by_key",
+        )));
+    }
+    check_arity(call, 1)?;
+    let ast::Expr::Closure(closure) = &call.args.args[0] else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            expr_span(&call.args.args[0]),
+            "by_key expects a key-extraction closure",
+        )));
+    };
+    let parameter_ty = match &closure.ty {
+        Some(declared) => {
+            let declared = lower_declared_type(declared, context.types)?;
+            if &declared != subject.as_ref() {
+                return Err(type_mismatch(
+                    type_span(declared_type_ref(closure)),
+                    subject.name(),
+                    declared.name(),
+                ));
+            }
+            declared
+        }
+        None => subject.as_ref().clone(),
+    };
+    let keyed = lower_closure_typed_with_body_kind(
+        nodes,
+        context,
+        closure,
+        parameter_ty,
+        None,
+        ClosureBodyKind::KeyedByParameter,
+    )?;
+    Ok(LoweredValue {
+        node: keyed.node,
+        ty: Type::order(subject.as_ref().clone()),
+    })
+}
+
+/// Lower `array.sorted where { order: <Order<T>> }`.
+///
+/// The caller's `Order<T>` carries a keyed closure `fn(T) -> (K, T)`. Sorting
+/// through it desugars to three recipes that already lower through the verified
+/// machine: map every element to its `(key, element)` pair, structurally sort
+/// the pairs — which orders by key and breaks equal keys by the source value —
+/// then project each pair back to its element. No host call, comparator
+/// callback, or new sort primitive is introduced.
+fn lower_sorted_with_order(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    receiver: &LoweredValue,
+    element: &Type,
+    named: &ast::WhereArgs,
+) -> Result<LoweredValue, Diagnostics> {
+    let [field] = named.fields.as_slice() else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            named.span,
+            "sorted accepts exactly one named argument `order`",
+        )));
+    };
+    if field.name.value != "order" {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            field.name.span,
+            "the only named argument sorted accepts is `order`",
+        )));
+    }
+    let Some(order_expr) = &field.value else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            field.span,
+            "sorted's `order` argument needs an Order<T> value",
+        )));
+    };
+    // Breaking equal keys by the structural order of the source requires the
+    // element type itself to be structurally ordered.
+    if !element.structural_order_is_defined() {
+        return Err(type_mismatch(
+            expr_span(order_expr),
+            "Array<T: Ord>",
+            Type::array(element.clone()).name(),
+        ));
+    }
+    let order_ty = Type::order(element.clone());
+    let order = lower_value_expected(nodes, bindings, context, order_expr, Some(&order_ty))?;
+    require_type(&order, &order_ty, expr_span(order_expr))?;
+
+    // The Order value's physical recipe is its keyed closure `fn(T) -> (K, T)`.
+    let Type::Function { parameter, result } = &nodes[order.node.0 as usize].ty else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            expr_span(order_expr),
+            "sorted's order must be a by_key recipe",
+        )));
+    };
+    if parameter.as_ref() != element {
+        return Err(type_mismatch(
+            expr_span(order_expr),
+            format!("Order<{}>", element.name()),
+            order.ty.name(),
+        ));
+    }
+    let pair_ty = result.as_ref().clone();
+
+    // 1. Pair every element with its extracted key: Array<(K, T)>.
+    let keyed_array_ty = Type::array(pair_ty.clone());
+    let keyed = push_node(
+        nodes,
+        named.span,
+        keyed_array_ty.clone(),
+        EffectFacts::PURE,
+        vec![receiver.node, order.node],
+        Op::ArrayMap {
+            grain: ArrayMapGrain {
+                key: ArrayMapGrainKey::InputPosition,
+                origin: ArrayMapGrainKey::InputPosition,
+            },
+        },
+    );
+
+    // 2. Structurally sort the pairs: orders by key, ties by source value.
+    let sorted_pairs = push_node(
+        nodes,
+        named.span,
+        keyed_array_ty,
+        EffectFacts::PURE,
+        vec![keyed],
+        Op::ArraySorted,
+    );
+
+    // 3. Project each sorted pair back to its element: Array<T>.
+    let project = build_pair_second_closure(nodes, context, &pair_ty, element, named.span)?;
+    let result_ty = Type::array(element.clone());
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            named.span,
+            result_ty.clone(),
+            EffectFacts::PURE,
+            vec![sorted_pairs, project.node],
+            Op::ArrayMap {
+                grain: ArrayMapGrain {
+                    key: ArrayMapGrainKey::InputPosition,
+                    origin: ArrayMapGrainKey::InputPosition,
+                },
+            },
+        ),
+        ty: result_ty,
+    })
+}
+
+/// Build the synthetic closure `|pair| pair.1` of type `fn((K, T)) -> T` that
+/// projects the source value out of a `(key, source)` sort pair.
+fn build_pair_second_closure(
+    nodes: &mut Vec<Node>,
+    context: &ModuleContext<'_>,
+    pair_ty: &Type,
+    element: &Type,
+    span: Span,
+) -> Result<LoweredValue, Diagnostics> {
+    let (id, name) = context.allocate_closure();
+    context.enter_function(name.clone());
+    let mut closure_nodes = Vec::new();
+    let parameter_id = ParameterId(0);
+    let parameter_node = push_node(
+        &mut closure_nodes,
+        span,
+        pair_ty.clone(),
+        EffectFacts::PURE,
+        Vec::new(),
+        Op::Parameter(parameter_id),
+    );
+    let output_node = push_node(
+        &mut closure_nodes,
+        span,
+        element.clone(),
+        EffectFacts::PURE,
+        vec![parameter_node],
+        Op::Project { index: 1 },
+    );
+    let ty = Type::Function {
+        parameter: Box::new(pair_ty.clone()),
+        result: Box::new(element.clone()),
+    };
+    context.insert_closure(Function {
+        id,
+        name,
+        span,
+        parameters: vec![Parameter {
+            id: parameter_id,
+            node: parameter_node,
+            name: "$argument".to_owned(),
+            ty: pair_ty.clone(),
+            kind: ParameterKind::Positional,
+        }],
+        return_type: element.clone(),
+        nodes: closure_nodes,
+        output: Some(output_node),
+        yielded_checks: Vec::new(),
+    });
+    context.leave_function();
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            span,
+            ty.clone(),
+            EffectFacts::PURE,
+            Vec::new(),
+            Op::Closure(id),
+        ),
+        ty,
+    })
 }
 
 fn lower_closure_typed(
@@ -3005,6 +3410,42 @@ fn lower_closure_typed(
     closure: &ast::ClosureExpr,
     parameter_ty: Type,
     expected_result: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    lower_closure_typed_with_body_kind(
+        nodes,
+        context,
+        closure,
+        parameter_ty,
+        expected_result,
+        ClosureBodyKind::Value,
+    )
+}
+
+/// How a closure body's result value is finalized into the closure frame's
+/// return.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum ClosureBodyKind {
+    /// The body value is the closure's return.
+    Value,
+    /// The body is `<array>.stream()`; the closure returns the underlying dense
+    /// array so it lowers as an ordinary array-returning frame. `flat_map`
+    /// streams that array with fresh position keys at collection time.
+    ArrayStreamSource,
+    /// The body extracts a structurally ordered key `K` from the parameter; the
+    /// frame returns the pair `(K, parameter)`. Structural comparison of that
+    /// pair then sorts by the extracted key and breaks equal keys by the
+    /// structural order of the whole source value. This is the recipe an
+    /// `Order<T>` built by `by_key` carries.
+    KeyedByParameter,
+}
+
+fn lower_closure_typed_with_body_kind(
+    nodes: &mut Vec<Node>,
+    context: &ModuleContext<'_>,
+    closure: &ast::ClosureExpr,
+    parameter_ty: Type,
+    expected_result: Option<&Type>,
+    body_kind: ClosureBodyKind,
 ) -> Result<LoweredValue, Diagnostics> {
     let (id, name) = context.allocate_closure();
     context.enter_function(name.clone());
@@ -3050,9 +3491,51 @@ fn lower_closure_typed(
         if let Some(expected_result) = expected_result {
             require_type(&output, expected_result, closure.span)?;
         }
+        // For an array-stream-producing closure, redirect the frame's return to
+        // the dense array underneath the terminal `.stream()`, so the closure is
+        // an ordinary array-returning frame.
+        let (output_node, return_type) = match body_kind {
+            ClosureBodyKind::Value => (output.node, output.ty.clone()),
+            ClosureBodyKind::ArrayStreamSource => {
+                let terminal = &closure_nodes[output.node.0 as usize];
+                if !matches!(terminal.op, Op::ArrayStream) {
+                    return Err(Diagnostics::one(Diagnostic::unsupported(
+                        closure.span,
+                        "flat_map closure body must be an array stream",
+                    )));
+                }
+                let array_node = *terminal.inputs.first().ok_or_else(|| {
+                    Diagnostics::one(Diagnostic::unsupported(
+                        closure.span,
+                        "array stream closure has no source array",
+                    ))
+                })?;
+                let array_ty = closure_nodes[array_node.0 as usize].ty.clone();
+                (array_node, array_ty)
+            }
+            ClosureBodyKind::KeyedByParameter => {
+                if !output.ty.structural_order_is_defined() {
+                    return Err(type_mismatch(
+                        closure.span,
+                        "structurally ordered key",
+                        output.ty.name(),
+                    ));
+                }
+                let pair_ty = Type::Tuple(vec![output.ty.clone(), parameter_ty.clone()]);
+                let pair = push_node(
+                    &mut closure_nodes,
+                    closure.span,
+                    pair_ty.clone(),
+                    EffectFacts::PURE,
+                    vec![output.node, parameter_node],
+                    Op::Tuple,
+                );
+                (pair, pair_ty)
+            }
+        };
         let ty = Type::Function {
             parameter: Box::new(parameter_ty.clone()),
-            result: Box::new(output.ty.clone()),
+            result: Box::new(return_type.clone()),
         };
         Ok::<_, Diagnostics>((
             Function {
@@ -3066,9 +3549,9 @@ fn lower_closure_typed(
                     ty: parameter_ty,
                     kind: ParameterKind::Positional,
                 }],
-                return_type: output.ty,
+                return_type,
                 nodes: closure_nodes,
-                output: Some(output.node),
+                output: Some(output_node),
                 yielded_checks: Vec::new(),
             },
             ty,
@@ -4577,6 +5060,53 @@ fn lower_value_call(
     })
 }
 
+/// Resolve a bare identifier that names a top-level function to a first-class
+/// callable value. A function reference is only well-typed as `fn(T) -> U` when
+/// the function declares exactly one positional parameter and no named ones.
+fn lower_function_reference(
+    nodes: &mut Vec<Node>,
+    context: &ModuleContext<'_>,
+    identifier: &crate::support::Spanned<String>,
+) -> Result<LoweredValue, Diagnostics> {
+    let signature = context
+        .signatures
+        .get(&identifier.value)
+        .ok_or_else(|| unknown_name(identifier.span, &identifier.value))?;
+    if signature.is_test {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            identifier.span,
+            "referencing a test function as a value",
+        )));
+    }
+    let [parameter] = signature.parameters.as_slice() else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            identifier.span,
+            "referencing a function with other than one parameter as a value",
+        )));
+    };
+    if parameter.kind != ParameterKind::Positional {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            identifier.span,
+            "referencing a function with a named parameter as a value",
+        )));
+    }
+    let ty = Type::Function {
+        parameter: Box::new(parameter.ty.clone()),
+        result: Box::new(signature.return_type.clone()),
+    };
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            identifier.span,
+            ty.clone(),
+            EffectFacts::PURE,
+            Vec::new(),
+            Op::Closure(signature.id),
+        ),
+        ty,
+    })
+}
+
 fn lookup_binding(
     bindings: &BTreeMap<String, LoweredValue>,
     name: &str,
@@ -4697,11 +5227,19 @@ fn lower_binary(
         }
         "==" => {
             require_same_type(&left, &right, binary.span)?;
-            (Type::Bool, Op::Eq)
+            let node = push_equality_condition(nodes, binary.span, &left, &right, false);
+            return Ok(LoweredValue {
+                node,
+                ty: Type::Bool,
+            });
         }
         "!=" => {
             require_same_type(&left, &right, binary.span)?;
-            (Type::Bool, Op::Ne)
+            let node = push_equality_condition(nodes, binary.span, &left, &right, true);
+            return Ok(LoweredValue {
+                node,
+                ty: Type::Bool,
+            });
         }
         "<=>" => {
             require_same_type(&left, &right, binary.span)?;
@@ -4832,6 +5370,93 @@ fn lower_bool_constant(nodes: &mut Vec<Node>, span: Span, value: bool) -> Lowere
         ),
         ty: Type::Bool,
     }
+}
+
+/// Build the equality condition for two same-typed values.
+///
+/// Ordered collections have structural value identity, but their VIR handles
+/// are opaque: two maps built by different recipes (a `collect` and a literal)
+/// share no handle. Structural equality desugars to comparison of the canonical
+/// projections that already lower through the verified machine — a map is equal
+/// iff its canonical key array and canonical value array both match, a set iff
+/// its canonical element array matches. Scalars and structural aggregates keep
+/// the direct `Op::Eq`/`Op::Ne` primitive. `negate` requests the `!=` sense.
+fn push_equality_condition(
+    nodes: &mut Vec<Node>,
+    span: Span,
+    left: &LoweredValue,
+    right: &LoweredValue,
+    negate: bool,
+) -> NodeId {
+    let equal = match &left.ty {
+        Type::Map { key, value } => {
+            let key_array = Type::array(key.as_ref().clone());
+            let value_array = Type::array(value.as_ref().clone());
+            let keys_left = push_project(nodes, span, left.node, key_array.clone(), Op::MapKeys);
+            let keys_right = push_project(nodes, span, right.node, key_array, Op::MapKeys);
+            let keys_equal = push_eq(nodes, span, keys_left, keys_right);
+            // The value projections and their comparison form the `then` region
+            // of a short-circuiting `keys_equal && values_equal`.
+            let values_start = nodes.len();
+            let values_left =
+                push_project(nodes, span, left.node, value_array.clone(), Op::MapValues);
+            let values_right = push_project(nodes, span, right.node, value_array, Op::MapValues);
+            let values_equal = push_eq(nodes, span, values_left, values_right);
+            let consequent = control_region(nodes, values_start, values_equal);
+            let alternative_start = nodes.len();
+            let alternative_value = lower_bool_constant(nodes, span, false);
+            let alternative = control_region(nodes, alternative_start, alternative_value.node);
+            push_node(
+                nodes,
+                span,
+                Type::Bool,
+                EffectFacts::PURE,
+                vec![keys_equal],
+                Op::If {
+                    consequent,
+                    alternative,
+                },
+            )
+        }
+        Type::Set(element) => {
+            let element_array = Type::array(element.as_ref().clone());
+            let left_values =
+                push_project(nodes, span, left.node, element_array.clone(), Op::SetValues);
+            let right_values = push_project(nodes, span, right.node, element_array, Op::SetValues);
+            push_eq(nodes, span, left_values, right_values)
+        }
+        _ => {
+            return push_node(
+                nodes,
+                span,
+                Type::Bool,
+                EffectFacts::PURE,
+                vec![left.node, right.node],
+                if negate { Op::Ne } else { Op::Eq },
+            );
+        }
+    };
+    if negate {
+        let alternative = lower_bool_constant(nodes, span, false);
+        push_eq(nodes, span, equal, alternative.node)
+    } else {
+        equal
+    }
+}
+
+fn push_project(nodes: &mut Vec<Node>, span: Span, source: NodeId, ty: Type, op: Op) -> NodeId {
+    push_node(nodes, span, ty, EffectFacts::PURE, vec![source], op)
+}
+
+fn push_eq(nodes: &mut Vec<Node>, span: Span, left: NodeId, right: NodeId) -> NodeId {
+    push_node(
+        nodes,
+        span,
+        Type::Bool,
+        EffectFacts::PURE,
+        vec![left, right],
+        Op::Eq,
+    )
 }
 
 #[derive(Clone, Copy)]
