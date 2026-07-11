@@ -1121,10 +1121,8 @@ fn rung_031_generator_task_is_verified_control_and_publish_only() {
         "generator program runs real variant control",
     );
     assert!(
-        !ops.iter().any(|op| matches!(
-            op,
-            WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }
-        )),
+        !ops.iter()
+            .any(|op| matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. })),
         "generator program uses no host/legacy path",
     );
 }
@@ -1133,7 +1131,10 @@ fn rung_031_generator_task_is_verified_control_and_publish_only() {
 fn rung_031_conditional_generator_executes_taken_sites() {
     let report = run_source(RUNG_031)
         .expect("rung 031 conditional generator executes through the provenance-keyed runtime");
-    assert!(report.agrees(), "plain and chaos agree on the check family: {report:?}");
+    assert!(
+        report.agrees(),
+        "plain and chaos agree on the check family: {report:?}"
+    );
     assert!(report.passed(), "every taken check passes: {report:?}");
     assert_eq!(
         report.plain.checks.len(),
@@ -1167,7 +1168,10 @@ fn taken_none() -> Stream<Check> {
 "#;
     let report = run_source(SOURCE).expect("taken-None generator executes through the runtime");
     assert!(report.agrees(), "plain and chaos agree: {report:?}");
-    assert!(report.passed(), "the None arm and the unconditional site pass: {report:?}");
+    assert!(
+        report.passed(),
+        "the None arm and the unconditional site pass: {report:?}"
+    );
     assert_eq!(
         report.plain.checks.len(),
         2,

@@ -652,8 +652,13 @@ impl<S: EventSink> Runtime<S> {
             let count = match task.publication_count() {
                 Ok(count) => count,
                 Err(fault) => {
-                    let error =
-                        self.task_fault(MachineOperation::Result, fault, lowered, attribution, None);
+                    let error = self.task_fault(
+                        MachineOperation::Result,
+                        fault,
+                        lowered,
+                        attribution,
+                        None,
+                    );
                     return Err(Box::new(self.terminate_machine_fault(
                         task_id,
                         lowered.demand_key,

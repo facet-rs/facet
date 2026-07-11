@@ -3538,9 +3538,7 @@ fn lower_node_sequence(
             )?,
             Op::Compare => lower_compare_node(node, dst, dst_region_id, values, sequence, outputs)?,
             Op::Eq | Op::Ne => lower_equality_node(node, dst, values, sequence, outputs)?,
-            Op::PublishSite(site) => {
-                lower_publish_site_node(node, dst, *site, sequence, outputs)?
-            }
+            Op::PublishSite(site) => lower_publish_site_node(node, dst, *site, sequence, outputs)?,
             _ => {
                 let mut lowering = NodeLoweringContext {
                     function: sequence.function,

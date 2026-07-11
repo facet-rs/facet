@@ -16,14 +16,23 @@ pub enum RunError {
     Machine(Box<MachineError>),
     /// A generator published a provenance selector that is not a representable
     /// static site index.
-    MalformedSiteKey { test: String, site: u64 },
+    MalformedSiteKey {
+        test: String,
+        site: u64,
+    },
     /// A generator published a selector that does not name a static yield site
     /// of the test.
-    UnknownSiteKey { test: String, site: u64 },
+    UnknownSiteKey {
+        test: String,
+        site: u64,
+    },
     /// A generator published the same site more than once. The zero-dynamic-key
     /// base case admits at most one occurrence per site; repeated multiplicity
     /// requires the dynamic-key tail (055-059).
-    DuplicateSiteKey { test: String, site: u32 },
+    DuplicateSiteKey {
+        test: String,
+        site: u32,
+    },
 }
 
 /// The stable provenance key of a published check: the yield site's selector

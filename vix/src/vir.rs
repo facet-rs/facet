@@ -976,7 +976,14 @@ struct GeneratorTaskBuilder<'a> {
 }
 
 impl GeneratorTaskBuilder<'_> {
-    fn push(&mut self, span: Span, ty: Type, effect: EffectFacts, inputs: Vec<NodeId>, op: Op) -> NodeId {
+    fn push(
+        &mut self,
+        span: Span,
+        ty: Type,
+        effect: EffectFacts,
+        inputs: Vec<NodeId>,
+        op: Op,
+    ) -> NodeId {
         let id = NodeId(u32::try_from(self.nodes.len()).expect("generator node index fits u32"));
         self.nodes.push(Node {
             id,
@@ -1017,7 +1024,13 @@ impl GeneratorTaskBuilder<'_> {
             .iter()
             .map(|&input| self.copy_value(input))
             .collect::<Vec<_>>();
-        self.push(node.span, node.ty.clone(), node.effect, inputs, node.op.clone())
+        self.push(
+            node.span,
+            node.ty.clone(),
+            node.effect,
+            inputs,
+            node.op.clone(),
+        )
     }
 
     fn lower_body(&mut self, body: &GeneratorBody, span: Span) -> NodeId {
