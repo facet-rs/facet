@@ -378,6 +378,46 @@ fn tight_rss() -> Stream<Check> {
     assert!(!outcome.passed(), "an over-RSS run is red: {outcome:?}");
 }
 
+/// The readiness boundary: a workload with a large preparation cost and a
+/// trivial execution passes even under a wall budget far smaller than its
+/// preparation time. Preparation — parsing, checking, lowering, verification,
+/// and native compilation — is fixed compiler/JIT baseline, not the tested
+/// program's work, so the wall clock must not start until it is complete. A
+/// runner that starts timing at spawn charges this preparation and kills the
+/// run over the wall; that regression is exactly what this certificate isolates.
+#[test]
+fn preparation_time_is_excluded_from_the_wall_budget() {
+    const SOURCE: &str = r#"
+#[test { budget_wall: 150ms }]
+fn tight_wall() -> Stream<Check> {
+    yield expect(true);
+}
+"#;
+    let budget = budget_of(SOURCE);
+    let outcome = run_under_budget(
+        Path::new(CHILD_EXE),
+        &budget,
+        // Preparation spends far longer than the 150ms wall budget; execution is
+        // instant. Only a readiness-aware runner keeps this within budget.
+        &Workload::SlowPrepare {
+            prepare_ns: 600_000_000,
+        },
+    );
+    assert!(
+        outcome.passed(),
+        "preparation cost does not consume the wall budget: {outcome:?}",
+    );
+    assert!(
+        matches!(
+            outcome,
+            BudgetOutcome::Within {
+                report: vix::budget::ChildReport::Completed
+            }
+        ),
+        "a slow-to-prepare, fast-to-execute workload completes within budget: {outcome:?}",
+    );
+}
+
 /// A unit-bearing literal is accepted only inside an attribute value. In an
 /// ordinary value position it is a typed error, never a silently-parsed number.
 #[test]

@@ -204,9 +204,21 @@ impl RatchetReport {
     }
 }
 
-/// Run every declared test twice. The chaos lane discards the first running
-/// task at an edge safepoint and must publish the same identities.
+/// A source that is parsed, checked, lowered, verified, and natively compiled,
+/// ready to execute. Every island the two lanes will demand is already lowered —
+/// and therefore JIT-compiled, since [`crate::lowering::LoweringArtifact`] holds
+/// an eagerly-compiled [`weavy::exec::Executable`] — and cached, so
+/// [`PreparedRun::execute`] performs no compilation and does only the asymptotic
+/// evaluation a budget is meant to gate.
 ///
+/// This is the readiness boundary the outer budget runner measures against:
+/// preparation is a fixed, O(1) compiler/JIT cost that is not the tested
+/// program's work, so it is completed *before* the wall clock starts.
+pub struct PreparedRun {
+    compilation: crate::compiler::Compilation,
+    cache: LoweringCache,
+}
+
 /// r[impl machine.scheduler.chaos-kill-oracle]
 /// r[impl machine.scheduler.replay-is-semantics]
 pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
@@ -221,24 +233,79 @@ pub fn run_source_with_config(
     source: &str,
     config: CompilerConfig,
 ) -> Result<RatchetReport, RunError> {
-    let compilation = Compiler::with_config(config).compile(source)?;
+    prepare_source_with_config(source, config)?.execute()
+}
 
+/// Parse, check, lower, verify, and natively compile `source` without running
+/// any test. When this returns `Ok`, all compilation is complete and the
+/// returned [`PreparedRun`] is ready to execute with no further compilation.
+///
+/// r[impl machine.scheduler.replay-is-semantics]
+pub fn prepare_source(source: &str) -> Result<PreparedRun, RunError> {
+    prepare_source_with_config(source, CompilerConfig::default())
+}
+
+/// The configurable form of [`prepare_source`]. This keeps shape-selection
+/// experiments on the same readiness boundary as the ordinary production path.
+pub fn prepare_source_with_config(
+    source: &str,
+    config: CompilerConfig,
+) -> Result<PreparedRun, RunError> {
+    let compilation = Compiler::with_config(config).compile(source)?;
     let mut cache = LoweringCache::default();
 
-    let plain = run_lane(&compilation.module, &mut cache, ChaosPolicy::default())?;
-    let chaos = run_lane(
-        &compilation.module,
-        &mut cache,
-        ChaosPolicy {
-            kill_first_running_task: true,
-        },
-    )?;
-    Ok(RatchetReport {
-        warnings: compilation.warnings,
-        plain,
-        chaos,
-        lowering_cache: cache.counters(),
-    })
+    // Lower every island the lanes will demand so its native code is compiled
+    // and cached now, before execution. `get_or_lower` keys on canonical recipe
+    // content, so these exact entries are reused as cache hits during execution.
+    for test in &compilation.module.tests {
+        // A conditional generator runs as its own verified task island.
+        if test.generator.has_conditional_sites() {
+            let generator = compilation.module.generator_task_island(test)?;
+            cache.get_or_lower(&generator)?;
+        }
+        // Every value-check island. A trace site reads the frozen counter
+        // snapshot and lowers nothing, so it is skipped here.
+        let partitioned = compilation.module.partition_test(test);
+        for site in &partitioned.sites {
+            if let PartitionedRecipe::Value { island } = &site.recipe {
+                cache.get_or_lower(&partitioned.islands[*island])?;
+            }
+        }
+    }
+
+    Ok(PreparedRun { compilation, cache })
+}
+
+impl PreparedRun {
+    /// Run every declared test twice over the warm cache. The chaos lane discards
+    /// the first running task at an edge safepoint and must publish the same
+    /// identities. No compilation happens here: every `get_or_lower` is a hit.
+    ///
+    /// r[impl machine.scheduler.chaos-kill-oracle]
+    /// r[impl machine.scheduler.replay-is-semantics]
+    pub fn execute(mut self) -> Result<RatchetReport, RunError> {
+        let plain = run_lane(&self.compilation.module, &mut self.cache, ChaosPolicy::default())?;
+        let chaos = run_lane(
+            &self.compilation.module,
+            &mut self.cache,
+            ChaosPolicy {
+                kill_first_running_task: true,
+            },
+        )?;
+        Ok(RatchetReport {
+            warnings: self.compilation.warnings,
+            plain,
+            chaos,
+            lowering_cache: self.cache.counters(),
+        })
+    }
+}
+
+/// Prepare and execute `source` in one call: the ordinary in-process production
+/// path. The outer budget runner instead splits these two phases across the
+/// readiness handshake so only execution is measured.
+pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
+    prepare_source(source)?.execute()
 }
 
 /// Evaluate one value-check island as an ordinary pure demand and record its
