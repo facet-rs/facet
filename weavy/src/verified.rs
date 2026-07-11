@@ -2516,7 +2516,7 @@ impl Verifier<'_> {
                 }
             }
             Op::Await { dst, input } => {
-                self.require_status_read(
+                self.require_scalar_read(
                     function_id,
                     pc,
                     frame,
