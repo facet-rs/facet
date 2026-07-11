@@ -39,6 +39,9 @@ const RUNG_041: &str = include_str!("ratchet/041-maps.vix");
 const RUNG_042: &str = include_str!("ratchet/042-map-overwrite.vix");
 const RUNG_043: &str = include_str!("ratchet/043-map-keys-canonical.vix");
 const RUNG_044: &str = include_str!("ratchet/044-sets.vix");
+const RUNG_048: &str = include_str!("ratchet/048-closures-capture.vix");
+const RUNG_049: &str = include_str!("ratchet/049-recursion.vix");
+const RUNG_052: &str = include_str!("ratchet/052-higher-order.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
 const RUNG_145: &str = include_str!("ratchet/145-push.reject.vix");
 const RUNG_146: &str = include_str!("ratchet/146-insert.reject.vix");
@@ -2438,6 +2441,103 @@ fn rung_026_arrays_run_through_verified_execution_without_publication() {
                     ))
             );
         }
+    }
+}
+
+#[test]
+fn rung_048_closures_capture_outer_values_by_value() {
+    let module = Compiler::new()
+        .compile(RUNG_048)
+        .expect("rung 048 compiles");
+    // The capturing closure lowers to a callable value carrying its environment.
+    assert_eq!(
+        module
+            .functions
+            .iter()
+            .flat_map(|function| &function.nodes)
+            .filter(|node| matches!(node.op, VirOp::Closure(_)))
+            .count(),
+        1
+    );
+    let report = run_source(RUNG_048).expect("rung 048 compiles and runs");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+    }
+}
+
+#[test]
+fn rung_049_plain_recursion_runs_through_verified_execution() {
+    let report = run_source(RUNG_049).expect("rung 049 compiles and runs");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+    }
+}
+
+#[test]
+fn rung_052_functions_are_first_class_arguments_and_results() {
+    let module = Compiler::new()
+        .compile(RUNG_052)
+        .expect("rung 052 compiles");
+    // `twice` takes a function and returns a function.
+    let twice = module
+        .functions
+        .iter()
+        .find(|function| function.name == "twice")
+        .expect("rung 052 declares twice");
+    let VirType::Function { parameter, result } = &twice.parameters[0].ty else {
+        panic!("twice's parameter is a function value");
+    };
+    assert_eq!(parameter.as_ref(), &VirType::Int);
+    assert_eq!(result.as_ref(), &VirType::Int);
+    assert!(matches!(twice.return_type, VirType::Function { .. }));
+
+    // The returned closure captures the callable argument, so `twice`
+    // constructs a closure whose environment is non-empty.
+    let returned_closure = twice
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::Closure(_)))
+        .expect("twice returns a closure value");
+    assert!(
+        !returned_closure.inputs.is_empty(),
+        "the returned closure captures its callable argument as an environment input"
+    );
+
+    // Direct invocation and Array.map both invoke closure values indirectly.
+    assert!(
+        module
+            .functions
+            .iter()
+            .flat_map(|function| &function.nodes)
+            .any(|node| matches!(node.op, VirOp::CallValue)),
+        "higher-order values are invoked through CallValue"
+    );
+
+    let report = run_source(RUNG_052).expect("rung 052 compiles and runs");
+    assert!(report.warnings.entries.is_empty());
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert!(lane.events.iter().all(|event| match event.kind {
+            EventKind::StoreAlloc { identity, .. } => {
+                identity.schema == SchemaId::named("vix.Check.v1")
+            }
+            _ => true,
+        }));
     }
 }
 
