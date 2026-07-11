@@ -1741,7 +1741,9 @@ impl Verifier<'_> {
                         .iter()
                         .zip(&call.entries)
                         .all(|(region, expected)| &contract.frame.regions[*region] == expected);
-                let result_matches = contract.frame.regions[result] == call.result;
+                let concrete_result = &contract.frame.regions[result];
+                let result_matches = concrete_result.shape == call.result.shape
+                    && concrete_result.value_shape == call.result.value_shape;
                 if !entries_match || !result_matches {
                     return Err(self.function(
                         function_id,
@@ -3738,7 +3740,7 @@ mod tests {
     }
 
     fn compare_program(byte_comparable: bool) -> (Program, ProgramContract) {
-        let schema = SchemaRef(0);
+        let string_schema = SchemaRef(0);
         (
             Program {
                 fns: vec![function(
@@ -3757,8 +3759,8 @@ mod tests {
                 functions: vec![function_contract(
                     3,
                     vec![
-                        word_region(0, WordKind::Handle(schema)),
-                        word_region(8, WordKind::Handle(schema)),
+                        word_region(0, WordKind::Handle(string_schema)),
+                        word_region(8, WordKind::Handle(string_schema)),
                         word_region(16, WordKind::Scalar),
                     ],
                     &[0, 1],
@@ -3767,7 +3769,7 @@ mod tests {
                 )],
                 calls: vec![],
                 schemas: vec![SchemaContract {
-                    inline: RegionShape::word(WordKind::Handle(schema)),
+                    inline: RegionShape::word(WordKind::Handle(string_schema)),
                     value_shape: None,
                     payload: PayloadKind::OpaqueBytes { byte_comparable },
                 }],
@@ -4258,7 +4260,7 @@ mod tests {
                 value_shapes: vec![],
             },
         );
-        let mismatched = (
+        let result_placement = (
             Program {
                 fns: vec![function(1, vec![Op::Ret { src: 0, size: 8 }])],
             },
@@ -4273,6 +4275,26 @@ mod tests {
                 calls: vec![CallContract {
                     entries: vec![],
                     result: word_region(8, WordKind::Scalar),
+                }],
+                schemas: vec![],
+                value_shapes: vec![],
+            },
+        );
+        let result_shape_mismatch = (
+            Program {
+                fns: vec![function(1, vec![Op::Ret { src: 0, size: 8 }])],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    1,
+                    vec![word_region(0, WordKind::Scalar)],
+                    &[],
+                    0,
+                    Some(0),
+                )],
+                calls: vec![CallContract {
+                    entries: vec![],
+                    result: word_region(0, WordKind::Status),
                 }],
                 schemas: vec![],
                 value_shapes: vec![],
@@ -4345,9 +4367,9 @@ mod tests {
                 ),
             },
             InvalidCase {
-                name: "function contract",
-                program: mismatched.0,
-                contract: mismatched.1,
+                name: "function contract result shape",
+                program: result_shape_mismatch.0,
+                contract: result_shape_mismatch.1,
                 expected: function_error(ProgramDefect::FunctionCallContractMismatch {
                     contract: CallContractId(0),
                 }),
@@ -4380,6 +4402,10 @@ mod tests {
             let error = case.program.verify(case.contract).expect_err(case.name);
             assert_eq!(error, case.expected, "{}", case.name);
         }
+        result_placement
+            .0
+            .verify(result_placement.1)
+            .expect("function call contracts ignore only concrete result placement");
     }
 
     #[test]
@@ -5547,6 +5573,44 @@ mod tests {
                 case.name
             );
         }
+    }
+
+    #[test]
+    fn copy_value_accepts_exact_non_structural_handle_regions() {
+        let string_schema = SchemaRef(0);
+        Program {
+            fns: vec![function(
+                2,
+                vec![
+                    Op::CopyValue {
+                        dst: RegionId(1),
+                        src: RegionId(0),
+                    },
+                    Op::Ret { src: 8, size: 8 },
+                ],
+            )],
+        }
+        .verify(ProgramContract {
+            functions: vec![function_contract(
+                2,
+                vec![
+                    word_region(0, WordKind::Handle(string_schema)),
+                    word_region(8, WordKind::Handle(string_schema)),
+                ],
+                &[],
+                1,
+                None,
+            )],
+            calls: vec![],
+            schemas: vec![schema(
+                RegionShape::word(WordKind::Handle(string_schema)),
+                PayloadKind::OpaqueBytes {
+                    byte_comparable: true,
+                },
+            )],
+            value_shapes: vec![],
+        })
+        .expect("CopyValue carries one exact non-structural handle value");
     }
 
     #[test]

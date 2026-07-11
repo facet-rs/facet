@@ -1887,6 +1887,43 @@ fn rung_021_closure_parameters_destructure_callable_values() {
             .count(),
         2
     );
+    for closure in partitioned.islands[0]
+        .nodes
+        .iter()
+        .filter_map(|node| match node.op {
+            VirOp::Closure(target) => Some((node.id, target)),
+            _ => None,
+        })
+    {
+        let (node, target) = closure;
+        let region = partitioned.islands[0]
+            .nodes
+            .iter()
+            .position(|candidate| candidate.id == node)
+            .expect("closure node has a canonical contract region");
+        let shape = lowered.contract.functions[0].frame.regions[region]
+            .value_shape
+            .expect("closure node has a structural value shape");
+        let ValueShapeKind::Product { fields } =
+            &lowered.contract.value_shapes[shape.0 as usize].kind
+        else {
+            panic!("closure is a product-shaped callable value");
+        };
+        let [WordKind::Callable(signature)] = fields[0].shape.words[0].as_slice() else {
+            panic!("closure field zero is its callable signature");
+        };
+        let target_frame = partitioned.islands[0]
+            .callees
+            .iter()
+            .position(|function| function.id == target)
+            .expect("closure target is in the island")
+            + 1;
+        assert_eq!(
+            Some(*signature),
+            lowered.contract.functions[target_frame].call_contract,
+            "closure target ABI is its source-level callable signature"
+        );
+    }
     assert!(lowered.program.fns.iter().all(|function| {
         function
             .code
@@ -2174,6 +2211,46 @@ fn local_application(flag: Bool) -> Bool {
     assert_eq!(report.chaos.counters.pure_host_calls, 0);
     assert_eq!(report.plain.receipt_count, 0);
     assert_eq!(report.chaos.receipt_count, 0);
+}
+
+#[test]
+fn enum_equality_cross_variant_is_false_without_projection_fault() {
+    const SOURCE: &str = r#"
+enum Outcome<T> {
+    Ok(T),
+    Err(String),
+}
+
+#[test]
+fn enum_equality() -> Stream<Check> {
+    let ok: Outcome<Bool> = Outcome::Ok(true);
+    let err: Outcome<Bool> = Outcome::Err("no");
+    let same_left: Outcome<Bool> = Outcome::Err("same");
+    let same_right: Outcome<Bool> = Outcome::Err("same");
+    yield expect_eq(ok == err, false);
+    yield expect_eq(ok != err, true);
+    yield expect_eq(same_left == same_right, true);
+}
+"#;
+
+    let module = Compiler::new().compile(SOURCE).expect("source compiles");
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut lowering_cache = LoweringCache::default();
+    assert!(partitioned.islands.iter().any(|island| {
+        lowering_cache
+            .get_or_lower(island)
+            .expect("typed enum equality lowers")
+            .program
+            .fns
+            .iter()
+            .flat_map(|function| &function.code)
+            .any(|op| matches!(op, WeavyOp::CompareValueBytes { .. }))
+    }));
+
+    let report = run_source(SOURCE).expect("enum equality runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks, report.chaos.checks);
 }
 
 // r[verify lang.value.ordering-is-enum]

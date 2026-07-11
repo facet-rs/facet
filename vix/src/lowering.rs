@@ -705,12 +705,15 @@ fn emit_semantic_equality(
                     a: accumulator.byte_offset(),
                     b: work.byte_offset(),
                 });
-                let next = code.label();
-                code.push(WeavyOp::EnumIsVariant {
-                    dst: work_region_id(work, temps, node.span)?,
-                    value: a.region_id,
-                    variant: variant_index,
+                // `Eq` is also true when both operands are *not* this
+                // variant. Multiplying by `b is variant` leaves one only on
+                // the sole path where both checked selectors name this arm.
+                code.push(WeavyOp::MulI64 {
+                    dst: work.byte_offset(),
+                    a: work.byte_offset(),
+                    b: equal.byte_offset(),
                 });
+                let next = code.label();
                 code.jump_if_zero(work, next);
                 let fields: Vec<&Type> = match &variant.payload {
                     VariantPayload::Unit => Vec::new(),
@@ -1049,9 +1052,9 @@ impl<'a> ProgramContractBuilder<'a> {
         let call = WeavyCallContract {
             entries: entries[..parameter_len]
                 .iter()
-                .map(|entry| regions[entry.0 as usize].clone())
+                .map(|entry| canonical_call_region(&regions[entry.0 as usize]))
                 .collect(),
-            result: regions[result.0 as usize].clone(),
+            result: canonical_call_region(&regions[result.0 as usize]),
         };
         Ok(self.intern_call(call))
     }
@@ -1339,6 +1342,14 @@ impl<'a> ProgramContractBuilder<'a> {
         self.calls.push(call);
         id
     }
+}
+
+fn canonical_call_region(region: &WeavyFrameRegion) -> WeavyFrameRegion {
+    let mut canonical = WeavyFrameRegion::new(0, region.shape.clone());
+    if let Some(value_shape) = region.value_shape {
+        canonical = canonical.with_value_shape(value_shape);
+    }
+    canonical
 }
 
 fn constant_closures(island: &Island) -> BTreeMap<FunctionId, BTreeSet<NodeRef>> {
