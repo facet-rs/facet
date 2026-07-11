@@ -78,16 +78,22 @@ At the time of the latest authoritative integration checkpoint
   checks. Scheduler/memo/store bounds are evaluated against one frozen snapshot
   after all selected Value checks, with no island, demand, memo entry, or intern
   for the Trace check itself. Typed wall/RSS metadata is enforced by an outer
-  child-process watchdog that kills runaway native work; default run
-  `4933603b-4592-4b12-abd9-f18880f24a55` and interpreter run
-  `1be4cb14-7092-4da7-86e6-1358bc983144` each passed 15/15 focused checks;
+  child-process watchdog that kills runaway native work. The typed
+  `Prepare -> Ready -> Execute -> Completed` protocol is folded at
+  `a184506dd`: parsing, checking, lowering, verification, and native compilation
+  finish before the wall clock starts, and RSS is charged as the execution peak
+  above the Ready baseline while a hard kill remains active. Exact-root run
+  `01024dd2-375d-4868-810c-def3d5611144` passed all 18 focused protocol,
+  malformed-child, wall, RSS, and frozen-counter checks;
 - rung 050 is the first canonical red boundary. Its self-tail call now lowers
   to one verifier-visible frame loop with typed next-argument staging and an
   attributed interior backedge; the direct verified 10-million-iteration lane
-  is green. The composed canonical plain/chaos child currently reaches the
-  declared 5-second wall, so budgeted end-to-end execution—not call-frame
-  recursion—is the remaining boundary. Ordinary recursion remains the rung-049
-  call-frame path;
+  is green. Startup is no longer the boundary: exact-root run
+  `b0e99bea-4623-4d9e-9da7-47b0e20e4226` completed within the wall budget but
+  measured `271,941,632` execution-owned RSS bytes above Ready, exceeding the
+  unchanged 256 MiB ceiling. The remaining boundary is retained allocation in
+  the composed execution path, not call-frame recursion or JIT startup.
+  Ordinary recursion remains the rung-049 call-frame path;
 - the persistent AVL core has a 200k insertion scaling oracle, but the
   end-to-end rung-138 Map proof is not yet established. The explicit framed
   value-identity epoch, compact inline sequence writer, semantic tree, and
@@ -317,7 +323,11 @@ tests. They land in this dependency order:
 2. `#[test { budget_wall, budget_rss }]` is parsed into typed test metadata and
    enforced by an outer runner that can terminate an over-budget execution.
    An in-process elapsed-time assertion that cannot stop a stuck native loop is
-   not enforcement; an inert parsed attribute is not a gate.
+   not enforcement; an inert parsed attribute is not a gate. A typed child
+   handshake completes compilation and execution-machine preparation before
+   releasing `Execute`; wall time and execution-relative peak RSS begin there,
+   while an independent absolute safety ceiling still contains pathological
+   total process growth.
 3. A self-tail call lowers to a verifier-visible in-frame loop with an interior
    pollpoint. It copies the next argument set without overlap, touches no
    scheduler/memo/identity machinery at the backedge, and has interpreter/JIT

@@ -284,7 +284,11 @@ impl PreparedRun {
     /// r[impl machine.scheduler.chaos-kill-oracle]
     /// r[impl machine.scheduler.replay-is-semantics]
     pub fn execute(mut self) -> Result<RatchetReport, RunError> {
-        let plain = run_lane(&self.compilation.module, &mut self.cache, ChaosPolicy::default())?;
+        let plain = run_lane(
+            &self.compilation.module,
+            &mut self.cache,
+            ChaosPolicy::default(),
+        )?;
         let chaos = run_lane(
             &self.compilation.module,
             &mut self.cache,
