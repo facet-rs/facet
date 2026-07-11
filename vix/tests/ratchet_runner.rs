@@ -39,6 +39,7 @@ const RUNG_025: &str = include_str!("ratchet/025-ordering-enum.vix");
 const RUNG_026: &str = include_str!("ratchet/026-arrays.vix");
 const RUNG_027: &str = include_str!("ratchet/027-array-map.vix");
 const RUNG_028: &str = include_str!("ratchet/028-array-enumerate.vix");
+const RUNG_029: &str = include_str!("ratchet/029-array-fold.vix");
 const RUNG_032: &str = include_str!("ratchet/032-pop.reject.vix");
 const RUNG_041: &str = include_str!("ratchet/041-maps.vix");
 const RUNG_042: &str = include_str!("ratchet/042-map-overwrite.vix");
@@ -672,6 +673,19 @@ fn rung_028_array_stream_collects_position_keyed_rows() {
     assert!(report.passed());
     assert!(report.agrees());
     assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+#[test]
+fn rung_029_array_fold_runs_in_authored_position_order() {
+    let report = run_source(RUNG_029).expect("rung 029 executes through verified production path");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
     assert_eq!(report.plain.checks, report.chaos.checks);
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.pure_host_calls, 0);
