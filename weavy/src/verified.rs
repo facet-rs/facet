@@ -2663,7 +2663,7 @@ impl Verifier<'_> {
                     ));
                 }
                 self.require_byte_comparable_schema(function_id, pc, text_schema)?;
-                self.require_scalar_write(
+                self.require_status_write(
                     function_id,
                     pc,
                     frame,
@@ -2676,7 +2676,7 @@ impl Verifier<'_> {
                 let text_schema =
                     self.read_handle(function_id, pc, frame, *text, AccessRole::CompareLeft)?;
                 self.require_byte_comparable_schema(function_id, pc, text_schema)?;
-                self.require_scalar_write(
+                self.require_status_write(
                     function_id,
                     pc,
                     frame,
