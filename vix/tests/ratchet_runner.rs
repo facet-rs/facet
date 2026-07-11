@@ -2061,10 +2061,6 @@ fn rung_002_integer_arithmetic_runs_through_vir_and_weavy() {
     assert_eq!(report.plain.checks, report.chaos.checks);
     assert_eq!(report.plain.receipt_count, 0);
     assert_eq!(report.chaos.receipt_count, 0);
-
-    let innards = run_source_innards(RUNG_007).expect("rung 007 diagnostic lane runs");
-    assert!(innards.passed());
-    assert!(innards.agrees());
 }
 
 #[test]
@@ -2368,6 +2364,10 @@ fn rung_007_enums_payloads_and_match_run_through_vir_and_weavy() {
     assert_eq!(report.chaos.counters.pure_host_calls, 0);
     assert_eq!(report.plain.receipt_count, 0);
     assert_eq!(report.chaos.receipt_count, 0);
+
+    let innards = run_source_innards(RUNG_007).expect("rung 007 diagnostic lane runs");
+    assert!(innards.passed());
+    assert!(innards.agrees());
 
     let area = module
         .functions
