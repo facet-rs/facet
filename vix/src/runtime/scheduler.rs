@@ -450,8 +450,6 @@ impl<S: EventSink> Runtime<S> {
     /// `Match`/`If` control and publishes; it never evaluates a check operand.
     /// Publication arrival order is a live schedule artifact — the caller re-keys
     /// the completed check family by provenance.
-    ///
-    /// r[impl machine.test.generator-runtime]
     pub fn drive_generator(
         &mut self,
         island: IslandId,

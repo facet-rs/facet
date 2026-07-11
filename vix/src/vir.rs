@@ -941,8 +941,6 @@ impl Module {
     /// the zero-dynamic-key base case of the general provenance-keyed protocol:
     /// control chooses which sites publish, and each published descriptor is the
     /// site's stable [`YieldSiteId`] selector.
-    ///
-    /// r[impl machine.test.generator-runtime]
     #[must_use]
     pub fn generator_task_island(&self, test: &Test) -> Island {
         let source = &self.functions[test.function.0 as usize];
