@@ -15,7 +15,7 @@ use crate::jit::task_lane::{JitExecutable, JitTask};
 use crate::task::{FnId, HostFn, Op, Task, TaskEvent, TaskStep, TraceMode, ValueMemories};
 use crate::{
     CallContractId, CallSiteFacts, DriveRequirements, FrameRegion, FunctionContract, RegionId,
-    SchemaRef, ValueShapeRef, VerifiedProgram, WordKind,
+    SchemaRef, ValueShapeKind, ValueShapeRef, VerifiedProgram, WordKind,
 };
 
 /// Which lane an [`Executable`] selected for new tasks.
@@ -104,6 +104,86 @@ pub struct FaultSite {
     pub call: Option<CallSiteFacts>,
 }
 
+/// A contract-checked read-only view of a structural task result.
+pub struct StructuralResult<'a> {
+    bytes: &'a [u8],
+    entry: FnId,
+    region: RegionId,
+    value_shape: ValueShapeRef,
+    shape: &'a crate::ValueShapeContract,
+}
+
+impl StructuralResult<'_> {
+    pub fn enum_selector(&self) -> Result<i64, TaskFault> {
+        let ValueShapeKind::Enum { selector, variants } = &self.shape.kind else {
+            return Err(TaskFault::InvalidResultShape {
+                entry: self.entry,
+                region: self.region,
+                size: self.bytes.len(),
+            });
+        };
+        let actual = self.word(selector.offset)?;
+        if actual < 0 || actual as usize >= variants.len() {
+            return Err(TaskFault::InvalidResultSelector {
+                entry: self.entry,
+                region: self.region,
+                value_shape: self.value_shape,
+                actual,
+                variant_count: variants.len(),
+            });
+        }
+        Ok(actual)
+    }
+
+    pub fn enum_scalar_field(&self, variant: u32, field: u32) -> Result<i64, TaskFault> {
+        let ValueShapeKind::Enum { variants, .. } = &self.shape.kind else {
+            return Err(TaskFault::InvalidResultShape {
+                entry: self.entry,
+                region: self.region,
+                size: self.bytes.len(),
+            });
+        };
+        let field = variants
+            .get(variant as usize)
+            .and_then(|variant| variant.fields.get(field as usize))
+            .ok_or(TaskFault::InvalidResultShape {
+                entry: self.entry,
+                region: self.region,
+                size: self.bytes.len(),
+            })?;
+        if field.shape.words.len() != 1 || !field.shape.words[0].is_exactly(WordKind::Scalar) {
+            return Err(TaskFault::InvalidResultShape {
+                entry: self.entry,
+                region: self.region,
+                size: self.bytes.len(),
+            });
+        }
+        self.word(field.offset)
+    }
+
+    fn word(&self, offset: u32) -> Result<i64, TaskFault> {
+        let start = offset as usize;
+        let end = start
+            .checked_add(size_of::<i64>())
+            .ok_or(TaskFault::InvalidResultShape {
+                entry: self.entry,
+                region: self.region,
+                size: self.bytes.len(),
+            })?;
+        let bytes = self
+            .bytes
+            .get(start..end)
+            .ok_or(TaskFault::InvalidResultShape {
+                entry: self.entry,
+                region: self.region,
+                size: self.bytes.len(),
+            })?;
+        Ok(i64::from_le_bytes(
+            bytes.try_into().expect("checked structural result word"),
+        ))
+    }
+}
+
 /// Dynamic task fault. Static program invalidity remains [`crate::ProgramError`].
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum TaskFault {
@@ -156,6 +236,13 @@ pub enum TaskFault {
         entry: FnId,
         region: RegionId,
         size: usize,
+    },
+    InvalidResultSelector {
+        entry: FnId,
+        region: RegionId,
+        value_shape: ValueShapeRef,
+        actual: i64,
+        variant_count: usize,
     },
     DriveTableLength {
         table: DriveTable,
@@ -517,6 +604,52 @@ impl ExecTask<'_> {
         Ok(i64::from_le_bytes(
             result.try_into().expect("result length checked"),
         ))
+    }
+
+    pub fn result_structural(&self) -> Result<StructuralResult<'_>, TaskFault> {
+        self.check_result_available()?;
+        let function = self.executable.function(self.entry)?;
+        let region = function.result;
+        let declared = &function.frame.regions[region.0 as usize];
+        let bytes = self.result()?;
+        let value_shape = declared.value_shape.ok_or(TaskFault::InvalidResultShape {
+            entry: self.entry,
+            region,
+            size: bytes.len(),
+        })?;
+        let expected = declared
+            .shape
+            .checked_byte_len()
+            .ok_or(TaskFault::InvalidResultShape {
+                entry: self.entry,
+                region,
+                size: bytes.len(),
+            })?;
+        if bytes.len() != expected {
+            return Err(TaskFault::InvalidResultShape {
+                entry: self.entry,
+                region,
+                size: bytes.len(),
+            });
+        }
+        let shape = self
+            .executable
+            .verified
+            .contract()
+            .value_shapes
+            .get(value_shape.0 as usize)
+            .ok_or(TaskFault::InvalidResultShape {
+                entry: self.entry,
+                region,
+                size: bytes.len(),
+            })?;
+        Ok(StructuralResult {
+            bytes,
+            entry: self.entry,
+            region,
+            value_shape,
+            shape,
+        })
     }
 
     fn check_not_poisoned(&self) -> Result<(), TaskFault> {

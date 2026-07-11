@@ -622,6 +622,7 @@ fn task_fault_site(fault: &TaskFault) -> Option<&FaultSite> {
         | TaskFault::EntryWriteAfterDrive { .. }
         | TaskFault::EntryValueSize { .. }
         | TaskFault::InvalidResultShape { .. }
+        | TaskFault::InvalidResultSelector { .. }
         | TaskFault::DriveTableLength { .. }
         | TaskFault::NativeFaultExit { .. }
         | TaskFault::InvalidFaultSite { .. }
@@ -635,7 +636,7 @@ fn result_shape_attribution(
     output: Option<MachineAttribution>,
 ) -> Option<MachineAttribution> {
     match fault {
-        TaskFault::InvalidResultShape { .. } => output,
+        TaskFault::InvalidResultShape { .. } | TaskFault::InvalidResultSelector { .. } => output,
         TaskFault::PoisonedResult { original } => result_shape_attribution(original, output),
         TaskFault::InvalidEntryFunction { .. }
         | TaskFault::InvalidEntryShape { .. }
