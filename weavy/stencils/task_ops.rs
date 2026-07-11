@@ -87,6 +87,8 @@ pub struct Ctx {
         i64,
         *mut i64,
     ) -> i64,
+    ordered_begin_probe:
+        unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *mut i64, *mut i64) -> i64,
 }
 
 /// Raw ABI descriptor; MUST match `crate::task::RawValueMemory`.
@@ -572,6 +574,33 @@ pub unsafe extern "C" fn weavy_task_array_new(cx: *mut Ctx) {
         &raw mut handle,
     );
     write_i64(c.frame, dst, handle);
+    write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+/// Begin a probe cursor over an ordered collection — immediates:
+/// [cursor, status, collection, schema]. Writes the two-word opaque cursor
+/// token (arena index, task generation) at `cursor`/`cursor + 8` and the
+/// operation status at `status`.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_begin_probe(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let cursor = *c.prog;
+    let status = *c.prog.add(1);
+    let collection = *c.prog.add(2);
+    let schema = *c.prog.add(3) as i64;
+    c.prog = c.prog.add(4);
+    let mut index = -1i64;
+    let mut generation = 0i64;
+    let op_status = (c.ordered_begin_probe)(
+        c.molten,
+        read_i64(c.frame, collection),
+        schema,
+        &raw mut index,
+        &raw mut generation,
+    );
+    write_i64(c.frame, cursor, index);
+    write_i64(c.frame, cursor + 8, generation);
     write_i64(c.frame, status, op_status);
     cont!(cx);
 }

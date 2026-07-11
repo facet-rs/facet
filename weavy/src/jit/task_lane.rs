@@ -69,6 +69,8 @@ struct Ctx {
         i64,
         *mut i64,
     ) -> i64,
+    ordered_begin_probe:
+        unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *mut i64, *mut i64) -> i64,
 }
 
 const EXIT_AWAIT_PARKED: i64 = 1;
@@ -342,6 +344,10 @@ fn compile_fn(
                 task_stencils::ARRAY_NEW,
                 Continuations::Fallthrough(task_stencils::ARRAY_NEW_CONT),
             ),
+            Op::OrderedBeginProbe { .. } => (
+                task_stencils::ORDERED_BEGIN_PROBE,
+                Continuations::Fallthrough(task_stencils::ORDERED_BEGIN_PROBE_CONT),
+            ),
             Op::ArrayStoreWord { .. } | Op::ArrayStore { .. } => (
                 task_stencils::ARRAY_STORE_WORD,
                 Continuations::Fallthrough(task_stencils::ARRAY_STORE_WORD_CONT),
@@ -481,6 +487,7 @@ fn compile_fn(
             Op::JumpIfZero { .. } => 3,
             Op::LoadIndexedI64 { .. } | Op::StoreIndexedI64 { .. } => 4,
             Op::ArrayNew { .. } => 5,
+            Op::OrderedBeginProbe { .. } => 4,
             Op::ArrayStoreWord { .. } | Op::LoadArray { .. } | Op::ArrayStore { .. } => 6,
             Op::LoadArrayWord { .. } => 5,
             Op::LoadArrayLen { .. } => 4,
@@ -716,6 +723,21 @@ fn compile_fn(
                     u64::from(*count_slot),
                     u64::from(*elem_width),
                     *elem_schema_ref as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::OrderedBeginProbe {
+                cursor,
+                status,
+                collection,
+                collection_schema_ref,
+            } => {
+                for v in [
+                    u64::from(*cursor),
+                    u64::from(*status),
+                    u64::from(*collection),
+                    *collection_schema_ref as u64,
                 ] {
                     layout.push_prog_word(root.prog_index, v);
                 }
@@ -1105,6 +1127,7 @@ impl JitTask {
                 array_store: crate::task::array_store_abi,
                 array_load: crate::task::array_load_abi,
                 array_len: crate::task::array_len_abi,
+                ordered_begin_probe: crate::task::ordered_begin_probe_abi,
             };
             // SAFETY: `frame.resume` is a chain offset of this compiled
             // function; the copied code uses the extern "C" fn(*mut Ctx)

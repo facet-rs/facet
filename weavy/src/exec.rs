@@ -1116,8 +1116,9 @@ mod tests {
     }
 
     fn non_scalar_entry_program() -> (Program, ProgramContract) {
-        let mut callable = AllowedKinds::new(WordKind::Callable(CallContractId(0)));
-        callable = callable.allowing(WordKind::Opaque);
+        // A callable word is non-scalar, so the entry accessor must reject it;
+        // opaque cursor words are separately confined and cannot appear here.
+        let callable = AllowedKinds::new(WordKind::Callable(CallContractId(0)));
         (
             Program {
                 fns: vec![function(1, vec![Op::Ret { src: 0, size: 8 }])],
@@ -1164,8 +1165,9 @@ mod tests {
     }
 
     fn non_scalar_result_program() -> (Program, ProgramContract) {
-        let mut callable = AllowedKinds::new(WordKind::Callable(CallContractId(0)));
-        callable = callable.allowing(WordKind::Opaque);
+        // A callable result word is non-scalar, so the result accessor must
+        // reject it; opaque cursor words are separately barred from results.
+        let callable = AllowedKinds::new(WordKind::Callable(CallContractId(0)));
         (
             Program {
                 fns: vec![function(1, vec![Op::Ret { src: 0, size: 8 }])],
@@ -1734,6 +1736,109 @@ mod tests {
         assert!(matches!(site.op, Op::ArrayStatusIs { .. }));
         assert_eq!(trace, vec![TaskEvent::FrameEntered(FnId(0))]);
         assert!(matches!(*poison, TaskFault::PoisonedReDrive { .. }));
+    }
+
+    fn ordered_begin_probe_program() -> (Program, ProgramContract) {
+        use crate::{OrderedCollectionContract, OrderedCollectionKind};
+
+        let collection = SchemaRef(3);
+        let opaque_cursor = RegionShape::new(vec![AllowedKinds::new(WordKind::Opaque); 2]);
+        (
+            Program {
+                fns: vec![function(
+                    4,
+                    vec![
+                        Op::OrderedBeginProbe {
+                            cursor: 8,
+                            status: 24,
+                            collection: 0,
+                            collection_schema_ref: 3,
+                        },
+                        Op::Ret { src: 24, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    4,
+                    vec![
+                        word_region(0, WordKind::Handle(collection)),
+                        FrameRegion::new(8, opaque_cursor),
+                        word_region(24, WordKind::Status),
+                    ],
+                    &[0],
+                    2,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![
+                    SchemaContract {
+                        inline: RegionShape::word(WordKind::Scalar),
+                        value_shape: None,
+                        payload: PayloadKind::Inline,
+                    },
+                    SchemaContract {
+                        inline: RegionShape::word(WordKind::Scalar),
+                        value_shape: None,
+                        payload: PayloadKind::Inline,
+                    },
+                    SchemaContract {
+                        inline: RegionShape::new(vec![
+                            AllowedKinds::new(WordKind::Scalar),
+                            AllowedKinds::new(WordKind::Scalar),
+                        ]),
+                        value_shape: None,
+                        payload: PayloadKind::Inline,
+                    },
+                    SchemaContract {
+                        inline: RegionShape::word(WordKind::Handle(collection)),
+                        value_shape: None,
+                        payload: PayloadKind::OrderedCollection(OrderedCollectionContract {
+                            kind: OrderedCollectionKind::Map,
+                            key: SchemaRef(0),
+                            value: Some(SchemaRef(1)),
+                            row: SchemaRef(2),
+                            fanout: 4,
+                        }),
+                    },
+                ],
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    #[test]
+    fn ordered_begin_probe_matches_across_public_executable_lanes() {
+        use crate::task::OrderedOpStatus;
+
+        // The empty collection (canonical handle 0) begins a cursor: status Ok.
+        // A handle naming no resident node is InvalidHandle. Both outcomes must
+        // agree between the interpreter and the native lane.
+        for (handle, expected) in [
+            (0i64, OrderedOpStatus::Ok),
+            (5i64, OrderedOpStatus::InvalidHandle),
+        ] {
+            let verified = Arc::new(verify(ordered_begin_probe_program()));
+            let interp = run_interpreter(
+                &verified,
+                |task| task.write_i64(0, handle),
+                ValueMemories::empty(),
+            )
+            .expect("ordered begin probe runs");
+            assert_eq!(interp.0, TaskStep::Done);
+            assert_eq!(
+                i64::from_le_bytes(interp.1[..8].try_into().unwrap()),
+                expected as i64,
+                "interpreter status for handle {handle}"
+            );
+            if let Some(native) = run_native(
+                Arc::clone(&verified),
+                |task| task.write_i64(0, handle),
+                ValueMemories::empty(),
+            ) {
+                assert_eq!(native.expect("native ordered begin probe runs"), interp);
+            }
+        }
     }
 
     #[test]

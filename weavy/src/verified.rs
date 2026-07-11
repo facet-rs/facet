@@ -413,6 +413,9 @@ pub enum AccessRole {
     ArrayElementSource,
     ArrayElementDestination,
     ArrayLengthDestination,
+    OrderedCollectionHandle,
+    OrderedStatus,
+    OrderedCursorDestination,
 }
 
 /// Structural failure for a checked frame range.
@@ -834,6 +837,39 @@ pub enum ProgramDefect {
         schema: SchemaRef,
         expected: RegionShape,
         actual: RegionShape,
+    },
+    /// An ordered-collection op's static schema witness was not a valid schema
+    /// index.
+    OrderedCollectionWitnessOutOfRange {
+        witness: i64,
+        schema_count: usize,
+    },
+    /// An ordered-collection op's collection handle schema did not match the
+    /// op's static schema witness.
+    OrderedCollectionSchemaMismatch {
+        handle: SchemaRef,
+        witness: SchemaRef,
+    },
+    /// An ordered-collection op named a handle whose schema is not an ordered
+    /// collection.
+    OrderedCollectionSchemaNotCollection {
+        schema: SchemaRef,
+    },
+    /// An ordered cursor destination was not exactly two internal opaque words.
+    OrderedCursorRegionShape {
+        region: RegionId,
+        shape: RegionShape,
+    },
+    /// An opaque cursor word escaped its internal confinement: it appeared at a
+    /// function/call entry or result, i.e. it could be published or aliased
+    /// across a call boundary.
+    OpaqueRegionEscapes {
+        owner: ShapeOwner,
+    },
+    /// An opaque cursor word was copied. Cursors are single-use and may never be
+    /// duplicated by a raw word copy.
+    OpaqueWordNotCopyable {
+        role: AccessRole,
     },
     ArraySchemaNotDense {
         schema: SchemaRef,
@@ -1407,6 +1443,9 @@ impl Verifier<'_> {
             }));
         }
         let size = self.validate_shape(&region.shape, owner, None)?;
+        if shape_has_opaque(&region.shape) {
+            return Err(self.global(ProgramDefect::OpaqueRegionEscapes { owner }));
+        }
         let start = usize::try_from(region.offset).map_err(|_| {
             self.global(ProgramDefect::CallRegionEndOverflow {
                 owner,
@@ -1800,6 +1839,14 @@ impl Verifier<'_> {
                         },
                     ));
                 }
+                if shape_has_opaque(&contract.frame.regions[index].shape) {
+                    return Err(self.function(
+                        function_id,
+                        ProgramDefect::OpaqueRegionEscapes {
+                            owner: ShapeOwner::FrameRegion(region),
+                        },
+                    ));
+                }
                 entries.push(index);
             }
             let Some(result) = usize::try_from(contract.result.0)
@@ -1815,6 +1862,14 @@ impl Verifier<'_> {
                     },
                 ));
             };
+            if shape_has_opaque(&contract.frame.regions[result].shape) {
+                return Err(self.function(
+                    function_id,
+                    ProgramDefect::OpaqueRegionEscapes {
+                        owner: ShapeOwner::FrameRegion(contract.result),
+                    },
+                ));
+            }
 
             if let Some(call_contract) = contract.call_contract {
                 let Some(call_index) = usize::try_from(call_contract.0)
@@ -2093,6 +2148,24 @@ impl Verifier<'_> {
                     &self.contract.functions[function_index].frame.regions[source_index];
                 let destination = &destination_region.shape.words[destination_word];
                 let source = &source_region.shape.words[source_word];
+                if destination.contains(WordKind::Opaque) {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::OpaqueWordNotCopyable {
+                            role: AccessRole::Destination,
+                        },
+                    ));
+                }
+                if source.contains(WordKind::Opaque) {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::OpaqueWordNotCopyable {
+                            role: AccessRole::Source,
+                        },
+                    ));
+                }
                 if !source.is_subset_of(destination) {
                     return Err(self.op(
                         function_id,
@@ -2463,6 +2536,35 @@ impl Verifier<'_> {
             }
             Op::HostCallYield { .. } => {
                 return Err(self.unsupported(function_id, pc, UnsupportedOp::HostCallYield));
+            }
+            Op::OrderedBeginProbe {
+                cursor,
+                status,
+                collection,
+                collection_schema_ref,
+            } => {
+                self.ordered_collection(
+                    function_id,
+                    pc,
+                    frame,
+                    *collection,
+                    *collection_schema_ref,
+                )?;
+                self.require_status_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::OrderedStatus,
+                )?;
+                self.require_ordered_cursor_write(
+                    function_id,
+                    pc,
+                    function_index,
+                    frame,
+                    *cursor,
+                    AccessRole::OrderedCursorDestination,
+                )?;
             }
         }
         Ok(None)
@@ -3122,6 +3224,91 @@ impl Verifier<'_> {
         Ok(witness)
     }
 
+    fn ordered_collection(
+        &self,
+        function: FnId,
+        pc: usize,
+        frame: &ValidatedFrame,
+        collection: u32,
+        witness: i64,
+    ) -> Result<SchemaRef, ProgramError> {
+        let handle_schema = self.read_handle(
+            function,
+            pc,
+            frame,
+            collection,
+            AccessRole::OrderedCollectionHandle,
+        )?;
+        let witness = usize::try_from(witness)
+            .ok()
+            .filter(|index| *index < self.contract.schemas.len())
+            .and_then(|index| u32::try_from(index).ok().map(SchemaRef))
+            .ok_or_else(|| {
+                self.op(
+                    function,
+                    pc,
+                    ProgramDefect::OrderedCollectionWitnessOutOfRange {
+                        witness,
+                        schema_count: self.contract.schemas.len(),
+                    },
+                )
+            })?;
+        if witness != handle_schema {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::OrderedCollectionSchemaMismatch {
+                    handle: handle_schema,
+                    witness,
+                },
+            ));
+        }
+        if !matches!(
+            self.contract.schemas[witness.0 as usize].payload,
+            PayloadKind::OrderedCollection(_)
+        ) {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::OrderedCollectionSchemaNotCollection { schema: witness },
+            ));
+        }
+        Ok(witness)
+    }
+
+    /// A cursor destination must name a whole two-word region that is exactly
+    /// internal opaque cursor words and carries no structural value shape.
+    fn require_ordered_cursor_write(
+        &self,
+        function: FnId,
+        pc: usize,
+        function_index: usize,
+        frame: &ValidatedFrame,
+        offset: u32,
+        role: AccessRole,
+    ) -> Result<(), ProgramError> {
+        let region_index = self.exact_region(function, pc, frame, offset, WORD_SIZE * 2, role)?;
+        let region = &self.contract.functions[function_index].frame.regions[region_index];
+        let two_opaque_words = region.value_shape.is_none()
+            && region.shape.words.len() == 2
+            && region
+                .shape
+                .words
+                .iter()
+                .all(|word| word.is_exactly(WordKind::Opaque));
+        if !two_opaque_words {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::OrderedCursorRegionShape {
+                    region: RegionId(region_index as u32),
+                    shape: region.shape.clone(),
+                },
+            ));
+        }
+        Ok(())
+    }
+
     fn validate_array_width(
         &self,
         function: FnId,
@@ -3408,6 +3595,7 @@ impl Verifier<'_> {
                     | Op::LoadArray { .. }
                     | Op::LoadArrayLen { .. }
                     | Op::ArrayStatusIs { .. }
+                    | Op::OrderedBeginProbe { .. }
                     | Op::Trace { .. } => pending.push(pc + 1),
                     Op::ArrayStoreWord { .. } => {
                         return Err(self.unsupported(
@@ -3515,6 +3703,16 @@ fn shapes_assignable(source: &RegionShape, destination: &RegionShape) -> bool {
             .iter()
             .zip(&destination.words)
             .all(|(source, destination)| source.is_subset_of(destination))
+}
+
+/// Whether any word of a region admits the internal opaque cursor kind. Opaque
+/// words are confined to internal cursor destinations; they may never appear at
+/// a function/call entry or result, where they could be published or aliased.
+fn shape_has_opaque(shape: &RegionShape) -> bool {
+    shape
+        .words
+        .iter()
+        .any(|word| word.contains(WordKind::Opaque))
 }
 
 #[cfg(test)]
@@ -3906,7 +4104,7 @@ mod tests {
                 functions: vec![function_contract(
                     3,
                     vec![
-                        word_region(0, WordKind::Opaque),
+                        word_region(0, WordKind::Scalar),
                         word_region(16, WordKind::Scalar),
                     ],
                     &[],
@@ -6633,6 +6831,172 @@ mod tests {
                     has_value: false,
                 },
             }
+        );
+    }
+
+    /// The map schema table shared by the ordered-begin-probe admission cases.
+    fn ordered_probe_schemas() -> Vec<SchemaContract> {
+        let scalar = RegionShape::word(WordKind::Scalar);
+        let row = RegionShape::new(vec![WordKind::Scalar.into(), WordKind::Scalar.into()]);
+        vec![
+            schema(scalar.clone(), PayloadKind::Inline),
+            schema(scalar.clone(), PayloadKind::Inline),
+            schema(row, PayloadKind::Inline),
+            schema(
+                RegionShape::word(WordKind::Handle(SchemaRef(3))),
+                PayloadKind::OrderedCollection(OrderedCollectionContract {
+                    kind: OrderedCollectionKind::Map,
+                    key: SchemaRef(0),
+                    value: Some(SchemaRef(1)),
+                    row: SchemaRef(2),
+                    fanout: 4,
+                }),
+            ),
+        ]
+    }
+
+    fn ordered_probe_program(
+        collection_region: FrameRegion,
+        cursor_region: FrameRegion,
+        schema_witness: i64,
+        entries: &[u32],
+    ) -> (Program, ProgramContract) {
+        (
+            Program {
+                fns: vec![function(
+                    4,
+                    vec![
+                        Op::OrderedBeginProbe {
+                            cursor: 8,
+                            status: 24,
+                            collection: 0,
+                            collection_schema_ref: schema_witness,
+                        },
+                        Op::Ret { src: 24, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    4,
+                    vec![
+                        collection_region,
+                        cursor_region,
+                        word_region(24, WordKind::Status),
+                    ],
+                    entries,
+                    2,
+                    None,
+                )],
+                calls: vec![],
+                schemas: ordered_probe_schemas(),
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    #[test]
+    fn ordered_begin_probe_admits_a_confined_cursor_and_rejects_escape() {
+        let handle = || word_region(0, WordKind::Handle(SchemaRef(3)));
+        let opaque_cursor = || region(8, RegionShape::new(vec![WordKind::Opaque.into(); 2]));
+
+        // Baseline: a Handle(collection) operand, a two-word opaque cursor, and
+        // a status destination, with the cursor confined (not an entry/result).
+        let (program, contract) = ordered_probe_program(handle(), opaque_cursor(), 3, &[0]);
+        program
+            .verify(contract)
+            .expect("a confined ordered begin probe is admitted");
+
+        // The cursor destination must be exactly two internal opaque words.
+        let (program, contract) = ordered_probe_program(
+            handle(),
+            region(8, RegionShape::new(vec![WordKind::Scalar.into(); 2])),
+            3,
+            &[0],
+        );
+        assert_eq!(
+            program.verify(contract).expect_err("cursor must be opaque"),
+            op_error(
+                0,
+                ProgramDefect::OrderedCursorRegionShape {
+                    region: RegionId(1),
+                    shape: RegionShape::new(vec![WordKind::Scalar.into(); 2]),
+                },
+            ),
+        );
+
+        // The collection handle schema must actually be an ordered collection.
+        let (program, contract) = ordered_probe_program(
+            word_region(0, WordKind::Handle(SchemaRef(0))),
+            opaque_cursor(),
+            0,
+            &[0],
+        );
+        assert_eq!(
+            program
+                .verify(contract)
+                .expect_err("scalar schema is not a collection"),
+            op_error(
+                0,
+                ProgramDefect::OrderedCollectionSchemaNotCollection {
+                    schema: SchemaRef(0),
+                },
+            ),
+        );
+
+        // The handle schema and the static witness must agree.
+        let (program, contract) = ordered_probe_program(
+            word_region(0, WordKind::Handle(SchemaRef(0))),
+            opaque_cursor(),
+            3,
+            &[0],
+        );
+        assert_eq!(
+            program
+                .verify(contract)
+                .expect_err("handle schema disagrees with witness"),
+            op_error(
+                0,
+                ProgramDefect::OrderedCollectionSchemaMismatch {
+                    handle: SchemaRef(0),
+                    witness: SchemaRef(3),
+                },
+            ),
+        );
+
+        // An opaque cursor may never appear at a function entry: it would escape.
+        let (program, contract) = ordered_probe_program(handle(), opaque_cursor(), 3, &[0, 1]);
+        assert_eq!(
+            program
+                .verify(contract)
+                .expect_err("opaque cursor cannot be an entry"),
+            function_error(ProgramDefect::OpaqueRegionEscapes {
+                owner: ShapeOwner::FrameRegion(RegionId(1)),
+            }),
+        );
+    }
+
+    #[test]
+    fn opaque_cursor_words_are_not_copyable() {
+        // A raw word copy could duplicate a single-use cursor; both directions
+        // of an opaque copy are rejected before the token can be aliased.
+        let (program, contract) = single_function(
+            2,
+            vec![Op::CopyI64 { dst: 8, src: 0 }, Op::Ret { src: 8, size: 8 }],
+            vec![
+                region(0, RegionShape::word(WordKind::Opaque)),
+                word_region(8, WordKind::Scalar),
+            ],
+            1,
+        );
+        assert_eq!(
+            program.verify(contract).expect_err("opaque source copy"),
+            op_error(
+                0,
+                ProgramDefect::OpaqueWordNotCopyable {
+                    role: AccessRole::Source,
+                },
+            ),
         );
     }
 }

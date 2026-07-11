@@ -293,6 +293,57 @@ pub(crate) struct OrderedCursorToken {
     task_generation: u64,
 }
 
+impl OrderedCursorToken {
+    /// Flatten the token into the two opaque frame words that carry it: the
+    /// arena cursor index and the task generation it was minted under.
+    pub(crate) fn into_words(self) -> (i64, i64) {
+        (self.index as i64, self.task_generation as i64)
+    }
+}
+
+/// The canonical empty ordered-collection root handle: it names no arena node.
+/// Any `n >= 1` names arena node `n - 1`.
+pub(crate) const ORDERED_EMPTY_HANDLE: i64 = 0;
+
+/// Poison written to a cursor's index word when a begin operation fails, so a
+/// failed cursor never aliases a live arena cursor index.
+pub(crate) const ORDERED_CURSOR_POISON: i64 = -1;
+
+/// Checked status for ordered-collection substrate operations. Closed set,
+/// stable i64 ABI shared by the interpreter and JIT lanes; Vix lowering maps
+/// these to language-level `MissingKey`/`DuplicateKey` at the source site.
+#[repr(i64)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum OrderedOpStatus {
+    /// The operation completed and any cursor/handle output is valid.
+    Ok = 1,
+    /// The collection root handle did not name a resident arena node.
+    InvalidHandle = 2,
+    /// A cursor or handle schema did not match the operation's declared schema.
+    SchemaMismatch = 3,
+    /// A cursor was consumed under a different operation than it was begun for.
+    OperationMismatch = 4,
+    /// A cursor was forged, cross-task, or already consumed.
+    Stale = 5,
+    /// The arena reported exhaustion for an otherwise valid request.
+    AllocationFailed = 6,
+}
+
+impl OrderedOpStatus {
+    #[must_use]
+    pub const fn from_word(word: i64) -> Option<Self> {
+        match word {
+            1 => Some(Self::Ok),
+            2 => Some(Self::InvalidHandle),
+            3 => Some(Self::SchemaMismatch),
+            4 => Some(Self::OperationMismatch),
+            5 => Some(Self::Stale),
+            6 => Some(Self::AllocationFailed),
+            _ => None,
+        }
+    }
+}
+
 static NEXT_MOLTEN_TASK_GENERATION: AtomicU64 = AtomicU64::new(1);
 
 impl Default for MoltenArena {
@@ -333,6 +384,38 @@ impl MoltenArena {
             right,
         });
         Ok(index)
+    }
+
+    /// Decode an ordered-collection root handle into an arena node index.
+    /// [`ORDERED_EMPTY_HANDLE`] is the canonical empty root (no node); any
+    /// `n >= 1` names node `n - 1`, bounds-checked against the node arena.
+    fn ordered_root(&self, collection: i64) -> Result<Option<usize>, OrderedOpStatus> {
+        if collection == ORDERED_EMPTY_HANDLE {
+            return Ok(None);
+        }
+        let index = usize::try_from(collection - 1).map_err(|_| OrderedOpStatus::InvalidHandle)?;
+        if index >= self.ordered_nodes.len() {
+            return Err(OrderedOpStatus::InvalidHandle);
+        }
+        Ok(Some(index))
+    }
+
+    /// Begin a single-use Probe cursor over the collection named by `collection`
+    /// under the declared `schema`. The returned token is confined to this
+    /// arena's current task generation and to the Probe operation.
+    pub(crate) fn begin_ordered_probe(
+        &mut self,
+        collection: i64,
+        schema: i64,
+    ) -> Result<OrderedCursorToken, OrderedOpStatus> {
+        let root = self.ordered_root(collection)?;
+        self.begin_ordered_cursor(schema, OrderedCursorOperation::Probe, root)
+            .map_err(|err| match err {
+                OrderedCursorError::SchemaMismatch => OrderedOpStatus::SchemaMismatch,
+                OrderedCursorError::OperationMismatch => OrderedOpStatus::OperationMismatch,
+                OrderedCursorError::Stale => OrderedOpStatus::Stale,
+                OrderedCursorError::Invalid => OrderedOpStatus::AllocationFailed,
+            })
     }
 
     pub(crate) fn begin_ordered_cursor(
@@ -568,6 +651,44 @@ pub(crate) unsafe extern "C" fn array_new_abi(
         Ok(handle) => {
             unsafe { *out_handle = handle };
             ArrayOpStatus::Ok as i64
+        }
+        Err(status) => status as i64,
+    }
+}
+
+/// # Safety
+/// `arena` must point to a live [`MoltenArena`] for the duration of the call,
+/// and no other mutable or shared reference may concurrently access that arena.
+/// `out_index` and `out_generation` must each be non-null and writable for one
+/// `i64`, and must not alias memory inside `arena`. This function writes
+/// [`ORDERED_CURSOR_POISON`]/`0` to the outputs before it attempts the
+/// operation, overwriting them only on success.
+pub(crate) unsafe extern "C" fn ordered_begin_probe_abi(
+    arena: *mut core::ffi::c_void,
+    collection: i64,
+    schema: i64,
+    out_index: *mut i64,
+    out_generation: *mut i64,
+) -> i64 {
+    if out_index.is_null() || out_generation.is_null() {
+        return OrderedOpStatus::InvalidHandle as i64;
+    }
+    unsafe {
+        *out_index = ORDERED_CURSOR_POISON;
+        *out_generation = 0;
+    }
+    if arena.is_null() {
+        return OrderedOpStatus::InvalidHandle as i64;
+    }
+    let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
+    match arena.begin_ordered_probe(collection, schema) {
+        Ok(token) => {
+            let (index, generation) = token.into_words();
+            unsafe {
+                *out_index = index;
+                *out_generation = generation;
+            }
+            OrderedOpStatus::Ok as i64
         }
         Err(status) => status as i64,
     }
@@ -993,6 +1114,23 @@ pub enum Op {
     /// Use this when host effects change native value-memory provenance and
     /// the next machine op may read through that provenance.
     HostCallYield { host: u32 },
+    /// Begin a single-use Probe cursor over an ordered collection.
+    ///
+    /// `frame[collection]` holds the collection root handle: `0` is the
+    /// canonical empty collection, and any `n >= 1` names arena node `n - 1`.
+    /// On success the two-word opaque region at `cursor` receives the cursor
+    /// token (arena index, task generation) and `frame[status]` receives
+    /// [`OrderedOpStatus::Ok`]; on failure the cursor index word receives
+    /// [`ORDERED_CURSOR_POISON`], its generation word `0`, and `frame[status]`
+    /// the precise [`OrderedOpStatus`]. The cursor word is internal-only: the
+    /// verifier forbids it at entries, results, calls, publication, copy, and
+    /// scalar interpretation.
+    OrderedBeginProbe {
+        cursor: u32,
+        status: u32,
+        collection: u32,
+        collection_schema_ref: i64,
+    },
 }
 
 /// A synchronous host operation over the current frame's bytes.
@@ -1614,6 +1752,32 @@ impl Task {
                     hosts[host as usize](&mut self.arena[base..end]);
                     self.frames.last_mut().expect("frame").pc += 1;
                     return Ok(TaskStep::Yielded);
+                }
+                Op::OrderedBeginProbe {
+                    cursor,
+                    status,
+                    collection,
+                    collection_schema_ref,
+                } => {
+                    let collection = read_i64_at(&self.arena, base + collection as usize);
+                    let mut index = ORDERED_CURSOR_POISON;
+                    let mut generation = 0i64;
+                    let op_status = match self
+                        .molten
+                        .begin_ordered_probe(collection, collection_schema_ref)
+                    {
+                        Ok(token) => {
+                            let (token_index, token_generation) = token.into_words();
+                            index = token_index;
+                            generation = token_generation;
+                            OrderedOpStatus::Ok
+                        }
+                        Err(status) => status,
+                    };
+                    write_i64_at(&mut self.arena, base + cursor as usize, index);
+                    write_i64_at(&mut self.arena, base + cursor as usize + 8, generation);
+                    write_i64_at(&mut self.arena, base + status as usize, op_status as i64);
+                    self.frames.last_mut().expect("frame").pc += 1;
                 }
                 Op::Await { dst, input } => {
                     let idx = input as usize;
@@ -2346,6 +2510,46 @@ mod tests {
         assert_eq!(
             arena.consume_ordered_cursor(foreign, 7, OrderedCursorOperation::Probe),
             Err(OrderedCursorError::Invalid)
+        );
+    }
+
+    #[test]
+    fn begin_ordered_probe_decodes_roots_and_confines_the_cursor() {
+        let mut arena = MoltenArena::default();
+        // Empty collection (canonical handle 0) begins a Probe cursor at no root.
+        let token = arena
+            .begin_ordered_probe(ORDERED_EMPTY_HANDLE, 7)
+            .expect("empty probe begins");
+        let (index, generation) = token.into_words();
+        assert_eq!(index, 0);
+        assert_ne!(generation, 0, "a real cursor carries the task generation");
+        // The cursor is a real, consumable Probe cursor confined to this arena.
+        assert_eq!(
+            arena.consume_ordered_cursor(token, 7, OrderedCursorOperation::Probe),
+            Ok(None)
+        );
+
+        // A non-empty handle names arena node `n - 1`; a matching schema begins.
+        let leaf = arena
+            .alloc_ordered_node(9, vec![1, 2], Some(vec![3, 4]), None, None)
+            .expect("node allocation");
+        let rooted = arena
+            .begin_ordered_probe(leaf as i64 + 1, 9)
+            .expect("rooted probe begins");
+        assert_eq!(
+            arena.consume_ordered_cursor(rooted, 9, OrderedCursorOperation::Probe),
+            Ok(Some(leaf))
+        );
+
+        // Wrong schema for a rooted collection is a typed status, not a panic.
+        assert_eq!(
+            arena.begin_ordered_probe(leaf as i64 + 1, 8),
+            Err(OrderedOpStatus::SchemaMismatch)
+        );
+        // An out-of-range handle never touches a node: it is InvalidHandle.
+        assert_eq!(
+            arena.begin_ordered_probe(999, 9),
+            Err(OrderedOpStatus::InvalidHandle)
         );
     }
 
