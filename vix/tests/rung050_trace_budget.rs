@@ -359,12 +359,18 @@ fn tight_rss() -> Stream<Check> {
     match &outcome {
         BudgetOutcome::OverRss {
             budget_bytes,
+            ready_baseline_bytes,
             observed_bytes,
+            execution_peak_bytes,
         } => {
             assert_eq!(*budget_bytes, 128 * 1024 * 1024);
             assert!(
-                *observed_bytes > *budget_bytes,
-                "the child was killed after exceeding the RSS ceiling: {outcome:?}",
+                *execution_peak_bytes > *budget_bytes,
+                "the child was killed after its execution-owned RSS delta exceeded the ceiling: {outcome:?}",
+            );
+            assert!(
+                *observed_bytes >= *ready_baseline_bytes,
+                "the absolute peak is measured relative to the readiness baseline: {outcome:?}",
             );
         }
         BudgetOutcome::RssEnforcementUnsupported { .. } => {
