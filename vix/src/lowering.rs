@@ -4629,13 +4629,21 @@ fn lower_node(
             require_input_count(node, 2)?;
             let source = input_value(node, values, 0)?;
             let mapper = input_value(node, values, 1)?;
-            let Type::Stream { value: source_value, .. } = &source.ty else {
+            let Type::Stream {
+                value: source_value,
+                ..
+            } = &source.ty
+            else {
                 return Err(lowering_diagnostic(
                     node.span,
                     "stream filter_map source is not keyed codata",
                 ));
             };
-            let Type::Stream { value: output_value, .. } = &node.ty else {
+            let Type::Stream {
+                value: output_value,
+                ..
+            } = &node.ty
+            else {
                 return Err(lowering_diagnostic(
                     node.span,
                     "stream filter_map result is not keyed codata",
@@ -4658,13 +4666,21 @@ fn lower_node(
             require_input_count(node, 2)?;
             let source = input_value(node, values, 0)?;
             let mapper = input_value(node, values, 1)?;
-            let Type::Stream { value: source_value, .. } = &source.ty else {
+            let Type::Stream {
+                value: source_value,
+                ..
+            } = &source.ty
+            else {
                 return Err(lowering_diagnostic(
                     node.span,
                     "stream flat_map source is not keyed codata",
                 ));
             };
-            let Type::Stream { value: output_value, .. } = &node.ty else {
+            let Type::Stream {
+                value: output_value,
+                ..
+            } = &node.ty
+            else {
                 return Err(lowering_diagnostic(
                     node.span,
                     "stream flat_map result is not keyed codata",
@@ -7102,7 +7118,9 @@ fn stream_transform_base<'n>(
         .nodes
         .get(&recipe.inputs[0])
         .copied()
-        .ok_or_else(|| lowering_diagnostic(node.span, "stream transform input has no VIR recipe"))?;
+        .ok_or_else(|| {
+            lowering_diagnostic(node.span, "stream transform input has no VIR recipe")
+        })?;
     if !matches!(array_stream.op, Op::ArrayStream) {
         return Err(lowering_diagnostic(
             node.span,
@@ -7191,9 +7209,9 @@ fn lower_array_stream_collect_node(
         ValueRepresentation::RealizedHandle,
     )?;
     let collection_ty = node.ty.clone();
-    let (collection_key, collection_value) = collection_ty.map_types().ok_or_else(|| {
-        lowering_diagnostic(node.span, "stream collect result is not a map")
-    })?;
+    let (collection_key, collection_value) = collection_ty
+        .map_types()
+        .ok_or_else(|| lowering_diagnostic(node.span, "stream collect result is not a map"))?;
     if collection_key != &Type::Int {
         return Err(lowering_diagnostic(
             node.span,
@@ -7381,9 +7399,10 @@ fn lower_array_stream_collect_node(
                 value: mapped.region_id,
                 variant: OPTION_SOME_VARIANT,
             });
-            outputs
-                .code
-                .jump_if_zero(scratch.condition, skip_insert.expect("filter_map skip label"));
+            outputs.code.jump_if_zero(
+                scratch.condition,
+                skip_insert.expect("filter_map skip label"),
+            );
             outputs.code.push(WeavyOp::EnumProjectChecked {
                 dst: temps.projected_value.region_id,
                 value: mapped.region_id,
@@ -7463,7 +7482,10 @@ fn lower_stream_flat_map_collect_node(
 ) -> Result<ValueRepresentation, Diagnostics> {
     require_input_count(recipe, 2)?;
     let stream = values.get(&node.inputs[0]).ok_or_else(|| {
-        lowering_diagnostic(node.span, "flat_map collect recipe is not topologically prior")
+        lowering_diagnostic(
+            node.span,
+            "flat_map collect recipe is not topologically prior",
+        )
     })?;
     let mapper = input_value(recipe, values, 1)?;
     let array_stream = stream_transform_base(node, recipe, sequence)?;
@@ -7472,7 +7494,10 @@ fn lower_stream_flat_map_collect_node(
         .get(&array_stream.inputs[0])
         .cloned()
         .ok_or_else(|| {
-            lowering_diagnostic(node.span, "flat_map source array is not topologically prior")
+            lowering_diagnostic(
+                node.span,
+                "flat_map source array is not topologically prior",
+            )
         })?;
     let Type::Array(element) = &source.ty else {
         return Err(lowering_diagnostic(
@@ -7504,7 +7529,12 @@ fn lower_stream_flat_map_collect_node(
         parameter: Box::new(element.clone()),
         result: Box::new(Type::array(inner_value.clone())),
     };
-    require_value(node, &mapper, &mapper_ty, ValueRepresentation::InlineComposite)?;
+    require_value(
+        node,
+        &mapper,
+        &mapper_ty,
+        ValueRepresentation::InlineComposite,
+    )?;
 
     let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
         lowering_diagnostic(node.span, "flat_map collect has no typed outcome scratch")
