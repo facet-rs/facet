@@ -3123,9 +3123,9 @@ fn resolve_stream_recipe(
     values: &BTreeMap<NodeId, LoweredSlot>,
     sequence: &SequenceContext<'_, '_, '_>,
 ) -> Result<ResolvedStreamRecipe, Diagnostics> {
-    let stream = values
-        .get(&stream_id)
-        .ok_or_else(|| lowering_diagnostic(node.span, "stream recipe is not topologically prior"))?;
+    let stream = values.get(&stream_id).ok_or_else(|| {
+        lowering_diagnostic(node.span, "stream recipe is not topologically prior")
+    })?;
     let recipe = sequence
         .nodes
         .get(&stream_id)
@@ -3137,7 +3137,12 @@ fn resolve_stream_recipe(
         Op::StreamFilter => {
             require_input_count(recipe, 2)?;
             let upstream = input_value(recipe, values, 0)?;
-            require_value(recipe, &upstream, &recipe.ty, ValueRepresentation::CodataRecipe)?;
+            require_value(
+                recipe,
+                &upstream,
+                &recipe.ty,
+                ValueRepresentation::CodataRecipe,
+            )?;
             let predicate = input_value(recipe, values, 1)?;
             let array_stream = sequence
                 .nodes
@@ -3657,19 +3662,13 @@ fn lower_node_sequence(
             | Op::StreamCollect => {
                 lower_checked_collection_node(node, dst, dst_region_id, values, sequence, outputs)?
             }
-            Op::StreamFindMin | Op::StreamFindMax => lower_checked_stream_selection_node(
-                node,
-                dst_region_id,
-                values,
-                sequence,
-                outputs,
-            )?,
+            Op::StreamFindMin | Op::StreamFindMax => {
+                lower_checked_stream_selection_node(node, dst_region_id, values, sequence, outputs)?
+            }
             Op::StreamSplitMin => {
                 lower_checked_stream_split_min_node(node, dst_region_id, values, sequence, outputs)?
             }
-            Op::StreamLen => {
-                lower_checked_stream_len_node(node, dst, values, sequence, outputs)?
-            }
+            Op::StreamLen => lower_checked_stream_len_node(node, dst, values, sequence, outputs)?,
             Op::StreamContains => {
                 lower_checked_stream_contains_node(node, dst, values, sequence, outputs)?
             }
@@ -6506,7 +6505,9 @@ fn lower_checked_stream_selection_node(
             node: node.id,
         })
         .copied()
-        .ok_or_else(|| lowering_diagnostic(node.span, "stream selection has no stable trace site"))?;
+        .ok_or_else(|| {
+            lowering_diagnostic(node.span, "stream selection has no stable trace site")
+        })?;
     let element_schema = sequence.lowering.schemas.schema_for(&element, node.span)?;
     let element_width = element_byte_width(&element, node.span)?;
 
@@ -6589,7 +6590,14 @@ fn lower_checked_stream_selection_node(
         )?;
         outputs.code.jump_if_zero(scratch.condition, advance);
     }
-    emit_checked_call_indirect(node, &selection, &current, &predicate_result, sequence, outputs)?;
+    emit_checked_call_indirect(
+        node,
+        &selection,
+        &current,
+        &predicate_result,
+        sequence,
+        outputs,
+    )?;
     outputs.code.jump_if_zero(scratch.condition, advance);
     outputs.code.jump_if_zero(scratch.fields[2], take);
     temps.rewind(comparison, node.span)?;
@@ -6621,9 +6629,12 @@ fn lower_checked_stream_selection_node(
     outputs.code.push(better);
     outputs.code.jump_if_zero(scratch.condition, advance);
     outputs.code.bind(take, node.span)?;
-    outputs
-        .code
-        .extend(copy_lowered_value(node, &current, best.region, best.region_id)?);
+    outputs.code.extend(copy_lowered_value(
+        node,
+        &current,
+        best.region,
+        best.region_id,
+    )?);
     outputs.code.push(WeavyOp::ConstI64 {
         dst: scratch.fields[2].byte_offset(),
         value: 1,
@@ -6672,11 +6683,9 @@ fn lower_checked_stream_len_node(
     let resolved = resolve_stream_recipe(node, node.inputs[0], values, sequence)?;
     let element = resolved.element.clone();
 
-    let scratch = sequence
-        .function
-        .layout
-        .outcome_scratch
-        .ok_or_else(|| lowering_diagnostic(node.span, "stream len has no checked outcome scratch"))?;
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(node.span, "stream len has no checked outcome scratch")
+    })?;
     let assigned = sequence
         .lowering
         .regions
@@ -6685,9 +6694,9 @@ fn lower_checked_stream_len_node(
         .lowering
         .regions
         .array_outcome(sequence.function.id, node.span)?;
-    let return_label = sequence
-        .array_return
-        .ok_or_else(|| lowering_diagnostic(node.span, "stream len has no checked outcome return"))?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(node.span, "stream len has no checked outcome return")
+    })?;
     let site = sequence
         .lowering
         .trace_ids
@@ -6835,7 +6844,9 @@ fn lower_checked_stream_contains_node(
             node: node.id,
         })
         .copied()
-        .ok_or_else(|| lowering_diagnostic(node.span, "stream contains has no stable trace site"))?;
+        .ok_or_else(|| {
+            lowering_diagnostic(node.span, "stream contains has no stable trace site")
+        })?;
     let element_schema = sequence.lowering.schemas.schema_for(&element, node.span)?;
     let element_width = element_byte_width(&element, node.span)?;
 

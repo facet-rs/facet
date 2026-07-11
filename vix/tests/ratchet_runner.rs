@@ -945,7 +945,9 @@ fn rung_038_selection_executes_on_verified_path() {
 fn selection() -> Stream<Check> {
     let ms = [5, 3, 9, 3].stream();
     yield expect_eq(ms.find_min(|n| n > 3), Some(5));
+    yield expect_eq(ms.find_min(|_| true), Some(3));
     yield expect_eq(ms.find_max(|_| true), Some(9));
+    yield expect_none(ms.find_min(|n| n > 100));
     yield expect_eq(ms.len(), 4);
     yield expect(ms.contains(3));
     yield expect(!ms.contains(7));
@@ -955,7 +957,7 @@ fn selection() -> Stream<Check> {
         run_source(SOURCE).expect("stream selection executes through verified production path");
     assert!(report.passed());
     assert!(report.agrees());
-    assert_eq!(report.plain.checks.len(), 5);
+    assert_eq!(report.plain.checks.len(), 7);
     assert_eq!(report.plain.checks, report.chaos.checks);
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.pure_host_calls, 0);
@@ -1005,7 +1007,8 @@ fn decompose() -> Stream<Check> {
                 .iter()
                 .find(|entry| entry.code == DiagnosticCode::LoweringUnsupported)
                 .expect("split_min decomposition reaches an explicit lowering seam");
-            let vix::diagnostic::DiagnosticPayload::Unsupported { construct } = &seam.payload else {
+            let vix::diagnostic::DiagnosticPayload::Unsupported { construct } = &seam.payload
+            else {
                 panic!("unexpected lowering seam payload: {:?}", seam.payload);
             };
             assert!(
