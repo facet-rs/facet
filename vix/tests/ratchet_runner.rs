@@ -3701,11 +3701,9 @@ fn rung_048_captured_closures_run_directly_and_through_array_map() {
     let capture_region = island
         .nodes
         .iter()
-        .find(|node| node.id == capture)
-        .expect("capture remains in the island")
-        .id;
-    let capture_region =
-        lowered.contract().functions[0].frame.regions[capture_region.0 as usize].offset;
+        .position(|node| node.id == capture)
+        .expect("capture remains in the island");
+    let capture_region = lowered.contract().functions[0].frame.regions[capture_region].offset;
     let direct = root
         .nodes
         .iter()
