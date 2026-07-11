@@ -7848,7 +7848,6 @@ dependencies = [
  "blake3",
  "exec-protocol",
  "facet",
- "facet-cargo-toml",
  "facet-json",
  "facet-toml",
  "facet-value",

@@ -52,9 +52,9 @@ tempfile = { workspace = true, optional = true }
 # The graph demand engine's driver uses only core::future (vix stays
 # wasm-clean); tokio is DEV-only, an executor + timers for the demand tests.
 [dev-dependencies]
-# The live-Cargo oracle harness (tests/rodin_fixtures.rs) parses real Cargo.lock
-# files into typed rows via facet — no serde. facet/facet-json/semver are already
-# normal deps and are nameable from integration tests; facet-cargo-toml is not.
-facet-cargo-toml = { path = "../facet-cargo-toml" }
+# The live-Cargo oracle harness (tests/rodin_fixtures.rs) reads `cargo metadata`
+# and parses it with facet-json — no serde. facet/facet-json/semver are already
+# normal deps and are nameable from integration tests, so no extra dev-dep is
+# needed for it.
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
 weavy = { path = "../weavy" }
