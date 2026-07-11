@@ -238,6 +238,14 @@ pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
     run_source_with_config(source, CompilerConfig::default())
 }
 
+/// Run through the production scheduler while retaining every interior Weavy
+/// source mark. This is an explicit diagnostic lane: ordinary [`run_source`]
+/// uses bounded Production tracing and preserves only structural task events.
+pub fn run_source_innards(source: &str) -> Result<RatchetReport, RunError> {
+    prepare_source_with_cache(source, CompilerConfig::default(), LoweringCache::innards())?
+        .execute()
+}
+
 /// Run every declared test twice under explicit shape-selection configuration.
 /// The forced-copy molten differential compiles the same source with
 /// `force_molten_copy` set and proves the produced value identities match the
@@ -264,8 +272,15 @@ pub fn prepare_source_with_config(
     source: &str,
     config: CompilerConfig,
 ) -> Result<PreparedRun, RunError> {
+    prepare_source_with_cache(source, config, LoweringCache::default())
+}
+
+fn prepare_source_with_cache(
+    source: &str,
+    config: CompilerConfig,
+    mut cache: LoweringCache,
+) -> Result<PreparedRun, RunError> {
     let compilation = Compiler::with_config(config).compile(source)?;
-    let mut cache = LoweringCache::default();
 
     // Lower every island the lanes will demand so its native code is compiled
     // and cached now, before execution. `get_or_lower` keys on canonical recipe
