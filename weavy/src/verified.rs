@@ -387,6 +387,7 @@ pub enum AccessRole {
     CompareRight,
     ArrayHandle,
     ArrayStatus,
+    ArrayStatusSource,
     ArrayCount,
     ArrayIndex,
     ArrayElementSource,
@@ -2157,7 +2158,7 @@ impl Verifier<'_> {
                 }
             }
             Op::Await { dst, input } => {
-                self.require_scalar_write(
+                self.require_scalar_read(
                     function_id,
                     pc,
                     frame,
@@ -2342,6 +2343,20 @@ impl Verifier<'_> {
                     frame,
                     *dst,
                     AccessRole::ArrayLengthDestination,
+                )?;
+            }
+            Op::ArrayStatusIs {
+                dst,
+                status,
+                expected: _,
+            } => {
+                self.require_scalar_read(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                self.require_status_read(
+                    function_id,
+                    pc,
+                    frame,
+                    *status,
+                    AccessRole::ArrayStatusSource,
                 )?;
             }
             Op::ArrayStoreWord { .. } => {
@@ -2923,6 +2938,29 @@ impl Verifier<'_> {
         Ok(())
     }
 
+    fn require_status_read(
+        &self,
+        function: FnId,
+        pc: usize,
+        frame: &ValidatedFrame,
+        offset: u32,
+        role: AccessRole,
+    ) -> Result<(), ProgramError> {
+        let kinds = self.word_kinds(function, pc, frame, offset, role)?;
+        if !kinds.is_exactly(WordKind::Status) {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::KindMismatch {
+                    role,
+                    required: KindRequirement::Status,
+                    allowed: kinds.clone(),
+                },
+            ));
+        }
+        Ok(())
+    }
+
     fn array_element(
         &self,
         function: FnId,
@@ -3276,6 +3314,7 @@ impl Verifier<'_> {
                     | Op::ArrayStore { .. }
                     | Op::LoadArray { .. }
                     | Op::LoadArrayLen { .. }
+                    | Op::ArrayStatusIs { .. }
                     | Op::Trace { .. } => pending.push(pc + 1),
                     Op::ArrayStoreWord { .. } => {
                         return Err(self.unsupported(
@@ -5028,6 +5067,77 @@ mod tests {
             );
         }
     }
+
+    #[test]
+    fn array_status_discriminator_requires_exact_scalar_and_status_regions() {
+        let fixture = || {
+            single_function(
+                2,
+                vec![
+                    Op::ArrayStatusIs {
+                        dst: 0,
+                        status: 8,
+                        expected: crate::task::ArrayOpStatus::Ok,
+                    },
+                    Op::Ret { src: 0, size: 8 },
+                ],
+                vec![
+                    word_region(0, WordKind::Scalar),
+                    word_region(8, WordKind::Status),
+                ],
+                0,
+            )
+        };
+
+        let (valid_program, valid_contract) = fixture();
+        valid_program
+            .verify(valid_contract)
+            .expect("closed array status discriminator verifies");
+
+        let (program, mut contract) = fixture();
+        contract.functions[0].frame.regions[0] = word_region(0, WordKind::Status);
+        assert_eq!(
+            program.verify(contract).expect_err("status destination"),
+            op_error(
+                0,
+                ProgramDefect::KindMismatch {
+                    role: AccessRole::Destination,
+                    required: KindRequirement::Scalar,
+                    allowed: kinds(WordKind::Status),
+                },
+            )
+        );
+
+        let (program, mut contract) = fixture();
+        contract.functions[0].frame.regions[1] = word_region(8, WordKind::Scalar);
+        assert_eq!(
+            program.verify(contract).expect_err("scalar status source"),
+            op_error(
+                0,
+                ProgramDefect::KindMismatch {
+                    role: AccessRole::ArrayStatusSource,
+                    required: KindRequirement::Status,
+                    allowed: kinds(WordKind::Scalar),
+                },
+            )
+        );
+
+        let (program, mut contract) = fixture();
+        contract.functions[0].frame.regions[1].shape =
+            RegionShape::new(vec![kinds(WordKind::Status).allowing(WordKind::Opaque)]);
+        assert_eq!(
+            program.verify(contract).expect_err("status union source"),
+            op_error(
+                0,
+                ProgramDefect::KindMismatch {
+                    role: AccessRole::ArrayStatusSource,
+                    required: KindRequirement::Status,
+                    allowed: kinds(WordKind::Status).allowing(WordKind::Opaque),
+                },
+            )
+        );
+    }
+
     #[test]
     fn verifies_structural_value_shapes() {
         let string = SchemaRef(0);

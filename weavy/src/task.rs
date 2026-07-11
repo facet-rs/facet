@@ -214,6 +214,24 @@ pub enum ArrayOpStatus {
     Uninitialized = 9,
 }
 
+impl ArrayOpStatus {
+    #[must_use]
+    pub const fn from_word(word: i64) -> Option<Self> {
+        match word {
+            1 => Some(Self::Ok),
+            2 => Some(Self::InvalidHandle),
+            3 => Some(Self::MalformedPayload),
+            4 => Some(Self::WidthMismatch),
+            5 => Some(Self::SchemaMismatch),
+            6 => Some(Self::OutOfRange),
+            7 => Some(Self::Overflow),
+            8 => Some(Self::AllocationFailed),
+            9 => Some(Self::Uninitialized),
+            _ => None,
+        }
+    }
+}
+
 /// A task-private molten arena: mutable, in-flight, not interned.
 ///
 /// It is owned by exactly one [`Task`] and dies with it, so a discarded task
@@ -793,6 +811,14 @@ pub enum Op {
         array: u32,
         elem_schema_ref: i64,
     },
+    /// Validate a checked array status and compare it with one closed status.
+    ///
+    /// A malformed status word faults; it is never silently false.
+    ArrayStatusIs {
+        dst: u32,
+        status: u32,
+        expected: ArrayOpStatus,
+    },
     /// Lexicographically compare two resident value-memory byte runs.
     ///
     /// `frame[a]` and `frame[b]` are value handles. The result is the closed
@@ -1369,6 +1395,28 @@ impl Task {
                         load_array_len(value_memories.into(), &self.molten, array, elem_schema_ref);
                     write_i64_at(&mut self.arena, base + dst as usize, value);
                     write_i64_at(&mut self.arena, base + status as usize, status_value as i64);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::ArrayStatusIs {
+                    dst,
+                    status,
+                    expected,
+                } => {
+                    let actual = read_i64_at(&self.arena, base + status as usize);
+                    let Some(actual) = ArrayOpStatus::from_word(actual) else {
+                        let Some(verified) = verified else {
+                            panic!("array status validation requires VerifiedProgram");
+                        };
+                        return Err(TaskFault::InvalidArrayStatus {
+                            site: fault_site(verified, fn_id, pc)?,
+                            actual,
+                        });
+                    };
+                    write_i64_at(
+                        &mut self.arena,
+                        base + dst as usize,
+                        i64::from(actual == expected),
+                    );
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
                 Op::CompareValueBytes { dst, a, b } => {

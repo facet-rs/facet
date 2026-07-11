@@ -608,7 +608,8 @@ fn task_fault_site(fault: &TaskFault) -> Option<&FaultSite> {
         | TaskFault::MissingIndirectCallFacts { site }
         | TaskFault::UnresidentCompareValueBytes { site, .. }
         | TaskFault::InvalidEnumSelector { site, .. }
-        | TaskFault::EnumProjectionMismatch { site, .. } => Some(site),
+        | TaskFault::EnumProjectionMismatch { site, .. }
+        | TaskFault::InvalidArrayStatus { site, .. } => Some(site),
         TaskFault::PoisonedReDrive { original } | TaskFault::PoisonedResult { original } => {
             task_fault_site(original)
         }
@@ -652,6 +653,7 @@ fn result_shape_attribution(
         | TaskFault::UnresidentCompareValueBytes { .. }
         | TaskFault::InvalidEnumSelector { .. }
         | TaskFault::EnumProjectionMismatch { .. }
+        | TaskFault::InvalidArrayStatus { .. }
         | TaskFault::NativeFaultExit { .. }
         | TaskFault::InvalidFaultSite { .. }
         | TaskFault::PoisonedReDrive { .. }

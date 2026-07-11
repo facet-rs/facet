@@ -197,6 +197,10 @@ pub enum TaskFault {
         expected: i64,
         actual: i64,
     },
+    InvalidArrayStatus {
+        site: FaultSite,
+        actual: i64,
+    },
     NativeFaultExit {
         function: FnId,
         code: i64,
@@ -691,7 +695,7 @@ mod tests {
     use super::*;
     use crate::jit::task_lane;
     use crate::mem::Layout;
-    use crate::task::{ArgCopy, Fn, Program, StructuralFieldSource, ValueMemory};
+    use crate::task::{ArgCopy, ArrayOpStatus, Fn, Program, StructuralFieldSource, ValueMemory};
     use crate::{
         AllowedKinds, CallContract, FrameContract, FrameRegion, FunctionContract, PayloadKind,
         ProgramContract, RegionShape, SchemaContract, SchemaRef, ValueFieldUse, ValueSelector,
@@ -1490,6 +1494,110 @@ mod tests {
         let trace = task.trace().to_vec();
         let poison = task.drive(&mut [], &[]).unwrap_err();
         (fault, trace, poison)
+    }
+
+    fn array_status_program() -> (Program, ProgramContract) {
+        (
+            Program {
+                fns: vec![function(
+                    2,
+                    vec![
+                        Op::ArrayStatusIs {
+                            dst: 0,
+                            status: 8,
+                            expected: ArrayOpStatus::OutOfRange,
+                        },
+                        Op::Ret { src: 0, size: 8 },
+                    ],
+                )],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    2,
+                    vec![
+                        word_region(0, WordKind::Scalar),
+                        word_region(8, WordKind::Status),
+                    ],
+                    &[],
+                    0,
+                    None,
+                )],
+                calls: vec![],
+                schemas: vec![],
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    fn run_public_array_status(
+        verified: VerifiedProgram,
+        status: i64,
+        force_interpreter: bool,
+    ) -> Result<(i64, Vec<TaskEvent>), (TaskFault, Vec<TaskEvent>, TaskFault)> {
+        let previous = std::env::var_os("WEAVY_JIT");
+        if force_interpreter {
+            unsafe { std::env::set_var("WEAVY_JIT", "0") };
+        } else {
+            unsafe { std::env::remove_var("WEAVY_JIT") };
+        }
+        let executable = Executable::new(verified);
+        match previous {
+            Some(value) => unsafe { std::env::set_var("WEAVY_JIT", value) },
+            None => unsafe { std::env::remove_var("WEAVY_JIT") },
+        }
+        let mut task = executable.spawn(FnId(0)).expect("verified entry spawns");
+        task.adversarial_write_word_at_offset_for_test(8, status);
+        match task.drive(&mut [], &[]) {
+            Ok(TaskStep::Done) => Ok((
+                task.result_i64().expect("scalar result"),
+                task.trace().to_vec(),
+            )),
+            Ok(step) => panic!("pure status program returned {step:?}"),
+            Err(fault) => {
+                let trace = task.trace().to_vec();
+                let poison = task.drive(&mut [], &[]).expect_err("fault poisons task");
+                Err((fault, trace, poison))
+            }
+        }
+    }
+
+    #[test]
+    fn array_status_discriminator_matches_across_public_executable_lanes() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let interpreter = run_public_array_status(verify(array_status_program()), 6, true);
+        let native = run_public_array_status(verify(array_status_program()), 6, false);
+        assert_eq!(interpreter, native);
+        assert_eq!(
+            interpreter.expect("OutOfRange is a valid status"),
+            (
+                1,
+                vec![
+                    TaskEvent::FrameEntered(FnId(0)),
+                    TaskEvent::FrameExited(FnId(0))
+                ]
+            )
+        );
+
+        let interpreter = run_public_array_status(verify(array_status_program()), 99, true)
+            .expect_err("invalid status faults");
+        let native = run_public_array_status(verify(array_status_program()), 99, false)
+            .expect_err("invalid status faults");
+        assert_eq!(interpreter, native);
+        let (fault, trace, poison) = interpreter;
+        let site = match fault {
+            TaskFault::InvalidArrayStatus { site, actual } => {
+                assert_eq!(actual, 99);
+                site
+            }
+            fault => panic!("unexpected array status fault: {fault:?}"),
+        };
+        assert_eq!(site.function, FnId(0));
+        assert_eq!(site.pc, 0);
+        assert!(matches!(site.op, Op::ArrayStatusIs { .. }));
+        assert_eq!(trace, vec![TaskEvent::FrameEntered(FnId(0))]);
+        assert!(matches!(poison, TaskFault::PoisonedReDrive { .. }));
     }
 
     #[test]

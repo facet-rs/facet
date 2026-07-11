@@ -81,6 +81,7 @@ const EXIT_COMPARE_LEFT_UNRESIDENT: i64 = 7;
 const EXIT_COMPARE_RIGHT_UNRESIDENT: i64 = 8;
 const EXIT_INVALID_ENUM_SELECTOR: i64 = 9;
 const EXIT_ENUM_PROJECTION_MISMATCH: i64 = 10;
+const EXIT_INVALID_ARRAY_STATUS: i64 = 11;
 
 /// Whether the task JIT lane is usable on this target.
 pub fn available() -> bool {
@@ -357,6 +358,10 @@ fn compile_fn(
                 task_stencils::LOAD_ARRAY_LEN,
                 Continuations::Fallthrough(task_stencils::LOAD_ARRAY_LEN_CONT),
             ),
+            Op::ArrayStatusIs { .. } => (
+                task_stencils::ARRAY_STATUS_IS,
+                Continuations::Fallthrough(task_stencils::ARRAY_STATUS_IS_CONT),
+            ),
             Op::CompareValueBytes { .. } => (
                 task_stencils::COMPARE_VALUE_BYTES,
                 Continuations::Fallthrough(task_stencils::COMPARE_VALUE_BYTES_CONT),
@@ -479,6 +484,7 @@ fn compile_fn(
             Op::ArrayStoreWord { .. } | Op::LoadArray { .. } | Op::ArrayStore { .. } => 6,
             Op::LoadArrayWord { .. } => 5,
             Op::LoadArrayLen { .. } => 4,
+            Op::ArrayStatusIs { .. } => 4,
             Op::CompareValueBytes { .. } => 4,
             Op::Await { .. } => 3,
             Op::Call { .. } | Op::CallIndirect { .. } => 1,
@@ -800,6 +806,20 @@ fn compile_fn(
                     *elem_schema_ref as u64,
                 ] {
                     layout.push_prog_word(root.prog_index, v);
+                }
+            }
+            Op::ArrayStatusIs {
+                dst,
+                status,
+                expected,
+            } => {
+                for value in [
+                    u64::from(*dst),
+                    u64::from(*status),
+                    *expected as i64 as u64,
+                    i as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, value);
                 }
             }
             Op::CompareValueBytes { dst, a, b } => {
@@ -1285,6 +1305,16 @@ impl JitTask {
                         value_shape,
                         expected: (0..variants.len()).map(|variant| variant as i64).collect(),
                         actual,
+                    });
+                }
+                EXIT_INVALID_ARRAY_STATUS => {
+                    let Some(verified) = verified else {
+                        panic!("array status validation requires VerifiedProgram");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("verified pc fits usize");
+                    return Err(TaskFault::InvalidArrayStatus {
+                        site: fault_site(verified, frame.fn_id, pc)?,
+                        actual: resume_scratch as i64,
                     });
                 }
                 code => {

@@ -107,6 +107,7 @@ const EXIT_COMPARE_LEFT_UNRESIDENT: i64 = 7;
 const EXIT_COMPARE_RIGHT_UNRESIDENT: i64 = 8;
 const EXIT_INVALID_ENUM_SELECTOR: i64 = 9;
 const EXIT_ENUM_PROJECTION_MISMATCH: i64 = 10;
+const EXIT_INVALID_ARRAY_STATUS: i64 = 11;
 
 const LENT_MOLTEN_MIN: i64 = i64::MIN / 2;
 
@@ -652,6 +653,27 @@ pub unsafe extern "C" fn weavy_task_load_array_len(cx: *mut Ctx) {
     );
     write_i64(c.frame, dst, count);
     write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+/// Validate one checked status and compare it with a closed expected status.
+/// Immediates: [dst, status, expected, pc].
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_array_status_is(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let status = *c.prog.add(1);
+    let expected = *c.prog.add(2) as i64;
+    let pc = *c.prog.add(3);
+    let actual = read_i64(c.frame, status);
+    if !(1..=9).contains(&actual) {
+        *c.await_index = pc;
+        *c.resume = actual as u64;
+        *c.exit = EXIT_INVALID_ARRAY_STATUS;
+        return;
+    }
+    c.prog = c.prog.add(4);
+    write_i64(c.frame, dst, i64::from(actual == expected));
     cont!(cx);
 }
 

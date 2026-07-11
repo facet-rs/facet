@@ -10411,6 +10411,7 @@ fn op_name(op: &Op) -> &'static str {
         Op::ArrayStore { .. } => "ArrayStore",
         Op::LoadArray { .. } => "LoadArray",
         Op::LoadArrayLen { .. } => "LoadArrayLen",
+        Op::ArrayStatusIs { .. } => "ArrayStatusIs",
         Op::CompareValueBytes { .. } => "CompareValueBytes",
         Op::ConstF64 { .. } => "ConstF64",
         Op::AddF64 { .. } => "AddF64",
