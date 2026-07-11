@@ -253,10 +253,13 @@ tests. They land in this dependency order:
 Before any composite dynamic key or completed aggregate crosses that boundary,
 the runtime Store must intern it through the canonical framed value walk:
 embedded handles contribute their referents' content identities, never their
-process-local integer values. The proven recursive walk currently living in the
-retiring machine driver is the migration source. Raw realized-byte hashing is
-valid only for contracts whose identity shape is entirely scalar/opaque; a
-generic Weavy serializer or second identity authority is forbidden.
+process-local integer values. The retiring machine driver's recursive
+descriptor walk is the migration source for traversal and handle resolution,
+not for encoding: its direct `hasher.update` format must be replaced by a
+closed framed-writer API (`start`, `field`, `variant`, `seq-len`, `map-pair`,
+and `bytes-len`). Raw realized-byte hashing is valid only for contracts whose
+identity shape is entirely scalar/opaque; a generic Weavy serializer or second
+identity authority is forbidden.
 
 The rung-138 scale certificate is production-shaped only when all of these are
 measured together:
