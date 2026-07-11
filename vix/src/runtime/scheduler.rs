@@ -945,7 +945,7 @@ mod tests {
     use super::*;
     use crate::compiler::Compiler;
     use crate::lowering::{LoweringCache, attribution_for};
-    use crate::runtime::{EventLog, MachineCause};
+    use crate::runtime::{EventLog, FramedNode, MachineCause};
     use weavy::exec::{DriveTable, TaskFault};
     use weavy::task::{ArrayOpStatus, Op};
     use weavy::{Executable, ValueShapeRef};
@@ -1345,5 +1345,58 @@ fn out_of_bounds() -> Stream<Check> {
                 }
             )));
         });
+    }
+
+    const PASSING_CHECK_SOURCE: &str = r#"
+#[test]
+fn passing() -> Stream<Check> {
+    yield expect_eq(1 + 1, 2);
+}
+"#;
+
+    #[test]
+    // r[verify machine.identity.framed-encoding]
+    fn realized_check_identity_is_the_framed_leaf_identity() {
+        let module = Compiler::new()
+            .compile(PASSING_CHECK_SOURCE)
+            .expect("source compiles");
+        let partitioned = module.partition_test(&module.tests[0]);
+        let island = &partitioned.islands[0];
+        let attribution = attribution_for(island);
+        let location = Location::for_test_island(&partitioned.name, island.id.0);
+        let mut cache = LoweringCache::default();
+        let mut runtime = Runtime::new(EventLog::default());
+        let artifact = cache
+            .get_or_lower(island)
+            .expect("source lowers through the verified executable");
+        let evaluation = runtime
+            .evaluate(
+                island.id,
+                &location,
+                artifact,
+                &attribution,
+                ChaosPolicy::default(),
+            )
+            .expect("passing check evaluates to a realized value");
+
+        assert!(evaluation.passed, "1 + 1 == 2 is a passing check");
+        assert!(evaluation.failure.is_none());
+
+        // The production realized-scalar path routes through the closed writer:
+        // its identity is exactly the framed scalar-leaf identity, computed here
+        // independently of the store.
+        let expected =
+            FramedNode::leaf(SchemaId::named("vix.Check.v1"), vec![u8::from(true)]).identity();
+        assert_eq!(
+            evaluation.identity, expected,
+            "realized check identity is the framed leaf identity from the closed writer"
+        );
+
+        // And the store carries that same entry-carried identity as a load.
+        let entry = runtime
+            .store()
+            .entry(evaluation.handle)
+            .expect("realized value is resident");
+        assert_eq!(entry.identity, expected);
     }
 }
