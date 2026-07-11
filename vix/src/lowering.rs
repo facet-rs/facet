@@ -6608,11 +6608,10 @@ fn lower_range_node(
     let to = input_value(node, values, 1)?;
     require_value(node, &from, &Type::Int, ValueRepresentation::Word)?;
     require_value(node, &to, &Type::Int, ValueRepresentation::Word)?;
-    let scratch = sequence
-        .function
-        .layout
-        .outcome_scratch
-        .ok_or_else(|| lowering_diagnostic(node.span, "range has no checked outcome scratch"))?;
+    let scratch =
+        sequence.function.layout.outcome_scratch.ok_or_else(|| {
+            lowering_diagnostic(node.span, "range has no checked outcome scratch")
+        })?;
     let assigned = sequence
         .lowering
         .regions
@@ -6633,7 +6632,10 @@ fn lower_range_node(
         })
         .copied()
         .ok_or_else(|| lowering_diagnostic(node.span, "range has no stable trace site"))?;
-    let element_schema = sequence.lowering.schemas.schema_for(&Type::Int, node.span)?;
+    let element_schema = sequence
+        .lowering
+        .schemas
+        .schema_for(&Type::Int, node.span)?;
     let width = element_byte_width(&Type::Int, node.span)?;
     let mut temps = TemporaryCursor::new(
         sequence.function.layout,

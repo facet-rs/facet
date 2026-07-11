@@ -42,7 +42,10 @@ fn range_dense() -> Stream<Check> {
 "#;
     let report = run_source(SOURCE).expect("range dense-array source runs");
     assert!(report.agrees(), "plain and chaos agree: {report:?}");
-    assert!(report.passed(), "every dense-array check passes: {report:?}");
+    assert!(
+        report.passed(),
+        "every dense-array check passes: {report:?}"
+    );
     assert_eq!(report.plain.checks.len(), 4);
 }
 
@@ -99,7 +102,8 @@ fn range_shape() -> Stream<Check> {
         "range reserves exactly one dense array",
     );
     assert!(
-        ops.iter().any(|op| matches!(op, WeavyOp::ArrayStore { .. })),
+        ops.iter()
+            .any(|op| matches!(op, WeavyOp::ArrayStore { .. })),
         "range fills the dense array with whole-element stores",
     );
     assert!(
@@ -169,7 +173,10 @@ fn molten_small() -> Stream<Check> {
 "#;
     let report = run_source(SOURCE).expect("molten append fold source runs");
     assert!(report.agrees(), "plain and chaos agree: {report:?}");
-    assert!(report.passed(), "every molten-fold check passes: {report:?}");
+    assert!(
+        report.passed(),
+        "every molten-fold check passes: {report:?}"
+    );
     assert_eq!(report.plain.checks.len(), 4);
 }
 
@@ -311,8 +318,8 @@ fn duplicates() -> Stream<Check> {
     yield expect_eq(xs[5], 1);
 }
 "#;
-    let molten = run_source_with_config(SOURCE, CompilerConfig::default())
-        .expect("molten duplicates run");
+    let molten =
+        run_source_with_config(SOURCE, CompilerConfig::default()).expect("molten duplicates run");
     let copy = run_source_with_config(
         SOURCE,
         CompilerConfig {
@@ -362,7 +369,10 @@ fn molten_accumulator() -> Stream<Check> {
 }
 "#;
     let report = run_source(SOURCE).expect("million-element molten source runs");
-    assert!(report.passed(), "the shared-publication rung passes: {report:?}");
+    assert!(
+        report.passed(),
+        "the shared-publication rung passes: {report:?}"
+    );
 }
 
 // ---------------------------------------------------------------------------

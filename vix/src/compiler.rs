@@ -3996,8 +3996,7 @@ fn try_build_molten_append_mapper(
     let [acc_pattern, elem_pattern] = closure.patterns.as_slice() else {
         return Ok(None);
     };
-    let (Some(acc_name), Some(elem_name)) =
-        (binding_name(acc_pattern), binding_name(elem_pattern))
+    let (Some(acc_name), Some(elem_name)) = (binding_name(acc_pattern), binding_name(elem_pattern))
     else {
         return Ok(None);
     };
@@ -4031,14 +4030,8 @@ fn try_build_molten_append_mapper(
     {
         return Ok(None);
     }
-    let mapper = build_unary_element_closure(
-        nodes,
-        context,
-        element,
-        elem_name,
-        appended,
-        closure.span,
-    )?;
+    let mapper =
+        build_unary_element_closure(nodes, context, element, elem_name, appended, closure.span)?;
     // The append is well typed only when the element expression has the
     // element type; otherwise this is not a same-type append fold and the copy
     // path owns the proper diagnostic.
@@ -4130,7 +4123,14 @@ fn build_unary_element_closure(
     let (function, ty) = lowered?;
     context.insert_closure(function);
     Ok(LoweredValue {
-        node: push_node(nodes, span, ty.clone(), EffectFacts::PURE, Vec::new(), Op::Closure(id)),
+        node: push_node(
+            nodes,
+            span,
+            ty.clone(),
+            EffectFacts::PURE,
+            Vec::new(),
+            Op::Closure(id),
+        ),
         ty,
     })
 }
@@ -4141,7 +4141,10 @@ fn build_unary_element_closure(
 fn expr_references_name(expression: &ast::Expr, name: &str) -> bool {
     match expression {
         ast::Expr::Identifier(identifier) => identifier.value == name,
-        ast::Expr::Path(_) | ast::Expr::Str(_) | ast::Expr::Number(_) | ast::Expr::Quantity(_)
+        ast::Expr::Path(_)
+        | ast::Expr::Str(_)
+        | ast::Expr::Number(_)
+        | ast::Expr::Quantity(_)
         | ast::Expr::Bool(_) => false,
         ast::Expr::Paren(paren) => expr_references_name(&paren.inner, name),
         ast::Expr::Unary(unary) => expr_references_name(&unary.value, name),
@@ -4153,12 +4156,13 @@ fn expr_references_name(expression: &ast::Expr, name: &str) -> bool {
         }
         ast::Expr::Field(field) => expr_references_name(&field.receiver, name),
         ast::Expr::Call(call) => {
-            call.args.args.iter().any(|arg| expr_references_name(arg, name))
+            call.args
+                .args
+                .iter()
+                .any(|arg| expr_references_name(arg, name))
                 || named_args_reference_name(call.named_args.as_ref(), name)
         }
-        ast::Expr::WhereCall(call) => {
-            named_args_reference_name(Some(&call.named_args), name)
-        }
+        ast::Expr::WhereCall(call) => named_args_reference_name(Some(&call.named_args), name),
         ast::Expr::MethodCall(call) => {
             expr_references_name(&call.receiver, name)
                 || call
@@ -4173,10 +4177,12 @@ fn expr_references_name(expression: &ast::Expr, name: &str) -> bool {
         ast::Expr::Map(map) => map.rows.iter().any(|row| {
             expr_references_name(&row.key, name) || expr_references_name(&row.value, name)
         }),
-        ast::Expr::Variant(variant) => variant
-            .tuple_payload
-            .as_ref()
-            .is_some_and(|payload| payload.args.iter().any(|arg| expr_references_name(arg, name))),
+        ast::Expr::Variant(variant) => variant.tuple_payload.as_ref().is_some_and(|payload| {
+            payload
+                .args
+                .iter()
+                .any(|arg| expr_references_name(arg, name))
+        }),
         ast::Expr::Record(record) => {
             record
                 .fields
@@ -5859,7 +5865,11 @@ fn lower_where_call(
         )));
     }
     let from = lower_value_expected(nodes, bindings, context, from, Some(&Type::Int))?;
-    require_type(&from, &Type::Int, expr_span_of_named(&call.named_args, "from"))?;
+    require_type(
+        &from,
+        &Type::Int,
+        expr_span_of_named(&call.named_args, "from"),
+    )?;
     let to = lower_value_expected(nodes, bindings, context, to, Some(&Type::Int))?;
     require_type(&to, &Type::Int, expr_span_of_named(&call.named_args, "to"))?;
     let ty = Type::array(Type::Int);
