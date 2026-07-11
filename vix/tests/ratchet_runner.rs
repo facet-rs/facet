@@ -41,6 +41,7 @@ const RUNG_027: &str = include_str!("ratchet/027-array-map.vix");
 const RUNG_028: &str = include_str!("ratchet/028-array-enumerate.vix");
 const RUNG_029: &str = include_str!("ratchet/029-array-fold.vix");
 const RUNG_030: &str = include_str!("ratchet/030-array-predicates.vix");
+const RUNG_031: &str = include_str!("ratchet/031-split-last.vix");
 const RUNG_032: &str = include_str!("ratchet/032-pop.reject.vix");
 const RUNG_033: &str = include_str!("ratchet/033-multiset-conversion.vix");
 const RUNG_034: &str = include_str!("ratchet/034-multiset-filter.vix");
@@ -894,6 +895,21 @@ fn split_last_values() -> Stream<Check> {
     assert!(report.agrees());
     assert_eq!(report.plain.checks.len(), 2);
     assert_eq!(report.plain.checks, report.chaos.checks);
+}
+
+// Rung 031 is the first faithful dynamic `#[test] -> Stream<Check>` generator:
+// its outer `yield match xs.split_last()` decides at runtime whether the taken
+// arm publishes three checks (Some) or one (None), followed by one later
+// unconditional empty-array check. This certifies the compile/VIR boundary: the
+// generator/codata VIR is built with real Match control and static yield sites.
+// The runtime fold is a later checkpoint.
+#[test]
+fn rung_031_split_last_compiles_to_generator_codata() {
+    let module = Compiler::new()
+        .compile(RUNG_031)
+        .expect("rung 031 compiles into generator/codata VIR");
+    assert_eq!(module.tests.len(), 1);
+    assert_eq!(module.tests[0].name, "split_last");
 }
 
 #[test]
