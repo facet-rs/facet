@@ -26,6 +26,7 @@ pub enum DiagnosticCode {
     NonExhaustiveMatch,
     ExpressionStatement,
     UnusedMustUse,
+    UnknownMethod,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -118,7 +119,10 @@ impl Diagnostic {
             DiagnosticPayload::Parse { detail } | DiagnosticPayload::Invariant { detail } => {
                 detail.clone()
             }
-            DiagnosticPayload::Name { name } => name.clone(),
+            DiagnosticPayload::Name { name } => match self.code {
+                DiagnosticCode::UnknownMethod => format!("unknown method {name}"),
+                _ => name.clone(),
+            },
             DiagnosticPayload::Type { expected, found } => {
                 format!("expected {expected}, found {found}")
             }

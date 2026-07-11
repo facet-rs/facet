@@ -1705,10 +1705,14 @@ fn lower_method_call(
     let receiver = lower_value(nodes, bindings, context, &call.receiver)?;
     let Some(entry) = PreludeMethodRegistry::STANDARD.resolve(&receiver.ty, &call.name.value)
     else {
-        return Err(Diagnostics::one(Diagnostic::unsupported(
-            call.name.span,
-            format!("{} has no registered prelude method", receiver.ty.name()),
-        )));
+        return Err(Diagnostics::one(Diagnostic {
+            code: DiagnosticCode::UnknownMethod,
+            primary: call.name.span,
+            labels: Vec::new(),
+            payload: DiagnosticPayload::Name {
+                name: call.name.value.clone(),
+            },
+        }));
     };
     if call.args.args.len() != entry.arity {
         return Err(invalid_arity(call.span, entry.arity, call.args.args.len()));

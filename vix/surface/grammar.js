@@ -213,6 +213,7 @@ module.exports = grammar({
           ".",
           field("name", $.identifier),
           field("args", $.arg_list),
+          optional(field("named_args", $.where_args)),
         ),
       ),
     index_expr: ($) =>

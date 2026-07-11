@@ -34,7 +34,9 @@ const RUNG_023: &str = include_str!("ratchet/023-option.vix");
 const RUNG_024: &str = include_str!("ratchet/024-user-result.vix");
 const RUNG_025: &str = include_str!("ratchet/025-ordering-enum.vix");
 const RUNG_026: &str = include_str!("ratchet/026-arrays.vix");
+const RUNG_032: &str = include_str!("ratchet/032-pop.reject.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
+const RUNG_145: &str = include_str!("ratchet/145-push.reject.vix");
 
 fn frame_index(functions: &[FunctionId], function: FunctionId) -> usize {
     functions
@@ -2728,6 +2730,21 @@ fn unused_collection_result_is_a_typed_warning() {
         "xs + 4"
     );
     assert_eq!(compilation.module.functions.len(), 1);
+}
+
+#[test]
+fn mutation_shaped_array_methods_are_unknown() {
+    for source in [RUNG_032, RUNG_145] {
+        let (expected_message, expected_line) = reject_header(source);
+        let diagnostics = Compiler::new()
+            .compile(source)
+            .expect_err("mutation-shaped array methods remain absent");
+        assert_eq!(diagnostics.entries.len(), 1);
+        let diagnostic = &diagnostics.entries[0];
+        assert_eq!(diagnostic.code, DiagnosticCode::UnknownMethod);
+        assert_eq!(diagnostic.message(), expected_message);
+        assert_eq!(source_line(source, diagnostic.primary.start), expected_line);
+    }
 }
 
 fn reject_header(source: &str) -> (&str, usize) {
