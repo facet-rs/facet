@@ -332,8 +332,8 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
     if output.ty != Type::Check {
         return Err(lowering_diagnostic(output.span, "island output is not a Check").into());
     }
-    let array_outcome =
-        island_contains_array_ops(island).then(|| ArrayOutcomeAbi::for_value(output.ty.clone()));
+    let array_outcome = island_contains_checked_collection_ops(island)
+        .then(|| ArrayOutcomeAbi::for_value(output.ty.clone()));
     let schemas = SchemaAssignments::build(island, array_outcome.is_some())?;
 
     let function_ids = island.local_function_ids();
@@ -464,7 +464,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
     })
 }
 
-fn island_contains_array_ops(island: &Island) -> bool {
+fn island_contains_checked_collection_ops(island: &Island) -> bool {
     island
         .nodes
         .iter()
@@ -472,7 +472,25 @@ fn island_contains_array_ops(island: &Island) -> bool {
         .any(|node| {
             matches!(
                 node.op,
-                Op::Array | Op::ArrayIndex | Op::ArrayLen | Op::ArrayAppend | Op::ArrayConcat
+                Op::Array
+                    | Op::ArrayIndex
+                    | Op::ArrayLen
+                    | Op::ArrayAppend
+                    | Op::ArrayConcat
+                    | Op::Map
+                    | Op::MapAdd
+                    | Op::MapConcat
+                    | Op::MapWith
+                    | Op::MapGet
+                    | Op::MapHas
+                    | Op::MapLen
+                    | Op::MapKeys
+                    | Op::Set
+                    | Op::SetAdd
+                    | Op::SetConcat
+                    | Op::SetHas
+                    | Op::SetLen
+                    | Op::SetValues
             )
         })
 }
@@ -2085,7 +2103,23 @@ impl FunctionLayout {
         for node in nodes.iter().filter(|node| {
             matches!(
                 node.op,
-                Op::Eq | Op::Ne | Op::Compare | Op::ArrayAppend | Op::ArrayConcat
+                Op::Eq
+                    | Op::Ne
+                    | Op::Compare
+                    | Op::ArrayAppend
+                    | Op::ArrayConcat
+                    | Op::Map
+                    | Op::MapAdd
+                    | Op::MapConcat
+                    | Op::MapWith
+                    | Op::MapGet
+                    | Op::MapHas
+                    | Op::MapKeys
+                    | Op::Set
+                    | Op::SetAdd
+                    | Op::SetConcat
+                    | Op::SetHas
+                    | Op::SetValues
             )
         }) {
             let mut types = if matches!(node.op, Op::Eq | Op::Ne) {
@@ -2094,10 +2128,12 @@ impl FunctionLayout {
                 vec![Type::Int, Type::Int]
             } else if let Type::Array(element) = &node.ty {
                 vec![element.as_ref().clone()]
+            } else if let Some(types) = collection_temporary_types(node, nodes)? {
+                types
             } else {
                 return Err(lowering_diagnostic(
                     node.span,
-                    "collection addition result is not an array",
+                    "collection operation has no typed temporary layout",
                 ));
             };
             if matches!(node.op, Op::Eq | Op::Ne | Op::Compare) {
@@ -2268,6 +2304,52 @@ impl FunctionLayout {
             .copied()
             .ok_or_else(|| lowering_diagnostic(span, "closure node has no typed temporary regions"))
     }
+}
+
+fn collection_temporary_types(
+    node: &Node,
+    nodes: &[Node],
+) -> Result<Option<Vec<Type>>, Diagnostics> {
+    let collection = match node.op {
+        Op::Map
+        | Op::MapAdd
+        | Op::MapConcat
+        | Op::MapWith
+        | Op::MapGet
+        | Op::MapHas
+        | Op::MapKeys => node
+            .inputs
+            .first()
+            .and_then(|input| nodes.iter().find(|candidate| candidate.id == *input))
+            .map(|input| input.ty.clone())
+            .unwrap_or_else(|| node.ty.clone()),
+        Op::Set | Op::SetAdd | Op::SetConcat | Op::SetHas | Op::SetValues => node
+            .inputs
+            .first()
+            .and_then(|input| nodes.iter().find(|candidate| candidate.id == *input))
+            .map(|input| input.ty.clone())
+            .unwrap_or_else(|| node.ty.clone()),
+        _ => return Ok(None),
+    };
+    let mut types = vec![Type::Int, Type::Int, Type::Int, collection.clone()];
+    match collection {
+        Type::Map { key, value } => {
+            let row = Type::Tuple(vec![key.as_ref().clone(), value.as_ref().clone()]);
+            types.extend([row.clone(), row, key.as_ref().clone(), key.as_ref().clone()]);
+            comparison_temporary_types(&key, &mut types);
+        }
+        Type::Set(element) => {
+            types.extend([element.as_ref().clone(), element.as_ref().clone()]);
+            comparison_temporary_types(&element, &mut types);
+        }
+        _ => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "collection operation receiver is not Map or Set",
+            ));
+        }
+    }
+    Ok(Some(types))
 }
 
 fn comparison_temporary_types(ty: &Type, out: &mut Vec<Type>) {
@@ -2613,6 +2695,22 @@ fn lower_node_sequence(
             }
             Op::Array | Op::ArrayIndex | Op::ArrayLen | Op::ArrayAppend | Op::ArrayConcat => {
                 lower_checked_array_node(node, dst, values, sequence, outputs)?
+            }
+            Op::Map
+            | Op::MapAdd
+            | Op::MapConcat
+            | Op::MapWith
+            | Op::MapGet
+            | Op::MapHas
+            | Op::MapLen
+            | Op::MapKeys
+            | Op::Set
+            | Op::SetAdd
+            | Op::SetConcat
+            | Op::SetHas
+            | Op::SetLen
+            | Op::SetValues => {
+                lower_checked_collection_node(node, dst, dst_region_id, values, sequence, outputs)?
             }
             Op::Match { .. } => {
                 lower_match_node(node, dst, dst_region_id, values, sequence, outputs)?
@@ -3166,6 +3264,86 @@ fn collect_typed_compare_leaves(
         }
     }
     Ok(())
+}
+
+fn emit_structural_order(
+    node: &Node,
+    ty: &Type,
+    a: &LoweredSlot,
+    b: &LoweredSlot,
+    dst: FrameSlot,
+    condition: FrameSlot,
+    temps: &mut TemporaryCursor<'_>,
+    code: &mut CodeBuilder,
+) -> Result<(), Diagnostics> {
+    let mut leaves = Vec::new();
+    collect_typed_compare_leaves(node, ty, a, b, temps, code, &mut leaves)?;
+    let done = code.label();
+    if leaves.is_empty() {
+        code.push(WeavyOp::ConstI64 {
+            dst: dst.byte_offset(),
+            value: i64::from(ORDERING_EQUAL_VARIANT),
+        });
+    }
+    for (index, leaf) in leaves.iter().enumerate() {
+        let last = index + 1 == leaves.len();
+        match leaf.kind {
+            CompareLeafKind::SignedWord => {
+                let not_less = code.label();
+                code.push(WeavyOp::LtI64 {
+                    dst: condition.byte_offset(),
+                    a: leaf.a.byte_offset(),
+                    b: leaf.b.byte_offset(),
+                });
+                code.jump_if_zero(condition, not_less);
+                code.push(WeavyOp::ConstI64 {
+                    dst: dst.byte_offset(),
+                    value: i64::from(ORDERING_LESS_VARIANT),
+                });
+                code.jump(done);
+                code.bind(not_less, node.span)?;
+                let equal = code.label();
+                code.push(WeavyOp::GtI64 {
+                    dst: condition.byte_offset(),
+                    a: leaf.a.byte_offset(),
+                    b: leaf.b.byte_offset(),
+                });
+                code.jump_if_zero(condition, equal);
+                code.push(WeavyOp::ConstI64 {
+                    dst: dst.byte_offset(),
+                    value: i64::from(ORDERING_GREATER_VARIANT),
+                });
+                code.jump(done);
+                code.bind(equal, node.span)?;
+                if last {
+                    code.push(WeavyOp::ConstI64 {
+                        dst: dst.byte_offset(),
+                        value: i64::from(ORDERING_EQUAL_VARIANT),
+                    });
+                }
+            }
+            CompareLeafKind::ValueBytes => {
+                code.push(WeavyOp::CompareValueBytes {
+                    dst: dst.byte_offset(),
+                    a: leaf.a.byte_offset(),
+                    b: leaf.b.byte_offset(),
+                });
+                if !last {
+                    code.push(WeavyOp::ConstI64 {
+                        dst: condition.byte_offset(),
+                        value: i64::from(ORDERING_EQUAL_VARIANT),
+                    });
+                    code.push(WeavyOp::EqI64 {
+                        dst: condition.byte_offset(),
+                        a: dst.byte_offset(),
+                        b: condition.byte_offset(),
+                    });
+                    code.jump_if_zero(condition, done);
+                }
+            }
+        }
+    }
+    code.bind(done, node.span)
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -4314,6 +4492,257 @@ fn lower_checked_array_node(
             Ok(ValueRepresentation::RealizedHandle)
         }
         _ => unreachable!("array lowering dispatched only array operations"),
+    }
+}
+
+fn lower_checked_collection_node(
+    node: &Node,
+    dst: FrameRegion,
+    dst_region: WeavyRegionId,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(
+            node.span,
+            "collection operation has no typed outcome scratch",
+        )
+    })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(
+            node.span,
+            "collection operation has no typed outcome return",
+        )
+    })?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(node.span, "collection operation has no trace site"))?;
+
+    match node.op {
+        Op::MapLen | Op::SetLen => {
+            require_input_count(node, 1)?;
+            let collection = input_value(node, values, 0)?;
+            let element = collection_element_type(&collection.ty, node.span)?;
+            let schema = sequence.lowering.schemas.schema_for(&element, node.span)?;
+            outputs.code.push(WeavyOp::LoadArrayLen {
+                dst: dst.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                array: collection.region.start().byte_offset(),
+                elem_schema_ref: i64::from(schema.0),
+            });
+            emit_array_status_machine_checks(
+                node,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            Ok(ValueRepresentation::Word)
+        }
+        Op::MapHas | Op::MapGet | Op::SetHas => {
+            require_input_count(node, 2)?;
+            let collection = input_value(node, values, 0)?;
+            let sought = input_value(node, values, 1)?;
+            let element = collection_element_type(&collection.ty, node.span)?;
+            let key = match &collection.ty {
+                Type::Map { key, .. } => key.as_ref(),
+                Type::Set(element) => element.as_ref(),
+                _ => {
+                    return Err(lowering_diagnostic(
+                        node.span,
+                        "membership receiver is not a collection",
+                    ));
+                }
+            };
+            require_value(node, &sought, key, representation_for_type(key, node.span)?)?;
+            let schema = sequence.lowering.schemas.schema_for(&element, node.span)?;
+            let width = element_byte_width(&element, node.span)?;
+            let mut temps = TemporaryCursor::new(
+                sequence.function.layout,
+                sequence.lowering.regions,
+                sequence.function.id,
+                node,
+            )?;
+            let order = temps.take(&Type::Int, node.span)?;
+            let _ = temps.take(&Type::Int, node.span)?;
+            let _ = temps.take(&Type::Int, node.span)?;
+            let _old = temps.take(&collection.ty, node.span)?;
+            let row = temps.take(&element, node.span)?;
+            let _ = temps.take(&element, node.span)?;
+            let row_key = if matches!(collection.ty, Type::Map { .. }) {
+                Some(temps.take(key, node.span)?)
+            } else {
+                None
+            };
+            let _ = if matches!(collection.ty, Type::Map { .. }) {
+                Some(temps.take(key, node.span)?)
+            } else {
+                None
+            };
+            outputs.code.push(WeavyOp::LoadArrayLen {
+                dst: scratch.fields[0].byte_offset(),
+                status: scratch.status.byte_offset(),
+                array: collection.region.start().byte_offset(),
+                elem_schema_ref: i64::from(schema.0),
+            });
+            emit_array_status_machine_checks(
+                node,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            outputs.code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[1].byte_offset(),
+                value: 0,
+            });
+            if !matches!(node.op, Op::MapGet) {
+                outputs.code.push(WeavyOp::ConstI64 {
+                    dst: dst.start().byte_offset(),
+                    value: 0,
+                });
+            }
+            let scan = outputs.code.label();
+            let next = outputs.code.label();
+            let absent = outputs.code.label();
+            let done = outputs.code.label();
+            outputs.code.bind(scan, node.span)?;
+            outputs.code.push(WeavyOp::LtI64 {
+                dst: scratch.condition.byte_offset(),
+                a: scratch.fields[1].byte_offset(),
+                b: scratch.fields[0].byte_offset(),
+            });
+            outputs.code.jump_if_zero(scratch.condition, absent);
+            outputs.code.push(WeavyOp::LoadArray {
+                dst: row.region.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                array: collection.region.start().byte_offset(),
+                index: scratch.fields[1].byte_offset(),
+                elem_width: width,
+                elem_schema_ref: i64::from(schema.0),
+            });
+            emit_array_status_machine_checks(
+                node,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            let compared = if let Some(row_key) = &row_key {
+                outputs.code.push(WeavyOp::ProductProject {
+                    dst: row_key.region_id,
+                    product: row.region_id,
+                    field: 0,
+                });
+                row_key
+            } else {
+                &row
+            };
+            emit_structural_order(
+                node,
+                key,
+                compared,
+                &sought,
+                order.region.start(),
+                scratch.condition,
+                &mut temps,
+                outputs.code,
+            )?;
+            outputs.code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[2].byte_offset(),
+                value: i64::from(ORDERING_EQUAL_VARIANT),
+            });
+            outputs.code.push(WeavyOp::EqI64 {
+                dst: scratch.condition.byte_offset(),
+                a: order.region.start().byte_offset(),
+                b: scratch.fields[2].byte_offset(),
+            });
+            outputs.code.jump_if_zero(scratch.condition, next);
+            match node.op {
+                Op::MapGet => {
+                    outputs.code.push(WeavyOp::ProductProject {
+                        dst: dst_region,
+                        product: row.region_id,
+                        field: 1,
+                    });
+                }
+                Op::MapHas | Op::SetHas => outputs.code.push(WeavyOp::ConstI64 {
+                    dst: dst.start().byte_offset(),
+                    value: 1,
+                }),
+                _ => unreachable!(),
+            }
+            outputs.code.jump(done);
+            outputs.code.bind(next, node.span)?;
+            outputs.code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[2].byte_offset(),
+                value: 1,
+            });
+            outputs.code.push(WeavyOp::AddI64 {
+                dst: scratch.fields[1].byte_offset(),
+                a: scratch.fields[1].byte_offset(),
+                b: scratch.fields[2].byte_offset(),
+            });
+            outputs.code.jump(scan);
+            outputs.code.bind(absent, node.span)?;
+            if matches!(node.op, Op::MapGet) {
+                outputs.code.push(WeavyOp::ConstI64 {
+                    dst: scratch.fields[0].byte_offset(),
+                    value: i64::from(site),
+                });
+                outputs.code.push(WeavyOp::EnumConstruct {
+                    dst: outcome,
+                    variant: ArrayOutcomeAbi::for_value(node.ty.clone()).missing_key_variant,
+                    fields: vec![StructuralFieldSource {
+                        field: 0,
+                        source: assigned.fields[0],
+                    }],
+                });
+                outputs.code.jump(return_label);
+            }
+            outputs.code.bind(done, node.span)?;
+            temps.finish(node.span)?;
+            representation_for_type(&node.ty, node.span)
+        }
+        _ => Err(lowering_diagnostic(
+            node.span,
+            "canonical Map/Set operation lowering is not implemented",
+        )),
+    }
+}
+
+fn collection_element_type(collection: &Type, span: Span) -> Result<Type, Diagnostics> {
+    match collection {
+        Type::Map { key, value } => Ok(Type::Tuple(vec![
+            key.as_ref().clone(),
+            value.as_ref().clone(),
+        ])),
+        Type::Set(element) => Ok(element.as_ref().clone()),
+        _ => Err(lowering_diagnostic(
+            span,
+            "collection operation input is not Map or Set",
+        )),
     }
 }
 
