@@ -1662,11 +1662,14 @@ mod tests {
         )
     }
 
+    type PublicArrayStatus = (i64, Vec<TaskEvent>);
+    type PublicArrayStatusFault = (Box<TaskFault>, Vec<TaskEvent>, Box<TaskFault>);
+
     fn run_public_array_status(
         verified: VerifiedProgram,
         status: i64,
         force_interpreter: bool,
-    ) -> Result<(i64, Vec<TaskEvent>), (TaskFault, Vec<TaskEvent>, TaskFault)> {
+    ) -> Result<PublicArrayStatus, PublicArrayStatusFault> {
         let previous = std::env::var_os("WEAVY_JIT");
         if force_interpreter {
             unsafe { std::env::set_var("WEAVY_JIT", "0") };
@@ -1689,7 +1692,7 @@ mod tests {
             Err(fault) => {
                 let trace = task.trace().to_vec();
                 let poison = task.drive(&mut [], &[]).expect_err("fault poisons task");
-                Err((fault, trace, poison))
+                Err((Box::new(fault), trace, Box::new(poison)))
             }
         }
     }

@@ -358,7 +358,7 @@ impl<S: EventSink> Runtime<S> {
                     );
                     let error = self.task_fault(
                         MachineOperation::Result,
-                        fault,
+                        *fault,
                         lowered,
                         attribution,
                         fallback,
@@ -690,19 +690,19 @@ enum DecodedResult {
 fn decode_result(
     task: &weavy::exec::ExecTask<'_>,
     lowered: &LoweringArtifact,
-) -> Result<DecodedResult, TaskFault> {
+) -> Result<DecodedResult, Box<TaskFault>> {
     let Some(abi) = &lowered.array_outcome else {
-        return task
+        return Ok(task
             .result_i64()
-            .map(|result| DecodedResult::Ok(result != 0));
+            .map(|result| DecodedResult::Ok(result != 0))?);
     };
     let result = task.result_structural()?;
     let selector = result.enum_selector()?;
-    let selector = u32::try_from(selector).map_err(|_| TaskFault::InvalidResultShape {
+    let selector = u32::try_from(selector).map_err(|_| Box::new(TaskFault::InvalidResultShape {
         entry: FnId(0),
         region: lowered.executable().program().contract().functions[0].result,
         size: 0,
-    })?;
+    }))?;
     if selector == abi.ok_variant {
         return Ok(DecodedResult::Ok(
             result.enum_scalar_field(selector, 0)? != 0,
@@ -710,11 +710,11 @@ fn decode_result(
     }
     if selector == abi.index_out_of_bounds_variant {
         let site = u32::try_from(result.enum_scalar_field(selector, 0)?).map_err(|_| {
-            TaskFault::InvalidResultShape {
+            Box::new(TaskFault::InvalidResultShape {
                 entry: FnId(0),
                 region: lowered.executable().program().contract().functions[0].result,
                 size: 0,
-            }
+            })
         })?;
         return Ok(DecodedResult::IndexOutOfBounds {
             site,
@@ -724,27 +724,27 @@ fn decode_result(
     }
     if selector == abi.array_machine_variant {
         let site = u32::try_from(result.enum_scalar_field(selector, 0)?).map_err(|_| {
-            TaskFault::InvalidResultShape {
+            Box::new(TaskFault::InvalidResultShape {
                 entry: FnId(0),
                 region: lowered.executable().program().contract().functions[0].result,
                 size: 0,
-            }
+            })
         })?;
         let raw_status = result.enum_scalar_field(selector, 1)?;
         let status = weavy::task::ArrayOpStatus::from_word(raw_status).ok_or(
-            TaskFault::InvalidResultShape {
+            Box::new(TaskFault::InvalidResultShape {
                 entry: FnId(0),
                 region: lowered.executable().program().contract().functions[0].result,
                 size: 0,
-            },
+            }),
         )?;
         return Ok(DecodedResult::ArrayMachine { site, status });
     }
-    Err(TaskFault::InvalidResultShape {
+    Err(Box::new(TaskFault::InvalidResultShape {
         entry: FnId(0),
         region: lowered.executable().program().contract().functions[0].result,
         size: 0,
-    })
+    }))
 }
 
 fn execution_facts(facts: weavy::exec::LaneFacts) -> ExecutionFacts {

@@ -3806,7 +3806,7 @@ fn lower_array_call_node(
         field: 0,
     });
     outputs.code.bind(done, node.span)?;
-    Ok(representation_for_type(&node.ty, node.span)?)
+    representation_for_type(&node.ty, node.span)
 }
 
 fn lower_checked_array_node(
@@ -3977,17 +3977,17 @@ fn lower_checked_array_node(
                     .map_err(|_| lowering_diagnostic(node.span, "array element width overflow"))?,
                 elem_schema_ref: i64::from(element_schema.0),
             });
-            emit_array_load_status_checks(
+            emit_array_load_status_checks(ArrayLoadStatusContext {
                 node,
                 site,
-                index.region_id,
+                index: index.region_id,
                 scratch,
                 assigned,
                 outcome,
                 return_label,
-                outputs.code,
-            )?;
-            Ok(representation_for_type(element, node.span)?)
+                code: outputs.code,
+            })?;
+            representation_for_type(element, node.span)
         }
         _ => unreachable!("array lowering dispatched only array operations"),
     }
@@ -4053,16 +4053,19 @@ fn emit_array_status_machine_checks(
     code.bind(success, node.span)
 }
 
-fn emit_array_load_status_checks(
-    node: &Node,
+struct ArrayLoadStatusContext<'a> {
+    node: &'a Node,
     site: u32,
     index: WeavyRegionId,
     scratch: OutcomeScratch,
     assigned: AssignedOutcomeScratch,
     outcome: WeavyRegionId,
     return_label: CodeLabel,
-    code: &mut CodeBuilder,
-) -> Result<(), Diagnostics> {
+    code: &'a mut CodeBuilder,
+}
+
+fn emit_array_load_status_checks(context: ArrayLoadStatusContext<'_>) -> Result<(), Diagnostics> {
+    let ArrayLoadStatusContext { node, site, index, scratch, assigned, outcome, return_label, code } = context;
     let success = code.label();
     for expected in [ArrayOpStatus::Ok, ArrayOpStatus::OutOfRange] {
         let next = code.label();
