@@ -8,7 +8,7 @@ use crate::vir::IslandId;
 
 use super::identity::{DemandKey, DemandPreimage, Location, LocationId, SchemaId, ValueId};
 use super::model::{
-    DemandRecord, DemandState, MemoVerdict, Receipt, TaskId, TaskRecord, TaskState,
+    DemandRecord, DemandState, FailureValue, MemoVerdict, Receipt, TaskId, TaskRecord, TaskState,
 };
 use super::observe::{
     Counters, Event, EventKind, EventSink, ExecutionFacts, ExecutionFallbackFact,
@@ -31,12 +31,13 @@ pub struct ChaosPolicy {
     pub kill_first_running_task: bool,
 }
 
-#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct Evaluation {
     pub handle: Handle,
     pub identity: ValueId,
     pub passed: bool,
     pub memo: MemoVerdict,
+    pub failure: Option<FailureValue>,
 }
 
 /// The scheduler owns passive maps and admission bookkeeping; Weavy owns the
@@ -89,6 +90,11 @@ impl<S: EventSink> Runtime<S> {
             && entry.preimage == lowered.demand_preimage
         {
             let handle = entry.result;
+            let failure = self
+                .store
+                .entry(handle)
+                .and_then(StoreEntry::failure)
+                .cloned();
             let identity = self
                 .store
                 .entry(handle)
@@ -101,11 +107,12 @@ impl<S: EventSink> Runtime<S> {
                     )
                 })?
                 .identity;
-            let passed = self
-                .store
-                .entry(handle)
-                .and_then(StoreEntry::resident_bytes)
-                .is_some_and(|bytes| bytes == [1]);
+            let passed = failure.is_none()
+                && self
+                    .store
+                    .entry(handle)
+                    .and_then(StoreEntry::resident_bytes)
+                    .is_some_and(|bytes| bytes == [1]);
             self.counters.memo_hits_exact += 1;
             self.emit(EventKind::Memo {
                 location: location.id,
@@ -117,6 +124,7 @@ impl<S: EventSink> Runtime<S> {
                 identity,
                 passed,
                 memo: MemoVerdict::Exact,
+                failure,
             });
         }
 
@@ -299,21 +307,42 @@ impl<S: EventSink> Runtime<S> {
                     index,
                     length,
                 }) => {
-                    let error = MachineError::runtime(
-                        MachineOperation::Result,
-                        RuntimeFault::LanguageFailurePending {
-                            site,
-                            index,
-                            length,
+                    let failure = FailureValue::IndexOutOfBounds {
+                        recipe: lowered.recipe,
+                        site,
+                        index,
+                        length,
+                        subject: None,
+                    };
+                    let interned = self.store.intern_failure(failure.clone(), &[]);
+                    self.observe_interned(interned);
+                    self.memo.insert(
+                        location.id,
+                        MemoEntry {
+                            location: location.clone(),
+                            key: lowered.demand_key,
+                            preimage: lowered.demand_preimage.clone(),
+                            result: interned.handle,
+                            receipt: None,
                         },
-                        self.output_attribution(lowered, attribution),
-                        Some(lowered.demand_key),
                     );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
+                    if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
+                        demand.result = Some(interned.handle);
+                    }
+                    self.transition_task(task_id, TaskState::Completed)?;
+                    self.transition_demand(lowered.demand_key, DemandState::Failed)?;
+                    self.emit(EventKind::LanguageFailed {
+                        task: task_id,
+                        key: lowered.demand_key,
+                        failure: failure.clone(),
+                    });
+                    return Ok(Evaluation {
+                        handle: interned.handle,
+                        identity: interned.identity,
+                        passed: false,
+                        memo: MemoVerdict::Miss,
+                        failure: Some(failure),
+                    });
                 }
                 Err(fault) => {
                     let fallback = result_shape_attribution(
@@ -363,6 +392,7 @@ impl<S: EventSink> Runtime<S> {
                 identity: interned.identity,
                 passed,
                 memo: MemoVerdict::Miss,
+                failure: None,
             });
         }
     }

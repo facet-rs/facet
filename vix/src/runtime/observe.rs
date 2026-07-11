@@ -3,7 +3,7 @@ use crate::vir::{FunctionId, IslandId, NodeId};
 
 use super::MachineOperation;
 use super::identity::{DemandKey, LocationId, ValueId};
-use super::model::{DemandState, MemoVerdict, TaskId, TaskState};
+use super::model::{DemandState, FailureValue, MemoVerdict, TaskId, TaskState};
 
 #[derive(facet::Facet, Clone, Copy, Debug, Default, PartialEq, Eq)]
 pub struct Counters {
@@ -90,6 +90,11 @@ pub enum EventKind {
         task: TaskId,
         key: DemandKey,
         operation: MachineOperation,
+    },
+    LanguageFailed {
+        task: TaskId,
+        key: DemandKey,
+        failure: FailureValue,
     },
     IslandEntered {
         task: TaskId,
