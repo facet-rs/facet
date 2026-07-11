@@ -5,7 +5,7 @@ use vix::budget::{BudgetOutcome, ChildReport, run_source_under_declared_budget};
 use vix::compiler::Compiler;
 use vix::diagnostic::{DiagnosticCode, DiagnosticSeverity};
 use vix::lowering::{LoweringCache, attribution_for, source_map_for};
-use vix::ratchet::{RunError, run_source};
+use vix::ratchet::{RunError, run_source, run_source_innards};
 use vix::runtime::{DemandState, EventKind, FailureValue, MemoVerdict, SchemaId, TaskState};
 use vix::surface::{SurfaceParser, ast};
 use vix::vir::{
@@ -208,6 +208,10 @@ fn rung_001_certifies_the_new_compiler_and_runtime_spine() {
     assert_eq!(report.chaos.counters.task_discards, 1);
     assert_eq!(report.chaos.receipt_count, 0);
 
+    let innards = run_source_innards(RUNG_001).expect("rung 001 diagnostic lane runs");
+    assert!(innards.passed());
+    assert!(innards.agrees());
+
     assert_contiguous_sequences(&report.plain.events);
     assert_contiguous_sequences(&report.chaos.events);
     assert!(report.plain.events.iter().any(|event| matches!(
@@ -233,6 +237,14 @@ fn rung_001_certifies_the_new_compiler_and_runtime_spine() {
             .all(|event| !matches!(event.kind, EventKind::WeavyMark { .. })),
         "production execution strips interior trace marks",
     );
+    assert!(innards.plain.events.iter().any(|event| matches!(
+        event.kind,
+        EventKind::WeavyMark { node, .. } if node.0 == 0
+    )));
+    assert!(innards.plain.events.iter().any(|event| matches!(
+        event.kind,
+        EventKind::WeavyMark { node, .. } if node.0 == 1
+    )));
     assert!(report.chaos.events.iter().any(|event| matches!(
         event.kind,
         EventKind::TaskTransition {
@@ -2327,6 +2339,10 @@ fn rung_007_enums_payloads_and_match_run_through_vir_and_weavy() {
     assert_eq!(report.plain.receipt_count, 0);
     assert_eq!(report.chaos.receipt_count, 0);
 
+    let innards = run_source_innards(RUNG_007).expect("rung 007 diagnostic lane runs");
+    assert!(innards.passed());
+    assert!(innards.agrees());
+
     let area = module
         .functions
         .iter()
@@ -2358,6 +2374,38 @@ fn rung_007_enums_payloads_and_match_run_through_vir_and_weavy() {
         expected_variants,
         arms.iter().map(|arm| arm.variant).collect::<Vec<_>>(),
     );
+    let mut selected_arm_marks = vec![0usize; partitioned.islands.len()];
+    for event in &innards.plain.events {
+        let EventKind::WeavyMark {
+            task,
+            function,
+            node,
+        } = &event.kind
+        else {
+            continue;
+        };
+        if *function != area.id {
+            continue;
+        }
+        let Some(arm_index) = arms.iter().position(|arm| arm.nodes.contains(node)) else {
+            continue;
+        };
+        let island_index = innards
+            .plain
+            .events
+            .iter()
+            .find_map(|event| match &event.kind {
+                EventKind::IslandEntered {
+                    task: entered,
+                    island,
+                } if entered == task => Some(island.0 as usize),
+                _ => None,
+            })
+            .expect("every marked task entered an island");
+        assert_eq!(arms[arm_index].variant, expected_variants[island_index]);
+        selected_arm_marks[island_index] += 1;
+    }
+    assert!(selected_arm_marks.into_iter().all(|marks| marks > 0));
     assert!(
         report
             .plain
@@ -3982,12 +4030,31 @@ fn rung_050_deep_tail_recursion_runs_under_its_declared_budget() {
         Path::new(env!("CARGO_BIN_EXE_vix-budget-child")),
         RUNG_050,
     );
-    assert_eq!(
+    assert!(matches!(
         outcome,
         BudgetOutcome::Within {
-            report: ChildReport::RanSource { passed: true },
-        },
-    );
+            report: ChildReport::RanSource { passed: true, .. },
+        }
+    ));
+}
+
+/// The ordinary ratchet path is production execution, not an innards
+/// diagnostic capture. The self-tail pollpoint remains in lowered code for
+/// attribution, but must not retain one `WeavyMark` per iteration.
+#[test]
+fn rung_050_ratchet_execution_strips_per_iteration_marks() {
+    let report = run_source(RUNG_050).expect("rung 050 runs through the production ratchet");
+    for lane in [&report.plain, &report.chaos] {
+        let marks = lane
+            .events
+            .iter()
+            .filter(|event| matches!(event.kind, EventKind::WeavyMark { .. }))
+            .count();
+        assert_eq!(
+            marks, 0,
+            "production ratchet retains no per-iteration innards marks: {marks}",
+        );
+    }
 }
 
 #[test]
@@ -5324,6 +5391,64 @@ fn tail_loop_executes_ten_million_iterations_in_the_selected_lane() {
             .iter()
             .any(|event| matches!(event, weavy::task::TaskEvent::Mark(_))),
         "Production-mode tail loop records no instrumentation marks",
+    );
+}
+
+/// Innards remains an explicit diagnostic lane: it retains source-attributed
+/// marks while preserving the structural frame trace that production also
+/// reports. The ordinary lowering path must never select this mode implicitly.
+#[test]
+fn tail_loop_innards_diagnostic_lane_retains_marks() {
+    use weavy::exec::Executable;
+    use weavy::task::{FnId, TaskEvent, TaskStep, TraceMode};
+
+    let module = Compiler::new()
+        .compile(TAIL_LOOP_SOURCE)
+        .expect("source compiles")
+        .module;
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(&partitioned.islands[0])
+        .expect("source lowers to Weavy");
+    let count_up = module
+        .functions
+        .iter()
+        .find(|function| function.name == "count_up")
+        .expect("count_up exists")
+        .id;
+    let frame = attribution_for(&partitioned.islands[0])
+        .functions
+        .iter()
+        .position(|function| *function == count_up)
+        .expect("count_up has a frame");
+    let verified = lowered
+        .program()
+        .clone()
+        .verify(lowered.contract().clone())
+        .expect("lowered tail loop re-verifies");
+    let executable = Executable::with_trace_mode(verified, TraceMode::Innards);
+    let mut task = executable
+        .spawn(FnId(frame as u32))
+        .expect("count_up spawns as a verified entry");
+    task.write_entry_i64(0, 0).expect("n");
+    task.write_entry_i64(1, 5).expect("limit");
+    task.write_entry_i64(2, 0).expect("acc");
+    let mut ready: [bool; 0] = [];
+    assert_eq!(
+        task.drive(&mut ready, &[]).expect("tail loop drives"),
+        TaskStep::Done
+    );
+    assert!(
+        task.trace()
+            .iter()
+            .any(|event| matches!(event, TaskEvent::Mark(_))),
+        "the explicit innards lane retains source-attributed marks",
+    );
+    assert!(
+        matches!(task.trace().first(), Some(TaskEvent::FrameEntered(_)))
+            && matches!(task.trace().last(), Some(TaskEvent::FrameExited(_))),
+        "diagnostic marks do not replace structural frame events",
     );
 }
 

@@ -6,10 +6,10 @@ use crate::compiler::{Compiler, CompilerConfig};
 use crate::diagnostic::Diagnostics;
 use crate::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
 use crate::runtime::{
-    ChaosPolicy, Counters, DemandState, Evaluation, Event, EventLog, FailureContext, FailureValue,
-    GeneratorOutcome, Location, MachineError, Runtime, TaskState, ValueId,
+    ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog, FailureContext,
+    FailureValue, GeneratorOutcome, Location, MachineError, Runtime, TaskState, ValueId,
 };
-use crate::vir::{PartitionedRecipe, TraceCheck, ValueIslandId};
+use crate::vir::{FunctionId, PartitionedRecipe, TraceCheck, ValueIslandId};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunError {
@@ -129,7 +129,7 @@ pub struct TraceFailure {
 /// checks read it without demanding any operand, issuing any scheduler request,
 /// or interning anything — so a trace check never counts its own reporting work
 /// against the very quantities it inspects.
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Debug)]
 struct TraceSnapshot {
     scheduler_requests: u64,
     memo_entries: u64,
@@ -141,6 +141,7 @@ struct TraceSnapshot {
     framed_bytes: u64,
     peak_molten_bytes: u64,
     peak_molten_nodes: u64,
+    function_calls: BTreeMap<FunctionId, u64>,
 }
 
 impl TraceSnapshot {
@@ -163,10 +164,17 @@ impl TraceSnapshot {
             TraceCheck::FramedBytesAtMost { bound } => (self.framed_bytes, bound),
             TraceCheck::PeakMoltenBytesAtMost { bound } => (self.peak_molten_bytes, bound),
             TraceCheck::PeakMoltenNodesAtMost { bound } => (self.peak_molten_nodes, bound),
+            TraceCheck::FunctionCallsExactly { function, times } => (
+                self.function_calls.get(&function).copied().unwrap_or(0),
+                times,
+            ),
         };
-        // `bound` is a non-negative surface literal; compare in i128 so a large
-        // observed count can never wrap past the ceiling.
-        let passed = i128::from(observed) <= i128::from(bound);
+        // Bounds and exact demand counts are surface literals; compare in i128
+        // so an observed counter cannot wrap past either contract.
+        let passed = match check {
+            TraceCheck::FunctionCallsExactly { .. } => i128::from(observed) == i128::from(bound),
+            _ => i128::from(observed) <= i128::from(bound),
+        };
         CheckRun {
             provenance,
             identity: None,
@@ -260,6 +268,32 @@ pub struct PreparedRun {
     cache: LoweringCache,
 }
 
+/// Execution lifecycle boundaries exposed to the outer budget runner. Each
+/// `Runtime` owns store, memo, demand, task, and event-log state; observing
+/// these points distinguishes fixed lane scaffolding from growth retained while
+/// a lane executes.
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum ExecutionPhase {
+    PlainRuntimeReady,
+    PlainCompleted,
+    ChaosRuntimeReady,
+    ChaosCompleted,
+}
+
+/// r[impl machine.scheduler.chaos-kill-oracle]
+/// r[impl machine.scheduler.replay-is-semantics]
+pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
+    run_source_with_config(source, CompilerConfig::default())
+}
+
+/// Run through the production scheduler while retaining every interior Weavy
+/// source mark. This is an explicit diagnostic lane: ordinary [`run_source`]
+/// uses bounded Production tracing and preserves only structural task events.
+pub fn run_source_innards(source: &str) -> Result<RatchetReport, RunError> {
+    prepare_source_with_cache(source, CompilerConfig::default(), LoweringCache::innards())?
+        .execute()
+}
 /// Run every declared test twice under explicit shape-selection configuration.
 /// The forced-copy molten differential compiles the same source with
 /// `force_molten_copy` set and proves the produced value identities match the
@@ -286,8 +320,15 @@ pub fn prepare_source_with_config(
     source: &str,
     config: CompilerConfig,
 ) -> Result<PreparedRun, RunError> {
+    prepare_source_with_cache(source, config, LoweringCache::default())
+}
+
+fn prepare_source_with_cache(
+    source: &str,
+    config: CompilerConfig,
+    mut cache: LoweringCache,
+) -> Result<PreparedRun, RunError> {
     let compilation = Compiler::with_config(config).compile(source)?;
-    let mut cache = LoweringCache::default();
 
     // Lower every island the lanes will demand so its native code is compiled
     // and cached now, before execution. `get_or_lower` keys on canonical recipe
@@ -321,11 +362,24 @@ impl PreparedRun {
     ///
     /// r[impl machine.scheduler.chaos-kill-oracle]
     /// r[impl machine.scheduler.replay-is-semantics]
-    pub fn execute(mut self) -> Result<RatchetReport, RunError> {
+    pub fn execute(self) -> Result<RatchetReport, RunError> {
+        self.execute_with_observer(|_| {})
+    }
+
+    /// Execute with lifecycle observations made while each lane's runtime is
+    /// still live. This is intentionally a production-path seam: observers see
+    /// no per-iteration callbacks and cannot hide retained execution state.
+    pub fn execute_with_observer(
+        mut self,
+        mut observe: impl FnMut(ExecutionPhase),
+    ) -> Result<RatchetReport, RunError> {
         let plain = run_lane(
             &self.compilation.module,
             &mut self.cache,
             ChaosPolicy::default(),
+            ExecutionPhase::PlainRuntimeReady,
+            ExecutionPhase::PlainCompleted,
+            &mut observe,
         )?;
         let chaos = run_lane(
             &self.compilation.module,
@@ -333,6 +387,9 @@ impl PreparedRun {
             ChaosPolicy {
                 kill_first_running_task: true,
             },
+            ExecutionPhase::ChaosRuntimeReady,
+            ExecutionPhase::ChaosCompleted,
+            &mut observe,
         )?;
         Ok(RatchetReport {
             warnings: self.compilation.warnings,
@@ -341,13 +398,6 @@ impl PreparedRun {
             lowering_cache: self.cache.counters(),
         })
     }
-}
-
-/// Prepare and execute `source` in one call: the ordinary in-process production
-/// path. The outer budget runner instead splits these two phases across the
-/// readiness handshake so only execution is measured.
-pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
-    prepare_source(source)?.execute()
 }
 
 /// Evaluate one value-check island as an ordinary pure demand and record its
@@ -401,8 +451,12 @@ fn run_lane(
     module: &crate::vir::Module,
     cache: &mut LoweringCache,
     chaos: ChaosPolicy,
+    ready_phase: ExecutionPhase,
+    completed_phase: ExecutionPhase,
+    observe: &mut impl FnMut(ExecutionPhase),
 ) -> Result<SuiteRun, RunError> {
     let mut runtime = Runtime::new(EventLog::default());
+    observe(ready_phase);
     let mut checks = Vec::new();
     let mut values = Vec::new();
     // Trace checks are deferred until every selected value check completes; they
@@ -561,6 +615,12 @@ fn run_lane(
     // it mutates no runtime state, so a trace check never adds to the scheduler
     // requests, memo entries, or store interns it inspects.
     let counters = runtime.counters();
+    let mut function_calls = BTreeMap::new();
+    for event in runtime.sink().events() {
+        if let EventKind::WeavyFrameEntered { function, .. } = event.kind {
+            *function_calls.entry(function).or_insert(0) += 1;
+        }
+    }
     let snapshot = TraceSnapshot {
         scheduler_requests: counters.scheduler_requests,
         memo_entries: runtime.memo_entries(),
@@ -572,6 +632,7 @@ fn run_lane(
         framed_bytes: counters.framed_bytes,
         peak_molten_bytes: counters.peak_molten_bytes,
         peak_molten_nodes: counters.peak_molten_nodes,
+        function_calls,
     };
     for (provenance, trace) in deferred_traces {
         checks.push(snapshot.evaluate(provenance, trace));
@@ -584,6 +645,7 @@ fn run_lane(
     let all_tasks_terminal = runtime
         .tasks()
         .all(|task| matches!(task.state, TaskState::Completed | TaskState::Discarded));
+    observe(completed_phase);
     let events = runtime.into_sink().into_events();
     Ok(SuiteRun {
         checks,

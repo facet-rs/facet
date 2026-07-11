@@ -7,7 +7,7 @@ use weavy::exec::Executable;
 use weavy::mem::Layout;
 use weavy::task::{
     ArgCopy, ArrayOpStatus, Fn as WeavyFn, FnId as WeavyFnId, Op as WeavyOp, OrderedOpStatus,
-    Program as WeavyProgram, StructuralFieldSource,
+    Program as WeavyProgram, StructuralFieldSource, TraceMode,
 };
 use weavy::{
     CallContract as WeavyCallContract, CallContractId as WeavyCallContractId,
@@ -299,13 +299,34 @@ pub struct LoweringCacheCounters {
 /// memo: eviction can only cause recompilation.
 ///
 /// r[impl machine.lowering.cache]
-#[derive(Default)]
 pub struct LoweringCache {
     entries: BTreeMap<RecipeId, LoweringArtifact>,
     counters: LoweringCacheCounters,
+    trace_mode: TraceMode,
+}
+
+impl Default for LoweringCache {
+    fn default() -> Self {
+        Self {
+            entries: BTreeMap::new(),
+            counters: LoweringCacheCounters::default(),
+            trace_mode: TraceMode::Production,
+        }
+    }
 }
 
 impl LoweringCache {
+    /// Construct an explicit diagnostic cache that retains interior source
+    /// marks. Ordinary production lowering uses [`Default`] and strips only
+    /// these unbounded marks while preserving structural task events.
+    #[must_use]
+    pub fn innards() -> Self {
+        Self {
+            trace_mode: TraceMode::Innards,
+            ..Self::default()
+        }
+    }
+
     pub fn get_or_lower(&mut self, island: &Island) -> Result<&LoweringArtifact, LoweringError> {
         let recipe = RecipeId::from_canonical_vir(&island.canonical_recipe_bytes());
         if self.entries.contains_key(&recipe) {
@@ -313,7 +334,7 @@ impl LoweringCache {
             return Ok(self.entries.get(&recipe).expect("entry was just observed"));
         }
         self.counters.misses += 1;
-        let lowered = lower_island(island, recipe)?;
+        let lowered = lower_island(island, recipe, self.trace_mode)?;
         self.entries.insert(recipe, lowered);
         Ok(self.entries.get(&recipe).expect("entry was just inserted"))
     }
@@ -367,7 +388,11 @@ fn push_source_entries(entries: &mut Vec<SourceMapEntry>, function: FunctionId, 
     }
 }
 
-fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, LoweringError> {
+fn lower_island(
+    island: &Island,
+    recipe: RecipeId,
+    trace_mode: TraceMode,
+) -> Result<LoweringArtifact, LoweringError> {
     let output = island
         .nodes
         .iter()
@@ -521,7 +546,10 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
         recipe,
         demand_key,
         demand_preimage,
-        executable: Executable::with_trace_mode(verified, weavy::task::TraceMode::Production),
+        // Keep source-attributed `Op::Trace` nodes in the verified program. The
+        // cache chooses bounded Production tracing for ordinary execution or
+        // explicit Innards tracing for diagnostics.
+        executable: Executable::with_trace_mode(verified, trace_mode),
         array_outcome,
         pc_nodes,
         constants,
@@ -1426,6 +1454,354 @@ impl SemanticEqualityEmitter<'_, '_, '_> {
     }
 }
 
+/// Emits the machine's structural total order for one VIR type into a single
+/// Ordering-discriminant word (`0` Less / `1` Equal / `2` Greater), recursing
+/// through products, enums, and arrays over the same checked Weavy operations
+/// that structural equality uses. Enum order is variant/declaration order first,
+/// then lexicographic payload order within the shared variant; array order is
+/// lexicographic by element with length as the exhausted-prefix tie-break. No
+/// handle or physical-layout bytes are ever compared for a semantic order.
+struct SemanticOrderingEmitter<'node, 'temps, 'code> {
+    node: &'node Node,
+    temps: &'node mut TemporaryCursor<'temps>,
+    code: &'code mut CodeBuilder,
+    array: Option<ArrayEqualityContext<'node>>,
+}
+
+impl SemanticOrderingEmitter<'_, '_, '_> {
+    fn emit(
+        &mut self,
+        ty: &Type,
+        a: &LoweredSlot,
+        b: &LoweredSlot,
+        out: FrameSlot,
+    ) -> Result<(), Diagnostics> {
+        match ty {
+            Type::Bool | Type::Int => self.emit_signed(a.region.start(), b.region.start(), out),
+            Type::String | Type::Path => {
+                self.code.push(WeavyOp::CompareValueBytes {
+                    dst: out.byte_offset(),
+                    a: a.region.start().byte_offset(),
+                    b: b.region.start().byte_offset(),
+                });
+                Ok(())
+            }
+            Type::Tuple(fields) => {
+                let field_tys: Vec<Type> = fields.clone();
+                self.emit_product(&field_tys, a, b, out)
+            }
+            Type::Record(record) => {
+                let field_tys: Vec<Type> =
+                    record.fields.iter().map(|field| field.ty.clone()).collect();
+                self.emit_product(&field_tys, a, b, out)
+            }
+            Type::Enum(enumeration) => self.emit_enum(&enumeration.clone(), a, b, out),
+            Type::Array(element) => self.emit_array(&element.as_ref().clone(), a, b, out),
+            Type::Map { .. }
+            | Type::Set(_)
+            | Type::Function { .. }
+            | Type::Check
+            | Type::StreamCheck
+            | Type::Stream { .. }
+            | Type::Order(_) => Err(lowering_diagnostic(
+                self.node.span,
+                "structural order is not defined for this VIR type",
+            )),
+        }
+    }
+
+    fn push_const(&mut self, dst: FrameSlot, value: i64) {
+        self.code.push(WeavyOp::ConstI64 {
+            dst: dst.byte_offset(),
+            value,
+        });
+    }
+
+    /// Three-way order of two signed words into `out`, using `out` as its own
+    /// scratch. Takes no temporaries.
+    fn emit_signed(
+        &mut self,
+        a: FrameSlot,
+        b: FrameSlot,
+        out: FrameSlot,
+    ) -> Result<(), Diagnostics> {
+        let span = self.node.span;
+        let done = self.code.label();
+        let not_less = self.code.label();
+        self.code.push(WeavyOp::LtI64 {
+            dst: out.byte_offset(),
+            a: a.byte_offset(),
+            b: b.byte_offset(),
+        });
+        self.code.jump_if_zero(out, not_less);
+        self.push_const(out, i64::from(ORDERING_LESS_VARIANT));
+        self.code.jump(done);
+        self.code.bind(not_less, span)?;
+        let not_greater = self.code.label();
+        self.code.push(WeavyOp::GtI64 {
+            dst: out.byte_offset(),
+            a: a.byte_offset(),
+            b: b.byte_offset(),
+        });
+        self.code.jump_if_zero(out, not_greater);
+        self.push_const(out, i64::from(ORDERING_GREATER_VARIANT));
+        self.code.jump(done);
+        self.code.bind(not_greater, span)?;
+        self.push_const(out, i64::from(ORDERING_EQUAL_VARIANT));
+        self.code.bind(done, span)
+    }
+
+    /// Emit `if out != Equal { jump target }`, using `probe` as scratch.
+    fn short_circuit(&mut self, out: FrameSlot, probe: FrameSlot, target: CodeLabel) {
+        self.push_const(probe, i64::from(ORDERING_EQUAL_VARIANT));
+        self.code.push(WeavyOp::EqI64 {
+            dst: probe.byte_offset(),
+            a: out.byte_offset(),
+            b: probe.byte_offset(),
+        });
+        self.code.jump_if_zero(probe, target);
+    }
+
+    fn emit_product(
+        &mut self,
+        fields: &[Type],
+        a: &LoweredSlot,
+        b: &LoweredSlot,
+        out: FrameSlot,
+    ) -> Result<(), Diagnostics> {
+        let span = self.node.span;
+        let ford = self.temps.take(&Type::Int, span)?.region.start();
+        let probe = self.temps.take(&Type::Int, span)?.region.start();
+        self.push_const(out, i64::from(ORDERING_EQUAL_VARIANT));
+        let done = self.code.label();
+        for (index, field) in fields.iter().enumerate() {
+            let left = self.temps.take(field, span)?;
+            let right = self.temps.take(field, span)?;
+            let field_index = u32::try_from(index)
+                .map_err(|_| lowering_diagnostic(span, "product field index overflow"))?;
+            self.code.push(WeavyOp::ProductProject {
+                dst: left.region_id,
+                product: a.region_id,
+                field: field_index,
+            });
+            self.code.push(WeavyOp::ProductProject {
+                dst: right.region_id,
+                product: b.region_id,
+                field: field_index,
+            });
+            self.emit(field, &left, &right, ford)?;
+            self.code.push(WeavyOp::CopyI64 {
+                dst: out.byte_offset(),
+                src: ford.byte_offset(),
+            });
+            self.short_circuit(out, probe, done);
+        }
+        self.code.bind(done, span)
+    }
+
+    fn emit_enum(
+        &mut self,
+        enumeration: &EnumType,
+        a: &LoweredSlot,
+        b: &LoweredSlot,
+        out: FrameSlot,
+    ) -> Result<(), Diagnostics> {
+        let span = self.node.span;
+        let idx_a = self.temps.take(&Type::Int, span)?.region.start();
+        let idx_b = self.temps.take(&Type::Int, span)?.region.start();
+        let isv = self.temps.take(&Type::Int, span)?.region.start();
+        let probe = self.temps.take(&Type::Int, span)?.region.start();
+        let ford = self.temps.take(&Type::Int, span)?.region.start();
+        self.variant_index(a, enumeration, idx_a, isv, probe)?;
+        self.variant_index(b, enumeration, idx_b, isv, probe)?;
+        self.emit_signed(idx_a, idx_b, out)?;
+        let done = self.code.label();
+        self.short_circuit(out, probe, done);
+        for (variant_index, variant) in enumeration.variants.iter().enumerate() {
+            let variant_index = u32::try_from(variant_index)
+                .map_err(|_| lowering_diagnostic(span, "enum variant index overflow"))?;
+            let fields: Vec<Type> = match &variant.payload {
+                VariantPayload::Unit => Vec::new(),
+                VariantPayload::Tuple(fields) => fields.clone(),
+                VariantPayload::Record(fields) => {
+                    fields.iter().map(|field| field.ty.clone()).collect()
+                }
+            };
+            self.code.push(WeavyOp::EnumIsVariant {
+                dst: work_region_id(isv, self.temps, span)?,
+                value: a.region_id,
+                variant: variant_index,
+            });
+            let next = self.code.label();
+            self.code.jump_if_zero(isv, next);
+            self.push_const(out, i64::from(ORDERING_EQUAL_VARIANT));
+            for (field_index, field) in fields.iter().enumerate() {
+                let left = self.temps.take(field, span)?;
+                let right = self.temps.take(field, span)?;
+                let field_index = u32::try_from(field_index)
+                    .map_err(|_| lowering_diagnostic(span, "enum field index overflow"))?;
+                self.code.push(WeavyOp::EnumProjectChecked {
+                    dst: left.region_id,
+                    value: a.region_id,
+                    variant: variant_index,
+                    field: field_index,
+                });
+                self.code.push(WeavyOp::EnumProjectChecked {
+                    dst: right.region_id,
+                    value: b.region_id,
+                    variant: variant_index,
+                    field: field_index,
+                });
+                self.emit(field, &left, &right, ford)?;
+                self.code.push(WeavyOp::CopyI64 {
+                    dst: out.byte_offset(),
+                    src: ford.byte_offset(),
+                });
+                self.short_circuit(out, probe, done);
+            }
+            self.code.jump(done);
+            self.code.bind(next, span)?;
+        }
+        self.code.bind(done, span)
+    }
+
+    /// `idx = sum over variants of is_variant(value, i) * i`.
+    fn variant_index(
+        &mut self,
+        value: &LoweredSlot,
+        enumeration: &EnumType,
+        idx: FrameSlot,
+        isv: FrameSlot,
+        probe: FrameSlot,
+    ) -> Result<(), Diagnostics> {
+        let span = self.node.span;
+        self.push_const(idx, 0);
+        for (variant_index, _variant) in enumeration.variants.iter().enumerate() {
+            let variant = u32::try_from(variant_index)
+                .map_err(|_| lowering_diagnostic(span, "enum variant index overflow"))?;
+            self.code.push(WeavyOp::EnumIsVariant {
+                dst: work_region_id(isv, self.temps, span)?,
+                value: value.region_id,
+                variant,
+            });
+            self.push_const(probe, variant_index as i64);
+            self.code.push(WeavyOp::MulI64 {
+                dst: isv.byte_offset(),
+                a: isv.byte_offset(),
+                b: probe.byte_offset(),
+            });
+            self.code.push(WeavyOp::AddI64 {
+                dst: idx.byte_offset(),
+                a: idx.byte_offset(),
+                b: isv.byte_offset(),
+            });
+        }
+        Ok(())
+    }
+
+    fn emit_array(
+        &mut self,
+        element: &Type,
+        a: &LoweredSlot,
+        b: &LoweredSlot,
+        out: FrameSlot,
+    ) -> Result<(), Diagnostics> {
+        let span = self.node.span;
+        let array = self.array.ok_or_else(|| {
+            lowering_diagnostic(span, "array comparison has no checked access context")
+        })?;
+        let len_a = self.temps.take(&Type::Int, span)?.region.start();
+        let len_b = self.temps.take(&Type::Int, span)?.region.start();
+        let index = self.temps.take(&Type::Int, span)?.region.start();
+        let one = self.temps.take(&Type::Int, span)?.region.start();
+        let probe = self.temps.take(&Type::Int, span)?.region.start();
+        let ford = self.temps.take(&Type::Int, span)?.region.start();
+        let left = self.temps.take(element, span)?;
+        let right = self.temps.take(element, span)?;
+        let schema = array.schemas.schema_for(element, span)?;
+        let width = element_byte_width(element, span)?;
+
+        self.code.push(WeavyOp::LoadArrayLen {
+            dst: len_a.byte_offset(),
+            status: array.scratch.status.byte_offset(),
+            array: a.region.start().byte_offset(),
+            elem_schema_ref: i64::from(schema.0),
+        });
+        self.array_checks(array)?;
+        self.code.push(WeavyOp::LoadArrayLen {
+            dst: len_b.byte_offset(),
+            status: array.scratch.status.byte_offset(),
+            array: b.region.start().byte_offset(),
+            elem_schema_ref: i64::from(schema.0),
+        });
+        self.array_checks(array)?;
+        self.push_const(out, i64::from(ORDERING_EQUAL_VARIANT));
+        self.push_const(index, 0);
+        self.push_const(one, 1);
+        let loop_top = self.code.label();
+        let lentie = self.code.label();
+        let done = self.code.label();
+        self.code.bind(loop_top, span)?;
+        self.code.push(WeavyOp::LtI64 {
+            dst: probe.byte_offset(),
+            a: index.byte_offset(),
+            b: len_a.byte_offset(),
+        });
+        self.code.jump_if_zero(probe, lentie);
+        self.code.push(WeavyOp::LtI64 {
+            dst: probe.byte_offset(),
+            a: index.byte_offset(),
+            b: len_b.byte_offset(),
+        });
+        self.code.jump_if_zero(probe, lentie);
+        self.code.push(WeavyOp::LoadArray {
+            dst: left.region.start().byte_offset(),
+            status: array.scratch.status.byte_offset(),
+            array: a.region.start().byte_offset(),
+            index: index.byte_offset(),
+            elem_width: width,
+            elem_schema_ref: i64::from(schema.0),
+        });
+        self.array_checks(array)?;
+        self.code.push(WeavyOp::LoadArray {
+            dst: right.region.start().byte_offset(),
+            status: array.scratch.status.byte_offset(),
+            array: b.region.start().byte_offset(),
+            index: index.byte_offset(),
+            elem_width: width,
+            elem_schema_ref: i64::from(schema.0),
+        });
+        self.array_checks(array)?;
+        self.emit(element, &left, &right, ford)?;
+        self.code.push(WeavyOp::CopyI64 {
+            dst: out.byte_offset(),
+            src: ford.byte_offset(),
+        });
+        self.short_circuit(out, probe, done);
+        self.code.push(WeavyOp::AddI64 {
+            dst: index.byte_offset(),
+            a: index.byte_offset(),
+            b: one.byte_offset(),
+        });
+        self.code.jump(loop_top);
+        self.code.bind(lentie, span)?;
+        self.emit_signed(len_a, len_b, out)?;
+        self.code.bind(done, span)
+    }
+
+    fn array_checks(&mut self, array: ArrayEqualityContext<'_>) -> Result<(), Diagnostics> {
+        emit_array_status_machine_checks(
+            self.node,
+            array.site,
+            array.scratch,
+            array.assigned,
+            array.outcome,
+            array.return_label,
+            self.code,
+        )
+    }
+}
+
 fn work_region_id(
     slot: FrameSlot,
     temps: &TemporaryCursor<'_>,
@@ -2124,8 +2500,8 @@ impl<'a> ProgramContractBuilder<'a> {
                     .byte_offset(),
                 shape.clone(),
             );
-            if self.field_requires_nested_ref(&shape) {
-                field = field.with_value_shape(self.intern_value_shape_for_type(ty, span)?);
+            if let Some(value_shape) = self.value_shape_for_type(ty, span)? {
+                field = field.with_value_shape(value_shape);
             }
             offset_words = offset_words
                 .checked_add(shape.words.len())
@@ -2157,9 +2533,8 @@ impl<'a> ProgramContractBuilder<'a> {
                         .byte_offset(),
                     shape.clone(),
                 );
-                if self.field_requires_nested_ref(&shape) {
-                    field =
-                        field.with_value_shape(self.intern_value_shape_for_type(element.ty, span)?);
+                if let Some(value_shape) = self.value_shape_for_type(element.ty, span)? {
+                    field = field.with_value_shape(value_shape);
                 }
                 fields.push(field);
             }
@@ -2172,10 +2547,6 @@ impl<'a> ProgramContractBuilder<'a> {
             },
             variants,
         })
-    }
-
-    fn field_requires_nested_ref(&self, shape: &WeavyRegionShape) -> bool {
-        !(shape.words.len() == 1 && shape.words[0].as_slice().len() == 1)
     }
 
     fn call_contract_for_signature(
@@ -2915,7 +3286,11 @@ impl FunctionLayout {
                     .ok_or_else(|| {
                         lowering_diagnostic(node.span, "comparison node has no first operand")
                     })?;
-                comparison_temporary_types(&operand.ty, &mut types);
+                if matches!(node.op, Op::Compare) {
+                    ordering_temporary_types(&operand.ty, &mut types);
+                } else {
+                    comparison_temporary_types(&operand.ty, &mut types);
+                }
             }
             let mut temps = Vec::with_capacity(types.len());
             for ty in types {
@@ -3643,6 +4018,74 @@ fn collection_temporary_types(
     Ok(Some(types))
 }
 
+/// The pre-allocated temporary regions `SemanticOrderingEmitter::emit` takes, in
+/// exact order. Must stay in lockstep with that emitter: products reserve two
+/// scratch Ints then `(left, right, recurse)` per field; enums reserve five
+/// scratch Ints then `(left, right, recurse)` per payload field across variants;
+/// arrays reserve six scratch Ints, then `(left, right)` element slots, then
+/// recurse on the element.
+fn ordering_temporary_types(ty: &Type, out: &mut Vec<Type>) {
+    match ty {
+        Type::Bool
+        | Type::Int
+        | Type::Check
+        | Type::String
+        | Type::Path
+        | Type::Map { .. }
+        | Type::Set(_)
+        | Type::Function { .. }
+        | Type::StreamCheck
+        | Type::Stream { .. }
+        | Type::Order(_) => {}
+        Type::Tuple(fields) => {
+            out.extend([Type::Int, Type::Int]);
+            for field in fields {
+                out.push(field.clone());
+                out.push(field.clone());
+                ordering_temporary_types(field, out);
+            }
+        }
+        Type::Record(record) => {
+            out.extend([Type::Int, Type::Int]);
+            for field in &record.fields {
+                out.push(field.ty.clone());
+                out.push(field.ty.clone());
+                ordering_temporary_types(&field.ty, out);
+            }
+        }
+        Type::Enum(enumeration) => {
+            out.extend([Type::Int, Type::Int, Type::Int, Type::Int, Type::Int]);
+            for variant in &enumeration.variants {
+                let fields: Vec<&Type> = match &variant.payload {
+                    VariantPayload::Unit => Vec::new(),
+                    VariantPayload::Tuple(fields) => fields.iter().collect(),
+                    VariantPayload::Record(fields) => {
+                        fields.iter().map(|field| &field.ty).collect()
+                    }
+                };
+                for field in fields {
+                    out.push(field.clone());
+                    out.push(field.clone());
+                    ordering_temporary_types(field, out);
+                }
+            }
+        }
+        Type::Array(element) => {
+            out.extend([
+                Type::Int,
+                Type::Int,
+                Type::Int,
+                Type::Int,
+                Type::Int,
+                Type::Int,
+            ]);
+            out.push(element.as_ref().clone());
+            out.push(element.as_ref().clone());
+            ordering_temporary_types(element, out);
+        }
+    }
+}
+
 fn comparison_temporary_types(ty: &Type, out: &mut Vec<Type>) {
     match ty {
         Type::Tuple(fields) => {
@@ -4059,6 +4502,7 @@ fn lower_node_sequence(
                 outputs,
             )?,
             Op::StringContains => lower_string_contains_node(node, dst, values, outputs)?,
+            Op::StringIsNumeric => lower_string_is_numeric_node(node, dst, values, outputs)?,
             Op::StringSplitOnce | Op::StringParseInt => {
                 lower_checked_string_node(node, dst, values, sequence, outputs)?
             }
@@ -4160,6 +4604,28 @@ fn lower_string_contains_node(
         dst: dst.start().byte_offset(),
         text: text.region.start().byte_offset(),
         needle: needle.region.start().byte_offset(),
+    });
+    Ok(ValueRepresentation::Word)
+}
+
+fn lower_string_is_numeric_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_node_type(node, Type::Bool)?;
+    require_input_count(node, 1)?;
+    let text = input_value(node, values, 0)?;
+    require_value(
+        node,
+        &text,
+        &Type::String,
+        ValueRepresentation::RealizedHandle,
+    )?;
+    outputs.code.push(WeavyOp::StringIsNumeric {
+        dst: dst.start().byte_offset(),
+        text: text.region.start().byte_offset(),
     });
     Ok(ValueRepresentation::Word)
 }
@@ -4678,79 +5144,51 @@ fn lower_compare_node(
     )?;
     let ordering = temps.take(&Type::Int, node.span)?;
     let test = temps.take(&Type::Int, node.span)?;
-    let mut leaves = Vec::new();
-    collect_typed_compare_leaves(node, &a.ty, &a, &b, &mut temps, outputs.code, &mut leaves)?;
     let dst = ordering.region.start();
-    let end = outputs.code.label();
-    if leaves.is_empty() {
-        outputs.code.push(WeavyOp::ConstI64 {
-            dst: dst.byte_offset(),
-            value: i64::from(ORDERING_EQUAL_VARIANT),
-        });
-    }
-    for (index, leaf) in leaves.iter().enumerate() {
-        let is_last = index + 1 == leaves.len();
-        match leaf.kind {
-            CompareLeafKind::SignedWord => {
-                let not_less = outputs.code.label();
-                outputs.code.push(WeavyOp::LtI64 {
-                    dst: dst.byte_offset(),
-                    a: leaf.a.byte_offset(),
-                    b: leaf.b.byte_offset(),
-                });
-                outputs.code.jump_if_zero(dst, not_less);
-                outputs.code.push(WeavyOp::ConstI64 {
-                    dst: dst.byte_offset(),
-                    value: i64::from(ORDERING_LESS_VARIANT),
-                });
-                outputs.code.jump(end);
-                outputs.code.bind(not_less, node.span)?;
-
-                let equal = outputs.code.label();
-                outputs.code.push(WeavyOp::GtI64 {
-                    dst: dst.byte_offset(),
-                    a: leaf.a.byte_offset(),
-                    b: leaf.b.byte_offset(),
-                });
-                outputs.code.jump_if_zero(dst, equal);
-                outputs.code.push(WeavyOp::ConstI64 {
-                    dst: dst.byte_offset(),
-                    value: i64::from(ORDERING_GREATER_VARIANT),
-                });
-                outputs.code.jump(end);
-                outputs.code.bind(equal, node.span)?;
-                if is_last {
-                    outputs.code.push(WeavyOp::ConstI64 {
-                        dst: dst.byte_offset(),
-                        value: i64::from(ORDERING_EQUAL_VARIANT),
-                    });
-                }
-            }
-            CompareLeafKind::ValueBytes => {
-                outputs.code.push(WeavyOp::CompareValueBytes {
-                    dst: dst.byte_offset(),
-                    a: leaf.a.byte_offset(),
-                    b: leaf.b.byte_offset(),
-                });
-                if !is_last {
-                    let scratch = sequence.function.layout.scratch.ok_or_else(|| {
-                        lowering_diagnostic(node.span, "comparison has no scratch word")
-                    })?;
-                    outputs.code.push(WeavyOp::ConstI64 {
-                        dst: scratch.byte_offset(),
-                        value: i64::from(ORDERING_EQUAL_VARIANT),
-                    });
-                    outputs.code.push(WeavyOp::EqI64 {
-                        dst: scratch.byte_offset(),
-                        a: dst.byte_offset(),
-                        b: scratch.byte_offset(),
-                    });
-                    outputs.code.jump_if_zero(scratch, end);
-                }
-            }
-        }
-    }
-    outputs.code.bind(end, node.span)?;
+    let array = if type_contains_array(&a.ty) {
+        let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+            lowering_diagnostic(node.span, "array comparison has no checked outcome scratch")
+        })?;
+        let assigned = sequence
+            .lowering
+            .regions
+            .outcome_scratch(sequence.function.id, node.span)?;
+        let outcome = sequence
+            .lowering
+            .regions
+            .array_outcome(sequence.function.id, node.span)?;
+        let return_label = sequence.array_return.ok_or_else(|| {
+            lowering_diagnostic(node.span, "array comparison has no checked outcome return")
+        })?;
+        let site = sequence
+            .lowering
+            .trace_ids
+            .get(&NodeRef {
+                function: sequence.function.id,
+                node: node.id,
+            })
+            .copied()
+            .ok_or_else(|| {
+                lowering_diagnostic(node.span, "array comparison has no stable trace site")
+            })?;
+        Some(ArrayEqualityContext {
+            schemas: sequence.lowering.schemas,
+            scratch,
+            assigned,
+            outcome,
+            return_label,
+            site,
+        })
+    } else {
+        None
+    };
+    let mut emitter = SemanticOrderingEmitter {
+        node,
+        temps: &mut temps,
+        code: outputs.code,
+        array,
+    };
+    emitter.emit(&a.ty, &a, &b, dst)?;
     let not_less = outputs.code.label();
     let not_equal = outputs.code.label();
     let done = outputs.code.label();
@@ -5639,7 +6077,7 @@ fn lower_node(
                 ValueRepresentation::RealizedHandle,
             )
         }
-        Op::StringContains | Op::StringSplitOnce | Op::StringParseInt => {
+        Op::StringContains | Op::StringIsNumeric | Op::StringSplitOnce | Op::StringParseInt => {
             return Err(lowering_diagnostic(
                 node.span,
                 "string operation did not reach checked lowering",
@@ -8464,8 +8902,8 @@ fn lower_checked_array_node(
 /// Typed temporaries for a structural array sort: two element registers to
 /// hold the pair under comparison, five integer registers (length, the two
 /// loop indices, the three-way ordering word, and the loop stride), followed
-/// by whatever nested registers the element type's structural comparison
-/// needs. The sequence must match `lower_array_sorted_node`'s `take` order.
+/// by the exact recursive temporary contract of `SemanticOrderingEmitter`.
+/// The sequence must match `lower_array_sorted_node`'s `take` order.
 fn array_sorted_temporary_types(node: &Node) -> Result<Vec<Type>, Diagnostics> {
     let Type::Array(element) = &node.ty else {
         return Err(lowering_diagnostic(
@@ -8483,7 +8921,7 @@ fn array_sorted_temporary_types(node: &Node) -> Result<Vec<Type>, Diagnostics> {
         Type::Int,
         Type::Int,
     ];
-    comparison_temporary_types(&element, &mut types);
+    ordering_temporary_types(&element, &mut types);
     Ok(types)
 }
 
@@ -8692,20 +9130,24 @@ fn lower_array_sorted_node(
         outputs.code,
     )?;
 
-    // Structural three-way order of out[i] against out[j].
+    // Structural three-way order of out[i] against out[j]. This is the same
+    // variant- and array-directed emitter that lowers ordinary `<=>`; the
+    // sort owns the checked array-access context required by nested arrays.
     temps.rewind(comparison_checkpoint, node.span)?;
-    emit_structural_order(
+    SemanticOrderingEmitter {
         node,
-        element,
-        &ei,
-        &ej,
-        StructuralOrderOutput {
-            ordering: ordering_slot,
-            condition: scratch.condition,
-        },
-        &mut temps,
-        outputs.code,
-    )?;
+        temps: &mut temps,
+        code: outputs.code,
+        array: Some(ArrayEqualityContext {
+            schemas: sequence.lowering.schemas,
+            scratch,
+            assigned,
+            outcome,
+            return_label,
+            site,
+        }),
+    }
+    .emit(element, &ei, &ej, ordering_slot)?;
 
     // Swap when out[i] is structurally greater than out[j].
     let no_swap = outputs.code.label();

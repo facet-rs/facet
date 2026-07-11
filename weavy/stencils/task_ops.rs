@@ -168,6 +168,10 @@ pub struct Ctx {
         *const RawValueMemory, usize, *const RawValueMemory, usize,
         *mut core::ffi::c_void, i64, i64, *mut i64,
     ) -> i64,
+    string_is_numeric: unsafe extern "C" fn(
+        *const RawValueMemory, usize, *const RawValueMemory, usize,
+        *mut core::ffi::c_void, i64, *mut i64,
+    ) -> i64,
     string_split_once: unsafe extern "C" fn(
         *const RawValueMemory, usize, *const RawValueMemory, usize,
         *mut core::ffi::c_void, i64, i64, *mut i64, *mut i64,
@@ -1176,6 +1180,18 @@ pub unsafe extern "C" fn weavy_task_string_contains(cx: *mut Ctx) {
     if result == 0 { write_i64(c.frame, dst, value); cont!(cx); }
     *c.await_index = pc; *c.resume = if result == 4 { read_i64(c.frame, text) as u64 } else { read_i64(c.frame, needle) as u64 };
     *c.exit = if result == 4 { EXIT_STRING_CONCAT_LEFT_UNRESIDENT } else if result == 5 { EXIT_STRING_CONCAT_RIGHT_UNRESIDENT } else { EXIT_STRING_CONCAT_ALLOCATION };
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_string_is_numeric(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog; let text = *c.prog.add(1); let pc = *c.prog.add(2);
+    c.prog = c.prog.add(3);
+    let mut value = 0;
+    let result = (c.string_is_numeric)(c.store_value_memories, c.store_value_memory_count, c.lent_molten_value_memories, c.lent_molten_value_memory_count, c.molten, read_i64(c.frame, text), &raw mut value);
+    if result == 0 { write_i64(c.frame, dst, value); cont!(cx); }
+    *c.await_index = pc; *c.resume = read_i64(c.frame, text) as u64;
+    *c.exit = if result == 4 { EXIT_STRING_CONCAT_LEFT_UNRESIDENT } else { EXIT_STRING_CONCAT_ALLOCATION };
 }
 
 #[no_mangle]

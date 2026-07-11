@@ -149,6 +149,15 @@ struct Ctx {
         i64,
         *mut i64,
     ) -> i64,
+    string_is_numeric: unsafe extern "C" fn(
+        *const crate::task::RawValueMemory,
+        usize,
+        *const crate::task::RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        *mut i64,
+    ) -> i64,
     string_split_once: unsafe extern "C" fn(
         *const crate::task::RawValueMemory,
         usize,
@@ -554,6 +563,10 @@ fn compile_fn(
                 task_stencils::STRING_CONTAINS,
                 Continuations::Fallthrough(task_stencils::STRING_CONTAINS_CONT),
             ),
+            Op::StringIsNumeric { .. } => (
+                task_stencils::STRING_IS_NUMERIC,
+                Continuations::Fallthrough(task_stencils::STRING_IS_NUMERIC_CONT),
+            ),
             Op::StringSplitOnce { .. } => (
                 task_stencils::STRING_SPLIT_ONCE,
                 Continuations::Fallthrough(task_stencils::STRING_SPLIT_ONCE_CONT),
@@ -711,6 +724,7 @@ fn compile_fn(
             Op::CompareValueBytes { .. } => 4,
             Op::StringConcat { .. } => 4,
             Op::StringContains { .. } | Op::StringParseInt { .. } => 4,
+            Op::StringIsNumeric { .. } => 3,
             Op::StringStatusIs { .. } => 4,
             Op::StringSplitOnce { .. } => 6,
             Op::ByteProject { .. } => 3,
@@ -1264,6 +1278,12 @@ fn compile_fn(
                 }
                 layout.push_prog_word(root.prog_index, i as u64);
             }
+            Op::StringIsNumeric { dst, text } => {
+                for value in [dst, text] {
+                    layout.push_prog_word(root.prog_index, u64::from(*value));
+                }
+                layout.push_prog_word(root.prog_index, i as u64);
+            }
             Op::StringSplitOnce {
                 left,
                 right,
@@ -1628,6 +1648,7 @@ impl JitTask {
                 ordered_len: crate::task::ordered_len_abi,
                 string_concat: crate::task::string_concat_abi,
                 string_contains: crate::task::string_contains_abi,
+                string_is_numeric: crate::task::string_is_numeric_abi,
                 string_split_once: crate::task::string_split_once_abi,
                 string_parse_int: crate::task::string_parse_int_abi,
                 byte_project: crate::task::byte_project_abi,

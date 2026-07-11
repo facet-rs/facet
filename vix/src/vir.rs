@@ -277,6 +277,12 @@ pub enum TraceCheck {
     PeakMoltenNodesAtMost {
         bound: i64,
     },
+    /// A callable's verified frame was entered exactly `times` times. This is
+    /// function-identity provenance, independent of scheduler or memo layout.
+    FunctionCallsExactly {
+        function: FunctionId,
+        times: i64,
+    },
 }
 
 /// One arm of a generator [`GeneratorStep::Match`]. The arm body is itself a
@@ -649,7 +655,8 @@ impl Type {
     pub fn structural_order_is_defined(&self) -> bool {
         match self {
             Self::Bool | Self::Int | Self::String | Self::Path => true,
-            Self::Array(_) | Self::Map { .. } | Self::Set(_) => false,
+            Self::Array(element) => element.structural_order_is_defined(),
+            Self::Map { .. } | Self::Set(_) => false,
             Self::Function { .. } => false,
             Self::Tuple(elements) => elements.iter().all(Self::structural_order_is_defined),
             Self::Record(record) => record
@@ -846,6 +853,8 @@ pub enum Op {
     StringSplitOnce,
     /// Parse a canonical decimal string as an Int.
     StringParseInt,
+    /// Test whether a string is a non-empty run of ASCII decimal digits.
+    StringIsNumeric,
     /// Join a compiler-validated segment suffix onto a relative Path.
     PathJoin,
     /// Render a relative Path as its String spelling.
@@ -1982,6 +1991,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::StringContains => op.push(62),
         Op::StringSplitOnce => op.push(63),
         Op::StringParseInt => op.push(64),
+        Op::StringIsNumeric => op.push(65),
         Op::PathJoin => op.push(81),
         Op::PathToString => op.push(82),
         Op::Range => op.push(83),
