@@ -105,8 +105,9 @@ At the time of the latest authoritative integration checkpoint
 - rungs 098 and 100 now receive `cargo_selection()` as a harness-supplied
   oracle value. Their pure solver code reads only fixture-built typed inputs;
   no recorded deleted-resolver answer remains an authority. The remaining
-  seam is a native Vix kernel producing the real typed `SolveResult` consumed
-  by the already-executable comparator.
+  seam is a native Vix kernel producing a result with typed `Version` values,
+  plus the external harness adapter that projects it into the already-executable
+  Cargo-facing comparator. Version text never enters the pure solver API.
 
 This section is a snapshot, not a durable source of truth. Each implementation
 turn starts by checking the branch, preserved checkpoints, and focused gates.
@@ -455,8 +456,9 @@ The oracle half of R3 is complete at `a1be1fa6e`:
    surfaced as unsupported `DomainMultiplicity`, never collapsed.
 
 The remaining R3 work is a new native kernel from
-`rodin/docs/content/spec.md` whose typed `SolveResult` is fed into that live
-comparator.
+`rodin/docs/content/spec.md` whose typed result is projected by an external
+harness adapter into that live comparator. The kernel keeps `Version` as a
+value; only the Cargo-facing projection uses Cargo's textual version spelling.
 
 The first kernel accepts fixture-built typed `PackageUniverse` values. This is
 not the raw crates.io sparse index and not the old parallel-column `Index`.
