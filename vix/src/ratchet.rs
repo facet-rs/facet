@@ -6,8 +6,8 @@ use crate::compiler::{Compiler, CompilerConfig};
 use crate::diagnostic::Diagnostics;
 use crate::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
 use crate::runtime::{
-    ChaosPolicy, Counters, DemandState, Evaluation, Event, EventLog, FailureContext, FailureValue,
-    EventKind, GeneratorOutcome, Location, MachineError, Runtime, TaskState, ValueId,
+    ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog, FailureContext,
+    FailureValue, GeneratorOutcome, Location, MachineError, Runtime, TaskState, ValueId,
 };
 use crate::vir::{FunctionId, PartitionedRecipe, TraceCheck};
 
