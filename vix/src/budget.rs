@@ -401,10 +401,7 @@ fn write_parent_command(writer: &mut ChildStdin, command: &ParentCommand) -> Res
     write_frame(writer, command).map_err(|error| format!("writing parent command: {error}"))
 }
 
-fn write_child_event(
-    writer: &mut impl Write,
-    event: &ChildEvent,
-) -> Result<(), String> {
+fn write_child_event(writer: &mut impl Write, event: &ChildEvent) -> Result<(), String> {
     write_frame(writer, event).map_err(|error| format!("writing child event: {error}"))
 }
 
@@ -413,7 +410,9 @@ fn write_frame<T: for<'a> facet::Facet<'a>>(
     value: &T,
 ) -> Result<(), String> {
     let encoded = facet_json::to_string(value).map_err(|error| error.to_string())?;
-    writer.write_all(encoded.as_bytes()).map_err(|error| error.to_string())?;
+    writer
+        .write_all(encoded.as_bytes())
+        .map_err(|error| error.to_string())?;
     writer.write_all(b"\n").map_err(|error| error.to_string())?;
     writer.flush().map_err(|error| error.to_string())
 }
@@ -501,13 +500,13 @@ fn execute_prepared(prepared: Prepared) -> ChildReport {
                 });
             });
             match outcome {
-            Ok(report) => ChildReport::RanSource {
-                passed: report.passed(),
-                observations,
-            },
-            Err(error) => ChildReport::Failed {
-                message: format!("{error:?}"),
-            },
+                Ok(report) => ChildReport::RanSource {
+                    passed: report.passed(),
+                    observations,
+                },
+                Err(error) => ChildReport::Failed {
+                    message: format!("{error:?}"),
+                },
             }
         }
         Prepared::Source(Err(message)) => ChildReport::Failed { message },

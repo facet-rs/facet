@@ -5432,9 +5432,14 @@ fn tail_loop_innards_diagnostic_lane_retains_marks() {
     task.write_entry_i64(1, 5).expect("limit");
     task.write_entry_i64(2, 0).expect("acc");
     let mut ready: [bool; 0] = [];
-    assert_eq!(task.drive(&mut ready, &[]).expect("tail loop drives"), TaskStep::Done);
+    assert_eq!(
+        task.drive(&mut ready, &[]).expect("tail loop drives"),
+        TaskStep::Done
+    );
     assert!(
-        task.trace().iter().any(|event| matches!(event, TaskEvent::Mark(_))),
+        task.trace()
+            .iter()
+            .any(|event| matches!(event, TaskEvent::Mark(_))),
         "the explicit innards lane retains source-attributed marks",
     );
     assert!(
