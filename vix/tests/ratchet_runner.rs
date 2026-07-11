@@ -5391,6 +5391,59 @@ fn tail_loop_executes_ten_million_iterations_in_the_selected_lane() {
     );
 }
 
+/// Innards remains an explicit diagnostic lane: it retains source-attributed
+/// marks while preserving the structural frame trace that production also
+/// reports. The ordinary lowering path must never select this mode implicitly.
+#[test]
+fn tail_loop_innards_diagnostic_lane_retains_marks() {
+    use weavy::exec::Executable;
+    use weavy::task::{FnId, TaskEvent, TaskStep, TraceMode};
+
+    let module = Compiler::new()
+        .compile(TAIL_LOOP_SOURCE)
+        .expect("source compiles")
+        .module;
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut cache = LoweringCache::default();
+    let lowered = cache
+        .get_or_lower(&partitioned.islands[0])
+        .expect("source lowers to Weavy");
+    let count_up = module
+        .functions
+        .iter()
+        .find(|function| function.name == "count_up")
+        .expect("count_up exists")
+        .id;
+    let frame = attribution_for(&partitioned.islands[0])
+        .functions
+        .iter()
+        .position(|function| *function == count_up)
+        .expect("count_up has a frame");
+    let verified = lowered
+        .program()
+        .clone()
+        .verify(lowered.contract().clone())
+        .expect("lowered tail loop re-verifies");
+    let executable = Executable::with_trace_mode(verified, TraceMode::Innards);
+    let mut task = executable
+        .spawn(FnId(frame as u32))
+        .expect("count_up spawns as a verified entry");
+    task.write_entry_i64(0, 0).expect("n");
+    task.write_entry_i64(1, 5).expect("limit");
+    task.write_entry_i64(2, 0).expect("acc");
+    let mut ready: [bool; 0] = [];
+    assert_eq!(task.drive(&mut ready, &[]).expect("tail loop drives"), TaskStep::Done);
+    assert!(
+        task.trace().iter().any(|event| matches!(event, TaskEvent::Mark(_))),
+        "the explicit innards lane retains source-attributed marks",
+    );
+    assert!(
+        matches!(task.trace().first(), Some(TaskEvent::FrameEntered(_)))
+            && matches!(task.trace().last(), Some(TaskEvent::FrameExited(_))),
+        "diagnostic marks do not replace structural frame events",
+    );
+}
+
 // The interpreter and JIT lanes agree on the 10,000,000-iteration result in one
 // process, and neither records a per-iteration mark.
 //

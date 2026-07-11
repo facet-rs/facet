@@ -7,7 +7,7 @@ use weavy::exec::Executable;
 use weavy::mem::Layout;
 use weavy::task::{
     ArgCopy, ArrayOpStatus, Fn as WeavyFn, FnId as WeavyFnId, Op as WeavyOp, OrderedOpStatus,
-    Program as WeavyProgram, StructuralFieldSource,
+    Program as WeavyProgram, StructuralFieldSource, TraceMode,
 };
 use weavy::{
     CallContract as WeavyCallContract, CallContractId as WeavyCallContractId,
@@ -503,7 +503,11 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
         recipe,
         demand_key,
         demand_preimage,
-        executable: Executable::new(verified),
+        // The ratchet is ordinary production execution. Keep source-attributed
+        // `Op::Trace` nodes in the verified program, but compile them in
+        // Production mode so an interior pollpoint cannot retain one mark per
+        // iteration. Diagnostics request Innards explicitly.
+        executable: Executable::with_trace_mode(verified, TraceMode::Production),
         array_outcome,
         pc_nodes,
         constants,
