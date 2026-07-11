@@ -490,6 +490,7 @@ fn nodes_contain_checked_collection_ops(nodes: &[Node]) -> bool {
                 | Op::ArrayLen
                 | Op::ArrayMap { .. }
                 | Op::ArrayFold
+                | Op::ArraySplitLast
                 | Op::ArrayAppend
                 | Op::ArrayConcat
                 | Op::Map
@@ -4318,6 +4319,12 @@ fn lower_node(
             return Err(lowering_diagnostic(
                 node.span,
                 "array fold did not reach checked lowering",
+            ));
+        }
+        Op::ArraySplitLast => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "array split_last lowering is not implemented",
             ));
         }
         Op::ArrayStream => {

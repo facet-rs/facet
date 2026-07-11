@@ -1513,6 +1513,7 @@ enum PreludeMethod {
     ArrayLen,
     ArrayMap,
     ArrayFold,
+    ArraySplitLast,
     ArrayStream,
     MapGet,
     MapHas,
@@ -1559,6 +1560,12 @@ impl PreludeMethodRegistry {
                 name: "fold",
                 arity: 2,
                 method: PreludeMethod::ArrayFold,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Array,
+                name: "split_last",
+                arity: 0,
+                method: PreludeMethod::ArraySplitLast,
             },
             PreludeMethodEntry {
                 receiver: PreludeReceiverType::Array,
@@ -2133,6 +2140,27 @@ fn lower_method_call(
                     },
                     vec![receiver.node, initial.node, folder.node],
                     Op::ArrayFold,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::ArraySplitLast => {
+            let Type::Array(element) = &receiver.ty else {
+                unreachable!("array split_last registry entry has an array receiver")
+            };
+            let payload = Type::Tuple(vec![
+                element.as_ref().clone(),
+                Type::array(element.as_ref().clone()),
+            ]);
+            let ty = Type::option(payload);
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    vec![receiver.node],
+                    Op::ArraySplitLast,
                 ),
                 ty,
             })

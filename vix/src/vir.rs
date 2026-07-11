@@ -501,6 +501,8 @@ pub enum Op {
     },
     /// Fold authored array positions left-to-right through one typed callable.
     ArrayFold,
+    /// Partition the final authored position from the remaining prefix.
+    ArraySplitLast,
     /// Add one element to a dense array, producing a fresh value.
     ArrayAppend,
     /// Concatenate two dense arrays, producing a fresh value.
@@ -1140,6 +1142,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::ArrayFold => op.push(48),
         Op::StreamFilter => op.push(49),
         Op::MapValues => op.push(50),
+        Op::ArraySplitLast => op.push(51),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());

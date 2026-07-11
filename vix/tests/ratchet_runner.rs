@@ -760,6 +760,40 @@ fn rung_034_stream_filter_preserves_survivor_keys() {
 }
 
 #[test]
+fn array_split_last_is_a_pure_optional_partition() {
+    const SOURCE: &str = r#"
+#[test]
+fn split_last_values() -> Stream<Check> {
+    yield expect_eq([1, 2, 3].split_last(), Some((3, [1, 2])));
+    let empty: [Int] = [];
+    yield expect_eq(empty.split_last(), None);
+}
+"#;
+    let compilation = Compiler::new()
+        .compile(SOURCE)
+        .expect("split_last compiles to typed VIR independently of generator codata");
+    let split_nodes = compilation.functions[0]
+        .nodes
+        .iter()
+        .filter(|node| matches!(node.op, VirOp::ArraySplitLast))
+        .collect::<Vec<_>>();
+    assert_eq!(split_nodes.len(), 2);
+    assert!(split_nodes.iter().all(|node| {
+        node.ty
+            == VirType::option(VirType::Tuple(vec![
+                VirType::Int,
+                VirType::array(VirType::Int),
+            ]))
+    }));
+
+    let report = run_source(SOURCE).expect("split_last executes through verified production path");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+}
+
+#[test]
 fn structured_if_and_match_emit_control_and_arm_pcs_with_distinct_owners() {
     const SOURCE: &str = r#"
 enum Flag {
