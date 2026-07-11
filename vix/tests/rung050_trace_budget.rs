@@ -27,6 +27,7 @@ use std::path::Path;
 
 use vix::budget::{BudgetOutcome, Workload, run_under_budget};
 use vix::compiler::Compiler;
+use vix::diagnostic::DiagnosticCode;
 use vix::ratchet::run_source;
 use vix::vir::Budget;
 
@@ -40,6 +41,18 @@ fn budget_of(source: &str) -> Budget {
     let module = Compiler::new().compile(source).expect("source compiles");
     assert_eq!(module.tests.len(), 1, "fixture declares exactly one test");
     module.tests[0].metadata.budget
+}
+
+/// The first diagnostic code from a source expected to fail compilation.
+fn compile_error_code(source: &str) -> DiagnosticCode {
+    let diagnostics = Compiler::new()
+        .compile(source)
+        .expect_err("source is expected to fail compilation");
+    diagnostics
+        .entries
+        .first()
+        .expect("a diagnostic is reported")
+        .code
 }
 
 /// The canonical rung 050 file must *compile*: its `#[test { budget_wall: 5s,
@@ -326,4 +339,72 @@ fn tight_rss() -> Stream<Check> {
         other => panic!("expected an RSS kill or the typed platform seam, got {other:?}"),
     }
     assert!(!outcome.passed(), "an over-RSS run is red: {outcome:?}");
+}
+
+/// A unit-bearing literal is accepted only inside an attribute value. In an
+/// ordinary value position it is a typed error, never a silently-parsed number.
+#[test]
+fn a_unit_literal_outside_an_attribute_is_a_typed_error() {
+    const SOURCE: &str = r#"
+#[test]
+fn misuse() -> Stream<Check> {
+    let d = 5s;
+    yield expect_eq(d, d);
+}
+"#;
+    assert_eq!(
+        compile_error_code(SOURCE),
+        DiagnosticCode::UnsupportedExpression,
+        "a unit literal in a value position is rejected with a typed diagnostic",
+    );
+}
+
+/// A duplicate budget field is a typed duplicate-field diagnostic.
+#[test]
+fn a_duplicate_budget_field_is_a_typed_error() {
+    const SOURCE: &str = r#"
+#[test { budget_wall: 5s, budget_wall: 6s }]
+fn dup() -> Stream<Check> {
+    yield expect(true);
+}
+"#;
+    assert_eq!(compile_error_code(SOURCE), DiagnosticCode::DuplicateField);
+}
+
+/// An unknown budget field is a typed unknown-field diagnostic.
+#[test]
+fn an_unknown_budget_field_is_a_typed_error() {
+    const SOURCE: &str = r#"
+#[test { budget_walls: 5s }]
+fn unknown() -> Stream<Check> {
+    yield expect(true);
+}
+"#;
+    assert_eq!(compile_error_code(SOURCE), DiagnosticCode::UnknownField);
+}
+
+/// A budget value carrying the wrong unit family (a byte unit where a duration
+/// is required) is a typed mismatch, not a silent reinterpretation.
+#[test]
+fn a_budget_unit_mismatch_is_a_typed_error() {
+    const SOURCE: &str = r#"
+#[test { budget_wall: 256MB }]
+fn mismatch() -> Stream<Check> {
+    yield expect(true);
+}
+"#;
+    assert_eq!(compile_error_code(SOURCE), DiagnosticCode::TypeMismatch);
+}
+
+/// A budget field must carry a unit-bearing literal; a plain number is a typed
+/// mismatch.
+#[test]
+fn a_budget_field_without_a_unit_is_a_typed_error() {
+    const SOURCE: &str = r#"
+#[test { budget_wall: 5 }]
+fn bare() -> Stream<Check> {
+    yield expect(true);
+}
+"#;
+    assert_eq!(compile_error_code(SOURCE), DiagnosticCode::TypeMismatch);
 }
