@@ -2104,6 +2104,190 @@ mod tests {
         }
     }
 
+    fn ordered_write_program() -> (Program, ProgramContract) {
+        use crate::task::OrderedOpStatus;
+
+        let status_ok = || Op::OrderedStatusIs {
+            dst: 128,
+            status: 40,
+            expected: OrderedOpStatus::Ok,
+        };
+        let accumulate = || Op::MulI64 {
+            dst: 120,
+            a: 120,
+            b: 128,
+        };
+        let code = vec![
+            Op::OrderedEmpty {
+                dst: 16,
+                collection_schema_ref: 3,
+            },
+            Op::ConstI64 { dst: 120, value: 1 },
+            Op::OrderedBeginInsert {
+                cursor: 24,
+                status: 40,
+                collection: 16,
+                collection_schema_ref: 3,
+            },
+            status_ok(),
+            accumulate(),
+            Op::OrderedInsertInspect {
+                cursor: 24,
+                present: 48,
+                key: 56,
+                status: 40,
+                key_width: 8,
+                collection_schema_ref: 3,
+            },
+            status_ok(),
+            accumulate(),
+            Op::OrderedInsertCommit {
+                dst: 16,
+                cursor: 24,
+                key: 0,
+                value: Some(8),
+                status: 40,
+                key_width: 8,
+                value_width: 8,
+                collection_schema_ref: 3,
+                replace: false,
+            },
+            status_ok(),
+            accumulate(),
+            Op::OrderedLen {
+                dst: 112,
+                status: 40,
+                collection: 16,
+                collection_schema_ref: 3,
+            },
+            status_ok(),
+            accumulate(),
+            Op::ConstI64 { dst: 64, value: 1 },
+            Op::EqI64 {
+                dst: 128,
+                a: 112,
+                b: 64,
+            },
+            accumulate(),
+            Op::OrderedBeginIterate {
+                cursor: 80,
+                status: 40,
+                collection: 16,
+                collection_schema_ref: 3,
+            },
+            status_ok(),
+            accumulate(),
+            Op::OrderedIterateRow {
+                cursor: 80,
+                present: 48,
+                row: 96,
+                status: 40,
+                row_width: 16,
+                collection_schema_ref: 3,
+            },
+            status_ok(),
+            accumulate(),
+            Op::EqI64 {
+                dst: 128,
+                a: 96,
+                b: 0,
+            },
+            accumulate(),
+            Op::EqI64 {
+                dst: 128,
+                a: 104,
+                b: 8,
+            },
+            accumulate(),
+            Op::MulI64 {
+                dst: 120,
+                a: 120,
+                b: 48,
+            },
+            Op::Ret { src: 120, size: 8 },
+        ];
+        let collection = WordKind::Handle(SchemaRef(3));
+        (
+            Program {
+                fns: vec![function(17, code)],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    17,
+                    vec![
+                        word_region(0, WordKind::Scalar),
+                        word_region(8, WordKind::Scalar),
+                        word_region(16, collection),
+                        FrameRegion::new(
+                            24,
+                            RegionShape::new(vec![AllowedKinds::new(WordKind::Opaque); 2]),
+                        ),
+                        word_region(40, WordKind::Status),
+                        word_region(48, WordKind::Scalar),
+                        word_region(56, WordKind::Scalar),
+                        word_region(64, WordKind::Scalar),
+                        word_region(72, WordKind::Scalar),
+                        FrameRegion::new(
+                            80,
+                            RegionShape::new(vec![AllowedKinds::new(WordKind::Opaque); 2]),
+                        ),
+                        FrameRegion::new(
+                            96,
+                            RegionShape::new(vec![
+                                AllowedKinds::new(WordKind::Scalar),
+                                AllowedKinds::new(WordKind::Scalar),
+                            ]),
+                        ),
+                        word_region(112, WordKind::Scalar),
+                        word_region(120, WordKind::Scalar),
+                        word_region(128, WordKind::Scalar),
+                    ],
+                    &[0, 1],
+                    12,
+                    None,
+                )],
+                calls: vec![],
+                schemas: ordered_map_schemas(),
+                value_shapes: vec![],
+            },
+        )
+    }
+
+    fn run_public_ordered_write(force_interpreter: bool) -> (i64, LaneFacts) {
+        let previous = std::env::var_os("WEAVY_JIT");
+        if force_interpreter {
+            unsafe { std::env::set_var("WEAVY_JIT", "0") };
+        } else {
+            unsafe { std::env::remove_var("WEAVY_JIT") };
+        }
+        let executable = Executable::new(verify(ordered_write_program()));
+        match previous {
+            Some(value) => unsafe { std::env::set_var("WEAVY_JIT", value) },
+            None => unsafe { std::env::remove_var("WEAVY_JIT") },
+        }
+        let facts = executable.lane_facts();
+        let mut task = executable.spawn(FnId(0)).expect("ordered task spawns");
+        task.write_entry_i64(0, 7).expect("key entry");
+        task.write_entry_i64(1, 70).expect("value entry");
+        assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
+        (task.result_i64().expect("scalar result"), facts)
+    }
+
+    #[test]
+    fn ordered_write_iteration_and_length_match_across_public_lanes() {
+        let _guard = ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let interpreter = run_public_ordered_write(true);
+        let native = run_public_ordered_write(false);
+        assert_eq!(interpreter.0, 1);
+        assert_eq!(native.0, interpreter.0);
+        assert_eq!(interpreter.1.selected, LaneKind::Interpreter);
+        if task_lane::available() {
+            assert_eq!(native.1.selected, LaneKind::Native);
+        }
+    }
+
     #[test]
     fn invalid_enum_selectors_and_projection_mismatches_fault_equivalently() {
         let _guard = ENV_LOCK

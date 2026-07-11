@@ -403,6 +403,10 @@ fn compile_fn(
                 task_stencils::ARRAY_NEW,
                 Continuations::Fallthrough(task_stencils::ARRAY_NEW_CONT),
             ),
+            Op::OrderedEmpty { .. } => (
+                task_stencils::ORDERED_EMPTY,
+                Continuations::Fallthrough(task_stencils::ORDERED_EMPTY_CONT),
+            ),
             Op::OrderedBeginProbe { .. } => (
                 task_stencils::ORDERED_BEGIN_PROBE,
                 Continuations::Fallthrough(task_stencils::ORDERED_BEGIN_PROBE_CONT),
@@ -586,6 +590,7 @@ fn compile_fn(
             Op::JumpIfZero { .. } => 3,
             Op::LoadIndexedI64 { .. } | Op::StoreIndexedI64 { .. } => 4,
             Op::ArrayNew { .. } => 5,
+            Op::OrderedEmpty { .. } => 2,
             Op::OrderedBeginProbe { .. } => 4,
             Op::OrderedProbeKey { .. } => 8,
             Op::OrderedProbeValue { .. } => 6,
@@ -834,6 +839,13 @@ fn compile_fn(
                 ] {
                     layout.push_prog_word(root.prog_index, v);
                 }
+            }
+            Op::OrderedEmpty {
+                dst,
+                collection_schema_ref,
+            } => {
+                layout.push_prog_word(root.prog_index, u64::from(*dst));
+                layout.push_prog_word(root.prog_index, *collection_schema_ref as u64);
             }
             Op::OrderedBeginProbe {
                 cursor,

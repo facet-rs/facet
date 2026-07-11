@@ -2059,6 +2059,11 @@ pub enum Op {
         value_width: u32,
         collection_schema_ref: i64,
     },
+    /// Materialize the canonical empty root for one ordered schema.
+    OrderedEmpty {
+        dst: u32,
+        collection_schema_ref: i64,
+    },
     /// Begin a persistent insert-or-replace handshake over one collection.
     OrderedBeginInsert {
         cursor: u32,
@@ -2853,6 +2858,13 @@ impl Task {
                     };
                     write_i64_at(&mut self.arena, base + present as usize, present_value);
                     write_i64_at(&mut self.arena, base + status as usize, op_status as i64);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::OrderedEmpty {
+                    dst,
+                    collection_schema_ref: _,
+                } => {
+                    write_i64_at(&mut self.arena, base + dst as usize, ORDERED_EMPTY_HANDLE);
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
                 Op::OrderedBeginInsert {
@@ -3938,6 +3950,90 @@ mod tests {
         assert_eq!(
             arena.probe_ordered_value(cursor, 9),
             Err(OrderedOpStatus::Stale)
+        );
+    }
+
+    fn insert_i64(
+        arena: &mut MoltenArena,
+        root: i64,
+        key: i64,
+        value: i64,
+        replace: bool,
+    ) -> Result<i64, OrderedOpStatus> {
+        let cursor = arena.begin_ordered_insert(root, 9)?;
+        loop {
+            let step = arena.inspect_ordered_insert(cursor, 9)?;
+            if !step.present {
+                return arena.commit_ordered_insert(
+                    cursor,
+                    9,
+                    key.to_le_bytes().to_vec(),
+                    Some(value.to_le_bytes().to_vec()),
+                    replace,
+                );
+            }
+            let candidate = i64::from_le_bytes(step.key.try_into().expect("i64 key width"));
+            let ordering = match key.cmp(&candidate) {
+                core::cmp::Ordering::Less => 0,
+                core::cmp::Ordering::Equal => 1,
+                core::cmp::Ordering::Greater => 2,
+            };
+            if arena.advance_ordered_insert(cursor, 9, ordering)? {
+                return arena.commit_ordered_insert(
+                    cursor,
+                    9,
+                    key.to_le_bytes().to_vec(),
+                    Some(value.to_le_bytes().to_vec()),
+                    replace,
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn ordered_insert_rebuilds_a_persistent_balanced_spine_and_iterates_canonically() {
+        let mut arena = MoltenArena::default();
+        let mut root = ORDERED_EMPTY_HANDLE;
+        let mut first_root = ORDERED_EMPTY_HANDLE;
+        for key in 0..4096i64 {
+            root = insert_i64(&mut arena, root, key, key * 10, false).expect("distinct insert");
+            if key == 0 {
+                first_root = root;
+            }
+        }
+        assert_eq!(arena.ordered_collection_len(root, 9), Ok(4096));
+        assert_eq!(arena.ordered_collection_len(first_root, 9), Ok(1));
+        let root_index = arena.ordered_root(root).unwrap().unwrap();
+        assert!(arena.ordered_nodes[root_index].height < 20);
+
+        assert_eq!(
+            insert_i64(&mut arena, root, 2048, -1, false),
+            Err(OrderedOpStatus::DuplicateKey)
+        );
+        let replaced = insert_i64(&mut arena, root, 2048, -1, true).expect("replacement");
+        assert_eq!(arena.ordered_collection_len(replaced, 9), Ok(4096));
+        assert_eq!(arena.ordered_collection_len(root, 9), Ok(4096));
+
+        let cursor = arena.begin_ordered_iterate(replaced, 9).unwrap();
+        let mut entries = Vec::new();
+        loop {
+            let step = arena.iterate_ordered_row(cursor, 9).unwrap();
+            if !step.present {
+                break;
+            }
+            let key = i64::from_le_bytes(step.row[..8].try_into().unwrap());
+            let value = i64::from_le_bytes(step.row[8..].try_into().unwrap());
+            entries.push((key, value));
+        }
+        assert_eq!(entries.len(), 4096);
+        assert!(entries.windows(2).all(|pair| pair[0].0 < pair[1].0));
+        assert_eq!(entries[2048], (2048, -1));
+
+        let cursor = arena.begin_ordered_insert(root, 9).unwrap();
+        arena.inspect_ordered_insert(cursor, 9).unwrap();
+        assert_eq!(
+            arena.advance_ordered_insert(cursor, 9, 99),
+            Err(OrderedOpStatus::InvalidOrdering)
         );
     }
 

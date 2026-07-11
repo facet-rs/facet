@@ -2661,6 +2661,21 @@ impl Verifier<'_> {
             Op::HostCallYield { .. } => {
                 return Err(self.unsupported(function_id, pc, UnsupportedOp::HostCallYield));
             }
+            Op::OrderedEmpty {
+                dst,
+                collection_schema_ref,
+            } => {
+                let (collection, _) =
+                    self.ordered_collection_contract(function_id, pc, *collection_schema_ref)?;
+                self.require_handle_write(
+                    function_id,
+                    pc,
+                    frame,
+                    *dst,
+                    collection,
+                    AccessRole::Destination,
+                )?;
+            }
             Op::OrderedBeginProbe {
                 cursor,
                 status,
@@ -4222,6 +4237,7 @@ impl Verifier<'_> {
                     | Op::LoadArrayLen { .. }
                     | Op::ArrayStatusIs { .. }
                     | Op::OrderedBeginProbe { .. }
+                    | Op::OrderedEmpty { .. }
                     | Op::OrderedProbeKey { .. }
                     | Op::OrderedProbeValue { .. }
                     | Op::OrderedBeginInsert { .. }

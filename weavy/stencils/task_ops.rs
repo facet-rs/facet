@@ -649,6 +649,15 @@ pub unsafe extern "C" fn weavy_task_array_new(cx: *mut Ctx) {
 /// token (arena index, task generation) at `cursor`/`cursor + 8` and the
 /// operation status at `status`.
 #[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_empty(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    c.prog = c.prog.add(2);
+    write_i64(c.frame, dst, 0);
+    cont!(cx);
+}
+
+#[no_mangle]
 pub unsafe extern "C" fn weavy_task_ordered_begin_probe(cx: *mut Ctx) {
     let c = &mut *cx;
     let cursor = *c.prog;
