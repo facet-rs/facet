@@ -3043,7 +3043,7 @@ fn lower_method_call(
                 ));
             }
             let value = value.clone();
-            let predicate = match &call.args.args[0] {
+            let predicate = match &positional[0] {
                 ast::Expr::Closure(closure) => {
                     lower_closure_with_parameter(nodes, bindings, context, closure, &value)?
                 }
@@ -3051,14 +3051,14 @@ fn lower_method_call(
             };
             let Type::Function { parameter, result } = &predicate.ty else {
                 return Err(type_mismatch(
-                    expr_span(&call.args.args[0]),
+                    expr_span(&positional[0]),
                     format!("fn({}) -> Bool", value.name()),
                     predicate.ty.name(),
                 ));
             };
             if parameter.as_ref() != &value || result.as_ref() != &Type::Bool {
                 return Err(type_mismatch(
-                    expr_span(&call.args.args[0]),
+                    expr_span(&positional[0]),
                     format!("fn({}) -> Bool", value.name()),
                     predicate.ty.name(),
                 ));
