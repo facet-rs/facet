@@ -1366,22 +1366,24 @@ impl<'a> ProgramContractBuilder<'a> {
                     WeavyWordKind::Callable(call).into(),
                     WeavyWordKind::Scalar.into(),
                 ]);
-                let value_shape = WeavyValueShapeRef(builder.value_shapes.len() as u32);
-                builder.value_shapes.push(WeavyValueShapeContract {
-                    shape: shape.clone(),
-                    kind: WeavyValueShapeKind::Product {
-                        fields: vec![
-                            WeavyValueFieldUse::new(
-                                0,
-                                WeavyRegionShape::word(WeavyWordKind::Callable(call)),
-                            ),
-                            WeavyValueFieldUse::new(
-                                FrameSlot::word_size(),
-                                WeavyRegionShape::word(WeavyWordKind::Scalar),
-                            ),
-                        ],
-                    },
-                });
+                let value_shape = builder
+                    .value_shape_keys
+                    .iter()
+                    .position(|candidate| candidate == &node.ty)
+                    .map(|index| WeavyValueShapeRef(index as u32))
+                    .ok_or_else(|| {
+                        lowering_diagnostic(
+                            node.span,
+                            "closure semantic value shape was not interned",
+                        )
+                    })?;
+                let declared_shape = &builder.value_shapes[value_shape.0 as usize].shape;
+                if declared_shape != &shape {
+                    return Err(lowering_diagnostic(
+                        node.span,
+                        "closure target ABI disagrees with its semantic function type",
+                    ));
+                }
                 let closure_region = builder.regions.node(source.id, node.id, node.span)?;
                 let closure = functions[function_index]
                     .frame
