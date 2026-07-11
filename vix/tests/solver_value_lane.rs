@@ -132,3 +132,31 @@ fn sources_are_domain_identity() -> Stream<Check> {
         4,
     );
 }
+
+#[test]
+fn sorted_by_key_orders_nested_enum_array_keys_language_wide() {
+    all_pass(
+        r#"
+enum Tag { Before, After([Int]) }
+struct Row { key: Tag, name: String }
+#[test]
+fn t() -> Stream<Check> {
+    let rows = [
+        Row { key: Tag::After([1, 3]), name: "third" },
+        Row { key: Tag::Before, name: "first" },
+        Row { key: Tag::After([1, 2]), name: "second" },
+        Row { key: Tag::After([1]), name: "prefix" },
+        Row { key: Tag::After([1, 2]), name: "second-again" },
+    ];
+    let sorted = rows.sorted where { order: by_key(|row| row.key) };
+    yield expect_eq(sorted.len(), 5);
+    yield expect_eq(sorted[0].name, "first");
+    yield expect_eq(sorted[1].name, "prefix");
+    yield expect_eq(sorted[2].name, "second");
+    yield expect_eq(sorted[3].name, "second-again");
+    yield expect_eq(sorted[4].name, "third");
+}
+"#,
+        6,
+    );
+}
