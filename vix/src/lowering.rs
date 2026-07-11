@@ -3971,6 +3971,7 @@ fn lower_node_sequence(
                 outputs,
             )?,
             Op::StringContains => lower_string_contains_node(node, dst, values, outputs)?,
+            Op::StringIsNumeric => lower_string_is_numeric_node(node, dst, values, outputs)?,
             Op::StringSplitOnce | Op::StringParseInt => {
                 lower_checked_string_node(node, dst, values, sequence, outputs)?
             }
@@ -4072,6 +4073,28 @@ fn lower_string_contains_node(
         dst: dst.start().byte_offset(),
         text: text.region.start().byte_offset(),
         needle: needle.region.start().byte_offset(),
+    });
+    Ok(ValueRepresentation::Word)
+}
+
+fn lower_string_is_numeric_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_node_type(node, Type::Bool)?;
+    require_input_count(node, 1)?;
+    let text = input_value(node, values, 0)?;
+    require_value(
+        node,
+        &text,
+        &Type::String,
+        ValueRepresentation::RealizedHandle,
+    )?;
+    outputs.code.push(WeavyOp::StringIsNumeric {
+        dst: dst.start().byte_offset(),
+        text: text.region.start().byte_offset(),
     });
     Ok(ValueRepresentation::Word)
 }
@@ -5545,7 +5568,7 @@ fn lower_node(
                 ValueRepresentation::RealizedHandle,
             )
         }
-        Op::StringContains | Op::StringSplitOnce | Op::StringParseInt => {
+        Op::StringContains | Op::StringIsNumeric | Op::StringSplitOnce | Op::StringParseInt => {
             return Err(lowering_diagnostic(
                 node.span,
                 "string operation did not reach checked lowering",

@@ -2203,6 +2203,49 @@ pub(crate) unsafe extern "C" fn string_contains_abi(
 }
 
 #[cfg_attr(not(feature = "jit"), allow(dead_code))]
+pub(crate) unsafe extern "C" fn string_is_numeric_abi(
+    store: *const RawValueMemory,
+    store_len: usize,
+    lent: *const RawValueMemory,
+    lent_len: usize,
+    arena: *mut core::ffi::c_void,
+    text: i64,
+    out: *mut i64,
+) -> i64 {
+    if out.is_null()
+        || arena.is_null()
+        || (store.is_null() && store_len != 0)
+        || (lent.is_null() && lent_len != 0)
+    {
+        return 6;
+    }
+    let store = if store_len == 0 {
+        &[]
+    } else {
+        unsafe { core::slice::from_raw_parts(store, store_len) }
+    };
+    let lent = if lent_len == 0 {
+        &[]
+    } else {
+        unsafe { core::slice::from_raw_parts(lent, lent_len) }
+    };
+    let memories = MemoryView::Raw(RawValueMemories {
+        store,
+        molten: lent,
+    });
+    let arena = unsafe { &*arena.cast::<MoltenArena>() };
+    match string_is_numeric_value_bytes(memories, arena, text) {
+        Ok(numeric) => {
+            unsafe { *out = i64::from(numeric) };
+            0
+        }
+        Err(StringConcatFault::LeftUnresident(_)) => 4,
+        Err(StringConcatFault::RightUnresident(_)) => 5,
+        Err(StringConcatFault::AllocationFailed) => 6,
+    }
+}
+
+#[cfg_attr(not(feature = "jit"), allow(dead_code))]
 pub(crate) unsafe extern "C" fn string_split_once_abi(
     store: *const RawValueMemory,
     store_len: usize,
@@ -2682,6 +2725,8 @@ pub enum Op {
     },
     /// Parse a resident string as a signed decimal integer.
     StringParseInt { dst: u32, status: u32, text: u32 },
+    /// Test whether a resident string is a non-empty run of ASCII digits.
+    StringIsNumeric { dst: u32, text: u32 },
     /// Compare a string-operation status with one closed status word.
     StringStatusIs {
         dst: u32,
@@ -3499,6 +3544,27 @@ impl Task {
                         }
                     };
                     write_i64_at(&mut self.arena, base + dst as usize, i64::from(found));
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
+                Op::StringIsNumeric { dst, text } => {
+                    let text = read_i64_at(&self.arena, base + text as usize);
+                    let numeric = match string_is_numeric_value_bytes(
+                        MemoryView::from(value_memories),
+                        &self.molten,
+                        text,
+                    ) {
+                        Ok(numeric) => numeric,
+                        Err(fault) => {
+                            let Some(verified) = verified else {
+                                panic!("legacy raw StringIsNumeric operand is not resident");
+                            };
+                            return Err(string_concat_fault(
+                                fault_site(verified, fn_id, pc)?,
+                                fault,
+                            ));
+                        }
+                    };
+                    write_i64_at(&mut self.arena, base + dst as usize, i64::from(numeric));
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
                 Op::StringSplitOnce {
@@ -4681,6 +4747,16 @@ fn string_contains_value_bytes(
     let needle = handle_bytes(memories, molten, needle)
         .map_err(|_| StringConcatFault::RightUnresident(needle))?;
     Ok(find_subslice(text, needle).is_some())
+}
+
+fn string_is_numeric_value_bytes(
+    memories: MemoryView<'_>,
+    molten: &MoltenArena,
+    text: i64,
+) -> Result<bool, StringConcatFault> {
+    let text = handle_bytes(memories, molten, text)
+        .map_err(|_| StringConcatFault::LeftUnresident(text))?;
+    Ok(!text.is_empty() && text.iter().all(u8::is_ascii_digit))
 }
 
 fn string_parse_int_value_bytes(

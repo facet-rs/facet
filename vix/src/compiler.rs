@@ -2056,6 +2056,7 @@ enum PreludeMethod {
     StringContains,
     StringSplitOnce,
     StringParseInt,
+    StringIsNumeric,
     ArraySorted,
     ArrayStream,
     IntRem,
@@ -2152,6 +2153,12 @@ impl PreludeMethodRegistry {
                 name: "parse_int",
                 arity: 0,
                 method: PreludeMethod::StringParseInt,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::String,
+                name: "is_numeric",
+                arity: 0,
+                method: PreludeMethod::StringIsNumeric,
             },
             PreludeMethodEntry {
                 receiver: PreludeReceiverType::Array,
@@ -3009,6 +3016,17 @@ fn lower_method_call(
                 Op::StringParseInt,
             ),
             ty: Type::Int,
+        }),
+        PreludeMethod::StringIsNumeric => Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                call.span,
+                Type::Bool,
+                EffectFacts::PURE,
+                vec![receiver.node],
+                Op::StringIsNumeric,
+            ),
+            ty: Type::Bool,
         }),
         PreludeMethod::ArrayStream => {
             let Type::Array(element) = &receiver.ty else {

@@ -813,6 +813,8 @@ pub enum Op {
     StringSplitOnce,
     /// Parse a canonical decimal string as an Int.
     StringParseInt,
+    /// Test whether a string is a non-empty run of ASCII decimal digits.
+    StringIsNumeric,
     /// Join a compiler-validated segment suffix onto a relative Path.
     PathJoin,
     /// Render a relative Path as its String spelling.
@@ -1739,6 +1741,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::StringContains => op.push(62),
         Op::StringSplitOnce => op.push(63),
         Op::StringParseInt => op.push(64),
+        Op::StringIsNumeric => op.push(65),
         Op::PathJoin => op.push(81),
         Op::PathToString => op.push(82),
     }
