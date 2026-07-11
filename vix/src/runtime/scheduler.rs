@@ -230,7 +230,7 @@ impl<S: EventSink> Runtime<S> {
                         *fault,
                         lowered,
                         attribution,
-                        self.root_attribution(lowered, attribution),
+                        None,
                     );
                     return Err(Box::new(self.terminate_machine_fault(
                         task_id,
@@ -245,7 +245,7 @@ impl<S: EventSink> Runtime<S> {
                     let error = MachineError::runtime(
                         MachineOperation::Drive,
                         RuntimeFault::PureIslandYielded,
-                        self.root_attribution(lowered, attribution),
+                        None,
                         Some(lowered.demand_key),
                     );
                     return Err(Box::new(self.terminate_machine_fault(
@@ -258,7 +258,7 @@ impl<S: EventSink> Runtime<S> {
                     let error = MachineError::runtime(
                         MachineOperation::Drive,
                         RuntimeFault::PureIslandParked { input },
-                        self.root_attribution(lowered, attribution),
+                        None,
                         Some(lowered.demand_key),
                     );
                     return Err(Box::new(self.terminate_machine_fault(
@@ -282,12 +282,16 @@ impl<S: EventSink> Runtime<S> {
             let passed = match task.result_i64() {
                 Ok(result) => result != 0,
                 Err(fault) => {
+                    let fallback = result_shape_attribution(
+                        &fault,
+                        self.output_attribution(lowered, attribution),
+                    );
                     let error = self.task_fault(
                         MachineOperation::Result,
                         fault,
                         lowered,
                         attribution,
-                        self.root_attribution(lowered, attribution),
+                        fallback,
                     );
                     return Err(Box::new(self.terminate_machine_fault(
                         task_id,
@@ -470,7 +474,7 @@ impl<S: EventSink> Runtime<S> {
         if let Err(transition) = self.transition_task(task, TaskState::Failed) {
             return *transition;
         }
-        if let Err(transition) = self.transition_demand(demand, DemandState::Failed) {
+        if let Err(transition) = self.transition_demand(demand, DemandState::MachineFailed) {
             return *transition;
         }
         self.emit(EventKind::MachineFailed {
@@ -502,7 +506,7 @@ impl<S: EventSink> Runtime<S> {
         })
     }
 
-    fn root_attribution(
+    fn output_attribution(
         &self,
         lowered: &LoweringArtifact,
         attribution: &LoweringAttribution,
@@ -625,6 +629,37 @@ fn task_fault_site(fault: &TaskFault) -> Option<&FaultSite> {
     }
 }
 
+fn result_shape_attribution(
+    fault: &TaskFault,
+    output: Option<MachineAttribution>,
+) -> Option<MachineAttribution> {
+    match fault {
+        TaskFault::InvalidResultShape { .. } => output,
+        TaskFault::PoisonedResult { original } => result_shape_attribution(original, output),
+        TaskFault::InvalidEntryFunction { .. }
+        | TaskFault::InvalidEntryShape { .. }
+        | TaskFault::InvalidEntryIndex { .. }
+        | TaskFault::EntryKindMismatch { .. }
+        | TaskFault::EntryMissing { .. }
+        | TaskFault::EntryAlreadyInitialized { .. }
+        | TaskFault::EntryWriteAfterDrive { .. }
+        | TaskFault::EntryValueSize { .. }
+        | TaskFault::DriveTableLength { .. }
+        | TaskFault::IndirectCalleeNegative { .. }
+        | TaskFault::IndirectCalleeOutOfRange { .. }
+        | TaskFault::IndirectCalleeContractMismatch { .. }
+        | TaskFault::MissingIndirectCallFacts { .. }
+        | TaskFault::UnresidentCompareValueBytes { .. }
+        | TaskFault::InvalidEnumSelector { .. }
+        | TaskFault::EnumProjectionMismatch { .. }
+        | TaskFault::NativeFaultExit { .. }
+        | TaskFault::InvalidFaultSite { .. }
+        | TaskFault::PoisonedReDrive { .. }
+        | TaskFault::ResultBeforeDone { .. }
+        | TaskFault::DriveAfterDone => None,
+    }
+}
+
 fn task_fault_attribution(
     site: &FaultSite,
     lowered: &LoweringArtifact,
@@ -648,7 +683,7 @@ mod tests {
     use crate::lowering::{LoweringCache, attribution_for};
     use crate::runtime::{EventLog, MachineCause};
     use weavy::ValueShapeRef;
-    use weavy::exec::TaskFault;
+    use weavy::exec::{DriveTable, TaskFault};
     use weavy::task::Op;
 
     const ENUM_SOURCE: &str = r#"
@@ -726,7 +761,7 @@ fn fault_site() -> Stream<Check> {
     }
 
     #[test]
-    fn machine_fault_marks_task_and_demand_failed_without_a_memo() {
+    fn machine_fault_marks_task_and_demand_machine_failed_without_a_memo() {
         with_lowered(ENUM_SOURCE, |artifact, _| {
             let mut runtime = Runtime::new(EventLog::default());
             runtime.demands.insert(
@@ -750,7 +785,7 @@ fn fault_site() -> Stream<Check> {
             assert_eq!(runtime.tasks[&task].state, TaskState::Failed);
             assert_eq!(
                 runtime.demands[&artifact.demand_key].state,
-                DemandState::Failed
+                DemandState::MachineFailed
             );
             assert!(runtime.memo.is_empty());
             assert!(runtime.sink.events().iter().any(|event| matches!(
@@ -761,6 +796,54 @@ fn fault_site() -> Stream<Check> {
                     operation: MachineOperation::Drive,
                 } if failed_task == task && key == artifact.demand_key
             )));
+        });
+    }
+
+    #[test]
+    fn no_site_task_fault_keeps_its_demand_without_source_attribution() {
+        with_lowered(ENUM_SOURCE, |artifact, attribution| {
+            let runtime = Runtime::new(EventLog::default());
+            let error = runtime.task_fault(
+                MachineOperation::Drive,
+                TaskFault::DriveTableLength {
+                    table: DriveTable::Ready,
+                    expected: 1,
+                    actual: 0,
+                },
+                artifact,
+                attribution,
+                None,
+            );
+            assert_eq!(error.attribution, None);
+            assert_eq!(error.demand_chain, [artifact.demand_key]);
+            assert!(matches!(
+                error.cause,
+                MachineCause::Task(fault) if matches!(*fault, TaskFault::DriveTableLength { .. })
+            ));
+        });
+    }
+
+    #[test]
+    fn result_shape_fault_alone_uses_the_output_attribution() {
+        with_lowered(ENUM_SOURCE, |artifact, attribution| {
+            let runtime = Runtime::new(EventLog::default());
+            let output = runtime
+                .output_attribution(artifact, attribution)
+                .expect("root return has output source attribution");
+            let fault = TaskFault::InvalidResultShape {
+                entry: FnId(0),
+                region: weavy::RegionId(0),
+                size: 8,
+            };
+            let fallback = result_shape_attribution(&fault, Some(output.clone()));
+            let error = runtime.task_fault(
+                MachineOperation::Result,
+                fault,
+                artifact,
+                attribution,
+                fallback,
+            );
+            assert_eq!(error.attribution, Some(output));
         });
     }
 }

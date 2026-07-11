@@ -66,13 +66,14 @@ impl MachineError {
         operation: MachineOperation,
         error: ProgramError,
         attribution: Option<MachineAttribution>,
+        demand: DemandKey,
     ) -> Self {
         Self {
             operation,
             subject: None,
             attribution,
-            demand_chain: Vec::new(),
-            cause: MachineCause::Program(Box::new(error)),
+            demand_chain: vec![demand],
+            cause: error.into(),
         }
     }
 
@@ -88,7 +89,7 @@ impl MachineError {
             subject: None,
             attribution,
             demand_chain: vec![demand],
-            cause: MachineCause::Task(Box::new(error)),
+            cause: error.into(),
         }
     }
 
@@ -109,20 +110,14 @@ impl MachineError {
     }
 }
 
-impl From<ProgramError> for MachineError {
+impl From<ProgramError> for MachineCause {
     fn from(error: ProgramError) -> Self {
-        Self::program(MachineOperation::LoweringVerification, error, None)
+        Self::Program(Box::new(error))
     }
 }
 
-impl From<TaskFault> for MachineError {
+impl From<TaskFault> for MachineCause {
     fn from(error: TaskFault) -> Self {
-        Self {
-            operation: MachineOperation::Drive,
-            subject: None,
-            attribution: None,
-            demand_chain: Vec::new(),
-            cause: MachineCause::Task(Box::new(error)),
-        }
+        Self::Task(Box::new(error))
     }
 }

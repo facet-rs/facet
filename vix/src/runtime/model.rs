@@ -9,6 +9,7 @@ pub enum DemandState {
     Running,
     Ready,
     Failed,
+    MachineFailed,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]

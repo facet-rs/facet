@@ -366,16 +366,19 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
         closure: recipe,
         arguments: Vec::new(),
     };
+    let demand_key = DemandKey::from_preimage(&demand_preimage);
     let verified = program.verify(contract).map_err(|error| {
+        let source = program_error_attribution(&error, &pc_nodes, &attribution);
         MachineError::program(
             MachineOperation::LoweringVerification,
-            error.clone(),
-            program_error_attribution(&error, &pc_nodes, &attribution),
+            error,
+            source,
+            demand_key,
         )
     })?;
     Ok(LoweringArtifact {
         recipe,
-        demand_key: DemandKey::from_preimage(&demand_preimage),
+        demand_key,
         demand_preimage,
         executable: Executable::new(verified),
         pc_nodes,
@@ -3790,6 +3793,7 @@ fn attribution() -> Stream<Check> {
             MachineOperation::LoweringVerification,
             error.clone(),
             program_error_attribution(&error, &lowered.pc_nodes, &attribution),
+            lowered.demand_key,
         );
         assert_eq!(
             machine.cause,
@@ -3799,6 +3803,7 @@ fn attribution() -> Stream<Check> {
         assert_eq!(mapped.span, source.span);
         assert_eq!(mapped.weavy_function, Some(FnId(0)));
         assert_eq!(mapped.weavy_pc, Some(pc as usize));
+        assert_eq!(machine.demand_chain, [lowered.demand_key]);
 
         let shifted = format!("\n\n{SOURCE}");
         let shifted_module = Compiler::new()
