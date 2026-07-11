@@ -2632,6 +2632,7 @@ impl Verifier<'_> {
                         },
                     ));
                 }
+                self.require_byte_comparable_schema(function_id, pc, text_schema)?;
             }
             Op::StringSplitOnce {
                 left,
@@ -2661,6 +2662,7 @@ impl Verifier<'_> {
                         },
                     ));
                 }
+                self.require_byte_comparable_schema(function_id, pc, text_schema)?;
                 self.require_scalar_write(
                     function_id,
                     pc,
@@ -2671,7 +2673,9 @@ impl Verifier<'_> {
             }
             Op::StringParseInt { dst, status, text } => {
                 self.require_scalar_write(function_id, pc, frame, *dst, AccessRole::Destination)?;
-                self.read_handle(function_id, pc, frame, *text, AccessRole::CompareLeft)?;
+                let text_schema =
+                    self.read_handle(function_id, pc, frame, *text, AccessRole::CompareLeft)?;
+                self.require_byte_comparable_schema(function_id, pc, text_schema)?;
                 self.require_scalar_write(
                     function_id,
                     pc,
@@ -3827,6 +3831,34 @@ impl Verifier<'_> {
             ));
         };
         Ok(*schema)
+    }
+
+    fn require_byte_comparable_schema(
+        &self,
+        function: FnId,
+        pc: usize,
+        schema: SchemaRef,
+    ) -> Result<(), ProgramError> {
+        let Some(contract) = self.contract.schemas.get(schema.0 as usize) else {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::SchemaNotByteComparable { schema },
+            ));
+        };
+        if !matches!(
+            contract.payload,
+            PayloadKind::OpaqueBytes {
+                byte_comparable: true
+            }
+        ) {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::SchemaNotByteComparable { schema },
+            ));
+        }
+        Ok(())
     }
 
     fn require_scalar_read(

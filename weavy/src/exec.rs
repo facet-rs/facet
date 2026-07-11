@@ -356,6 +356,10 @@ pub enum TaskFault {
         site: FaultSite,
         actual: i64,
     },
+    InvalidStringStatus {
+        site: FaultSite,
+        actual: i64,
+    },
     InvalidOrderedStatus {
         site: FaultSite,
         actual: i64,

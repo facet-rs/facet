@@ -206,6 +206,7 @@ const EXIT_STRING_CONCAT_LEFT_UNRESIDENT: i64 = 13;
 const EXIT_STRING_CONCAT_RIGHT_UNRESIDENT: i64 = 14;
 const EXIT_STRING_CONCAT_ALLOCATION: i64 = 15;
 const EXIT_PUBLICATION_ALLOCATION: i64 = 16;
+const EXIT_INVALID_STRING_STATUS: i64 = 17;
 
 const LENT_MOLTEN_MIN: i64 = i64::MIN / 2;
 
@@ -1178,9 +1179,16 @@ pub unsafe extern "C" fn weavy_task_string_parse_int(cx: *mut Ctx) {
 #[no_mangle]
 pub unsafe extern "C" fn weavy_task_string_status_is(cx: *mut Ctx) {
     let c = &mut *cx;
-    let dst = *c.prog; let status = *c.prog.add(1) as i64; let expected = *c.prog.add(2) as i64;
-    c.prog = c.prog.add(3);
-    write_i64(c.frame, dst, i64::from(status == expected));
+    let dst = *c.prog; let status = *c.prog.add(1); let expected = *c.prog.add(2) as i64; let pc = *c.prog.add(3);
+    c.prog = c.prog.add(4);
+    let actual = read_i64(c.frame, status);
+    if !(0..=3).contains(&actual) {
+        *c.await_index = pc;
+        *c.resume = actual as u64;
+        *c.exit = EXIT_INVALID_STRING_STATUS;
+        return;
+    }
+    write_i64(c.frame, dst, i64::from(actual == expected));
     cont!(cx);
 }
 

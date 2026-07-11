@@ -189,6 +189,7 @@ const EXIT_STRING_CONCAT_LEFT_UNRESIDENT: i64 = 13;
 const EXIT_STRING_CONCAT_RIGHT_UNRESIDENT: i64 = 14;
 const EXIT_STRING_CONCAT_ALLOCATION: i64 = 15;
 const EXIT_PUBLICATION_ALLOCATION: i64 = 16;
+const EXIT_INVALID_STRING_STATUS: i64 = 17;
 
 /// Whether the task JIT lane is usable on this target.
 pub fn available() -> bool {
@@ -677,7 +678,8 @@ fn compile_fn(
             Op::ArrayStatusIs { .. } => 4,
             Op::CompareValueBytes { .. } => 4,
             Op::StringConcat { .. } => 4,
-            Op::StringContains { .. } | Op::StringParseInt { .. } | Op::StringStatusIs { .. } => 3,
+            Op::StringContains { .. } | Op::StringParseInt { .. } => 3,
+            Op::StringStatusIs { .. } => 4,
             Op::StringSplitOnce { .. } => 5,
             Op::Publish { .. } => 5,
             Op::Await { .. } => 3,
@@ -1248,7 +1250,12 @@ fn compile_fn(
                 status,
                 expected,
             } => {
-                for value in [u64::from(*dst), u64::from(*status), *expected as i64 as u64] {
+                for value in [
+                    u64::from(*dst),
+                    u64::from(*status),
+                    *expected as i64 as u64,
+                    i as u64,
+                ] {
                     layout.push_prog_word(root.prog_index, value);
                 }
             }
@@ -1818,6 +1825,16 @@ impl JitTask {
                     };
                     let pc = usize::try_from(index_scratch).expect("verified pc fits usize");
                     return Err(TaskFault::InvalidOrderedStatus {
+                        site: fault_site(verified, frame.fn_id, pc)?,
+                        actual: resume_scratch as i64,
+                    });
+                }
+                EXIT_INVALID_STRING_STATUS => {
+                    let Some(verified) = verified else {
+                        panic!("string status validation requires VerifiedProgram");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("verified pc fits usize");
+                    return Err(TaskFault::InvalidStringStatus {
                         site: fault_site(verified, frame.fn_id, pc)?,
                         actual: resume_scratch as i64,
                     });

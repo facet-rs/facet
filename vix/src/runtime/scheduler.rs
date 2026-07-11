@@ -979,6 +979,7 @@ fn task_fault_site(fault: &TaskFault) -> Option<&FaultSite> {
         | TaskFault::InvalidEnumSelector { site, .. }
         | TaskFault::EnumProjectionMismatch { site, .. }
         | TaskFault::InvalidArrayStatus { site, .. }
+        | TaskFault::InvalidStringStatus { site, .. }
         | TaskFault::InvalidOrderedStatus { site, .. } => Some(site),
         TaskFault::PoisonedReDrive { original } | TaskFault::PoisonedResult { original } => {
             task_fault_site(original)
@@ -1030,6 +1031,7 @@ fn result_shape_attribution(
         | TaskFault::InvalidEnumSelector { .. }
         | TaskFault::EnumProjectionMismatch { .. }
         | TaskFault::InvalidArrayStatus { .. }
+        | TaskFault::InvalidStringStatus { .. }
         | TaskFault::InvalidOrderedStatus { .. }
         | TaskFault::NativeFaultExit { .. }
         | TaskFault::InvalidFaultSite { .. }

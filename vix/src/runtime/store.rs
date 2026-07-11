@@ -224,11 +224,18 @@ fn failure_identity(schema: SchemaId, failure: &FailureValue) -> ValueId {
                 content: hash_framed(b"vix.value.v1", &fields),
             }
         }
-        FailureValue::MissingKey { recipe, site } | FailureValue::DuplicateKey { recipe, site } => {
-            let tag = if matches!(failure, FailureValue::MissingKey { .. }) {
-                [2u8]
-            } else {
-                [3u8]
+        FailureValue::MissingKey { recipe, site }
+        | FailureValue::DuplicateKey { recipe, site }
+        | FailureValue::MissingDelimiter { recipe, site }
+        | FailureValue::InvalidInteger { recipe, site }
+        | FailureValue::IntegerOverflow { recipe, site } => {
+            let tag = match failure {
+                FailureValue::MissingKey { .. } => [2u8],
+                FailureValue::DuplicateKey { .. } => [3u8],
+                FailureValue::MissingDelimiter { .. } => [4u8],
+                FailureValue::InvalidInteger { .. } => [5u8],
+                FailureValue::IntegerOverflow { .. } => [6u8],
+                FailureValue::IndexOutOfBounds { .. } => unreachable!("matched above"),
             };
             let site = site.to_le_bytes();
             ValueId {
