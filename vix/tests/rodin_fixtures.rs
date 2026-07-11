@@ -12,9 +12,50 @@
 //!
 //! Ported from vixenware `rodin-fixtures`, retargeted from the Rust reference
 //! resolver (`rodin-core`) to rodin.vix. The cargo-oracle side works today; the
-//! `vix_selected` SUT seam is filled in as rodin.vix grows (rodin/docs/40-search).
-//! The five differential tests are #[ignore]'d until the native resolver lands;
-//! the behaviors they pin are catalogued in rodin/docs/05-fixture-corpus.md.
+//! `vix_selected` SUT seam runs the current WIP `rodin.vix` as rodin grows
+//! (rodin/docs/40-search). The behaviors these differentials pin are catalogued
+//! in rodin/docs/05-fixture-corpus.md.
+//!
+//! ## The live-Cargo oracle lane (typed, serde-free)
+//!
+//! Below the differential corpus, this file also carries an *independent*
+//! live-Cargo oracle harness — the one true oracle is cargo, not the deleted
+//! Rust resolver and not any recorded expected-selection (rodin/docs/00-oracle,
+//! rodin/PLAN.md). It reuses the fixture DSL (`Fixture`/`materialize`) and reads
+//! both cargo oracles from `cargo metadata` (parsed via `facet-json`, no serde),
+//! Cargo's own machine surface — chosen over parsing `cargo tree`/`Cargo.lock`
+//! display text precisely because metadata exposes the *exact, unambiguous*
+//! package id, the typed source (with a path coordinate for path deps), the per-
+//! edge dependency kind, and `--filter-platform` cfg projection:
+//!
+//!   * Oracle 1 — version selection (the lockfile): `cargo metadata`'s resolved
+//!     package closure, one exact [`CargoPackageId`] per locked package. This is
+//!     the same selection `cargo generate-lockfile` writes to `Cargo.lock`.
+//!   * Oracle 2 — the target-projected enabled graph: `cargo metadata
+//!     --filter-platform <triple>`, walked from the root over `normal`/`build`
+//!     edges (dev excluded), yielding typed [`GraphEdge`]s that keep both exact
+//!     endpoints and the edge [`DepKind`]. This is the same projection `cargo
+//!     tree -e normal,build --target <triple>` shows.
+//!
+//! The exact Cargo package identity `(source, name, version)` is kept *separate*
+//! from Rodin's [`ResolutionDomain`] `(source, name, compat-class)`: the former
+//! is what Cargo actually locked (never collapsed), the latter the coexistence
+//! bucket a version competes in. Rodin's domain is a *model* of cargo's own
+//! version bucketing, not a proven identity with it, so multiple exact packages
+//! projecting to one domain is a valid Cargo case Rodin's single-version-per-
+//! domain model does not represent — surfaced as a typed
+//! [`Discrepancy::DomainMultiplicity`], never a silent last-wins collapse and
+//! never asserted impossible. An unrecognized Cargo source scheme is a typed
+//! parse error, never a silent registry.
+//!
+//! A future Vix resolver kernel emits a typed [`SolveResult`]; the harness
+//! compares it against both oracles and turns every divergence into a structured
+//! [`Discrepancy`] value suitable for minimization (serialized to JSON via
+//! `facet-json`, never hand-written). The kernel does not exist yet, so nothing
+//! in-tree produces a real `SolveResult`; the comparator is exercised with
+//! candidates constructed from cargo's own oracle output (a trivially-matching
+//! twin) and deliberately-perturbed variants — the Cargo side itself carries
+//! production-shaped coverage against real offline workspaces.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -22,6 +63,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 
+use facet::Facet;
+use semver::Version as SemVer;
 use vix::machine::{DriveEvent, Machine, MachineArg, NamedArg, RenderedValue};
 
 const LINUX: &str = "x86_64-unknown-linux-gnu";
@@ -1280,6 +1323,525 @@ fn push_generated_clause(clauses: &mut VixClauses, next_id: &mut i32, clause: Vi
     *next_id += 1;
 }
 
+// ===========================================================================
+// The live-Cargo oracle harness (typed, serde-free).
+//
+// cargo is THE and ONLY oracle (rodin/PLAN.md, rodin/docs/00-oracle.md). Both
+// oracles are read from `cargo metadata` — Cargo's own machine surface — parsed
+// with facet-json (no serde). metadata is chosen over `cargo tree` / `Cargo.lock`
+// display text because it alone gives the exact package id, the typed source
+// (with a path coordinate), the per-edge dependency kind, and `--filter-platform`
+// cfg projection. Mapping to doc-00's two oracles is in the module docs.
+// ===========================================================================
+
+// ---- facet-json view of `cargo metadata` (a subset; unknown JSON fields are ----
+// ---- ignored — facet-json only rejects them under deny_unknown_fields).    ----
+
+#[derive(Facet, Debug)]
+struct CargoMetadata {
+    packages: Vec<MetaPackage>,
+    resolve: MetaResolve,
+}
+
+#[derive(Facet, Debug)]
+struct MetaPackage {
+    /// Cargo's opaque-but-unique package id.
+    id: String,
+    name: String,
+    version: String,
+    /// `null` for a path/workspace member; `registry+`/`sparse+`/`git+…` otherwise.
+    source: Option<String>,
+    manifest_path: String,
+}
+
+#[derive(Facet, Debug)]
+struct MetaResolve {
+    nodes: Vec<MetaNode>,
+}
+
+#[derive(Facet, Debug)]
+struct MetaNode {
+    id: String,
+    deps: Vec<MetaDep>,
+}
+
+#[derive(Facet, Debug)]
+struct MetaDep {
+    /// The resolved dependency's package id.
+    pkg: String,
+    dep_kinds: Vec<MetaDepKind>,
+}
+
+#[derive(Facet, Debug)]
+struct MetaDepKind {
+    /// `null` = normal, `"build"`, or `"dev"`. (`--filter-platform` has already
+    /// applied the cfg gate, so the `target` field is not modelled.)
+    kind: Option<String>,
+}
+
+// ---- exact Cargo identity, kept separate from Rodin's resolution domain ----
+
+/// Provenance of a Cargo package: a typed classification of cargo's `source`
+/// field. A path dependency carries its manifest directory, so two path crates of
+/// the same name never collapse; an unrecognized scheme is a parse error, never a
+/// silent registry (see [`classify_source`]).
+#[derive(Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+enum Source {
+    /// A path dependency (cargo `source: null`), keyed by its manifest directory.
+    Path { dir: String },
+    /// crates.io or an alternate registry, by the full `registry+`/`sparse+` spec.
+    Registry { spec: String },
+    /// A git dependency, by the full `git+URL#REV` spec (rev embedded by cargo).
+    Git { spec: String },
+}
+
+/// The exact, unambiguous Cargo package identity — `(source, name, version)`,
+/// which is Cargo.lock's own key and is unique per resolved package. This is what
+/// Cargo actually selected; the harness never collapses two of these.
+#[derive(Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct CargoPackageId {
+    source: Source,
+    name: String,
+    version: String,
+}
+
+impl CargoPackageId {
+    /// Project onto Rodin's coexistence domain. Fails only if the version is not
+    /// semver — cargo guarantees it is, so this is a defensive typed error.
+    fn domain(&self) -> Result<ResolutionDomain, String> {
+        let parsed = SemVer::parse(&self.version)
+            .map_err(|err| format!("parse version `{}` of `{}`: {err}", self.version, self.name))?;
+        Ok(ResolutionDomain {
+            source: self.source.clone(),
+            name: self.name.clone(),
+            compat: CompatClass::of(&parsed),
+        })
+    }
+}
+
+/// Rodin's resolution domain (rodin/docs/10-identity.md): `(source, name,
+/// compat-class)`, the coexistence bucket a version competes in. This is a
+/// *projection* of the exact Cargo identity, NOT the identity itself; a
+/// non-injective projection is a [`Discrepancy::DomainMultiplicity`].
+#[derive(Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct ResolutionDomain {
+    source: Source,
+    name: String,
+    compat: CompatClass,
+}
+
+/// The semver coexistence bucket (rodin/docs/10-identity.md § compat-class rule),
+/// keyed on the first non-zero version component.
+#[derive(Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+enum CompatClass {
+    /// `major >= 1` → class keyed on major (`1.4.2` and `1.9.0` share class `1`).
+    Major { major: u64 },
+    /// `major == 0, minor != 0` → the `0.y` footgun; each `0.minor` is its own class.
+    ZeroMinor { minor: u64 },
+    /// `major == 0, minor == 0` → each `0.0.patch` is its own class.
+    ZeroZeroPatch { patch: u64 },
+}
+
+impl CompatClass {
+    fn of(version: &SemVer) -> Self {
+        if version.major >= 1 {
+            Self::Major {
+                major: version.major,
+            }
+        } else if version.minor != 0 {
+            Self::ZeroMinor {
+                minor: version.minor,
+            }
+        } else {
+            Self::ZeroZeroPatch {
+                patch: version.patch,
+            }
+        }
+    }
+}
+
+/// Classify cargo's `source` field into a typed [`Source`]. `None` is a path
+/// dependency (coordinate taken from `manifest_path`); recognized registry/git
+/// schemes keep their full spec; anything else is a typed parse error.
+fn classify_source(source: Option<&str>, manifest_path: &str) -> Result<Source, String> {
+    match source {
+        None => {
+            let dir = Path::new(manifest_path)
+                .parent()
+                .ok_or_else(|| {
+                    format!("path package manifest has no directory: {manifest_path:?}")
+                })?
+                .to_string_lossy()
+                .into_owned();
+            Ok(Source::Path { dir })
+        }
+        Some(spec) if spec.starts_with("registry+") || spec.starts_with("sparse+") => {
+            Ok(Source::Registry {
+                spec: spec.to_owned(),
+            })
+        }
+        Some(spec) if spec.starts_with("git+") => Ok(Source::Git {
+            spec: spec.to_owned(),
+        }),
+        Some(other) => Err(format!("unrecognized Cargo source scheme: {other:?}")),
+    }
+}
+
+fn package_id(package: &MetaPackage) -> Result<CargoPackageId, String> {
+    Ok(CargoPackageId {
+        source: classify_source(package.source.as_deref(), &package.manifest_path)?,
+        name: package.name.clone(),
+        version: package.version.clone(),
+    })
+}
+
+// ---- Oracle 2's edge kind ----
+
+/// The dependency-edge kind retained by Oracle 2. The graph oracle compares the
+/// enabled `normal` + `build` edges (dev is excluded by the walk), and the kind
+/// is part of edge identity: a `normal` edge and a `build` edge to the same
+/// package are distinct edges (target graph vs host graph). `dev` never appears.
+#[derive(Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+#[repr(u8)]
+enum EdgeKind {
+    Normal,
+    Build,
+}
+
+impl EdgeKind {
+    /// Map cargo's `dep_kinds[].kind`: `null` = normal, `"build"` = build, `"dev"`
+    /// = excluded (`Ok(None)`); anything else is a typed parse error.
+    fn classify(kind: Option<&str>) -> Result<Option<Self>, String> {
+        match kind {
+            None => Ok(Some(Self::Normal)),
+            Some("build") => Ok(Some(Self::Build)),
+            Some("dev") => Ok(None),
+            Some(other) => Err(format!("unrecognized Cargo dependency kind: {other:?}")),
+        }
+    }
+}
+
+/// One edge of Oracle 2: a consumed dependency edge under a specific target and
+/// the `normal`/`build` edge-kind filter, with both endpoints as exact ids.
+#[derive(Facet, Clone, Debug, PartialEq, Eq, PartialOrd, Ord)]
+struct GraphEdge {
+    from: CargoPackageId,
+    to: CargoPackageId,
+    kind: EdgeKind,
+}
+
+// ---- the two oracles + the future SUT's typed output ----
+
+/// Oracle 1 — the lockfile's selection: every exact Cargo package cargo resolved.
+struct SelectionOracle {
+    packages: BTreeSet<CargoPackageId>,
+}
+
+/// Oracle 2 — the target-projected enabled graph for one triple.
+struct GraphOracle {
+    triple: String,
+    nodes: BTreeSet<CargoPackageId>,
+    edges: BTreeSet<GraphEdge>,
+}
+
+/// What a future Vix resolver kernel emits: a per-package selection plus the
+/// per-target enabled graph. The harness accepts this typed value and compares it
+/// against the two cargo oracles. Nothing in-tree builds a real one yet.
+#[derive(Facet, Clone, Debug, Default)]
+struct SolveResult {
+    selected: BTreeSet<CargoPackageId>,
+    /// Enabled graph edges, keyed by target triple.
+    graphs: BTreeMap<String, BTreeSet<GraphEdge>>,
+}
+
+impl SolveResult {
+    /// Compare against Oracle 1 and, for each provided [`GraphOracle`], Oracle 2.
+    /// Deterministic (BTree order) and structural — ready for a minimizer.
+    fn compare(&self, selection: &SelectionOracle, graphs: &[GraphOracle]) -> Vec<Discrepancy> {
+        let mut out = compare_selection(&self.selected, selection);
+        for graph in graphs {
+            let candidate = self.graphs.get(&graph.triple).cloned().unwrap_or_default();
+            out.extend(compare_graph(&graph.triple, &candidate, graph));
+        }
+        out
+    }
+}
+
+/// Which side of a comparison an observation belongs to.
+#[derive(Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum Side {
+    Cargo,
+    Candidate,
+}
+
+/// A single typed divergence between a candidate `SolveResult` and a cargo oracle.
+/// The Oracle-1 vocabulary mirrors the historical differential's classification
+/// (rodin/docs/00-oracle.md § provenance): MissingInRodin / ExtraInRodin /
+/// VersionMismatch, now over exact Cargo identity with domain multiplicity and
+/// malformed versions surfaced rather than collapsed.
+#[derive(Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+enum Discrepancy {
+    /// Oracle 1: cargo locked this domain's exact package; the candidate did not.
+    MissingSelection { expected: CargoPackageId },
+    /// Oracle 1: the candidate selected a domain cargo did not lock.
+    ExtraSelection { unexpected: CargoPackageId },
+    /// Oracle 1: same Rodin domain (same coexistence bucket), different exact version.
+    VersionMismatch {
+        domain: ResolutionDomain,
+        cargo: String,
+        candidate: String,
+    },
+    /// Oracle 1: one Rodin domain is covered by >1 exact Cargo package on `side`.
+    /// Rodin's `(source, name, compat-class)` model represents at most one version
+    /// per domain, so it cannot represent this — an explicit *unsupported* Cargo
+    /// case, not an impossibility. The harness does not assume Rodin's compat-class
+    /// matches cargo's own version bucketing for every input (prerelease/build-
+    /// metadata semantics, alternate registries, or a compat-class bug could
+    /// diverge), so any such domain is surfaced here rather than last-wins
+    /// collapsed or assumed away.
+    DomainMultiplicity {
+        side: Side,
+        domain: ResolutionDomain,
+        packages: Vec<CargoPackageId>,
+    },
+    /// Oracle 1: a package version on `side` is not semver — cannot be assigned a
+    /// coexistence domain.
+    MalformedVersion { side: Side, package: CargoPackageId },
+    /// Oracle 2: cargo's target-projected graph has an edge the candidate lacks.
+    MissingEdge { target: String, edge: GraphEdge },
+    /// Oracle 2: the candidate has a target-projected edge cargo does not.
+    ExtraEdge { target: String, edge: GraphEdge },
+}
+
+/// A minimizable, machine-readable report over one fixture, serialized via
+/// `facet-json` — never hand-written, never serde.
+#[derive(Facet, Clone, Debug)]
+struct DiscrepancyReport {
+    fixture: String,
+    discrepancies: Vec<Discrepancy>,
+}
+
+impl DiscrepancyReport {
+    fn to_json(&self) -> Result<String, String> {
+        facet_json::to_string_pretty(self)
+            .map_err(|err| format!("serialize discrepancy report: {err}"))
+    }
+}
+
+/// Group exact packages by Rodin domain, surfacing every non-injective projection
+/// (domain multiplicity) and every malformed version as a typed discrepancy on
+/// `side`, and returning the well-defined singleton domains for comparison.
+fn domain_index(
+    packages: &BTreeSet<CargoPackageId>,
+    side: Side,
+    out: &mut Vec<Discrepancy>,
+) -> BTreeMap<ResolutionDomain, CargoPackageId> {
+    let mut grouped: BTreeMap<ResolutionDomain, Vec<CargoPackageId>> = BTreeMap::new();
+    for package in packages {
+        match package.domain() {
+            Ok(domain) => grouped.entry(domain).or_default().push(package.clone()),
+            Err(_) => out.push(Discrepancy::MalformedVersion {
+                side,
+                package: package.clone(),
+            }),
+        }
+    }
+    let mut singletons = BTreeMap::new();
+    for (domain, mut packages) in grouped {
+        if packages.len() == 1 {
+            singletons.insert(domain, packages.pop().expect("length checked to be one"));
+        } else {
+            // packages came from a BTreeSet, so they are already sorted.
+            out.push(Discrepancy::DomainMultiplicity {
+                side,
+                domain,
+                packages,
+            });
+        }
+    }
+    singletons
+}
+
+/// Oracle 1 comparison: exact-identity missing/extra plus same-domain version
+/// mismatch, with multiplicity/malformed observations preserved (never collapsed).
+fn compare_selection(
+    candidate: &BTreeSet<CargoPackageId>,
+    oracle: &SelectionOracle,
+) -> Vec<Discrepancy> {
+    let mut out = Vec::new();
+    let oracle_by_domain = domain_index(&oracle.packages, Side::Cargo, &mut out);
+    let candidate_by_domain = domain_index(candidate, Side::Candidate, &mut out);
+    for (domain, cargo_pkg) in &oracle_by_domain {
+        match candidate_by_domain.get(domain) {
+            None => out.push(Discrepancy::MissingSelection {
+                expected: cargo_pkg.clone(),
+            }),
+            Some(candidate_pkg) if candidate_pkg.version != cargo_pkg.version => {
+                out.push(Discrepancy::VersionMismatch {
+                    domain: domain.clone(),
+                    cargo: cargo_pkg.version.clone(),
+                    candidate: candidate_pkg.version.clone(),
+                });
+            }
+            Some(_) => {}
+        }
+    }
+    for (domain, candidate_pkg) in &candidate_by_domain {
+        if !oracle_by_domain.contains_key(domain) {
+            out.push(Discrepancy::ExtraSelection {
+                unexpected: candidate_pkg.clone(),
+            });
+        }
+    }
+    out
+}
+
+/// Oracle 2 comparison: the symmetric difference of the edge sets for `target`.
+fn compare_graph(
+    target: &str,
+    candidate: &BTreeSet<GraphEdge>,
+    oracle: &GraphOracle,
+) -> Vec<Discrepancy> {
+    let mut out = Vec::new();
+    for edge in oracle.edges.difference(candidate) {
+        out.push(Discrepancy::MissingEdge {
+            target: target.to_owned(),
+            edge: edge.clone(),
+        });
+    }
+    for edge in candidate.difference(&oracle.edges) {
+        out.push(Discrepancy::ExtraEdge {
+            target: target.to_owned(),
+            edge: edge.clone(),
+        });
+    }
+    out
+}
+
+impl Fixture {
+    /// Run `cargo metadata` (optionally `--filter-platform <triple>`) over a
+    /// *single* materialized workspace and parse it via facet-json. Both oracles
+    /// take the same `workspace` so the path-source coordinate — part of exact
+    /// identity — is shared and their exact ids are directly comparable.
+    fn cargo_metadata(
+        &self,
+        workspace: &Path,
+        filter_platform: Option<&str>,
+    ) -> Result<CargoMetadata, String> {
+        let mut args = vec![
+            "metadata".to_owned(),
+            "--format-version".to_owned(),
+            "1".to_owned(),
+            "--offline".to_owned(),
+        ];
+        if let Some(triple) = filter_platform {
+            args.push("--filter-platform".to_owned());
+            args.push(triple.to_owned());
+        }
+        let output = Command::new("cargo")
+            .args(&args)
+            .current_dir(workspace)
+            .output()
+            .map_err(|err| format!("spawning cargo metadata: {err}"))?;
+        if !output.status.success() {
+            return Err(format!(
+                "cargo metadata failed for `{}`: {}",
+                self.name,
+                String::from_utf8_lossy(&output.stderr).trim()
+            ));
+        }
+        let text = String::from_utf8(output.stdout).map_err(|err| err.to_string())?;
+        facet_json::from_str(&text).map_err(|err| format!("parse cargo metadata: {err}"))
+    }
+
+    /// Oracle 1: the lockfile's selection — every exact Cargo package cargo
+    /// resolved (the same set `cargo generate-lockfile` writes to `Cargo.lock`).
+    fn selection_oracle(&self, workspace: &Path) -> Result<SelectionOracle, String> {
+        let metadata = self.cargo_metadata(workspace, None)?;
+        let mut packages = BTreeSet::new();
+        for package in &metadata.packages {
+            packages.insert(package_id(package)?);
+        }
+        Ok(SelectionOracle { packages })
+    }
+
+    /// Oracle 2: the target-projected enabled graph. `cargo metadata
+    /// --filter-platform <triple>` applies the cfg gate; the walk from the root
+    /// over `normal`/`build` edges (dev excluded) is the same projection `cargo
+    /// tree -e normal,build --target <triple>` shows.
+    fn graph_oracle(&self, workspace: &Path, triple: &str) -> Result<GraphOracle, String> {
+        let metadata = self.cargo_metadata(workspace, Some(triple))?;
+        let mut by_id: BTreeMap<String, CargoPackageId> = BTreeMap::new();
+        for package in &metadata.packages {
+            by_id.insert(package.id.clone(), package_id(package)?);
+        }
+        let exact = |id: &str| -> Result<CargoPackageId, String> {
+            by_id
+                .get(id)
+                .cloned()
+                .ok_or_else(|| format!("metadata id `{id}` absent from packages"))
+        };
+        let node_by_id: BTreeMap<&str, &MetaNode> = metadata
+            .resolve
+            .nodes
+            .iter()
+            .map(|node| (node.id.as_str(), node))
+            .collect();
+        let root_id = metadata
+            .packages
+            .iter()
+            .find(|package| package.name == self.root)
+            .map(|package| package.id.clone())
+            .ok_or_else(|| format!("root package `{}` absent from cargo metadata", self.root))?;
+
+        let mut nodes = BTreeSet::new();
+        let mut edges = BTreeSet::new();
+        let mut seen: BTreeSet<String> = BTreeSet::new();
+        let mut stack = vec![root_id.clone()];
+        nodes.insert(exact(&root_id)?);
+        seen.insert(root_id);
+        while let Some(id) = stack.pop() {
+            let Some(node) = node_by_id.get(id.as_str()) else {
+                continue;
+            };
+            let from = exact(&id)?;
+            for dep in &node.deps {
+                let mut kinds = BTreeSet::new();
+                for dep_kind in &dep.dep_kinds {
+                    if let Some(kind) = EdgeKind::classify(dep_kind.kind.as_deref())? {
+                        kinds.insert(kind);
+                    }
+                }
+                if kinds.is_empty() {
+                    // A dev-only edge under this platform — excluded by the oracle.
+                    continue;
+                }
+                let to = exact(&dep.pkg)?;
+                nodes.insert(to.clone());
+                for kind in kinds {
+                    edges.insert(GraphEdge {
+                        from: from.clone(),
+                        to: to.clone(),
+                        kind,
+                    });
+                }
+                if seen.insert(dep.pkg.clone()) {
+                    stack.push(dep.pkg.clone());
+                }
+            }
+        }
+        Ok(GraphOracle {
+            triple: triple.to_owned(),
+            nodes,
+            edges,
+        })
+    }
+}
+
 // ---------------------------------------------------------------------------
 // The harness smoke test: prove the ported DSL -> workspace -> cargo -> parse
 // path works end to end against the real cargo oracle (independent of rodin.vix).
@@ -1543,4 +2105,490 @@ fn rodin_linear_interiors_use_tail_loops() {
         enabled.total() < forced.total(),
         "tail-loop trace should shrink linear recursion events: enabled={enabled:?} forced={forced:?}"
     );
+}
+
+// ===========================================================================
+// The live-Cargo oracle harness: production-shaped coverage.
+//
+// Every test drives a real, offline `cargo metadata` over a materialized path
+// workspace and validates the typed extraction and the comparator. cargo is the
+// only oracle; no recorded reference selection is consulted. Both oracles run on
+// one shared materialized workspace so the path-source coordinate is comparable.
+// ===========================================================================
+
+/// A trivial three-crate line workspace: `app -> mid -> leaf`, all `0.1.0`, all
+/// path dependencies.
+fn line_fixture(name: &str) -> Fixture {
+    Fixture::new(name, "app")
+        .krate(FixtureCrate::new("leaf"))
+        .krate(FixtureCrate::new("mid").dep(FixtureDep::new("leaf")))
+        .krate(FixtureCrate::new("app").dep(FixtureDep::new("mid")))
+}
+
+fn selected_named(oracle: &SelectionOracle, name: &str) -> CargoPackageId {
+    oracle
+        .packages
+        .iter()
+        .find(|package| package.name == name)
+        .unwrap_or_else(|| panic!("`{name}` locked by cargo: {:?}", oracle.packages))
+        .clone()
+}
+
+fn edge_kind_to(graph: &GraphOracle, from: &str, to: &str) -> Option<EdgeKind> {
+    graph
+        .edges
+        .iter()
+        .find(|edge| edge.from.name == from && edge.to.name == to)
+        .map(|edge| edge.kind)
+}
+
+/// The compat-class rule (rodin/docs/10-identity.md) — cargo's coexistence
+/// semantics, keyed on the first non-zero version component.
+#[test]
+fn compat_class_follows_cargo_coexistence_rule() {
+    let class = |v: &str| CompatClass::of(&SemVer::parse(v).unwrap());
+    assert_eq!(class("1.4.2"), CompatClass::Major { major: 1 });
+    assert_eq!(class("1.9.0"), CompatClass::Major { major: 1 });
+    assert_eq!(class("2.0.0"), CompatClass::Major { major: 2 });
+    assert_eq!(class("0.4.9"), CompatClass::ZeroMinor { minor: 4 });
+    assert_eq!(class("0.5.0"), CompatClass::ZeroMinor { minor: 5 });
+    assert_eq!(class("0.0.7"), CompatClass::ZeroZeroPatch { patch: 7 });
+    assert_eq!(class("1.4.2"), class("1.9.0"));
+    assert_ne!(class("1.9.0"), class("2.0.0"));
+    assert_ne!(class("0.4.9"), class("0.5.0"));
+}
+
+/// Cargo's `source` field is classified into a typed [`Source`]; a path keeps its
+/// directory, registry/git keep their full spec, and an unknown scheme is a typed
+/// parse error — never a silent registry.
+#[test]
+fn classify_source_types_path_registry_git_and_rejects_unknown() {
+    let path = classify_source(None, "/tmp/ws/leaf/Cargo.toml").unwrap();
+    assert_eq!(
+        path,
+        Source::Path {
+            dir: "/tmp/ws/leaf".to_owned()
+        }
+    );
+    let registry = classify_source(
+        Some("registry+https://github.com/rust-lang/crates.io-index"),
+        "",
+    )
+    .unwrap();
+    assert_eq!(
+        registry,
+        Source::Registry {
+            spec: "registry+https://github.com/rust-lang/crates.io-index".to_owned()
+        }
+    );
+    let git = classify_source(Some("git+https://example.com/x?rev=abc#abc123"), "").unwrap();
+    assert_eq!(
+        git,
+        Source::Git {
+            spec: "git+https://example.com/x?rev=abc#abc123".to_owned()
+        }
+    );
+    let err = classify_source(Some("weird+file:///nope"), "").unwrap_err();
+    assert!(err.contains("unrecognized Cargo source scheme"), "{err}");
+}
+
+/// Cargo's per-edge `kind` maps to a typed [`EdgeKind`]; `dev` is excluded and an
+/// unknown kind is a typed parse error.
+#[test]
+fn edge_kind_classify_maps_cargo_dep_kinds() {
+    assert_eq!(EdgeKind::classify(None).unwrap(), Some(EdgeKind::Normal));
+    assert_eq!(
+        EdgeKind::classify(Some("build")).unwrap(),
+        Some(EdgeKind::Build)
+    );
+    assert_eq!(EdgeKind::classify(Some("dev")).unwrap(), None);
+    let err = EdgeKind::classify(Some("bench")).unwrap_err();
+    assert!(err.contains("unrecognized Cargo dependency kind"), "{err}");
+}
+
+/// Oracle 1: `cargo metadata` locks every workspace member as an exact
+/// path-source identity at its declared version and domain.
+#[test]
+fn selection_oracle_locks_exact_path_identities() {
+    let fixture = line_fixture("selection-identities");
+    let workspace = fixture.materialize().expect("materialize workspace");
+    let oracle = fixture
+        .selection_oracle(&workspace)
+        .expect("cargo metadata resolves");
+    for name in ["app", "mid", "leaf"] {
+        let package = selected_named(&oracle, name);
+        match &package.source {
+            Source::Path { dir } => {
+                assert!(dir.ends_with(name), "{name} path dir is {dir:?}");
+            }
+            other => panic!("{name} should be a path source, got {other:?}"),
+        }
+        assert_eq!(package.version, "0.1.0");
+        assert_eq!(
+            package.domain().unwrap().compat,
+            CompatClass::ZeroMinor { minor: 1 },
+            "{name}@0.1.0 is compat class 0.1"
+        );
+    }
+}
+
+/// Oracle 2: the graph is target-projected AND retains edge kind. A `cfg(windows)`
+/// edge appears only on windows; a build-dep edge is tagged `Build`, a normal-dep
+/// edge `Normal`.
+#[test]
+fn graph_oracle_projects_target_and_retains_edge_kind() {
+    let fixture = Fixture::new("graph-kinds", "app")
+        .krate(FixtureCrate::new("leaf"))
+        .krate(FixtureCrate::new("gen"))
+        .krate(FixtureCrate::new("winonly"))
+        .krate(
+            FixtureCrate::new("app")
+                .dep(FixtureDep::new("leaf"))
+                .dep(FixtureDep::new("gen").kind(DepKind::Build))
+                .dep(FixtureDep::new("winonly").target("cfg(windows)")),
+        );
+    let workspace = fixture.materialize().expect("materialize workspace");
+
+    let linux = fixture
+        .graph_oracle(&workspace, LINUX)
+        .expect("linux graph");
+    assert_eq!(edge_kind_to(&linux, "app", "leaf"), Some(EdgeKind::Normal));
+    assert_eq!(
+        edge_kind_to(&linux, "app", "gen"),
+        Some(EdgeKind::Build),
+        "build-dep edge kind is retained: {:?}",
+        linux.edges
+    );
+    assert_eq!(
+        edge_kind_to(&linux, "app", "winonly"),
+        None,
+        "cfg(windows) edge is projected out on linux: {:?}",
+        linux.edges
+    );
+    assert!(!linux.nodes.iter().any(|node| node.name == "winonly"));
+
+    let windows = fixture
+        .graph_oracle(&workspace, WINDOWS)
+        .expect("windows graph");
+    assert_eq!(
+        edge_kind_to(&windows, "app", "winonly"),
+        Some(EdgeKind::Normal),
+        "cfg(windows) edge is enabled on windows: {:?}",
+        windows.edges
+    );
+    assert_eq!(edge_kind_to(&windows, "app", "gen"), Some(EdgeKind::Build));
+}
+
+/// The two oracles cohere on one workspace: every node in the target-projected
+/// graph is an *exact* package the lockfile selected (equal by source+name+version,
+/// not just name+version).
+#[test]
+fn graph_nodes_are_exact_subset_of_selection() {
+    let fixture = line_fixture("oracles-cohere");
+    let workspace = fixture.materialize().expect("materialize workspace");
+    let selection = fixture.selection_oracle(&workspace).expect("selection");
+    let graph = fixture.graph_oracle(&workspace, LINUX).expect("graph");
+    assert!(!graph.nodes.is_empty(), "graph has nodes");
+    for node in &graph.nodes {
+        assert!(
+            selection.packages.contains(node),
+            "graph node {node:?} must be an exact locked package: {:?}",
+            selection.packages
+        );
+    }
+}
+
+/// A candidate `SolveResult` built from cargo's own oracle output matches both
+/// oracles with zero discrepancies — the comparator's reflexivity plus the whole
+/// materialize -> cargo metadata -> parse -> compare pipeline end to end.
+#[test]
+fn cargo_derived_candidate_matches_both_oracles() {
+    let fixture = line_fixture("candidate-matches");
+    let workspace = fixture.materialize().expect("materialize workspace");
+    let selection = fixture.selection_oracle(&workspace).expect("selection");
+    let graph = fixture.graph_oracle(&workspace, LINUX).expect("graph");
+
+    let mut graphs = BTreeMap::new();
+    graphs.insert(graph.triple.clone(), graph.edges.clone());
+    let candidate = SolveResult {
+        selected: selection.packages.clone(),
+        graphs,
+    };
+
+    let discrepancies = candidate.compare(&selection, std::slice::from_ref(&graph));
+    assert!(
+        discrepancies.is_empty(),
+        "cargo-derived candidate matches both oracles: {discrepancies:?}"
+    );
+}
+
+/// Oracle 1 comparator: a missing selection, a same-domain version bump, and an
+/// extra selection each become their own typed `Discrepancy` — keyed on exact
+/// identity with a domain projection, no last-wins collapse.
+#[test]
+fn selection_comparator_types_missing_extra_and_version_mismatch() {
+    let fixture = line_fixture("selection-discrepancies");
+    let workspace = fixture.materialize().expect("materialize workspace");
+    let oracle = fixture.selection_oracle(&workspace).expect("selection");
+    let leaf = selected_named(&oracle, "leaf");
+    let mid = selected_named(&oracle, "mid");
+
+    let mut candidate = oracle.packages.clone();
+    candidate.remove(&leaf);
+    candidate.remove(&mid);
+    // Bump `mid` within its coexistence domain (0.1.0 -> 0.1.9 stays class 0.1).
+    candidate.insert(CargoPackageId {
+        source: mid.source.clone(),
+        name: mid.name.clone(),
+        version: "0.1.9".to_owned(),
+    });
+    // Invent an exact package cargo never locked.
+    let ghost = CargoPackageId {
+        source: Source::Path {
+            dir: "/tmp/ghost".to_owned(),
+        },
+        name: "ghost".to_owned(),
+        version: "0.1.0".to_owned(),
+    };
+    candidate.insert(ghost.clone());
+
+    let discrepancies = compare_selection(&candidate, &oracle);
+    assert_eq!(
+        discrepancies.len(),
+        3,
+        "exactly three typed divergences: {discrepancies:?}"
+    );
+    assert!(discrepancies.contains(&Discrepancy::MissingSelection {
+        expected: leaf.clone()
+    }));
+    assert!(discrepancies.contains(&Discrepancy::VersionMismatch {
+        domain: mid.domain().unwrap(),
+        cargo: "0.1.0".to_owned(),
+        candidate: "0.1.9".to_owned(),
+    }));
+    assert!(discrepancies.contains(&Discrepancy::ExtraSelection { unexpected: ghost }));
+}
+
+/// Two exact packages that project to one Rodin domain are surfaced as a typed
+/// `DomainMultiplicity` (never a silent last-wins collapse), and the ambiguous
+/// domain is withheld from the missing/extra comparison.
+#[test]
+fn domain_multiplicity_is_surfaced_not_collapsed() {
+    let source = Source::Registry {
+        spec: "registry+https://github.com/rust-lang/crates.io-index".to_owned(),
+    };
+    let serde_low = CargoPackageId {
+        source: source.clone(),
+        name: "serde".to_owned(),
+        version: "1.0.0".to_owned(),
+    };
+    let serde_high = CargoPackageId {
+        source,
+        name: "serde".to_owned(),
+        version: "1.5.0".to_owned(),
+    };
+    let mut candidate = BTreeSet::new();
+    candidate.insert(serde_low.clone());
+    candidate.insert(serde_high.clone());
+    let oracle = SelectionOracle {
+        packages: BTreeSet::new(),
+    };
+
+    let discrepancies = compare_selection(&candidate, &oracle);
+    assert!(
+        discrepancies.iter().any(|d| matches!(
+            d,
+            Discrepancy::DomainMultiplicity { side: Side::Candidate, packages, .. }
+                if packages.len() == 2
+                    && packages.contains(&serde_low)
+                    && packages.contains(&serde_high)
+        )),
+        "two same-class exact versions surface as domain multiplicity: {discrepancies:?}"
+    );
+    assert!(
+        !discrepancies
+            .iter()
+            .any(|d| matches!(d, Discrepancy::ExtraSelection { .. })),
+        "the ambiguous domain is withheld from the missing/extra comparison: {discrepancies:?}"
+    );
+}
+
+/// A non-semver version cannot be assigned a coexistence domain; it is surfaced as
+/// a typed `MalformedVersion`, not silently dropped.
+#[test]
+fn malformed_version_is_surfaced() {
+    let bad = CargoPackageId {
+        source: Source::Path {
+            dir: "/tmp/bad".to_owned(),
+        },
+        name: "bad".to_owned(),
+        version: "not-semver".to_owned(),
+    };
+    let mut candidate = BTreeSet::new();
+    candidate.insert(bad.clone());
+    let oracle = SelectionOracle {
+        packages: BTreeSet::new(),
+    };
+
+    let discrepancies = compare_selection(&candidate, &oracle);
+    assert!(
+        discrepancies.iter().any(|d| matches!(
+            d,
+            Discrepancy::MalformedVersion { side: Side::Candidate, package } if *package == bad
+        )),
+        "a non-semver version is surfaced, not dropped: {discrepancies:?}"
+    );
+}
+
+/// Executable cargo certificate: two overlapping *compatible* requirements
+/// (`^1.0.0` and `=1.0.0`) on one path crate unify to a single locked package.
+/// This demonstrates local unification only — it does NOT establish that a real
+/// lockfile can never place two exact versions in one Rodin domain. Rodin's
+/// `(source, name, compat-class)` domain is a *model* of cargo's version
+/// bucketing, not a proven identity with it. Disjoint *exact* requirements across
+/// dependency paths (`=1.0.0` and `=1.2.0`, both compat class 1) need a registry
+/// publishing two versions; measured against live cargo, that specific pair is a
+/// resolution *conflict* (cargo activates one version per compat bucket) rather
+/// than coexistence — but a Rodin/cargo bucketing divergence (prerelease/build-
+/// metadata, alternate registries, or a compat-class bug) is a valid Cargo case
+/// Rodin cannot represent, surfaced as [`Discrepancy::DomainMultiplicity`], never
+/// collapsed and never assumed away. Certifying that boundary against live cargo
+/// needs a two-version registry; no cargo-usable local registry exists in-repo
+/// (the sparse-index snapshot feeds vix's own resolver, not cargo), so the live
+/// differential is a later oracle extension — the constructed
+/// `domain_multiplicity_is_surfaced_not_collapsed` certificate stands in for now.
+#[test]
+fn cargo_unifies_overlapping_compatible_requirements() {
+    let fixture = Fixture::new("same-class-unify", "app")
+        .krate(FixtureCrate::new("dep").version("1.0.0"))
+        .krate(FixtureCrate::new("a").dep(FixtureDep::new("dep").req("^1.0.0")))
+        .krate(FixtureCrate::new("b").dep(FixtureDep::new("dep").req("=1.0.0")))
+        .krate(
+            FixtureCrate::new("app")
+                .dep(FixtureDep::new("a"))
+                .dep(FixtureDep::new("b")),
+        );
+    let workspace = fixture.materialize().expect("materialize workspace");
+    let oracle = fixture.selection_oracle(&workspace).expect("selection");
+
+    let deps: Vec<_> = oracle
+        .packages
+        .iter()
+        .filter(|package| package.name == "dep")
+        .collect();
+    assert_eq!(
+        deps.len(),
+        1,
+        "cargo unifies same-compat-class requirements to one package: {deps:?}"
+    );
+    let self_check = compare_selection(&oracle.packages, &oracle);
+    assert!(
+        self_check.is_empty(),
+        "this fixture's cargo selection has one package per domain, so the self-comparison is clean: {self_check:?}"
+    );
+}
+
+/// Oracle 2 comparator: a dropped edge and an invented edge become MissingEdge and
+/// ExtraEdge for the target.
+#[test]
+fn graph_comparator_types_missing_and_extra_edges() {
+    let fixture = line_fixture("graph-discrepancies");
+    let workspace = fixture.materialize().expect("materialize workspace");
+    let graph = fixture.graph_oracle(&workspace, LINUX).expect("graph");
+    assert!(!graph.edges.is_empty(), "line workspace has edges");
+
+    let mut candidate = graph.edges.clone();
+    let dropped = candidate.iter().next().cloned().unwrap();
+    candidate.remove(&dropped);
+    let invented = GraphEdge {
+        from: CargoPackageId {
+            source: Source::Path {
+                dir: "/tmp/app".to_owned(),
+            },
+            name: "app".to_owned(),
+            version: "0.1.0".to_owned(),
+        },
+        to: CargoPackageId {
+            source: Source::Path {
+                dir: "/tmp/ghost".to_owned(),
+            },
+            name: "ghost".to_owned(),
+            version: "9.9.9".to_owned(),
+        },
+        kind: EdgeKind::Normal,
+    };
+    candidate.insert(invented.clone());
+
+    let discrepancies = compare_graph(LINUX, &candidate, &graph);
+    assert_eq!(
+        discrepancies.len(),
+        2,
+        "one missing, one extra: {discrepancies:?}"
+    );
+    assert!(discrepancies.contains(&Discrepancy::MissingEdge {
+        target: LINUX.to_owned(),
+        edge: dropped,
+    }));
+    assert!(discrepancies.contains(&Discrepancy::ExtraEdge {
+        target: LINUX.to_owned(),
+        edge: invented,
+    }));
+}
+
+/// The discrepancy report is a machine-readable artifact: it serializes to JSON
+/// via facet (no serde, no hand-written JSON) and round-trips back to the same
+/// typed values — ready to feed a minimizer.
+#[test]
+fn discrepancy_report_serializes_and_round_trips_via_facet_json() {
+    let registry = Source::Registry {
+        spec: "registry+https://github.com/rust-lang/crates.io-index".to_owned(),
+    };
+    let report = DiscrepancyReport {
+        fixture: "demo".to_owned(),
+        discrepancies: vec![
+            Discrepancy::MissingSelection {
+                expected: CargoPackageId {
+                    source: registry.clone(),
+                    name: "serde".to_owned(),
+                    version: "1.0.1".to_owned(),
+                },
+            },
+            Discrepancy::VersionMismatch {
+                domain: ResolutionDomain {
+                    source: Source::Path {
+                        dir: "/tmp/ws/mid".to_owned(),
+                    },
+                    name: "mid".to_owned(),
+                    compat: CompatClass::ZeroMinor { minor: 1 },
+                },
+                cargo: "0.1.0".to_owned(),
+                candidate: "0.1.9".to_owned(),
+            },
+            Discrepancy::DomainMultiplicity {
+                side: Side::Candidate,
+                domain: ResolutionDomain {
+                    source: registry.clone(),
+                    name: "serde".to_owned(),
+                    compat: CompatClass::Major { major: 1 },
+                },
+                packages: vec![CargoPackageId {
+                    source: registry,
+                    name: "serde".to_owned(),
+                    version: "1.0.0".to_owned(),
+                }],
+            },
+        ],
+    };
+
+    let json = report.to_json().expect("serialize via facet-json");
+    assert!(
+        json.contains("MissingSelection"),
+        "variant tag present: {json}"
+    );
+    assert!(json.contains("serde"), "identity payload present: {json}");
+
+    let parsed: DiscrepancyReport =
+        facet_json::from_str(&json).expect("round-trip back through facet-json");
+    assert_eq!(parsed.fixture, report.fixture);
+    assert_eq!(parsed.discrepancies, report.discrepancies);
 }
