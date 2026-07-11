@@ -22,7 +22,7 @@ struct Version {
     minor: Int,
     patch: Int,
     pre: PreTag,
-    build: Option<String>,
+    build: String,
 }
 
 // A requirement admits a prerelease only when its comparator explicitly names
@@ -106,17 +106,13 @@ fn strip_build(text: String) -> String {
     }
 }
 
-fn build_metadata(text: String) -> Option<String> {
+fn build_metadata(text: String) -> String {
     if text.contains("+") {
         let (_core, build) = text.split_once("+");
-        Some(build)
+        build
     } else {
-        None
+        ""
     }
-}
-
-fn no_build() -> Option<String> {
-    None
 }
 
 fn release_core(core: String) -> String {
@@ -186,7 +182,7 @@ fn parse_ident(s: String) -> PreIdent {
 }
 
 fn release_version(major: Int) where { minor: Int, patch: Int } -> Version {
-    Version { major, minor, patch, pre: PreTag::Release, build: no_build() }
+    Version { major, minor, patch, pre: PreTag::Release, build: "" }
 }
 
 fn next_major(version: Version) -> Version {

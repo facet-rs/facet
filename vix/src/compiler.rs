@@ -4897,7 +4897,7 @@ fn lower_named_record_values(
     for (index, declared) in declared_fields.iter().enumerate() {
         let node = if let Some(field) = provided.remove(&declared.name) {
             let value = if let Some(expression) = &field.value {
-                lower_value(nodes, bindings, context, expression)?
+                lower_value_expected(nodes, bindings, context, expression, Some(&declared.ty))?
             } else {
                 lookup_binding(bindings, &field.name.value, field.name.span)?
             };
