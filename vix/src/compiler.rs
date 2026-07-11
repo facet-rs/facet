@@ -1845,6 +1845,8 @@ enum PreludeMethod {
     SetLen,
     SetValues,
     StreamFilter,
+    StreamFilterMap,
+    StreamFlatMap,
     StreamCollect,
 }
 
@@ -1985,6 +1987,18 @@ impl PreludeMethodRegistry {
             },
             PreludeMethodEntry {
                 receiver: PreludeReceiverType::Stream,
+                name: "filter_map",
+                arity: 1,
+                method: PreludeMethod::StreamFilterMap,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Stream,
+                name: "flat_map",
+                arity: 1,
+                method: PreludeMethod::StreamFlatMap,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Stream,
                 name: "collect",
                 arity: 0,
                 method: PreludeMethod::StreamCollect,
@@ -2037,7 +2051,11 @@ fn lower_value_expected(
             lower_none(nodes, identifier.span, expected)
         }
         ast::Expr::Identifier(identifier) => {
-            lookup_binding(bindings, &identifier.value, identifier.span)
+            if let Some(value) = bindings.get(&identifier.value) {
+                Ok(value.clone())
+            } else {
+                lower_function_reference(nodes, context, identifier)
+            }
         }
         ast::Expr::Call(call) if call.callee.value == "Some" => {
             lower_some(nodes, bindings, context, call, expected)
@@ -2820,6 +2838,101 @@ fn lower_method_call(
                     EffectFacts::CODATA,
                     vec![receiver.node, predicate.node],
                     Op::StreamFilter,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::StreamFilterMap => {
+            let (key, value) = receiver
+                .ty
+                .stream_types()
+                .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
+            let key = key.clone();
+            let value = value.clone();
+            let transform = match &call.args.args[0] {
+                ast::Expr::Closure(closure) => {
+                    lower_closure_with_parameter(nodes, bindings, context, closure, &value)?
+                }
+                expression => lower_value_expected(nodes, bindings, context, expression, None)?,
+            };
+            let Type::Function { parameter, result } = &transform.ty else {
+                return Err(type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    format!("fn({}) -> Option<_>", value.name()),
+                    transform.ty.name(),
+                ));
+            };
+            if parameter.as_ref() != &value {
+                return Err(type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    format!("fn({}) -> Option<_>", value.name()),
+                    transform.ty.name(),
+                ));
+            }
+            let output = result.option_inner().ok_or_else(|| {
+                type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    format!("fn({}) -> Option<_>", value.name()),
+                    transform.ty.name(),
+                )
+            })?;
+            let ty = Type::stream(key, output.clone());
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::CODATA,
+                    vec![receiver.node, transform.node],
+                    Op::StreamFilterMap,
+                ),
+                ty,
+            })
+        }
+        PreludeMethod::StreamFlatMap => {
+            let (key, value) = receiver
+                .ty
+                .stream_types()
+                .ok_or_else(|| type_mismatch(call.span, "Stream<K, V>", receiver.ty.name()))?;
+            let key = key.clone();
+            let value = value.clone();
+            let transform = match &call.args.args[0] {
+                ast::Expr::Closure(closure) => {
+                    lower_closure_with_parameter(nodes, bindings, context, closure, &value)?
+                }
+                expression => lower_value_expected(nodes, bindings, context, expression, None)?,
+            };
+            let Type::Function { parameter, result } = &transform.ty else {
+                return Err(type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    format!("fn({}) -> Stream<_, _>", value.name()),
+                    transform.ty.name(),
+                ));
+            };
+            if parameter.as_ref() != &value {
+                return Err(type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    format!("fn({}) -> Stream<_, _>", value.name()),
+                    transform.ty.name(),
+                ));
+            }
+            let (inner_key, inner_value) = result.stream_types().ok_or_else(|| {
+                type_mismatch(
+                    expr_span(&call.args.args[0]),
+                    format!("fn({}) -> Stream<_, _>", value.name()),
+                    transform.ty.name(),
+                )
+            })?;
+            let composed_key = Type::Tuple(vec![key, inner_key.clone()]);
+            let ty = Type::stream(composed_key, inner_value.clone());
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    ty.clone(),
+                    EffectFacts::CODATA,
+                    vec![receiver.node, transform.node],
+                    Op::StreamFlatMap,
                 ),
                 ty,
             })
@@ -4574,6 +4687,53 @@ fn lower_value_call(
             Op::CallValue,
         ),
         ty: result,
+    })
+}
+
+/// Resolve a bare identifier that names a top-level function to a first-class
+/// callable value. A function reference is only well-typed as `fn(T) -> U` when
+/// the function declares exactly one positional parameter and no named ones.
+fn lower_function_reference(
+    nodes: &mut Vec<Node>,
+    context: &ModuleContext<'_>,
+    identifier: &crate::support::Spanned<String>,
+) -> Result<LoweredValue, Diagnostics> {
+    let signature = context
+        .signatures
+        .get(&identifier.value)
+        .ok_or_else(|| unknown_name(identifier.span, &identifier.value))?;
+    if signature.is_test {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            identifier.span,
+            "referencing a test function as a value",
+        )));
+    }
+    let [parameter] = signature.parameters.as_slice() else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            identifier.span,
+            "referencing a function with other than one parameter as a value",
+        )));
+    };
+    if parameter.kind != ParameterKind::Positional {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            identifier.span,
+            "referencing a function with a named parameter as a value",
+        )));
+    }
+    let ty = Type::Function {
+        parameter: Box::new(parameter.ty.clone()),
+        result: Box::new(signature.return_type.clone()),
+    };
+    Ok(LoweredValue {
+        node: push_node(
+            nodes,
+            identifier.span,
+            ty.clone(),
+            EffectFacts::PURE,
+            Vec::new(),
+            Op::Closure(signature.id),
+        ),
+        ty,
     })
 }
 
