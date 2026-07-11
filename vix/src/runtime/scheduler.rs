@@ -1123,6 +1123,15 @@ impl<S: EventSink> Runtime<S> {
         self.counters
     }
 
+    /// The number of distinct memo entries standing at this point in the run.
+    /// This is the live table size, not a cumulative counter, so it is the
+    /// quantity a `memo_entries_at_most` trace check bounds. Reads never mutate
+    /// the table, so inspecting it costs no memo entry of its own.
+    #[must_use]
+    pub fn memo_entries(&self) -> u64 {
+        self.memo.len() as u64
+    }
+
     pub fn demands(&self) -> impl Iterator<Item = &DemandRecord> {
         self.demands.values()
     }

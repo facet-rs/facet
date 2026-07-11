@@ -51,6 +51,7 @@ ast({
 
   identifier: { as: "Identifier", decode: "text" },
   string: { as: "Str", decode: "string" },
+  quantity: { as: "Quantity", decode: "text" },
   number: { as: "Number", decode: "text" },
   tuple_index: { as: "Index", decode: "text" },
   boolean: { as: "Bool", decode: "bool" },
