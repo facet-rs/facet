@@ -36,18 +36,24 @@ Cargo fixtures.
 
 At the time this plan was written:
 
-- the canonical accepted production path is green through rung 026;
-- rung 027 is preserved on `vix/rung027-array-map` as commits
-  `12f10fdcb`, `9968d618e`, `3cc43a4a2`, and `aa6522334`, but is not folded
-  into the current integration branch;
-- the corrected collection surface parses and emits distinct typed VIR grains
-  for Map and Set operations;
-- Map/Set lowering is deliberately red with `map/set lowering is not
-  implemented`;
-- Weavy has a verified persistent ordered-collection contract, persistent AVL
-  core, a 200k core scaling oracle, and the read half of the opaque probe
-  protocol;
-- ordered insert, union, iteration, and their complete Vix lowering remain;
+- the canonical accepted production path is green through rung 028 in plain,
+  chaos, native, and interpreter-fallback lanes;
+- rung 029 has typed multi-parameter closures and verified in-frame `ArrayFold`
+  lowering; its remaining red boundary is checked String concatenation;
+- rung 031 now parses block-bodied match arms and exposes the first real dynamic
+  `Stream<Check>` boundary: the current runner still partitions a static list of
+  top-level yields and cannot represent branch-dependent check publication;
+- rungs 033 and 034 execute position-keyed stream collection and key-preserving
+  filtering through verified ordered Map construction;
+- Weavy owns the verified persistent ordered Map/Set arena, including probe,
+  insert, union, iteration, and interpreter/JIT parity; Vix rungs 041-044 run
+  through it with typed `MissingKey` and `DuplicateKey` outcomes;
+- `Map.values()` projects values in canonical key order; structural
+  duplicate-preserving `Array.sorted()` remains the next rung-035 boundary;
+- the persistent AVL core has a 200k insertion scaling oracle, but the
+  end-to-end rung-138 proof is not yet established: range/fold driving,
+  counter/budget enforcement, molten-to-store publication, non-colliding live
+  and frozen handles, and ordered-arena observability remain explicit seams;
 - the Cargo fixture harness exists in `vix/tests/rodin_fixtures.rs` and its Cargo
   side is independently runnable;
 - rungs 098 and 100 still use a recorded `expected_selection()` from the deleted
@@ -142,6 +148,36 @@ Required Map/Set semantics:
 - Set construction and union deduplicate by semantic equality;
 - one-item accumulation may be molten under the as-if law but publishes once;
 - interpreter and JIT use the same verified ordered-node arena and fault model.
+
+Dynamic test codata is an R1 dependency, not a harness-only workaround. Rung
+031 decides at runtime whether its match publishes three checks or one. The
+faithful shape is:
+
+1. `Array.split_last` remains an ordinary pure
+   `[T] -> Option<(T, [T])>` operation and lands independently.
+2. A test body lowers to one verified generator task. Taken control-flow arms
+   append descriptors containing a stable yield-site key, a parameterized check
+   recipe, and typed captured arguments to an append-only codata log.
+3. Each published descriptor becomes an ordinary pure check demand whose
+   `DemandPreimage` contains the check closure and captured value identities.
+   Untaken arms publish nothing; there are no phantom passing checks.
+4. Chaos replay must reproduce the same ordered descriptor set and check
+   identities. Pure check islands retain their existing prohibition on
+   yielding.
+
+This reuses the existing memo/evaluation machinery. It does not evaluate checks
+inside the generator, add a host observer, or constant-fold conditional yields.
+
+The rung-138 scale certificate is production-shaped only when all of these are
+measured together:
+
+- one in-frame loop carries a live ordered root through the accumulation;
+- the completed Map freezes and interns once when it crosses the island edge;
+- wall/RSS budgets and `store_interns_at_most`/`memo_entries_at_most` are
+  enforced by the runner rather than parsed as inert syntax;
+- production counters expose ordered arena growth and reuse, so the proof does
+  not infer cost from a small core benchmark;
+- live molten roots and frozen store handles occupy disjoint encodings.
 
 Forbidden implementations:
 
