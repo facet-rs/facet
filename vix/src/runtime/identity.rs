@@ -440,11 +440,7 @@ impl FramedNode {
                 canonical_bytes,
             } => {
                 let width = *element_width as usize;
-                let count = if width == 0 {
-                    0
-                } else {
-                    canonical_bytes.len() / width
-                };
+                let count = canonical_bytes.len().checked_div(width).unwrap_or(0);
                 writer.start(*schema, count as u64).seq_len(count as u64);
                 for index in 0..count {
                     let start = index * width;
