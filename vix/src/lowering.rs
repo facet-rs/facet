@@ -4727,7 +4727,7 @@ fn lower_checked_collection_node(
         }
         _ => Err(lowering_diagnostic(
             node.span,
-            "canonical Map/Set operation lowering is not implemented",
+            "map/set lowering is not implemented",
         )),
     }
 }
