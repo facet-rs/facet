@@ -34,6 +34,7 @@ use core::future::Future;
 use core::marker::PhantomData;
 use core::pin::Pin;
 use core::task::{Context, Poll};
+use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use crate::exec::{CompareSide, TaskFault, fault_site};
 use crate::mem::Layout;
@@ -244,9 +245,65 @@ impl ArrayOpStatus {
 /// space. Externally lent molten handles retain the legacy `-1 - index` shape
 /// in the high negative range, outside the task-local namespace. Nonnegative
 /// handles remain store handles.
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug)]
 pub(crate) struct MoltenArena {
     buffers: Vec<MoltenBuffer>,
+    ordered_nodes: Vec<OrderedNode>,
+    ordered_cursors: Vec<OrderedCursor>,
+    task_generation: u64,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct OrderedNode {
+    schema: i64,
+    key: Vec<u8>,
+    value: Option<Vec<u8>>,
+    left: Option<usize>,
+    right: Option<usize>,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OrderedCursorOperation {
+    Probe,
+    Insert,
+    Union,
+    Iterate,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct OrderedCursor {
+    task_generation: u64,
+    schema: i64,
+    operation: OrderedCursorOperation,
+    root: Option<usize>,
+    consumed: bool,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum OrderedCursorError {
+    Invalid,
+    Stale,
+    SchemaMismatch,
+    OperationMismatch,
+}
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) struct OrderedCursorToken {
+    index: usize,
+    task_generation: u64,
+}
+
+static NEXT_MOLTEN_TASK_GENERATION: AtomicU64 = AtomicU64::new(1);
+
+impl Default for MoltenArena {
+    fn default() -> Self {
+        Self {
+            buffers: Vec::new(),
+            ordered_nodes: Vec::new(),
+            ordered_cursors: Vec::new(),
+            task_generation: NEXT_MOLTEN_TASK_GENERATION.fetch_add(1, AtomicOrdering::Relaxed),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -256,6 +313,83 @@ struct MoltenBuffer {
 }
 
 impl MoltenArena {
+    pub(crate) fn alloc_ordered_node(
+        &mut self,
+        schema: i64,
+        key: Vec<u8>,
+        value: Option<Vec<u8>>,
+        left: Option<usize>,
+        right: Option<usize>,
+    ) -> Result<usize, OrderedCursorError> {
+        self.ordered_nodes
+            .try_reserve(1)
+            .map_err(|_| OrderedCursorError::Invalid)?;
+        let index = self.ordered_nodes.len();
+        self.ordered_nodes.push(OrderedNode {
+            schema,
+            key,
+            value,
+            left,
+            right,
+        });
+        Ok(index)
+    }
+
+    pub(crate) fn begin_ordered_cursor(
+        &mut self,
+        schema: i64,
+        operation: OrderedCursorOperation,
+        root: Option<usize>,
+    ) -> Result<OrderedCursorToken, OrderedCursorError> {
+        if root.is_some_and(|root| {
+            self.ordered_nodes
+                .get(root)
+                .is_none_or(|node| node.schema != schema)
+        }) {
+            return Err(OrderedCursorError::SchemaMismatch);
+        }
+        self.ordered_cursors
+            .try_reserve(1)
+            .map_err(|_| OrderedCursorError::Invalid)?;
+        let index = self.ordered_cursors.len();
+        self.ordered_cursors.push(OrderedCursor {
+            task_generation: self.task_generation,
+            schema,
+            operation,
+            root,
+            consumed: false,
+        });
+        Ok(OrderedCursorToken {
+            index,
+            task_generation: self.task_generation,
+        })
+    }
+
+    pub(crate) fn consume_ordered_cursor(
+        &mut self,
+        token: OrderedCursorToken,
+        schema: i64,
+        operation: OrderedCursorOperation,
+    ) -> Result<Option<usize>, OrderedCursorError> {
+        if token.task_generation != self.task_generation {
+            return Err(OrderedCursorError::Invalid);
+        }
+        let cursor = self
+            .ordered_cursors
+            .get_mut(token.index)
+            .ok_or(OrderedCursorError::Invalid)?;
+        if cursor.task_generation != self.task_generation || cursor.consumed {
+            return Err(OrderedCursorError::Stale);
+        }
+        if cursor.schema != schema {
+            return Err(OrderedCursorError::SchemaMismatch);
+        }
+        if cursor.operation != operation {
+            return Err(OrderedCursorError::OperationMismatch);
+        }
+        cursor.consumed = true;
+        Ok(cursor.root)
+    }
     /// Reserve a zeroed array-elements payload and return its task-local molten
     /// handle. Elements are written afterwards through checked array-store ops;
     /// the payload is well-formed from allocation on.
@@ -2165,6 +2299,53 @@ mod tests {
         assert_eq!(
             lent_molten_index(LENT_MOLTEN_MIN),
             usize::try_from(first_lent_index).ok()
+        );
+    }
+
+    #[test]
+    fn ordered_cursor_is_single_use_schema_and_operation_confined() {
+        let mut arena = MoltenArena::default();
+        let leaf = arena
+            .alloc_ordered_node(7, vec![1, 2], Some(vec![3, 4]), None, None)
+            .expect("node allocation");
+        let node = &arena.ordered_nodes[leaf];
+        assert_eq!(node.schema, 7);
+        assert_eq!(node.key, [1, 2]);
+        assert_eq!(node.value.as_deref(), Some([3, 4].as_slice()));
+        assert_eq!(node.left, None);
+        assert_eq!(node.right, None);
+        let cursor = arena
+            .begin_ordered_cursor(7, OrderedCursorOperation::Probe, Some(leaf))
+            .expect("cursor allocation");
+        assert_eq!(
+            arena.consume_ordered_cursor(cursor, 7, OrderedCursorOperation::Probe),
+            Ok(Some(leaf))
+        );
+        assert_eq!(
+            arena.consume_ordered_cursor(cursor, 7, OrderedCursorOperation::Probe),
+            Err(OrderedCursorError::Stale)
+        );
+        let cursor = arena
+            .begin_ordered_cursor(7, OrderedCursorOperation::Insert, Some(leaf))
+            .expect("cursor allocation");
+        assert_eq!(
+            arena.consume_ordered_cursor(cursor, 8, OrderedCursorOperation::Insert),
+            Err(OrderedCursorError::SchemaMismatch)
+        );
+        let cursor = arena
+            .begin_ordered_cursor(7, OrderedCursorOperation::Union, Some(leaf))
+            .expect("cursor allocation");
+        assert_eq!(
+            arena.consume_ordered_cursor(cursor, 7, OrderedCursorOperation::Iterate),
+            Err(OrderedCursorError::OperationMismatch)
+        );
+        let mut other = MoltenArena::default();
+        let foreign = other
+            .begin_ordered_cursor(7, OrderedCursorOperation::Probe, None)
+            .expect("foreign cursor allocation");
+        assert_eq!(
+            arena.consume_ordered_cursor(foreign, 7, OrderedCursorOperation::Probe),
+            Err(OrderedCursorError::Invalid)
         );
     }
 
