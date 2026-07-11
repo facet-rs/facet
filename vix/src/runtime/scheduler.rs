@@ -155,7 +155,7 @@ impl<S: EventSink> Runtime<S> {
             }
 
             let mut task = lowered
-                .executable
+                .executable()
                 .spawn(FnId(0))
                 .map_err(|fault| runtime_invariant(&format!("Weavy spawn fault: {fault:?}")))?;
             for (constant, handle) in lowered.constants.iter().zip(constants) {

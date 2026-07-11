@@ -1842,27 +1842,8 @@ impl Verifier<'_> {
                 )?;
             }
             Op::CopyValue { dst, src } => {
-                let regions = &self.contract.functions[function_index].frame.regions;
-                let source = regions.get(src.0 as usize).ok_or_else(|| {
-                    self.op(
-                        function_id,
-                        pc,
-                        ProgramDefect::StructuralRegionOutOfRange {
-                            region: *src,
-                            region_count: regions.len(),
-                        },
-                    )
-                })?;
-                let destination = regions.get(dst.0 as usize).ok_or_else(|| {
-                    self.op(
-                        function_id,
-                        pc,
-                        ProgramDefect::StructuralRegionOutOfRange {
-                            region: *dst,
-                            region_count: regions.len(),
-                        },
-                    )
-                })?;
+                let source = self.structural_region(function_id, pc, function_index, *src)?;
+                let destination = self.structural_region(function_id, pc, function_index, *dst)?;
                 if source.value_shape != destination.value_shape
                     || source.shape != destination.shape
                 {
@@ -4300,6 +4281,60 @@ mod tests {
                 value_shapes: vec![],
             },
         );
+        let multi_entry_placement = (
+            Program {
+                fns: vec![function(3, vec![Op::Ret { src: 0, size: 8 }])],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    3,
+                    vec![
+                        word_region(0, WordKind::Scalar),
+                        word_region(8, WordKind::Scalar),
+                        word_region(16, WordKind::Scalar),
+                    ],
+                    &[1, 2],
+                    0,
+                    Some(0),
+                )],
+                calls: vec![CallContract {
+                    entries: vec![
+                        word_region(8, WordKind::Scalar),
+                        word_region(16, WordKind::Scalar),
+                    ],
+                    result: word_region(24, WordKind::Scalar),
+                }],
+                schemas: vec![],
+                value_shapes: vec![],
+            },
+        );
+        let entry_placement_mismatch = (
+            Program {
+                fns: vec![function(3, vec![Op::Ret { src: 0, size: 8 }])],
+            },
+            ProgramContract {
+                functions: vec![function_contract(
+                    3,
+                    vec![
+                        word_region(0, WordKind::Scalar),
+                        word_region(8, WordKind::Scalar),
+                        word_region(16, WordKind::Scalar),
+                    ],
+                    &[1, 2],
+                    0,
+                    Some(0),
+                )],
+                calls: vec![CallContract {
+                    entries: vec![
+                        word_region(0, WordKind::Scalar),
+                        word_region(16, WordKind::Scalar),
+                    ],
+                    result: word_region(24, WordKind::Scalar),
+                }],
+                schemas: vec![],
+                value_shapes: vec![],
+            },
+        );
         let duplicate_calls = (
             Program::default(),
             ProgramContract {
@@ -4375,6 +4410,14 @@ mod tests {
                 }),
             },
             InvalidCase {
+                name: "function contract entry placement",
+                program: entry_placement_mismatch.0,
+                contract: entry_placement_mismatch.1,
+                expected: function_error(ProgramDefect::FunctionCallContractMismatch {
+                    contract: CallContractId(0),
+                }),
+            },
+            InvalidCase {
                 name: "deduplicated call table",
                 program: duplicate_calls.0,
                 contract: duplicate_calls.1,
@@ -4406,6 +4449,10 @@ mod tests {
             .0
             .verify(result_placement.1)
             .expect("function call contracts ignore only concrete result placement");
+        multi_entry_placement
+            .0
+            .verify(multi_entry_placement.1)
+            .expect("function call contracts preserve exact multi-entry argument placement");
     }
 
     #[test]
@@ -5576,9 +5623,9 @@ mod tests {
     }
 
     #[test]
-    fn copy_value_accepts_exact_non_structural_handle_regions() {
+    fn rejects_copy_value_for_non_structural_handle_regions() {
         let string_schema = SchemaRef(0);
-        Program {
+        let error = Program {
             fns: vec![function(
                 2,
                 vec![
@@ -5610,7 +5657,16 @@ mod tests {
             )],
             value_shapes: vec![],
         })
-        .expect("CopyValue carries one exact non-structural handle value");
+        .expect_err("CopyValue is reserved for complete structural values");
+        assert_eq!(
+            error,
+            op_error(
+                0,
+                ProgramDefect::StructuralRegionRequiresShape {
+                    region: RegionId(0),
+                }
+            )
+        );
     }
 
     #[test]

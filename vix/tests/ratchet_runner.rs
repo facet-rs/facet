@@ -43,8 +43,8 @@ fn frame_index(functions: &[FunctionId], function: FunctionId) -> usize {
 }
 
 fn assert_pc_maps_complete(lowered: &vix::lowering::LoweringArtifact) {
-    assert_eq!(lowered.program.fns.len(), lowered.pc_nodes.len());
-    for (frame, function) in lowered.program.fns.iter().enumerate() {
+    assert_eq!(lowered.program().fns.len(), lowered.pc_nodes.len());
+    for (frame, function) in lowered.program().fns.iter().enumerate() {
         assert_eq!(
             function.code.len(),
             lowered.pc_nodes[frame].len(),
@@ -238,7 +238,7 @@ fn pc_node_attribution_is_cached_but_node_spans_stay_per_compilation() {
         .expect("rung 001 lowers to Weavy");
     assert_pc_maps_complete(lowered);
     let root_frame = frame_index(&attribution.functions, island.function);
-    let last_pc = lowered.program.fns[root_frame].code.len() - 1;
+    let last_pc = lowered.program().fns[root_frame].code.len() - 1;
     assert_eq!(
         lowered.node_for_pc(root_frame as u32, last_pc as u32),
         Some(output_node),
@@ -280,11 +280,14 @@ fn scalar_contract() -> Stream<Check> {
 "#;
 
     with_first_lowered(SOURCE, |lowered| {
-        let verified = lowered.program.clone().verify(lowered.contract.clone());
-        assert!(
-            verified.is_ok(),
-            "scalar-only lowered artifacts should certify through Program::verify: {verified:?}",
-        );
+        assert!(std::ptr::eq(
+            lowered.program(),
+            lowered.executable().program().program()
+        ));
+        assert!(std::ptr::eq(
+            lowered.contract(),
+            lowered.executable().program().contract()
+        ));
     });
 }
 
@@ -320,7 +323,7 @@ fn structural_contracts() -> Stream<Check> {
 "#;
 
     with_first_lowered(SOURCE, |lowered| {
-        let contract = &lowered.contract;
+        let contract = lowered.contract();
         assert!(
             contract
                 .functions
@@ -371,7 +374,7 @@ fn structural_contracts() -> Stream<Check> {
                     WordKind::Scalar,
                     WordKind::Handle(
                         lowered
-                            .contract
+                            .contract()
                             .schemas
                             .iter()
                             .position(|schema| matches!(
@@ -404,9 +407,9 @@ fn structural_contracts() -> Stream<Check> {
 #[test]
 fn closure_values_carry_exact_signature_call_contract() {
     with_first_lowered(RUNG_021, |lowered| {
-        assert!(!lowered.contract.calls.is_empty());
+        assert!(!lowered.contract().calls.is_empty());
         let callable_function = lowered
-            .contract
+            .contract()
             .functions
             .iter()
             .find(|function| function.call_contract.is_some())
@@ -414,11 +417,11 @@ fn closure_values_carry_exact_signature_call_contract() {
         let call_contract = callable_function
             .call_contract
             .expect("call contract is present");
-        let call = &lowered.contract.calls[call_contract.0 as usize];
+        let call = &lowered.contract().calls[call_contract.0 as usize];
         assert_eq!(call.entries.len(), 1);
 
         let closure_region = lowered
-            .contract
+            .contract()
             .functions
             .iter()
             .flat_map(|function| &function.frame.regions)
@@ -449,9 +452,9 @@ fn direct_string_call() -> Stream<Check> {
 "#;
 
     with_first_lowered(SOURCE, |lowered| {
-        assert_eq!(lowered.program.fns.len(), 2);
-        let root = &lowered.contract.functions[0];
-        let callee = &lowered.contract.functions[1];
+        assert_eq!(lowered.program().fns.len(), 2);
+        let root = &lowered.contract().functions[0];
+        let callee = &lowered.contract().functions[1];
         assert_eq!(lowered.constants.len(), 2, "one publication per NodeRef");
         let root_function = lowered.constants[0].root.function;
         for (root_entry, constant) in lowered.constants.iter().enumerate() {
@@ -484,7 +487,7 @@ fn direct_string_call() -> Stream<Check> {
             2,
             "callee entries are parameter first, then local string constant"
         );
-        let root_call = lowered.program.fns[0]
+        let root_call = lowered.program().fns[0]
             .code
             .iter()
             .find_map(|op| match op {
@@ -506,7 +509,7 @@ fn direct_string_call() -> Stream<Check> {
 #[test]
 fn frame_contract_regions_do_not_overlap_for_word_regions() {
     with_first_lowered(RUNG_004, |lowered| {
-        for function in &lowered.contract.functions {
+        for function in &lowered.contract().functions {
             for (left_index, left) in function.frame.regions.iter().enumerate() {
                 let left_start = left.offset as usize;
                 let left_end = left_start + region_byte_len(left);
@@ -540,7 +543,7 @@ fn cached_contract_is_stable_across_span_only_edits() {
         .get_or_lower(&partitioned.islands[0])
         .expect("rung 003 lowers");
     let recipe = lowered.recipe;
-    let contract = lowered.contract.clone();
+    let contract = lowered.contract().clone();
 
     let shifted_source = format!("\n\n{RUNG_003}");
     let shifted_module = Compiler::new()
@@ -552,7 +555,7 @@ fn cached_contract_is_stable_across_span_only_edits() {
         .expect("span-only edit reuses lowering artifact");
 
     assert_eq!(shifted_lowered.recipe, recipe);
-    assert_eq!(shifted_lowered.contract, contract);
+    assert_eq!(shifted_lowered.contract(), &contract);
     assert_eq!(lowering_cache.counters().misses, 1);
     assert_eq!(lowering_cache.counters().hits, 1);
 }
@@ -576,18 +579,10 @@ fn accepted_rungs_verify_and_execute_through_one_executable() {
                 let lowered = lowering_cache
                     .get_or_lower(island)
                     .expect("accepted artifact verifies before execution");
-                let verified = lowered.executable.program();
-                assert_eq!(verified.program().fns.len(), lowered.program.fns.len());
-                assert!(
-                    verified
-                        .program()
-                        .fns
-                        .iter()
-                        .zip(&lowered.program.fns)
-                        .all(|(verified, rendered)| verified.code.len() == rendered.code.len())
-                );
-                assert_eq!(verified.contract(), &lowered.contract);
-                assert!(lowered.program.fns.iter().all(|function| {
+                let verified = lowered.executable().program();
+                assert!(std::ptr::eq(verified.program(), lowered.program()));
+                assert!(std::ptr::eq(verified.contract(), lowered.contract()));
+                assert!(lowered.program().fns.iter().all(|function| {
                     function.code.iter().all(|op| {
                         !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. })
                     })
@@ -676,7 +671,7 @@ fn attribution() -> Stream<Check> {
     assert_pc_maps_complete(lowered);
 
     let choose_frame = frame_index(&attribution.functions, choose.id);
-    let choose_code = &lowered.program.fns[choose_frame].code;
+    let choose_code = &lowered.program().fns[choose_frame].code;
     let match_ref = NodeRef {
         function: choose.id,
         node: match_node.id,
@@ -806,7 +801,7 @@ fn rung_004_functions_and_application_run_through_vir_and_weavy() {
         let lowered = lowering_cache
             .get_or_lower(island)
             .expect("rung 004 lowers to Weavy");
-        assert_eq!(lowered.program.fns.len(), index + 2);
+        assert_eq!(lowered.program().fns.len(), index + 2);
         assert!(lowered.render().contains("Call {"));
     }
 
@@ -851,18 +846,18 @@ fn rung_005_tuples_and_positional_projection_run_through_vir_and_weavy() {
     let lowered = lowering_cache
         .get_or_lower(&partitioned.islands[2])
         .expect("rung 005 lowers to Weavy");
-    assert_eq!(lowered.program.fns.len(), 2);
-    assert!(lowered.program.fns[0].code.iter().any(|op| matches!(
+    assert_eq!(lowered.program().fns.len(), 2);
+    assert!(lowered.program().fns[0].code.iter().any(|op| matches!(
         op,
         WeavyOp::Call { args, .. } if args.len() == 1 && args[0].size == 16
     )));
     assert!(
-        lowered.program.fns[1]
+        lowered.program().fns[1]
             .code
             .iter()
             .any(|op| matches!(op, WeavyOp::Ret { size: 16, .. }))
     );
-    assert!(lowered.program.fns.iter().all(|function| {
+    assert!(lowered.program().fns.iter().all(|function| {
         function
             .code
             .iter()
@@ -931,13 +926,13 @@ fn rung_006_records_and_named_projection_run_through_vir_and_weavy() {
         let lowered = lowering_cache
             .get_or_lower(island)
             .expect("rung 006 lowers to Weavy");
-        assert!(lowered.program.fns.iter().all(|function| {
+        assert!(lowered.program().fns.iter().all(|function| {
             function
                 .code
                 .iter()
                 .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
         }));
-        assert!(lowered.program.fns.iter().any(|function| {
+        assert!(lowered.program().fns.iter().any(|function| {
             function
                 .code
                 .iter()
@@ -1013,7 +1008,7 @@ fn rung_007_enums_payloads_and_match_run_through_vir_and_weavy() {
         let lowered = lowering_cache
             .get_or_lower(island)
             .expect("rung 007 lowers to Weavy");
-        let entry = &lowered.program.fns[0].code;
+        let entry = &lowered.program().fns[0].code;
         let trace_pc = entry
             .iter()
             .position(|op| matches!(op, WeavyOp::Trace { id } if *id == trace_id))
@@ -1022,24 +1017,24 @@ fn rung_007_enums_payloads_and_match_run_through_vir_and_weavy() {
             &entry[trace_pc + 1],
             WeavyOp::EnumConstruct { variant: lowered_variant, .. } if lowered_variant == variant
         ));
-        assert!(lowered.program.fns.iter().any(|function| {
+        assert!(lowered.program().fns.iter().any(|function| {
             function.code.iter().any(
                 |op| matches!(op, WeavyOp::Call { args, .. } if args.len() == 1 && args[0].size == 24),
             )
         }));
-        assert!(lowered.program.fns.iter().any(|function| {
+        assert!(lowered.program().fns.iter().any(|function| {
             function
                 .code
                 .iter()
                 .any(|op| matches!(op, WeavyOp::JumpIfZero { .. }))
         }));
-        assert!(lowered.program.fns.iter().any(|function| {
+        assert!(lowered.program().fns.iter().any(|function| {
             function
                 .code
                 .iter()
                 .any(|op| matches!(op, WeavyOp::Jump { .. }))
         }));
-        assert!(lowered.program.fns.iter().all(|function| {
+        assert!(lowered.program().fns.iter().all(|function| {
             function
                 .code
                 .iter()
@@ -1153,7 +1148,7 @@ fn rung_008_record_spread_builds_a_fresh_value_through_vir_and_weavy() {
         let lowered = lowering_cache
             .get_or_lower(island)
             .expect("rung 008 lowers to Weavy");
-        assert!(lowered.program.fns.iter().all(|function| {
+        assert!(lowered.program().fns.iter().all(|function| {
             function
                 .code
                 .iter()
@@ -1209,7 +1204,7 @@ fn rung_009_ambient_structural_equality_runs_through_vir_and_weavy() {
         let lowered = lowering_cache
             .get_or_lower(island)
             .expect("rung 009 lowers to Weavy");
-        assert!(lowered.program.fns.iter().any(|function| {
+        assert!(lowered.program().fns.iter().any(|function| {
             function
                 .code
                 .iter()
@@ -1223,7 +1218,7 @@ fn rung_009_ambient_structural_equality_runs_through_vir_and_weavy() {
                     .count()
                     >= 3
         }));
-        assert!(lowered.program.fns.iter().all(|function| {
+        assert!(lowered.program().fns.iter().all(|function| {
             function
                 .code
                 .iter()
@@ -1290,7 +1285,7 @@ fn rung_010_spaceship_returns_ambient_ordering_through_vir_and_weavy() {
         let lowered = lowering_cache
             .get_or_lower(island)
             .expect("rung 010 lowers to Weavy");
-        saw_integer_order |= lowered.program.fns.iter().any(|function| {
+        saw_integer_order |= lowered.program().fns.iter().any(|function| {
             function
                 .code
                 .iter()
@@ -1300,13 +1295,13 @@ fn rung_010_spaceship_returns_ambient_ordering_through_vir_and_weavy() {
                     .iter()
                     .any(|op| matches!(op, WeavyOp::GtI64 { .. }))
         });
-        saw_value_bytes_order |= lowered.program.fns.iter().any(|function| {
+        saw_value_bytes_order |= lowered.program().fns.iter().any(|function| {
             function
                 .code
                 .iter()
                 .any(|op| matches!(op, WeavyOp::CompareValueBytes { .. }))
         });
-        assert!(lowered.program.fns.iter().all(|function| {
+        assert!(lowered.program().fns.iter().all(|function| {
             function
                 .code
                 .iter()
@@ -1370,7 +1365,7 @@ fn rung_011_relations_derive_from_spaceship_through_vir_and_weavy() {
         let lowered = lowering_cache
             .get_or_lower(island)
             .expect("rung 011 lowers to Weavy");
-        for function in &lowered.program.fns {
+        for function in &lowered.program().fns {
             let has_integer_order = function
                 .code
                 .iter()
@@ -1445,7 +1440,7 @@ fn rung_012_record_order_is_total_structural_and_declaration_ordered() {
         let lowered = lowering_cache
             .get_or_lower(island)
             .expect("rung 012 lowers to Weavy");
-        let entry = &lowered.program.fns[0];
+        let entry = &lowered.program().fns[0];
         let projected_fields = entry
             .code
             .iter()
@@ -1571,14 +1566,14 @@ fn rung_014_if_else_is_an_expression_through_vir_and_weavy() {
             .get_or_lower(island)
             .expect("rung 014 lowers to Weavy");
         for trace_id in conditional_trace_ids {
-            assert!(lowered.program.fns.iter().any(|function| {
+            assert!(lowered.program().fns.iter().any(|function| {
                 function.code.windows(2).any(|ops| {
                     matches!(ops[0], WeavyOp::Trace { id } if id == trace_id)
                         && matches!(ops[1], WeavyOp::JumpIfZero { .. })
                 })
             }));
         }
-        assert!(lowered.program.fns.iter().all(|function| {
+        assert!(lowered.program().fns.iter().all(|function| {
             function
                 .code
                 .iter()
@@ -1643,12 +1638,12 @@ fn rung_015_boolean_operators_reuse_structured_conditionals() {
                 .find(|entry| entry.function == island.function && entry.node == conditional.id)
                 .expect("short-circuit conditional has source attribution")
                 .trace_id;
-            assert!(lowered.program.fns[0].code.windows(2).any(|ops| {
+            assert!(lowered.program().fns[0].code.windows(2).any(|ops| {
                 matches!(ops[0], WeavyOp::Trace { id } if id == trace_id)
                     && matches!(ops[1], WeavyOp::JumpIfZero { .. })
             }));
         }
-        assert!(lowered.program.fns.iter().all(|function| {
+        assert!(lowered.program().fns.iter().all(|function| {
             function
                 .code
                 .iter()
@@ -1696,19 +1691,19 @@ fn rung_016_match_is_a_value_selecting_one_control_region() {
         let lowered = lowering_cache
             .get_or_lower(island)
             .expect("rung 016 lowers to Weavy");
-        assert!(lowered.program.fns.iter().any(|function| {
+        assert!(lowered.program().fns.iter().any(|function| {
             function
                 .code
                 .iter()
                 .any(|op| matches!(op, WeavyOp::JumpIfZero { .. }))
         }));
-        assert!(lowered.program.fns.iter().any(|function| {
+        assert!(lowered.program().fns.iter().any(|function| {
             function
                 .code
                 .iter()
                 .any(|op| matches!(op, WeavyOp::Jump { .. }))
         }));
-        assert!(lowered.program.fns.iter().all(|function| {
+        assert!(lowered.program().fns.iter().all(|function| {
             function
                 .code
                 .iter()
@@ -1897,10 +1892,10 @@ fn rung_021_closure_parameters_destructure_callable_values() {
     let lowered = lowering_cache
         .get_or_lower(&partitioned.islands[0])
         .expect("rung 021 lowers to Weavy");
-    assert_eq!(lowered.program.fns.len(), 3);
+    assert_eq!(lowered.program().fns.len(), 3);
     assert_eq!(
         lowered
-            .program
+            .program()
             .fns
             .iter()
             .flat_map(|function| &function.code)
@@ -1922,11 +1917,11 @@ fn rung_021_closure_parameters_destructure_callable_values() {
             .iter()
             .position(|candidate| candidate.id == node)
             .expect("closure node has a canonical contract region");
-        let shape = lowered.contract.functions[0].frame.regions[region]
+        let shape = lowered.contract().functions[0].frame.regions[region]
             .value_shape
             .expect("closure node has a structural value shape");
         let ValueShapeKind::Product { fields } =
-            &lowered.contract.value_shapes[shape.0 as usize].kind
+            &lowered.contract().value_shapes[shape.0 as usize].kind
         else {
             panic!("closure is a product-shaped callable value");
         };
@@ -1941,11 +1936,11 @@ fn rung_021_closure_parameters_destructure_callable_values() {
             + 1;
         assert_eq!(
             Some(*signature),
-            lowered.contract.functions[target_frame].call_contract,
+            lowered.contract().functions[target_frame].call_contract,
             "closure target ABI is its source-level callable signature"
         );
     }
-    assert!(lowered.program.fns.iter().all(|function| {
+    assert!(lowered.program().fns.iter().all(|function| {
         function
             .code
             .iter()
@@ -2015,8 +2010,8 @@ fn rung_022_nested_record_patterns_project_named_fields() {
     let lowered = lowering_cache
         .get_or_lower(&partitioned.islands[0])
         .expect("rung 022 lowers to Weavy");
-    assert_eq!(lowered.program.fns.len(), 2);
-    assert!(lowered.program.fns.iter().all(|function| {
+    assert_eq!(lowered.program().fns.len(), 2);
+    assert!(lowered.program().fns.iter().all(|function| {
         function
             .code
             .iter()
@@ -2106,13 +2101,13 @@ fn rung_023_option_construction_matching_and_checks() {
             .get_or_lower(island)
             .expect("rung 023 lowers to Weavy");
         division_ops += lowered
-            .program
+            .program()
             .fns
             .iter()
             .flat_map(|function| &function.code)
             .filter(|op| matches!(op, WeavyOp::DivI64 { .. }))
             .count();
-        assert!(lowered.program.fns.iter().all(|function| {
+        assert!(lowered.program().fns.iter().all(|function| {
             function
                 .code
                 .iter()
@@ -2215,7 +2210,7 @@ fn local_application(flag: Bool) -> Bool {
         let lowered = lowering_cache
             .get_or_lower(island)
             .expect("rung 024 lowers to Weavy");
-        assert!(lowered.program.fns.iter().all(|function| {
+        assert!(lowered.program().fns.iter().all(|function| {
             function
                 .code
                 .iter()
@@ -2261,7 +2256,7 @@ fn enum_equality() -> Stream<Check> {
         lowering_cache
             .get_or_lower(island)
             .expect("typed enum equality lowers")
-            .program
+            .program()
             .fns
             .iter()
             .flat_map(|function| &function.code)
@@ -2322,7 +2317,7 @@ fn rung_025_ordering_is_an_ordinary_matchable_enum() {
         let lowered = lowering_cache
             .get_or_lower(island)
             .expect("rung 025 lowers to Weavy");
-        assert!(lowered.program.fns.iter().any(|function| {
+        assert!(lowered.program().fns.iter().any(|function| {
             function
                 .code
                 .iter()
@@ -2336,7 +2331,7 @@ fn rung_025_ordering_is_an_ordinary_matchable_enum() {
                     .iter()
                     .any(|op| matches!(op, WeavyOp::EqI64 { .. }))
         }));
-        assert!(lowered.program.fns.iter().all(|function| {
+        assert!(lowered.program().fns.iter().all(|function| {
             function
                 .code
                 .iter()

@@ -98,14 +98,27 @@ pub struct LoweringArtifact {
     pub recipe: RecipeId,
     pub demand_key: DemandKey,
     pub demand_preimage: DemandPreimage,
-    pub program: WeavyProgram,
-    pub contract: WeavyProgramContract,
-    pub executable: Executable,
+    executable: Executable,
     pub pc_nodes: Vec<Vec<NodeRef>>,
     pub constants: Vec<ValueConstant>,
 }
 
 impl LoweringArtifact {
+    #[must_use]
+    pub fn program(&self) -> &WeavyProgram {
+        self.executable.program().program()
+    }
+
+    #[must_use]
+    pub fn contract(&self) -> &WeavyProgramContract {
+        self.executable.program().contract()
+    }
+
+    #[must_use]
+    pub fn executable(&self) -> &Executable {
+        &self.executable
+    }
+
     #[must_use]
     pub fn node_for_pc(&self, frame: u32, pc: u32) -> Option<NodeRef> {
         self.pc_nodes
@@ -134,7 +147,7 @@ impl LoweringArtifact {
                 constant.bytes.len()
             );
         }
-        for (function_index, function) in self.program.fns.iter().enumerate() {
+        for (function_index, function) in self.program().fns.iter().enumerate() {
             let _ = writeln!(
                 out,
                 "weavy fn {function_index} frame(size={}, align={})",
@@ -337,7 +350,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
         closure: recipe,
         arguments: Vec::new(),
     };
-    let verified = program.clone().verify(contract.clone()).map_err(|error| {
+    let verified = program.verify(contract).map_err(|error| {
         lowering_diagnostic(
             output.span,
             &format!("Weavy verifier rejected lowered program: {error:?}"),
@@ -347,8 +360,6 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, D
         recipe,
         demand_key: DemandKey::from_preimage(&demand_preimage),
         demand_preimage,
-        program,
-        contract,
         executable: Executable::new(verified),
         pc_nodes,
         constants,
@@ -1052,7 +1063,7 @@ impl<'a> ProgramContractBuilder<'a> {
         let call = WeavyCallContract {
             entries: entries[..parameter_len]
                 .iter()
-                .map(|entry| canonical_call_region(&regions[entry.0 as usize]))
+                .map(|entry| regions[entry.0 as usize].clone())
                 .collect(),
             result: canonical_call_region(&regions[result.0 as usize]),
         };
@@ -3589,12 +3600,11 @@ fn copy_lowered_value(
     }
     match source.representation {
         ValueRepresentation::Word => copy_region(node, source.region, destination),
-        ValueRepresentation::RealizedHandle | ValueRepresentation::InlineComposite => {
-            Ok(vec![WeavyOp::CopyValue {
-                dst: destination_region,
-                src: source.region_id,
-            }])
-        }
+        ValueRepresentation::RealizedHandle => copy_region(node, source.region, destination),
+        ValueRepresentation::InlineComposite => Ok(vec![WeavyOp::CopyValue {
+            dst: destination_region,
+            src: source.region_id,
+        }]),
     }
 }
 
