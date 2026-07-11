@@ -1736,17 +1736,12 @@ fn lower_check(
             let right =
                 lower_value_expected(nodes, bindings, context, &call.args.args[1], Some(&left.ty))?;
             require_same_type(&left, &right, call.span)?;
-            push_node(
+            push_equality_condition(
                 nodes,
                 call.span,
-                Type::Bool,
-                EffectFacts::PURE,
-                vec![left.node, right.node],
-                if call.callee.value == "expect_eq" {
-                    Op::Eq
-                } else {
-                    Op::Ne
-                },
+                &left,
+                &right,
+                call.callee.value == "expect_ne",
             )
         }
         "expect_some" | "expect_none" => {
@@ -4948,11 +4943,19 @@ fn lower_binary(
         }
         "==" => {
             require_same_type(&left, &right, binary.span)?;
-            (Type::Bool, Op::Eq)
+            let node = push_equality_condition(nodes, binary.span, &left, &right, false);
+            return Ok(LoweredValue {
+                node,
+                ty: Type::Bool,
+            });
         }
         "!=" => {
             require_same_type(&left, &right, binary.span)?;
-            (Type::Bool, Op::Ne)
+            let node = push_equality_condition(nodes, binary.span, &left, &right, true);
+            return Ok(LoweredValue {
+                node,
+                ty: Type::Bool,
+            });
         }
         "<=>" => {
             require_same_type(&left, &right, binary.span)?;
@@ -5083,6 +5086,94 @@ fn lower_bool_constant(nodes: &mut Vec<Node>, span: Span, value: bool) -> Lowere
         ),
         ty: Type::Bool,
     }
+}
+
+/// Build the equality condition for two same-typed values.
+///
+/// Ordered collections have structural value identity, but their VIR handles
+/// are opaque: two maps built by different recipes (a `collect` and a literal)
+/// share no handle. Structural equality desugars to comparison of the canonical
+/// projections that already lower through the verified machine — a map is equal
+/// iff its canonical key array and canonical value array both match, a set iff
+/// its canonical element array matches. Scalars and structural aggregates keep
+/// the direct `Op::Eq`/`Op::Ne` primitive. `negate` requests the `!=` sense.
+fn push_equality_condition(
+    nodes: &mut Vec<Node>,
+    span: Span,
+    left: &LoweredValue,
+    right: &LoweredValue,
+    negate: bool,
+) -> NodeId {
+    let equal = match &left.ty {
+        Type::Map { key, value } => {
+            let key_array = Type::array(key.as_ref().clone());
+            let value_array = Type::array(value.as_ref().clone());
+            let keys_left =
+                push_project(nodes, span, left.node, key_array.clone(), Op::MapKeys);
+            let keys_right = push_project(nodes, span, right.node, key_array, Op::MapKeys);
+            let keys_equal = push_eq(nodes, span, keys_left, keys_right);
+            // The value projections and their comparison form the `then` region
+            // of a short-circuiting `keys_equal && values_equal`.
+            let values_start = nodes.len();
+            let values_left =
+                push_project(nodes, span, left.node, value_array.clone(), Op::MapValues);
+            let values_right = push_project(nodes, span, right.node, value_array, Op::MapValues);
+            let values_equal = push_eq(nodes, span, values_left, values_right);
+            let consequent = control_region(nodes, values_start, values_equal);
+            let alternative_start = nodes.len();
+            let alternative_value = lower_bool_constant(nodes, span, false);
+            let alternative = control_region(nodes, alternative_start, alternative_value.node);
+            push_node(
+                nodes,
+                span,
+                Type::Bool,
+                EffectFacts::PURE,
+                vec![keys_equal],
+                Op::If {
+                    consequent,
+                    alternative,
+                },
+            )
+        }
+        Type::Set(element) => {
+            let element_array = Type::array(element.as_ref().clone());
+            let left_values =
+                push_project(nodes, span, left.node, element_array.clone(), Op::SetValues);
+            let right_values = push_project(nodes, span, right.node, element_array, Op::SetValues);
+            push_eq(nodes, span, left_values, right_values)
+        }
+        _ => {
+            return push_node(
+                nodes,
+                span,
+                Type::Bool,
+                EffectFacts::PURE,
+                vec![left.node, right.node],
+                if negate { Op::Ne } else { Op::Eq },
+            );
+        }
+    };
+    if negate {
+        let alternative = lower_bool_constant(nodes, span, false);
+        push_eq(nodes, span, equal, alternative.node)
+    } else {
+        equal
+    }
+}
+
+fn push_project(nodes: &mut Vec<Node>, span: Span, source: NodeId, ty: Type, op: Op) -> NodeId {
+    push_node(nodes, span, ty, EffectFacts::PURE, vec![source], op)
+}
+
+fn push_eq(nodes: &mut Vec<Node>, span: Span, left: NodeId, right: NodeId) -> NodeId {
+    push_node(
+        nodes,
+        span,
+        Type::Bool,
+        EffectFacts::PURE,
+        vec![left, right],
+        Op::Eq,
+    )
 }
 
 #[derive(Clone, Copy)]
