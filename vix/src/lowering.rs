@@ -4546,43 +4546,15 @@ fn lower_array_call_node(
     });
     outputs.code.jump(done);
     outputs.code.bind(failures, node.span)?;
-    for (variant, field_count) in [(1u32, 3usize), (2u32, 2usize)] {
-        let next = outputs.code.label();
-        outputs.code.push(WeavyOp::EnumIsVariant {
-            dst: assigned.condition,
-            value: call_outcome_id,
-            variant,
-        });
-        outputs.code.jump_if_zero(scratch.condition, next);
-        for field in 0..field_count {
-            outputs.code.push(WeavyOp::EnumProjectChecked {
-                dst: assigned.fields[field],
-                value: call_outcome_id,
-                variant,
-                field: field as u32,
-            });
-        }
-        outputs.code.push(WeavyOp::EnumConstruct {
-            dst: own_outcome,
-            variant,
-            fields: (0..field_count)
-                .map(|field| StructuralFieldSource {
-                    field: field as u32,
-                    source: assigned.fields[field],
-                })
-                .collect(),
-        });
-        outputs.code.jump(return_label);
-        outputs.code.bind(next, node.span)?;
-    }
-    // Both checked selectors above validate the closed source enum; a surviving
-    // path is unreachable for a valid selector and is deliberately loud.
-    outputs.code.push(WeavyOp::EnumProjectChecked {
-        dst: assigned.fields[0],
-        value: call_outcome_id,
-        variant: 2,
-        field: 0,
-    });
+    propagate_checked_call_failure(
+        node,
+        call_outcome_id,
+        own_outcome,
+        scratch,
+        assigned,
+        return_label,
+        outputs.code,
+    )?;
     outputs.code.bind(done, node.span)?;
     representation_for_type(&node.ty, node.span)
 }
@@ -4789,23 +4761,50 @@ fn emit_checked_call_indirect(
     });
     outputs.code.jump(done);
     outputs.code.bind(failures, node.span)?;
-    for (variant, field_count) in [(1u32, 3usize), (2u32, 2usize)] {
-        let next = outputs.code.label();
-        outputs.code.push(WeavyOp::EnumIsVariant {
+    propagate_checked_call_failure(
+        node,
+        call_outcome_id,
+        own_outcome,
+        scratch,
+        assigned,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.bind(done, node.span)
+}
+
+fn propagate_checked_call_failure(
+    node: &Node,
+    call_outcome: WeavyRegionId,
+    own_outcome: WeavyRegionId,
+    scratch: OutcomeScratch,
+    assigned: AssignedOutcomeScratch,
+    return_label: CodeLabel,
+    code: &mut CodeBuilder,
+) -> Result<(), Diagnostics> {
+    for (variant, field_count) in [
+        (1u32, 3usize),
+        (2u32, 2usize),
+        (3u32, 1usize),
+        (4u32, 1usize),
+        (5u32, 2usize),
+    ] {
+        let next = code.label();
+        code.push(WeavyOp::EnumIsVariant {
             dst: assigned.condition,
-            value: call_outcome_id,
+            value: call_outcome,
             variant,
         });
-        outputs.code.jump_if_zero(scratch.condition, next);
+        code.jump_if_zero(scratch.condition, next);
         for field in 0..field_count {
-            outputs.code.push(WeavyOp::EnumProjectChecked {
+            code.push(WeavyOp::EnumProjectChecked {
                 dst: assigned.fields[field],
-                value: call_outcome_id,
+                value: call_outcome,
                 variant,
                 field: field as u32,
             });
         }
-        outputs.code.push(WeavyOp::EnumConstruct {
+        code.push(WeavyOp::EnumConstruct {
             dst: own_outcome,
             variant,
             fields: (0..field_count)
@@ -4815,16 +4814,18 @@ fn emit_checked_call_indirect(
                 })
                 .collect(),
         });
-        outputs.code.jump(return_label);
-        outputs.code.bind(next, node.span)?;
+        code.jump(return_label);
+        code.bind(next, node.span)?;
     }
-    outputs.code.push(WeavyOp::EnumProjectChecked {
+    // Every selector probe validates the closed enum. Reaching this operation
+    // is impossible for a valid selector and remains a typed dynamic fault.
+    code.push(WeavyOp::EnumProjectChecked {
         dst: assigned.fields[0],
-        value: call_outcome_id,
-        variant: 2,
+        value: call_outcome,
+        variant: 5,
         field: 0,
     });
-    outputs.code.bind(done, node.span)
+    Ok(())
 }
 
 fn lower_checked_call_value_node(
