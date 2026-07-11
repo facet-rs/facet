@@ -462,7 +462,9 @@ impl FramedNode {
                     .start(*schema, children.len() as u64)
                     .seq_len(children.len() as u64);
                 for (index, child) in children.iter().enumerate() {
-                    writer.seq_element(index as u64, *element_schema).child(*child);
+                    writer
+                        .seq_element(index as u64, *element_schema)
+                        .child(*child);
                 }
             }
         }

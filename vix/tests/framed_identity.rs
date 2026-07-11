@@ -134,7 +134,10 @@ fn identity_is_layout_independent_and_content_sensitive() {
         "identity ignores the physical resident layout"
     );
     assert_eq!(compact.handle, padded.handle);
-    assert!(padded.deduped, "distinct physical layouts of one value dedupe");
+    assert!(
+        padded.deduped,
+        "distinct physical layouts of one value dedupe"
+    );
     assert_eq!(compact.identity, node.identity());
 
     // Hold the physical resident bytes fixed; change only the semantic content.
