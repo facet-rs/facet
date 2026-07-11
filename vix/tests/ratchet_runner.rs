@@ -50,6 +50,7 @@ const RUNG_035: &str = include_str!("ratchet/035-canonical-order.vix");
 const RUNG_036: &str = include_str!("ratchet/036-multiset-fold.vix");
 const RUNG_037: &str = include_str!("ratchet/037-filter-map-flat-map.vix");
 const RUNG_039: &str = include_str!("ratchet/039-indexed-roundtrip.vix");
+const RUNG_040: &str = include_str!("ratchet/040-sorted-by.vix");
 const RUNG_041: &str = include_str!("ratchet/041-maps.vix");
 const RUNG_042: &str = include_str!("ratchet/042-map-overwrite.vix");
 const RUNG_043: &str = include_str!("ratchet/043-map-keys-canonical.vix");
@@ -1318,6 +1319,68 @@ fn rung_039_indexed_roundtrip_carries_survivor_positions_through_collect() {
         assert!(lane.checks.iter().all(|check| check.passed));
         assert_eq!(lane.counters.pure_host_calls, 0);
         assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+// Rung 040 — `.sorted where { order: by_key(|x| x.weight) }` sorts the collected
+// values by the caller-supplied `Order<Row>`. `by_key(f)` is an ordinary typed
+// Vix recipe: it compares the structural order of the extracted key `f(x)`, and
+// breaks equal keys by the structural order of the whole source row. The two
+// weight-2 rows "b" and "a" therefore settle as `a` before `b` (structural row
+// order), yielding the unchanged expected order `c, a, b`. Sorting lowers
+// entirely through the verified machine with no host call.
+#[test]
+fn rung_040_sorted_with_order_runs_through_verified_production_path() {
+    let module = Compiler::new()
+        .compile(RUNG_040)
+        .expect("rung 040 compiles through the canonical surface");
+
+    // Every lowered frame stays inside the verified machine: no host calls, and
+    // the caller's Order sorts through the same structural sort substrate as the
+    // zero-argument `.sorted()` path.
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("rung 040 lowers through verified Weavy execution");
+        assert!(lowered.program().fns.iter().all(|function| {
+            function
+                .code
+                .iter()
+                .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+        }));
+    }
+
+    let report = run_source(RUNG_040).expect("rung 040 runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+        if std::env::var("WEAVY_JIT").as_deref() == Ok("0") {
+            assert!(
+                lane.events
+                    .iter()
+                    .filter_map(|event| match event.kind {
+                        EventKind::ExecutionLane { facts, .. } => Some(facts),
+                        _ => None,
+                    })
+                    .all(|facts| matches!(
+                        facts,
+                        vix::runtime::ExecutionFacts {
+                            selected: vix::runtime::ExecutionLaneFact::Interpreter,
+                            fallback: Some(
+                                vix::runtime::ExecutionFallbackFact::DisabledByEnvironment
+                            ),
+                            ..
+                        }
+                    ))
+            );
+        }
     }
 }
 
