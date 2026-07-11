@@ -661,6 +661,9 @@ impl<'a> TypeResolver<'a> {
                 parameter: Box::new(self.resolve_type_with(&function.parameter, substitutions)?),
                 result: Box::new(self.resolve_type_with(&function.result, substitutions)?),
             }),
+            ast::Type::Array(array) => Ok(Type::array(
+                self.resolve_type_with(&array.elem, substitutions)?,
+            )),
             ast::Type::Tuple(tuple) => tuple
                 .elems
                 .iter()
@@ -1063,6 +1066,7 @@ fn lower_declared_type(
             parameter: Box::new(lower_declared_type(&function.parameter, types)?),
             result: Box::new(lower_declared_type(&function.result, types)?),
         }),
+        ast::Type::Array(array) => Ok(Type::array(lower_declared_type(&array.elem, types)?)),
         ast::Type::Tuple(tuple) => tuple
             .elems
             .iter()
@@ -3715,6 +3719,7 @@ fn expr_span(expression: &ast::Expr) -> Span {
 fn type_span(ty: &ast::Type) -> Span {
     match ty {
         ast::Type::Function(value) => value.span,
+        ast::Type::Array(value) => value.span,
         ast::Type::Generic(value) => value.span,
         ast::Type::Tuple(value) => value.span,
         ast::Type::Path(value) => value.span,

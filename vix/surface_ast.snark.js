@@ -41,6 +41,7 @@ ast({
   record_pattern: { as: "Record" },
   tuple_expr: { as: "Tuple" },
   generic_type: { as: "Generic" },
+  array_type: { as: "Array" },
   tuple_type: { as: "Tuple" },
   function_type: { as: "Function" },
   type_path: { as: "Path" },
