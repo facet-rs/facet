@@ -3454,6 +3454,7 @@ fn lower_node(
                 "array literal lowering is not implemented",
             ));
         }
+        // r[impl lang.collection.array-index]
         Op::ArrayIndex => {
             return Err(lowering_diagnostic(
                 node.span,

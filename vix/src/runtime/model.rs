@@ -46,6 +46,7 @@ pub struct TaskRecord {
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum FailureValue {
+    // r[impl machine.error.failure-source-site-identity]
     IndexOutOfBounds {
         recipe: RecipeId,
         site: u32,

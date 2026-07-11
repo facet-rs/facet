@@ -188,6 +188,7 @@ impl Store {
 }
 
 fn failure_identity(schema: SchemaId, failure: &FailureValue) -> ValueId {
+    // r[impl machine.error.failure-source-site-identity]
     match failure {
         FailureValue::IndexOutOfBounds {
             recipe,

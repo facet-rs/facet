@@ -307,6 +307,7 @@ impl<S: EventSink> Runtime<S> {
                         error,
                     )));
                 }
+                // r[impl machine.error.index-out-of-bounds]
                 Ok(DecodedResult::IndexOutOfBounds {
                     site,
                     index,
@@ -660,6 +661,7 @@ fn failure_context(
     lowered: &LoweringArtifact,
     attribution: &LoweringAttribution,
 ) -> Option<FailureContext> {
+    // r[impl machine.error.failure-source-site-identity]
     match failure {
         FailureValue::IndexOutOfBounds { recipe, site, .. } if *recipe == lowered.recipe => {
             let source = attribution.source_for_trace(*site)?;
@@ -1089,6 +1091,7 @@ fn out_of_bounds() -> Stream<Check> {
     }
 
     #[test]
+    // r[verify machine.error.failure-source-site-identity]
     fn language_failure_memo_hit_rebuilds_current_attribution_without_reexecution() {
         let module = Compiler::new()
             .compile(OUT_OF_BOUNDS_SOURCE)

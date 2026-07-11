@@ -2434,6 +2434,8 @@ fn rung_026_arrays_run_through_verified_execution_without_publication() {
 }
 
 #[test]
+// r[verify lang.collection.array-index]
+// r[verify machine.error.index-out-of-bounds]
 fn array_index_out_of_bounds_is_a_memoized_language_failure() {
     let source = r#"
 #[test]
