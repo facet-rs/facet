@@ -81,17 +81,20 @@ At the time of the latest authoritative integration checkpoint
   child-process watchdog that kills runaway native work; default run
   `4933603b-4592-4b12-abd9-f18880f24a55` and interpreter run
   `1be4cb14-7092-4da7-86e6-1358bc983144` each passed 15/15 focused checks;
-- rung 050 is the first canonical red boundary. Its preserved red checkpoint
-  is `8b618a7c4`. The canonical source now parses and its TraceCheck/budget
-  substrate is live; the remaining boundary is verifier-visible self-tail-loop
-  lowering with a cheap interior pollpoint. Ordinary recursion remains the
-  rung-049 call-frame path;
+- rung 050 is the first canonical red boundary. Its self-tail call now lowers
+  to one verifier-visible frame loop with typed next-argument staging and an
+  attributed interior backedge; the direct verified 10-million-iteration lane
+  is green. The composed canonical plain/chaos child currently reaches the
+  declared 5-second wall, so budgeted end-to-end execution—not call-frame
+  recursion—is the remaining boundary. Ordinary recursion remains the rung-049
+  call-frame path;
 - the persistent AVL core has a 200k insertion scaling oracle, but neither the
   rung-051 array certificate nor the end-to-end rung-138 Map proof is yet
-  established. Range/fold driving, shared-demand extraction,
-  molten-to-store publication, non-colliding live/frozen handles, the identity
-  epoch's closed framed writer, and production arena observability remain
-  explicit seams;
+  established. The explicit framed value-identity epoch, compact inline
+  sequence writer, semantic tree, and `Store::intern_tree` identity monopoly
+  are folded at `e5e82357b`. Range/fold driving, shared-demand extraction,
+  molten-to-store publication, non-colliding live/frozen handles, and
+  production arena observability remain explicit seams;
 - the Cargo fixture harness exists in `vix/tests/rodin_fixtures.rs` and its Cargo
   side is independently runnable;
 - rungs 098 and 100 still use a recorded `expected_selection()` from the deleted
