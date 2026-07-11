@@ -178,6 +178,19 @@ impl LoweringArtifact {
         &self.executable
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_test_verified_executable(&self, executable: Executable) -> Self {
+        Self {
+            recipe: self.recipe,
+            demand_key: self.demand_key,
+            demand_preimage: self.demand_preimage.clone(),
+            executable,
+            array_outcome: self.array_outcome.clone(),
+            pc_nodes: self.pc_nodes.clone(),
+            constants: self.constants.clone(),
+        }
+    }
+
     #[must_use]
     pub fn node_for_pc(&self, frame: u32, pc: u32) -> Option<NodeRef> {
         self.pc_nodes

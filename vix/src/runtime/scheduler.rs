@@ -849,9 +849,9 @@ mod tests {
     use crate::compiler::Compiler;
     use crate::lowering::{LoweringCache, attribution_for};
     use crate::runtime::{EventLog, MachineCause};
-    use weavy::ValueShapeRef;
+    use weavy::{Executable, ValueShapeRef};
     use weavy::exec::{DriveTable, TaskFault};
-    use weavy::task::Op;
+    use weavy::task::{ArrayOpStatus, Op};
 
     const ENUM_SOURCE: &str = r#"
 enum Outcome {
@@ -883,6 +883,70 @@ fn out_of_bounds() -> Stream<Check> {
             .get_or_lower(island)
             .expect("source lowers through verified executable");
         inspect(artifact, &attribution);
+    }
+
+    fn array_machine_result_artifact(
+        artifact: &LoweringArtifact,
+        status: ArrayOpStatus,
+    ) -> LoweringArtifact {
+        let mut program = artifact.program().clone();
+        let contract = artifact.contract().clone();
+        let code = &artifact.program().fns[0].code;
+        let (construct_at, result_region, fields) = code
+            .iter()
+            .enumerate()
+            .find_map(|(pc, op)| match op {
+                Op::EnumConstruct {
+                    dst,
+                    variant: 2,
+                    fields,
+                } => Some((pc, *dst, fields.clone())),
+                _ => None,
+            })
+            .expect("array lowering emits an ArrayMachine reconstruction");
+        let site = match code.get(construct_at.checked_sub(2).expect("site constant precedes")) {
+            Some(Op::ConstI64 { value, .. }) => *value,
+            op => panic!("array machine site uses a static scalar constant: {op:?}"),
+        };
+        let field_offset = |field: usize| {
+            let region = fields
+                .get(field)
+                .expect("array machine field exists")
+                .source;
+            contract.functions[0].frame.regions[region.0 as usize].offset
+        };
+        let result = contract.functions[0].result;
+        let result_region_contract = &contract.functions[0].frame.regions[result.0 as usize];
+        let result_size = u32::try_from(
+            result_region_contract
+                .shape
+                .checked_byte_len()
+                .expect("declared outcome size fits"),
+        )
+        .expect("declared outcome size is a bytecode size");
+        program.fns[0].code = vec![
+            Op::ConstI64 {
+                dst: field_offset(0),
+                value: site,
+            },
+            Op::ConstI64 {
+                dst: field_offset(1),
+                value: status as i64,
+            },
+            Op::EnumConstruct {
+                dst: result_region,
+                variant: 2,
+                fields,
+            },
+            Op::Ret {
+                src: result_region_contract.offset,
+                size: result_size,
+            },
+        ];
+        let verified = program
+            .verify(contract)
+            .expect("the declared ArrayMachine result remains verifier-admitted");
+        artifact.with_test_verified_executable(Executable::new(verified))
     }
 
     #[test]
@@ -1127,5 +1191,53 @@ fn out_of_bounds() -> Stream<Check> {
                 .count(),
             1
         );
+    }
+
+    #[test]
+    fn verified_array_machine_result_is_never_a_language_failure_or_memo() {
+        with_lowered(OUT_OF_BOUNDS_SOURCE, |artifact, attribution| {
+            let artifact = array_machine_result_artifact(artifact, ArrayOpStatus::InvalidHandle);
+            let mut runtime = Runtime::new(EventLog::default());
+            let location = Location::for_test_island("out_of_bounds", 0);
+            let error = runtime
+                .evaluate(
+                    IslandId(0),
+                    &location,
+                    &artifact,
+                    attribution,
+                    ChaosPolicy::default(),
+                )
+                .expect_err("non-OutOfRange status is a machine error");
+
+            assert!(matches!(
+                error.cause,
+                MachineCause::Runtime(RuntimeFault::ArrayMachineStatus {
+                    status: ArrayOpStatus::InvalidHandle,
+                    ..
+                })
+            ));
+            assert!(runtime
+                .tasks()
+                .all(|task| task.state == TaskState::Failed));
+            assert!(runtime
+                .demands()
+                .all(|demand| demand.state == DemandState::MachineFailed));
+            assert!(runtime.memo.is_empty());
+            assert!(runtime
+                .store()
+                .inspect()
+                .all(|entry| entry.failure().is_none()));
+            assert!(!runtime.sink().events().iter().any(|event| matches!(
+                event.kind,
+                EventKind::LanguageFailed { .. }
+            )));
+            assert!(runtime.sink().events().iter().any(|event| matches!(
+                event.kind,
+                EventKind::MachineFailed {
+                    operation: MachineOperation::Result,
+                    ..
+                }
+            )));
+        });
     }
 }
