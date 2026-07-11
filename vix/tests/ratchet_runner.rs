@@ -48,6 +48,7 @@ const RUNG_033: &str = include_str!("ratchet/033-multiset-conversion.vix");
 const RUNG_034: &str = include_str!("ratchet/034-multiset-filter.vix");
 const RUNG_035: &str = include_str!("ratchet/035-canonical-order.vix");
 const RUNG_036: &str = include_str!("ratchet/036-multiset-fold.vix");
+const RUNG_038: &str = include_str!("ratchet/038-find-split-min-max.vix");
 const RUNG_041: &str = include_str!("ratchet/041-maps.vix");
 const RUNG_042: &str = include_str!("ratchet/042-map-overwrite.vix");
 const RUNG_043: &str = include_str!("ratchet/043-map-keys-canonical.vix");
@@ -857,6 +858,98 @@ fn rung_034_stream_filter_preserves_survivor_keys() {
     assert!(report.passed());
     assert!(report.agrees());
     assert_eq!(report.plain.checks.len(), 4);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+// Rung 038 — deterministic selection (`find_min`/`find_max`) and decomposition
+// (`split_min`). `find_min`/`find_max` retain the stream and return `Option<V>`,
+// invoking the predicate through the verified callable ABI; `split_min` removes
+// exactly one selected element and returns `Option<(V, Stream<K, V>)>`. Values
+// are compared in structural-semantic order with the stable stream key as the
+// tie-breaker, so a duplicate equal value remains in the rest.
+#[test]
+fn rung_038_selection_and_decomposition_compiles() {
+    let module = Compiler::new()
+        .compile(RUNG_038)
+        .expect("rung 038 compiles selection and decomposition into typed stream VIR");
+    assert_eq!(module.tests.len(), 1);
+    let test = &module.tests[0];
+    assert_eq!(test.name, "find_split_min_max");
+    let function = &module.functions[test.function.0 as usize];
+
+    // `find_min`/`find_max` are structural-order selections over the retained
+    // stream: each returns `Option<Int>` while the stream is not consumed.
+    let selections = function
+        .nodes
+        .iter()
+        .filter(|node| node.ty == VirType::option(VirType::Int))
+        .count();
+    assert!(
+        selections >= 2,
+        "find_min and find_max each select an Option<Int> from the retained stream"
+    );
+
+    // `split_min` decomposes the stream into the selected value and the ordered
+    // rest, keeping duplicate equal values: `Option<(Int, Stream<Int, Int>)>`.
+    let decomposition = function.nodes.iter().any(|node| {
+        node.ty
+            == VirType::option(VirType::Tuple(vec![
+                VirType::Int,
+                VirType::stream(VirType::Int, VirType::Int),
+            ]))
+    });
+    assert!(
+        decomposition,
+        "split_min returns the selected value paired with the ordered stream rest"
+    );
+
+    // The `match` over `split_min` makes the generator branch-dependent: the
+    // taken Some arm publishes three checks, the untaken None arm one.
+    assert!(test.generator.has_conditional_sites());
+}
+
+// The whole rung 038 test is one branch-dependent generator (its `match` over
+// `split_min` owns the Some/None yield sites), so — exactly like rung 031 — the
+// static runner reaches the explicit typed generator seam rather than silently
+// dropping the checks the untaken arm would never publish. When the parallel
+// provenance-keyed codata bridge lands, the unchanged rung executes with three
+// passing Some-arm checks and no None-arm phantom.
+#[test]
+fn rung_038_reaches_explicit_runtime_seam() {
+    match run_source(RUNG_038) {
+        Err(RunError::UnsupportedGenerator { test }) => assert_eq!(test, "find_split_min_max"),
+        other => panic!("expected explicit generator runtime seam, got {other:?}"),
+    }
+}
+
+// The selection primitives and the stream cardinality/membership queries execute
+// end-to-end through the verified production path, independent of the still-open
+// generator seam that gates `split_min`'s decomposition. A flat generator (no
+// branch-dependent yield site) exercises `find_min`/`find_max` invoking the
+// predicate through the callable ABI, plus `len`/`contains` over the retained
+// keyed codata.
+#[test]
+fn rung_038_selection_executes_on_verified_path() {
+    const SOURCE: &str = r#"
+#[test]
+fn selection() -> Stream<Check> {
+    let ms = [5, 3, 9, 3].stream();
+    yield expect_eq(ms.find_min(|n| n > 3), Some(5));
+    yield expect_eq(ms.find_max(|_| true), Some(9));
+    yield expect_eq(ms.len(), 4);
+    yield expect(ms.contains(3));
+    yield expect(!ms.contains(7));
+}
+"#;
+    let report =
+        run_source(SOURCE).expect("stream selection executes through verified production path");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 5);
     assert_eq!(report.plain.checks, report.chaos.checks);
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.pure_host_calls, 0);
