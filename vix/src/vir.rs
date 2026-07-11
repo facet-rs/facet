@@ -205,6 +205,8 @@ pub struct YieldSite {
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct GeneratorArm {
     pub variant: u32,
+    /// A pure Bool node that is true exactly when this arm is selected.
+    pub condition: NodeId,
     /// Nodes binding the arm pattern's payload projections.
     pub bindings: Vec<NodeId>,
     pub body: GeneratorBody,
@@ -736,6 +738,16 @@ pub enum Op {
     StreamFlatMap,
     /// Materialize a keyed codata recipe as its canonical Map value.
     StreamCollect,
+    /// Select the structurally-least value whose row satisfies a typed
+    /// predicate, breaking ties by the stable stream key, retaining the stream.
+    StreamFindMin,
+    /// Select the structurally-greatest value whose row satisfies a typed
+    /// predicate, breaking ties by the stable stream key, retaining the stream.
+    StreamFindMax,
+    /// Remove exactly the structurally-least row (stable key tie-break) from a
+    /// keyed codata recipe, realizing the remaining values as a fresh dense
+    /// array in canonical structural key order with the selected row omitted.
+    StreamSplitMin,
     /// Concatenate two immutable strings.
     StringConcat,
 }
@@ -924,43 +936,51 @@ impl Module {
             .iter()
             .enumerate()
             .map(|(index, &output)| {
-                let mut needed = BTreeSet::new();
-                collect_dependencies(function, output, &mut needed);
-                let mut nodes = function
-                    .nodes
-                    .iter()
-                    .filter(|node| needed.contains(&node.id))
-                    .cloned()
-                    .collect::<Vec<_>>();
-                prune_control_regions(&mut nodes, &needed);
-                let mut seen = BTreeSet::from([function.id]);
-                let mut callees = Vec::new();
-                collect_callees(self, &nodes, &mut seen, &mut callees);
-                let mut array_map_partitions =
-                    collect_array_map_partitions(function.id, &nodes, output);
-                for callee in &callees {
-                    if let Some(output) = callee.output {
-                        array_map_partitions.extend(collect_array_map_partitions(
-                            callee.id,
-                            &callee.nodes,
-                            output,
-                        ));
-                    }
-                }
-                Island {
-                    id: IslandId(index as u32),
-                    function: function.id,
-                    function_name: function.name.clone(),
-                    nodes,
-                    output,
-                    callees,
-                    array_map_partitions,
-                }
+                self.partition_function_output(function, output, IslandId(index as u32))
             })
             .collect();
         PartitionedTest {
             name: test.name.clone(),
             islands,
+        }
+    }
+
+    fn partition_function_output(
+        &self,
+        function: &Function,
+        output: NodeId,
+        id: IslandId,
+    ) -> Island {
+        let mut needed = BTreeSet::new();
+        collect_dependencies(function, output, &mut needed);
+        let mut nodes = function
+            .nodes
+            .iter()
+            .filter(|node| needed.contains(&node.id))
+            .cloned()
+            .collect::<Vec<_>>();
+        prune_control_regions(&mut nodes, &needed);
+        let mut seen = BTreeSet::from([function.id]);
+        let mut callees = Vec::new();
+        collect_callees(self, &nodes, &mut seen, &mut callees);
+        let mut array_map_partitions = collect_array_map_partitions(function.id, &nodes, output);
+        for callee in &callees {
+            if let Some(output) = callee.output {
+                array_map_partitions.extend(collect_array_map_partitions(
+                    callee.id,
+                    &callee.nodes,
+                    output,
+                ));
+            }
+        }
+        Island {
+            id,
+            function: function.id,
+            function_name: function.name.clone(),
+            nodes,
+            output,
+            callees,
+            array_map_partitions,
         }
     }
 
@@ -1557,6 +1577,9 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             op.push(58);
             op.extend_from_slice(&site.0.to_le_bytes());
         }
+        Op::StreamFindMin => op.push(59),
+        Op::StreamFindMax => op.push(60),
+        Op::StreamSplitMin => op.push(61),
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());

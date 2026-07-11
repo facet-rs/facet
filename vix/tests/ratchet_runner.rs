@@ -49,6 +49,7 @@ const RUNG_034: &str = include_str!("ratchet/034-multiset-filter.vix");
 const RUNG_035: &str = include_str!("ratchet/035-canonical-order.vix");
 const RUNG_036: &str = include_str!("ratchet/036-multiset-fold.vix");
 const RUNG_037: &str = include_str!("ratchet/037-filter-map-flat-map.vix");
+const RUNG_038: &str = include_str!("ratchet/038-find-split-min-max.vix");
 const RUNG_039: &str = include_str!("ratchet/039-indexed-roundtrip.vix");
 const RUNG_040: &str = include_str!("ratchet/040-sorted-by.vix");
 const RUNG_041: &str = include_str!("ratchet/041-maps.vix");
@@ -860,6 +861,149 @@ fn rung_034_stream_filter_preserves_survivor_keys() {
     assert!(report.passed());
     assert!(report.agrees());
     assert_eq!(report.plain.checks.len(), 4);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+// Rung 038 — deterministic selection (`find_min`/`find_max`) and decomposition
+// (`split_min`). `find_min`/`find_max` retain the stream and return `Option<V>`,
+// invoking the predicate through the verified callable ABI; `split_min` removes
+// exactly one selected element and returns `Option<(V, [V])>`. Values
+// are compared in structural-semantic order with the stable stream key as the
+// tie-breaker, so a duplicate equal value remains in the rest.
+#[test]
+fn rung_038_selection_and_decomposition_compiles() {
+    let module = Compiler::new()
+        .compile(RUNG_038)
+        .expect("rung 038 compiles selection and decomposition into typed stream VIR");
+    assert_eq!(module.tests.len(), 1);
+    let test = &module.tests[0];
+    assert_eq!(test.name, "find_split_min_max");
+    let function = &module.functions[test.function.0 as usize];
+
+    // `find_min`/`find_max` are structural-order selections over the retained
+    // stream: each is a distinct op returning `Option<Int>` while the stream is
+    // not consumed.
+    let find_min = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamFindMin))
+        .expect("find_min is a distinct selection op");
+    let find_max = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamFindMax))
+        .expect("find_max is a distinct selection op");
+    assert_eq!(find_min.ty, VirType::option(VirType::Int));
+    assert_eq!(find_max.ty, VirType::option(VirType::Int));
+
+    // `split_min` decomposes the stream into the selected value and the ordered
+    // dense remainder, keeping duplicate equal values: `Option<(Int, [Int])>`.
+    let split_min = function
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamSplitMin))
+        .expect("split_min is a distinct decomposition op");
+    assert_eq!(
+        split_min.ty,
+        VirType::option(VirType::Tuple(vec![
+            VirType::Int,
+            VirType::array(VirType::Int),
+        ])),
+        "split_min returns the selected value paired with the ordered dense remainder"
+    );
+
+    // The `match` over `split_min` makes the generator branch-dependent: the
+    // taken Some arm publishes three checks, the untaken None arm one.
+    assert!(test.generator.has_conditional_sites());
+}
+
+// The whole rung 038 fixture is a branch-dependent generator (its `match` over
+// `split_min` owns the Some/None yield sites). The checked lowering executes the
+// taken Some arm and does not publish the untaken None-arm check.
+#[test]
+fn rung_038_executes_on_verified_path() {
+    let report = run_source(RUNG_038).expect("rung 038 executes through verified production path");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 5);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+// `find_min`/`find_max` execute through the verified callable ABI without
+// consuming their keyed-codata source. Stream completion is explicit through
+// `split_min`'s `[V]` result, whose Array methods own cardinality and membership.
+#[test]
+fn rung_038_selection_executes_on_verified_path() {
+    const SOURCE: &str = r#"
+#[test]
+fn selection() -> Stream<Check> {
+    let ms = [5, 3, 9, 3].stream();
+    yield expect_eq(ms.find_min(|n| n > 3), Some(5));
+    yield expect_eq(ms.find_min(|_| true), Some(3));
+    yield expect_eq(ms.find_max(|_| true), Some(9));
+    yield expect_none(ms.find_min(|n| n > 100));
+}
+"#;
+    let report =
+        run_source(SOURCE).expect("stream selection executes through verified production path");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 4);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+// `split_min` realizes a dense remainder at completion, so the selected key is
+// omitted once while an equal duplicate at another key remains. This is driven
+// through the production path independently of the canonical fixture.
+#[test]
+fn rung_038_split_min_executes_on_verified_path() {
+    const SOURCE: &str = r#"
+#[test]
+fn decompose() -> Stream<Check> {
+    let ms = [5, 3, 9, 3].stream();
+    yield match ms.split_min() {
+        Some((least, rest)) => {
+            yield expect_eq(least, 3);
+            yield expect_eq(rest, [5, 9, 3]);
+        },
+        None => expect(false),
+    };
+    let empty: [Int] = [];
+    yield expect_none(empty.stream().split_min());
+}
+"#;
+    let compilation = Compiler::new()
+        .compile(SOURCE)
+        .expect("split_min compiles to typed decomposition VIR");
+    let split_min = compilation.functions[0]
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::StreamSplitMin))
+        .expect("split_min lowers to a distinct decomposition op");
+    assert_eq!(
+        split_min.ty,
+        VirType::option(VirType::Tuple(vec![
+            VirType::Int,
+            VirType::array(VirType::Int),
+        ]))
+    );
+
+    let report = run_source(SOURCE).expect("split_min executes through verified production path");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 3);
     assert_eq!(report.plain.checks, report.chaos.checks);
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.pure_host_calls, 0);
