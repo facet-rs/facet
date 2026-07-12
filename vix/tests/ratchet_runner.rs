@@ -68,6 +68,7 @@ const RUNG_049: &str = include_str!("ratchet/049-recursion.vix");
 const RUNG_050: &str = include_str!("ratchet/050-deep-tail-recursion.vix");
 const RUNG_052: &str = include_str!("ratchet/052-higher-order.vix");
 const RUNG_060: &str = include_str!("ratchet/060-snapshot-record.vix");
+const RUNG_061: &str = include_str!("ratchet/061-snapshot-canonical.vix");
 const RUNG_138: &str = include_str!("ratchet/138-map-accumulator.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
 const RUNG_145: &str = include_str!("ratchet/145-push.reject.vix");
@@ -5809,5 +5810,25 @@ fn rung_060_snapshots_render_any_value_structurally() {
     assert_eq!(
         snapshot.rendered,
         "Dep {\n    name: \"mio\",\n    req: \"^0.8\",\n    optional: false,\n}"
+    );
+}
+
+#[test]
+fn rung_061_snapshots_sorted_stream_values_are_canonical() {
+    // Snapshotting a sorted stream projection renders in canonical value order,
+    // stable forever: alpha, beta, gamma regardless of authored order.
+    let report = run_source(RUNG_061).expect("rung 061 compiles and runs");
+    assert!(report.passed(), "rung 061 snapshot check passes");
+    assert!(report.agrees(), "plain and chaos lanes agree on the snapshot");
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    let snapshot = report.plain.checks[0]
+        .snapshot
+        .as_ref()
+        .expect("rung 061 yields a snapshot check");
+    assert_eq!(snapshot.name, "greek-letters");
+    assert_eq!(
+        snapshot.rendered,
+        "[\n    \"alpha\",\n    \"beta\",\n    \"gamma\",\n]"
     );
 }
