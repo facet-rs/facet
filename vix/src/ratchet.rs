@@ -507,8 +507,8 @@ fn run_lane(
                 .generator
                 .as_ref()
                 .expect("conditional test has a partitioned generator");
-            let lowered = cache.get_or_lower(&generator)?;
-            let attribution = attribution_for(&generator);
+            let lowered = cache.get_or_lower(generator)?;
+            let attribution = attribution_for(generator);
             let arguments = generator
                 .value_inputs
                 .iter()
