@@ -2489,6 +2489,80 @@ fn vix_string_set(values: impl IntoIterator<Item = impl AsRef<str>>) -> String {
     format!("%[{values}]")
 }
 
+fn vix_feature_rules(
+    krate: &FixtureCrate,
+    by_name: &BTreeMap<String, CargoPackageId>,
+    package_fn: &BTreeMap<CargoPackageId, String>,
+) -> Result<String, String> {
+    let dependency = |name: &str| -> Result<(&FixtureDep, &str), String> {
+        krate
+            .deps
+            .iter()
+            .find(|dependency| dependency.name == name)
+            .map(|dependency| (dependency, dependency.name.as_str()))
+            .ok_or_else(|| {
+                format!(
+                    "feature of {:?} names absent dependency {name:?}",
+                    krate.name
+                )
+            })
+    };
+    let effect_for = |enable: &str| -> Result<String, String> {
+        if let Some(name) = enable.strip_prefix("dep:") {
+            let (dependency, name) = dependency(name)?;
+            let package = &package_fn[&by_name[name]];
+            return Ok(format!(
+                "FeatureEffect::Activate {{ package: {package}, kind: {} }}",
+                vix_dependency_kind(dependency.kind)
+            ));
+        }
+        if let Some((name, feature)) = enable.split_once("?/") {
+            let (dependency, name) = dependency(name)?;
+            let package = &package_fn[&by_name[name]];
+            return Ok(format!(
+                "FeatureEffect::Weak {{ package: {package}, kind: {}, feature: {} }}",
+                vix_dependency_kind(dependency.kind),
+                vix_string(feature)
+            ));
+        }
+        if let Some((name, feature)) = enable.split_once('/') {
+            let (dependency, name) = dependency(name)?;
+            let package = &package_fn[&by_name[name]];
+            return Ok(format!(
+                "FeatureEffect::Strong {{ package: {package}, kind: {}, feature: {} }}",
+                vix_dependency_kind(dependency.kind),
+                vix_string(feature)
+            ));
+        }
+        Ok(format!("FeatureEffect::Local({})", vix_string(enable)))
+    };
+
+    let mut rules = Vec::new();
+    for (name, enables) in &krate.features {
+        let effects = enables
+            .iter()
+            .map(|enable| effect_for(enable))
+            .collect::<Result<Vec<_>, _>>()?
+            .join(", ");
+        rules.push(format!(
+            "FeatureRule {{ name: {}, effects: [{effects}] }}",
+            vix_string(name)
+        ));
+    }
+    let explicit = explicit_optional_dep_features(krate);
+    for dependency in &krate.deps {
+        if dependency.optional && !explicit.contains(&dependency.name) {
+            let package = &package_fn[&by_name[&dependency.name]];
+            rules.push(format!(
+                "FeatureRule {{ name: {}, effects: [FeatureEffect::Activate {{ package: {package}, kind: {} }}] }}",
+                vix_string(&dependency.name),
+                vix_dependency_kind(dependency.kind)
+            ));
+        }
+    }
+    Ok(format!("[{}]", rules.join(", ")))
+}
+
 fn native_target_facts(triple: &str) -> Result<String, String> {
     let (atom, os) = match triple {
         LINUX => ("unix", "linux"),
@@ -2578,15 +2652,10 @@ impl Fixture {
                 })
                 .collect::<Result<Vec<_>, String>>()?
                 .join(", ");
-            if !krate.features.is_empty() {
-                return Err(format!(
-                    "feature rule adapter is not yet available for fixture crate {:?}",
-                    krate.name
-                ));
-            }
+            let features = vix_feature_rules(krate, &by_name, &package_fn)?;
             writeln!(
                 source,
-                "            {package_expr} => [PackageRow {{ package: {package_expr}, version: parse_version({}), dependencies: [{dependencies}], features: [], yanked: false, links: None, provenance: {} }}],",
+                "            {package_expr} => [PackageRow {{ package: {package_expr}, version: parse_version({}), dependencies: [{dependencies}], features: {features}, yanked: false, links: None, provenance: {} }}],",
                 vix_string(&package.version),
                 vix_string(&format!("{}/Cargo.toml", krate.name)),
             )
@@ -2673,20 +2742,23 @@ fn native_cargo_oracles() -> Stream<Check> {
     }
 }
 
-#[test]
-fn native_rodin_kernel_matches_live_cargo_line_oracles() {
-    let fixture = line_fixture("native-live-cargo-line");
-    let workspace = fixture.materialize().expect("materialize line fixture");
+fn assert_native_kernel_matches_cargo(fixture: &Fixture, workspace: &Path, triple: &str) {
     let adapter = fixture
-        .native_kernel_oracle_source(&workspace, LINUX)
-        .expect("project Cargo line oracles into typed Vix values");
+        .native_kernel_oracle_source(workspace, triple)
+        .unwrap_or_else(|error| panic!("project Cargo oracles for {}: {error}", fixture.name));
     let source = format!("{STD_VERSION}\n{NATIVE_RODIN_KERNEL}\n{adapter}");
-    let report = run_source(&source).expect("native Rodin kernel runs against live Cargo oracles");
+    let report = run_source(&source)
+        .unwrap_or_else(|error| panic!("native Rodin kernel runs {}: {error:?}", fixture.name));
     assert!(
         report.passed(),
-        "Cargo line differential passes: {report:?}"
+        "Cargo differential passes for {} on {triple}: {report:?}",
+        fixture.name
     );
-    assert!(report.agrees(), "plain and chaos agree");
+    assert!(
+        report.agrees(),
+        "plain and chaos agree for {} on {triple}",
+        fixture.name
+    );
     assert_eq!(report.plain.checks.len(), 1);
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.pure_host_calls, 0);
@@ -2695,24 +2767,56 @@ fn native_rodin_kernel_matches_live_cargo_line_oracles() {
 }
 
 #[test]
+fn native_rodin_kernel_matches_live_cargo_line_oracles() {
+    let fixture = line_fixture("native-live-cargo-line");
+    let workspace = fixture.materialize().expect("materialize line fixture");
+    assert_native_kernel_matches_cargo(&fixture, &workspace, LINUX);
+}
+
+#[test]
 fn native_rodin_kernel_matches_live_cargo_target_oracles() {
     let fixture = direct_target_fixture("native-live-cargo-target");
     let workspace = fixture.materialize().expect("materialize target fixture");
     for triple in [LINUX, WINDOWS] {
-        let adapter = fixture
-            .native_kernel_oracle_source(&workspace, triple)
-            .expect("project Cargo target oracles into typed Vix values");
-        let source = format!("{STD_VERSION}\n{NATIVE_RODIN_KERNEL}\n{adapter}");
-        let report = run_source(&source).expect("native Rodin kernel runs target differential");
-        assert!(
-            report.passed(),
-            "Cargo target differential passes for {triple}: {report:?}"
-        );
-        assert!(report.agrees(), "plain and chaos agree for {triple}");
-        assert_eq!(report.plain.checks.len(), 1);
-        for lane in [&report.plain, &report.chaos] {
-            assert_eq!(lane.counters.pure_host_calls, 0);
-            assert_eq!(lane.receipt_count, 0);
+        assert_native_kernel_matches_cargo(&fixture, &workspace, triple);
+    }
+}
+
+#[test]
+fn native_rodin_kernel_matches_live_cargo_feature_oracles() {
+    let fixture = feature_unification_fixture("native-live-cargo-features");
+    let workspace = fixture
+        .materialize()
+        .expect("materialize feature-unification fixture");
+    assert_native_kernel_matches_cargo(&fixture, &workspace, LINUX);
+}
+
+#[test]
+fn native_rodin_kernel_matches_live_cargo_policy_oracles() {
+    let cases = [
+        (
+            weak_feature_fixture("native-live-cargo-weak-feature"),
+            vec![LINUX],
+        ),
+        (
+            feature_target_fixture("native-live-cargo-feature-target"),
+            vec![LINUX, WINDOWS],
+        ),
+        (
+            cfg_combinator_fixture("native-live-cargo-cfg-combinators"),
+            vec![LINUX, WINDOWS],
+        ),
+        (
+            edge_kind_fixture("native-live-cargo-edge-kinds"),
+            vec![LINUX],
+        ),
+    ];
+    for (fixture, targets) in cases {
+        let workspace = fixture
+            .materialize()
+            .unwrap_or_else(|error| panic!("materialize {}: {error}", fixture.name));
+        for triple in targets {
+            assert_native_kernel_matches_cargo(&fixture, &workspace, triple);
         }
     }
 }
@@ -2730,6 +2834,92 @@ fn direct_target_fixture(name: &str) -> Fixture {
     Fixture::new(name, "app")
         .krate(FixtureCrate::new("winthing"))
         .krate(FixtureCrate::new("app").dep(FixtureDep::new("winthing").target("cfg(windows)")))
+}
+
+fn feature_unification_fixture(name: &str) -> Fixture {
+    Fixture::new(name, "app")
+        .krate(FixtureCrate::new("left_dep"))
+        .krate(FixtureCrate::new("right_dep"))
+        .krate(
+            FixtureCrate::new("shared")
+                .feature("left", &["dep:left_dep"])
+                .feature("right", &["dep:right_dep"])
+                .dep(FixtureDep::new("left_dep").optional())
+                .dep(FixtureDep::new("right_dep").optional()),
+        )
+        .krate(
+            FixtureCrate::new("a").dep(
+                FixtureDep::new("shared")
+                    .default_features(false)
+                    .feature("left"),
+            ),
+        )
+        .krate(
+            FixtureCrate::new("b").dep(
+                FixtureDep::new("shared")
+                    .default_features(false)
+                    .feature("right"),
+            ),
+        )
+        .krate(
+            FixtureCrate::new("app")
+                .dep(FixtureDep::new("a"))
+                .dep(FixtureDep::new("b")),
+        )
+}
+
+fn weak_feature_fixture(name: &str) -> Fixture {
+    Fixture::new(name, "app")
+        .krate(FixtureCrate::new("helper").feature("extra", &[]))
+        .krate(
+            FixtureCrate::new("lib")
+                .feature("default", &["weak"])
+                .feature("weak", &["helper?/extra"])
+                .dep(FixtureDep::new("helper").optional()),
+        )
+        .krate(FixtureCrate::new("app").dep(FixtureDep::new("lib")))
+}
+
+fn feature_target_fixture(name: &str) -> Fixture {
+    Fixture::new(name, "app")
+        .krate(FixtureCrate::new("platform"))
+        .krate(
+            FixtureCrate::new("lib")
+                .feature("default", &["bundle-platform"])
+                .feature("bundle-platform", &["dep:platform"])
+                .dep(
+                    FixtureDep::new("platform")
+                        .optional()
+                        .target("cfg(windows)"),
+                ),
+        )
+        .krate(FixtureCrate::new("app").dep(FixtureDep::new("lib")))
+}
+
+fn cfg_combinator_fixture(name: &str) -> Fixture {
+    Fixture::new(name, "app")
+        .krate(FixtureCrate::new("unix_x64"))
+        .krate(FixtureCrate::new("win_os"))
+        .krate(
+            FixtureCrate::new("app")
+                .dep(
+                    FixtureDep::new("unix_x64")
+                        .target(r#"cfg(all(unix, target_arch = "x86_64", not(windows)))"#),
+                )
+                .dep(FixtureDep::new("win_os").target(r#"cfg(target_os = "windows")"#)),
+        )
+}
+
+fn edge_kind_fixture(name: &str) -> Fixture {
+    Fixture::new(name, "app")
+        .krate(FixtureCrate::new("testonly"))
+        .krate(FixtureCrate::new("gen"))
+        .krate(FixtureCrate::new("lib").dep(FixtureDep::new("testonly").kind(DepKind::Dev)))
+        .krate(
+            FixtureCrate::new("app")
+                .dep(FixtureDep::new("lib"))
+                .dep(FixtureDep::new("gen").kind(DepKind::Build)),
+        )
 }
 
 fn selected_named(oracle: &SelectionOracle, name: &str) -> CargoPackageId {

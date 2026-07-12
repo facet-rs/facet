@@ -50,9 +50,9 @@ struct Dependency {
 
 enum FeatureEffect {
     Local(String),
-    Activate(PackageId),
-    Strong { package: PackageId, feature: String },
-    Weak { package: PackageId, feature: String },
+    Activate { package: PackageId, kind: DependencyKind },
+    Strong { package: PackageId, kind: DependencyKind, feature: String },
+    Weak { package: PackageId, kind: DependencyKind, feature: String },
 }
 
 struct FeatureRule {
@@ -150,6 +150,7 @@ struct DeadRegion {
 struct SolverState {
     active: Set<PackageId>,
     graph_active: Set<PackageId>,
+    activated_optional: Set<ResolvedEdge>,
     domains: Map<PackageId, VersionSet>,
     selected: Map<PackageId, SelectedPackage>,
     features: Map<PackageId, Set<String>>,
@@ -184,6 +185,7 @@ fn empty_state() -> SolverState {
     SolverState {
         active: %[],
         graph_active: %[],
+        activated_optional: %[],
         domains: %{},
         selected: %{},
         features: %{},
@@ -413,8 +415,68 @@ fn add_dependency_features(state: SolverState) where { dependency: Dependency } 
     }
 }
 
+fn dependency_key(from: PackageId) where { dependency: Dependency } -> ResolvedEdge {
+    ResolvedEdge { from, to: dependency.package, kind: dependency.kind }
+}
+
+fn apply_feature_effects(effects: [FeatureEffect]) where { state: SolverState, from: PackageId } -> SolverState {
+    match effects.split_last() {
+        None => state,
+        Some((effect, rest)) => {
+            let next = match effect {
+                FeatureEffect::Local(feature) => with_features(state) where {
+                    package: from,
+                    features: feature_set(state) where { package: from } + feature,
+                },
+                FeatureEffect::Activate { package, kind } => SolverState {
+                    activated_optional: state.activated_optional + ResolvedEdge { from, to: package, kind },
+                    ..state
+                },
+                FeatureEffect::Strong { package, kind, feature } => {
+                    let activated = SolverState {
+                        activated_optional: state.activated_optional + ResolvedEdge { from, to: package, kind },
+                        ..state
+                    };
+                    with_features(activated) where {
+                        package,
+                        features: feature_set(activated) where { package } + feature,
+                    }
+                },
+                FeatureEffect::Weak { package, kind, feature } => {
+                    if state.activated_optional.has(ResolvedEdge { from, to: package, kind }) {
+                        with_features(state) where {
+                            package,
+                            features: feature_set(state) where { package } + feature,
+                        }
+                    } else {
+                        state
+                    }
+                },
+            };
+            apply_feature_effects(rest) where { state: next, from }
+        },
+    }
+}
+
+fn apply_feature_rules(rules: [FeatureRule]) where { state: SolverState, from: PackageId } -> SolverState {
+    match rules.split_last() {
+        None => state,
+        Some((rule, rest)) => {
+            let enabled = feature_set(state) where { package: from };
+            let next = if enabled.has(rule.name) {
+                apply_feature_effects(rule.effects) where { state, from }
+            } else {
+                state
+            };
+            apply_feature_rules(rest) where { state: next, from }
+        },
+    }
+}
+
 fn apply_dependency(input: SolveInput) where { state: SolverState, from: PackageId, dependency: Dependency, force_optional: Bool, provenance: String } -> StateStep {
-    if dependency.optional && !force_optional {
+    let key = dependency_key(from) where { dependency };
+    let enabled = !dependency.optional || force_optional || state.activated_optional.has(key);
+    if !enabled {
         StateStep::Pass(state)
     } else {
         let with_edge = if state.graph_active.has(from)
@@ -471,7 +533,7 @@ fn apply_selected(input: SolveInput) where { state: SolverState, packages: [Pack
                     provenance: ["selected row disappeared"],
                 }),
                 Some(row) => match apply_dependencies(input) where {
-                    state,
+                    state: apply_feature_rules(row.features) where { state, from: package },
                     from: package,
                     dependencies: row.dependencies,
                 } {
@@ -505,6 +567,7 @@ fn selected_maps_equal(left: Map<PackageId, SelectedPackage>) where { right: Map
 fn propagation_equal(left: SolverState) where { right: SolverState } -> Bool {
     left.active == right.active
         && left.graph_active == right.graph_active
+        && left.activated_optional == right.activated_optional
         && domain_maps_equal(left.domains) where { right: right.domains }
         && selected_maps_equal(left.selected) where { right: right.selected }
         && feature_maps_equal(left.features) where { right: right.features }
