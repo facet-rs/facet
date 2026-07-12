@@ -203,6 +203,10 @@ pub struct LoweringArtifact {
     pub output_schema: SchemaId,
     pub forced_copy_value: bool,
     pub publishes_value: bool,
+    /// This island exists only to publish a value for a snapshot check. Its
+    /// result is realized structurally for every type (scalars included) so the
+    /// harness can render it.
+    pub publishes_snapshot: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -254,6 +258,7 @@ impl LoweringArtifact {
             output_schema: self.output_schema,
             forced_copy_value: self.forced_copy_value,
             publishes_value: self.publishes_value,
+            publishes_snapshot: self.publishes_snapshot,
         }
     }
 
@@ -428,8 +433,10 @@ fn lower_island(
         }
     } else if island.purpose == IslandPurpose::Check && output.ty != Type::Check {
         return Err(lowering_diagnostic(output.span, "island output is not a Check").into());
-    } else if island.purpose == IslandPurpose::Value
-        && !publication_capability_registered(&output.ty)
+    } else if matches!(
+        island.purpose,
+        IslandPurpose::Value | IslandPurpose::Snapshot
+    ) && !publication_capability_registered(&output.ty)
     {
         return Err(lowering_diagnostic(
             output.span,
@@ -437,8 +444,17 @@ fn lower_island(
         )
         .into());
     }
-    let array_outcome = island_contains_checked_collection_ops(island)
-        .then(|| ArrayOutcomeAbi::for_value(output.ty.clone()));
+    let is_snapshot = island.purpose == IslandPurpose::Snapshot;
+    // A value island that publishes a structural product or sum (a record,
+    // tuple, or enum) with no checked collection op still needs the outcome
+    // envelope so the result is decoded as a realized value, not a bare scalar.
+    // A snapshot island forces the envelope for EVERY type so scalars and
+    // strings are decoded as realized values and freeze renderably.
+    let publishes_aggregate = island.purpose == IslandPurpose::Value
+        && matches!(&output.ty, Type::Record(_) | Type::Tuple(_) | Type::Enum(_));
+    let array_outcome =
+        (island_contains_checked_collection_ops(island) || publishes_aggregate || is_snapshot)
+            .then(|| ArrayOutcomeAbi::for_value(output.ty.clone()));
     let schemas = SchemaAssignments::build(island, array_outcome.is_some())?;
 
     let function_ids = island.local_function_ids();
@@ -579,7 +595,11 @@ fn lower_island(
         output_type: output.ty.clone(),
         output_schema: semantic_schema_id(&output.ty),
         forced_copy_value: island.forced_copy_value,
-        publishes_value: island.purpose == IslandPurpose::Value,
+        publishes_value: matches!(
+            island.purpose,
+            IslandPurpose::Value | IslandPurpose::Snapshot
+        ),
+        publishes_snapshot: is_snapshot,
     })
 }
 

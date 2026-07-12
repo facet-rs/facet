@@ -11,7 +11,7 @@ use crate::lowering::{
 use crate::runtime::{
     ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog, FailureContext,
     FailureValue, FramedNode, GeneratorOutcome, IslandInputs, Location, MachineError, MemoVerdict,
-    Runtime, SchemaId, TaskState, ValueId, WireDemand,
+    Runtime, SchemaId, SnapshotCapture, SnapshotOutcome, TaskState, ValueId, WireDemand,
 };
 use crate::vir::{
     DescribedWire, FunctionId, Island, IslandId, NodeId, Op, PartitionedRecipe, PartitionedValue,
@@ -293,6 +293,9 @@ pub struct CheckRun {
     /// verdict and stays byte-identical across the plain and chaos lanes even
     /// though the observed counter differs between them.
     pub trace_failure: Option<TraceFailure>,
+    /// The structural rendering captured by an `expect_snapshot` value check.
+    /// Absent for every other check kind. Byte-identical across lanes.
+    pub snapshot: Option<SnapshotCapture>,
 }
 
 /// Why a trace check went red: the descriptor and the value observed in the
@@ -426,6 +429,7 @@ impl TraceSnapshot {
             failure: None,
             failure_context: None,
             trace_failure: (!passed).then_some(TraceFailure { check, observed }),
+            snapshot: None,
         }
     }
 }
@@ -524,10 +528,56 @@ pub enum ExecutionPhase {
     ChaosCompleted,
 }
 
+/// The harness snapshot oracle: the expected structural renderings a run is
+/// checked against, keyed by test identity + stable snapshot name. It is the
+/// authority a snapshot `Check` delegates to — `evaluate_snapshot_site` sets the
+/// check's verdict from `expected == rendered`, so a changed rendering (or a
+/// missing golden) makes the check, and hence [`RatchetReport::passed`], false.
+///
+/// Goldens are supplied through this generic API. A future `vx test` disk loader
+/// is an explicit adapter seam: it populates this registry from on-disk snapshot
+/// artifacts (and an `--update` mode writes back the `rendered` captures a run
+/// produces). This type deliberately defines no disk format.
+#[derive(Clone, Debug, Default)]
+pub struct SnapshotExpectations {
+    entries: BTreeMap<String, BTreeMap<String, String>>,
+}
+
+impl SnapshotExpectations {
+    #[must_use]
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register the expected rendering for `test`'s snapshot named `name`.
+    #[must_use]
+    pub fn with(mut self, test: &str, name: &str, rendered: &str) -> Self {
+        self.entries
+            .entry(test.to_owned())
+            .or_default()
+            .insert(name.to_owned(), rendered.to_owned());
+        self
+    }
+
+    fn expected(&self, test: &str, name: &str) -> Option<&str> {
+        self.entries.get(test)?.get(name).map(String::as_str)
+    }
+}
+
 /// r[impl machine.scheduler.chaos-kill-oracle]
 /// r[impl machine.scheduler.replay-is-semantics]
 pub fn run_source(source: &str) -> Result<RatchetReport, RunError> {
     run_source_with_config(source, CompilerConfig::default())
+}
+
+/// Run every declared test twice against a snapshot oracle. Snapshot checks
+/// compare their rendering to `expectations`; every other check is unaffected.
+pub fn run_source_with_snapshots(
+    source: &str,
+    expectations: &SnapshotExpectations,
+) -> Result<RatchetReport, RunError> {
+    prepare_source_with_config(source, CompilerConfig::default())?
+        .execute_with_snapshots(expectations)
 }
 
 /// Run through the production scheduler while retaining every interior Weavy
@@ -592,8 +642,12 @@ fn prepare_source_with_cache(
             cache.get_or_lower(generator)?;
         }
         for site in &partitioned.sites {
-            if let PartitionedRecipe::Value { island } = &site.recipe {
-                cache.get_or_lower(&partitioned.islands[*island])?;
+            match &site.recipe {
+                PartitionedRecipe::Value { island }
+                | PartitionedRecipe::Snapshot { island, .. } => {
+                    cache.get_or_lower(&partitioned.islands[*island])?;
+                }
+                PartitionedRecipe::Trace(_) => {}
             }
         }
     }
@@ -609,14 +663,31 @@ impl PreparedRun {
     /// r[impl machine.scheduler.chaos-kill-oracle]
     /// r[impl machine.scheduler.replay-is-semantics]
     pub fn execute(self) -> Result<RatchetReport, RunError> {
-        self.execute_with_observer(|_| {})
+        self.execute_inner(&SnapshotExpectations::new(), |_| {})
+    }
+
+    /// Execute with a snapshot oracle: snapshot checks compare their rendering to
+    /// `expectations` and go red on mismatch/missing; other checks are unaffected.
+    pub fn execute_with_snapshots(
+        self,
+        expectations: &SnapshotExpectations,
+    ) -> Result<RatchetReport, RunError> {
+        self.execute_inner(expectations, |_| {})
     }
 
     /// Execute with lifecycle observations made while each lane's runtime is
     /// still live. This is intentionally a production-path seam: observers see
     /// no per-iteration callbacks and cannot hide retained execution state.
     pub fn execute_with_observer(
+        self,
+        observe: impl FnMut(ExecutionPhase),
+    ) -> Result<RatchetReport, RunError> {
+        self.execute_inner(&SnapshotExpectations::new(), observe)
+    }
+
+    fn execute_inner(
         mut self,
+        expectations: &SnapshotExpectations,
         mut observe: impl FnMut(ExecutionPhase),
     ) -> Result<RatchetReport, RunError> {
         let plain = run_lane(
@@ -625,6 +696,7 @@ impl PreparedRun {
             ChaosPolicy::default(),
             ExecutionPhase::PlainRuntimeReady,
             ExecutionPhase::PlainCompleted,
+            expectations,
             &mut observe,
         )?;
         let chaos = run_lane(
@@ -635,6 +707,7 @@ impl PreparedRun {
             },
             ExecutionPhase::ChaosRuntimeReady,
             ExecutionPhase::ChaosCompleted,
+            expectations,
             &mut observe,
         )?;
         Ok(RatchetReport {
@@ -716,15 +789,131 @@ fn evaluate_value_site(
         failure: evaluation.failure,
         failure_context: evaluation.failure_context,
         trace_failure: None,
+        snapshot: None,
     })
 }
 
+/// Evaluate one `expect_snapshot` site: demand its value-publishing island,
+/// render the published value structurally, and decide the check's verdict
+/// against the harness snapshot oracle. The value publication is an ordinary
+/// demand, so plain/chaos and native/interpreter lanes agree on the same
+/// identity and the same rendering; the verdict is a function of (name, actual,
+/// expected) alone, so it is lane-stable too.
+///
+/// The check passes only when the rendering equals the oracle's golden for this
+/// test + name. A mismatch, a missing golden, a duplicate name within the test,
+/// or a render fault each produces a red `CheckRun` carrying typed context — none
+/// aborts the run.
+#[allow(clippy::too_many_arguments)]
+fn evaluate_snapshot_site(
+    runtime: &mut Runtime<EventLog>,
+    cache: &mut LoweringCache,
+    context: &SiteContext<'_>,
+    island: &crate::vir::Island,
+    site: u32,
+    name: &str,
+    oracle: &SnapshotExpectations,
+    seen_names: &mut BTreeSet<String>,
+    chaos: ChaosPolicy,
+) -> Result<CheckRun, RunError> {
+    cache.get_or_lower(island)?;
+    let lowered = cache.lowered(island).expect("snapshot island is lowered");
+    let output_type = lowered.output_type.clone();
+    let attribution = attribution_for(island);
+    let provenance = ProvenanceKey::site(site);
+    let location = Location::for_test_provenance(context.test_name, site, &provenance.dynamic_keys);
+    let arguments = island
+        .value_inputs
+        .iter()
+        .map(|value| {
+            context
+                .published_values
+                .get(value)
+                .cloned()
+                .expect("partitioned value input was published")
+        })
+        .collect::<Vec<_>>();
+    let wires_backing = flat_wires(
+        cache,
+        context.wire_lookup,
+        &island.wire_inputs,
+        context.test_name,
+    );
+    let wires = wires_backing.demands();
+    let evaluation: Evaluation = runtime.evaluate(
+        island.id,
+        &location,
+        lowered,
+        &attribution,
+        IslandInputs {
+            arguments: &arguments,
+            wires: &wires,
+        },
+        chaos,
+    )?;
+    let argument_identities = arguments.iter().map(|argument| argument.identity).collect();
+    // If the value publication itself language-failed, there is nothing to
+    // render; surface that as the check failure with its own attribution.
+    if !evaluation.passed || evaluation.failure.is_some() {
+        return Ok(CheckRun {
+            provenance,
+            identity: Some(evaluation.identity),
+            arguments: argument_identities,
+            passed: false,
+            failure: evaluation.failure,
+            failure_context: evaluation.failure_context,
+            trace_failure: None,
+            snapshot: None,
+        });
+    }
+    // A second use of a name in the same test run is a duplicate, regardless of
+    // what it renders to; the oracle keys by name and cannot hold two goldens.
+    let (rendered, outcome) = if !seen_names.insert(name.to_owned()) {
+        let rendered = runtime
+            .render_snapshot(evaluation.handle, &output_type)
+            .unwrap_or_default();
+        (rendered, SnapshotOutcome::DuplicateName)
+    } else {
+        match runtime.render_snapshot(evaluation.handle, &output_type) {
+            Err(detail) => (String::new(), SnapshotOutcome::RenderFault { detail }),
+            Ok(rendered) => match oracle.expected(context.test_name, name) {
+                None => (rendered, SnapshotOutcome::MissingExpected),
+                Some(expected) if expected == rendered => (rendered, SnapshotOutcome::Matched),
+                Some(expected) => (
+                    rendered,
+                    SnapshotOutcome::Mismatch {
+                        expected: expected.to_owned(),
+                    },
+                ),
+            },
+        }
+    };
+    let capture = SnapshotCapture {
+        name: name.to_owned(),
+        rendered,
+        outcome,
+    };
+    let passed = capture.passed();
+    Ok(CheckRun {
+        provenance,
+        identity: Some(evaluation.identity),
+        arguments: argument_identities,
+        passed,
+        failure: None,
+        failure_context: None,
+        trace_failure: None,
+        snapshot: Some(capture),
+    })
+}
+
+#[allow(clippy::too_many_arguments)]
 fn run_lane(
     module: &crate::vir::Module,
     cache: &mut LoweringCache,
     chaos: ChaosPolicy,
     ready_phase: ExecutionPhase,
     completed_phase: ExecutionPhase,
+    expectations: &SnapshotExpectations,
     observe: &mut impl FnMut(ExecutionPhase),
 ) -> Result<SuiteRun, RunError> {
     let mut runtime = Runtime::new(EventLog::default());
@@ -743,6 +932,8 @@ fn run_lane(
         let partitioned = module.try_partition_test(test)?;
         let selected = selected_wire_functions(&partitioned);
         let mut evaluated_islands: Vec<usize> = Vec::new();
+        // Snapshot names already emitted in this test; a repeat is a duplicate.
+        let mut seen_snapshot_names: BTreeSet<String> = BTreeSet::new();
         let wire_lookup: BTreeMap<ValueIslandId, &PartitionedValue> = partitioned
             .wire_islands
             .iter()
@@ -887,6 +1078,24 @@ fn run_lane(
                                 ChaosPolicy::default(),
                             )?);
                         }
+                        PartitionedRecipe::Snapshot { island, name } => {
+                            evaluated_islands.push(*island);
+                            checks.push(evaluate_snapshot_site(
+                                &mut runtime,
+                                cache,
+                                &SiteContext {
+                                    test_name: &partitioned.name,
+                                    wire_lookup: &wire_lookup,
+                                    published_values: &published_values,
+                                },
+                                &partitioned.islands[*island],
+                                site,
+                                name,
+                                expectations,
+                                &mut seen_snapshot_names,
+                                ChaosPolicy::default(),
+                            )?);
+                        }
                         PartitionedRecipe::Trace(trace) => {
                             deferred_traces.push((ProvenanceKey::site(site), trace.clone()));
                         }
@@ -912,6 +1121,27 @@ fn run_lane(
                                 },
                                 &partitioned.islands[*island],
                                 site,
+                                ChaosPolicy {
+                                    kill_first_running_task: kill_available,
+                                },
+                            )?);
+                            kill_available = false;
+                        }
+                        PartitionedRecipe::Snapshot { island, name } => {
+                            evaluated_islands.push(*island);
+                            checks.push(evaluate_snapshot_site(
+                                &mut runtime,
+                                cache,
+                                &SiteContext {
+                                    test_name: &partitioned.name,
+                                    wire_lookup: &wire_lookup,
+                                    published_values: &published_values,
+                                },
+                                &partitioned.islands[*island],
+                                site,
+                                name,
+                                expectations,
+                                &mut seen_snapshot_names,
                                 ChaosPolicy {
                                     kill_first_running_task: kill_available,
                                 },

@@ -1515,15 +1515,21 @@ fn lower_generator_body(
                     )?;
                     // An unconditional top-level value check retains the
                     // historical `Op::Yield` codata marker so flat tests keep
-                    // their exact VIR shape. A trace site publishes no codata
-                    // island, so it emits no marker node.
-                    if top_level && let CheckRecipe::Value { check } = &site.recipe {
+                    // their exact VIR shape. A snapshot publishes its value node
+                    // through the same codata edge. A trace site publishes no
+                    // codata island, so it emits no marker node.
+                    let published = match &site.recipe {
+                        CheckRecipe::Value { check } => Some(*check),
+                        CheckRecipe::Snapshot { value, .. } => Some(*value),
+                        CheckRecipe::Trace(_) => None,
+                    };
+                    if top_level && let Some(published) = published {
                         push_node(
                             nodes,
                             statement.span,
                             Type::StreamCheck,
                             EffectFacts::CODATA,
-                            vec![*check],
+                            vec![published],
                             Op::Yield,
                         );
                     }
@@ -1921,6 +1927,9 @@ fn lower_check(
             },
         }));
     };
+    if call.callee.value == "expect_snapshot" {
+        return lower_snapshot_check(nodes, bindings, context, call);
+    }
     if call.named_args.is_some() {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             call.span,
@@ -2075,6 +2084,41 @@ fn lower_check(
             vec![condition],
             Op::Expect,
         ),
+    })
+}
+
+/// `expect_snapshot (value, "name")` — snapshot any value structurally.
+///
+/// Per the Calling chapter, application is juxtaposition and the comma builds a
+/// tuple, so this is `expect_snapshot` applied to one pair `(T, String)` — the
+/// subject value and its stable name — exactly parallel to `expect_eq (a, b)`.
+/// The pair's first component is lowered without a type constraint (every value
+/// renders) and becomes the recipe root of a value-publishing island. The second
+/// component is a compile-time string literal: a stable harness artifact, never a
+/// runtime value, so it is knowable without demanding anything.
+fn lower_snapshot_check(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::Call,
+) -> Result<CheckRecipe, Diagnostics> {
+    if call.named_args.is_some() {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "named arguments on a check constructor",
+        )));
+    }
+    check_arity(call, 2)?;
+    let value = lower_value(nodes, bindings, context, &call.args.args[0])?;
+    let ast::Expr::Str(literal) = &call.args.args[1] else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            expr_span(&call.args.args[1]),
+            "snapshot name must be a string literal",
+        )));
+    };
+    Ok(CheckRecipe::Snapshot {
+        value: value.node,
+        name: literal.value.clone(),
     })
 }
 

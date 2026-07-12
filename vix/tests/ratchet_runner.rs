@@ -5,8 +5,12 @@ use vix::budget::{BudgetOutcome, ChildReport, run_source_under_declared_budget};
 use vix::compiler::Compiler;
 use vix::diagnostic::{DiagnosticCode, DiagnosticSeverity};
 use vix::lowering::{LoweringCache, attribution_for, source_map_for};
-use vix::ratchet::{RunError, run_source, run_source_innards};
-use vix::runtime::{DemandState, EventKind, FailureValue, MemoVerdict, SchemaId, TaskState};
+use vix::ratchet::{
+    RunError, SnapshotExpectations, run_source, run_source_innards, run_source_with_snapshots,
+};
+use vix::runtime::{
+    DemandState, EventKind, FailureValue, MemoVerdict, SchemaId, SnapshotOutcome, TaskState,
+};
 use vix::surface::{SurfaceParser, ast};
 use vix::vir::{
     ArrayMapExecutionShape, ArrayMapGrainKey, EffectKind, FunctionId, GeneratorControl,
@@ -67,6 +71,8 @@ const RUNG_048: &str = include_str!("ratchet/048-closures-capture.vix");
 const RUNG_049: &str = include_str!("ratchet/049-recursion.vix");
 const RUNG_050: &str = include_str!("ratchet/050-deep-tail-recursion.vix");
 const RUNG_052: &str = include_str!("ratchet/052-higher-order.vix");
+const RUNG_060: &str = include_str!("ratchet/060-snapshot-record.vix");
+const RUNG_061: &str = include_str!("ratchet/061-snapshot-canonical.vix");
 const RUNG_138: &str = include_str!("ratchet/138-map-accumulator.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
 const RUNG_145: &str = include_str!("ratchet/145-push.reject.vix");
@@ -5787,5 +5793,264 @@ fn tail_loop_backedge_adds_no_per_iteration_machinery() {
     assert_eq!(
         small_len, large_len,
         "the tail-loop task trace length is constant in the iteration count",
+    );
+}
+
+const DEP_MIO_GOLDEN: &str =
+    "Dep {\n    name: \"mio\",\n    req: \"^0.8\",\n    optional: false,\n}";
+const GREEK_LETTERS_GOLDEN: &str = "[\n    \"alpha\",\n    \"beta\",\n    \"gamma\",\n]";
+
+/// The one snapshot check in `report`, asserting lanes agree and it is the only
+/// check. Goldens are supplied to `run_source_with_snapshots`, so the verdict is
+/// the ratchet's own — not a post-hoc Rust `assert_eq!` over an always-pass run.
+fn sole_snapshot(report: &vix::ratchet::RatchetReport) -> SnapshotOutcome {
+    assert!(
+        report.agrees(),
+        "plain and chaos lanes agree on the snapshot"
+    );
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    report.plain.checks[0]
+        .snapshot
+        .as_ref()
+        .expect("a snapshot check")
+        .outcome
+        .clone()
+}
+
+#[test]
+fn rung_060_snapshots_render_any_value_structurally() {
+    // The struct value renders structurally (no Debug impls) and the ratchet's
+    // own verdict is driven by the harness snapshot oracle keyed by test + name.
+    let oracle = SnapshotExpectations::new().with("snapshot_record", "dep-mio", DEP_MIO_GOLDEN);
+    let report = run_source_with_snapshots(RUNG_060, &oracle).expect("rung 060 compiles and runs");
+    assert!(report.passed(), "rung 060 snapshot check passes");
+    assert_eq!(sole_snapshot(&report), SnapshotOutcome::Matched);
+    let snapshot = report.plain.checks[0].snapshot.as_ref().unwrap();
+    assert_eq!(snapshot.name, "dep-mio");
+    assert_eq!(snapshot.rendered, DEP_MIO_GOLDEN);
+}
+
+#[test]
+fn rung_060_golden_drift_makes_the_run_fail() {
+    // The load-bearing property the audit demanded: perturb the golden and the
+    // ratchet verdict goes red — a changed rendering flips report.passed().
+    let drifted = SnapshotExpectations::new().with(
+        "snapshot_record",
+        "dep-mio",
+        "Dep {\n    name: \"MIO\",\n    req: \"^0.8\",\n    optional: false,\n}",
+    );
+    let report = run_source_with_snapshots(RUNG_060, &drifted).expect("rung 060 still runs");
+    assert!(!report.passed(), "a drifted golden must fail the run");
+    assert!(matches!(
+        sole_snapshot(&report),
+        SnapshotOutcome::Mismatch { .. }
+    ));
+}
+
+#[test]
+fn rung_060_missing_golden_is_a_red_check_not_a_vacuous_pass() {
+    // No expectation supplied: the snapshot must NOT vacuously pass.
+    let report = run_source(RUNG_060).expect("rung 060 runs with no oracle");
+    assert!(!report.passed(), "a snapshot with no golden must not pass");
+    assert_eq!(sole_snapshot(&report), SnapshotOutcome::MissingExpected);
+}
+
+#[test]
+fn rung_061_snapshots_sorted_stream_values_are_canonical() {
+    // Snapshotting a sorted stream projection renders in canonical value order,
+    // stable forever: alpha, beta, gamma regardless of authored order.
+    let oracle = SnapshotExpectations::new().with(
+        "snapshot_canonical",
+        "greek-letters",
+        GREEK_LETTERS_GOLDEN,
+    );
+    let report = run_source_with_snapshots(RUNG_061, &oracle).expect("rung 061 compiles and runs");
+    assert!(report.passed(), "rung 061 snapshot check passes");
+    assert_eq!(sole_snapshot(&report), SnapshotOutcome::Matched);
+    let snapshot = report.plain.checks[0].snapshot.as_ref().unwrap();
+    assert_eq!(snapshot.name, "greek-letters");
+    assert_eq!(snapshot.rendered, GREEK_LETTERS_GOLDEN);
+}
+
+// --- Snapshot adversarial coverage (audit findings 2, 3, 4, 6) ---
+
+/// Run inline snapshot source against an oracle and return the checks in site
+/// order (plain lane); asserts lanes agree so every assertion is lane-stable.
+fn snapshot_checks(source: &str, oracle: &SnapshotExpectations) -> Vec<vix::ratchet::CheckRun> {
+    let report = run_source_with_snapshots(source, oracle).expect("snapshot source runs");
+    assert!(report.agrees(), "plain and chaos lanes agree");
+    report.plain.checks.clone()
+}
+
+fn snapshot_outcome(check: &vix::ratchet::CheckRun) -> SnapshotOutcome {
+    check
+        .snapshot
+        .as_ref()
+        .expect("a snapshot check")
+        .outcome
+        .clone()
+}
+
+#[test]
+fn snapshots_render_scalars_and_strings_without_aborting() {
+    // Every currently representable leaf T renders through a semantic value:
+    // Int (incl. negative), Bool, and String. None aborts the run.
+    const SRC: &str = r#"#[test]
+fn scalars() -> Stream<Check> {
+    yield expect_snapshot(42, "int");
+    yield expect_snapshot(-7, "neg");
+    yield expect_snapshot(true, "yes");
+    yield expect_snapshot(false, "no");
+    yield expect_snapshot("hi", "str");
+}
+"#;
+    let oracle = SnapshotExpectations::new()
+        .with("scalars", "int", "42")
+        .with("scalars", "neg", "-7")
+        .with("scalars", "yes", "true")
+        .with("scalars", "no", "false")
+        .with("scalars", "str", "\"hi\"");
+    let report = run_source_with_snapshots(SRC, &oracle).expect("scalar snapshots run");
+    assert!(report.passed(), "all scalar snapshots match their goldens");
+    assert_eq!(report.plain.checks.len(), 5);
+    for check in &report.plain.checks {
+        assert_eq!(snapshot_outcome(check), SnapshotOutcome::Matched);
+    }
+}
+
+#[test]
+fn snapshot_string_escaping_is_canonical_vix_not_debug() {
+    // Tab, quote, backslash, newline escape canonically; a non-ASCII scalar is
+    // emitted verbatim. This is a defined Vix rule, exercised end to end.
+    const SRC: &str = r#"#[test]
+fn esc() -> Stream<Check> {
+    yield expect_snapshot("tab\tq\"bs\\nl\nend-é", "e");
+}
+"#;
+    const GOLDEN: &str = "\"tab\\tq\\\"bs\\\\nl\\nend-é\"";
+    let oracle = SnapshotExpectations::new().with("esc", "e", GOLDEN);
+    let checks = snapshot_checks(SRC, &oracle);
+    assert_eq!(checks.len(), 1);
+    assert_eq!(snapshot_outcome(&checks[0]), SnapshotOutcome::Matched);
+    assert_eq!(checks[0].snapshot.as_ref().unwrap().rendered, GOLDEN);
+}
+
+#[test]
+fn duplicate_snapshot_name_is_a_typed_red_check() {
+    // Two snapshots reusing one name in a test do not silently double-emit: the
+    // second is a typed DuplicateName failure and the run does not pass.
+    const SRC: &str = r#"#[test]
+fn dup() -> Stream<Check> {
+    yield expect_snapshot(1, "same");
+    yield expect_snapshot(2, "same");
+}
+"#;
+    let oracle = SnapshotExpectations::new().with("dup", "same", "1");
+    let report = run_source_with_snapshots(SRC, &oracle).expect("dup source runs");
+    assert!(report.agrees(), "lanes agree on the duplicate verdict");
+    assert!(!report.passed(), "a duplicate snapshot name fails the run");
+    let duplicates = report
+        .plain
+        .checks
+        .iter()
+        .filter(|c| matches!(snapshot_outcome(c), SnapshotOutcome::DuplicateName))
+        .count();
+    assert_eq!(duplicates, 1, "exactly one duplicate is flagged");
+}
+
+#[test]
+fn snapshot_mismatch_is_a_red_check_with_expected_context() {
+    const SRC: &str = r#"#[test]
+fn m() -> Stream<Check> {
+    yield expect_snapshot(1, "n");
+}
+"#;
+    let oracle = SnapshotExpectations::new().with("m", "n", "2");
+    let checks = snapshot_checks(SRC, &oracle);
+    assert!(matches!(
+        snapshot_outcome(&checks[0]),
+        SnapshotOutcome::Mismatch { expected } if expected == "2"
+    ));
+    assert!(!checks[0].passed);
+}
+
+#[test]
+fn snapshot_rendering_agrees_across_native_and_interpreter_lanes() {
+    // In-tree native/interpreter differential: force the interpreter lane, then
+    // the (default) native lane, and assert byte-identical renderings. On a
+    // non-native target both are the interpreter and agreement is trivially true.
+    let oracle = SnapshotExpectations::new().with("snapshot_record", "dep-mio", DEP_MIO_GOLDEN);
+    let interpreter = with_weavy_jit(Some("0"), || {
+        run_source_with_snapshots(RUNG_060, &oracle).expect("interpreter lane runs")
+    });
+    let native = with_weavy_jit(None, || {
+        run_source_with_snapshots(RUNG_060, &oracle).expect("native lane runs")
+    });
+    let interp_rendered = &interpreter.plain.checks[0]
+        .snapshot
+        .as_ref()
+        .unwrap()
+        .rendered;
+    let native_rendered = &native.plain.checks[0].snapshot.as_ref().unwrap().rendered;
+    assert_eq!(
+        interp_rendered, native_rendered,
+        "native and interpreter lanes render byte-identically"
+    );
+    assert_eq!(interp_rendered, DEP_MIO_GOLDEN);
+    assert!(interpreter.passed() && native.passed());
+}
+
+/// Run `f` with `WEAVY_JIT` set to `value` (or unset), restoring it after. Sound
+/// because nextest isolates each test in its own single-threaded process, the
+/// same discipline weavy's own lane-differential tests use.
+fn with_weavy_jit<T>(value: Option<&str>, f: impl FnOnce() -> T) -> T {
+    let previous = std::env::var_os("WEAVY_JIT");
+    // SAFETY: one test process, no other thread reads the environment here.
+    unsafe {
+        match value {
+            Some(v) => std::env::set_var("WEAVY_JIT", v),
+            None => std::env::remove_var("WEAVY_JIT"),
+        }
+    }
+    let out = f();
+    unsafe {
+        match previous {
+            Some(v) => std::env::set_var("WEAVY_JIT", v),
+            None => std::env::remove_var("WEAVY_JIT"),
+        }
+    }
+    out
+}
+
+#[test]
+fn expect_snapshot_consumes_one_pair_of_value_and_string_name() {
+    // The calling convention is one pair (T, String) — juxtaposition applied to a
+    // grouped tuple, per the Calling chapter. Prove it type-checks with a varied
+    // subject T and a String second component, and rejects a non-literal name.
+    const OK: &str = r#"struct P { x: Int, y: Int }
+#[test]
+fn pair() -> Stream<Check> {
+    yield expect_snapshot(P { x: 1, y: 2 }, "rec");
+    yield expect_snapshot(7, "int");
+}
+"#;
+    let oracle = SnapshotExpectations::new()
+        .with("pair", "rec", "P {\n    x: 1,\n    y: 2,\n}")
+        .with("pair", "int", "7");
+    let report = run_source_with_snapshots(OK, &oracle).expect("pair form compiles and runs");
+    assert!(report.passed(), "the tuple (value, name) form is accepted");
+
+    // The name component must be a compile-time String literal, not a runtime
+    // value: a bound identifier in name position is a typed compile error.
+    const BAD: &str = r#"#[test]
+fn bad() -> Stream<Check> {
+    let n = "x";
+    yield expect_snapshot(1, n);
+}
+"#;
+    assert!(
+        matches!(run_source(BAD), Err(RunError::Diagnostics(_))),
+        "a non-literal snapshot name is rejected at compile time"
     );
 }
