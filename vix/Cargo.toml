@@ -15,6 +15,7 @@ description = "The Vix demand-driven language and runtime."
 [dependencies]
 snark = { path = "../snark", features = ["json-import"] }
 facet = { path = "../facet" }
+facet-format = { path = "../facet-format" }
 facet-json = { path = "../facet-json" }
 facet-toml = { path = "../facet-toml" }
 facet-value = { path = "../facet-value", default-features = false, features = ["alloc"] }
