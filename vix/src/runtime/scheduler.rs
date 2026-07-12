@@ -65,6 +65,15 @@ pub struct ChaosPolicy {
     pub kill_first_running_task: bool,
 }
 
+/// The resolved inputs an island evaluation consumes: its pre-published shared
+/// value arguments, and the scalar words of any wire inputs it awaits. Wire
+/// awaits are supplied ready, so an unconditional wire resumes without parking.
+#[derive(Clone, Copy)]
+pub struct IslandInputs<'a> {
+    pub arguments: &'a [Evaluation],
+    pub awaited: &'a [i64],
+}
+
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct Evaluation {
     pub handle: Handle,
@@ -160,10 +169,10 @@ impl<S: EventSink> Runtime<S> {
         location: &Location,
         lowered: &LoweringArtifact,
         attribution: &LoweringAttribution,
-        arguments: &[Evaluation],
-        awaited: &[i64],
+        inputs: IslandInputs<'_>,
         chaos: ChaosPolicy,
     ) -> Result<Evaluation, Box<MachineError>> {
+        let IslandInputs { arguments, awaited } = inputs;
         let invocation = DemandExecution::new(
             lowered,
             arguments.iter().map(|argument| argument.identity).collect(),
@@ -2448,8 +2457,11 @@ fn duplicate_key() -> Stream<Check> {
                     &location,
                     artifact,
                     &first_attribution,
-                    &[],
-                    &[],                    ChaosPolicy::default(),
+                    IslandInputs {
+                        arguments: &[],
+                        awaited: &[],
+                    },
+                    ChaosPolicy::default(),
                 )
                 .expect("first demand becomes a typed language failure");
             (evaluation, demand_key)
@@ -2487,8 +2499,11 @@ fn duplicate_key() -> Stream<Check> {
                     &location,
                     artifact,
                     &shifted_attribution,
-                    &[],
-                    &[],                    ChaosPolicy::default(),
+                    IslandInputs {
+                        arguments: &[],
+                        awaited: &[],
+                    },
+                    ChaosPolicy::default(),
                 )
                 .expect("second demand is an exact memo hit")
         };
@@ -2558,8 +2573,11 @@ fn duplicate_key() -> Stream<Check> {
                     &location,
                     &artifact,
                     attribution,
-                    &[],
-                    &[],                    ChaosPolicy::default(),
+                    IslandInputs {
+                        arguments: &[],
+                        awaited: &[],
+                    },
+                    ChaosPolicy::default(),
                 )
                 .expect_err("non-OutOfRange status is a machine error");
 
@@ -2628,8 +2646,11 @@ fn passing() -> Stream<Check> {
                 &location,
                 artifact,
                 &attribution,
-                &[],
-                &[],                ChaosPolicy::default(),
+                IslandInputs {
+                    arguments: &[],
+                    awaited: &[],
+                },
+                ChaosPolicy::default(),
             )
             .expect("passing check evaluates to a realized value");
 

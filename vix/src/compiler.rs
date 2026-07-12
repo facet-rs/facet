@@ -6,6 +6,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics, Label};
 use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
+use crate::vir::DescribedWire;
 use crate::vir::{
     ArrayMapGrain, ArrayMapGrainKey, Budget, CheckRecipe, ControlRegion, EffectFacts, EnumType,
     EnumVariant, Function, FunctionId, GeneratorArm, GeneratorBody, GeneratorStep,
@@ -14,7 +15,6 @@ use crate::vir::{
     ParameterKind, RecordField, RecordType, Test, TestMetadata, TraceCheck, Type, VariantPayload,
     WireArg, YieldSite, YieldSiteId,
 };
-use crate::vir::DescribedWire;
 
 pub struct Compiler {
     parser: SurfaceParser,
@@ -2156,21 +2156,30 @@ fn described_wire(
 ) -> Result<DescribedWire, Diagnostics> {
     check_arity(call, 1)?;
     let ast::Expr::Call(operand) = &call.args.args[0] else {
-        return Err(Diagnostics::one(Diagnostic::unsupported(expr_span(&call.args.args[0]), "a described-wire trace check takes a direct function invocation")));
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            expr_span(&call.args.args[0]),
+            "a described-wire trace check takes a direct function invocation",
+        )));
     };
     if operand.named_args.is_some() {
-        return Err(Diagnostics::one(Diagnostic::unsupported(operand.span, "a described-wire selector does not carry where-clause arguments")));
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            operand.span,
+            "a described-wire selector does not carry where-clause arguments",
+        )));
     }
-    let signature = context.signatures.get(&operand.callee.value).ok_or_else(|| {
-        Diagnostics::one(Diagnostic {
-            code: DiagnosticCode::UnknownName,
-            primary: operand.callee.span,
-            labels: Vec::new(),
-            payload: DiagnosticPayload::Name {
-                name: operand.callee.value.clone(),
-            },
-        })
-    })?;
+    let signature = context
+        .signatures
+        .get(&operand.callee.value)
+        .ok_or_else(|| {
+            Diagnostics::one(Diagnostic {
+                code: DiagnosticCode::UnknownName,
+                primary: operand.callee.span,
+                labels: Vec::new(),
+                payload: DiagnosticPayload::Name {
+                    name: operand.callee.value.clone(),
+                },
+            })
+        })?;
     let arguments = operand
         .args
         .args
@@ -2190,13 +2199,18 @@ fn described_wire(
 /// an argument identity.
 fn wire_argument_literal(argument: &ast::Expr) -> Result<WireArg, Diagnostics> {
     match argument {
-        ast::Expr::Number(number) => number
-            .value
-            .parse::<i64>()
-            .map(WireArg::Int)
-            .map_err(|_| type_mismatch(number.span, "Int", format!("number literal `{}`", number.value))),
+        ast::Expr::Number(number) => number.value.parse::<i64>().map(WireArg::Int).map_err(|_| {
+            type_mismatch(
+                number.span,
+                "Int",
+                format!("number literal `{}`", number.value),
+            )
+        }),
         ast::Expr::Bool(boolean) => Ok(WireArg::Bool(boolean.value)),
-        other => Err(Diagnostics::one(Diagnostic::unsupported(expr_span(other), "a described-wire argument must be a closed scalar literal"))),
+        other => Err(Diagnostics::one(Diagnostic::unsupported(
+            expr_span(other),
+            "a described-wire argument must be a closed scalar literal",
+        ))),
     }
 }
 

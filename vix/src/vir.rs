@@ -779,7 +779,9 @@ pub enum Op {
     /// path, and resume with the typed scalar result. `input` indexes the
     /// enclosing island's [`Island::wire_inputs`]. A callee demands a wire only
     /// where it is consumed, so an unconsumed wire issues no demand.
-    AwaitWire { input: u32 },
+    AwaitWire {
+        input: u32,
+    },
     Tuple,
     Record,
     Project {
@@ -1463,8 +1465,7 @@ impl Module {
                 // this value island from the scheduler and parks until it is
                 // evaluated through the memo path. It is reached — and therefore
                 // demanded — only when control actually consumes it.
-                let input =
-                    u32::try_from(wire_inputs.len()).expect("wire input count fits u32");
+                let input = u32::try_from(wire_inputs.len()).expect("wire input count fits u32");
                 node.op = Op::AwaitWire { input };
                 node.inputs.clear();
                 wire_inputs.push(value);

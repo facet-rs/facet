@@ -7,10 +7,12 @@ use crate::diagnostic::Diagnostics;
 use crate::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
 use crate::runtime::{
     ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog, FailureContext,
-    FailureValue, FramedNode, GeneratorOutcome, Location, MachineError, MemoVerdict, Runtime,
-    SchemaId, TaskState, ValueId,
+    FailureValue, FramedNode, GeneratorOutcome, IslandInputs, Location, MachineError, MemoVerdict,
+    Runtime, SchemaId, TaskState, ValueId,
 };
-use crate::vir::{DescribedWire, FunctionId, PartitionedRecipe, TraceCheck, ValueIslandId, WireArg};
+use crate::vir::{
+    DescribedWire, FunctionId, PartitionedRecipe, TraceCheck, ValueIslandId, WireArg,
+};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunError {
@@ -170,7 +172,11 @@ fn wire_arg_identity(arg: &WireArg) -> ValueId {
         WireArg::Int(value) => ("Int", value.to_le_bytes().to_vec()),
         WireArg::Bool(value) => ("Bool", i64::from(*value).to_le_bytes().to_vec()),
     };
-    FramedNode::leaf(SchemaId::named(&format!("vix.semantic.v1:{ty_name}")), bytes).identity()
+    FramedNode::leaf(
+        SchemaId::named(&format!("vix.semantic.v1:{ty_name}")),
+        bytes,
+    )
+    .identity()
 }
 
 /// An at-most trace comparison: the observed counter and whether it stays
@@ -199,10 +205,14 @@ impl TraceSnapshot {
     /// Evaluate one trace check against the frozen snapshot.
     fn evaluate(&self, provenance: ProvenanceKey, check: TraceCheck) -> CheckRun {
         let (observed, passed) = match &check {
-            TraceCheck::SchedulerRequestsAtMost { bound } => at_most(self.scheduler_requests, *bound),
+            TraceCheck::SchedulerRequestsAtMost { bound } => {
+                at_most(self.scheduler_requests, *bound)
+            }
             TraceCheck::MemoEntriesAtMost { bound } => at_most(self.memo_entries, *bound),
             TraceCheck::StoreInternsAtMost { bound } => at_most(self.store_interns, *bound),
-            TraceCheck::ValueIslandSpawnsAtMost { bound } => at_most(self.value_island_spawns, *bound),
+            TraceCheck::ValueIslandSpawnsAtMost { bound } => {
+                at_most(self.value_island_spawns, *bound)
+            }
             TraceCheck::SuccessfulAggregateFreezesAtMost { bound } => {
                 at_most(self.successful_aggregate_freezes, *bound)
             }
@@ -504,8 +514,10 @@ fn evaluate_value_site(
         &location,
         lowered,
         &attribution,
-        &arguments,
-        &awaited,
+        IslandInputs {
+            arguments: &arguments,
+            awaited: &awaited,
+        },
         chaos,
     )?;
     let argument_identities = arguments.iter().map(|argument| argument.identity).collect();
@@ -607,8 +619,10 @@ fn run_lane(
                 &location,
                 lowered,
                 &attribution,
-                &arguments,
-                &[],
+                IslandInputs {
+                    arguments: &arguments,
+                    awaited: &[],
+                },
                 ChaosPolicy {
                     kill_first_running_task: kill_available,
                 },
