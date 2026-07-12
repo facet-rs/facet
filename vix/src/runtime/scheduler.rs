@@ -294,6 +294,82 @@ impl<S: EventSink> Runtime<S> {
                     )));
                 }
             }
+            if let Some(abi) = &lowered.snapshot {
+                // A snapshot island publishes the value itself; read it
+                // structurally and render it type-directed under its stable name.
+                let tree = match task
+                    .result_structural()
+                    .and_then(|structural| structural.read_tree())
+                {
+                    Ok(tree) => tree,
+                    Err(fault) => {
+                        let error = self.task_fault(
+                            MachineOperation::Result,
+                            fault,
+                            lowered,
+                            attribution,
+                            self.output_attribution(lowered, attribution),
+                        );
+                        return Err(Box::new(self.terminate_machine_fault(
+                            task_id,
+                            lowered.demand_key,
+                            error,
+                        )));
+                    }
+                };
+                let rendered = match render_snapshot(&abi.value, &tree, &self.store) {
+                    Ok(rendered) => rendered,
+                    Err(detail) => {
+                        let error = MachineError::runtime(
+                            MachineOperation::Result,
+                            RuntimeFault::SnapshotRender { detail },
+                            self.output_attribution(lowered, attribution),
+                            Some(lowered.demand_key),
+                        );
+                        return Err(Box::new(self.terminate_machine_fault(
+                            task_id,
+                            lowered.demand_key,
+                            error,
+                        )));
+                    }
+                };
+                let capture = SnapshotCapture {
+                    name: abi.name.clone(),
+                    rendered,
+                };
+                let interned = self
+                    .store
+                    .intern_realized(SchemaId::named("vix.Snapshot.v1"), capture.rendered.as_bytes());
+                self.observe_interned(interned);
+                self.memo.insert(
+                    location.id,
+                    MemoEntry {
+                        location: location.clone(),
+                        key: lowered.demand_key,
+                        preimage: lowered.demand_preimage.clone(),
+                        result: interned.handle,
+                        receipt: None,
+                    },
+                );
+                if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
+                    demand.result = Some(interned.handle);
+                }
+                self.transition_task(task_id, TaskState::Completed)?;
+                self.transition_demand(lowered.demand_key, DemandState::Ready)?;
+                self.emit(EventKind::Completed {
+                    key: lowered.demand_key,
+                    identity: interned.identity,
+                });
+                return Ok(Evaluation {
+                    handle: interned.handle,
+                    identity: interned.identity,
+                    passed: true,
+                    memo: MemoVerdict::Miss,
+                    failure: None,
+                    failure_context: None,
+                    snapshot: Some(capture),
+                });
+            }
             let passed = match decode_result(&task, lowered) {
                 Ok(DecodedResult::Ok(passed)) => passed,
                 Ok(DecodedResult::ArrayMachine { site, status }) => {

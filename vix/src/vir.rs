@@ -413,6 +413,12 @@ pub enum Op {
     Eq,
     Ne,
     Expect,
+    /// Structurally snapshot the single input value under a stable harness name.
+    /// The node is typed `Check`; lowering renders it by emitting the input
+    /// value's structural result rather than a boolean condition.
+    Snapshot {
+        name: String,
+    },
     Yield,
     String(String),
     Parameter(ParameterId),
@@ -985,6 +991,10 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::SetLen => op.push(42),
         Op::SetValues => op.push(43),
         Op::StringConcat => op.push(44),
+        Op::Snapshot { name } => {
+            op.push(45);
+            frame(&mut op, name.as_bytes());
+        }
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());

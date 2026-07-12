@@ -153,6 +153,13 @@ impl Store {
         self.entries.get(handle.0 as usize)
     }
 
+    /// Resolve a raw store index (as carried by a Weavy handle word) to its
+    /// resident bytes. Used to render snapshot values whose leaves are handles.
+    #[must_use]
+    pub(crate) fn resident_bytes_at(&self, index: usize) -> Option<&[u8]> {
+        self.entries.get(index)?.resident_bytes()
+    }
+
     /// Convert only a live store-owned handle to Weavy's opaque entry handle.
     pub(crate) fn weavy_handle(&self, handle: Handle) -> Option<StoreHandle> {
         self.entry(handle)?;

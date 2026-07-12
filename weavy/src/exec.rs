@@ -15,7 +15,8 @@ use crate::jit::task_lane::{JitExecutable, JitTask};
 use crate::task::{FnId, HostFn, Op, Task, TaskEvent, TaskStep, TraceMode, ValueMemories};
 use crate::{
     CallContractId, CallSiteFacts, DriveRequirements, FrameRegion, FunctionContract, RegionId,
-    SchemaRef, ValueShapeKind, ValueShapeRef, VerifiedProgram, WordKind,
+    SchemaRef, ValueFieldUse, ValueShapeContract, ValueShapeKind, ValueShapeRef, VerifiedProgram,
+    WordKind,
 };
 
 /// Which lane an [`Executable`] selected for new tasks.
@@ -111,6 +112,28 @@ pub struct StructuralResult<'a> {
     region: RegionId,
     value_shape: ValueShapeRef,
     shape: &'a crate::ValueShapeContract,
+    value_shapes: &'a [ValueShapeContract],
+}
+
+/// A structural word read from a task result region: its verified interpretation
+/// and its raw machine value. Handle words carry a nonnegative store index.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct StructuralWord {
+    pub kind: WordKind,
+    pub value: i64,
+}
+
+/// A type-directed, positional decoding of a structural task result. The tree
+/// mirrors the verified value shape exactly; consumers add source-level names
+/// and rendering from their own type.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum StructuralTree {
+    Leaf(Vec<StructuralWord>),
+    Product(Vec<StructuralTree>),
+    Enum {
+        selector: usize,
+        fields: Vec<StructuralTree>,
+    },
 }
 
 impl StructuralResult<'_> {
@@ -159,6 +182,89 @@ impl StructuralResult<'_> {
             });
         }
         self.word(field.offset)
+    }
+
+    /// Decode the whole result as a positional structural tree, following the
+    /// verified value shape. Handle words are returned as raw store indices; the
+    /// caller resolves them and supplies field names from its own type.
+    pub fn read_tree(&self) -> Result<StructuralTree, TaskFault> {
+        self.read_shape(self.shape, 0)
+    }
+
+    fn read_shape(&self, shape: &ValueShapeContract, base: u32) -> Result<StructuralTree, TaskFault> {
+        match &shape.kind {
+            ValueShapeKind::Product { fields } => {
+                let mut out = Vec::with_capacity(fields.len());
+                for field in fields {
+                    out.push(self.read_field(field, base)?);
+                }
+                Ok(StructuralTree::Product(out))
+            }
+            ValueShapeKind::Enum { selector, variants } => {
+                let raw = self.word(base + selector.offset)?;
+                if raw < 0 || raw as usize >= variants.len() {
+                    return Err(TaskFault::InvalidResultSelector {
+                        entry: self.entry,
+                        region: self.region,
+                        value_shape: self.value_shape,
+                        actual: raw,
+                        variant_count: variants.len(),
+                    });
+                }
+                let variant = &variants[raw as usize];
+                let mut out = Vec::with_capacity(variant.fields.len());
+                for field in &variant.fields {
+                    out.push(self.read_field(field, base)?);
+                }
+                Ok(StructuralTree::Enum {
+                    selector: raw as usize,
+                    fields: out,
+                })
+            }
+        }
+    }
+
+    fn read_field(&self, field: &ValueFieldUse, base: u32) -> Result<StructuralTree, TaskFault> {
+        let offset = base
+            .checked_add(field.offset)
+            .ok_or(TaskFault::InvalidResultShape {
+                entry: self.entry,
+                region: self.region,
+                size: self.bytes.len(),
+            })?;
+        if let Some(nested) = field.value_shape {
+            let shape =
+                self.value_shapes
+                    .get(nested.0 as usize)
+                    .ok_or(TaskFault::InvalidResultShape {
+                        entry: self.entry,
+                        region: self.region,
+                        size: self.bytes.len(),
+                    })?;
+            return self.read_shape(shape, offset);
+        }
+        let mut words = Vec::with_capacity(field.shape.words.len());
+        for (index, allowed) in field.shape.words.iter().enumerate() {
+            let word_offset = offset
+                .checked_add((index * size_of::<i64>()) as u32)
+                .ok_or(TaskFault::InvalidResultShape {
+                    entry: self.entry,
+                    region: self.region,
+                    size: self.bytes.len(),
+                })?;
+            let kind = allowed.as_slice().first().copied().ok_or({
+                TaskFault::InvalidResultShape {
+                    entry: self.entry,
+                    region: self.region,
+                    size: self.bytes.len(),
+                }
+            })?;
+            words.push(StructuralWord {
+                kind,
+                value: self.word(word_offset)?,
+            });
+        }
+        Ok(StructuralTree::Leaf(words))
     }
 
     fn word(&self, offset: u32) -> Result<i64, TaskFault> {
@@ -632,11 +738,8 @@ impl ExecTask<'_> {
                 size: bytes.len(),
             });
         }
-        let shape = self
-            .executable
-            .verified
-            .contract()
-            .value_shapes
+        let value_shapes = &self.executable.verified.contract().value_shapes;
+        let shape = value_shapes
             .get(value_shape.0 as usize)
             .ok_or(TaskFault::InvalidResultShape {
                 entry: self.entry,
@@ -649,6 +752,7 @@ impl ExecTask<'_> {
             region,
             value_shape,
             shape,
+            value_shapes,
         })
     }
 

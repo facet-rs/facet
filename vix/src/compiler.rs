@@ -1399,6 +1399,9 @@ fn lower_check(
             },
         }));
     };
+    if call.callee.value == "expect_snapshot" {
+        return lower_snapshot_check(nodes, bindings, context, call);
+    }
     if call.named_args.is_some() {
         return Err(Diagnostics::one(Diagnostic::unsupported(
             call.span,
@@ -1474,6 +1477,70 @@ fn lower_check(
         EffectFacts::PURE,
         vec![condition],
         Op::Expect,
+    ))
+}
+
+/// `expect_snapshot(v) where { name: "..." }` — snapshot any value structurally.
+///
+/// The value is lowered without a type constraint (every value renders), and the
+/// name is a compile-time string literal: it is a stable harness artifact, not a
+/// runtime value, so it must be knowable without demanding anything.
+fn lower_snapshot_check(
+    nodes: &mut Vec<Node>,
+    bindings: &BTreeMap<String, LoweredValue>,
+    context: &ModuleContext<'_>,
+    call: &ast::Call,
+) -> Result<NodeId, Diagnostics> {
+    check_arity(call, 1)?;
+    let value = lower_value(nodes, bindings, context, &call.args.args[0])?;
+    let Some(named) = &call.named_args else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "expect_snapshot requires a `name`",
+        )));
+    };
+    let mut name = None;
+    for field in &named.fields {
+        if field.name.value != "name" {
+            return Err(Diagnostics::one(Diagnostic {
+                code: DiagnosticCode::UnknownName,
+                primary: field.name.span,
+                labels: Vec::new(),
+                payload: DiagnosticPayload::Name {
+                    name: field.name.value.clone(),
+                },
+            }));
+        }
+        let Some(ast::Expr::Str(literal)) = &field.value else {
+            return Err(Diagnostics::one(Diagnostic::unsupported(
+                field.span,
+                "snapshot name must be a string literal",
+            )));
+        };
+        if name.replace(literal.value.clone()).is_some() {
+            return Err(Diagnostics::one(Diagnostic {
+                code: DiagnosticCode::DuplicateBinding,
+                primary: field.name.span,
+                labels: Vec::new(),
+                payload: DiagnosticPayload::Name {
+                    name: field.name.value.clone(),
+                },
+            }));
+        }
+    }
+    let Some(name) = name else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "expect_snapshot requires a `name`",
+        )));
+    };
+    Ok(push_node(
+        nodes,
+        call.span,
+        Type::Check,
+        EffectFacts::PURE,
+        vec![value.node],
+        Op::Snapshot { name },
     ))
 }
 

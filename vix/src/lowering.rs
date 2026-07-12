@@ -135,6 +135,16 @@ impl ArrayOutcomeAbi {
     }
 }
 
+/// Metadata carried by a snapshot island: the value's structural VIR type and
+/// the stable harness name. The island's verified result region holds the value
+/// itself (not a boolean), so the runtime reads it structurally against `value`
+/// and renders it under `name`.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct SnapshotAbi {
+    pub name: String,
+    pub value: Type,
+}
+
 struct PendingValueConstant {
     node: NodeRef,
     root_slot: FrameSlot,
@@ -152,6 +162,7 @@ pub struct LoweringArtifact {
     pub demand_preimage: DemandPreimage,
     executable: Executable,
     pub array_outcome: Option<ArrayOutcomeAbi>,
+    pub snapshot: Option<SnapshotAbi>,
     pub pc_nodes: Vec<Vec<NodeRef>>,
     pub constants: Vec<ValueConstant>,
 }
@@ -198,6 +209,7 @@ impl LoweringArtifact {
             demand_preimage: self.demand_preimage.clone(),
             executable,
             array_outcome: self.array_outcome.clone(),
+            snapshot: self.snapshot.clone(),
             pc_nodes: self.pc_nodes.clone(),
             constants: self.constants.clone(),
         }
@@ -323,15 +335,76 @@ fn push_source_entries(entries: &mut Vec<SourceMapEntry>, function: FunctionId, 
     }
 }
 
-fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, LoweringError> {
+fn lower_island(
+    original_island: &Island,
+    recipe: RecipeId,
+) -> Result<LoweringArtifact, LoweringError> {
+    let declared_output = original_island
+        .nodes
+        .iter()
+        .find(|node| node.id == original_island.output)
+        .ok_or_else(|| lowering_diagnostic(Span { start: 0, end: 0 }, "missing island output"))?;
+    if declared_output.ty != Type::Check {
+        return Err(
+            lowering_diagnostic(declared_output.span, "island output is not a Check").into(),
+        );
+    }
+
+    // A snapshot island publishes the value itself, not a boolean. Rewrite the
+    // island so its verified result region is the snapshotted value's node, and
+    // record the type-directed rendering metadata for the runtime.
+    let snapshot_request = match &declared_output.op {
+        Op::Snapshot { name } => {
+            let value_node = *declared_output.inputs.first().ok_or_else(|| {
+                lowering_diagnostic(declared_output.span, "snapshot check has no value input")
+            })?;
+            let value_ty = original_island
+                .nodes
+                .iter()
+                .find(|node| node.id == value_node)
+                .ok_or_else(|| {
+                    lowering_diagnostic(declared_output.span, "snapshot value node is missing")
+                })?
+                .ty
+                .clone();
+            Some((name.clone(), value_node, value_ty))
+        }
+        _ => None,
+    };
+
+    let rewritten;
+    let island: &Island = match &snapshot_request {
+        Some((_, value_node, _)) => {
+            let nodes = original_island
+                .nodes
+                .iter()
+                .filter(|node| node.id != original_island.output)
+                .cloned()
+                .collect();
+            rewritten = Island {
+                id: original_island.id,
+                function: original_island.function,
+                function_name: original_island.function_name.clone(),
+                nodes,
+                output: *value_node,
+                callees: original_island.callees.clone(),
+            };
+            &rewritten
+        }
+        None => original_island,
+    };
+
     let output = island
         .nodes
         .iter()
         .find(|node| node.id == island.output)
         .ok_or_else(|| lowering_diagnostic(Span { start: 0, end: 0 }, "missing island output"))?;
-    if output.ty != Type::Check {
-        return Err(lowering_diagnostic(output.span, "island output is not a Check").into());
-    }
+    let snapshot = snapshot_request
+        .as_ref()
+        .map(|(name, _, value_ty)| SnapshotAbi {
+            name: name.clone(),
+            value: value_ty.clone(),
+        });
     let array_outcome = island_contains_checked_collection_ops(island)
         .then(|| ArrayOutcomeAbi::for_value(output.ty.clone()));
     let schemas = SchemaAssignments::build(island, array_outcome.is_some())?;
@@ -459,6 +532,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
         demand_preimage,
         executable: Executable::new(verified),
         array_outcome,
+        snapshot,
         pc_nodes,
         constants,
     })
@@ -3818,6 +3892,12 @@ fn lower_node(
             return Err(lowering_diagnostic(
                 node.span,
                 "codata Yield appeared inside an island",
+            ));
+        }
+        Op::Snapshot { .. } => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "snapshot check node is rewritten to its value before codegen",
             ));
         }
     };

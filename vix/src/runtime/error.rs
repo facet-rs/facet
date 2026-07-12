@@ -66,6 +66,9 @@ pub enum RuntimeFault {
         index: i64,
         length: i64,
     },
+    SnapshotRender {
+        detail: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
