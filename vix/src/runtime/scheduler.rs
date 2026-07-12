@@ -7,7 +7,7 @@ use weavy::exec::{
 use weavy::task::{FnId, TaskEvent as WeavyTaskEvent, TaskStep};
 
 use crate::lowering::{LoweringArtifact, LoweringAttribution};
-use crate::vir::{IslandId, Type, VariantPayload};
+use crate::vir::{FunctionId, IslandId, Type, VariantPayload};
 
 use super::identity::{DemandKey, DemandPreimage, Location, LocationId, SchemaId, ValueId};
 use super::identity::{FramedField, FramedNode, FramedValue};
@@ -104,6 +104,12 @@ pub struct Runtime<S> {
     tasks: BTreeMap<TaskId, TaskRecord>,
     counters: Counters,
     next_task: u64,
+    /// One entry per realized wire demand — a callee invocation the memo path
+    /// actually computed (a miss that ran), recorded as its callee function and
+    /// canonical argument identities. Memoized re-demands add no entry, so this
+    /// log counts realizations. It backs the described-wire trace checks and
+    /// retains only the callee/argument selectors a descriptor can name.
+    wire_demands: Vec<(FunctionId, Vec<ValueId>)>,
 }
 
 impl<S: EventSink> Runtime<S> {
@@ -118,7 +124,15 @@ impl<S: EventSink> Runtime<S> {
             tasks: BTreeMap::new(),
             counters: Counters::default(),
             next_task: 0,
+            wire_demands: Vec::new(),
         }
+    }
+
+    /// The frozen log of realized wire demands: each callee invocation the memo
+    /// path computed, by callee function and canonical argument identities.
+    #[must_use]
+    pub fn realized_wire_demands(&self) -> &[(FunctionId, Vec<ValueId>)] {
+        &self.wire_demands
     }
 
     pub fn evaluate(

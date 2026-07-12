@@ -233,15 +233,15 @@ pub enum CheckRecipe {
 /// demanded value. The three initial constructors bound machinery contacts and
 /// carry only a scalar ceiling, so nothing about them is demanded.
 ///
-/// The enum is deliberately open. A later `never_demanded(expr)` /
-/// `demanded_once(expr)` slots in as a further variant carrying a *described
-/// wire* — a recipe/location description of an operand the check pins WITHOUT
-/// demanding it. Because a [`CheckRecipe::Trace`] is never lowered to an island
-/// and the runner never evaluates a trace check's operands as demands, that
-/// wire is held, not consumed. No such variant is constructed yet (rung 050/051
-/// need only the counter checks), and the design does not eagerly evaluate
-/// operands or fabricate reflection.
-#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+/// The enum is deliberately open. `never_demanded(expr)` / `demanded(expr)` /
+/// `demanded_once(expr)` each carry a *described wire* ([`DescribedWire`]) — a
+/// recipe/location description of an operand the check pins WITHOUT demanding
+/// it. Because a [`CheckRecipe::Trace`] is never lowered to an island and the
+/// runner never evaluates a trace check's operands as demands, that wire is
+/// held, not consumed: the intrinsic records the invocation's recipe/argument
+/// selector, never its result. The design does not eagerly evaluate operands or
+/// fabricate reflection.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum TraceCheck {
     /// Scheduler machinery contacts during the test are at most `bound`.
@@ -283,6 +283,52 @@ pub enum TraceCheck {
         function: FunctionId,
         times: i64,
     },
+    /// The described invocation was demanded at least once during the run.
+    Demanded {
+        wire: DescribedWire,
+    },
+    /// The described invocation was never demanded during the run — the operand
+    /// wire was held, not consumed, so no evaluation of it occurred.
+    NeverDemanded {
+        wire: DescribedWire,
+    },
+    /// The described invocation was demanded exactly once — one demand key, one
+    /// computation. Repeated identical `recipe + argument` demands memoize to a
+    /// single realization; distinct arguments stay distinct.
+    DemandedOnce {
+        wire: DescribedWire,
+    },
+}
+
+/// A held description of an unevaluated invocation: which user function is
+/// invoked and, for a call-site selector, the exact scalar argument identities.
+/// This is the "wire" a trace-check constructor pins — it is never demanded,
+/// counted, or lowered to an island; it only names what to look for in the
+/// frozen completed-run demand log. Arguments are carried as their surface
+/// literals and resolved to canonical value identities where the check is
+/// evaluated, so this VIR type stays free of any runtime-identity dependency.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct DescribedWire {
+    /// The user function whose invocation this wire describes.
+    pub function: FunctionId,
+    /// Literal scalar arguments of the described invocation, in order. Empty for
+    /// a zero-argument callee or a name-level selector.
+    pub arguments: Vec<WireArg>,
+    /// A name-level selector matches every argument demand of `function`
+    /// (`demanded_once(costly())` — one distinct realization total); a call-site
+    /// selector matches only the exact described argument identities
+    /// (`demanded_once(costly(1))`).
+    pub name_level: bool,
+}
+
+/// One scalar argument literal of a [`DescribedWire`]. Only closed scalar
+/// literals participate in a described selector; the wire never evaluates a
+/// sub-expression to obtain an argument.
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum WireArg {
+    Int(i64),
+    Bool(bool),
 }
 
 /// One arm of a generator [`GeneratorStep::Match`]. The arm body is itself a
@@ -1248,7 +1294,7 @@ impl Module {
                     ));
                     PartitionedRecipe::Value { island }
                 }
-                CheckRecipe::Trace(trace) => PartitionedRecipe::Trace(*trace),
+                CheckRecipe::Trace(trace) => PartitionedRecipe::Trace(trace.clone()),
             };
             sites.push(PartitionedSite {
                 id: site.id,

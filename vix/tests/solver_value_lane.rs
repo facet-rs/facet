@@ -413,6 +413,7 @@ fn rung_092_preserves_duplicate_generator_check_demand_boundary() {
         assert!(lane.checks[0].passed, "the selected solution is valid");
         let failure = lane.checks[1]
             .trace_failure
+            .clone()
             .expect("the name-level demand count remains the red boundary");
         let TraceCheck::FunctionCallsExactly { times, .. } = failure.check else {
             panic!("rung 092 carries the function-call trace check");
@@ -431,7 +432,23 @@ fn rung_092_preserves_duplicate_generator_check_demand_boundary() {
 
 #[test]
 fn rung_093_preserves_the_demanded_once_red_boundary() {
-    assert_eq!(unknown_name(&solver_lane(RUNG_093)), "demanded_once");
+    // `demanded_once` is now a described-wire intrinsic, but rung 093 selects a
+    // let-bound wire (`demanded_once(solve)`) rather than a direct invocation.
+    // Resolving a bound wire to its underlying demand is a separate solver-lane
+    // capability, so 093 stays red at the described-wire operand boundary.
+    let Err(RunError::Diagnostics(diagnostics)) = run_source(&solver_lane(RUNG_093)) else {
+        panic!("rung 093 remains red at the described-wire operand boundary");
+    };
+    assert_eq!(diagnostics.entries.len(), 1, "one red boundary");
+    let entry = &diagnostics.entries[0];
+    assert_eq!(entry.code, DiagnosticCode::UnsupportedExpression);
+    let DiagnosticPayload::Unsupported { construct } = &entry.payload else {
+        panic!("described-wire operand boundary carries an unsupported payload: {entry:?}");
+    };
+    assert_eq!(
+        construct,
+        "a described-wire trace check takes a direct function invocation"
+    );
 }
 
 #[test]

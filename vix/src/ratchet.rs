@@ -7,9 +7,10 @@ use crate::diagnostic::Diagnostics;
 use crate::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
 use crate::runtime::{
     ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog, FailureContext,
-    FailureValue, GeneratorOutcome, Location, MachineError, Runtime, TaskState, ValueId,
+    FailureValue, FramedNode, GeneratorOutcome, Location, MachineError, Runtime, SchemaId,
+    TaskState, ValueId,
 };
-use crate::vir::{FunctionId, PartitionedRecipe, TraceCheck, ValueIslandId};
+use crate::vir::{DescribedWire, FunctionId, PartitionedRecipe, TraceCheck, ValueIslandId, WireArg};
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunError {
@@ -118,7 +119,7 @@ pub struct CheckRun {
 
 /// Why a trace check went red: the descriptor and the value observed in the
 /// frozen completed-run snapshot. Only present on a failing trace check.
-#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct TraceFailure {
     pub check: TraceCheck,
     pub observed: u64,
@@ -142,38 +143,94 @@ struct TraceSnapshot {
     peak_molten_bytes: u64,
     peak_molten_nodes: u64,
     function_calls: BTreeMap<FunctionId, u64>,
+    /// One entry per realized wire demand (a computation the memo path actually
+    /// ran). Repeated identical `recipe + argument` demands memoize to a single
+    /// realization, so a call-site selector observes at most one entry; distinct
+    /// arguments contribute distinct entries. This is the frozen log the
+    /// described-wire trace checks read; it retains only the callee identity and
+    /// argument identities a trace descriptor can select on.
+    wire_demands: Vec<RealizedWireDemand>,
+}
+
+/// One realized invocation recorded for described-wire observation: which user
+/// function was demanded and with which canonical argument identities. Recorded
+/// only when a wire demand actually computes (a memo miss that ran), so the log
+/// counts realizations, never re-demands of an already-memoized key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RealizedWireDemand {
+    pub function: FunctionId,
+    pub arguments: Vec<ValueId>,
+}
+
+/// The canonical identity of one described-wire scalar argument. Computed the
+/// same way an evaluated scalar value interns, so a described literal selects
+/// the exact realized argument identity without demanding anything.
+fn wire_arg_identity(arg: &WireArg) -> ValueId {
+    let (ty_name, bytes) = match arg {
+        WireArg::Int(value) => ("Int", value.to_le_bytes().to_vec()),
+        WireArg::Bool(value) => ("Bool", i64::from(*value).to_le_bytes().to_vec()),
+    };
+    FramedNode::leaf(SchemaId::named(&format!("vix.semantic.v1:{ty_name}")), bytes).identity()
+}
+
+/// An at-most trace comparison: the observed counter and whether it stays
+/// within the surface literal bound. Compared in i128 so an observed counter
+/// cannot wrap past the contract.
+fn at_most(observed: u64, bound: i64) -> (u64, bool) {
+    (observed, i128::from(observed) <= i128::from(bound))
 }
 
 impl TraceSnapshot {
+    /// Count the realized demands that match a described wire. A name-level
+    /// selector matches every realization of the callee; a call-site selector
+    /// matches only the exact described argument identities. The described
+    /// literals are resolved to identities here — never demanded or counted.
+    fn wire_matches(&self, wire: &DescribedWire) -> u64 {
+        let described: Vec<ValueId> = wire.arguments.iter().map(wire_arg_identity).collect();
+        self.wire_demands
+            .iter()
+            .filter(|demand| {
+                demand.function == wire.function
+                    && (wire.name_level || demand.arguments == described)
+            })
+            .count() as u64
+    }
+
     /// Evaluate one trace check against the frozen snapshot.
     fn evaluate(&self, provenance: ProvenanceKey, check: TraceCheck) -> CheckRun {
-        let (observed, bound) = match check {
-            TraceCheck::SchedulerRequestsAtMost { bound } => (self.scheduler_requests, bound),
-            TraceCheck::MemoEntriesAtMost { bound } => (self.memo_entries, bound),
-            TraceCheck::StoreInternsAtMost { bound } => (self.store_interns, bound),
-            TraceCheck::ValueIslandSpawnsAtMost { bound } => (self.value_island_spawns, bound),
+        let (observed, passed) = match &check {
+            TraceCheck::SchedulerRequestsAtMost { bound } => at_most(self.scheduler_requests, *bound),
+            TraceCheck::MemoEntriesAtMost { bound } => at_most(self.memo_entries, *bound),
+            TraceCheck::StoreInternsAtMost { bound } => at_most(self.store_interns, *bound),
+            TraceCheck::ValueIslandSpawnsAtMost { bound } => at_most(self.value_island_spawns, *bound),
             TraceCheck::SuccessfulAggregateFreezesAtMost { bound } => {
-                (self.successful_aggregate_freezes, bound)
+                at_most(self.successful_aggregate_freezes, *bound)
             }
             TraceCheck::ActiveMoltenSelectionsAtMost { bound } => {
-                (self.active_molten_selections, bound)
+                at_most(self.active_molten_selections, *bound)
             }
             TraceCheck::ForcedCopySelectionsAtMost { bound } => {
-                (self.forced_copy_selections, bound)
+                at_most(self.forced_copy_selections, *bound)
             }
-            TraceCheck::FramedBytesAtMost { bound } => (self.framed_bytes, bound),
-            TraceCheck::PeakMoltenBytesAtMost { bound } => (self.peak_molten_bytes, bound),
-            TraceCheck::PeakMoltenNodesAtMost { bound } => (self.peak_molten_nodes, bound),
-            TraceCheck::FunctionCallsExactly { function, times } => (
-                self.function_calls.get(&function).copied().unwrap_or(0),
-                times,
-            ),
-        };
-        // Bounds and exact demand counts are surface literals; compare in i128
-        // so an observed counter cannot wrap past either contract.
-        let passed = match check {
-            TraceCheck::FunctionCallsExactly { .. } => i128::from(observed) == i128::from(bound),
-            _ => i128::from(observed) <= i128::from(bound),
+            TraceCheck::FramedBytesAtMost { bound } => at_most(self.framed_bytes, *bound),
+            TraceCheck::PeakMoltenBytesAtMost { bound } => at_most(self.peak_molten_bytes, *bound),
+            TraceCheck::PeakMoltenNodesAtMost { bound } => at_most(self.peak_molten_nodes, *bound),
+            TraceCheck::FunctionCallsExactly { function, times } => {
+                let observed = self.function_calls.get(function).copied().unwrap_or(0);
+                (observed, i128::from(observed) == i128::from(*times))
+            }
+            TraceCheck::Demanded { wire } => {
+                let observed = self.wire_matches(wire);
+                (observed, observed >= 1)
+            }
+            TraceCheck::NeverDemanded { wire } => {
+                let observed = self.wire_matches(wire);
+                (observed, observed == 0)
+            }
+            TraceCheck::DemandedOnce { wire } => {
+                let observed = self.wire_matches(wire);
+                (observed, observed == 1)
+            }
         };
         CheckRun {
             provenance,
@@ -575,7 +632,7 @@ fn run_lane(
                             )?);
                         }
                         PartitionedRecipe::Trace(trace) => {
-                            deferred_traces.push((ProvenanceKey::site(site), *trace));
+                            deferred_traces.push((ProvenanceKey::site(site), trace.clone()));
                         }
                     }
                 }
@@ -602,7 +659,7 @@ fn run_lane(
                             kill_available = false;
                         }
                         PartitionedRecipe::Trace(trace) => {
-                            deferred_traces.push((ProvenanceKey::site(site), *trace));
+                            deferred_traces.push((ProvenanceKey::site(site), trace.clone()));
                         }
                     }
                 }
@@ -633,6 +690,14 @@ fn run_lane(
         peak_molten_bytes: counters.peak_molten_bytes,
         peak_molten_nodes: counters.peak_molten_nodes,
         function_calls,
+        wire_demands: runtime
+            .realized_wire_demands()
+            .iter()
+            .map(|(function, arguments)| RealizedWireDemand {
+                function: *function,
+                arguments: arguments.clone(),
+            })
+            .collect(),
     };
     for (provenance, trace) in deferred_traces {
         checks.push(snapshot.evaluate(provenance, trace));

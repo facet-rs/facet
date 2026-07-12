@@ -12,8 +12,9 @@ use crate::vir::{
     MatchArm as VirMatchArm, Module, Node, NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
     ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm, Parameter, ParameterId,
     ParameterKind, RecordField, RecordType, Test, TestMetadata, TraceCheck, Type, VariantPayload,
-    YieldSite, YieldSiteId,
+    WireArg, YieldSite, YieldSiteId,
 };
+use crate::vir::DescribedWire;
 
 pub struct Compiler {
     parser: SurfaceParser,
@@ -1991,6 +1992,21 @@ fn lower_check(
                 nodes, bindings, context, call,
             )?));
         }
+        "demanded" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::Demanded {
+                wire: described_wire(context, call)?,
+            }));
+        }
+        "never_demanded" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::NeverDemanded {
+                wire: described_wire(context, call)?,
+            }));
+        }
+        "demanded_once" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::DemandedOnce {
+                wire: described_wire(context, call)?,
+            }));
+        }
         _ => {}
     }
     let condition = match call.callee.value.as_str() {
@@ -2122,6 +2138,66 @@ fn trace_function_calls(
         )
     })?;
     Ok(TraceCheck::FunctionCallsExactly { function, times })
+}
+
+/// Describe the operand of a `demanded` / `never_demanded` / `demanded_once`
+/// intrinsic as a held [`DescribedWire`], WITHOUT lowering or demanding it.
+///
+/// Because function arguments are wires, the operand `f(3)` in argument position
+/// is a description of an invocation, not a computed value. This resolves that
+/// description to the callee's function identity and its exact scalar argument
+/// literals. A zero-argument selector `f()` on a function that declares
+/// parameters is a name-level selector (every argument demand of `f`); a
+/// call-site selector carries the literal arguments so equal-recipe/different-
+/// argument demands stay distinct. No node is built and no operand is evaluated.
+fn described_wire(
+    context: &ModuleContext<'_>,
+    call: &ast::Call,
+) -> Result<DescribedWire, Diagnostics> {
+    check_arity(call, 1)?;
+    let ast::Expr::Call(operand) = &call.args.args[0] else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(expr_span(&call.args.args[0]), "a described-wire trace check takes a direct function invocation")));
+    };
+    if operand.named_args.is_some() {
+        return Err(Diagnostics::one(Diagnostic::unsupported(operand.span, "a described-wire selector does not carry where-clause arguments")));
+    }
+    let signature = context.signatures.get(&operand.callee.value).ok_or_else(|| {
+        Diagnostics::one(Diagnostic {
+            code: DiagnosticCode::UnknownName,
+            primary: operand.callee.span,
+            labels: Vec::new(),
+            payload: DiagnosticPayload::Name {
+                name: operand.callee.value.clone(),
+            },
+        })
+    })?;
+    let arguments = operand
+        .args
+        .args
+        .iter()
+        .map(wire_argument_literal)
+        .collect::<Result<Vec<_>, _>>()?;
+    let name_level = arguments.is_empty() && !signature.parameters.is_empty();
+    Ok(DescribedWire {
+        function: signature.id,
+        arguments,
+        name_level,
+    })
+}
+
+/// One closed scalar literal in a described-wire selector. A described selector
+/// only names literal arguments; it never evaluates a sub-expression to obtain
+/// an argument identity.
+fn wire_argument_literal(argument: &ast::Expr) -> Result<WireArg, Diagnostics> {
+    match argument {
+        ast::Expr::Number(number) => number
+            .value
+            .parse::<i64>()
+            .map(WireArg::Int)
+            .map_err(|_| type_mismatch(number.span, "Int", format!("number literal `{}`", number.value))),
+        ast::Expr::Bool(boolean) => Ok(WireArg::Bool(boolean.value)),
+        other => Err(Diagnostics::one(Diagnostic::unsupported(expr_span(other), "a described-wire argument must be a closed scalar literal"))),
+    }
 }
 
 #[derive(Clone)]
