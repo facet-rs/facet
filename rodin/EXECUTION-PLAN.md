@@ -170,19 +170,29 @@ At the time of the latest authoritative integration checkpoint
   `696488bf-ced4-4e2e-979d-f21f0fd7866b` proves `conflict_analysis` executes
   once total. Rung 093 remains red pending the value-level described-wire trace
   contract. This readiness progress does not renumber the canonical prefix;
-- the live Cargo oracle is folded at `a1be1fa6e`. One shared materialized
-  workspace is queried through `cargo metadata --offline`, preserving exact
+- the live Cargo oracle is folded into the production kernel lane. One shared
+  materialized workspace is queried through `cargo metadata --offline`, preserving exact
   source/name/version package identities, target-projected normal/build graph
   edges, and typed discrepancies including unsupported
-  `DomainMultiplicity`. Exact-root run
-  `76e6111a-3dd9-4c3b-9670-81402c2b89a2` passed all 24 production-shaped
-  fixture tests;
-- rungs 098 and 100 now receive `cargo_selection()` as a harness-supplied
-  oracle value. Their pure solver code reads only fixture-built typed inputs;
-  no recorded deleted-resolver answer remains an authority. The remaining
-  seam is a native Vix kernel producing a result with typed `Version` values,
-  plus the external harness adapter that projects it into the already-executable
-  Cargo-facing comparator. Version text never enters the pure solver API.
+  `DomainMultiplicity`. The external adapter constructs typed `SolveInput`
+  values and compares the typed `SolveResult` selection and target graph against
+  Cargo; Version text never enters the pure solver API;
+- `rodin/kernel.vix` is the first native kernel. It propagates roots,
+  target/cfg predicates, edge kinds, optional dependencies, default and weak
+  feature effects, and `links` claims through persistent state; searches in
+  deterministic precedence order; chronologically backtracks; and returns typed
+  `SolveResult`, `Conflict`, or `UnsupportedInput` values. Conflicts carry
+  provenance and widened `DeadRegion`s. Region installation uses semantic
+  VersionSet/feature containment and removes subsumed points. A Cargo selection
+  with a non-injective Rodin-domain projection is detected by the adapter and
+  returned as typed `DomainMultiplicity`, never collapsed;
+- exact native-kernel runs `73fd9a40-a678-4a2c-b221-07b0a011d09c` and
+  `f294d8f5-2f9d-4e07-8df6-ed31114fa867` passed the same nine default and
+  `WEAVY_JIT=0` certificates. They cover live Cargo line, target, feature, and
+  policy oracles; typed conflicts and learned regions; unsupported-domain
+  preflight; and scale plus explicit interpreter/native parity. Full Vix+Weavy
+  run `fe3f813b-f874-4429-8b49-2a223a0e1fd2` passed 719/719, including the
+  accepted-corpus cross-lane differential.
 
 This section is a snapshot, not a durable source of truth. Each implementation
 turn starts by checking the branch, preserved checkpoints, and focused gates.
@@ -196,6 +206,9 @@ The existing ratchet is not renumbered or reordered.
 The canonical score remains the highest consecutive green rung. Every rule in
 `vix/tests/ratchet/README.md` and `FOUNDATION.md` still applies. A green rung
 above a red rung does not change this score.
+
+At this snapshot the canonical prefix is 065; rung 066 remains a typed red
+boundary.
 
 ### Rodin readiness
 
@@ -548,7 +561,7 @@ The implementation follows `rodin/docs/10-identity.md` through
 
 ### R3 — Cargo oracle and production-shaped kernel
 
-The oracle half of R3 is complete at `a1be1fa6e`:
+R3 is complete in the production chain through `5e4a9de60`:
 
 1. Rungs 098 and 100 no longer treat `expected_selection()` from the deleted
    resolver as an authority; `cargo_selection()` is supplied by the harness.
@@ -559,16 +572,30 @@ The oracle half of R3 is complete at `a1be1fa6e`:
 5. Selection and graph differences are closed typed `Discrepancy` values ready
    for fixture minimization; a many-package projection into one Rodin domain is
    surfaced as unsupported `DomainMultiplicity`, never collapsed.
-
-The remaining R3 work is a new native kernel from
-`rodin/docs/content/spec.md` whose typed result is projected by an external
-harness adapter into that live comparator. The kernel keeps `Version` as a
-value; only the Cargo-facing projection uses Cargo's textual version spelling.
-
-The first kernel accepts fixture-built typed `PackageUniverse` values. This is
-not the raw crates.io sparse index and not the old parallel-column `Index`.
-Rows contain typed package identity, candidate version, dependency clauses,
-features, cfg/target gates, source coordinates, yanked state, and policy data.
+6. `rodin/kernel.vix` accepts fixture-built typed `PackageUniverse` values. This
+   is not the raw crates.io sparse index and not the old parallel-column
+   `Index`. Rows contain typed package identity, candidate version, dependency
+   clauses, features, cfg/target gates, source coordinates, yanked state, and
+   policy data.
+7. The kernel returns typed selected packages and typed target-graph edges.
+   Conflicts retain their cause, decisions, provenance, and learned region.
+8. Persistent propagation uses a dirty worklist; search chooses the highest
+   viable row, branches from immutable state, and retries chronologically.
+   Feature and links conflicts widen point regions using declared structure;
+   containment-based installation removes subsumed regions. Regions implement
+   assignment and region containment, intersection, finite-universe disjoint
+   subtraction, and positive/negative feature polarities. Installed no-goods
+   conflict on full entry and unit-propagate the final open version or feature
+   dimension.
+9. The Cargo adapter detects domain multiplicity before constructing a
+   name-indexed universe and supplies the typed unsupported preflight. The
+   resulting Vix execution returns `RodinOutcome::Unsupported` through the same
+   production path.
+10. Dodeca connects the spec, Vix kernel, and Rust Cargo adapter from their
+    actual repository roots. All 13 solver rules are referenced; 12 are
+    implemented and verified with zero invalid or stale references. The sole
+    dependency-only rule is cross-solve learned-region reuse, reserved for R4's
+    substrate memo work rather than claimed by this first kernel.
 
 Kernel completion evidence:
 
@@ -581,12 +608,37 @@ Kernel completion evidence:
 - structural inspection proves the typed domain model is the live execution
   path, not unused declarations beside flattened tables.
 
+The isolated scale certificate records:
+
+| packages | preparation | execution | peak molten bytes | molten nodes | frames | events |
+| ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| 4 | 1,744,483 us | 143,485 us | 17,668 | 358 | 636 | 1,385 |
+| 16 | 1,816,332 us | 153,241 us | 95,464 | 1,713 | 2,508 | 5,189 |
+| 64 | 1,966,541 us | 190,329 us | 485,376 | 8,088 | 9,996 | 20,405 |
+
+All three sizes use exactly three scheduler requests, three task spawns, two
+memo misses, five lowering units, one value-island spawn, one aggregate freeze,
+one active-molten selection, and zero forced-copy selections. The certificate
+pins linear upper bounds for Store work, framed bytes, molten bytes/nodes, and
+frame/event counts. Preparation fell by roughly 3.1x when schema assignment
+changed from repeated recursive sort-key construction to cached canonical keys;
+the kernel's global rescans were replaced by the dirty worklist and persistent
+undecided frontier. Candidate-domain construction performs one deduplicating
+interval pass. The measured Production trace is affine: `156n + 12` function
+entries and `317n + 117` events, with the certificate enforcing bounds of
+`160n` entries and `320n + 128` events.
+
+The final scale certificate is run
+`d937a8c4-7c18-4e00-876d-f0c4cd33c1ba`; the final nine-test production bands
+and full-suite run are recorded in the integration snapshot above.
+
 The historical 95.6% Cargo agreement is context and a baseline, not an oracle.
 The deleted Rust implementation is neither restored nor consulted.
 
 ### R4 — laziness, incrementality, and scale
 
-After the first Cargo-matching kernel:
+With the first Cargo-matching kernel green, the next incrementality and scale
+layers are:
 
 - `078-082`: receipts, cross-run reuse, early cutoff, projection reuse, and
   nondeterminism detection;
