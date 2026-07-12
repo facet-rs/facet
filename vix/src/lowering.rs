@@ -258,6 +258,7 @@ impl LoweringArtifact {
             output_schema: self.output_schema,
             forced_copy_value: self.forced_copy_value,
             publishes_value: self.publishes_value,
+            publishes_snapshot: self.publishes_snapshot,
         }
     }
 
