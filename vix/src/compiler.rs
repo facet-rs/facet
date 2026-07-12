@@ -2631,7 +2631,7 @@ fn lower_value_expected(
         ast::Expr::Map(map) => lower_map(nodes, bindings, context, map, expected),
         ast::Expr::Set(set) => lower_set(nodes, bindings, context, set, expected),
         ast::Expr::Index(index) => lower_array_index(nodes, bindings, context, index),
-        ast::Expr::MethodCall(call) => lower_method_call(nodes, bindings, context, call),
+        ast::Expr::MethodCall(call) => lower_method_call(nodes, bindings, context, call, expected),
         ast::Expr::Paren(paren) => {
             lower_value_expected(nodes, bindings, context, &paren.inner, expected)
         }
@@ -2927,6 +2927,7 @@ fn lower_method_call(
     bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     call: &ast::MethodCall,
+    expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
     let receiver = lower_value(nodes, bindings, context, &call.receiver)?;
     let Some(entry) = PreludeMethodRegistry::STANDARD.resolve(&receiver.ty, &call.name.value)
@@ -3060,12 +3061,18 @@ fn lower_method_call(
                     ty,
                 });
             }
-            let initial = lower_fold_initial(nodes, bindings, context, &positional[0], &element)?;
+            let initial =
+                lower_fold_accumulator(nodes, bindings, context, &positional[0], &positional[1], &element, expected)?;
             let parameter_ty = Type::Tuple(vec![initial.ty.clone(), element.clone()]);
             let folder = match &positional[1] {
-                ast::Expr::Closure(closure) => {
-                    lower_closure_with_parameter(nodes, bindings, context, closure, &parameter_ty)?
-                }
+                ast::Expr::Closure(closure) => lower_closure_typed(
+                    nodes,
+                    bindings,
+                    context,
+                    closure,
+                    parameter_ty.clone(),
+                    Some(&initial.ty),
+                )?,
                 expression => lower_value_expected(nodes, bindings, context, expression, None)?,
             };
             let Type::Function { parameter, result } = &folder.ty else {
@@ -4151,29 +4158,152 @@ fn build_pair_second_closure(
     })
 }
 
-/// Lower a fold's initial accumulator. An empty array literal `[]` cannot infer
-/// its element type in isolation; a fold that builds an array over `[element]`
-/// starts from `[element]`, so the empty literal is typed against that element.
-/// Every other initial keeps ordinary inference (scalar and string folds).
-fn lower_fold_initial(
+/// Lower a fold's initial accumulator. An empty collection literal (`[]`,
+/// `%{}`, `#{}`) cannot infer its element type in isolation; the fold's
+/// accumulator type `A` must come from either an external expected type or
+/// the closure body's `+` dispatch. A non-empty seed keeps ordinary inference
+/// (scalar and string folds, prefilled maps).
+fn lower_fold_accumulator(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     initial: &ast::Expr,
+    folder: &ast::Expr,
     element: &Type,
+    expected: Option<&Type>,
 ) -> Result<LoweredValue, Diagnostics> {
-    if let ast::Expr::Array(array) = initial
-        && array.elems.is_empty()
+    // An external expected type is the accumulator type `A`: flow it into the
+    // seed directly, including empty literals.
+    if let Some(expected) = expected {
+        return lower_value_expected(nodes, bindings, context, initial, Some(expected));
+    }
+    // An empty collection literal with no external expected type needs its
+    // accumulator type inferred from the closure body's `+` dispatch.
+    if let Some(accumulator_ty) =
+        infer_empty_seed_accumulator_type(context, initial, folder, element)?
     {
-        return lower_value_expected(
-            nodes,
-            bindings,
-            context,
-            initial,
-            Some(&Type::array(element.clone())),
-        );
+        return lower_value_expected(nodes, bindings, context, initial, Some(&accumulator_ty));
     }
     lower_value(nodes, bindings, context, initial)
+}
+
+/// Infer the accumulator type `A` for a fold whose seed is an empty collection
+/// literal (`[]`, `%{}`, `#{}`) with no external expected type. The closure
+/// body must be `acc + EXPR` where `acc` is the accumulator binding and `EXPR`
+/// captures only the element parameter; the `+` dispatch table then fixes `A`
+/// from the seed's collection kind and `EXPR`'s type:
+///
+///   * `%{}` seed, `EXPR : (K, V)`        ⇒ `A = Map<K, V>`
+///   * `#{}` seed, `EXPR : T`             ⇒ `A = Set<T>`
+///   * `[]`  seed, `EXPR : T`             ⇒ `A = [T]`  (the array-append grain)
+///
+/// Returns `None` when the shape does not hold, leaving the copy path to own
+/// the proper diagnostic.
+fn infer_empty_seed_accumulator_type(
+    context: &ModuleContext<'_>,
+    initial: &ast::Expr,
+    folder: &ast::Expr,
+    element: &Type,
+) -> Result<Option<Type>, Diagnostics> {
+    let ast::Expr::Closure(closure) = folder else {
+        return Ok(None);
+    };
+    if closure.ty.is_some() {
+        return Ok(None);
+    }
+    let [acc_pattern, elem_pattern] = closure.patterns.as_slice() else {
+        return Ok(None);
+    };
+    let (Some(acc_name), Some(elem_name)) = (binding_name(acc_pattern), binding_name(elem_pattern))
+    else {
+        return Ok(None);
+    };
+    let ast::ClosureBody::Expr(body) = &closure.body else {
+        return Ok(None);
+    };
+    let ast::Expr::Binary(binary) = unwrap_paren(body) else {
+        return Ok(None);
+    };
+    if binary.op.value != "+" {
+        return Ok(None);
+    }
+    let ast::Expr::Identifier(left) = unwrap_paren(&binary.left) else {
+        return Ok(None);
+    };
+    if left.value != acc_name {
+        return Ok(None);
+    }
+    let appended = &binary.right;
+    // The accumulator is consumed once as the append base and nowhere else.
+    if expr_references_name(appended, acc_name) {
+        return Ok(None);
+    }
+    // Probe `EXPR`'s type by lowering it in a throwaway closure frame with
+    // only the element parameter bound. The probe allocates a closure id and
+    // discards it; its VIR nodes never reach the enclosing function.
+    let probe_ty = probe_element_expression_type(context, appended, element, elem_name, closure.span)?;
+    let accumulator_ty = match initial {
+        ast::Expr::Array(array) if array.elems.is_empty() => Type::array(probe_ty),
+        ast::Expr::Map(map) if map.rows.is_empty() => {
+            let Type::Tuple(fields) = &probe_ty else {
+                return Ok(None);
+            };
+            if fields.len() != 2 {
+                return Ok(None);
+            }
+            let key = fields[0].clone();
+            if !key.structural_order_is_defined() {
+                return Ok(None);
+            }
+            Type::map(key, fields[1].clone())
+        }
+        ast::Expr::Set(set) if set.elems.is_empty() => {
+            if !probe_ty.structural_order_is_defined() {
+                return Ok(None);
+            }
+            Type::set(probe_ty)
+        }
+        _ => return Ok(None),
+    };
+    Ok(Some(accumulator_ty))
+}
+
+/// Lower `body` in a throwaway single-parameter closure frame to discover its
+/// result type, without committing any VIR nodes to the enclosing function.
+/// The frame binds `elem_name` to `element` and lowers `body` with no expected
+/// type. Used only by [`infer_empty_seed_accumulator_type`] as a type probe.
+fn probe_element_expression_type(
+    context: &ModuleContext<'_>,
+    body: &ast::Expr,
+    element: &Type,
+    elem_name: &str,
+    span: Span,
+) -> Result<Type, Diagnostics> {
+    // Lower `body` in a throwaway node buffer with only the element parameter
+    // bound, purely to discover its result type. No closure id is allocated and
+    // no function is inserted, so the enclosing module's FunctionId ordering is
+    // undisturbed. The body of a fold's appended expression is a simple value
+    // expression over the element parameter; it does not allocate closures.
+    let mut probe_nodes = Vec::new();
+    let parameter_id = ParameterId(0);
+    let parameter_node = push_node(
+        &mut probe_nodes,
+        span,
+        element.clone(),
+        EffectFacts::PURE,
+        Vec::new(),
+        Op::Parameter(parameter_id),
+    );
+    let mut probe_bindings = BTreeMap::new();
+    probe_bindings.insert(
+        elem_name.to_owned(),
+        LoweredValue {
+            node: parameter_node,
+            ty: element.clone(),
+        },
+    );
+    let output = lower_value_expected(&mut probe_nodes, &probe_bindings, context, body, None)?;
+    Ok(output.ty)
 }
 
 /// Recognise the exact strict one-item-append fold shape and, when it holds,
