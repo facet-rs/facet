@@ -10335,7 +10335,7 @@ pub fn main() -> String {
         let mut traces = Vec::new();
         for lane in lanes() {
             let mut machine = load_with_lane(src, lane);
-            let (target, _) = machine.driver.intern_windows_target().unwrap();
+            let (target, _) = machine.driver.intern_target(2, 1).unwrap();
             let toolchain = machine.demand_i64("toolchain", vec![target]).unwrap();
 
             let cc = machine.driver.store_field(toolchain, 0).unwrap();
