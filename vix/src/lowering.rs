@@ -2203,8 +2203,40 @@ impl<'a> ProgramContractBuilder<'a> {
             })?,
         };
         let call_contract = if self.closure_targets.contains(&function.id) {
-            let call = self.call_contract_for_function(&entries, result, &regions)?;
-            Some(call)
+            // The captures follow the single argument entry. If they exceed one
+            // inline word they are boxed: the concrete contract carries the same
+            // call entries (captures still arrive as call arguments, unboxed at
+            // the call site) plus the environment layout that EnvBox/EnvLoad and
+            // the boxed-convention proof read.
+            let capture_entries = entries
+                .get(1..function.parameters.len())
+                .unwrap_or(&[]);
+            let capture_words: usize = capture_entries
+                .iter()
+                .map(|entry| regions[entry.0 as usize].shape.words.len())
+                .sum();
+            if capture_words > 1 {
+                let mut offset = 0u32;
+                let environment = capture_entries
+                    .iter()
+                    .map(|entry| {
+                        let region = &regions[entry.0 as usize];
+                        let field = WeavyFrameRegion::new(offset, region.shape.clone());
+                        offset += (region.shape.words.len() * 8) as u32;
+                        field
+                    })
+                    .collect();
+                Some(self.intern_call(WeavyCallContract {
+                    entries: entries
+                        .iter()
+                        .map(|entry| regions[entry.0 as usize].clone())
+                        .collect(),
+                    environment,
+                    result: canonical_call_region(&regions[result.0 as usize]),
+                }))
+            } else {
+                Some(self.call_contract_for_function(&entries, result, &regions)?)
+            }
         } else {
             None
         };
@@ -2231,30 +2263,6 @@ impl<'a> ProgramContractBuilder<'a> {
                 .map(|entry| regions[entry.0 as usize].clone())
                 .collect(),
             environment: Vec::new(),
-            result: canonical_call_region(&regions[result.0 as usize]),
-        };
-        Ok(self.intern_call(call))
-    }
-
-    /// Build the concrete contract for a closure that materializes its captures
-    /// from a boxed environment: only the leading argument entries are call
-    /// arguments; the trailing capture entries become the environment contract.
-    fn boxed_call_contract_for_function(
-        &mut self,
-        argument_entries: &[WeavyRegionId],
-        capture_entries: &[WeavyRegionId],
-        result: WeavyRegionId,
-        regions: &[WeavyFrameRegion],
-    ) -> Result<WeavyCallContractId, Diagnostics> {
-        let call = WeavyCallContract {
-            entries: argument_entries
-                .iter()
-                .map(|entry| regions[entry.0 as usize].clone())
-                .collect(),
-            environment: capture_entries
-                .iter()
-                .map(|entry| canonical_call_region(&regions[entry.0 as usize]))
-                .collect(),
             result: canonical_call_region(&regions[result.0 as usize]),
         };
         Ok(self.intern_call(call))
@@ -5749,12 +5757,6 @@ fn lower_node(
                     "closure capture count does not match its callable ABI",
                 ));
             }
-            if node.inputs.len() > 1 {
-                return Err(lowering_diagnostic(
-                    node.span,
-                    "closure environment currently carries exactly one captured word",
-                ));
-            }
             if &target_parameter.ty != parameter.as_ref()
                 || &target.return_type != result.as_ref()
                 || target_layout
@@ -5782,9 +5784,27 @@ fn lower_node(
                     .closure(lowering.function.id, node.id, node.span)?;
             let (callee_temp, environment_temp) =
                 lowering.function.layout.closure_temps(node.id, node.span)?;
-            let environment = if !node.inputs.is_empty() {
-                let capture = input_value(node, values, 0)?;
-                require_value(node, &capture, &Type::Int, ValueRepresentation::Word)?;
+            // The total inline width of the captures decides the environment
+            // representation: a single word rides inline in the environment
+            // word (the optimized static path); anything wider — notably a
+            // captured callable — is boxed behind a task-lifetime environment
+            // handle, since a uniform recursive closure cannot inline a value of
+            // its own two-word width.
+            let capture_slots = (0..node.inputs.len())
+                .map(|index| input_value(node, values, index))
+                .collect::<Result<Vec<_>, _>>()?;
+            let capture_words: usize = capture_slots
+                .iter()
+                .map(|slot| slot.region.words().as_usize())
+                .sum();
+            let environment = if capture_words > 1 {
+                WeavyOp::EnvBox {
+                    dst: environment_region,
+                    callee: WeavyFnId(callee),
+                    fields: capture_slots.iter().map(|slot| slot.region_id).collect(),
+                }
+            } else if let [capture] = capture_slots.as_slice() {
+                require_value(node, capture, &Type::Int, ValueRepresentation::Word)?;
                 WeavyOp::CopyI64 {
                     dst: environment_temp.start().byte_offset(),
                     src: capture.region.start().byte_offset(),
