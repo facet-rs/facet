@@ -28,6 +28,13 @@ pub enum DiagnosticCode {
     ExpressionStatement,
     UnusedMustUse,
     UnknownMethod,
+    /// A compile-time constant-fold decode of a literal document failed: the
+    /// document did not match the compiler-known target type.
+    DecodeFailed,
+    /// A decode call whose document is not a compile-time-constant literal, or
+    /// whose target type is not known from context: the runtime doc-parse
+    /// primitive that would serve it does not exist yet.
+    RuntimeDecodeUnavailable,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
@@ -91,6 +98,25 @@ pub enum DiagnosticPayload {
     UnusedResult {
         operation: String,
     },
+    /// A typed decode failure at a compile-time constant fold. The structured
+    /// fields (kind label, field path, document byte span) are the machine-
+    /// consumable truth; `detail` is a rendered convenience for `message()` and
+    /// is never an identity-bearing value.
+    Decode {
+        format: String,
+        target: String,
+        kind: String,
+        path: Vec<String>,
+        doc_offset: Option<u32>,
+        doc_len: Option<u32>,
+        detail: String,
+    },
+    /// The runtime typed-decode seam a nonliteral/untyped-context decode would
+    /// need, named explicitly rather than swallowed as a generic rejection.
+    RuntimeDecode {
+        format: String,
+        target: Option<String>,
+    },
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -148,6 +174,32 @@ impl Diagnostic {
             DiagnosticPayload::UnusedResult { operation } => {
                 format!("unused result of `{operation}`")
             }
+            DiagnosticPayload::Decode {
+                format,
+                target,
+                path,
+                detail,
+                ..
+            } => {
+                let at = if path.is_empty() {
+                    String::new()
+                } else {
+                    format!(" at {}", path.join("."))
+                };
+                format!("{format} decode into {target} failed{at}: {detail}")
+            }
+            DiagnosticPayload::RuntimeDecode { format, target } => match target {
+                Some(target) => format!(
+                    "runtime typed decode is unavailable: {format} decode into {target} needs the \
+                     runtime doc-parse primitive (r[machine.primitive.typed-deserialization], not \
+                     yet implemented); only compile-time-constant document literals are folded"
+                ),
+                None => format!(
+                    "runtime typed decode is unavailable: {format} decode has no target type known \
+                     from context; only compile-time-constant document literals with a known target \
+                     are folded"
+                ),
+            },
         }
     }
 }

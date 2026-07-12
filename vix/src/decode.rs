@@ -1,4 +1,4 @@
-//! Type-directed document decoding.
+//! Type-directed document decoding — the compile-time half of typed decode.
 //!
 //! One [`FormatParser`] pass per document, walked directly against the
 //! compiler-known Vix target [`Type`]. No generic `Doc`/`Value` is
@@ -6,13 +6,23 @@
 //! matched against the exact declared type it lands on, and the walk yields
 //! typed leaves ([`DecodedValue`]) that the compiler lowers into ordinary
 //! typed-construction VIR (records → `Op::Record`, strings → `Op::String`,
-//! …). The machine therefore retains typed construction and framed store
-//! identity; the "host call" is this single per-document parser drive.
+//! …). The constructed value therefore interns to the same content-addressed
+//! handle a hand-written literal of that value would.
 //!
-//! This is the scheduler-edge realization of
-//! `r[machine.primitive.typed-deserialization]`: format parsing targets vix
-//! structs directly via schema, one host call per document, typed store
-//! values out, zero generic-Doc projection walking.
+//! This is the **constant-fold subset** of
+//! `r[machine.primitive.typed-deserialization]`, restricted to compile-time-
+//! constant document literals — not a realization of that runtime primitive.
+//! The doctrine's doc-parse primitive is a *runtime* host call that serves
+//! *dynamic* documents (a fetched index, a manifest read from disk) and returns
+//! a runtime `Outcome`; this lane performs zero host calls and runs entirely in
+//! `Compiler::compile`. Folding a pure, deterministic decode of a literal is a
+//! legitimate as-if rewrite of that primitive's constant-input case, and the
+//! zero-`HostCall` certificate on the lowered frames is an as-if optimization
+//! proof — not evidence that the runtime primitive exists. When it lands, this
+//! code must become the constant-folded case *of* it; nonliteral or
+//! unknown-target decodes are rejected at a named runtime seam
+//! ([`crate::diagnostic::DiagnosticCode::RuntimeDecodeUnavailable`]), never
+//! host-evaluated here.
 
 use facet_format::{FieldKey, FormatParser, ParseEventKind, ScalarValue};
 use facet_json::JsonParser;
@@ -36,18 +46,216 @@ impl DecodeFormat {
     }
 }
 
-/// A typed decode failure. Its `message` is the same value a runtime
-/// `try_*_decode` surfaces as `DecodeError { message }`.
+/// A byte span inside the *decoded document* (the parser's own coordinate
+/// space), not the vix source. The document reaches the decoder as a string
+/// literal whose escapes are never reversed, so mapping this offset back into
+/// the vix source through those escapes is not available; the boundary is
+/// represented explicitly here rather than fabricating a source offset.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct DocumentSpan {
+    pub offset: u32,
+    pub len: u32,
+}
+
+/// The document span carried by one parse event. Reads the event's span fields
+/// directly so the (transitive) `facet_reflect::Span` type need not be named.
+fn event_span(event: &facet_format::ParseEvent<'_>) -> DocumentSpan {
+    DocumentSpan {
+        offset: event.span.offset,
+        len: event.span.len,
+    }
+}
+
+/// One step of a structured field path into the document.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum PathSegment {
+    Field(String),
+}
+
+/// A typed decode failure kind. No prose is identity-bearing: [`label`] is the
+/// stable machine discriminant and [`render`] is a human convenience.
+///
+/// [`label`]: DecodeErrorKind::label
+/// [`render`]: DecodeErrorKind::render
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum DecodeErrorKind {
+    ExpectedScalar {
+        expected: String,
+        found: &'static str,
+    },
+    ExpectedObject {
+        container: String,
+        found: &'static str,
+    },
+    ExpectedStringOrObject {
+        enum_name: String,
+        found: &'static str,
+    },
+    IntOutOfRange,
+    MissingField {
+        container: String,
+        field: String,
+    },
+    UnknownField {
+        container: String,
+        field: String,
+    },
+    DuplicateField {
+        container: String,
+        field: String,
+    },
+    NoStringForm {
+        enum_name: String,
+    },
+    NoTableForm {
+        enum_name: String,
+    },
+    AmbiguousStringForm {
+        enum_name: String,
+    },
+    AmbiguousTableForm {
+        enum_name: String,
+    },
+    UnsupportedTarget {
+        type_name: String,
+    },
+    TrailingContent {
+        format: &'static str,
+        found: &'static str,
+    },
+    UnexpectedEnd {
+        container: String,
+    },
+    /// A leaf failure reported by the underlying parser. The parser only offers
+    /// a rendered string here; it stays quarantined in `detail` and is never
+    /// promoted to a discriminant.
+    Parse {
+        detail: String,
+    },
+}
+
+impl DecodeErrorKind {
+    /// A stable machine discriminant — never rendered prose.
+    pub fn label(&self) -> &'static str {
+        match self {
+            DecodeErrorKind::ExpectedScalar { .. } => "expected-scalar",
+            DecodeErrorKind::ExpectedObject { .. } => "expected-object",
+            DecodeErrorKind::ExpectedStringOrObject { .. } => "expected-string-or-object",
+            DecodeErrorKind::IntOutOfRange => "int-out-of-range",
+            DecodeErrorKind::MissingField { .. } => "missing-field",
+            DecodeErrorKind::UnknownField { .. } => "unknown-field",
+            DecodeErrorKind::DuplicateField { .. } => "duplicate-field",
+            DecodeErrorKind::NoStringForm { .. } => "no-string-form",
+            DecodeErrorKind::NoTableForm { .. } => "no-table-form",
+            DecodeErrorKind::AmbiguousStringForm { .. } => "ambiguous-string-form",
+            DecodeErrorKind::AmbiguousTableForm { .. } => "ambiguous-table-form",
+            DecodeErrorKind::UnsupportedTarget { .. } => "unsupported-target",
+            DecodeErrorKind::TrailingContent { .. } => "trailing-content",
+            DecodeErrorKind::UnexpectedEnd { .. } => "unexpected-end",
+            DecodeErrorKind::Parse { .. } => "parse-error",
+        }
+    }
+
+    /// A human-readable rendering. Convenience only; identity lives in the kind.
+    pub fn render(&self) -> String {
+        match self {
+            DecodeErrorKind::ExpectedScalar { expected, found } => {
+                format!("expected {expected}, found {found}")
+            }
+            DecodeErrorKind::ExpectedObject { container, found } => {
+                format!("expected an object for {container}, found {found}")
+            }
+            DecodeErrorKind::ExpectedStringOrObject { enum_name, found } => {
+                format!("expected a string or object for {enum_name}, found {found}")
+            }
+            DecodeErrorKind::IntOutOfRange => {
+                "expected Int, found an out-of-range integer".to_owned()
+            }
+            DecodeErrorKind::MissingField { container, field } => {
+                format!("missing field \"{field}\" in {container}")
+            }
+            DecodeErrorKind::UnknownField { container, field } => {
+                format!("unknown field \"{field}\" in {container}")
+            }
+            DecodeErrorKind::DuplicateField { container, field } => {
+                format!("duplicate field \"{field}\" in {container}")
+            }
+            DecodeErrorKind::NoStringForm { enum_name } => {
+                format!("{enum_name} has no short (single-string) form for a scalar document")
+            }
+            DecodeErrorKind::NoTableForm { enum_name } => {
+                format!("{enum_name} has no detailed (table) form for an object document")
+            }
+            DecodeErrorKind::AmbiguousStringForm { enum_name } => format!(
+                "{enum_name} has more than one short (single-string) form; a scalar document \
+                 selects no variant unambiguously"
+            ),
+            DecodeErrorKind::AmbiguousTableForm { enum_name } => format!(
+                "{enum_name} has more than one detailed (table) form; an object document selects \
+                 no variant unambiguously"
+            ),
+            DecodeErrorKind::UnsupportedTarget { type_name } => {
+                format!("cannot decode into {type_name}")
+            }
+            DecodeErrorKind::TrailingContent { format, found } => {
+                format!("unexpected trailing {format} after the decoded value: {found}")
+            }
+            DecodeErrorKind::UnexpectedEnd { container } => {
+                format!("expected a value for {container}, found end of document")
+            }
+            DecodeErrorKind::Parse { detail } => detail.clone(),
+        }
+    }
+}
+
+/// A typed decode failure: a kind, the structured field path that reached it,
+/// and the offending document span when the parser offered one. This is the
+/// compiler-internal error the constant-fold lane raises; it is rendered into a
+/// [`crate::diagnostic::Diagnostic`] at the call site. No identity depends on a
+/// prose string.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct DecodeError {
-    pub message: String,
+    pub kind: DecodeErrorKind,
+    pub path: Vec<PathSegment>,
+    pub span: Option<DocumentSpan>,
 }
 
 impl DecodeError {
-    fn new(message: impl Into<String>) -> Self {
+    fn of(kind: DecodeErrorKind) -> Self {
         Self {
-            message: message.into(),
+            kind,
+            path: Vec::new(),
+            span: None,
         }
+    }
+
+    fn with_span(mut self, span: DocumentSpan) -> Self {
+        if self.span.is_none() {
+            self.span = Some(span);
+        }
+        self
+    }
+
+    /// Prepend one field as the error unwinds, so the path reads outer→inner.
+    fn under(mut self, field: &str) -> Self {
+        self.path.insert(0, PathSegment::Field(field.to_owned()));
+        self
+    }
+
+    /// The field-path names, outer→inner.
+    #[must_use]
+    pub fn path_names(&self) -> Vec<String> {
+        self.path
+            .iter()
+            .map(|PathSegment::Field(name)| name.clone())
+            .collect()
+    }
+
+    /// A human rendering: the kind's message with no path prefix (the path is
+    /// carried separately and joined by the diagnostic renderer).
+    #[must_use]
+    pub fn render(&self) -> String {
+        self.kind.render()
     }
 }
 
@@ -85,8 +293,11 @@ pub fn decode(
             Ok(value)
         }
         DecodeFormat::Toml => {
-            let mut parser = TomlParser::new(source)
-                .map_err(|err| DecodeError::new(format!("TOML parse error: {err:?}")))?;
+            let mut parser = TomlParser::new(source).map_err(|err| {
+                DecodeError::of(DecodeErrorKind::Parse {
+                    detail: format!("TOML parse error: {err:?}"),
+                })
+            })?;
             let value = decode_value(&mut parser, target)?;
             expect_end(&mut parser, format)?;
             Ok(value)
@@ -111,50 +322,55 @@ fn decode_value<'de>(
     }
 
     match ty {
-        Type::Int => match scalar(parser, ty)? {
-            ScalarValue::I64(value) => Ok(DecodedValue::Int(value)),
-            ScalarValue::U64(value) => i64::try_from(value)
-                .map(DecodedValue::Int)
-                .map_err(|_| DecodeError::new("expected Int, found an out-of-range integer")),
-            other => Err(scalar_mismatch("Int", &other)),
-        },
-        Type::Bool => match scalar(parser, ty)? {
-            ScalarValue::Bool(value) => Ok(DecodedValue::Bool(value)),
-            other => Err(scalar_mismatch("Bool", &other)),
-        },
-        Type::String => match scalar(parser, ty)? {
-            ScalarValue::Str(value) => Ok(DecodedValue::Str(value.into_owned())),
-            other => Err(scalar_mismatch("String", &other)),
-        },
+        Type::Int => {
+            let (value, span) = scalar(parser, "Int")?;
+            match value {
+                ScalarValue::I64(value) => Ok(DecodedValue::Int(value)),
+                ScalarValue::U64(value) => i64::try_from(value)
+                    .map(DecodedValue::Int)
+                    .map_err(|_| DecodeError::of(DecodeErrorKind::IntOutOfRange).with_span(span)),
+                other => Err(scalar_mismatch("Int", &other, span)),
+            }
+        }
+        Type::Bool => {
+            let (value, span) = scalar(parser, "Bool")?;
+            match value {
+                ScalarValue::Bool(value) => Ok(DecodedValue::Bool(value)),
+                other => Err(scalar_mismatch("Bool", &other, span)),
+            }
+        }
+        Type::String => {
+            let (value, span) = scalar(parser, "String")?;
+            match value {
+                ScalarValue::Str(value) => Ok(DecodedValue::Str(value.into_owned())),
+                other => Err(scalar_mismatch("String", &other, span)),
+            }
+        }
         Type::Record(record) => Ok(DecodedValue::Record(decode_fields(
             parser,
             &record.name,
             &record.fields,
         )?)),
         Type::Enum(enumeration) => decode_enum(parser, enumeration),
-        other => Err(DecodeError::new(format!(
-            "cannot decode into {}",
-            other.name()
-        ))),
+        other => Err(DecodeError::of(DecodeErrorKind::UnsupportedTarget {
+            type_name: other.name(),
+        })),
     }
 }
 
 /// The string-or-table enum form (the Cargo dependency shape). A scalar string
 /// selects the short single-`String` tuple variant; an object selects the
-/// detailed record variant and decodes directly into its fields. Both compose
-/// through the same decoder as any other value.
+/// detailed record variant and decodes directly into its fields. Selection is
+/// deterministic: an ambiguous payload shape (two short forms, or two table
+/// forms) is a typed failure, never a first-match guess.
 fn decode_enum<'de>(
     parser: &mut dyn FormatParser<'de>,
     enumeration: &EnumType,
 ) -> Result<DecodedValue, DecodeError> {
-    match peek_kind(parser)? {
+    let (kind, span) = peek(parser)?;
+    match kind {
         Some(ParseEventKind::Scalar(_)) => {
-            let (index, inner) = string_form_variant(enumeration).ok_or_else(|| {
-                DecodeError::new(format!(
-                    "{} has no short (single-string) form for a scalar document",
-                    enumeration.name
-                ))
-            })?;
+            let (index, inner) = string_form_variant(enumeration)?;
             let field = decode_value(parser, inner)?;
             Ok(DecodedValue::Variant {
                 index,
@@ -162,55 +378,77 @@ fn decode_enum<'de>(
             })
         }
         Some(ParseEventKind::StructStart(_)) => {
-            let (index, fields) = table_form_variant(enumeration).ok_or_else(|| {
-                DecodeError::new(format!(
-                    "{} has no detailed (table) form for an object document",
-                    enumeration.name
-                ))
-            })?;
+            let (index, fields) = table_form_variant(enumeration)?;
             let values = decode_fields(parser, &enumeration.name, fields)?;
             Ok(DecodedValue::Variant {
                 index,
                 fields: values,
             })
         }
-        Some(other) => Err(DecodeError::new(format!(
-            "expected a string or object for {}, found {}",
-            enumeration.name,
-            event_label(&other)
-        ))),
-        None => Err(DecodeError::new(format!(
-            "expected a value for {}, found end of document",
-            enumeration.name
-        ))),
+        Some(other) => Err(span_opt(
+            DecodeError::of(DecodeErrorKind::ExpectedStringOrObject {
+                enum_name: enumeration.name.clone(),
+                found: event_label(&other),
+            }),
+            span,
+        )),
+        None => Err(DecodeError::of(DecodeErrorKind::UnexpectedEnd {
+            container: enumeration.name.clone(),
+        })),
     }
 }
 
-/// The variant that carries the short form: a single-`String` tuple payload.
-fn string_form_variant(enumeration: &EnumType) -> Option<(u32, &Type)> {
-    enumeration
+/// Select the unique short-form variant (a single-`String` tuple payload).
+/// Zero matches is [`DecodeErrorKind::NoStringForm`], more than one is
+/// [`DecodeErrorKind::AmbiguousStringForm`] — never a first-match pick.
+fn string_form_variant(enumeration: &EnumType) -> Result<(u32, &Type), DecodeError> {
+    let mut matches = enumeration
         .variants
         .iter()
         .enumerate()
-        .find_map(|(index, variant)| match &variant.payload {
+        .filter_map(|(index, variant)| match &variant.payload {
             VariantPayload::Tuple(types) => match types.as_slice() {
                 [inner @ Type::String] => Some((index as u32, inner)),
                 _ => None,
             },
             _ => None,
+        });
+    let first = matches.next().ok_or_else(|| {
+        DecodeError::of(DecodeErrorKind::NoStringForm {
+            enum_name: enumeration.name.clone(),
         })
+    })?;
+    if matches.next().is_some() {
+        return Err(DecodeError::of(DecodeErrorKind::AmbiguousStringForm {
+            enum_name: enumeration.name.clone(),
+        }));
+    }
+    Ok(first)
 }
 
-/// The variant that carries the detailed form: a record payload.
-fn table_form_variant(enumeration: &EnumType) -> Option<(u32, &[RecordField])> {
-    enumeration
+/// Select the unique table-form variant (a record payload). Zero matches is
+/// [`DecodeErrorKind::NoTableForm`], more than one is
+/// [`DecodeErrorKind::AmbiguousTableForm`] — never a first-match pick.
+fn table_form_variant(enumeration: &EnumType) -> Result<(u32, &[RecordField]), DecodeError> {
+    let mut matches = enumeration
         .variants
         .iter()
         .enumerate()
-        .find_map(|(index, variant)| match &variant.payload {
+        .filter_map(|(index, variant)| match &variant.payload {
             VariantPayload::Record(fields) => Some((index as u32, fields.as_slice())),
             _ => None,
+        });
+    let first = matches.next().ok_or_else(|| {
+        DecodeError::of(DecodeErrorKind::NoTableForm {
+            enum_name: enumeration.name.clone(),
         })
+    })?;
+    if matches.next().is_some() {
+        return Err(DecodeError::of(DecodeErrorKind::AmbiguousTableForm {
+            enum_name: enumeration.name.clone(),
+        }));
+    }
+    Ok(first)
 }
 
 /// Decode one object's fields against a declared field list, in declaration
@@ -223,19 +461,23 @@ fn decode_fields<'de>(
     container: &str,
     fields: &[RecordField],
 ) -> Result<Vec<DecodedValue>, DecodeError> {
-    match consume(parser)?.kind {
+    let start = consume(parser)?;
+    let start_span = event_span(&start);
+    match start.kind {
         ParseEventKind::StructStart(_) => {}
         other => {
-            return Err(DecodeError::new(format!(
-                "expected an object for {container}, found {}",
-                event_label(&other)
-            )));
+            return Err(DecodeError::of(DecodeErrorKind::ExpectedObject {
+                container: container.to_owned(),
+                found: event_label(&other),
+            })
+            .with_span(start_span));
         }
     }
 
     let mut slots: Vec<Option<DecodedValue>> = fields.iter().map(|_| None).collect();
     loop {
-        match peek_kind(parser)? {
+        let (kind, span) = peek(parser)?;
+        match kind {
             None => break,
             Some(ParseEventKind::StructEnd) => {
                 consume(parser)?;
@@ -249,26 +491,37 @@ fn decode_fields<'de>(
                 match fields.iter().position(|field| field.name == name) {
                     Some(index) => {
                         if slots[index].is_some() {
-                            return Err(DecodeError::new(format!(
-                                "duplicate field \"{name}\" in {container}"
-                            )));
+                            return Err(span_opt(
+                                DecodeError::of(DecodeErrorKind::DuplicateField {
+                                    container: container.to_owned(),
+                                    field: name,
+                                }),
+                                span,
+                            ));
                         }
                         let value = decode_value(parser, &fields[index].ty)
-                            .map_err(|err| field_context(&name, err))?;
+                            .map_err(|err| err.under(&name))?;
                         slots[index] = Some(value);
                     }
                     None => {
-                        return Err(DecodeError::new(format!(
-                            "unknown field \"{name}\" in {container}"
-                        )));
+                        return Err(span_opt(
+                            DecodeError::of(DecodeErrorKind::UnknownField {
+                                container: container.to_owned(),
+                                field: name,
+                            }),
+                            span,
+                        ));
                     }
                 }
             }
             Some(other) => {
-                return Err(DecodeError::new(format!(
-                    "expected a field of {container}, found {}",
-                    event_label(&other)
-                )));
+                return Err(span_opt(
+                    DecodeError::of(DecodeErrorKind::ExpectedObject {
+                        container: container.to_owned(),
+                        found: event_label(&other),
+                    }),
+                    span,
+                ));
             }
         }
     }
@@ -279,34 +532,40 @@ fn decode_fields<'de>(
             Some(value) => out.push(value),
             None if field.ty.option_inner().is_some() => out.push(DecodedValue::OptionNone),
             None => {
-                return Err(DecodeError::new(format!(
-                    "missing field \"{}\" in {container}",
-                    field.name
-                )));
+                return Err(DecodeError::of(DecodeErrorKind::MissingField {
+                    container: container.to_owned(),
+                    field: field.name.clone(),
+                }));
             }
         }
     }
     Ok(out)
 }
 
+/// Consume one scalar, returning its value and document span. `expected` names
+/// the target type for the mismatch message.
 fn scalar<'de>(
     parser: &mut dyn FormatParser<'de>,
-    ty: &Type,
-) -> Result<ScalarValue<'de>, DecodeError> {
-    match consume(parser)?.kind {
-        ParseEventKind::Scalar(value) => Ok(value),
-        other => Err(DecodeError::new(format!(
-            "expected {}, found {}",
-            ty.name(),
-            event_label(&other)
-        ))),
+    expected: &str,
+) -> Result<(ScalarValue<'de>, DocumentSpan), DecodeError> {
+    let event = consume(parser)?;
+    let span = event_span(&event);
+    match event.kind {
+        ParseEventKind::Scalar(value) => Ok((value, span)),
+        other => Err(DecodeError::of(DecodeErrorKind::ExpectedScalar {
+            expected: expected.to_owned(),
+            found: event_label(&other),
+        })
+        .with_span(span)),
     }
 }
 
 fn is_null<'de>(parser: &mut dyn FormatParser<'de>) -> Result<bool, DecodeError> {
     Ok(matches!(
-        peek_kind(parser)?,
-        Some(ParseEventKind::Scalar(ScalarValue::Null | ScalarValue::Unit))
+        peek(parser)?.0,
+        Some(ParseEventKind::Scalar(
+            ScalarValue::Null | ScalarValue::Unit
+        ))
     ))
 }
 
@@ -315,18 +574,28 @@ fn consume<'de>(
 ) -> Result<facet_format::ParseEvent<'de>, DecodeError> {
     match parser.next_event() {
         Ok(Some(event)) => Ok(event),
-        Ok(None) => Err(DecodeError::new("unexpected end of document")),
-        Err(err) => Err(DecodeError::new(format!("parse error: {err:?}"))),
+        Ok(None) => Err(DecodeError::of(DecodeErrorKind::UnexpectedEnd {
+            container: "the document".to_owned(),
+        })),
+        Err(err) => Err(DecodeError::of(DecodeErrorKind::Parse {
+            detail: format!("parse error: {err:?}"),
+        })),
     }
 }
 
-fn peek_kind<'de>(
+/// Peek the next event's kind and document span without consuming it.
+fn peek<'de>(
     parser: &mut dyn FormatParser<'de>,
-) -> Result<Option<ParseEventKind<'de>>, DecodeError> {
+) -> Result<(Option<ParseEventKind<'de>>, Option<DocumentSpan>), DecodeError> {
     match parser.peek_event() {
-        Ok(Some(event)) => Ok(Some(event.kind)),
-        Ok(None) => Ok(None),
-        Err(err) => Err(DecodeError::new(format!("parse error: {err:?}"))),
+        Ok(Some(event)) => {
+            let span = event_span(&event);
+            Ok((Some(event.kind), Some(span)))
+        }
+        Ok(None) => Ok((None, None)),
+        Err(err) => Err(DecodeError::of(DecodeErrorKind::Parse {
+            detail: format!("parse error: {err:?}"),
+        })),
     }
 }
 
@@ -334,13 +603,23 @@ fn expect_end<'de>(
     parser: &mut dyn FormatParser<'de>,
     format: DecodeFormat,
 ) -> Result<(), DecodeError> {
-    match peek_kind(parser)? {
+    let (kind, span) = peek(parser)?;
+    match kind {
         None => Ok(()),
-        Some(other) => Err(DecodeError::new(format!(
-            "unexpected trailing {} after the decoded value: {}",
-            format.label(),
-            event_label(&other)
-        ))),
+        Some(other) => Err(span_opt(
+            DecodeError::of(DecodeErrorKind::TrailingContent {
+                format: format.label(),
+                found: event_label(&other),
+            }),
+            span,
+        )),
+    }
+}
+
+fn span_opt(error: DecodeError, span: Option<DocumentSpan>) -> DecodeError {
+    match span {
+        Some(span) => error.with_span(span),
+        None => error,
     }
 }
 
@@ -356,15 +635,12 @@ fn field_name(key: &FieldKey<'_>) -> String {
     }
 }
 
-fn field_context(name: &str, err: DecodeError) -> DecodeError {
-    DecodeError::new(format!("field \"{name}\": {}", err.message))
-}
-
-fn scalar_mismatch(expected: &str, found: &ScalarValue<'_>) -> DecodeError {
-    DecodeError::new(format!(
-        "expected {expected}, found {}",
-        scalar_label(found)
-    ))
+fn scalar_mismatch(expected: &str, found: &ScalarValue<'_>, span: DocumentSpan) -> DecodeError {
+    DecodeError::of(DecodeErrorKind::ExpectedScalar {
+        expected: expected.to_owned(),
+        found: scalar_label(found),
+    })
+    .with_span(span)
 }
 
 fn scalar_label(value: &ScalarValue<'_>) -> &'static str {
@@ -463,9 +739,18 @@ mod tests {
         Type::Record(RecordType {
             name: "PkgRow".to_owned(),
             fields: vec![
-                RecordField { name: "name".to_owned(), ty: Type::String },
-                RecordField { name: "vers".to_owned(), ty: Type::String },
-                RecordField { name: "yanked".to_owned(), ty: Type::Bool },
+                RecordField {
+                    name: "name".to_owned(),
+                    ty: Type::String,
+                },
+                RecordField {
+                    name: "vers".to_owned(),
+                    ty: Type::String,
+                },
+                RecordField {
+                    name: "yanked".to_owned(),
+                    ty: Type::Bool,
+                },
             ],
         })
     }
@@ -497,8 +782,14 @@ mod tests {
                 ty: Type::Record(RecordType {
                     name: "Package".to_owned(),
                     fields: vec![
-                        RecordField { name: "name".to_owned(), ty: Type::String },
-                        RecordField { name: "version".to_owned(), ty: Type::String },
+                        RecordField {
+                            name: "name".to_owned(),
+                            ty: Type::String,
+                        },
+                        RecordField {
+                            name: "version".to_owned(),
+                            ty: Type::String,
+                        },
                     ],
                 }),
             }],
@@ -523,8 +814,14 @@ mod tests {
         let dep_decl = Type::Record(RecordType {
             name: "DepDecl".to_owned(),
             fields: vec![
-                RecordField { name: "version".to_owned(), ty: Type::option(Type::String) },
-                RecordField { name: "path".to_owned(), ty: Type::option(Type::String) },
+                RecordField {
+                    name: "version".to_owned(),
+                    ty: Type::option(Type::String),
+                },
+                RecordField {
+                    name: "path".to_owned(),
+                    ty: Type::option(Type::String),
+                },
             ],
         });
         let value = decode(DecodeFormat::Json, "{\"version\":\"^1.0\"}", &dep_decl)
@@ -539,9 +836,80 @@ mod tests {
     }
 
     #[test]
-    fn decode_failure_names_the_field() {
+    fn decode_failure_is_typed_with_a_field_path_and_span() {
         let err = decode(DecodeFormat::Json, "{\"name\": 42}", &pkg_row())
             .expect_err("an integer where a string is expected fails");
-        assert!(err.message.contains("name"), "message = {}", err.message);
+        // Typed kind, not a prose match.
+        assert_eq!(
+            err.kind,
+            DecodeErrorKind::ExpectedScalar {
+                expected: "String".to_owned(),
+                found: "an integer",
+            }
+        );
+        // Structured field path names the offending field.
+        assert_eq!(err.path_names(), vec!["name".to_owned()]);
+        // The document byte span of the offending value (`42`) is preserved.
+        let span = err.span.expect("the offending document span is preserved");
+        assert_eq!(
+            &"{\"name\": 42}"[span.offset as usize..(span.offset + span.len) as usize],
+            "42"
+        );
+        assert_eq!(err.kind.label(), "expected-scalar");
+    }
+
+    #[test]
+    fn ambiguous_enum_forms_are_rejected_not_first_matched() {
+        // Two short (single-String tuple) forms: a scalar document is ambiguous.
+        let two_short = Type::Enum(EnumType {
+            name: "TwoShort".to_owned(),
+            variants: vec![
+                EnumVariant {
+                    name: "A".to_owned(),
+                    payload: VariantPayload::Tuple(vec![Type::String]),
+                },
+                EnumVariant {
+                    name: "B".to_owned(),
+                    payload: VariantPayload::Tuple(vec![Type::String]),
+                },
+            ],
+        });
+        let err = decode(DecodeFormat::Json, "\"x\"", &two_short)
+            .expect_err("two short forms are ambiguous");
+        assert_eq!(
+            err.kind,
+            DecodeErrorKind::AmbiguousStringForm {
+                enum_name: "TwoShort".to_owned(),
+            }
+        );
+
+        // Two table (record) forms: an object document is ambiguous.
+        let two_table = Type::Enum(EnumType {
+            name: "TwoTable".to_owned(),
+            variants: vec![
+                EnumVariant {
+                    name: "A".to_owned(),
+                    payload: VariantPayload::Record(vec![RecordField {
+                        name: "x".to_owned(),
+                        ty: Type::Bool,
+                    }]),
+                },
+                EnumVariant {
+                    name: "B".to_owned(),
+                    payload: VariantPayload::Record(vec![RecordField {
+                        name: "y".to_owned(),
+                        ty: Type::Bool,
+                    }]),
+                },
+            ],
+        });
+        let err = decode(DecodeFormat::Json, "{\"x\":true}", &two_table)
+            .expect_err("two table forms are ambiguous");
+        assert_eq!(
+            err.kind,
+            DecodeErrorKind::AmbiguousTableForm {
+                enum_name: "TwoTable".to_owned(),
+            }
+        );
     }
 }
