@@ -492,21 +492,8 @@ fn evaluate_value_site(
                 .expect("partitioned value input was published")
         })
         .collect::<Vec<_>>();
-    // Wire inputs are demanded pure values this check consumes; each is already
-    // published by its callee island. Supply their scalar results as ready
-    // awaited words so an unconditional wire await resumes without parking.
-    let awaited = island
-        .wire_inputs
-        .iter()
-        .map(|value| {
-            let evaluation = published_values
-                .get(value)
-                .expect("wire input was published before its consumer");
-            runtime
-                .scalar_word(evaluation.handle)
-                .expect("a wire callee publishes a scalar result word")
-        })
-        .collect::<Vec<_>>();
+    // The partition does not yet emit demand wires for check islands, so this
+    // island forces none; the lazy-parameter partition slice populates them.
     let evaluation: Evaluation = runtime.evaluate(
         island.id,
         &location,
@@ -514,7 +501,7 @@ fn evaluate_value_site(
         &attribution,
         IslandInputs {
             arguments: &arguments,
-            awaited: &awaited,
+            wires: &[],
         },
         chaos,
     )?;
@@ -572,7 +559,7 @@ fn run_lane(
                 &attribution,
                 IslandInputs {
                     arguments: &arguments,
-                    awaited: &[],
+                    wires: &[],
                 },
                 ChaosPolicy {
                     kill_first_running_task: kill_available,

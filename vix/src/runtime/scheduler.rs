@@ -66,13 +66,32 @@ pub struct ChaosPolicy {
     pub kill_first_running_task: bool,
 }
 
-/// The resolved inputs an island evaluation consumes: its pre-published shared
-/// value arguments, and the scalar words of any wire inputs it awaits. Wire
-/// awaits are supplied ready, so an unconditional wire resumes without parking.
+/// The inputs an island evaluation consumes: its pre-published shared value
+/// arguments (already realized), and its demand wires (unresolved). A wire is
+/// resolved lazily — only when the task actually parks on it — through the
+/// canonical `DemandPreimage`/memo path, never pre-resolved.
 #[derive(Clone, Copy)]
 pub struct IslandInputs<'a> {
     pub arguments: &'a [Evaluation],
-    pub awaited: &'a [i64],
+    pub wires: &'a [WireDemand<'a>],
+}
+
+/// One demand wire an island may force: the canonical argument demand the
+/// scheduler evaluates through the existing memo machinery when the consuming
+/// task parks on the wire's `AwaitWire` input. It carries everything needed to
+/// evaluate that argument island — its recipe artifact, cost-model location,
+/// realized arguments, and its own nested wires — plus the callee identity used
+/// to record the realized dependency. A wire is never evaluated unless the task
+/// parks on it.
+#[derive(Clone, Copy)]
+pub struct WireDemand<'a> {
+    pub island: IslandId,
+    pub location: &'a Location,
+    pub lowered: &'a LoweringArtifact,
+    pub attribution: &'a LoweringAttribution,
+    pub arguments: &'a [Evaluation],
+    pub wires: &'a [WireDemand<'a>],
+    pub function: FunctionId,
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -173,7 +192,7 @@ impl<S: EventSink> Runtime<S> {
         inputs: IslandInputs<'_>,
         chaos: ChaosPolicy,
     ) -> Result<Evaluation, Box<MachineError>> {
-        let IslandInputs { arguments, awaited } = inputs;
+        let IslandInputs { arguments, wires } = inputs;
         let invocation = DemandExecution::new(
             lowered,
             arguments.iter().map(|argument| argument.identity).collect(),
@@ -228,6 +247,25 @@ impl<S: EventSink> Runtime<S> {
                     .and_then(|failure| failure_context(failure, lowered, attribution)),
                 failure,
             });
+        }
+
+        // A wire that forces a demand already Running on the stack is a cyclic
+        // demand. The demand state machine detects it here — before the record is
+        // re-queued — as a typed fault, so a re-entrant wire never recurses
+        // forever.
+        if self
+            .demands
+            .get(&lowered.demand_key)
+            .is_some_and(|record| record.state == DemandState::Running)
+        {
+            return Err(Box::new(MachineError::runtime(
+                MachineOperation::Drive,
+                RuntimeFault::ReentrantDemand {
+                    key: lowered.demand_key,
+                },
+                self.output_attribution(lowered.artifact, attribution),
+                Some(lowered.demand_key),
+            )));
         }
 
         self.counters.memo_misses += 1;
@@ -481,66 +519,131 @@ impl<S: EventSink> Runtime<S> {
                 schema_bytes.copy_from_slice(&i64::from(element_schema.0).to_le_bytes());
                 value_memory_overrides.push((argument.handle, abi_view));
             }
-            // Wire inputs the island demands are pre-resolved by the runner and
-            // supplied as ready awaited words: an unconditional wire await reads
-            // its value and never parks. A wire under an untaken branch is never
-            // reached, so its slot is never consumed.
-            let mut ready = vec![true; awaited.len()];
-            let step = match self.store.with_value_memory_overrides(
-                &value_memory_overrides,
-                |value_memories| {
-                    task.drive_hosted_with_value_memories(
-                        &mut ready,
-                        awaited,
-                        &mut [],
-                        value_memories,
-                    )
-                    .map_err(Box::new)
-                },
-            ) {
-                Ok(step) => step,
-                Err(fault) => {
-                    let error = self.task_fault(
-                        MachineOperation::Drive,
-                        *fault,
-                        lowered,
-                        attribution,
-                        None,
-                    );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
-                }
-            };
-            match step {
-                TaskStep::Done => {}
-                TaskStep::Yielded => {
-                    let error = MachineError::runtime(
-                        MachineOperation::Drive,
-                        RuntimeFault::PureIslandYielded,
-                        None,
-                        Some(lowered.demand_key),
-                    );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
-                }
-                TaskStep::Parked { input } => {
-                    let error = MachineError::runtime(
-                        MachineOperation::Drive,
-                        RuntimeFault::PureIslandParked { input },
-                        None,
-                        Some(lowered.demand_key),
-                    );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
+            // Demand wires start unresolved. The task drives until it parks on a
+            // wire it actually consumes; only then does the scheduler evaluate
+            // that wire's canonical argument demand through the memo path and
+            // resume the SAME task. A wire the task never parks on — an untaken
+            // branch's argument — is never evaluated, entered, or failed.
+            let mut ready = vec![false; wires.len()];
+            let mut awaited = vec![0i64; wires.len()];
+            loop {
+                let step = match self.store.with_value_memory_overrides(
+                    &value_memory_overrides,
+                    |value_memories| {
+                        task.drive_hosted_with_value_memories(
+                            &mut ready,
+                            &awaited,
+                            &mut [],
+                            value_memories,
+                        )
+                        .map_err(Box::new)
+                    },
+                ) {
+                    Ok(step) => step,
+                    Err(fault) => {
+                        let error = self.task_fault(
+                            MachineOperation::Drive,
+                            *fault,
+                            lowered,
+                            attribution,
+                            None,
+                        );
+                        return Err(Box::new(self.terminate_machine_fault(
+                            task_id,
+                            lowered.demand_key,
+                            error,
+                        )));
+                    }
+                };
+                match step {
+                    TaskStep::Done => break,
+                    TaskStep::Yielded => {
+                        let error = MachineError::runtime(
+                            MachineOperation::Drive,
+                            RuntimeFault::PureIslandYielded,
+                            None,
+                            Some(lowered.demand_key),
+                        );
+                        return Err(Box::new(self.terminate_machine_fault(
+                            task_id,
+                            lowered.demand_key,
+                            error,
+                        )));
+                    }
+                    TaskStep::Parked { input } => {
+                        // The task has fully returned control — its frame arena is
+                        // the owned suspended state, so every task/store/value-
+                        // memory borrow is released here. Resolve the wire it parked
+                        // on through the canonical DemandPreimage/memo state
+                        // machine, then resume the same task.
+                        let index = input as usize;
+                        let Some(wire) = wires.get(index) else {
+                            let error = MachineError::runtime(
+                                MachineOperation::Drive,
+                                RuntimeFault::PureIslandParked { input },
+                                None,
+                                Some(lowered.demand_key),
+                            );
+                            return Err(Box::new(self.terminate_machine_fault(
+                                task_id,
+                                lowered.demand_key,
+                                error,
+                            )));
+                        };
+                        self.emit(EventKind::WeavyParked {
+                            task: task_id,
+                            input,
+                        });
+                        let resolved = self.evaluate(
+                            wire.island,
+                            wire.location,
+                            wire.lowered,
+                            wire.attribution,
+                            IslandInputs {
+                                arguments: wire.arguments,
+                                wires: wire.wires,
+                            },
+                            ChaosPolicy::default(),
+                        )?;
+                        if let Some(failure) = resolved.failure {
+                            // A demanded argument failed on the language plane;
+                            // propagate the typed failure with its authored source
+                            // site to the parent demand.
+                            self.memo.insert(
+                                location.id,
+                                MemoEntry {
+                                    location: location.clone(),
+                                    key: lowered.demand_key,
+                                    preimage: lowered.demand_preimage.clone(),
+                                    result: resolved.handle,
+                                    receipt: None,
+                                },
+                            );
+                            if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
+                                demand.result = Some(resolved.handle);
+                            }
+                            self.transition_demand(lowered.demand_key, DemandState::Failed)?;
+                            return Ok(Evaluation {
+                                handle: resolved.handle,
+                                identity: resolved.identity,
+                                passed: false,
+                                memo: MemoVerdict::Miss,
+                                failure: Some(failure),
+                                failure_context: resolved.failure_context,
+                            });
+                        }
+                        let word = self.scalar_word(resolved.handle).ok_or_else(|| {
+                            Box::new(MachineError::runtime(
+                                MachineOperation::Drive,
+                                RuntimeFault::PureIslandParked { input },
+                                None,
+                                Some(lowered.demand_key),
+                            ))
+                        })?;
+                        awaited[index] = word;
+                        ready[index] = true;
+                        self.emit(EventKind::WeavyResumed { task: task_id });
+                    }
                 }
             }
             for event in task.trace() {
@@ -2992,7 +3095,7 @@ fn duplicate_key() -> Stream<Check> {
                     &first_attribution,
                     IslandInputs {
                         arguments: &[],
-                        awaited: &[],
+                        wires: &[],
                     },
                     ChaosPolicy::default(),
                 )
@@ -3034,7 +3137,7 @@ fn duplicate_key() -> Stream<Check> {
                     &shifted_attribution,
                     IslandInputs {
                         arguments: &[],
-                        awaited: &[],
+                        wires: &[],
                     },
                     ChaosPolicy::default(),
                 )
@@ -3108,7 +3211,7 @@ fn duplicate_key() -> Stream<Check> {
                     attribution,
                     IslandInputs {
                         arguments: &[],
-                        awaited: &[],
+                        wires: &[],
                     },
                     ChaosPolicy::default(),
                 )
@@ -3181,7 +3284,7 @@ fn passing() -> Stream<Check> {
                 &attribution,
                 IslandInputs {
                     arguments: &[],
-                    awaited: &[],
+                    wires: &[],
                 },
                 ChaosPolicy::default(),
             )
