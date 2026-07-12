@@ -1838,11 +1838,13 @@ impl JitTask {
                             &self.molten,
                             verified,
                             callee_id,
-                            frame.base + offset as usize + 8,
-                            callee_base,
-                            desc.args.len(),
-                            frame.fn_id,
-                            desc.pc,
+                            &crate::task::CallEnvironmentSite {
+                                env_word: frame.base + offset as usize + 8,
+                                callee_base,
+                                arg_count: desc.args.len(),
+                                caller: frame.fn_id,
+                                pc: desc.pc,
+                            },
                         )?;
                     }
                     self.frames.push(JitFrame {

@@ -1786,35 +1786,43 @@ pub(crate) unsafe extern "C" fn env_bytes_abi(
     }
 }
 
+/// One indirect call's frame geometry for [`unbox_call_environment`]: the
+/// caller frame's environment-handle word, the fresh callee frame base, the
+/// number of arguments the verified call already copied, and the caller site
+/// (function id and pc) that names any environment fault.
+pub(crate) struct CallEnvironmentSite {
+    pub env_word: usize,
+    pub callee_base: usize,
+    pub arg_count: usize,
+    pub caller: FnId,
+    pub pc: usize,
+}
+
 /// Materialize a boxed closure's trailing capture entries into a freshly
 /// allocated callee frame, shared by the interpreter and native call drivers so
 /// both lanes use one env-arena and contract semantics. The captures beyond
-/// `arg_count` come from the environment box named by the closure value's
-/// environment word at `env_word`; a fabricated, stale, or short box fails
-/// closed with the same [`TaskFault::Environment`] and site.
+/// `site.arg_count` come from the environment box named by the closure value's
+/// environment word; a fabricated, stale, or short box fails closed with the
+/// same [`TaskFault::Environment`] and site.
 pub(crate) fn unbox_call_environment(
     arena: &mut [u8],
     molten: &MoltenArena,
     verified: &VerifiedProgram,
     callee: FnId,
-    env_word: usize,
-    callee_base: usize,
-    arg_count: usize,
-    fn_id: FnId,
-    pc: usize,
+    site: &CallEnvironmentSite,
 ) -> Result<(), TaskFault> {
     let callee_contract = &verified.contract().functions[callee.0 as usize];
-    if callee_contract.environment.is_empty() || arg_count >= callee_contract.entries.len() {
+    if callee_contract.environment.is_empty() || site.arg_count >= callee_contract.entries.len() {
         return Ok(());
     }
-    let handle = read_i64_at(arena, env_word);
+    let handle = read_i64_at(arena, site.env_word);
     let mut writes: Vec<(usize, Vec<u8>)> = Vec::new();
     {
         let bytes = molten
             .env_bytes(handle)
-            .map_err(|fault| environment_fault(verified, fn_id, pc, fault, handle))?;
+            .map_err(|fault| environment_fault(verified, site.caller, site.pc, fault, handle))?;
         for (index, field) in callee_contract.environment.iter().enumerate() {
-            let entry = arg_count + index;
+            let entry = site.arg_count + index;
             let region_id = callee_contract.entries[entry];
             let region = &callee_contract.frame.regions[region_id.0 as usize];
             let off = field.offset as usize;
@@ -1822,14 +1830,14 @@ pub(crate) fn unbox_call_environment(
             if off + len > bytes.len() {
                 return Err(environment_fault(
                     verified,
-                    fn_id,
-                    pc,
+                    site.caller,
+                    site.pc,
                     EnvBoxFault::OutOfRange,
                     handle,
                 ));
             }
             writes.push((
-                callee_base + region.offset as usize,
+                site.callee_base + region.offset as usize,
                 bytes[off..off + len].to_vec(),
             ));
         }
@@ -3601,11 +3609,13 @@ impl Task {
                             &self.molten,
                             verified,
                             callee,
-                            environment_word,
-                            callee_frame,
-                            args.len(),
-                            fn_id,
-                            pc,
+                            &CallEnvironmentSite {
+                                env_word: environment_word,
+                                callee_base: callee_frame,
+                                arg_count: args.len(),
+                                caller: fn_id,
+                                pc,
+                            },
                         )?;
                     }
                     self.frames.push(FrameRecord {
