@@ -48,16 +48,12 @@
 //! never asserted impossible. An unrecognized Cargo source scheme is a typed
 //! parse error, never a silent registry.
 //!
-//! A future Vix resolver kernel emits its own typed result with a typed `Version`;
-//! a harness adapter projects that value into the Cargo-facing [`SolveResult`]
-//! below, whose version spelling deliberately matches `cargo metadata`. The
-//! comparator then turns every divergence into a structured [`Discrepancy`]
-//! suitable for minimization (serialized to JSON via `facet-json`, never
-//! hand-written). The kernel does not exist yet, so neither that typed result nor
-//! its adapter exists in-tree. The comparator is exercised with candidates
-//! constructed from cargo's own oracle output (a trivially-matching twin) and
-//! deliberately-perturbed variants — the Cargo side itself carries
-//! production-shaped coverage against real offline workspaces.
+//! The native Vix kernel emits a typed `SolveResult` with typed `Version` values.
+//! The harness adapter below projects Cargo's two metadata oracles into typed Vix
+//! values and compares them inside the production run, while the Cargo-facing
+//! [`SolveResult`] comparator retains Cargo's textual version spelling for
+//! minimizable structured discrepancy reports. No recorded selection is an
+//! authority on either path.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write as _;
@@ -2181,6 +2177,282 @@ fn native_rodin_kernel_executes_typed_line_input() {
     assert_eq!(report.plain.receipt_count, 0);
     assert_eq!(report.chaos.counters.pure_host_calls, 0);
     assert_eq!(report.chaos.receipt_count, 0);
+}
+
+fn vix_compat_class(version: &str) -> Result<String, String> {
+    let version =
+        SemVer::parse(version).map_err(|err| format!("parse version `{version}`: {err}"))?;
+    let component = |value: u64| {
+        i64::try_from(value).map_err(|_| format!("version component {value} exceeds Vix Int"))
+    };
+    if version.major != 0 {
+        Ok(format!("CompatClass::Major({})", component(version.major)?))
+    } else if version.minor != 0 {
+        Ok(format!(
+            "CompatClass::ZeroMinor({})",
+            component(version.minor)?
+        ))
+    } else {
+        Ok(format!(
+            "CompatClass::ZeroZeroPatch({})",
+            component(version.patch)?
+        ))
+    }
+}
+
+fn vix_package_source(source: &Source) -> Result<String, String> {
+    match source {
+        Source::Path { dir } => Ok(format!("PackageSource::Path({})", vix_string(dir))),
+        Source::Registry { spec } => Ok(format!("PackageSource::Registry({})", vix_string(spec))),
+        Source::Git { spec } => {
+            let body = spec
+                .strip_prefix("git+")
+                .ok_or_else(|| format!("git source lacks git+ prefix: {spec:?}"))?;
+            let (url, rev) = body
+                .rsplit_once('#')
+                .ok_or_else(|| format!("git source lacks resolved revision: {spec:?}"))?;
+            Ok(format!(
+                "PackageSource::Git {{ url: {}, rev: {} }}",
+                vix_string(url),
+                vix_string(rev)
+            ))
+        }
+    }
+}
+
+fn vix_package_id(package: &CargoPackageId) -> Result<String, String> {
+    Ok(format!(
+        "PackageId {{ source: {}, name: {}, compat: {} }}",
+        vix_package_source(&package.source)?,
+        vix_string(&package.name),
+        vix_compat_class(&package.version)?
+    ))
+}
+
+fn vix_dependency_kind(kind: DepKind) -> &'static str {
+    match kind {
+        DepKind::Normal => "DependencyKind::Normal",
+        DepKind::Build => "DependencyKind::Build",
+        DepKind::Dev => "DependencyKind::Dev",
+    }
+}
+
+fn vix_edge_kind(kind: EdgeKind) -> &'static str {
+    match kind {
+        EdgeKind::Normal => "DependencyKind::Normal",
+        EdgeKind::Build => "DependencyKind::Build",
+    }
+}
+
+fn vix_string_set(values: impl IntoIterator<Item = impl AsRef<str>>) -> String {
+    let values = values
+        .into_iter()
+        .map(|value| vix_string(value.as_ref()))
+        .collect::<Vec<_>>()
+        .join(", ");
+    format!("%[{values}]")
+}
+
+fn native_target_facts(triple: &str) -> Result<String, String> {
+    let (atom, os) = match triple {
+        LINUX => ("unix", "linux"),
+        WINDOWS => ("windows", "windows"),
+        other => return Err(format!("fixture adapter has no target facts for {other:?}")),
+    };
+    let triple = vix_string(triple);
+    let atom = vix_string(atom);
+    let arch_key = vix_string("target_arch");
+    let arch = vix_string("x86_64");
+    let os_key = vix_string("target_os");
+    let os = vix_string(os);
+    Ok(format!(
+        "TargetFacts {{ triple: {triple}, atoms: %[{atom}], values: %{{{arch_key} => {arch}, {os_key} => {os}}} }}"
+    ))
+}
+
+impl Fixture {
+    fn native_kernel_oracle_source(
+        &self,
+        workspace: &Path,
+        triple: &str,
+    ) -> Result<String, String> {
+        let selection = self.selection_oracle(workspace)?;
+        let graph = self.graph_oracle(workspace, triple)?;
+        let mut by_name = BTreeMap::new();
+        for package in &selection.packages {
+            if let Some(previous) = by_name.insert(package.name.clone(), package.clone()) {
+                return Err(format!(
+                    "fixture adapter cannot collapse same-name packages: {previous:?} and {package:?}"
+                ));
+            }
+        }
+        for krate in &self.crates {
+            if !by_name.contains_key(&krate.name) {
+                return Err(format!(
+                    "Cargo selection omitted fixture crate {:?}",
+                    krate.name
+                ));
+            }
+        }
+
+        let mut source = String::new();
+        for (index, package) in selection.packages.iter().enumerate() {
+            writeln!(
+                source,
+                "fn cargo_package_{index}() -> PackageId {{ {} }}",
+                vix_package_id(package)?
+            )
+            .ok();
+        }
+        let package_fn = selection
+            .packages
+            .iter()
+            .enumerate()
+            .map(|(index, package)| (package.clone(), format!("cargo_package_{index}()")))
+            .collect::<BTreeMap<_, _>>();
+
+        writeln!(source, "\nfn cargo_fixture_input() -> SolveInput {{").ok();
+        writeln!(source, "    SolveInput {{").ok();
+        writeln!(source, "        universe: PackageUniverse {{ rows: %{{").ok();
+        for krate in &self.crates {
+            let package = by_name
+                .get(&krate.name)
+                .ok_or_else(|| format!("fixture package {:?} is absent", krate.name))?;
+            let package_expr = &package_fn[package];
+            let dependencies = krate
+                .deps
+                .iter()
+                .map(|dependency| {
+                    if dependency.target.is_some() {
+                        return Err(format!(
+                            "target predicate adapter is not yet available for {:?}",
+                            dependency.target
+                        ));
+                    }
+                    let target = by_name.get(&dependency.name).ok_or_else(|| {
+                        format!("dependency package {:?} is absent", dependency.name)
+                    })?;
+                    Ok(format!(
+                        "Dependency {{ package: {}, requirement: parse_req({}), kind: {}, target: None, optional: {}, default_features: {}, features: {} }}",
+                        package_fn[target],
+                        vix_string(&dependency.req),
+                        vix_dependency_kind(dependency.kind),
+                        dependency.optional,
+                        dependency.default_features,
+                        vix_string_set(&dependency.features),
+                    ))
+                })
+                .collect::<Result<Vec<_>, String>>()?
+                .join(", ");
+            if !krate.features.is_empty() {
+                return Err(format!(
+                    "feature rule adapter is not yet available for fixture crate {:?}",
+                    krate.name
+                ));
+            }
+            writeln!(
+                source,
+                "            {package_expr} => [PackageRow {{ package: {package_expr}, version: parse_version({}), dependencies: [{dependencies}], features: [], yanked: false, links: None, provenance: {} }}],",
+                vix_string(&package.version),
+                vix_string(&format!("{}/Cargo.toml", krate.name)),
+            )
+            .ok();
+        }
+        writeln!(source, "        }} }},").ok();
+        let root = by_name
+            .get(&self.root)
+            .ok_or_else(|| format!("root package {:?} is absent", self.root))?;
+        writeln!(
+            source,
+            "        roots: [RootRequest {{ package: {}, requirement: parse_req({}), features: %[], default_features: true }}],",
+            package_fn[root],
+            vix_string(&format!("={}", root.version)),
+        )
+        .ok();
+        writeln!(source, "        target: {},", native_target_facts(triple)?).ok();
+        writeln!(
+            source,
+            "        policy: SolvePolicy {{ consume_build: true, consume_dev: false, mutually_exclusive_features: %{{}} }},"
+        )
+        .ok();
+        writeln!(source, "    }}").ok();
+        writeln!(source, "}}").ok();
+
+        writeln!(
+            source,
+            "\nfn cargo_expected_versions() -> Map<PackageId, Version> {{ %{{"
+        )
+        .ok();
+        for package in &selection.packages {
+            writeln!(
+                source,
+                "    {} => parse_version({}),",
+                package_fn[package],
+                vix_string(&package.version)
+            )
+            .ok();
+        }
+        writeln!(source, "}} }}").ok();
+
+        writeln!(
+            source,
+            "\nfn cargo_expected_edges() -> Set<ResolvedEdge> {{ %["
+        )
+        .ok();
+        for edge in &graph.edges {
+            writeln!(
+                source,
+                "    ResolvedEdge {{ from: {}, to: {}, kind: {} }},",
+                package_fn[&edge.from],
+                package_fn[&edge.to],
+                vix_edge_kind(edge.kind),
+            )
+            .ok();
+        }
+        writeln!(source, "] }}").ok();
+
+        source.push_str(
+            r#"
+fn cargo_oracles_match(result: SolveResult) -> Bool {
+    let expected = cargo_expected_versions();
+    result.selected.keys() == expected.keys()
+        && expected.keys().all(|package| result.selected.get(package).version == expected.get(package))
+        && result.edges == cargo_expected_edges()
+}
+
+#[test]
+fn native_cargo_oracles() -> Stream<Check> {
+    yield match rodin_solve(cargo_fixture_input()) {
+        RodinOutcome::Solved(result) => expect(cargo_oracles_match(result)),
+        RodinOutcome::Failed(_) => expect(false),
+        RodinOutcome::Unsupported(_) => expect(false),
+    };
+}
+"#,
+        );
+        Ok(source)
+    }
+}
+
+#[test]
+fn native_rodin_kernel_matches_live_cargo_line_oracles() {
+    let fixture = line_fixture("native-live-cargo-line");
+    let workspace = fixture.materialize().expect("materialize line fixture");
+    let adapter = fixture
+        .native_kernel_oracle_source(&workspace, LINUX)
+        .expect("project Cargo line oracles into typed Vix values");
+    let source = format!("{STD_VERSION}\n{NATIVE_RODIN_KERNEL}\n{adapter}");
+    let report = run_source(&source).expect("native Rodin kernel runs against live Cargo oracles");
+    assert!(
+        report.passed(),
+        "Cargo line differential passes: {report:?}"
+    );
+    assert!(report.agrees(), "plain and chaos agree");
+    assert_eq!(report.plain.checks.len(), 1);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
 }
 
 /// A trivial three-crate line workspace: `app -> mid -> leaf`, all `0.1.0`, all
