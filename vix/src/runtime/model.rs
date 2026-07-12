@@ -75,6 +75,17 @@ pub struct FailureContext {
     pub demand_chain: Vec<DemandKey>,
 }
 
+/// A structural snapshot captured by `expect_snapshot(v) where { name }`.
+///
+/// The rendering is produced by a type-directed walk of the value's structural
+/// shape — never a `Debug` impl — so it is a stable harness artifact keyed by
+/// `name`. The golden text lives with the harness that demanded the check.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct SnapshotCapture {
+    pub name: String,
+    pub rendered: String,
+}
+
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum MemoVerdict {

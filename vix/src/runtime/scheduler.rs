@@ -8,8 +8,8 @@ use crate::vir::IslandId;
 
 use super::identity::{DemandKey, DemandPreimage, Location, LocationId, SchemaId, ValueId};
 use super::model::{
-    DemandRecord, DemandState, FailureContext, FailureValue, MemoVerdict, Receipt, TaskId,
-    TaskRecord, TaskState,
+    DemandRecord, DemandState, FailureContext, FailureValue, MemoVerdict, Receipt, SnapshotCapture,
+    TaskId, TaskRecord, TaskState,
 };
 use super::observe::{
     Counters, Event, EventKind, EventSink, ExecutionFacts, ExecutionFallbackFact,
@@ -40,6 +40,7 @@ pub struct Evaluation {
     pub memo: MemoVerdict,
     pub failure: Option<FailureValue>,
     pub failure_context: Option<FailureContext>,
+    pub snapshot: Option<SnapshotCapture>,
 }
 
 /// The scheduler owns passive maps and admission bookkeeping; Weavy owns the
@@ -130,6 +131,7 @@ impl<S: EventSink> Runtime<S> {
                     .as_ref()
                     .and_then(|failure| failure_context(failure, lowered, attribution)),
                 failure,
+                snapshot: None,
             });
         }
 
@@ -350,6 +352,7 @@ impl<S: EventSink> Runtime<S> {
                         memo: MemoVerdict::Miss,
                         failure: Some(failure),
                         failure_context: report_context,
+                        snapshot: None,
                     });
                 }
                 Ok(DecodedResult::MissingKey { site }) => {
@@ -428,6 +431,7 @@ impl<S: EventSink> Runtime<S> {
                 memo: MemoVerdict::Miss,
                 failure: None,
                 failure_context: None,
+                snapshot: None,
             });
         }
     }
@@ -622,6 +626,7 @@ impl<S: EventSink> Runtime<S> {
             memo: MemoVerdict::Miss,
             failure: Some(failure),
             failure_context: report_context,
+            snapshot: None,
         })
     }
 

@@ -39,6 +39,7 @@ const RUNG_041: &str = include_str!("ratchet/041-maps.vix");
 const RUNG_042: &str = include_str!("ratchet/042-map-overwrite.vix");
 const RUNG_043: &str = include_str!("ratchet/043-map-keys-canonical.vix");
 const RUNG_044: &str = include_str!("ratchet/044-sets.vix");
+const RUNG_060: &str = include_str!("ratchet/060-snapshot-record.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
 const RUNG_145: &str = include_str!("ratchet/145-push.reject.vix");
 const RUNG_146: &str = include_str!("ratchet/146-insert.reject.vix");
@@ -2963,6 +2964,24 @@ fn mutation_shaped_collection_methods_are_unknown() {
         assert_eq!(diagnostic.message(), expected_message);
         assert_eq!(source_line(source, diagnostic.primary.start), expected_line);
     }
+}
+
+#[test]
+fn rung_060_snapshots_render_any_value_structurally() {
+    let report = run_source(RUNG_060).expect("rung 060 compiles and runs");
+    assert!(report.passed(), "rung 060 snapshot check passes");
+    assert!(report.agrees(), "plain and chaos lanes agree on the snapshot");
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    let snapshot = report.plain.checks[0]
+        .snapshot
+        .as_ref()
+        .expect("rung 060 yields a snapshot check");
+    assert_eq!(snapshot.name, "dep-mio");
+    assert_eq!(
+        snapshot.rendered,
+        "Dep {\n    name: \"mio\",\n    req: \"^0.8\",\n    optional: false,\n}"
+    );
 }
 
 fn reject_header(source: &str) -> (&str, usize) {
