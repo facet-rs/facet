@@ -6,13 +6,14 @@ use std::collections::{BTreeMap, BTreeSet};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics, Label};
 use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
+use crate::vir::DescribedWire;
 use crate::vir::{
     ArrayMapGrain, ArrayMapGrainKey, Budget, CheckRecipe, ControlRegion, EffectFacts, EnumType,
     EnumVariant, Function, FunctionId, GeneratorArm, GeneratorBody, GeneratorStep,
     MatchArm as VirMatchArm, Module, Node, NodeId, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
     ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, OrderedMatchArm, Parameter, ParameterId,
     ParameterKind, RecordField, RecordType, Test, TestMetadata, TraceCheck, Type, VariantPayload,
-    YieldSite, YieldSiteId,
+    WireArg, YieldSite, YieldSiteId,
 };
 
 pub struct Compiler {
@@ -1991,6 +1992,21 @@ fn lower_check(
                 nodes, bindings, context, call,
             )?));
         }
+        "demanded" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::Demanded {
+                wire: described_wire(context, call)?,
+            }));
+        }
+        "never_demanded" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::NeverDemanded {
+                wire: described_wire(context, call)?,
+            }));
+        }
+        "demanded_once" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::DemandedOnce {
+                wire: described_wire(context, call)?,
+            }));
+        }
         _ => {}
     }
     let condition = match call.callee.value.as_str() {
@@ -2122,6 +2138,80 @@ fn trace_function_calls(
         )
     })?;
     Ok(TraceCheck::FunctionCallsExactly { function, times })
+}
+
+/// Describe the operand of a `demanded` / `never_demanded` / `demanded_once`
+/// intrinsic as a held [`DescribedWire`], WITHOUT lowering or demanding it.
+///
+/// Because function arguments are wires, the operand `f(3)` in argument position
+/// is a description of an invocation, not a computed value. This resolves that
+/// description to the callee's function identity and its exact scalar argument
+/// literals. A zero-argument selector `f()` on a function that declares
+/// parameters is a name-level selector (every argument demand of `f`); a
+/// call-site selector carries the literal arguments so equal-recipe/different-
+/// argument demands stay distinct. No node is built and no operand is evaluated.
+fn described_wire(
+    context: &ModuleContext<'_>,
+    call: &ast::Call,
+) -> Result<DescribedWire, Diagnostics> {
+    check_arity(call, 1)?;
+    let ast::Expr::Call(operand) = &call.args.args[0] else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            expr_span(&call.args.args[0]),
+            "a described-wire trace check takes a direct function invocation",
+        )));
+    };
+    if operand.named_args.is_some() {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            operand.span,
+            "a described-wire selector does not carry where-clause arguments",
+        )));
+    }
+    let signature = context
+        .signatures
+        .get(&operand.callee.value)
+        .ok_or_else(|| {
+            Diagnostics::one(Diagnostic {
+                code: DiagnosticCode::UnknownName,
+                primary: operand.callee.span,
+                labels: Vec::new(),
+                payload: DiagnosticPayload::Name {
+                    name: operand.callee.value.clone(),
+                },
+            })
+        })?;
+    let arguments = operand
+        .args
+        .args
+        .iter()
+        .map(wire_argument_literal)
+        .collect::<Result<Vec<_>, _>>()?;
+    let name_level = arguments.is_empty() && !signature.parameters.is_empty();
+    Ok(DescribedWire {
+        function: signature.id,
+        arguments,
+        name_level,
+    })
+}
+
+/// One closed scalar literal in a described-wire selector. A described selector
+/// only names literal arguments; it never evaluates a sub-expression to obtain
+/// an argument identity.
+fn wire_argument_literal(argument: &ast::Expr) -> Result<WireArg, Diagnostics> {
+    match argument {
+        ast::Expr::Number(number) => number.value.parse::<i64>().map(WireArg::Int).map_err(|_| {
+            type_mismatch(
+                number.span,
+                "Int",
+                format!("number literal `{}`", number.value),
+            )
+        }),
+        ast::Expr::Bool(boolean) => Ok(WireArg::Bool(boolean.value)),
+        other => Err(Diagnostics::one(Diagnostic::unsupported(
+            expr_span(other),
+            "a described-wire argument must be a closed scalar literal",
+        ))),
+    }
 }
 
 #[derive(Clone)]
@@ -2824,6 +2914,26 @@ fn lower_array_index(
     let element = element.clone();
     let position = lower_value(nodes, bindings, context, &index.index)?;
     require_type(&position, &Type::Int, expr_span(&index.index))?;
+    // Array.map is keyed lazy codata at the element boundary: projecting one
+    // element of `source.map(f)` denotes `f(source[i])` — one application at a
+    // canonical recipe+argument identity — never an eager whole-array map. When
+    // the mapper is a capture-free function and the position is a static index
+    // of a dense array literal, lower the projection directly to that single
+    // application. The unprojected map materializes nothing.
+    if let Some((function, argument)) = map_projection(nodes, context, receiver.node, position.node)
+    {
+        return Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                index.span,
+                element.clone(),
+                EffectFacts::PURE,
+                vec![argument],
+                Op::Call(function),
+            ),
+            ty: element,
+        });
+    }
     Ok(LoweredValue {
         node: push_node(
             nodes,
@@ -2838,6 +2948,56 @@ fn lower_array_index(
         ),
         ty: element,
     })
+}
+
+/// Recognize `source.map(f)[i]` where `f` is a capture-free top-level function,
+/// `source` is a dense array literal, and `i` is a static in-bounds position.
+/// Returns the mapper's function identity and the source element node it applies
+/// to, so the projection lowers to that one application — the keyed-codata
+/// element boundary at a stable recipe identity. An anonymous closure keeps the
+/// fused-projection map path: it has no standalone recipe to demand.
+fn map_projection(
+    nodes: &[Node],
+    context: &ModuleContext<'_>,
+    array: NodeId,
+    position: NodeId,
+) -> Option<(FunctionId, NodeId)> {
+    let map = nodes.get(array.0 as usize)?;
+    if !matches!(map.op, Op::ArrayMap { .. }) {
+        return None;
+    }
+    let [source, mapper] = map.inputs[..] else {
+        return None;
+    };
+    let mapper = nodes.get(mapper.0 as usize)?;
+    let Op::Closure(function) = mapper.op else {
+        return None;
+    };
+    if !mapper.inputs.is_empty() {
+        return None;
+    }
+    // Only a top-level named function has a standalone recipe to demand; an
+    // anonymous closure is inline map machinery.
+    if !context
+        .signatures
+        .values()
+        .any(|signature| signature.id == function)
+    {
+        return None;
+    }
+    let Op::Int(index) = nodes.get(position.0 as usize)?.op else {
+        return None;
+    };
+    let index = usize::try_from(index).ok()?;
+    let source = nodes.get(source.0 as usize)?;
+    if !matches!(source.op, Op::Array) {
+        return None;
+    }
+    source
+        .inputs
+        .get(index)
+        .copied()
+        .map(|node| (function, node))
 }
 
 /// The positional arguments of a method call. The parenless named-argument

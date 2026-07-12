@@ -8,7 +8,7 @@ use weavy::exec::{
 use weavy::task::{FnId, TaskEvent as WeavyTaskEvent, TaskStep};
 
 use crate::lowering::{LoweringArtifact, LoweringAttribution, ValueInputBinding};
-use crate::vir::{IslandId, Type, VariantPayload};
+use crate::vir::{FunctionId, IslandId, Type, VariantPayload};
 
 use super::identity::{DemandKey, DemandPreimage, Location, LocationId, SchemaId, ValueId};
 use super::identity::{FramedField, FramedNode, FramedValue};
@@ -66,6 +66,39 @@ pub struct ChaosPolicy {
     pub kill_first_running_task: bool,
 }
 
+/// The inputs an island evaluation consumes: its pre-published shared value
+/// arguments (already realized), and its demand wires (unresolved). A wire is
+/// resolved lazily — only when the task actually parks on it — through the
+/// canonical `DemandPreimage`/memo path, never pre-resolved.
+#[derive(Clone, Copy)]
+pub struct IslandInputs<'a> {
+    pub arguments: &'a [Evaluation],
+    pub wires: &'a [WireDemand<'a>],
+}
+
+/// One demand wire an island may force: the canonical argument demand the
+/// scheduler evaluates through the existing memo machinery when the consuming
+/// task parks on the wire's `AwaitWire` input. It carries everything needed to
+/// evaluate that argument island — its recipe artifact, cost-model location,
+/// realized arguments, and its own nested wires — plus the callee identity used
+/// to record the realized dependency. A wire is never evaluated unless the task
+/// parks on it.
+#[derive(Clone, Copy)]
+pub struct WireDemand<'a> {
+    pub island: IslandId,
+    pub location: &'a Location,
+    pub lowered: &'a LoweringArtifact,
+    pub attribution: &'a LoweringAttribution,
+    pub arguments: &'a [Evaluation],
+    pub wires: &'a [WireDemand<'a>],
+    pub function: FunctionId,
+    /// The canonical scalar argument identities of this invocation, recorded in
+    /// the realized-demand log when the wire actually computes (a memo miss).
+    /// Empty for a zero-argument callee. A memoized re-force adds no entry, so
+    /// the log counts one realization per distinct demand identity.
+    pub demand_arguments: &'a [ValueId],
+}
+
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct Evaluation {
     pub handle: Handle,
@@ -105,6 +138,12 @@ pub struct Runtime<S> {
     tasks: BTreeMap<TaskId, TaskRecord>,
     counters: Counters,
     next_task: u64,
+    /// One entry per realized wire demand — a callee invocation the memo path
+    /// actually computed (a miss that ran), recorded as its callee function and
+    /// canonical argument identities. Memoized re-demands add no entry, so this
+    /// log counts realizations. It backs the described-wire trace checks and
+    /// retains only the callee/argument selectors a descriptor can name.
+    wire_demands: Vec<(FunctionId, Vec<ValueId>)>,
 }
 
 impl<S: EventSink> Runtime<S> {
@@ -119,7 +158,34 @@ impl<S: EventSink> Runtime<S> {
             tasks: BTreeMap::new(),
             counters: Counters::default(),
             next_task: 0,
+            wire_demands: Vec::new(),
         }
+    }
+
+    /// The frozen log of realized wire demands: each callee invocation the memo
+    /// path computed, by callee function and canonical argument identities.
+    #[must_use]
+    pub fn realized_wire_demands(&self) -> &[(FunctionId, Vec<ValueId>)] {
+        &self.wire_demands
+    }
+
+    /// Record one realized wire demand — a callee invocation the memo path
+    /// actually computed. The runner calls this only on a memo miss, so a
+    /// memoized re-demand of the same recipe+argument adds no entry.
+    pub fn record_wire_demand(&mut self, function: FunctionId, arguments: Vec<ValueId>) {
+        self.wire_demands.push((function, arguments));
+    }
+
+    /// The scalar result word of a resolved wire demand, read from its interned
+    /// store handle. Used to supply an awaiting task's ready wire input; a
+    /// wire's callee always publishes a scalar.
+    #[must_use]
+    pub fn scalar_word(&self, handle: Handle) -> Option<i64> {
+        let bytes = self.store.entry(handle)?.resident_bytes()?;
+        let mut word = [0u8; 8];
+        let width = bytes.len().min(8);
+        word[..width].copy_from_slice(&bytes[..width]);
+        Some(i64::from_le_bytes(word))
     }
 
     pub fn evaluate(
@@ -128,9 +194,10 @@ impl<S: EventSink> Runtime<S> {
         location: &Location,
         lowered: &LoweringArtifact,
         attribution: &LoweringAttribution,
-        arguments: &[Evaluation],
+        inputs: IslandInputs<'_>,
         chaos: ChaosPolicy,
     ) -> Result<Evaluation, Box<MachineError>> {
+        let IslandInputs { arguments, wires } = inputs;
         let invocation = DemandExecution::new(
             lowered,
             arguments.iter().map(|argument| argument.identity).collect(),
@@ -185,6 +252,25 @@ impl<S: EventSink> Runtime<S> {
                     .and_then(|failure| failure_context(failure, lowered, attribution)),
                 failure,
             });
+        }
+
+        // A wire that forces a demand already Running on the stack is a cyclic
+        // demand. The demand state machine detects it here — before the record is
+        // re-queued — as a typed fault, so a re-entrant wire never recurses
+        // forever.
+        if self
+            .demands
+            .get(&lowered.demand_key)
+            .is_some_and(|record| record.state == DemandState::Running)
+        {
+            return Err(Box::new(MachineError::runtime(
+                MachineOperation::Drive,
+                RuntimeFault::ReentrantDemand {
+                    key: lowered.demand_key,
+                },
+                self.output_attribution(lowered.artifact, attribution),
+                Some(lowered.demand_key),
+            )));
         }
 
         self.counters.memo_misses += 1;
@@ -438,56 +524,138 @@ impl<S: EventSink> Runtime<S> {
                 schema_bytes.copy_from_slice(&i64::from(element_schema.0).to_le_bytes());
                 value_memory_overrides.push((argument.handle, abi_view));
             }
-            let step = match self.store.with_value_memory_overrides(
-                &value_memory_overrides,
-                |value_memories| {
-                    task.drive_hosted_with_value_memories(&mut [], &[], &mut [], value_memories)
+            // Demand wires start unresolved. The task drives until it parks on a
+            // wire it actually consumes; only then does the scheduler evaluate
+            // that wire's canonical argument demand through the memo path and
+            // resume the SAME task. A wire the task never parks on — an untaken
+            // branch's argument — is never evaluated, entered, or failed.
+            let mut ready = vec![false; wires.len()];
+            let mut awaited = vec![0i64; wires.len()];
+            loop {
+                let step = match self.store.with_value_memory_overrides(
+                    &value_memory_overrides,
+                    |value_memories| {
+                        task.drive_hosted_with_value_memories(
+                            &mut ready,
+                            &awaited,
+                            &mut [],
+                            value_memories,
+                        )
                         .map_err(Box::new)
-                },
-            ) {
-                Ok(step) => step,
-                Err(fault) => {
-                    let error = self.task_fault(
-                        MachineOperation::Drive,
-                        *fault,
-                        lowered,
-                        attribution,
-                        None,
-                    );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
-                }
-            };
-            match step {
-                TaskStep::Done => {}
-                TaskStep::Yielded => {
-                    let error = MachineError::runtime(
-                        MachineOperation::Drive,
-                        RuntimeFault::PureIslandYielded,
-                        None,
-                        Some(lowered.demand_key),
-                    );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
-                }
-                TaskStep::Parked { input } => {
-                    let error = MachineError::runtime(
-                        MachineOperation::Drive,
-                        RuntimeFault::PureIslandParked { input },
-                        None,
-                        Some(lowered.demand_key),
-                    );
-                    return Err(Box::new(self.terminate_machine_fault(
-                        task_id,
-                        lowered.demand_key,
-                        error,
-                    )));
+                    },
+                ) {
+                    Ok(step) => step,
+                    Err(fault) => {
+                        let error = self.task_fault(
+                            MachineOperation::Drive,
+                            *fault,
+                            lowered,
+                            attribution,
+                            None,
+                        );
+                        return Err(Box::new(self.terminate_machine_fault(
+                            task_id,
+                            lowered.demand_key,
+                            error,
+                        )));
+                    }
+                };
+                match step {
+                    TaskStep::Done => break,
+                    TaskStep::Yielded => {
+                        let error = MachineError::runtime(
+                            MachineOperation::Drive,
+                            RuntimeFault::PureIslandYielded,
+                            None,
+                            Some(lowered.demand_key),
+                        );
+                        return Err(Box::new(self.terminate_machine_fault(
+                            task_id,
+                            lowered.demand_key,
+                            error,
+                        )));
+                    }
+                    TaskStep::Parked { input } => {
+                        // The task has fully returned control — its frame arena is
+                        // the owned suspended state, so every task/store/value-
+                        // memory borrow is released here. Resolve the wire it parked
+                        // on through the canonical DemandPreimage/memo state
+                        // machine, then resume the same task.
+                        let index = input as usize;
+                        let Some(wire) = wires.get(index) else {
+                            let error = MachineError::runtime(
+                                MachineOperation::Drive,
+                                RuntimeFault::PureIslandParked { input },
+                                None,
+                                Some(lowered.demand_key),
+                            );
+                            return Err(Box::new(self.terminate_machine_fault(
+                                task_id,
+                                lowered.demand_key,
+                                error,
+                            )));
+                        };
+                        self.emit(EventKind::WeavyParked {
+                            task: task_id,
+                            input,
+                        });
+                        let resolved = self.evaluate(
+                            wire.island,
+                            wire.location,
+                            wire.lowered,
+                            wire.attribution,
+                            IslandInputs {
+                                arguments: wire.arguments,
+                                wires: wire.wires,
+                            },
+                            ChaosPolicy::default(),
+                        )?;
+                        // A wire that actually computed (a memo miss that ran)
+                        // records one realized demand for its described invocation;
+                        // a memoized re-force is a hit and records nothing, so
+                        // structurally equal forces observe a single realization.
+                        if resolved.memo == MemoVerdict::Miss {
+                            self.record_wire_demand(wire.function, wire.demand_arguments.to_vec());
+                        }
+                        if let Some(failure) = resolved.failure {
+                            // A demanded argument failed on the language plane;
+                            // propagate the typed failure with its authored source
+                            // site to the parent demand.
+                            self.memo.insert(
+                                location.id,
+                                MemoEntry {
+                                    location: location.clone(),
+                                    key: lowered.demand_key,
+                                    preimage: lowered.demand_preimage.clone(),
+                                    result: resolved.handle,
+                                    receipt: None,
+                                },
+                            );
+                            if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
+                                demand.result = Some(resolved.handle);
+                            }
+                            self.transition_demand(lowered.demand_key, DemandState::Failed)?;
+                            return Ok(Evaluation {
+                                handle: resolved.handle,
+                                identity: resolved.identity,
+                                passed: false,
+                                memo: MemoVerdict::Miss,
+                                failure: Some(failure),
+                                failure_context: resolved.failure_context,
+                            });
+                        }
+                        let word = self.scalar_word(resolved.handle).ok_or_else(|| {
+                            Box::new(MachineError::runtime(
+                                MachineOperation::Drive,
+                                RuntimeFault::PureIslandParked { input },
+                                None,
+                                Some(lowered.demand_key),
+                            ))
+                        })?;
+                        awaited[index] = word;
+                        ready[index] = true;
+                        self.emit(EventKind::WeavyResumed { task: task_id });
+                    }
                 }
             }
             for event in task.trace() {
@@ -503,6 +671,49 @@ impl<S: EventSink> Runtime<S> {
             }
             let passed = match decode_result(&task, lowered) {
                 Ok(DecodedResult::OkScalar(passed)) => passed,
+                Ok(DecodedResult::OkScalarValue(word)) => {
+                    // A hoisted wire invocation published its demanded scalar. It
+                    // interns under its semantic schema exactly as an evaluated
+                    // scalar would, so equal recipe+argument demands share one
+                    // identity and memoize once.
+                    let width = lowered
+                        .output_type
+                        .word_width()
+                        .and_then(|words| words.checked_mul(8))
+                        .unwrap_or(8);
+                    let bytes = &word.to_le_bytes()[..width.min(8)];
+                    let interned = self
+                        .store
+                        .intern_realized(semantic_schema_id(&lowered.output_type), bytes);
+                    self.observe_interned(interned);
+                    self.memo.insert(
+                        location.id,
+                        MemoEntry {
+                            location: location.clone(),
+                            key: lowered.demand_key,
+                            preimage: lowered.demand_preimage.clone(),
+                            result: interned.handle,
+                            receipt: None,
+                        },
+                    );
+                    if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
+                        demand.result = Some(interned.handle);
+                    }
+                    self.transition_task(task_id, TaskState::Completed)?;
+                    self.transition_demand(lowered.demand_key, DemandState::Ready)?;
+                    self.emit(EventKind::Completed {
+                        key: lowered.demand_key,
+                        identity: interned.identity,
+                    });
+                    return Ok(Evaluation {
+                        handle: interned.handle,
+                        identity: interned.identity,
+                        passed: true,
+                        memo: MemoVerdict::Miss,
+                        failure: None,
+                        failure_context: None,
+                    });
+                }
                 Ok(DecodedResult::OkValue) => {
                     let realized = match realize_value(&task, lowered.artifact, &self.store) {
                         Ok(realized) => realized,
@@ -697,6 +908,18 @@ impl<S: EventSink> Runtime<S> {
                         lowered,
                         attribution,
                         FailureValue::IntegerOverflow {
+                            recipe: lowered.recipe,
+                            site,
+                        },
+                    );
+                }
+                Ok(DecodedResult::IntDivisionByZero { site }) => {
+                    return self.complete_language_failure(
+                        task_id,
+                        location,
+                        lowered,
+                        attribution,
+                        FailureValue::DivisionByZero {
                             recipe: lowered.recipe,
                             site,
                         },
@@ -1055,7 +1278,9 @@ impl<S: EventSink> Runtime<S> {
             // failure while constructing control stays on the language plane; a
             // machine-invariant status is a machine fault.
             match decode_result(&task, lowered) {
-                Ok(DecodedResult::OkScalar(_)) => {
+                // The generator's placeholder result word is unused whether it
+                // decodes as a `Check` verdict or a scalar value.
+                Ok(DecodedResult::OkScalar(_) | DecodedResult::OkScalarValue(_)) => {
                     let count = match task.publication_count() {
                         Ok(count) => count,
                         Err(fault) => {
@@ -1169,6 +1394,18 @@ impl<S: EventSink> Runtime<S> {
                 }
                 Ok(DecodedResult::IntegerOverflow { site }) => {
                     let failure = FailureValue::IntegerOverflow {
+                        recipe: lowered.recipe,
+                        site,
+                    };
+                    return self.complete_generator_language_failure(
+                        task_id,
+                        lowered,
+                        attribution,
+                        failure,
+                    );
+                }
+                Ok(DecodedResult::IntDivisionByZero { site }) => {
+                    let failure = FailureValue::DivisionByZero {
                         recipe: lowered.recipe,
                         site,
                     };
@@ -2258,6 +2495,7 @@ fn failure_context(
         | FailureValue::MissingDelimiter { recipe, site }
         | FailureValue::InvalidInteger { recipe, site }
         | FailureValue::IntegerOverflow { recipe, site }
+        | FailureValue::DivisionByZero { recipe, site }
             if *recipe == lowered.recipe =>
         {
             let source = attribution.source_for_trace(*site)?;
@@ -2273,12 +2511,18 @@ fn failure_context(
         | FailureValue::DuplicateKey { .. }
         | FailureValue::MissingDelimiter { .. }
         | FailureValue::InvalidInteger { .. }
-        | FailureValue::IntegerOverflow { .. } => None,
+        | FailureValue::IntegerOverflow { .. }
+        | FailureValue::DivisionByZero { .. } => None,
     }
 }
 
 enum DecodedResult {
     OkScalar(bool),
+    /// A scalar `Int`/`Bool` value island published its exact result word — the
+    /// demanded pure value, interned under its semantic schema. This is the
+    /// wire-demand publication path: a hoisted invocation returns its scalar
+    /// result to be memoized and observed, never a `Check` verdict.
+    OkScalarValue(i64),
     OkValue,
     IndexOutOfBounds {
         site: u32,
@@ -2300,6 +2544,9 @@ enum DecodedResult {
     IntegerOverflow {
         site: u32,
     },
+    IntDivisionByZero {
+        site: u32,
+    },
     ArrayMachine {
         site: u32,
         status: weavy::task::ArrayOpStatus,
@@ -2315,7 +2562,12 @@ fn decode_result(
     lowered: &LoweringArtifact,
 ) -> Result<DecodedResult, Box<TaskFault>> {
     let Some(abi) = &lowered.array_outcome else {
-        return Ok(DecodedResult::OkScalar(task.result_i64()? != 0));
+        // A `Check` island's word is its pass/fail verdict; a scalar `Int`/`Bool`
+        // value island's word is the demanded value itself.
+        return Ok(match lowered.output_type {
+            Type::Int | Type::Bool => DecodedResult::OkScalarValue(task.result_i64()?),
+            _ => DecodedResult::OkScalar(task.result_i64()? != 0),
+        });
     };
     let result = task.result_structural()?;
     let selector = result.enum_selector()?;
@@ -2416,6 +2668,16 @@ fn decode_result(
         } else {
             DecodedResult::IntegerOverflow { site }
         });
+    }
+    if selector == abi.int_division_by_zero_variant {
+        let site = u32::try_from(result.enum_scalar_field(selector, 0)?).map_err(|_| {
+            Box::new(TaskFault::InvalidResultShape {
+                entry: FnId(0),
+                region: lowered.executable().program().contract().functions[0].result,
+                size: 0,
+            })
+        })?;
+        return Ok(DecodedResult::IntDivisionByZero { site });
     }
     Err(Box::new(TaskFault::InvalidResultShape {
         entry: FnId(0),
@@ -2847,7 +3109,10 @@ fn duplicate_key() -> Stream<Check> {
                     &location,
                     artifact,
                     &first_attribution,
-                    &[],
+                    IslandInputs {
+                        arguments: &[],
+                        wires: &[],
+                    },
                     ChaosPolicy::default(),
                 )
                 .expect("first demand becomes a typed language failure");
@@ -2886,7 +3151,10 @@ fn duplicate_key() -> Stream<Check> {
                     &location,
                     artifact,
                     &shifted_attribution,
-                    &[],
+                    IslandInputs {
+                        arguments: &[],
+                        wires: &[],
+                    },
                     ChaosPolicy::default(),
                 )
                 .expect("second demand is an exact memo hit")
@@ -2957,7 +3225,10 @@ fn duplicate_key() -> Stream<Check> {
                     &location,
                     &artifact,
                     attribution,
-                    &[],
+                    IslandInputs {
+                        arguments: &[],
+                        wires: &[],
+                    },
                     ChaosPolicy::default(),
                 )
                 .expect_err("non-OutOfRange status is a machine error");
@@ -3027,7 +3298,10 @@ fn passing() -> Stream<Check> {
                 &location,
                 artifact,
                 &attribution,
-                &[],
+                IslandInputs {
+                    arguments: &[],
+                    wires: &[],
+                },
                 ChaosPolicy::default(),
             )
             .expect("passing check evaluates to a realized value");

@@ -74,6 +74,10 @@ pub enum FailureValue {
         recipe: RecipeId,
         site: u32,
     },
+    DivisionByZero {
+        recipe: RecipeId,
+        site: u32,
+    },
 }
 
 /// Context rebuilt while reporting a language failure. It is deliberately not

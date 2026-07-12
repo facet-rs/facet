@@ -233,15 +233,15 @@ pub enum CheckRecipe {
 /// demanded value. The three initial constructors bound machinery contacts and
 /// carry only a scalar ceiling, so nothing about them is demanded.
 ///
-/// The enum is deliberately open. A later `never_demanded(expr)` /
-/// `demanded_once(expr)` slots in as a further variant carrying a *described
-/// wire* — a recipe/location description of an operand the check pins WITHOUT
-/// demanding it. Because a [`CheckRecipe::Trace`] is never lowered to an island
-/// and the runner never evaluates a trace check's operands as demands, that
-/// wire is held, not consumed. No such variant is constructed yet (rung 050/051
-/// need only the counter checks), and the design does not eagerly evaluate
-/// operands or fabricate reflection.
-#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+/// The enum is deliberately open. `never_demanded(expr)` / `demanded(expr)` /
+/// `demanded_once(expr)` each carry a *described wire* ([`DescribedWire`]) — a
+/// recipe/location description of an operand the check pins WITHOUT demanding
+/// it. Because a [`CheckRecipe::Trace`] is never lowered to an island and the
+/// runner never evaluates a trace check's operands as demands, that wire is
+/// held, not consumed: the intrinsic records the invocation's recipe/argument
+/// selector, never its result. The design does not eagerly evaluate operands or
+/// fabricate reflection.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum TraceCheck {
     /// Scheduler machinery contacts during the test are at most `bound`.
@@ -283,6 +283,52 @@ pub enum TraceCheck {
         function: FunctionId,
         times: i64,
     },
+    /// The described invocation was demanded at least once during the run.
+    Demanded {
+        wire: DescribedWire,
+    },
+    /// The described invocation was never demanded during the run — the operand
+    /// wire was held, not consumed, so no evaluation of it occurred.
+    NeverDemanded {
+        wire: DescribedWire,
+    },
+    /// The described invocation was demanded exactly once — one demand key, one
+    /// computation. Repeated identical `recipe + argument` demands memoize to a
+    /// single realization; distinct arguments stay distinct.
+    DemandedOnce {
+        wire: DescribedWire,
+    },
+}
+
+/// A held description of an unevaluated invocation: which user function is
+/// invoked and, for a call-site selector, the exact scalar argument identities.
+/// This is the "wire" a trace-check constructor pins — it is never demanded,
+/// counted, or lowered to an island; it only names what to look for in the
+/// frozen completed-run demand log. Arguments are carried as their surface
+/// literals and resolved to canonical value identities where the check is
+/// evaluated, so this VIR type stays free of any runtime-identity dependency.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct DescribedWire {
+    /// The user function whose invocation this wire describes.
+    pub function: FunctionId,
+    /// Literal scalar arguments of the described invocation, in order. Empty for
+    /// a zero-argument callee or a name-level selector.
+    pub arguments: Vec<WireArg>,
+    /// A name-level selector matches every argument demand of `function`
+    /// (`demanded_once(costly())` — one distinct realization total); a call-site
+    /// selector matches only the exact described argument identities
+    /// (`demanded_once(costly(1))`).
+    pub name_level: bool,
+}
+
+/// One scalar argument literal of a [`DescribedWire`]. Only closed scalar
+/// literals participate in a described selector; the wire never evaluates a
+/// sub-expression to obtain an argument.
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u8)]
+pub enum WireArg {
+    Int(i64),
+    Bool(bool),
 }
 
 /// One arm of a generator [`GeneratorStep::Match`]. The arm body is itself a
@@ -728,6 +774,14 @@ pub enum Op {
     Call(FunctionId),
     Closure(FunctionId),
     CallValue,
+    /// Demand a wire input: request an unevaluated pure value from the scheduler,
+    /// park until it is evaluated through the DemandPreimage + Location memo
+    /// path, and resume with the typed scalar result. `input` indexes the
+    /// enclosing island's [`Island::wire_inputs`]. A callee demands a wire only
+    /// where it is consumed, so an unconsumed wire issues no demand.
+    AwaitWire {
+        input: u32,
+    },
     Tuple,
     Record,
     Project {
@@ -907,6 +961,88 @@ pub struct Function {
     pub yielded_checks: Vec<NodeId>,
 }
 
+impl Function {
+    /// The parameters that are demand wires: those NOT proven to be consumed on
+    /// every reachable path from the function's output. A parameter absent from
+    /// this set is strict — its consumption is proven on every path — and the
+    /// compiler may evaluate its argument eagerly as a strictness optimization of
+    /// call-by-need semantics. This is a pure, conservative property of the
+    /// function body, independent of any trace descriptor: a parameter is a wire
+    /// unless every reachable return path consumes it.
+    ///
+    /// `pick(flag) where { a, b } -> if flag { a } else { b }` classifies `a` and
+    /// `b` as wires (each consumed on only one branch) and `flag` as strict;
+    /// `add(a) where { b } -> a + b` classifies both as strict.
+    #[must_use]
+    pub fn wire_parameters(&self) -> BTreeSet<ParameterId> {
+        let Some(output) = self.output else {
+            return BTreeSet::new();
+        };
+        let mut cache = BTreeMap::new();
+        let always = self.always_consumed(output, &mut cache);
+        self.parameters
+            .iter()
+            .filter(|parameter| !always.contains(&parameter.node))
+            .map(|parameter| parameter.id)
+            .collect()
+    }
+
+    /// The parameter nodes consumed on every path when evaluating `node`. A
+    /// node's own inputs are always evaluated before it; a branch contributes
+    /// only what all of its arms share, because only one arm is taken.
+    fn always_consumed(
+        &self,
+        node: NodeId,
+        cache: &mut BTreeMap<NodeId, BTreeSet<NodeId>>,
+    ) -> BTreeSet<NodeId> {
+        if let Some(cached) = cache.get(&node) {
+            return cached.clone();
+        }
+        // A VIR function body is acyclic; the placeholder only guards against a
+        // malformed cycle and is overwritten with the real set below.
+        cache.insert(node, BTreeSet::new());
+        let this = &self.nodes[node.0 as usize];
+        let mut consumed = BTreeSet::new();
+        if matches!(this.op, Op::Parameter(_)) {
+            consumed.insert(node);
+        }
+        for &input in &this.inputs {
+            consumed.extend(self.always_consumed(input, cache));
+        }
+        match &this.op {
+            Op::If {
+                consequent,
+                alternative,
+            } => {
+                let taken = self.always_consumed(consequent.output, cache);
+                let untaken = self.always_consumed(alternative.output, cache);
+                consumed.extend(taken.intersection(&untaken).copied());
+            }
+            Op::Match { arms } => {
+                if let Some((first, rest)) = arms.split_first() {
+                    let mut shared = self.always_consumed(first.output, cache);
+                    for arm in rest {
+                        let arm_consumed = self.always_consumed(arm.output, cache);
+                        shared = shared.intersection(&arm_consumed).copied().collect();
+                    }
+                    consumed.extend(shared);
+                }
+            }
+            Op::OrderedMatch { arms, fallback } => {
+                let mut shared = self.always_consumed(fallback.output, cache);
+                for arm in arms {
+                    let body = self.always_consumed(arm.body.output, cache);
+                    shared = shared.intersection(&body).copied().collect();
+                }
+                consumed.extend(shared);
+            }
+            _ => {}
+        }
+        cache.insert(node, consumed.clone());
+        consumed
+    }
+}
+
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct Test {
     pub name: String,
@@ -967,6 +1103,13 @@ pub struct Island {
     pub function_name: String,
     pub parameters: Vec<Parameter>,
     pub value_inputs: Vec<ValueIslandId>,
+    /// Demanded wire inputs, one per [`Op::AwaitWire`] in this island's nodes and
+    /// indexed by that op's `input`. Each names the value island to demand
+    /// through the scheduler when the awaiting task parks: an unevaluated pure
+    /// value the task requests, parks on, and resumes with. Unlike
+    /// `value_inputs`, a wire input is resolved lazily — a wire under an untaken
+    /// branch is never awaited, so it is never demanded.
+    pub wire_inputs: Vec<ValueIslandId>,
     pub forced_copy_value: bool,
     pub nodes: Vec<Node>,
     pub output: NodeId,
@@ -1002,6 +1145,22 @@ impl ValueIslandId {
 pub struct PartitionedValue {
     pub id: ValueIslandId,
     pub island: Island,
+    /// Present when this value island is a hoisted user-function invocation
+    /// demanded as a wire: its callee identity and exact scalar arguments. The
+    /// runner records one realized demand per computed (non-memoized) evaluation
+    /// so a described-wire trace check can observe the invocation. Absent for an
+    /// ordinary shared-publication island.
+    pub wire: Option<WireProvenance>,
+}
+
+/// The described invocation a hoisted wire value island realizes: the callee
+/// user function and its exact scalar argument literals. Recorded so a
+/// described-wire trace check can select this realization by callee identity and
+/// argument identities.
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct WireProvenance {
+    pub function: FunctionId,
+    pub arguments: Vec<WireArg>,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
@@ -1021,6 +1180,13 @@ pub struct ArrayMapPartition {
 pub struct PartitionedTest {
     pub name: String,
     pub values: Vec<PartitionedValue>,
+    /// Argument islands demanded lazily through force-on-park, keyed by their
+    /// [`ValueIslandId`]. A consuming island's [`Island::wire_inputs`] names one
+    /// of these; the runner builds a `WireDemand` from it and drives it through
+    /// the memo path only when a task actually parks on the wire. Structurally
+    /// equal invocations collapse to one entry, so an awaited wire memoizes to a
+    /// single realization.
+    pub wire_islands: Vec<PartitionedValue>,
     pub generator: Option<Island>,
     /// Value-check islands, in site order. A [`PartitionedRecipe::Value`]
     /// indexes into this vector. Trace sites contribute no island.
@@ -1047,6 +1213,18 @@ pub struct PartitionedSite {
 pub enum PartitionedRecipe {
     Value { island: usize },
     Trace(TraceCheck),
+}
+
+/// The inter-island edges an island partition stops at: shared aggregate
+/// publications (`Op::Parameter` value inputs), shared scalar-invocation wires
+/// (`Op::AwaitWire` consumers), and lazy call arguments (demanded inside a
+/// specialized callee). Each maps a source node to the representative island the
+/// runner drives for it.
+#[derive(Clone, Copy)]
+struct IslandBoundary<'a> {
+    shared: &'a BTreeMap<NodeId, ValueIslandId>,
+    wires: &'a BTreeMap<NodeId, ValueIslandId>,
+    lazy_arg_reps: &'a BTreeMap<NodeId, ValueIslandId>,
 }
 
 impl Module {
@@ -1212,34 +1390,137 @@ impl Module {
             function: function.id,
             node: node.id,
         });
+        // A shared scalar user-invocation is a demanded WIRE, not an eagerly
+        // published aggregate: it is consumed through `AwaitWire`/force-on-park so
+        // its typed scalar result flows through the same memo path an ordinary
+        // argument demand uses. Structurally equal invocations collapse to one wire
+        // identity — two `costly(7)` calls share a single memoized realization (rung
+        // 058) — while distinct arguments keep distinct wire identities (rung 059).
+        // Aggregate publications remain eager shared value islands.
+        let mut wire_nodes = Vec::new();
+        shared.retain(|node| {
+            if is_scalar_call_candidate(node) {
+                wire_nodes.push(*node);
+                false
+            } else {
+                true
+            }
+        });
         let shared_ids = shared
             .iter()
-            .map(|node| {
-                (
-                    node.id,
-                    ValueIslandId {
-                        function: function.id,
-                        node: node.id,
-                    },
-                )
-            })
+            .map(|node| (node.id, self.value_island_id(function.id, node.id)))
             .collect::<BTreeMap<_, _>>();
+        // The non-strict argument nodes of every lazy call site: a call whose
+        // callee has wire parameters demands each such argument inside the callee
+        // through force-on-park, so the argument becomes its own wire island. Both
+        // the shared-consumer wires (rung 058) and these lazy arguments (rung 053)
+        // collapse through one structural-fingerprint map, so equal invocations
+        // share one realization and distinct ones stay distinct.
+        let mut lazy_arg_nodes = Vec::new();
+        for node in &function.nodes {
+            if let Op::Call(callee) = node.op {
+                for index in wire_param_indices(&self.functions[callee.0 as usize]) {
+                    lazy_arg_nodes.push(node.inputs[index]);
+                }
+            }
+        }
+        // Independently-demandable aggregate fields: a projection of a
+        // projection-only local record becomes an `AwaitWire` of its own field's
+        // initializer, so demanding `p.x` never computes `p.y` (rung 054).
+        let projection_wires = projection_field_wires(function);
+        // Collapse structurally equal wire invocations to one representative demand
+        // identity. `wire_ids` maps every shared-consumer node and every fused field
+        // projection to the representative wire island it awaits (rungs 058/054);
+        // `lazy_arg_reps` maps every lazy call argument node to its representative
+        // wire island (rung 053). `wire_islands` are the argument islands built once
+        // per representative and driven lazily through force-on-park.
+        let mut wire_representatives = Vec::new();
+        let (wire_ids, lazy_arg_reps) = {
+            let mut fingerprints = BTreeMap::new();
+            let mut representative_of = BTreeMap::<String, NodeId>::new();
+            let mut register = |node_id: NodeId| -> ValueIslandId {
+                let fingerprint = structural_fingerprint(function, node_id, &mut fingerprints);
+                let representative = *representative_of.entry(fingerprint).or_insert(node_id);
+                if representative == node_id {
+                    wire_representatives.push(node_id);
+                }
+                self.value_island_id(function.id, representative)
+            };
+            let mut wire_ids = wire_nodes
+                .iter()
+                .map(|node| (node.id, register(node.id)))
+                .collect::<BTreeMap<_, _>>();
+            for &(project, field_init) in &projection_wires {
+                let representative = register(field_init);
+                wire_ids.insert(project, representative);
+            }
+            let lazy_arg_reps = lazy_arg_nodes
+                .iter()
+                .map(|&arg| (arg, register(arg)))
+                .collect::<BTreeMap<_, _>>();
+            (wire_ids, lazy_arg_reps)
+        };
         let values = shared
             .iter()
             .enumerate()
-            .map(|(ordinal, node)| PartitionedValue {
-                id: shared_ids[&node.id],
-                island: self.partition_function_output_with_shared(
-                    function,
-                    node.id,
-                    IslandId(u32::try_from(ordinal).expect("value island index fits u32")),
-                    IslandPurpose::Value,
-                    &shared_ids
-                        .iter()
-                        .filter(|(candidate, _)| **candidate != node.id)
-                        .map(|(candidate, value)| (*candidate, *value))
-                        .collect(),
-                ),
+            .map(|(ordinal, node)| {
+                // A value island computes itself; only OTHER shared aggregates are
+                // pre-published inputs.
+                let representative_id = self.value_island_id(function.id, node.id);
+                let shared_here = shared_ids
+                    .iter()
+                    .filter(|(candidate, _)| **candidate != node.id)
+                    .map(|(candidate, value)| (*candidate, *value))
+                    .collect();
+                let lazy_here = lazy_reps_excluding(&lazy_arg_reps, representative_id);
+                PartitionedValue {
+                    id: representative_id,
+                    island: self.partition_function_output_with_shared(
+                        function,
+                        node.id,
+                        IslandId(u32::try_from(ordinal).expect("value island index fits u32")),
+                        IslandPurpose::Value,
+                        &IslandBoundary {
+                            shared: &shared_here,
+                            wires: &BTreeMap::new(),
+                            lazy_arg_reps: &lazy_here,
+                        },
+                    ),
+                    wire: None,
+                }
+            })
+            .collect::<Vec<_>>();
+        // The argument islands demanded through force-on-park. Each computes its
+        // invocation from ordinary shared inputs; a nested wire consumes another
+        // wire island. The island's own representative node is not one of its
+        // inputs, so it is excluded from every input map.
+        let wire_islands = wire_representatives
+            .iter()
+            .enumerate()
+            .map(|(ordinal, &node_id)| {
+                let representative_id = self.value_island_id(function.id, node_id);
+                let wires_here = wire_ids
+                    .iter()
+                    .filter(|(_, value)| **value != representative_id)
+                    .map(|(candidate, value)| (*candidate, *value))
+                    .collect();
+                let lazy_here = lazy_reps_excluding(&lazy_arg_reps, representative_id);
+                let node = &function.nodes[node_id.0 as usize];
+                PartitionedValue {
+                    id: representative_id,
+                    island: self.partition_function_output_with_shared(
+                        function,
+                        node_id,
+                        IslandId(u32::try_from(ordinal).expect("wire island index fits u32")),
+                        IslandPurpose::Value,
+                        &IslandBoundary {
+                            shared: &shared_ids,
+                            wires: &wires_here,
+                            lazy_arg_reps: &lazy_here,
+                        },
+                    ),
+                    wire: scalar_call_provenance(function, node),
+                }
             })
             .collect::<Vec<_>>();
         let generator = test
@@ -1258,11 +1539,15 @@ impl Module {
                         *check,
                         IslandId(u32::try_from(island).expect("island index fits u32")),
                         IslandPurpose::Check,
-                        &shared_ids,
+                        &IslandBoundary {
+                            shared: &shared_ids,
+                            wires: &wire_ids,
+                            lazy_arg_reps: &lazy_arg_reps,
+                        },
                     ));
                     PartitionedRecipe::Value { island }
                 }
-                CheckRecipe::Trace(trace) => PartitionedRecipe::Trace(*trace),
+                CheckRecipe::Trace(trace) => PartitionedRecipe::Trace(trace.clone()),
             };
             sites.push(PartitionedSite {
                 id: site.id,
@@ -1272,10 +1557,15 @@ impl Module {
         Ok(PartitionedTest {
             name: test.name.clone(),
             values,
+            wire_islands,
             generator,
             islands,
             sites,
         })
+    }
+
+    fn value_island_id(&self, function: FunctionId, node: NodeId) -> ValueIslandId {
+        ValueIslandId { function, node }
     }
 
     fn partition_function_output_with_shared(
@@ -1284,10 +1574,21 @@ impl Module {
         output: NodeId,
         id: IslandId,
         purpose: IslandPurpose,
-        shared: &BTreeMap<NodeId, ValueIslandId>,
+        boundary: &IslandBoundary<'_>,
     ) -> Island {
+        let IslandBoundary {
+            shared,
+            wires,
+            lazy_arg_reps,
+        } = *boundary;
+        let stop = shared
+            .keys()
+            .chain(wires.keys())
+            .chain(lazy_arg_reps.keys())
+            .copied()
+            .collect();
         let mut needed = BTreeSet::new();
-        collect_dependencies_stopping_at(function, output, shared, &mut needed);
+        collect_dependencies_stopping_at(function, output, &stop, &mut needed);
         let mut nodes = function
             .nodes
             .iter()
@@ -1296,28 +1597,105 @@ impl Module {
             .collect::<Vec<_>>();
         let mut parameters = Vec::new();
         let mut value_inputs = Vec::new();
+        let mut wire_inputs = Vec::new();
         for node in &mut nodes {
-            let Some(&value) = shared.get(&node.id) else {
-                continue;
-            };
-            let id = ParameterId(
-                u32::try_from(parameters.len()).expect("shared value parameter count fits u32"),
-            );
-            node.op = Op::Parameter(id);
-            node.inputs.clear();
-            parameters.push(Parameter {
-                id,
-                node: node.id,
-                name: format!("$value_{}", value.stable_segment()),
-                ty: node.ty.clone(),
-                kind: ParameterKind::Positional,
-            });
-            value_inputs.push(value);
+            if let Some(&value) = shared.get(&node.id) {
+                let id = ParameterId(
+                    u32::try_from(parameters.len()).expect("shared value parameter count fits u32"),
+                );
+                node.op = Op::Parameter(id);
+                node.inputs.clear();
+                parameters.push(Parameter {
+                    id,
+                    node: node.id,
+                    name: format!("$value_{}", value.stable_segment()),
+                    ty: node.ty.clone(),
+                    kind: ParameterKind::Positional,
+                });
+                value_inputs.push(value);
+            } else if let Some(&value) = wires.get(&node.id) {
+                // A demanded wire: the node becomes an await point that requests
+                // this value island from the scheduler and parks until it is
+                // evaluated through the memo path. It is reached — and therefore
+                // demanded — only when control actually consumes it.
+                let input = u32::try_from(wire_inputs.len()).expect("wire input count fits u32");
+                node.op = Op::AwaitWire { input };
+                node.inputs.clear();
+                wire_inputs.push(value);
+            }
         }
         prune_control_regions(&mut nodes, &needed);
+        // A fused field projection or awaited wire consumer no longer references
+        // the aggregate it was cut from, so its now-dead subtree — an unmaterialized
+        // record and its unprojected field initializers — must be dropped before
+        // collecting callees, or an undemanded field's invocation would execute.
+        if !wires.is_empty() {
+            let live = island_reachable(&nodes, output);
+            nodes.retain(|node| live.contains(&node.id));
+        }
         let mut seen = BTreeSet::from([function.id]);
         let mut callees = Vec::new();
         collect_callees(self, &nodes, &mut seen, &mut callees);
+        // Lazy call sites: a bundled call whose callee has wire parameters keeps
+        // its strict arguments as `ArgCopy` frame bindings, but each non-strict
+        // argument is demanded inside the callee through force-on-park. The wire
+        // argument islands are appended to this island's `wire_inputs`, giving
+        // each a global index the callee's specialized `AwaitWire` nodes reference.
+        // The typed call-site mapping is this island's `wire_inputs` — supplied at
+        // evaluation time, never baked into the shared lowered callee — so two call
+        // sites cannot cross-wire even when they share a lowering.
+        let mut specialized = Vec::new();
+        let mut next_specialized = u32::try_from(self.functions.len())
+            .expect("module function count fits u32")
+            .max(
+                callees
+                    .iter()
+                    .map(|callee| callee.id.0 + 1)
+                    .max()
+                    .unwrap_or(0),
+            );
+        for node in &mut nodes {
+            let Op::Call(callee_id) = node.op else {
+                continue;
+            };
+            let callee = &self.functions[callee_id.0 as usize];
+            let wire_positions = wire_param_indices(callee);
+            if wire_positions.is_empty() {
+                continue;
+            }
+            let wire_set: BTreeSet<usize> = wire_positions.iter().copied().collect();
+            let mut strict_inputs = Vec::new();
+            let mut await_map = BTreeMap::new();
+            for (index, parameter) in callee.parameters.iter().enumerate() {
+                let arg = node.inputs[index];
+                if wire_set.contains(&index) {
+                    let value = *lazy_arg_reps
+                        .get(&arg)
+                        .expect("lazy wire argument has a partitioned island");
+                    let global =
+                        u32::try_from(wire_inputs.len()).expect("wire input count fits u32");
+                    wire_inputs.push(value);
+                    await_map.insert(parameter.node, global);
+                } else {
+                    strict_inputs.push(arg);
+                }
+            }
+            let new_id = FunctionId(next_specialized);
+            next_specialized += 1;
+            specialized.push(specialize_lazy_callee(callee, &await_map, new_id));
+            node.op = Op::Call(new_id);
+            node.inputs = strict_inputs;
+        }
+        if !specialized.is_empty() {
+            // A lazy argument is consumed only inside its callee now, so its
+            // island node is dead in this island; drop everything no longer
+            // reachable from the output before collecting the callee closure.
+            let live = island_reachable(&nodes, output);
+            nodes.retain(|node| live.contains(&node.id));
+            callees.extend(specialized);
+            let referenced = referenced_function_ids(&nodes, &callees);
+            callees.retain(|callee| referenced.contains(&callee.id));
+        }
         let mut array_map_partitions = collect_array_map_partitions(function.id, &nodes, output);
         for callee in &callees {
             if let Some(output) = callee.output {
@@ -1335,6 +1713,7 @@ impl Module {
             function_name: function.name.clone(),
             parameters,
             value_inputs,
+            wire_inputs,
             forced_copy_value: purpose == IslandPurpose::Value && self.force_molten_copy,
             nodes,
             output,
@@ -1402,6 +1781,7 @@ impl Module {
             function_name: format!("{}$generator", test.name),
             parameters,
             value_inputs,
+            wire_inputs: Vec::new(),
             forced_copy_value: false,
             nodes,
             output,
@@ -1663,6 +2043,282 @@ impl PartitionedTest {
     }
 }
 
+/// The parameter positions of `callee` that are demand wires, in declaration
+/// order. A call's argument inputs align with the callee's parameters by index
+/// (positional then named), so a wire parameter at index `i` is fed by the call
+/// node's input at index `i`.
+/// Locally constructed records/tuples consumed only by field projections of
+/// inline-word fields: each such projection is an independently-demandable
+/// aggregate field. Returns `(projection node, field-initializer node)` pairs, so
+/// the projection can demand only its own field's initializer through
+/// force-on-park while the aggregate is never materialized and the other fields
+/// are never computed. A record consumed whole (passed, returned, or a control
+/// output) stays materialized and is excluded.
+fn projection_field_wires(function: &Function) -> Vec<(NodeId, NodeId)> {
+    let mut region_outputs = BTreeSet::new();
+    for node in &function.nodes {
+        match &node.op {
+            Op::If {
+                consequent,
+                alternative,
+            } => {
+                region_outputs.insert(consequent.output);
+                region_outputs.insert(alternative.output);
+            }
+            Op::Match { arms } => {
+                region_outputs.extend(arms.iter().map(|arm| arm.output));
+            }
+            Op::OrderedMatch { arms, fallback } => {
+                for arm in arms {
+                    region_outputs.insert(arm.condition.output);
+                    region_outputs.insert(arm.body.output);
+                }
+                region_outputs.insert(fallback.output);
+            }
+            _ => {}
+        }
+    }
+    let mut result = Vec::new();
+    for record in &function.nodes {
+        if !matches!(record.op, Op::Record | Op::Tuple) {
+            continue;
+        }
+        let mut projections = Vec::new();
+        let mut whole = function.output == Some(record.id) || region_outputs.contains(&record.id);
+        for other in &function.nodes {
+            if other.id == record.id {
+                continue;
+            }
+            match &other.op {
+                Op::Project { index } if other.inputs == [record.id] => {
+                    projections.push((other.id, *index, other.ty.clone()));
+                }
+                _ if other.inputs.contains(&record.id) => whole = true,
+                _ => {}
+            }
+        }
+        if whole || projections.is_empty() {
+            continue;
+        }
+        // Only fuse when every projected field is an inline word the force-on-park
+        // scalar resume supports; a composite field stays materialized.
+        let projected_word = projections
+            .iter()
+            .all(|(_, _, ty)| matches!(ty, Type::Int | Type::Bool));
+        // Only fuse when materializing the aggregate would execute a genuinely
+        // undemanded field invocation — an unprojected field whose initializer is a
+        // user call (rung 054's `expensive()`). A record of literals or fully
+        // projected fields is materialized unchanged, so aggregate contract shapes
+        // are preserved where no partial-demand laziness is observable.
+        let projected: BTreeSet<u32> = projections.iter().map(|(_, index, _)| *index).collect();
+        let saves_an_invocation = (0..record.inputs.len()).any(|index| {
+            !projected.contains(&(index as u32))
+                && matches!(
+                    function.nodes[record.inputs[index].0 as usize].op,
+                    Op::Call(_)
+                )
+        });
+        if projected_word && saves_an_invocation {
+            for (project, index, _) in projections {
+                result.push((project, record.inputs[index as usize]));
+            }
+        }
+    }
+    result
+}
+
+/// The lazy-argument representative map for building one island, with the
+/// island's own representative excluded so its own invocation is computed rather
+/// than stopped at as a wire boundary.
+fn lazy_reps_excluding(
+    lazy_arg_reps: &BTreeMap<NodeId, ValueIslandId>,
+    representative_id: ValueIslandId,
+) -> BTreeMap<NodeId, ValueIslandId> {
+    lazy_arg_reps
+        .iter()
+        .filter(|(_, value)| **value != representative_id)
+        .map(|(node, value)| (*node, *value))
+        .collect()
+}
+
+fn wire_param_indices(callee: &Function) -> Vec<usize> {
+    let wires = callee.wire_parameters();
+    callee
+        .parameters
+        .iter()
+        .enumerate()
+        .filter(|(_, parameter)| {
+            // Force-on-park resumes an awaiting task with a typed scalar word, so
+            // only inline-word (`Int`/`Bool`) wire parameters are demanded lazily.
+            // A composite wire parameter stays a bundled `ArgCopy` binding until
+            // the handle-resume seam lands.
+            wires.contains(&parameter.id) && matches!(parameter.ty, Type::Int | Type::Bool)
+        })
+        .map(|(index, _)| index)
+        .collect()
+}
+
+/// Specialize a bundled callee for one lazy call site: each wire parameter's
+/// declaration node becomes an [`Op::AwaitWire`] at the call-site-specific global
+/// wire-input index, and the wire parameters are removed from the frame's
+/// argument list so only strict parameters remain `ArgCopy` bindings. The
+/// awaited value is demanded inside the callee's own taken control region, so an
+/// untaken arm never parks and never demands. `new_id` is the specialized frame's
+/// island-local identity; different call sites get different `await_map`s, so a
+/// shared source callee cannot hardcode the wrong task input across call sites.
+fn specialize_lazy_callee(
+    callee: &Function,
+    await_map: &BTreeMap<NodeId, u32>,
+    new_id: FunctionId,
+) -> Function {
+    let mut needed = callee
+        .parameters
+        .iter()
+        .map(|parameter| parameter.node)
+        .collect::<BTreeSet<_>>();
+    if let Some(output) = callee.output {
+        collect_dependencies(callee, output, &mut needed);
+    }
+    let mut sliced = callee.clone();
+    sliced.id = new_id;
+    sliced.nodes.retain(|node| needed.contains(&node.id));
+    for node in &mut sliced.nodes {
+        if let Some(&input) = await_map.get(&node.id) {
+            node.op = Op::AwaitWire { input };
+            node.inputs.clear();
+        }
+    }
+    sliced
+        .parameters
+        .retain(|parameter| !await_map.contains_key(&parameter.node));
+    // A former wire parameter was a top-level node evaluated unconditionally. As
+    // an `AwaitWire` it must park only where control actually consumes it, so sink
+    // each into the control regions that reference it; an untaken arm then never
+    // parks and never demands.
+    let await_ids: BTreeSet<NodeId> = await_map.keys().copied().collect();
+    sink_await_nodes(&mut sliced.nodes, &await_ids);
+    prune_control_regions(&mut sliced.nodes, &needed);
+    sliced
+}
+
+/// Move each awaited wire node into the control regions that reference it, so it
+/// is lowered inside that region (evaluated only when the region is taken) rather
+/// than at the frame's unconditional top level.
+fn sink_await_nodes(nodes: &mut [Node], await_ids: &BTreeSet<NodeId>) {
+    let inputs_of: BTreeMap<NodeId, Vec<NodeId>> = nodes
+        .iter()
+        .map(|node| (node.id, node.inputs.clone()))
+        .collect();
+    let sink = |region_nodes: &mut Vec<NodeId>, output: NodeId| {
+        for &wire in await_ids {
+            let referenced = output == wire
+                || region_nodes.iter().any(|id| {
+                    inputs_of
+                        .get(id)
+                        .is_some_and(|inputs| inputs.contains(&wire))
+                });
+            if referenced && !region_nodes.contains(&wire) {
+                // An `AwaitWire` has no inputs, so it is topologically first in the
+                // region; inserting at the front keeps every consumer prior-ordered.
+                region_nodes.insert(0, wire);
+            }
+        }
+    };
+    for node in nodes {
+        match &mut node.op {
+            Op::If {
+                consequent,
+                alternative,
+            } => {
+                sink(&mut consequent.nodes, consequent.output);
+                sink(&mut alternative.nodes, alternative.output);
+            }
+            Op::Match { arms } => {
+                for arm in arms {
+                    sink(&mut arm.nodes, arm.output);
+                }
+            }
+            Op::OrderedMatch { arms, fallback } => {
+                for arm in arms {
+                    sink(&mut arm.condition.nodes, arm.condition.output);
+                    sink(&mut arm.body.nodes, arm.body.output);
+                }
+                sink(&mut fallback.nodes, fallback.output);
+            }
+            _ => {}
+        }
+    }
+}
+
+/// The function ids reachable from `nodes` through `Op::Call`/`Op::Closure`,
+/// transitively over `functions`. Used to drop a lazy call's original bundled
+/// callee once every reference has been rewritten to its specialization.
+fn referenced_function_ids(nodes: &[Node], functions: &[Function]) -> BTreeSet<FunctionId> {
+    let by_id: BTreeMap<FunctionId, &Function> = functions
+        .iter()
+        .map(|function| (function.id, function))
+        .collect();
+    let mut reachable = BTreeSet::new();
+    let mut stack: Vec<FunctionId> = nodes.iter().filter_map(direct_callee).collect();
+    while let Some(id) = stack.pop() {
+        if !reachable.insert(id) {
+            continue;
+        }
+        if let Some(function) = by_id.get(&id) {
+            stack.extend(function.nodes.iter().filter_map(direct_callee));
+        }
+    }
+    reachable
+}
+
+/// The node ids reachable from `output` within one island's own node list,
+/// following data inputs and taken/untaken control-region outputs. Used to drop
+/// lazy-argument nodes once a lazy call no longer references them.
+fn island_reachable(nodes: &[Node], output: NodeId) -> BTreeSet<NodeId> {
+    let by_id: BTreeMap<NodeId, &Node> = nodes.iter().map(|node| (node.id, node)).collect();
+    let mut reachable = BTreeSet::new();
+    let mut stack = vec![output];
+    while let Some(id) = stack.pop() {
+        if !reachable.insert(id) {
+            continue;
+        }
+        let Some(node) = by_id.get(&id) else {
+            continue;
+        };
+        stack.extend(node.inputs.iter().copied());
+        match &node.op {
+            Op::Match { arms } => {
+                for arm in arms {
+                    stack.push(arm.output);
+                }
+            }
+            Op::If {
+                consequent,
+                alternative,
+            } => {
+                stack.push(consequent.output);
+                stack.push(alternative.output);
+            }
+            Op::OrderedMatch { arms, fallback } => {
+                for arm in arms {
+                    stack.push(arm.condition.output);
+                    stack.push(arm.body.output);
+                }
+                stack.push(fallback.output);
+            }
+            _ => {}
+        }
+    }
+    reachable
+}
+
+fn direct_callee(node: &Node) -> Option<FunctionId> {
+    match node.op {
+        Op::Call(callee) | Op::Closure(callee) => Some(callee),
+        _ => None,
+    }
+}
+
 fn collect_callees(
     module: &Module,
     nodes: &[Node],
@@ -1733,7 +2389,69 @@ enum PublicationConsumer {
     ValueCheck(YieldSiteId),
 }
 
+/// A scalar user-function invocation whose result is a shared, memoizable
+/// demand: a word-typed `Op::Call`. Two structurally equal such calls collapse
+/// to one demand identity (rung 058); distinct ones stay distinct (rung 059).
+/// Single-consumer scalar calls stay bundled inside their island (rung 004's
+/// direct `WeavyOp::Call`); the shared cut only applies at two or more consumers.
+fn is_scalar_call_candidate(node: &Node) -> bool {
+    // Only genuine inline scalars (never a handle-backed aggregate, string, or
+    // path) flow through the `AwaitWire`/`scalar_word` resume path.
+    matches!(node.op, Op::Call(_)) && matches!(node.ty, Type::Int | Type::Bool)
+}
+
+/// The described invocation a shared scalar call realizes, when every argument is
+/// a closed scalar literal. A call with a non-literal argument shares its
+/// computation but carries no described-wire provenance (nothing selects it).
+fn scalar_call_provenance(function: &Function, node: &Node) -> Option<WireProvenance> {
+    let Op::Call(callee) = node.op else {
+        return None;
+    };
+    let mut arguments = Vec::with_capacity(node.inputs.len());
+    for &input in &node.inputs {
+        match function.nodes[input.0 as usize].op {
+            Op::Int(value) => arguments.push(WireArg::Int(value)),
+            Op::Bool(value) => arguments.push(WireArg::Bool(value)),
+            _ => return None,
+        }
+    }
+    Some(WireProvenance {
+        function: callee,
+        arguments,
+    })
+}
+
+/// A canonical, node-id-independent fingerprint of the pure subtree rooted at
+/// `node`: its operation and the fingerprints of its inputs. Two subtrees with
+/// the same fingerprint compute the same value, so they may share one demand
+/// identity. This never inspects a runtime handle, arrival ordinal, or trace
+/// descriptor — only the authored graph.
+fn structural_fingerprint(
+    function: &Function,
+    node: NodeId,
+    cache: &mut BTreeMap<NodeId, String>,
+) -> String {
+    if let Some(cached) = cache.get(&node) {
+        return cached.clone();
+    }
+    // Guard against a malformed cycle; a well-formed VIR body is acyclic.
+    cache.insert(node, format!("cycle:{}", node.0));
+    let this = &function.nodes[node.0 as usize];
+    let inputs = this
+        .inputs
+        .iter()
+        .map(|&input| structural_fingerprint(function, input, cache))
+        .collect::<Vec<_>>()
+        .join(",");
+    let fingerprint = format!("{:?}[{}]:{}", this.op, inputs, this.ty.name());
+    cache.insert(node, fingerprint.clone());
+    fingerprint
+}
+
 fn is_shared_publication_candidate(node: &Node) -> bool {
+    if is_scalar_call_candidate(node) {
+        return true;
+    }
     match &node.ty {
         Type::Array(_) => true,
         Type::Map { .. } => matches!(
@@ -1893,35 +2611,35 @@ fn collect_dependencies(function: &Function, node: NodeId, needed: &mut BTreeSet
 fn collect_dependencies_stopping_at(
     function: &Function,
     node: NodeId,
-    shared: &BTreeMap<NodeId, ValueIslandId>,
+    stop: &BTreeSet<NodeId>,
     needed: &mut BTreeSet<NodeId>,
 ) {
-    if !needed.insert(node) || shared.contains_key(&node) {
+    if !needed.insert(node) || stop.contains(&node) {
         return;
     }
     let node = &function.nodes[node.0 as usize];
     for &input in &node.inputs {
-        collect_dependencies_stopping_at(function, input, shared, needed);
+        collect_dependencies_stopping_at(function, input, stop, needed);
     }
     match &node.op {
         Op::Match { arms } => {
             for arm in arms {
-                collect_dependencies_stopping_at(function, arm.output, shared, needed);
+                collect_dependencies_stopping_at(function, arm.output, stop, needed);
             }
         }
         Op::If {
             consequent,
             alternative,
         } => {
-            collect_dependencies_stopping_at(function, consequent.output, shared, needed);
-            collect_dependencies_stopping_at(function, alternative.output, shared, needed);
+            collect_dependencies_stopping_at(function, consequent.output, stop, needed);
+            collect_dependencies_stopping_at(function, alternative.output, stop, needed);
         }
         Op::OrderedMatch { arms, fallback } => {
             for arm in arms {
-                collect_dependencies_stopping_at(function, arm.condition.output, shared, needed);
-                collect_dependencies_stopping_at(function, arm.body.output, shared, needed);
+                collect_dependencies_stopping_at(function, arm.condition.output, stop, needed);
+                collect_dependencies_stopping_at(function, arm.body.output, stop, needed);
             }
-            collect_dependencies_stopping_at(function, fallback.output, shared, needed);
+            collect_dependencies_stopping_at(function, fallback.output, stop, needed);
         }
         _ => {}
     }
@@ -2135,6 +2853,10 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
             );
         }
         Op::CallValue => op.push(22),
+        Op::AwaitWire { input } => {
+            op.push(84);
+            op.extend_from_slice(&input.to_le_bytes());
+        }
         Op::Div => op.push(23),
         Op::IsVariant { variant } => {
             op.push(24);

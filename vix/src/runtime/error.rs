@@ -57,6 +57,12 @@ pub enum RuntimeFault {
     PureIslandParked {
         input: u32,
     },
+    /// A wire forced a demand that is already being evaluated on the demand
+    /// stack: a cyclic/re-entrant demand. The demand state machine detects it as
+    /// a typed fault rather than recursing forever.
+    ReentrantDemand {
+        key: DemandKey,
+    },
     MissingFrameAttribution {
         function: FnId,
     },
