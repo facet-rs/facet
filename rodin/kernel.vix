@@ -95,6 +95,7 @@ struct SolvePolicy {
 }
 
 struct SolveInput {
+    unsupported: Option<UnsupportedInput>,
     universe: PackageUniverse,
     roots: [RootRequest],
     target: TargetFacts,
@@ -827,13 +828,16 @@ fn try_rows(input: SolveInput) where {
 }
 
 pub fn rodin_solve(input: SolveInput) -> RodinOutcome {
-    match seed_roots(input) where { roots: input.roots, state: empty_state() } {
-        StateStep::Conflict(conflict) => RodinOutcome::Failed(conflict),
-        StateStep::Pass(seed) => match propagate(input) where { state: seed } {
+    match input.unsupported {
+        Some(unsupported) => RodinOutcome::Unsupported(unsupported),
+        None => match seed_roots(input) where { roots: input.roots, state: empty_state() } {
             StateStep::Conflict(conflict) => RodinOutcome::Failed(conflict),
-            StateStep::Pass(state) => match search(input) where { state } {
-                SearchOutcome::Found(result) => RodinOutcome::Solved(result),
-                SearchOutcome::Dead(dead) => RodinOutcome::Failed(dead.conflict),
+            StateStep::Pass(seed) => match propagate(input) where { state: seed } {
+                StateStep::Conflict(conflict) => RodinOutcome::Failed(conflict),
+                StateStep::Pass(state) => match search(input) where { state } {
+                    SearchOutcome::Found(result) => RodinOutcome::Solved(result),
+                    SearchOutcome::Dead(dead) => RodinOutcome::Failed(dead.conflict),
+                },
             },
         },
     }

@@ -2211,6 +2211,7 @@ fn native_line_input() -> SolveInput {
         provenance: "fixture/app/Cargo.toml",
     };
     SolveInput {
+        unsupported: None,
         universe: PackageUniverse { rows: %{app => [row]} },
         roots: [RootRequest {
             package: app,
@@ -2317,6 +2318,7 @@ fn search_input(include_low: Bool) -> SolveInput {
         [app_row("1.1.0") where { requirement: "=2.0.0" }]
     };
     SolveInput {
+        unsupported: None,
         universe: PackageUniverse {
             rows: %{app_package() => app_rows, shared_package() => [shared_row()]},
         },
@@ -2384,6 +2386,7 @@ fn feature_conflict_input() -> SolveInput {
         provenance: "fixture/feature-conflict/Cargo.toml",
     };
     SolveInput {
+        unsupported: None,
         universe: PackageUniverse { rows: %{package => [row]} },
         roots: [RootRequest {
             package,
@@ -2449,6 +2452,7 @@ fn links_conflict_input() -> SolveInput {
     let left = links_package("left");
     let right = links_package("right");
     SolveInput {
+        unsupported: None,
         universe: PackageUniverse {
             rows: %{left => [links_row("left")], right => [links_row("right")]},
         },
@@ -2492,6 +2496,28 @@ fn native_links_conflict() -> Stream<Check> {
         RodinOutcome::Solved(_) => expect(false),
         RodinOutcome::Unsupported(_) => expect(false),
         RodinOutcome::Failed(conflict) => expect(is_links_conflict(conflict)),
+    };
+}
+
+fn domain_multiplicity_input() -> SolveInput {
+    SolveInput {
+        unsupported: Some(UnsupportedInput::DomainMultiplicity(app_package())),
+        ..search_input(true)
+    }
+}
+
+fn is_domain_multiplicity(unsupported: UnsupportedInput) -> Bool {
+    match unsupported {
+        UnsupportedInput::DomainMultiplicity(package) => package == app_package(),
+    }
+}
+
+#[test]
+fn native_domain_multiplicity_is_explicitly_unsupported() -> Stream<Check> {
+    yield match rodin_solve(domain_multiplicity_input()) {
+        RodinOutcome::Solved(_) => expect(false),
+        RodinOutcome::Failed(_) => expect(false),
+        RodinOutcome::Unsupported(unsupported) => expect(is_domain_multiplicity(unsupported)),
     };
 }
 
@@ -2557,7 +2583,7 @@ fn native_rodin_kernel_backtracks_and_returns_typed_conflicts() {
         "search/conflict certificates pass: {report:?}"
     );
     assert!(report.agrees(), "plain and chaos agree");
-    assert_eq!(report.plain.checks.len(), 7);
+    assert_eq!(report.plain.checks.len(), 8);
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.pure_host_calls, 0);
         assert_eq!(lane.receipt_count, 0);
@@ -2646,7 +2672,7 @@ fn native_scale_source(packages: usize) -> String {
         .expect("write provenance");
         fixture.push_str("    };\n");
     }
-    fixture.push_str("    SolveInput {\n        universe: PackageUniverse { rows: %{");
+    fixture.push_str("    SolveInput {\n        unsupported: None,\n        universe: PackageUniverse { rows: %{");
     for index in 0..packages {
         if index > 0 {
             fixture.push_str(", ");
@@ -3315,14 +3341,90 @@ fn native_target_facts(triple: &str) -> Result<String, String> {
     ))
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum NativeKernelOracleExpectation {
+    Solved,
+    UnsupportedDomainMultiplicity,
+}
+
+struct NativeKernelOracleAdapter {
+    source: String,
+    expectation: NativeKernelOracleExpectation,
+}
+
+fn first_domain_multiplicity(
+    packages: &BTreeSet<CargoPackageId>,
+) -> Result<Option<Vec<CargoPackageId>>, String> {
+    let mut grouped = BTreeMap::<ResolutionDomain, Vec<CargoPackageId>>::new();
+    for package in packages {
+        grouped
+            .entry(package.domain()?)
+            .or_default()
+            .push(package.clone());
+    }
+    Ok(grouped.into_values().find(|packages| packages.len() > 1))
+}
+
+fn native_domain_multiplicity_source(
+    packages: &[CargoPackageId],
+    triple: &str,
+) -> Result<NativeKernelOracleAdapter, String> {
+    let package = packages
+        .first()
+        .ok_or_else(|| "domain multiplicity needs at least one package".to_owned())?;
+    let package = vix_package_id(package)?;
+    let target = native_target_facts(triple)?;
+    let source = format!(
+        r#"
+fn cargo_unsupported_package() -> PackageId {{ {package} }}
+
+fn cargo_fixture_input() -> SolveInput {{
+    SolveInput {{
+        unsupported: Some(UnsupportedInput::DomainMultiplicity(cargo_unsupported_package())),
+        universe: PackageUniverse {{ rows: %{{}} }},
+        roots: [],
+        target: {target},
+        policy: SolvePolicy {{
+            consume_build: true,
+            consume_dev: false,
+            mutually_exclusive_features: %{{}},
+        }},
+    }}
+}}
+
+fn is_expected_domain_multiplicity(unsupported: UnsupportedInput) -> Bool {{
+    match unsupported {{
+        UnsupportedInput::DomainMultiplicity(package) => package == cargo_unsupported_package(),
+    }}
+}}
+
+#[test]
+fn native_cargo_oracles() -> Stream<Check> {{
+    yield match rodin_solve(cargo_fixture_input()) {{
+        RodinOutcome::Solved(_) => expect(false),
+        RodinOutcome::Failed(_) => expect(false),
+        RodinOutcome::Unsupported(unsupported) => expect(is_expected_domain_multiplicity(unsupported)),
+    }};
+}}
+"#
+    );
+    Ok(NativeKernelOracleAdapter {
+        source,
+        expectation: NativeKernelOracleExpectation::UnsupportedDomainMultiplicity,
+    })
+}
+
 impl Fixture {
     fn native_kernel_oracle_source(
         &self,
         workspace: &Path,
         triple: &str,
-    ) -> Result<String, String> {
+    ) -> Result<NativeKernelOracleAdapter, String> {
         let selection = self.selection_oracle(workspace)?;
         let graph = self.graph_oracle(workspace, triple)?;
+        if let Some(packages) = first_domain_multiplicity(&selection.packages)? {
+            return native_domain_multiplicity_source(&packages, triple);
+        }
         let mut by_name = BTreeMap::new();
         for package in &selection.packages {
             if let Some(previous) = by_name.insert(package.name.clone(), package.clone()) {
@@ -3358,6 +3460,7 @@ impl Fixture {
 
         writeln!(source, "\nfn cargo_fixture_input() -> SolveInput {{").ok();
         writeln!(source, "    SolveInput {{").ok();
+        writeln!(source, "        unsupported: None,").ok();
         writeln!(source, "        universe: PackageUniverse {{ rows: %{{").ok();
         for krate in &self.crates {
             let package = by_name
@@ -3473,7 +3576,10 @@ fn native_cargo_oracles() -> Stream<Check> {
 }
 "#,
         );
-        Ok(source)
+        Ok(NativeKernelOracleAdapter {
+            source,
+            expectation: NativeKernelOracleExpectation::Solved,
+        })
     }
 }
 
@@ -3481,7 +3587,7 @@ fn assert_native_kernel_matches_cargo(fixture: &Fixture, workspace: &Path, tripl
     let adapter = fixture
         .native_kernel_oracle_source(workspace, triple)
         .unwrap_or_else(|error| panic!("project Cargo oracles for {}: {error}", fixture.name));
-    let source = format!("{STD_VERSION}\n{NATIVE_RODIN_KERNEL}\n{adapter}");
+    let source = format!("{STD_VERSION}\n{NATIVE_RODIN_KERNEL}\n{}", adapter.source);
     let report = run_source(&source)
         .unwrap_or_else(|error| panic!("native Rodin kernel runs {}: {error:?}", fixture.name));
     let verdicts = report
@@ -3490,12 +3596,20 @@ fn assert_native_kernel_matches_cargo(fixture: &Fixture, workspace: &Path, tripl
         .iter()
         .map(|check| check.passed)
         .collect::<Vec<_>>();
-    assert_eq!(
-        verdicts,
-        [true, true, true, true],
-        "Cargo oracle verdicts [selection keys, versions, graph edge count, expected edges] for {} on {triple}",
-        fixture.name
-    );
+    match adapter.expectation {
+        NativeKernelOracleExpectation::Solved => assert_eq!(
+            verdicts,
+            [true, true, true, true],
+            "Cargo oracle verdicts [selection keys, versions, graph edge count, expected edges] for {} on {triple}",
+            fixture.name
+        ),
+        NativeKernelOracleExpectation::UnsupportedDomainMultiplicity => assert_eq!(
+            verdicts,
+            [true],
+            "Cargo domain multiplicity is explicitly unsupported for {} on {triple}",
+            fixture.name
+        ),
+    }
     assert!(
         report.passed(),
         "Cargo differential passes for {} on {triple}",
@@ -3506,7 +3620,7 @@ fn assert_native_kernel_matches_cargo(fixture: &Fixture, workspace: &Path, tripl
         "plain and chaos agree for {} on {triple}",
         fixture.name
     );
-    assert_eq!(report.plain.checks.len(), 4);
+    assert_eq!(report.plain.checks.len(), verdicts.len());
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.pure_host_calls, 0);
         assert_eq!(lane.receipt_count, 0);
@@ -3565,6 +3679,43 @@ fn native_rodin_kernel_matches_live_cargo_policy_oracles() {
         for triple in targets {
             assert_native_kernel_matches_cargo(&fixture, &workspace, triple);
         }
+    }
+}
+
+#[test]
+fn native_rodin_kernel_rejects_adapter_domain_multiplicity() {
+    let source = Source::Registry {
+        spec: "registry+https://github.com/rust-lang/crates.io-index".to_owned(),
+    };
+    let packages = [
+        CargoPackageId {
+            source: source.clone(),
+            name: "serde".to_owned(),
+            version: "1.0.0".to_owned(),
+        },
+        CargoPackageId {
+            source,
+            name: "serde".to_owned(),
+            version: "1.5.0".to_owned(),
+        },
+    ];
+    let adapter = native_domain_multiplicity_source(&packages, LINUX)
+        .expect("construct typed domain-multiplicity adapter");
+    assert_eq!(
+        adapter.expectation,
+        NativeKernelOracleExpectation::UnsupportedDomainMultiplicity
+    );
+    let source = format!("{STD_VERSION}\n{NATIVE_RODIN_KERNEL}\n{}", adapter.source);
+    let report = run_source(&source).expect("native Rodin rejects domain multiplicity");
+    assert!(
+        report.passed(),
+        "unsupported certificate passes: {report:?}"
+    );
+    assert!(report.agrees(), "plain and chaos agree");
+    assert_eq!(report.plain.checks.len(), 1);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
     }
 }
 
@@ -3934,6 +4085,14 @@ fn domain_multiplicity_is_surfaced_not_collapsed() {
     let mut candidate = BTreeSet::new();
     candidate.insert(serde_low.clone());
     candidate.insert(serde_high.clone());
+    let unsupported = first_domain_multiplicity(&candidate)
+        .expect("project candidate packages into Rodin domains")
+        .expect("same-domain exact packages are unsupported");
+    assert_eq!(
+        unsupported,
+        [serde_low.clone(), serde_high.clone()],
+        "the native-kernel adapter detects the same non-injective domain"
+    );
     let oracle = SelectionOracle {
         packages: BTreeSet::new(),
     };
