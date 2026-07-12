@@ -3811,6 +3811,234 @@ fn lower_some(
     })
 }
 
+/// Names introduced by an irrefutable (or refutable) pattern. Used to subtract
+/// a closure's own parameters and inner `let`/match bindings from the set of
+/// free variables it must capture.
+fn collect_pattern_names(pattern: &ast::Pattern, out: &mut BTreeSet<String>) {
+    match pattern {
+        ast::Pattern::Binding(binding) => {
+            out.insert(binding.binding.value.clone());
+        }
+        ast::Pattern::Tuple(tuple) => {
+            for element in &tuple.elems {
+                collect_pattern_names(element, out);
+            }
+        }
+        ast::Pattern::Record(record) => {
+            for field in &record.fields.fields {
+                match &field.pattern {
+                    Some(sub) => collect_pattern_names(sub, out),
+                    None => {
+                        out.insert(field.name.value.clone());
+                    }
+                }
+            }
+        }
+        ast::Pattern::Some(some) => collect_pattern_names(&some.payload, out),
+        ast::Pattern::Variant(variant) => {
+            if let Some(payload) = &variant.tuple_payload {
+                for element in &payload.elems {
+                    collect_pattern_names(element, out);
+                }
+            }
+        }
+        ast::Pattern::None(_)
+        | ast::Pattern::Wildcard(_)
+        | ast::Pattern::Str(_)
+        | ast::Pattern::Number(_) => {}
+    }
+}
+
+/// Free value-level identifiers referenced by an expression, excluding those in
+/// `bound`. A call callee is a value reference too: it either names a module
+/// function (never in `bound`, so ignored by the caller's capture filter) or a
+/// callable binding that must be captured.
+fn collect_free_idents_expr(
+    expr: &ast::Expr,
+    bound: &BTreeSet<String>,
+    out: &mut BTreeSet<String>,
+) {
+    match expr {
+        ast::Expr::Identifier(identifier) => {
+            if !bound.contains(&identifier.value) {
+                out.insert(identifier.value.clone());
+            }
+        }
+        ast::Expr::Call(call) => {
+            if !bound.contains(&call.callee.value) {
+                out.insert(call.callee.value.clone());
+            }
+            for argument in &call.args.args {
+                collect_free_idents_expr(argument, bound, out);
+            }
+            if let Some(named) = &call.named_args {
+                collect_free_idents_named(&named.fields, bound, out);
+            }
+        }
+        ast::Expr::WhereCall(call) => {
+            if !bound.contains(&call.callee.value) {
+                out.insert(call.callee.value.clone());
+            }
+            collect_free_idents_named(&call.named_args.fields, bound, out);
+        }
+        ast::Expr::MethodCall(call) => {
+            collect_free_idents_expr(&call.receiver, bound, out);
+            if let Some(args) = &call.args {
+                for argument in &args.args {
+                    collect_free_idents_expr(argument, bound, out);
+                }
+            }
+            if let Some(named) = &call.named_args {
+                collect_free_idents_named(&named.fields, bound, out);
+            }
+        }
+        ast::Expr::Binary(binary) => {
+            collect_free_idents_expr(&binary.left, bound, out);
+            collect_free_idents_expr(&binary.right, bound, out);
+        }
+        ast::Expr::Unary(unary) => collect_free_idents_expr(&unary.value, bound, out),
+        ast::Expr::If(if_expr) => {
+            collect_free_idents_expr(&if_expr.condition, bound, out);
+            collect_free_idents_block(&if_expr.consequent, bound, out);
+            collect_free_idents_if_branch(&if_expr.alternative, bound, out);
+        }
+        ast::Expr::Match(match_expr) => {
+            collect_free_idents_expr(&match_expr.scrutinee, bound, out);
+            for arm in &match_expr.arms.arms {
+                let mut arm_bound = bound.clone();
+                collect_pattern_names(&arm.pattern, &mut arm_bound);
+                if let Some(guard) = &arm.guard {
+                    collect_free_idents_expr(guard, &arm_bound, out);
+                }
+                match &arm.body {
+                    ast::MatchArmBody::Block(block) => {
+                        collect_free_idents_block(block, &arm_bound, out);
+                    }
+                    ast::MatchArmBody::Expr(expression) => {
+                        collect_free_idents_expr(expression, &arm_bound, out);
+                    }
+                }
+            }
+        }
+        ast::Expr::Closure(closure) => {
+            let mut inner = bound.clone();
+            for pattern in &closure.patterns {
+                collect_pattern_names(pattern, &mut inner);
+            }
+            match &closure.body {
+                ast::ClosureBody::Block(block) => collect_free_idents_block(block, &inner, out),
+                ast::ClosureBody::Expr(expression) => {
+                    collect_free_idents_expr(expression, &inner, out);
+                }
+            }
+        }
+        ast::Expr::Index(index) => {
+            collect_free_idents_expr(&index.receiver, bound, out);
+            collect_free_idents_expr(&index.index, bound, out);
+        }
+        ast::Expr::Array(array) => {
+            for element in &array.elems {
+                collect_free_idents_expr(element, bound, out);
+            }
+        }
+        ast::Expr::Set(set) => {
+            for element in &set.elems {
+                collect_free_idents_expr(element, bound, out);
+            }
+        }
+        ast::Expr::Map(map) => {
+            for row in &map.rows {
+                collect_free_idents_expr(&row.key, bound, out);
+                collect_free_idents_expr(&row.value, bound, out);
+            }
+        }
+        ast::Expr::Field(field) => collect_free_idents_expr(&field.receiver, bound, out),
+        ast::Expr::Variant(variant) => {
+            if let Some(payload) = &variant.tuple_payload {
+                for argument in &payload.args {
+                    collect_free_idents_expr(argument, bound, out);
+                }
+            }
+        }
+        ast::Expr::Record(record) => {
+            if let Some(spread) = &record.fields.spread {
+                collect_free_idents_expr(&spread.base, bound, out);
+            }
+            collect_free_idents_named(&record.fields.fields, bound, out);
+        }
+        ast::Expr::Tuple(tuple) => {
+            for element in &tuple.elems {
+                collect_free_idents_expr(element, bound, out);
+            }
+        }
+        ast::Expr::Paren(paren) => collect_free_idents_expr(&paren.inner, bound, out),
+        // A `Path` is a qualified type/module reference, a `Quantity` is a
+        // dimensioned literal — neither can name an enclosing value binding.
+        ast::Expr::Path(_)
+        | ast::Expr::Quantity(_)
+        | ast::Expr::Str(_)
+        | ast::Expr::Number(_)
+        | ast::Expr::Bool(_) => {}
+    }
+}
+
+fn collect_free_idents_named(
+    fields: &[ast::NamedValue],
+    bound: &BTreeSet<String>,
+    out: &mut BTreeSet<String>,
+) {
+    for field in fields {
+        match &field.value {
+            Some(value) => collect_free_idents_expr(value, bound, out),
+            None => {
+                if !bound.contains(&field.name.value) {
+                    out.insert(field.name.value.clone());
+                }
+            }
+        }
+    }
+}
+
+fn collect_free_idents_if_branch(
+    branch: &ast::IfBranch,
+    bound: &BTreeSet<String>,
+    out: &mut BTreeSet<String>,
+) {
+    match branch {
+        ast::IfBranch::Block(block) => collect_free_idents_block(block, bound, out),
+        ast::IfBranch::If(if_expr) => {
+            collect_free_idents_expr(&if_expr.condition, bound, out);
+            collect_free_idents_block(&if_expr.consequent, bound, out);
+            collect_free_idents_if_branch(&if_expr.alternative, bound, out);
+        }
+    }
+}
+
+fn collect_free_idents_block(
+    block: &ast::Block,
+    bound: &BTreeSet<String>,
+    out: &mut BTreeSet<String>,
+) {
+    let mut bound = bound.clone();
+    for statement in &block.stmts {
+        match statement {
+            ast::Stmt::Let(let_stmt) => {
+                collect_free_idents_expr(&let_stmt.value, &bound, out);
+                collect_pattern_names(&let_stmt.pattern, &mut bound);
+            }
+            ast::Stmt::Yield(yield_stmt) => {
+                collect_free_idents_expr(&yield_stmt.value, &bound, out);
+            }
+            ast::Stmt::Expression(expression) => {
+                collect_free_idents_expr(&expression.value, &bound, out);
+            }
+        }
+    }
+    if let Some(tail) = &block.tail {
+        collect_free_idents_expr(tail, &bound, out);
+    }
+}
+
 fn lower_closure(
     nodes: &mut Vec<Node>,
     outer_bindings: &BTreeMap<String, LoweredValue>,
@@ -4654,10 +4882,28 @@ fn lower_closure_typed_with_body_kind(
     expected_result: Option<&Type>,
     body_kind: ClosureBodyKind,
 ) -> Result<LoweredValue, Diagnostics> {
-    let captures = outer_bindings
-        .iter()
-        .filter(|(name, _)| closure_body_mentions(&closure.body, name))
-        .map(|(name, value)| (name.clone(), value.clone()))
+    // A closure captures exactly the enclosing bindings its body reads free.
+    // The free set is computed by a full traversal that descends through calls,
+    // method calls, control flow, and nested closures, subtracting names bound
+    // by the closure's own parameter patterns and by inner `let`/match/closure
+    // scopes — so a name read only inside `f(f(n))` (a call) is captured, and a
+    // name shadowed by an inner binder is not.
+    let mut bound_by_parameters = BTreeSet::new();
+    for pattern in &closure.patterns {
+        collect_pattern_names(pattern, &mut bound_by_parameters);
+    }
+    let mut free = BTreeSet::new();
+    match &closure.body {
+        ast::ClosureBody::Block(block) => {
+            collect_free_idents_block(block, &bound_by_parameters, &mut free);
+        }
+        ast::ClosureBody::Expr(expression) => {
+            collect_free_idents_expr(expression, &bound_by_parameters, &mut free);
+        }
+    }
+    let captures = free
+        .into_iter()
+        .filter_map(|name| outer_bindings.get(&name).map(|value| (name, value.clone())))
         .collect::<Vec<_>>();
     let (id, name) = context.allocate_closure();
     context.enter_function(name.clone());
@@ -4799,29 +5045,22 @@ fn lower_closure_typed_with_body_kind(
     let (function, ty) = lowered?;
     context.insert_closure(function);
 
+    // The closure closes over the enclosing values by reference to their VIR
+    // nodes; lowering decides per capture whether the environment word carries
+    // it inline (a single word) or through a boxed environment (wider captures,
+    // e.g. a captured callable).
     let capture_inputs = captures
         .iter()
         .map(|(_, captured)| {
-            let source = nodes.get(captured.node.0 as usize).ok_or_else(|| {
-                Diagnostics::one(Diagnostic::unsupported(
-                    closure.span,
-                    "captured value is absent",
-                ))
-            })?;
-            let Op::Int(value) = source.op else {
-                return Err(Diagnostics::one(Diagnostic::unsupported(
-                    closure.span,
-                    "closure capture currently requires an Int value at construction",
-                )));
-            };
-            Ok(push_node(
-                nodes,
-                closure.span,
-                Type::Int,
-                EffectFacts::PURE,
-                Vec::new(),
-                Op::Int(value),
-            ))
+            nodes
+                .get(captured.node.0 as usize)
+                .map(|_| captured.node)
+                .ok_or_else(|| {
+                    Diagnostics::one(Diagnostic::unsupported(
+                        closure.span,
+                        "captured value is absent",
+                    ))
+                })
         })
         .collect::<Result<Vec<_>, Diagnostics>>()?;
 
@@ -4836,25 +5075,6 @@ fn lower_closure_typed_with_body_kind(
         ),
         ty,
     })
-}
-
-fn closure_body_mentions(body: &ast::ClosureBody, name: &str) -> bool {
-    match body {
-        ast::ClosureBody::Expr(expression) => expression_mentions_binding(expression, name),
-        ast::ClosureBody::Block(_) => false,
-    }
-}
-
-fn expression_mentions_binding(expression: &ast::Expr, name: &str) -> bool {
-    match expression {
-        ast::Expr::Identifier(identifier) => identifier.value == name,
-        ast::Expr::Binary(binary) => {
-            expression_mentions_binding(&binary.left, name)
-                || expression_mentions_binding(&binary.right, name)
-        }
-        ast::Expr::Paren(paren) => expression_mentions_binding(&paren.inner, name),
-        _ => false,
-    }
 }
 
 fn bind_closure_patterns(

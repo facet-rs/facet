@@ -237,6 +237,8 @@ const TASK_SYMBOLS: &[&str] = &[
     "weavy_task_mul_f64",
     "weavy_task_hostcall",
     "weavy_task_hostcall_yield",
+    "weavy_task_env_box",
+    "weavy_task_env_load",
     "weavy_task_trace",
     "weavy_task_done",
 ];
@@ -305,6 +307,8 @@ const TASK_NAMES: &[(&str, &str)] = &[
     ("MUL_F64", "weavy_task_mul_f64"),
     ("HOSTCALL", "weavy_task_hostcall"),
     ("HOSTCALL_YIELD", "weavy_task_hostcall_yield"),
+    ("ENV_BOX", "weavy_task_env_box"),
+    ("ENV_LOAD", "weavy_task_env_load"),
     ("TRACE", "weavy_task_trace"),
     ("DONE", "weavy_task_done"),
 ];

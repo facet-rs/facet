@@ -66,6 +66,7 @@ const RUNG_047: &str = include_str!("ratchet/047-string-to-path.reject.vix");
 const RUNG_048: &str = include_str!("ratchet/048-closures-capture.vix");
 const RUNG_049: &str = include_str!("ratchet/049-recursion.vix");
 const RUNG_050: &str = include_str!("ratchet/050-deep-tail-recursion.vix");
+const RUNG_052: &str = include_str!("ratchet/052-higher-order.vix");
 const RUNG_138: &str = include_str!("ratchet/138-map-accumulator.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
 const RUNG_145: &str = include_str!("ratchet/145-push.reject.vix");
@@ -4027,6 +4028,98 @@ fn rung_049_plain_recursion_uses_stable_verified_call_abi() {
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.pure_host_calls, 0);
         assert_eq!(lane.receipt_count, 0);
+    }
+}
+
+#[test]
+fn rung_052_functions_are_first_class_arguments_and_results() {
+    let module = Compiler::new()
+        .compile(RUNG_052)
+        .expect("rung 052 compiles: functions are first-class arguments and results");
+
+    // `twice` takes a function and returns a function.
+    let twice = module
+        .functions
+        .iter()
+        .find(|function| function.name == "twice")
+        .expect("rung 052 declares twice");
+    let VirType::Function { parameter, result } = &twice.parameters[0].ty else {
+        panic!("twice's parameter is a function value");
+    };
+    assert_eq!(parameter.as_ref(), &VirType::Int);
+    assert_eq!(result.as_ref(), &VirType::Int);
+    assert!(matches!(twice.return_type, VirType::Function { .. }));
+
+    // The returned closure `|n| f(f(n))` captures the callable argument `f`,
+    // read free from inside a call — the strong free-variable analysis records
+    // it as the closure's construction input even though it never appears in a
+    // bare binary/identifier position.
+    let returned_closure = twice
+        .nodes
+        .iter()
+        .find(|node| matches!(node.op, VirOp::Closure(_)))
+        .expect("twice returns a closure value");
+    let VirOp::Closure(returned_target) = returned_closure.op else {
+        unreachable!("selected node is a closure")
+    };
+    assert_eq!(
+        returned_closure.inputs.len(),
+        1,
+        "the returned closure captures exactly its callable argument f",
+    );
+    let target_fn = module
+        .functions
+        .iter()
+        .find(|function| function.id == returned_target)
+        .expect("closure target is a module function");
+    // The capture is itself a callable value (fn(Int)->Int), so the closure's
+    // environment transports a full callable, not merely a scalar.
+    let capture_ty = &target_fn.parameters[1].ty;
+    assert!(matches!(capture_ty, VirType::Function { .. }));
+
+    // Direct invocation and Array.map both invoke closure values indirectly.
+    assert!(
+        module
+            .functions
+            .iter()
+            .flat_map(|function| &function.nodes)
+            .any(|node| matches!(node.op, VirOp::CallValue)),
+        "higher-order values are invoked through CallValue",
+    );
+
+    let report = run_source(RUNG_052).expect("rung 052 runs through Executable");
+    assert!(report.warnings.entries.is_empty());
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), 2);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+    }
+
+    // Certificate: the boxed-environment closure executes natively through the
+    // JIT by default and on the interpreter under WEAVY_JIT=0 — never a
+    // per-program lane fallback — and both lanes produce identical checks.
+    let expected_lane = if std::env::var("WEAVY_JIT").as_deref() == Ok("0") {
+        vix::runtime::ExecutionLaneFact::Interpreter
+    } else {
+        vix::runtime::ExecutionLaneFact::Native
+    };
+    for lane in [&report.plain, &report.chaos] {
+        let selections = lane
+            .events
+            .iter()
+            .filter_map(|event| match event.kind {
+                EventKind::ExecutionLane { facts, .. } => Some(facts.selected),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(!selections.is_empty(), "rung 052 records an execution lane");
+        assert!(
+            selections.iter().all(|selected| *selected == expected_lane),
+            "rung 052 selects {expected_lane:?}, got {selections:?}",
+        );
     }
 }
 

@@ -2460,7 +2460,8 @@ fn task_fault_site(fault: &TaskFault) -> Option<&FaultSite> {
         | TaskFault::EnumProjectionMismatch { site, .. }
         | TaskFault::InvalidArrayStatus { site, .. }
         | TaskFault::InvalidStringStatus { site, .. }
-        | TaskFault::InvalidOrderedStatus { site, .. } => Some(site),
+        | TaskFault::InvalidOrderedStatus { site, .. }
+        | TaskFault::Environment { site, .. } => Some(site),
         TaskFault::PoisonedReDrive { original } | TaskFault::PoisonedResult { original } => {
             task_fault_site(original)
         }
@@ -2518,6 +2519,7 @@ fn result_shape_attribution(
         | TaskFault::InvalidArrayStatus { .. }
         | TaskFault::InvalidStringStatus { .. }
         | TaskFault::InvalidOrderedStatus { .. }
+        | TaskFault::Environment { .. }
         | TaskFault::NativeFaultExit { .. }
         | TaskFault::InvalidFaultSite { .. }
         | TaskFault::PoisonedReDrive { .. }

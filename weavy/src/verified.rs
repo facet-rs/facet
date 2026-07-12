@@ -150,9 +150,45 @@ pub struct FunctionContract {
     pub entries: Vec<RegionId>,
     pub result: RegionId,
     pub call_contract: Option<CallContractId>,
+    /// The boxed capture environment of a closure that carries its captures
+    /// through a task-lifetime environment box rather than as call arguments.
+    /// Empty for ordinary functions and for closures whose captures ride inline
+    /// (the static concrete-capture convention). Each field is one captured
+    /// value's shape at its offset within the box; the entries that follow the
+    /// argument are materialized from it by `CallIndirect` or `EnvLoad`. This
+    /// lives on the function, not the call contract, so a boxed closure's public
+    /// value keeps its uniform semantic callable shape.
+    pub environment: Vec<FrameRegion>,
+}
+
+impl FunctionContract {
+    /// Whether this function materializes trailing capture entries from a boxed
+    /// environment rather than receiving them as call arguments.
+    #[must_use]
+    pub fn is_boxed(&self) -> bool {
+        !self.environment.is_empty()
+    }
 }
 
 /// A function-independent indirect-call ABI.
+///
+/// A callable follows one of two proven calling conventions, distinguished by
+/// `environment`:
+///
+/// * **Static concrete-capture** (`environment` empty): every parameter —
+///   argument and captures — is passed as an ordinary call argument. Used when
+///   the caller statically knows the concrete closure and holds its captures in
+///   frame. This is the optimized path.
+/// * **Boxed environment** (`environment` non-empty): only the leading argument
+///   entry is passed as a call argument; the remaining declared capture regions
+///   are materialized at callee entry by [`crate::task::Op::EnvLoad`] from the
+///   boxed environment handle threaded through [`crate::task::Op::CallIndirect`]
+///   (the closure value's opaque environment word). Used for a closure whose
+///   value escapes its construction frame (returned, mapped, stored), so its
+///   captures cannot travel as caller-frame arguments.
+///
+/// The verifier proves the convention structurally from the callee function's
+/// [`FunctionContract::environment`]; runtime never guesses it from handle bits.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CallContract {
     pub entries: Vec<FrameRegion>,
@@ -800,6 +836,42 @@ pub enum ProgramDefect {
     CallArgumentCount {
         expected: usize,
         actual: usize,
+    },
+    /// An `EnvBox`/`EnvLoad` named a closure callee that does not exist.
+    EnvironmentContractOutOfRange {
+        callee: FnId,
+        function_count: usize,
+    },
+    /// An `EnvBox`/`EnvLoad` addressed a closure callee that carries no boxed
+    /// environment (its `environment` is empty — it uses the static convention).
+    EnvironmentNotBoxed {
+        callee: FnId,
+    },
+    /// An `EnvBox` supplied the wrong number of capture field sources for its
+    /// environment contract.
+    EnvironmentFieldCount {
+        callee: FnId,
+        expected: usize,
+        actual: usize,
+    },
+    /// An `EnvLoad` addressed a capture index beyond the environment contract.
+    EnvironmentFieldIndex {
+        callee: FnId,
+        field: u32,
+        field_count: usize,
+    },
+    /// An `EnvBox` source or `EnvLoad` destination did not match the declared
+    /// shape of its capture field (wrong schema, kind, or width).
+    EnvironmentFieldShape {
+        callee: FnId,
+        field: u32,
+        expected: RegionShape,
+        actual: RegionShape,
+    },
+    /// An `EnvBox` result or `EnvLoad` environment word was not a single opaque
+    /// scalar handle word.
+    EnvironmentHandleShape {
+        region: RegionId,
     },
     CallArgumentDestination {
         index: usize,
@@ -2077,11 +2149,28 @@ impl Verifier<'_> {
                     ));
                 };
                 let call = &self.contract.calls[call_index];
-                let entries_match = entries.len() == call.entries.len()
-                    && entries
-                        .iter()
-                        .zip(&call.entries)
-                        .all(|(region, expected)| &contract.frame.regions[*region] == expected);
+                // A boxed closure's call contract covers only the leading
+                // argument entries; the trailing capture entries are
+                // materialized from the environment box and their shapes are
+                // proven against `environment` rather than call arguments.
+                let leading = call.entries.len();
+                let entries_match = if contract.environment.is_empty() {
+                    entries.len() == leading
+                        && entries
+                            .iter()
+                            .zip(&call.entries)
+                            .all(|(region, expected)| &contract.frame.regions[*region] == expected)
+                } else {
+                    entries.len() == leading + contract.environment.len()
+                        && entries
+                            .iter()
+                            .take(leading)
+                            .zip(&call.entries)
+                            .all(|(region, expected)| &contract.frame.regions[*region] == expected)
+                        && entries.iter().skip(leading).zip(&contract.environment).all(
+                            |(region, field)| contract.frame.regions[*region].shape == field.shape,
+                        )
+                };
                 let concrete_result = &contract.frame.regions[result];
                 let result_matches = concrete_result.shape == call.result.shape
                     && concrete_result.value_shape == call.result.value_shape;
@@ -2181,6 +2270,80 @@ impl Verifier<'_> {
                     *dst,
                     declared,
                 )?;
+            }
+            Op::EnvBox {
+                dst,
+                callee,
+                fields,
+            } => {
+                let environment = self.env_contract(function_id, pc, *callee)?;
+                if environment.len() != fields.len() {
+                    let expected = environment.len();
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::EnvironmentFieldCount {
+                            callee: *callee,
+                            expected,
+                            actual: fields.len(),
+                        },
+                    ));
+                }
+                let declared: Vec<RegionShape> = environment
+                    .iter()
+                    .map(|field| field.shape.clone())
+                    .collect();
+                self.require_env_handle(function_id, pc, function_index, *dst)?;
+                for (index, source) in fields.iter().enumerate() {
+                    let actual = self.plain_region(function_id, pc, function_index, *source)?;
+                    if !shapes_assignable(&actual.shape, &declared[index]) {
+                        return Err(self.op(
+                            function_id,
+                            pc,
+                            ProgramDefect::EnvironmentFieldShape {
+                                callee: *callee,
+                                field: index as u32,
+                                expected: declared[index].clone(),
+                                actual: actual.shape.clone(),
+                            },
+                        ));
+                    }
+                }
+            }
+            Op::EnvLoad {
+                dst,
+                env,
+                callee,
+                field,
+            } => {
+                let environment = self.env_contract(function_id, pc, *callee)?;
+                let Some(declared) = environment.get(*field as usize).map(|f| f.shape.clone())
+                else {
+                    let field_count = environment.len();
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::EnvironmentFieldIndex {
+                            callee: *callee,
+                            field: *field,
+                            field_count,
+                        },
+                    ));
+                };
+                self.require_env_handle(function_id, pc, function_index, *env)?;
+                let destination = self.plain_region(function_id, pc, function_index, *dst)?;
+                if !shapes_assignable(&declared, &destination.shape) {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::EnvironmentFieldShape {
+                            callee: *callee,
+                            field: *field,
+                            expected: declared,
+                            actual: destination.shape.clone(),
+                        },
+                    ));
+                }
             }
             Op::CopyValue { dst, src } => {
                 let source = self.structural_region(function_id, pc, function_index, *src)?;
@@ -3468,6 +3631,73 @@ impl Verifier<'_> {
         Ok(region_contract)
     }
 
+    /// The boxed environment layout of a closure callee, or a defect if the
+    /// callee is out of range or uses the static (non-boxed) convention.
+    fn env_contract(
+        &self,
+        function: FnId,
+        pc: usize,
+        callee: FnId,
+    ) -> Result<&[FrameRegion], ProgramError> {
+        let Some(callee_contract) = self.contract.functions.get(callee.0 as usize) else {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::EnvironmentContractOutOfRange {
+                    callee,
+                    function_count: self.contract.functions.len(),
+                },
+            ));
+        };
+        if callee_contract.environment.is_empty() {
+            return Err(self.op(function, pc, ProgramDefect::EnvironmentNotBoxed { callee }));
+        }
+        Ok(&callee_contract.environment)
+    }
+
+    /// A frame region by id, with no structural-value-shape requirement.
+    fn plain_region(
+        &self,
+        function: FnId,
+        pc: usize,
+        function_index: usize,
+        region: RegionId,
+    ) -> Result<&FrameRegion, ProgramError> {
+        let regions = &self.contract.functions[function_index].frame.regions;
+        usize::try_from(region.0)
+            .ok()
+            .and_then(|index| regions.get(index))
+            .ok_or_else(|| {
+                self.op(
+                    function,
+                    pc,
+                    ProgramDefect::StructuralRegionOutOfRange {
+                        region,
+                        region_count: regions.len(),
+                    },
+                )
+            })
+    }
+
+    /// Require a region to be a single opaque scalar environment-handle word.
+    fn require_env_handle(
+        &self,
+        function: FnId,
+        pc: usize,
+        function_index: usize,
+        region: RegionId,
+    ) -> Result<(), ProgramError> {
+        let handle = self.plain_region(function, pc, function_index, region)?;
+        if handle.shape.words.len() != 1 || !handle.shape.words[0].contains(WordKind::Scalar) {
+            return Err(self.op(
+                function,
+                pc,
+                ProgramDefect::EnvironmentHandleShape { region },
+            ));
+        }
+        Ok(())
+    }
+
     fn product_region(
         &self,
         function: FnId,
@@ -4625,6 +4855,8 @@ impl Verifier<'_> {
                     Op::ConstI64 { .. }
                     | Op::ProductConstruct { .. }
                     | Op::ProductProject { .. }
+                    | Op::EnvBox { .. }
+                    | Op::EnvLoad { .. }
                     | Op::CopyValue { .. }
                     | Op::EnumConstruct { .. }
                     | Op::EnumIsVariant { .. }
@@ -4902,6 +5134,7 @@ mod tests {
             entries: entries.iter().copied().map(RegionId).collect(),
             result: RegionId(result),
             call_contract: call_contract.map(CallContractId),
+            environment: Vec::new(),
         }
     }
 
@@ -7198,6 +7431,116 @@ mod tests {
             },
         ];
 
+        for case in cases {
+            assert_eq!(
+                case.program.verify(case.contract).expect_err(case.name),
+                case.expected,
+                "{}",
+                case.name
+            );
+        }
+    }
+
+    #[test]
+    fn admits_boxed_projection_and_rejects_environment_defects() {
+        let scalar = RegionShape::word(WordKind::Scalar);
+        let pair = RegionShape::new(vec![kinds(WordKind::Scalar), kinds(WordKind::Scalar)]);
+        let build = |field: u32, callee: u32, environment: Vec<FrameRegion>, dst: RegionShape| {
+            let program = Program {
+                fns: vec![function(
+                    3,
+                    vec![
+                        Op::EnvLoad {
+                            dst: RegionId(0),
+                            env: RegionId(1),
+                            callee: FnId(callee),
+                            field,
+                        },
+                        Op::Ret { src: 0, size: 8 },
+                    ],
+                )],
+            };
+            let mut contract = function_contract(
+                3,
+                vec![
+                    region(0, dst),
+                    word_region(8, WordKind::Scalar),
+                    word_region(16, WordKind::Scalar),
+                ],
+                &[2],
+                0,
+                None,
+            );
+            contract.environment = environment;
+            (
+                program,
+                ProgramContract {
+                    functions: vec![contract],
+                    calls: vec![],
+                    schemas: vec![],
+                    value_shapes: vec![],
+                },
+            )
+        };
+
+        // A scalar capture projected into a scalar slot is the boxed convention.
+        let (program, contract) = build(0, 0, vec![region(0, scalar.clone())], scalar.clone());
+        assert!(
+            program.verify(contract).is_ok(),
+            "boxed projection verifies"
+        );
+
+        let index = build(3, 0, vec![region(0, scalar.clone())], scalar.clone());
+        let not_boxed = build(0, 0, vec![], scalar.clone());
+        let out_of_range = build(0, 9, vec![region(0, scalar.clone())], scalar.clone());
+        let width = build(0, 0, vec![region(0, pair.clone())], scalar.clone());
+        let cases = [
+            InvalidCase {
+                name: "capture index out of range",
+                program: index.0,
+                contract: index.1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::EnvironmentFieldIndex {
+                        callee: FnId(0),
+                        field: 3,
+                        field_count: 1,
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "callee is not boxed",
+                program: not_boxed.0,
+                contract: not_boxed.1,
+                expected: op_error(0, ProgramDefect::EnvironmentNotBoxed { callee: FnId(0) }),
+            },
+            InvalidCase {
+                name: "callee out of range",
+                program: out_of_range.0,
+                contract: out_of_range.1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::EnvironmentContractOutOfRange {
+                        callee: FnId(9),
+                        function_count: 1,
+                    },
+                ),
+            },
+            InvalidCase {
+                name: "capture width mismatch",
+                program: width.0,
+                contract: width.1,
+                expected: op_error(
+                    0,
+                    ProgramDefect::EnvironmentFieldShape {
+                        callee: FnId(0),
+                        field: 0,
+                        expected: pair.clone(),
+                        actual: scalar.clone(),
+                    },
+                ),
+            },
+        ];
         for case in cases {
             assert_eq!(
                 case.program.verify(case.contract).expect_err(case.name),
