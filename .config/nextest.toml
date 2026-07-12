@@ -180,3 +180,18 @@ slow-timeout = { period = "120s", terminate-after = 5 }
 [[profile.default.overrides]]
 filter = 'package(vix) & test(accepted_rungs_verify_and_execute_through_one_executable)'
 slow-timeout = { period = "120s", terminate-after = 5 }
+
+# The cross-lane differential (F1) compiles the accepted canonical corpus
+# (through rung 059) once and executes every accepted rung through both an
+# explicitly-selected native Executable and an explicitly-selected interpreter
+# Executable, plain and chaos. It runs the 10M-iteration tail-recursion rung 050
+# and the million-element molten rung 051 through the *interpreter* lane twice
+# (plain + chaos), which dominates the cost: in isolation it is ~123s, but under
+# the parallel load of a full `--workspace` run it has been observed at ~390s,
+# and the coverage-instrumented native leg is slower still. It is bounded and
+# always passing; give it a generous leash (well under a 1200s hard cap) so
+# workspace contention or coverage cannot flake it, on the same shape as the
+# other heavy vix certificates.
+[[profile.default.overrides]]
+filter = 'package(vix) & test(accepted_corpus_agrees_across_native_and_interpreter_lanes)'
+slow-timeout = { period = "300s", terminate-after = 4 }

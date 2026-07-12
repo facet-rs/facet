@@ -32,6 +32,37 @@ pub enum LaneKind {
 pub enum FallbackReason {
     NativeUnavailable,
     DisabledByEnvironment,
+    /// The caller explicitly requested the interpreter through
+    /// [`LaneRequest::Interpreter`], independent of the environment. This keeps a
+    /// typed per-executable interpreter selection distinguishable from the global
+    /// `WEAVY_JIT=0` toggle.
+    DisabledByRequest,
+}
+
+/// A typed, per-executable lane request. This is the seam that lets one process
+/// build a native `Executable` and an interpreter `Executable` side by side —
+/// e.g. a cross-lane differential — without touching the global `WEAVY_JIT`
+/// environment variable, which would race sibling tests under a parallel runner.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum LaneRequest {
+    /// Weavy's own policy: select the native lane iff it is [`available`] and not
+    /// disabled by `WEAVY_JIT=0`; otherwise the interpreter. This is the ordinary
+    /// production path.
+    ///
+    /// [`available`]: crate::jit::task_lane::available
+    #[default]
+    Auto,
+    /// Force the interpreter lane regardless of native availability or
+    /// environment. Never compiles the native lane.
+    Interpreter,
+    /// Force the native lane. Compiles the native lane iff it is [`available`] on
+    /// this target, ignoring `WEAVY_JIT=0`. When native is unavailable the
+    /// executable still falls back to the interpreter with
+    /// [`FallbackReason::NativeUnavailable`], so a caller that requires native
+    /// must assert on [`LaneFacts::selected`].
+    ///
+    /// [`available`]: crate::jit::task_lane::available
+    Native,
 }
 
 /// Typed lane-selection facts. This is observability, not a selector.
@@ -889,12 +920,28 @@ impl Executable {
         Self::with_trace_mode(verified, TraceMode::Innards)
     }
 
+    /// Prepare with Weavy's own [`LaneRequest::Auto`] lane policy: native iff
+    /// available and not `WEAVY_JIT=0`. This is the production entry point.
     #[must_use]
     pub fn with_trace_mode(verified: VerifiedProgram, mode: TraceMode) -> Self {
+        Self::with_lane(verified, mode, LaneRequest::Auto)
+    }
+
+    /// Prepare with an explicit, typed per-executable [`LaneRequest`]. This is the
+    /// non-environment lane seam: `Native`/`Interpreter` force a lane in-process
+    /// without mutating `WEAVY_JIT`, so two lanes can be materialized at once.
+    #[must_use]
+    pub fn with_lane(verified: VerifiedProgram, mode: TraceMode, request: LaneRequest) -> Self {
         let verified = Arc::new(verified);
         let native_available = crate::jit::task_lane::available();
-        let disabled = native_disabled_by_environment();
-        let native = if native_available && !disabled {
+        // Whether this request permits compiling the native lane. Only `Auto`
+        // consults the environment; the explicit requests are authoritative.
+        let want_native = match request {
+            LaneRequest::Auto => !native_disabled_by_environment(),
+            LaneRequest::Interpreter => false,
+            LaneRequest::Native => true,
+        };
+        let native = if native_available && want_native {
             JitExecutable::compile(Arc::clone(&verified), mode)
         } else {
             None
@@ -902,9 +949,18 @@ impl Executable {
         let native_compiled = native.is_some();
         let fallback = if native_compiled {
             None
-        } else if disabled {
-            Some(FallbackReason::DisabledByEnvironment)
+        } else if !want_native {
+            // The interpreter was chosen deliberately: an explicit request, or
+            // `Auto` seeing `WEAVY_JIT=0`.
+            match request {
+                LaneRequest::Interpreter => Some(FallbackReason::DisabledByRequest),
+                LaneRequest::Auto | LaneRequest::Native => {
+                    Some(FallbackReason::DisabledByEnvironment)
+                }
+            }
         } else {
+            // Native was wanted but the target has no native lane (or it declined
+            // to compile this program).
             Some(FallbackReason::NativeUnavailable)
         };
         let selected = if native_compiled {

@@ -598,6 +598,41 @@ pub fn run_source_with_config(
     prepare_source_with_config(source, config)?.execute()
 }
 
+/// Run every declared test twice through an explicitly selected execution lane.
+///
+/// This is the non-environment lane seam behind the cross-lane differential: the
+/// [`weavy::exec::LaneRequest`] is threaded per-executable through the lowering
+/// cache, so a native and an interpreter run can be produced in one process
+/// without mutating the global `WEAVY_JIT` variable (which would race sibling
+/// tests under a parallel runner). Every other aspect — Production trace mode,
+/// the plain/chaos discipline, provenance-keyed families — is identical to
+/// [`run_source`], so the two lanes are compared on the exact production shape.
+///
+/// Lane *authority* still lives in Weavy ([`weavy::exec::LaneRequest`] /
+/// `Executable::with_lane`, `r[machine.execution.weavy-owns-mode]`): this is a
+/// forwarding seam used only by the cross-lane certificate, not a machine-side
+/// lane selector — the production path stays on [`LaneRequest::Auto`].
+pub fn run_source_with_lane(
+    source: &str,
+    lane: weavy::exec::LaneRequest,
+) -> Result<RatchetReport, RunError> {
+    prepare_source_with_lane(source, lane)?.execute()
+}
+
+/// The readiness-boundary form of [`run_source_with_lane`]: compile, lower, and
+/// verify every demanded island through the requested lane without running a
+/// test.
+pub fn prepare_source_with_lane(
+    source: &str,
+    lane: weavy::exec::LaneRequest,
+) -> Result<PreparedRun, RunError> {
+    prepare_source_with_cache(
+        source,
+        CompilerConfig::default(),
+        LoweringCache::for_lane(lane),
+    )
+}
+
 /// Parse, check, lower, verify, and natively compile `source` without running
 /// any test. When this returns `Ok`, all compilation is complete and the
 /// returned [`PreparedRun`] is ready to execute with no further compilation.

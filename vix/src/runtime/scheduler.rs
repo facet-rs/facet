@@ -2982,6 +2982,7 @@ fn execution_facts(facts: weavy::exec::LaneFacts) -> ExecutionFacts {
     let fallback = facts.fallback.map(|fallback| match fallback {
         FallbackReason::NativeUnavailable => ExecutionFallbackFact::NativeUnavailable,
         FallbackReason::DisabledByEnvironment => ExecutionFallbackFact::DisabledByEnvironment,
+        FallbackReason::DisabledByRequest => ExecutionFallbackFact::DisabledByRequest,
     });
     ExecutionFacts {
         selected,
