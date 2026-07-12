@@ -1353,6 +1353,16 @@ struct MetaPackage {
     /// `null` for a path/workspace member; `registry+`/`sparse+`/`git+…` otherwise.
     source: Option<String>,
     manifest_path: String,
+    dependencies: Vec<MetaDependency>,
+    features: BTreeMap<String, Vec<String>>,
+}
+
+#[derive(Facet, Debug)]
+struct MetaDependency {
+    name: String,
+    rename: Option<String>,
+    kind: Option<String>,
+    optional: bool,
 }
 
 #[derive(Facet, Debug)]
@@ -1363,11 +1373,14 @@ struct MetaResolve {
 #[derive(Facet, Debug)]
 struct MetaNode {
     id: String,
+    features: Vec<String>,
     deps: Vec<MetaDep>,
 }
 
 #[derive(Facet, Debug)]
 struct MetaDep {
+    /// The dependency name in the parent package (the alias when renamed).
+    name: String,
     /// The resolved dependency's package id.
     pkg: String,
     dep_kinds: Vec<MetaDepKind>,
@@ -1496,6 +1509,36 @@ fn package_id(package: &MetaPackage) -> Result<CargoPackageId, String> {
         name: package.name.clone(),
         version: package.version.clone(),
     })
+}
+
+fn activated_optional_dependencies(package: &MetaPackage, node: &MetaNode) -> BTreeSet<String> {
+    let mut active = BTreeSet::new();
+    let mut expanded = BTreeSet::new();
+    let mut pending = node.features.clone();
+    while let Some(feature) = pending.pop() {
+        if !expanded.insert(feature.clone()) {
+            continue;
+        }
+        let Some(effects) = package.features.get(&feature) else {
+            continue;
+        };
+        for effect in effects {
+            if let Some(dependency) = effect.strip_prefix("dep:") {
+                active.insert(dependency.to_owned());
+            } else if effect.contains("?/") {
+                continue;
+            } else if let Some((dependency, _)) = effect.split_once('/') {
+                active.insert(dependency.to_owned());
+            } else {
+                pending.push(effect.clone());
+            }
+        }
+    }
+    active
+}
+
+fn dependency_alias(dependency: &MetaDependency) -> &str {
+    dependency.rename.as_deref().unwrap_or(&dependency.name)
 }
 
 // ---- Oracle 2's edge kind ----
@@ -1779,8 +1822,10 @@ impl Fixture {
     fn graph_oracle(&self, workspace: &Path, triple: &str) -> Result<GraphOracle, String> {
         let metadata = self.cargo_metadata(workspace, Some(triple))?;
         let mut by_id: BTreeMap<String, CargoPackageId> = BTreeMap::new();
+        let mut package_by_id: BTreeMap<&str, &MetaPackage> = BTreeMap::new();
         for package in &metadata.packages {
             by_id.insert(package.id.clone(), package_id(package)?);
+            package_by_id.insert(package.id.as_str(), package);
         }
         let exact = |id: &str| -> Result<CargoPackageId, String> {
             by_id
@@ -1811,11 +1856,37 @@ impl Fixture {
             let Some(node) = node_by_id.get(id.as_str()) else {
                 continue;
             };
+            let package = package_by_id
+                .get(id.as_str())
+                .copied()
+                .ok_or_else(|| format!("metadata id `{id}` has no package declaration"))?;
+            let activated_optional = activated_optional_dependencies(package, node);
             let from = exact(&id)?;
             for dep in &node.deps {
                 let mut kinds = BTreeSet::new();
                 for dep_kind in &dep.dep_kinds {
                     if let Some(kind) = EdgeKind::classify(dep_kind.kind.as_deref())? {
+                        let mut declarations = Vec::new();
+                        for declaration in package
+                            .dependencies
+                            .iter()
+                            .filter(|declaration| dependency_alias(declaration) == dep.name)
+                        {
+                            if EdgeKind::classify(declaration.kind.as_deref())? == Some(kind) {
+                                declarations.push(declaration);
+                            }
+                        }
+                        if declarations.is_empty() {
+                            return Err(format!(
+                                "resolved dependency {:?} kind {kind:?} has no package declaration",
+                                dep.name
+                            ));
+                        }
+                        if declarations.iter().all(|declaration| declaration.optional)
+                            && !activated_optional.contains(&dep.name)
+                        {
+                            continue;
+                        }
                         kinds.insert(kind);
                     }
                 }
@@ -2721,17 +2792,17 @@ impl Fixture {
 
         source.push_str(
             r#"
-fn cargo_oracles_match(result: SolveResult) -> Bool {
-    let expected = cargo_expected_versions();
-    result.selected.keys() == expected.keys()
-        && expected.keys().all(|package| result.selected.get(package).version == expected.get(package))
-        && result.edges == cargo_expected_edges()
-}
-
 #[test]
 fn native_cargo_oracles() -> Stream<Check> {
     yield match rodin_solve(cargo_fixture_input()) {
-        RodinOutcome::Solved(result) => expect(cargo_oracles_match(result)),
+        RodinOutcome::Solved(result) => {
+            let expected = cargo_expected_versions();
+            let expected_edges = cargo_expected_edges();
+            yield expect_eq(result.selected.keys(), expected.keys());
+            yield expect(expected.keys().all(|package| result.selected.get(package).version == expected.get(package)));
+            yield expect_eq(result.edges.len(), expected_edges.len());
+            yield expect(expected_edges.values().all(|edge| result.edges.has(edge)));
+        },
         RodinOutcome::Failed(_) => expect(false),
         RodinOutcome::Unsupported(_) => expect(false),
     };
@@ -2749,9 +2820,21 @@ fn assert_native_kernel_matches_cargo(fixture: &Fixture, workspace: &Path, tripl
     let source = format!("{STD_VERSION}\n{NATIVE_RODIN_KERNEL}\n{adapter}");
     let report = run_source(&source)
         .unwrap_or_else(|error| panic!("native Rodin kernel runs {}: {error:?}", fixture.name));
+    let verdicts = report
+        .plain
+        .checks
+        .iter()
+        .map(|check| check.passed)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        verdicts,
+        [true, true, true, true],
+        "Cargo oracle verdicts [selection keys, versions, graph edge count, expected edges] for {} on {triple}",
+        fixture.name
+    );
     assert!(
         report.passed(),
-        "Cargo differential passes for {} on {triple}: {report:?}",
+        "Cargo differential passes for {} on {triple}",
         fixture.name
     );
     assert!(
@@ -2759,7 +2842,7 @@ fn assert_native_kernel_matches_cargo(fixture: &Fixture, workspace: &Path, tripl
         "plain and chaos agree for {} on {triple}",
         fixture.name
     );
-    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.checks.len(), 4);
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.pure_host_calls, 0);
         assert_eq!(lane.receipt_count, 0);
