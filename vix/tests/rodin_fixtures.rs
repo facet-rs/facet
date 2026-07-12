@@ -2142,6 +2142,7 @@ fn native_line_input() -> SolveInput {
             requirement: parse_req("=0.1.0"),
             features: %[],
             default_features: true,
+            graph: true,
         }],
         target: TargetFacts {
             triple: "x86_64-unknown-linux-gnu",
@@ -2226,6 +2227,241 @@ fn vix_package_id(package: &CargoPackageId) -> Result<String, String> {
         vix_package_source(&package.source)?,
         vix_string(&package.name),
         vix_compat_class(&package.version)?
+    ))
+}
+
+#[derive(Clone, Debug)]
+enum NativeCfgExpr {
+    Atom(String),
+    Value { key: String, value: String },
+    Not(Box<NativeCfgExpr>),
+    All(Vec<NativeCfgExpr>),
+    Any(Vec<NativeCfgExpr>),
+}
+
+struct NativeCfgParser<'a> {
+    input: &'a str,
+    offset: usize,
+}
+
+impl<'a> NativeCfgParser<'a> {
+    fn new(input: &'a str) -> Self {
+        Self { input, offset: 0 }
+    }
+
+    fn parse(mut self) -> Result<NativeCfgExpr, String> {
+        let expression = self.expression()?;
+        self.whitespace();
+        if self.offset != self.input.len() {
+            return Err(format!(
+                "unexpected cfg suffix {:?}",
+                &self.input[self.offset..]
+            ));
+        }
+        Ok(expression)
+    }
+
+    fn expression(&mut self) -> Result<NativeCfgExpr, String> {
+        self.whitespace();
+        let identifier = self.identifier()?;
+        self.whitespace();
+        if self.consume('(') {
+            let mut arguments = Vec::new();
+            self.whitespace();
+            if !self.consume(')') {
+                loop {
+                    arguments.push(self.expression()?);
+                    self.whitespace();
+                    if self.consume(')') {
+                        break;
+                    }
+                    self.expect(',')?;
+                }
+            }
+            return match identifier.as_str() {
+                "all" => Ok(NativeCfgExpr::All(arguments)),
+                "any" => Ok(NativeCfgExpr::Any(arguments)),
+                "not" if arguments.len() == 1 => Ok(NativeCfgExpr::Not(Box::new(
+                    arguments.pop().expect("length checked"),
+                ))),
+                "not" => Err("cfg not() requires exactly one operand".to_owned()),
+                other => Err(format!("unsupported cfg operator {other:?}")),
+            };
+        }
+        if self.consume('=') {
+            self.whitespace();
+            return Ok(NativeCfgExpr::Value {
+                key: identifier,
+                value: self.quoted_string()?,
+            });
+        }
+        Ok(NativeCfgExpr::Atom(identifier))
+    }
+
+    fn identifier(&mut self) -> Result<String, String> {
+        let start = self.offset;
+        while self
+            .input
+            .as_bytes()
+            .get(self.offset)
+            .is_some_and(|byte| byte.is_ascii_alphanumeric() || *byte == b'_')
+        {
+            self.offset += 1;
+        }
+        if start == self.offset {
+            return Err(format!(
+                "expected cfg identifier at {:?}",
+                &self.input[self.offset..]
+            ));
+        }
+        Ok(self.input[start..self.offset].to_owned())
+    }
+
+    fn quoted_string(&mut self) -> Result<String, String> {
+        self.expect('"')?;
+        let start = self.offset;
+        while self.input.as_bytes().get(self.offset).copied() != Some(b'"') {
+            if self.offset == self.input.len() {
+                return Err("unterminated cfg string".to_owned());
+            }
+            self.offset += 1;
+        }
+        let value = self.input[start..self.offset].to_owned();
+        self.offset += 1;
+        Ok(value)
+    }
+
+    fn whitespace(&mut self) {
+        while self
+            .input
+            .as_bytes()
+            .get(self.offset)
+            .is_some_and(u8::is_ascii_whitespace)
+        {
+            self.offset += 1;
+        }
+    }
+
+    fn consume(&mut self, expected: char) -> bool {
+        if self.input[self.offset..].starts_with(expected) {
+            self.offset += expected.len_utf8();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn expect(&mut self, expected: char) -> Result<(), String> {
+        if self.consume(expected) {
+            Ok(())
+        } else {
+            Err(format!(
+                "expected {expected:?} at {:?}",
+                &self.input[self.offset..]
+            ))
+        }
+    }
+}
+
+#[derive(Clone, Debug, Default)]
+struct NativeCfgConjunction {
+    required_atoms: BTreeSet<String>,
+    forbidden_atoms: BTreeSet<String>,
+    required_values: BTreeMap<String, String>,
+}
+
+fn cfg_dnf(expression: &NativeCfgExpr) -> Result<Vec<NativeCfgConjunction>, String> {
+    match expression {
+        NativeCfgExpr::Atom(atom) => Ok(vec![NativeCfgConjunction {
+            required_atoms: [atom.clone()].into_iter().collect(),
+            ..NativeCfgConjunction::default()
+        }]),
+        NativeCfgExpr::Value { key, value } => Ok(vec![NativeCfgConjunction {
+            required_values: [(key.clone(), value.clone())].into_iter().collect(),
+            ..NativeCfgConjunction::default()
+        }]),
+        NativeCfgExpr::Not(inner) => match inner.as_ref() {
+            NativeCfgExpr::Atom(atom) => Ok(vec![NativeCfgConjunction {
+                forbidden_atoms: [atom.clone()].into_iter().collect(),
+                ..NativeCfgConjunction::default()
+            }]),
+            _ => Err("normalized target facts cannot represent not(key = value)".to_owned()),
+        },
+        NativeCfgExpr::Any(arguments) => {
+            let mut out = Vec::new();
+            for argument in arguments {
+                out.extend(cfg_dnf(argument)?);
+            }
+            Ok(out)
+        }
+        NativeCfgExpr::All(arguments) => {
+            let mut out = vec![NativeCfgConjunction::default()];
+            for argument in arguments {
+                let terms = cfg_dnf(argument)?;
+                let mut product = Vec::new();
+                for left in &out {
+                    for right in &terms {
+                        let mut merged = left.clone();
+                        merged.required_atoms.extend(right.required_atoms.clone());
+                        merged.forbidden_atoms.extend(right.forbidden_atoms.clone());
+                        for (key, value) in &right.required_values {
+                            if let Some(previous) =
+                                merged.required_values.insert(key.clone(), value.clone())
+                                && previous != *value
+                            {
+                                return Err(format!(
+                                    "cfg conjunction requires two values for {key:?}"
+                                ));
+                            }
+                        }
+                        product.push(merged);
+                    }
+                }
+                out = product;
+            }
+            Ok(out)
+        }
+    }
+}
+
+fn vix_target_predicate(target: &str) -> Result<String, String> {
+    if !target.starts_with("cfg(") {
+        let target = vix_string(target);
+        return Ok(format!(
+            "TargetPredicate {{ triples: %[{target}], any: [] }}"
+        ));
+    }
+    let inner = target
+        .strip_prefix("cfg(")
+        .and_then(|value| value.strip_suffix(')'))
+        .ok_or_else(|| format!("malformed cfg predicate {target:?}"))?;
+    let mut terms = cfg_dnf(&NativeCfgParser::new(inner).parse()?)?;
+    if terms.is_empty() {
+        terms.push(NativeCfgConjunction {
+            required_atoms: ["__rodin_never__".to_owned()].into_iter().collect(),
+            forbidden_atoms: ["__rodin_never__".to_owned()].into_iter().collect(),
+            ..NativeCfgConjunction::default()
+        });
+    }
+    let terms = terms
+        .into_iter()
+        .map(|term| {
+            let values = term
+                .required_values
+                .iter()
+                .map(|(key, value)| format!("{} => {}", vix_string(key), vix_string(value)))
+                .collect::<Vec<_>>()
+                .join(", ");
+            format!(
+                "CfgConjunction {{ required_atoms: {}, forbidden_atoms: {}, required_values: %{{{values}}} }}",
+                vix_string_set(term.required_atoms),
+                vix_string_set(term.forbidden_atoms),
+            )
+        })
+        .collect::<Vec<_>>()
+        .join(", ");
+    Ok(format!(
+        "TargetPredicate {{ triples: %[], any: [{terms}] }}"
     ))
 }
 
@@ -2323,17 +2559,15 @@ impl Fixture {
                 .deps
                 .iter()
                 .map(|dependency| {
-                    if dependency.target.is_some() {
-                        return Err(format!(
-                            "target predicate adapter is not yet available for {:?}",
-                            dependency.target
-                        ));
-                    }
                     let target = by_name.get(&dependency.name).ok_or_else(|| {
                         format!("dependency package {:?} is absent", dependency.name)
                     })?;
+                    let target_predicate = match &dependency.target {
+                        None => "None".to_owned(),
+                        Some(target) => format!("Some({})", vix_target_predicate(target)?),
+                    };
                     Ok(format!(
-                        "Dependency {{ package: {}, requirement: parse_req({}), kind: {}, target: None, optional: {}, default_features: {}, features: {} }}",
+                        "Dependency {{ package: {}, requirement: parse_req({}), kind: {}, target: {target_predicate}, optional: {}, default_features: {}, features: {} }}",
                         package_fn[target],
                         vix_string(&dependency.req),
                         vix_dependency_kind(dependency.kind),
@@ -2359,16 +2593,21 @@ impl Fixture {
             .ok();
         }
         writeln!(source, "        }} }},").ok();
-        let root = by_name
-            .get(&self.root)
-            .ok_or_else(|| format!("root package {:?} is absent", self.root))?;
-        writeln!(
-            source,
-            "        roots: [RootRequest {{ package: {}, requirement: parse_req({}), features: %[], default_features: true }}],",
-            package_fn[root],
-            vix_string(&format!("={}", root.version)),
-        )
-        .ok();
+        writeln!(source, "        roots: [").ok();
+        for krate in &self.crates {
+            let package = by_name
+                .get(&krate.name)
+                .ok_or_else(|| format!("fixture package {:?} is absent", krate.name))?;
+            let graph = krate.name == self.root;
+            writeln!(
+                source,
+                "            RootRequest {{ package: {}, requirement: parse_req({}), features: %[], default_features: {graph}, graph: {graph} }},",
+                package_fn[package],
+                vix_string(&format!("={}", package.version)),
+            )
+            .ok();
+        }
+        writeln!(source, "        ],").ok();
         writeln!(source, "        target: {},", native_target_facts(triple)?).ok();
         writeln!(
             source,
@@ -2455,6 +2694,29 @@ fn native_rodin_kernel_matches_live_cargo_line_oracles() {
     }
 }
 
+#[test]
+fn native_rodin_kernel_matches_live_cargo_target_oracles() {
+    let fixture = direct_target_fixture("native-live-cargo-target");
+    let workspace = fixture.materialize().expect("materialize target fixture");
+    for triple in [LINUX, WINDOWS] {
+        let adapter = fixture
+            .native_kernel_oracle_source(&workspace, triple)
+            .expect("project Cargo target oracles into typed Vix values");
+        let source = format!("{STD_VERSION}\n{NATIVE_RODIN_KERNEL}\n{adapter}");
+        let report = run_source(&source).expect("native Rodin kernel runs target differential");
+        assert!(
+            report.passed(),
+            "Cargo target differential passes for {triple}: {report:?}"
+        );
+        assert!(report.agrees(), "plain and chaos agree for {triple}");
+        assert_eq!(report.plain.checks.len(), 1);
+        for lane in [&report.plain, &report.chaos] {
+            assert_eq!(lane.counters.pure_host_calls, 0);
+            assert_eq!(lane.receipt_count, 0);
+        }
+    }
+}
+
 /// A trivial three-crate line workspace: `app -> mid -> leaf`, all `0.1.0`, all
 /// path dependencies.
 fn line_fixture(name: &str) -> Fixture {
@@ -2462,6 +2724,12 @@ fn line_fixture(name: &str) -> Fixture {
         .krate(FixtureCrate::new("leaf"))
         .krate(FixtureCrate::new("mid").dep(FixtureDep::new("leaf")))
         .krate(FixtureCrate::new("app").dep(FixtureDep::new("mid")))
+}
+
+fn direct_target_fixture(name: &str) -> Fixture {
+    Fixture::new(name, "app")
+        .krate(FixtureCrate::new("winthing"))
+        .krate(FixtureCrate::new("app").dep(FixtureDep::new("winthing").target("cfg(windows)")))
 }
 
 fn selected_named(oracle: &SelectionOracle, name: &str) -> CargoPackageId {

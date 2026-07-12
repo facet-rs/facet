@@ -79,6 +79,7 @@ struct RootRequest {
     requirement: VersionSet,
     features: Set<String>,
     default_features: Bool,
+    graph: Bool,
 }
 
 struct TargetFacts {
@@ -148,6 +149,7 @@ struct DeadRegion {
 
 struct SolverState {
     active: Set<PackageId>,
+    graph_active: Set<PackageId>,
     domains: Map<PackageId, VersionSet>,
     selected: Map<PackageId, SelectedPackage>,
     features: Map<PackageId, Set<String>>,
@@ -181,6 +183,7 @@ fn empty_string_set() -> Set<String> { %[] }
 fn empty_state() -> SolverState {
     SolverState {
         active: %[],
+        graph_active: %[],
         domains: %{},
         selected: %{},
         features: %{},
@@ -271,8 +274,13 @@ fn seed_roots(input: SolveInput) where { roots: [RootRequest], state: SolverStat
                 package: root.package,
                 features: feature_set(state) where { package: root.package } ++ requested,
             };
+            let with_root_graph = if root.graph {
+                SolverState { graph_active: with_root_features.graph_active + root.package, ..with_root_features }
+            } else {
+                with_root_features
+            };
             match narrow(input) where {
-                state: with_root_features,
+                state: with_root_graph,
                 package: root.package,
                 requirement: root.requirement,
                 provenance: "root request",
@@ -406,13 +414,18 @@ fn add_dependency_features(state: SolverState) where { dependency: Dependency } 
 }
 
 fn apply_dependency(input: SolveInput) where { state: SolverState, from: PackageId, dependency: Dependency, force_optional: Bool, provenance: String } -> StateStep {
-    if !dependency_is_consumed(dependency) where { input }
-        || (dependency.optional && !force_optional) {
+    if dependency.optional && !force_optional {
         StateStep::Pass(state)
     } else {
-        let with_edge = SolverState {
-            edges: state.edges + ResolvedEdge { from, to: dependency.package, kind: dependency.kind },
-            ..state
+        let with_edge = if state.graph_active.has(from)
+            && dependency_is_consumed(dependency) where { input } {
+            SolverState {
+                graph_active: state.graph_active + dependency.package,
+                edges: state.edges + ResolvedEdge { from, to: dependency.package, kind: dependency.kind },
+                ..state
+            }
+        } else {
+            state
         };
         let with_features = add_dependency_features(with_edge) where { dependency };
         narrow(input) where {
@@ -491,6 +504,7 @@ fn selected_maps_equal(left: Map<PackageId, SelectedPackage>) where { right: Map
 
 fn propagation_equal(left: SolverState) where { right: SolverState } -> Bool {
     left.active == right.active
+        && left.graph_active == right.graph_active
         && domain_maps_equal(left.domains) where { right: right.domains }
         && selected_maps_equal(left.selected) where { right: right.selected }
         && feature_maps_equal(left.features) where { right: right.features }
