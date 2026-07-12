@@ -5,8 +5,9 @@ use vix::budget::{BudgetOutcome, ChildReport, run_source_under_declared_budget};
 use vix::compiler::Compiler;
 use vix::diagnostic::{DiagnosticCode, DiagnosticSeverity};
 use vix::lowering::{LoweringCache, attribution_for, source_map_for};
-use vix::ratchet::{RunError, SnapshotExpectations, run_source, run_source_innards,
-    run_source_with_snapshots};
+use vix::ratchet::{
+    RunError, SnapshotExpectations, run_source, run_source_innards, run_source_with_snapshots,
+};
 use vix::runtime::{
     DemandState, EventKind, FailureValue, MemoVerdict, SchemaId, SnapshotOutcome, TaskState,
 };
@@ -5795,14 +5796,18 @@ fn tail_loop_backedge_adds_no_per_iteration_machinery() {
     );
 }
 
-const DEP_MIO_GOLDEN: &str = "Dep {\n    name: \"mio\",\n    req: \"^0.8\",\n    optional: false,\n}";
+const DEP_MIO_GOLDEN: &str =
+    "Dep {\n    name: \"mio\",\n    req: \"^0.8\",\n    optional: false,\n}";
 const GREEK_LETTERS_GOLDEN: &str = "[\n    \"alpha\",\n    \"beta\",\n    \"gamma\",\n]";
 
 /// The one snapshot check in `report`, asserting lanes agree and it is the only
 /// check. Goldens are supplied to `run_source_with_snapshots`, so the verdict is
 /// the ratchet's own — not a post-hoc Rust `assert_eq!` over an always-pass run.
 fn sole_snapshot(report: &vix::ratchet::RatchetReport) -> SnapshotOutcome {
-    assert!(report.agrees(), "plain and chaos lanes agree on the snapshot");
+    assert!(
+        report.agrees(),
+        "plain and chaos lanes agree on the snapshot"
+    );
     assert_eq!(report.plain.checks.len(), 1);
     assert_eq!(report.plain.checks, report.chaos.checks);
     report.plain.checks[0]
@@ -5855,8 +5860,11 @@ fn rung_060_missing_golden_is_a_red_check_not_a_vacuous_pass() {
 fn rung_061_snapshots_sorted_stream_values_are_canonical() {
     // Snapshotting a sorted stream projection renders in canonical value order,
     // stable forever: alpha, beta, gamma regardless of authored order.
-    let oracle =
-        SnapshotExpectations::new().with("snapshot_canonical", "greek-letters", GREEK_LETTERS_GOLDEN);
+    let oracle = SnapshotExpectations::new().with(
+        "snapshot_canonical",
+        "greek-letters",
+        GREEK_LETTERS_GOLDEN,
+    );
     let report = run_source_with_snapshots(RUNG_061, &oracle).expect("rung 061 compiles and runs");
     assert!(report.passed(), "rung 061 snapshot check passes");
     assert_eq!(sole_snapshot(&report), SnapshotOutcome::Matched);
@@ -5876,7 +5884,12 @@ fn snapshot_checks(source: &str, oracle: &SnapshotExpectations) -> Vec<vix::ratc
 }
 
 fn snapshot_outcome(check: &vix::ratchet::CheckRun) -> SnapshotOutcome {
-    check.snapshot.as_ref().expect("a snapshot check").outcome.clone()
+    check
+        .snapshot
+        .as_ref()
+        .expect("a snapshot check")
+        .outcome
+        .clone()
 }
 
 #[test]
@@ -5974,7 +5987,11 @@ fn snapshot_rendering_agrees_across_native_and_interpreter_lanes() {
     let native = with_weavy_jit(None, || {
         run_source_with_snapshots(RUNG_060, &oracle).expect("native lane runs")
     });
-    let interp_rendered = &interpreter.plain.checks[0].snapshot.as_ref().unwrap().rendered;
+    let interp_rendered = &interpreter.plain.checks[0]
+        .snapshot
+        .as_ref()
+        .unwrap()
+        .rendered;
     let native_rendered = &native.plain.checks[0].snapshot.as_ref().unwrap().rendered;
     assert_eq!(
         interp_rendered, native_rendered,

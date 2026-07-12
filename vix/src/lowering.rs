@@ -433,8 +433,10 @@ fn lower_island(
         }
     } else if island.purpose == IslandPurpose::Check && output.ty != Type::Check {
         return Err(lowering_diagnostic(output.span, "island output is not a Check").into());
-    } else if matches!(island.purpose, IslandPurpose::Value | IslandPurpose::Snapshot)
-        && !publication_capability_registered(&output.ty)
+    } else if matches!(
+        island.purpose,
+        IslandPurpose::Value | IslandPurpose::Snapshot
+    ) && !publication_capability_registered(&output.ty)
     {
         return Err(lowering_diagnostic(
             output.span,
@@ -450,10 +452,9 @@ fn lower_island(
     // strings are decoded as realized values and freeze renderably.
     let publishes_aggregate = island.purpose == IslandPurpose::Value
         && matches!(&output.ty, Type::Record(_) | Type::Tuple(_) | Type::Enum(_));
-    let array_outcome = (island_contains_checked_collection_ops(island)
-        || publishes_aggregate
-        || is_snapshot)
-        .then(|| ArrayOutcomeAbi::for_value(output.ty.clone()));
+    let array_outcome =
+        (island_contains_checked_collection_ops(island) || publishes_aggregate || is_snapshot)
+            .then(|| ArrayOutcomeAbi::for_value(output.ty.clone()));
     let schemas = SchemaAssignments::build(island, array_outcome.is_some())?;
 
     let function_ids = island.local_function_ids();

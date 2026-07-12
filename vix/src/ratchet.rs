@@ -576,7 +576,8 @@ pub fn run_source_with_snapshots(
     source: &str,
     expectations: &SnapshotExpectations,
 ) -> Result<RatchetReport, RunError> {
-    prepare_source_with_config(source, CompilerConfig::default())?.execute_with_snapshots(expectations)
+    prepare_source_with_config(source, CompilerConfig::default())?
+        .execute_with_snapshots(expectations)
 }
 
 /// Run through the production scheduler while retaining every interior Weavy
