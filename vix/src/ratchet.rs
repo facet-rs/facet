@@ -558,7 +558,10 @@ pub fn run_source_with_config(
 /// the plain/chaos discipline, provenance-keyed families — is identical to
 /// [`run_source`], so the two lanes are compared on the exact production shape.
 ///
-/// r[impl machine.execution.jit-single-feature]
+/// Lane *authority* still lives in Weavy ([`weavy::exec::LaneRequest`] /
+/// `Executable::with_lane`, `r[machine.execution.weavy-owns-mode]`): this is a
+/// forwarding seam used only by the cross-lane certificate, not a machine-side
+/// lane selector — the production path stays on [`LaneRequest::Auto`].
 pub fn run_source_with_lane(
     source: &str,
     lane: weavy::exec::LaneRequest,
