@@ -3061,8 +3061,15 @@ fn lower_method_call(
                     ty,
                 });
             }
-            let initial =
-                lower_fold_accumulator(nodes, bindings, context, &positional[0], &positional[1], &element, expected)?;
+            let initial = lower_fold_accumulator(
+                nodes,
+                bindings,
+                context,
+                &positional[0],
+                &positional[1],
+                &element,
+                expected,
+            )?;
             let parameter_ty = Type::Tuple(vec![initial.ty.clone(), element.clone()]);
             let folder = match &positional[1] {
                 ast::Expr::Closure(closure) => lower_closure_typed(
@@ -3714,11 +3721,7 @@ fn lower_method_call(
             ty: Type::String,
         }),
         PreludeMethod::IntToString => {
-            require_type(
-                &receiver,
-                &Type::Int,
-                expr_span(&call.receiver),
-            )?;
+            require_type(&receiver, &Type::Int, expr_span(&call.receiver))?;
             Ok(LoweredValue {
                 node: push_node(
                     nodes,
@@ -4483,7 +4486,14 @@ fn infer_empty_seed_accumulator_type(
     }
     // Probe `EXPR`'s type by lowering it in a throwaway closure frame with
     // only the element parameter bound. The probe allocates a closure id and
-    let probe_ty = probe_element_expression_type(bindings, context, appended, element, elem_name, closure.span)?;
+    let probe_ty = probe_element_expression_type(
+        bindings,
+        context,
+        appended,
+        element,
+        elem_name,
+        closure.span,
+    )?;
     let accumulator_ty = match initial {
         ast::Expr::Array(array) if array.elems.is_empty() => Type::array(probe_ty),
         ast::Expr::Map(map) if map.rows.is_empty() => {

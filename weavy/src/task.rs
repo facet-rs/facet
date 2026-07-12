@@ -5059,7 +5059,7 @@ fn write_i64_at(arena: &mut [u8], at: usize, value: i64) {
 /// Write the canonical decimal spelling of `value` into the front of `buffer`
 /// and return the slice written. No external allocation; the buffer must hold
 /// at least 20 bytes (the length of `i64::MIN`).
-fn write_i64_decimal<'b>(buffer: &'b mut [u8; 20], value: i64) -> &'b [u8] {
+fn write_i64_decimal(buffer: &mut [u8; 20], value: i64) -> &[u8] {
     if value == 0 {
         buffer[0] = b'0';
         return &buffer[..1];
@@ -5068,7 +5068,7 @@ fn write_i64_decimal<'b>(buffer: &'b mut [u8; 20], value: i64) -> &'b [u8] {
     // Decompose into magnitude without overflowing on i64::MIN: render the
     // absolute value via repeated unsigned division of the wrapped magnitude.
     let magnitude = if negative {
-        (value as u64).wrapping_neg() as u64
+        (value as u64).wrapping_neg()
     } else {
         value as u64
     };

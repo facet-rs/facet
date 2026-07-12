@@ -4169,10 +4169,7 @@ fn rung_050_ratchet_execution_strips_per_iteration_marks() {
 fn rung_138_map_accumulator_runs_through_production_path() {
     let report = run_source(RUNG_138).expect("rung 138 runs through the production ratchet");
     assert!(report.agrees(), "plain and chaos agree: {report:?}");
-    assert!(
-        report.passed(),
-        "every rung 138 check passes: {report:?}"
-    );
+    assert!(report.passed(), "every rung 138 check passes: {report:?}");
     assert_eq!(
         report.plain.checks.len(),
         3,
@@ -4257,7 +4254,10 @@ fn tuple_value_map() -> Stream<Check> {
 "#;
     let report = run_source(SOURCE).expect("tuple-value map fold runs");
     assert!(report.agrees(), "plain and chaos agree: {report:?}");
-    assert!(report.passed(), "tuple-value map fold checks pass: {report:?}");
+    assert!(
+        report.passed(),
+        "tuple-value map fold checks pass: {report:?}"
+    );
     assert_eq!(report.plain.checks.len(), 2);
 }
 
@@ -4276,7 +4276,10 @@ fn annotated_map_fold() -> Stream<Check> {
 "#;
     let report = run_source(SOURCE).expect("annotated map fold runs");
     assert!(report.agrees(), "plain and chaos agree: {report:?}");
-    assert!(report.passed(), "annotated map fold checks pass: {report:?}");
+    assert!(
+        report.passed(),
+        "annotated map fold checks pass: {report:?}"
+    );
     assert_eq!(report.plain.checks.len(), 2);
 }
 

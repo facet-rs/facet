@@ -187,11 +187,7 @@ struct Ctx {
         i64,
         *mut i64,
     ) -> i64,
-    int_to_string: unsafe extern "C" fn(
-        *mut core::ffi::c_void,
-        i64,
-        *mut i64,
-    ) -> i64,
+    int_to_string: unsafe extern "C" fn(*mut core::ffi::c_void, i64, *mut i64) -> i64,
     path_join: unsafe extern "C" fn(
         *const crate::task::RawValueMemory,
         usize,

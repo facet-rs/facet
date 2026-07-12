@@ -4885,7 +4885,7 @@ impl Verifier<'_> {
                     | Op::ByteProject { .. }
                     | Op::IntToString { .. }
                     | Op::PathJoin { .. } => pending.push(pc + 1),
-                    | Op::Publish { .. }
+                    Op::Publish { .. }
                     | Op::ConstF64 { .. }
                     | Op::AddF64 { .. }
                     | Op::MulF64 { .. }
