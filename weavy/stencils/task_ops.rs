@@ -34,8 +34,10 @@ pub struct Ctx {
     frame: *mut u8,
     /// Host readiness array: `ready[i] != 0` ⇒ await #i's value is present.
     ready: *mut i64,
+    ready_count: usize,
     /// Host value array, indexed by await index.
     awaited: *const i64,
+    awaited_count: usize,
     /// On any driver exit (park/call/ret), the chain offset to re-enter.
     resume: *mut u64,
     /// On park, which await parked the task.
@@ -1405,8 +1407,11 @@ pub unsafe extern "C" fn weavy_task_await(cx: *mut Ctx) {
     let resume_off = *c.prog;
     let index = *c.prog.add(1) as usize;
     let dst = *c.prog.add(2);
-    let ready = c.ready.add(index);
-    if *ready != 0 {
+    let is_ready = index < c.ready_count
+        && index < c.awaited_count
+        && *c.ready.add(index) != 0;
+    if is_ready {
+        let ready = c.ready.add(index);
         *ready = 0;
         c.prog = c.prog.add(3);
         write_i64(c.frame, dst, *c.awaited.add(index));
