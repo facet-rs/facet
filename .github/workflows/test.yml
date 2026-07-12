@@ -244,6 +244,51 @@ jobs:
           exclude: facet-testattrs, facet-cargo-toml, facet-axum, rusqlite-facet, rediff, facet-dessert, facet-format, facet-json, facet-json-classics, facet-postcard, facet-msgpack, facet-toml, facet-yaml, facet-format-suite, facet-asn1, facet-csv, facet-xdr, facet-json-schema, facet-typescript, facet-python, facet-lua, facet-value, facet-hash, fable, facet-zod, facet-singularize, facet-dom, facet-xml, facet-xml-node, facet-atom, facet-svg, figue, figue-attrs, picante, picante-macros, facet-styx, serde_styx, styx-cli, styx-compat-tests, styx-cst, styx-embed, styx-embed-macros, styx-ffi, styx-format, styx-gen-go, styx-lsp, styx-lsp-ext, styx-lsp-test-schema, styx-parse, styx-testhelpers, styx-tokenizer, styx-tree, styx-wasm, tree-sitter-styx, facet-tokio-postgres, dibs, dibs-cli, dibs-codegen, dibs-config, dibs-db-schema, dibs-jsonb, dibs-macros, dibs-proto, dibs-qgen, dibs-query-schema, dibs-runtime, dibs-sql, copypatch, weavy, phon, phon-codegen, phon-conformance, phon-engine, phon-ir, phon-jit, phon-schema, dockside, my-app, my-app-db, my-app-queries, xtask, rust-examples, vox-xtask, spec-proto, spec-tests, vox-types, vox-rt, vox-rt-macros, vox-schema, vox-core, vox-stream, vox-websocket, vox-inprocess, vox-local, vox-fdpass, vox-ffi, ur-taking-me-with-you, vox-macros-parse, vox-macros-core, vox-service-macros, vox, subject-rust, vox-codegen, vox-phon, wasm-browser-tests, wasm-inprocess-tests, peer-server, arborium-vix, exec-protocol, taxon
           verbose: true
 
+  # Pinned interpreter-lane leg (audit finding F2). bearcove-ubuntu-24.04 is a
+  # native copy-patch target (linux-x86_64), so WEAVY_JIT=0 is the *only* thing
+  # forcing the interpreter lane here — which is the point: it proves the Vix
+  # corpus runs on the interpreter even on a box that would otherwise go native,
+  # so interpreter coverage survives an OS-matrix edit that drops the windows /
+  # linux-aarch64 legs. WEAVY_JIT=0 is a build-time cfg gate, so the whole build
+  # is interpreter-only: the canonical ratchet corpus runner (including
+  # accepted_rungs_verify_and_execute_through_one_executable) executes on the
+  # interpreter, and the cross-lane differential is compiled and run too (it
+  # takes its documented non-native skip here; its genuine two-lane comparison
+  # runs on the default native legs above). Bounded to two vix test binaries.
+  vix-interpreter-lane:
+    runs-on: bearcove-ubuntu-24.04
+
+    container:
+      image: ghcr.io/facet-rs/facet-ci:latest-amd64
+    steps:
+      - uses: actions/checkout@v6
+
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 26
+
+      - name: Select Rust 1.92
+        shell: bash
+        run: |
+          rustup toolchain install 1.92 --profile minimal --component rust-src --component clippy --component llvm-tools-preview --component rustfmt
+          rustup target add thumbv8m.main-none-eabihf --toolchain 1.92
+          echo "RUSTUP_TOOLCHAIN=1.92" >> "$GITHUB_ENV"
+
+      - name: Install system dependencies
+        run: apt-get update && apt-get install -y zlib1g-dev
+
+      - uses: Swatinem/rust-cache@v2
+
+      - name: ✨ Vix corpus on the interpreter lane (WEAVY_JIT=0, native target)
+        shell: bash
+        env:
+          # Only replay proptest regressions in CI
+          PROPTEST_CASES: 0
+          # Force the interpreter lane at build time on a native target.
+          WEAVY_JIT: "0"
+        run: |
+          cargo nextest run -p vix -E 'binary(ratchet_runner) | binary(cross_lane_differential)'
+
   test-aarch64-apple-darwin:
     runs-on: macos-26
     steps:
