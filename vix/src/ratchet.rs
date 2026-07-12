@@ -743,9 +743,7 @@ fn evaluate_snapshot_site(
     chaos: ChaosPolicy,
 ) -> Result<CheckRun, RunError> {
     cache.get_or_lower(island)?;
-    let lowered = cache
-        .lowered(island)
-        .expect("snapshot island is lowered");
+    let lowered = cache.lowered(island).expect("snapshot island is lowered");
     let output_type = lowered.output_type.clone();
     let attribution = attribution_for(island);
     let provenance = ProvenanceKey::site(site);

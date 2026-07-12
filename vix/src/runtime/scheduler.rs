@@ -1973,7 +1973,11 @@ fn render_frozen(
                 out.push('}');
             }
         }
-        Type::Check | Type::StreamCheck | Type::Stream { .. } | Type::Order(_) | Type::Function { .. } => {
+        Type::Check
+        | Type::StreamCheck
+        | Type::Stream { .. }
+        | Type::Order(_)
+        | Type::Function { .. } => {
             return Err(render_mismatch(ty));
         }
     }
