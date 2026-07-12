@@ -6,7 +6,9 @@
 //! memory; Nextest's own timeout is coarse and does not read the typed budget.
 //! So enforcement lives here: the parent reads the typed budget *before*
 //! execution, launches the workload in a watched child process, and terminates
-//! that child the moment it exceeds the wall-clock or resident-set ceiling.
+//! that child the moment it exceeds the wall-clock or execution resident-growth
+//! ceiling. Compiler/JIT residency is snapshotted at the readiness boundary,
+//! just as compiler/JIT time is excluded from the execution wall budget.
 //!
 //! `run_source` remains the ordinary in-process production path for value/trace
 //! certificates. The canonical budget proof exercises *this* path instead: a
@@ -129,7 +131,8 @@ pub enum BudgetOutcome {
     Within { report: ChildReport },
     /// The child exceeded the wall-clock ceiling and was killed.
     OverWall { budget_ns: u64, elapsed_ns: u64 },
-    /// The child exceeded the resident-set ceiling and was killed.
+    /// The child exceeded its post-readiness resident-growth ceiling and was
+    /// killed. `observed_bytes` is growth above the prepared baseline.
     OverRss {
         budget_bytes: u64,
         /// Absolute child RSS captured while it was waiting at the readiness
@@ -211,7 +214,8 @@ pub fn run_source_under_declared_budget(child_exe: &Path, source: &str) -> Budge
 
 /// Run `workload` in a child process launched from `child_exe`, enforcing
 /// `budget`. The typed budget is read *before* execution; the child is killed
-/// the instant it exceeds a declared wall or resident-set ceiling.
+/// the instant it exceeds a declared wall or post-readiness resident-growth
+/// ceiling.
 #[must_use]
 pub fn run_under_budget(child_exe: &Path, budget: &Budget, workload: &Workload) -> BudgetOutcome {
     if budget.rss_bytes.is_some() && !RSS_ENFORCEABLE {
@@ -258,7 +262,6 @@ pub fn run_under_budget(child_exe: &Path, budget: &Budget, workload: &Workload) 
     ) {
         return kill_with_child_error(&mut child, detail);
     }
-
     match read_child_event(&mut stdout) {
         Ok(ChildEvent::Ready) => {}
         Ok(ChildEvent::Completed { .. }) => {
@@ -538,20 +541,19 @@ fn execute_prepared(prepared: Prepared) -> ChildReport {
 /// (a transient race, or an unsupported platform).
 #[cfg(target_os = "macos")]
 fn resident_bytes(pid: u32) -> Option<u64> {
-    // proc_pidinfo(PROC_PIDTASKINFO) reports a child's resident_size without
-    // privileged task-port access. A short write count means the call failed.
-    let mut info: libc::proc_taskinfo = unsafe { std::mem::zeroed() };
-    let size = std::mem::size_of::<libc::proc_taskinfo>() as libc::c_int;
-    let written = unsafe {
-        libc::proc_pidinfo(
+    // Physical footprint is macOS's pressure-accounted resident measure. Raw
+    // `pti_resident_size` includes shared/file-backed pages and can exceed the
+    // process's attributable footprint by hundreds of MiB, making the same
+    // typed budget change meaning as binaries and the dyld cache evolve.
+    let mut info: libc::rusage_info_v2 = unsafe { std::mem::zeroed() };
+    let result = unsafe {
+        libc::proc_pid_rusage(
             pid as libc::c_int,
-            libc::PROC_PIDTASKINFO,
-            0,
-            (&mut info as *mut libc::proc_taskinfo).cast::<libc::c_void>(),
-            size,
+            libc::RUSAGE_INFO_V2,
+            (&raw mut info).cast::<libc::rusage_info_t>(),
         )
     };
-    (written == size).then_some(info.pti_resident_size)
+    (result == 0).then_some(info.ri_phys_footprint)
 }
 
 /// The resident-set size of `pid` in bytes from `/proc/<pid>/statm` (field 2 is

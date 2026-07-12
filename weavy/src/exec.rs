@@ -163,6 +163,48 @@ impl StructuralResult<'_> {
         self.word(field.offset)
     }
 
+    /// Read a handle-shaped field as an opaque reference tied to the completed
+    /// task borrow. The raw machine word is never exposed.
+    pub fn enum_value_field(
+        &self,
+        variant: u32,
+        field: u32,
+    ) -> Result<TaskValueRef<'_>, TaskFault> {
+        let ValueShapeKind::Enum { variants, .. } = &self.shape.kind else {
+            return Err(TaskFault::InvalidResultShape {
+                entry: self.entry,
+                region: self.region,
+                size: self.bytes.len(),
+            });
+        };
+        let field = variants
+            .get(variant as usize)
+            .and_then(|variant| variant.fields.get(field as usize))
+            .ok_or(TaskFault::InvalidResultShape {
+                entry: self.entry,
+                region: self.region,
+                size: self.bytes.len(),
+            })?;
+        let [word] = field.shape.words.as_slice() else {
+            return Err(TaskFault::InvalidResultShape {
+                entry: self.entry,
+                region: self.region,
+                size: self.bytes.len(),
+            });
+        };
+        if !matches!(word.as_slice(), [WordKind::Handle(_)]) {
+            return Err(TaskFault::InvalidResultShape {
+                entry: self.entry,
+                region: self.region,
+                size: self.bytes.len(),
+            });
+        }
+        Ok(TaskValueRef {
+            word: self.word(field.offset)?,
+            lifetime: core::marker::PhantomData,
+        })
+    }
+
     fn word(&self, offset: u32) -> Result<i64, TaskFault> {
         let start = offset as usize;
         let end = start
@@ -183,6 +225,64 @@ impl StructuralResult<'_> {
         Ok(i64::from_le_bytes(
             bytes.try_into().expect("checked structural result word"),
         ))
+    }
+}
+
+/// Opaque task-result reference. Its machine word is private and its lifetime
+/// is minted only inside [`ExecTask::with_result_resolver`].
+pub struct TaskValueRef<'task> {
+    word: i64,
+    lifetime: core::marker::PhantomData<&'task mut &'task ()>,
+}
+
+/// A resolved value reference. Store indices occupy their typed nonnegative
+/// namespace; task-local molten bytes remain borrowed from the task; externally
+/// lent molten references retain a distinct typed namespace.
+pub enum ResolvedTaskValue<'task> {
+    Store(StoreHandle),
+    TaskMolten(&'task [u8]),
+    LentMolten { index: usize },
+}
+
+/// Borrow-scoped resolver for opaque result references. It has no constructor
+/// and cannot outlive the closure passed to `with_result_resolver`.
+pub struct TaskValueResolver<'task> {
+    molten: &'task crate::task::MoltenArena,
+}
+
+impl<'task> TaskValueResolver<'task> {
+    pub fn resolve(&self, value: TaskValueRef<'task>) -> Option<ResolvedTaskValue<'task>> {
+        match self.molten.resolve_handle(value.word)? {
+            crate::task::ResolvedHandle::Store(index) => {
+                Some(ResolvedTaskValue::Store(StoreHandle::new(index)?))
+            }
+            crate::task::ResolvedHandle::TaskMolten(bytes) => {
+                Some(ResolvedTaskValue::TaskMolten(bytes))
+            }
+            crate::task::ResolvedHandle::LentMolten(index) => {
+                Some(ResolvedTaskValue::LentMolten { index })
+            }
+        }
+    }
+
+    /// Resolve one nested handle word without exposing that word. The caller
+    /// supplies the typed payload offset; semantic identity is still rebuilt
+    /// from element position, schema, and referent identity.
+    pub fn resolve_nested(
+        &self,
+        bytes: &'task [u8],
+        offset: usize,
+    ) -> Option<ResolvedTaskValue<'task>> {
+        let word = i64::from_le_bytes(bytes.get(offset..offset.checked_add(8)?)?.try_into().ok()?);
+        self.resolve(TaskValueRef {
+            word,
+            lifetime: core::marker::PhantomData,
+        })
+    }
+
+    #[must_use]
+    pub fn molten_stats(&self) -> (usize, usize) {
+        self.molten.stats()
     }
 }
 
@@ -676,7 +776,15 @@ impl ExecTask<'_> {
         }
     }
 
-    pub fn result(&self) -> Result<&[u8], TaskFault> {
+    #[must_use]
+    pub fn frame_arena_bytes(&self) -> usize {
+        match &self.lane {
+            Lane::Interpreter(task) => task.frame_arena_bytes(),
+            Lane::Native(task) => task.frame_arena_bytes(),
+        }
+    }
+
+    pub(crate) fn result(&self) -> Result<&[u8], TaskFault> {
         self.check_result_available()?;
         Ok(match &self.lane {
             Lane::Interpreter(task) => &task.result,
@@ -745,6 +853,25 @@ impl ExecTask<'_> {
             value_shape,
             shape,
         })
+    }
+
+    /// Inspect a completed structural result together with an opaque resolver
+    /// borrowed from the same lane-owned molten arena. The higher-ranked
+    /// closure prevents the resolver and opaque references from escaping this
+    /// borrow; interpreter and native lanes expose the identical contract.
+    pub fn with_result_resolver<R>(
+        &self,
+        use_result: impl for<'task> FnOnce(
+            StructuralResult<'task>,
+            TaskValueResolver<'task>,
+        ) -> Result<R, TaskFault>,
+    ) -> Result<R, TaskFault> {
+        let result = self.result_structural()?;
+        let molten = match &self.lane {
+            Lane::Interpreter(task) => task.molten(),
+            Lane::Native(task) => task.molten(),
+        };
+        use_result(result, TaskValueResolver { molten })
     }
 
     /// Number of descriptors the task published, available once the task is

@@ -811,6 +811,7 @@ fn lower_module(source: &ast::SourceFile, config: CompilerConfig) -> Result<Modu
         config,
     };
     let mut module = Module {
+        force_molten_copy: config.force_molten_copy,
         records: source
             .items
             .iter()
@@ -1943,6 +1944,45 @@ fn lower_check(
         }
         "store_interns_at_most" => {
             return Ok(CheckRecipe::Trace(TraceCheck::StoreInternsAtMost {
+                bound: trace_bound(call)?,
+            }));
+        }
+        "value_island_spawns_at_most" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::ValueIslandSpawnsAtMost {
+                bound: trace_bound(call)?,
+            }));
+        }
+        "successful_aggregate_freezes_at_most" => {
+            return Ok(CheckRecipe::Trace(
+                TraceCheck::SuccessfulAggregateFreezesAtMost {
+                    bound: trace_bound(call)?,
+                },
+            ));
+        }
+        "active_molten_selections_at_most" => {
+            return Ok(CheckRecipe::Trace(
+                TraceCheck::ActiveMoltenSelectionsAtMost {
+                    bound: trace_bound(call)?,
+                },
+            ));
+        }
+        "forced_copy_selections_at_most" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::ForcedCopySelectionsAtMost {
+                bound: trace_bound(call)?,
+            }));
+        }
+        "framed_bytes_at_most" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::FramedBytesAtMost {
+                bound: trace_bound(call)?,
+            }));
+        }
+        "peak_molten_bytes_at_most" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::PeakMoltenBytesAtMost {
+                bound: trace_bound(call)?,
+            }));
+        }
+        "peak_molten_nodes_at_most" => {
+            return Ok(CheckRecipe::Trace(TraceCheck::PeakMoltenNodesAtMost {
                 bound: trace_bound(call)?,
             }));
         }
