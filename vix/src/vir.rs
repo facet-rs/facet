@@ -419,6 +419,12 @@ pub enum Op {
     Call(FunctionId),
     Closure(FunctionId),
     CallValue,
+    /// Read one captured free variable, by canonical capture index, out of the
+    /// enclosing closure's environment. Only ever appears inside a closure
+    /// function whose `captures` declares the matching typed slot.
+    Capture {
+        index: u32,
+    },
     Tuple,
     Record,
     Project {
@@ -520,6 +526,11 @@ pub struct Function {
     pub name: String,
     pub span: Span,
     pub parameters: Vec<Parameter>,
+    /// Free variables the function closes over, in canonical (source-order of
+    /// first reference is not identity-bearing; these are sorted by name). Each
+    /// capture is a typed value supplied from the closure value's environment,
+    /// never from a call-site argument. Ordinary named functions never capture.
+    pub captures: Vec<Parameter>,
     pub return_type: Type,
     pub nodes: Vec<Node>,
     pub output: Option<NodeId>,
@@ -699,6 +710,7 @@ fn collect_callees(
         let mut needed = function
             .parameters
             .iter()
+            .chain(&function.captures)
             .map(|parameter| parameter.node)
             .collect::<BTreeSet<_>>();
         if let Some(output) = function.output {
@@ -844,6 +856,15 @@ fn canonical_function(
         );
         frame(&mut bytes, &encoded);
     }
+    frame(&mut bytes, &(function.captures.len() as u64).to_le_bytes());
+    for capture in &function.captures {
+        let mut encoded = Vec::new();
+        frame(&mut encoded, &capture.id.0.to_le_bytes());
+        frame(&mut encoded, &capture.node.0.to_le_bytes());
+        frame(&mut encoded, capture.name.as_bytes());
+        frame(&mut encoded, &canonical_type(&capture.ty));
+        frame(&mut bytes, &encoded);
+    }
     for node in &function.nodes {
         frame(&mut bytes, &canonical_node(node, function_ids));
     }
@@ -985,6 +1006,10 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::SetLen => op.push(42),
         Op::SetValues => op.push(43),
         Op::StringConcat => op.push(44),
+        Op::Capture { index } => {
+            op.push(45);
+            op.extend_from_slice(&index.to_le_bytes());
+        }
     }
     frame(&mut bytes, &op);
     frame(&mut bytes, &(node.inputs.len() as u64).to_le_bytes());

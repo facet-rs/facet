@@ -3543,6 +3543,23 @@ fn lower_node(
             )?;
             (vec![op], representation_for_type(&node.ty, node.span)?)
         }
+        Op::Capture { .. } => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "closure environment capture is not yet lowered to Weavy: the boxed \
+                 environment ABI (EnvBox/EnvLoad + call-contract environment) is unimplemented",
+            ));
+        }
+        Op::Closure(callee) if !node.inputs.is_empty() => {
+            let _ = callee;
+            return Err(lowering_diagnostic(
+                node.span,
+                "capturing closure is not yet lowered to Weavy: the returned closure \
+                 references captured values, which require the boxed environment ABI \
+                 (a one-word Handle environment plus EnvBox at construction and EnvLoad \
+                 in the callee prologue)",
+            ));
+        }
         Op::Closure(callee) => {
             require_input_count(node, 0)?;
             if !matches!(node.ty, Type::Function { .. }) || dst_region.words().as_usize() != 2 {

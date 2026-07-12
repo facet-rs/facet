@@ -1252,6 +1252,7 @@ fn lower_function(
         name: function.name.value.clone(),
         span: function.span,
         parameters,
+        captures: Vec::new(),
         return_type: signature.return_type.clone(),
         nodes,
         output,
@@ -2203,9 +2204,214 @@ fn lower_some(
     })
 }
 
+/// Names introduced by an irrefutable (or refutable) pattern. Used to subtract
+/// a closure's own parameters and inner `let`/match bindings from the set of
+/// free variables it must capture.
+fn collect_pattern_names(pattern: &ast::Pattern, out: &mut BTreeSet<String>) {
+    match pattern {
+        ast::Pattern::Binding(binding) => {
+            out.insert(binding.binding.value.clone());
+        }
+        ast::Pattern::Tuple(tuple) => {
+            for element in &tuple.elems {
+                collect_pattern_names(element, out);
+            }
+        }
+        ast::Pattern::Record(record) => {
+            for field in &record.fields.fields {
+                match &field.pattern {
+                    Some(sub) => collect_pattern_names(sub, out),
+                    None => {
+                        out.insert(field.name.value.clone());
+                    }
+                }
+            }
+        }
+        ast::Pattern::Some(some) => collect_pattern_names(&some.payload, out),
+        ast::Pattern::Variant(variant) => {
+            if let Some(payload) = &variant.tuple_payload {
+                for element in &payload.elems {
+                    collect_pattern_names(element, out);
+                }
+            }
+        }
+        ast::Pattern::None(_)
+        | ast::Pattern::Wildcard(_)
+        | ast::Pattern::Str(_)
+        | ast::Pattern::Number(_) => {}
+    }
+}
+
+/// Free value-level identifiers referenced by an expression, excluding those in
+/// `bound`. A call callee is a value reference too: it either names a module
+/// function (never in `bound`, so ignored by the caller's capture filter) or a
+/// callable binding that must be captured.
+fn collect_free_idents_expr(
+    expr: &ast::Expr,
+    bound: &BTreeSet<String>,
+    out: &mut BTreeSet<String>,
+) {
+    match expr {
+        ast::Expr::Identifier(identifier) => {
+            if !bound.contains(&identifier.value) {
+                out.insert(identifier.value.clone());
+            }
+        }
+        ast::Expr::Call(call) => {
+            if !bound.contains(&call.callee.value) {
+                out.insert(call.callee.value.clone());
+            }
+            for argument in &call.args.args {
+                collect_free_idents_expr(argument, bound, out);
+            }
+            if let Some(named) = &call.named_args {
+                collect_free_idents_named(&named.fields, bound, out);
+            }
+        }
+        ast::Expr::MethodCall(call) => {
+            collect_free_idents_expr(&call.receiver, bound, out);
+            for argument in &call.args.args {
+                collect_free_idents_expr(argument, bound, out);
+            }
+            if let Some(named) = &call.named_args {
+                collect_free_idents_named(&named.fields, bound, out);
+            }
+        }
+        ast::Expr::Binary(binary) => {
+            collect_free_idents_expr(&binary.left, bound, out);
+            collect_free_idents_expr(&binary.right, bound, out);
+        }
+        ast::Expr::Unary(unary) => collect_free_idents_expr(&unary.value, bound, out),
+        ast::Expr::If(if_expr) => {
+            collect_free_idents_expr(&if_expr.condition, bound, out);
+            collect_free_idents_block(&if_expr.consequent, bound, out);
+            collect_free_idents_if_branch(&if_expr.alternative, bound, out);
+        }
+        ast::Expr::Match(match_expr) => {
+            collect_free_idents_expr(&match_expr.scrutinee, bound, out);
+            for arm in &match_expr.arms.arms {
+                let mut arm_bound = bound.clone();
+                collect_pattern_names(&arm.pattern, &mut arm_bound);
+                if let Some(guard) = &arm.guard {
+                    collect_free_idents_expr(guard, &arm_bound, out);
+                }
+                collect_free_idents_expr(&arm.body, &arm_bound, out);
+            }
+        }
+        ast::Expr::Closure(closure) => {
+            let mut inner = bound.clone();
+            collect_pattern_names(&closure.pattern, &mut inner);
+            match &closure.body {
+                ast::ClosureBody::Block(block) => collect_free_idents_block(block, &inner, out),
+                ast::ClosureBody::Expr(expression) => {
+                    collect_free_idents_expr(expression, &inner, out);
+                }
+            }
+        }
+        ast::Expr::Index(index) => {
+            collect_free_idents_expr(&index.receiver, bound, out);
+            collect_free_idents_expr(&index.index, bound, out);
+        }
+        ast::Expr::Array(array) => {
+            for element in &array.elems {
+                collect_free_idents_expr(element, bound, out);
+            }
+        }
+        ast::Expr::Set(set) => {
+            for element in &set.elems {
+                collect_free_idents_expr(element, bound, out);
+            }
+        }
+        ast::Expr::Map(map) => {
+            for row in &map.rows {
+                collect_free_idents_expr(&row.key, bound, out);
+                collect_free_idents_expr(&row.value, bound, out);
+            }
+        }
+        ast::Expr::Field(field) => collect_free_idents_expr(&field.receiver, bound, out),
+        ast::Expr::Variant(variant) => {
+            if let Some(payload) = &variant.tuple_payload {
+                for argument in &payload.args {
+                    collect_free_idents_expr(argument, bound, out);
+                }
+            }
+        }
+        ast::Expr::Record(record) => {
+            if let Some(spread) = &record.fields.spread {
+                collect_free_idents_expr(&spread.base, bound, out);
+            }
+            collect_free_idents_named(&record.fields.fields, bound, out);
+        }
+        ast::Expr::Tuple(tuple) => {
+            for element in &tuple.elems {
+                collect_free_idents_expr(element, bound, out);
+            }
+        }
+        ast::Expr::Paren(paren) => collect_free_idents_expr(&paren.inner, bound, out),
+        ast::Expr::Str(_) | ast::Expr::Number(_) | ast::Expr::Bool(_) => {}
+    }
+}
+
+fn collect_free_idents_named(
+    fields: &[ast::NamedValue],
+    bound: &BTreeSet<String>,
+    out: &mut BTreeSet<String>,
+) {
+    for field in fields {
+        match &field.value {
+            Some(value) => collect_free_idents_expr(value, bound, out),
+            None => {
+                if !bound.contains(&field.name.value) {
+                    out.insert(field.name.value.clone());
+                }
+            }
+        }
+    }
+}
+
+fn collect_free_idents_if_branch(
+    branch: &ast::IfBranch,
+    bound: &BTreeSet<String>,
+    out: &mut BTreeSet<String>,
+) {
+    match branch {
+        ast::IfBranch::Block(block) => collect_free_idents_block(block, bound, out),
+        ast::IfBranch::If(if_expr) => {
+            collect_free_idents_expr(&if_expr.condition, bound, out);
+            collect_free_idents_block(&if_expr.consequent, bound, out);
+            collect_free_idents_if_branch(&if_expr.alternative, bound, out);
+        }
+    }
+}
+
+fn collect_free_idents_block(
+    block: &ast::Block,
+    bound: &BTreeSet<String>,
+    out: &mut BTreeSet<String>,
+) {
+    let mut bound = bound.clone();
+    for statement in &block.stmts {
+        match statement {
+            ast::Stmt::Let(let_stmt) => {
+                collect_free_idents_expr(&let_stmt.value, &bound, out);
+                collect_pattern_names(&let_stmt.pattern, &mut bound);
+            }
+            ast::Stmt::Yield(yield_stmt) => {
+                collect_free_idents_expr(&yield_stmt.value, &bound, out);
+            }
+            ast::Stmt::Expression(expression) => {
+                collect_free_idents_expr(&expression.value, &bound, out);
+            }
+        }
+    }
+    if let Some(tail) = &block.tail {
+        collect_free_idents_expr(tail, &bound, out);
+    }
+}
+
 fn lower_closure(
     nodes: &mut Vec<Node>,
-    _outer_bindings: &BTreeMap<String, LoweredValue>,
+    outer_bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     closure: &ast::ClosureExpr,
     expected: Option<&Type>,
@@ -2240,6 +2446,27 @@ fn lower_closure(
         }
     };
 
+    // Free variables the body reads from the enclosing scope become the
+    // closure's captured environment, in canonical name order. Names that
+    // resolve to module functions or the prelude are not bindings, so the
+    // intersection with `outer_bindings` leaves only genuine captures.
+    let mut bound_by_parameter = BTreeSet::new();
+    collect_pattern_names(&closure.pattern, &mut bound_by_parameter);
+    let mut free = BTreeSet::new();
+    match &closure.body {
+        ast::ClosureBody::Block(block) => {
+            collect_free_idents_block(block, &bound_by_parameter, &mut free);
+        }
+        ast::ClosureBody::Expr(expression) => {
+            collect_free_idents_expr(expression, &bound_by_parameter, &mut free);
+        }
+    }
+    let captured: Vec<(String, LoweredValue)> = free
+        .into_iter()
+        .filter_map(|name| outer_bindings.get(&name).map(|value| (name, value.clone())))
+        .collect();
+    let capture_inputs: Vec<NodeId> = captured.iter().map(|(_, value)| value.node).collect();
+
     let (id, name) = context.allocate_closure();
     context.enter_function(name.clone());
     let lowered = (|| {
@@ -2264,6 +2491,39 @@ fn lower_closure(
             &closure.pattern,
             &parameter_value,
         )?;
+
+        // Materialize each capture as a typed environment read, bound under its
+        // source name so the body resolves it like any other value.
+        let mut captures = Vec::with_capacity(captured.len());
+        for (index, (capture_name, capture_value)) in captured.iter().enumerate() {
+            let capture_index = u32::try_from(index).map_err(|_| {
+                Diagnostics::one(Diagnostic::unsupported(closure.span, "too many captures"))
+            })?;
+            let capture_node = push_node(
+                &mut closure_nodes,
+                closure.span,
+                capture_value.ty.clone(),
+                EffectFacts::PURE,
+                Vec::new(),
+                Op::Capture {
+                    index: capture_index,
+                },
+            );
+            closure_bindings.insert(
+                capture_name.clone(),
+                LoweredValue {
+                    node: capture_node,
+                    ty: capture_value.ty.clone(),
+                },
+            );
+            captures.push(Parameter {
+                id: ParameterId(capture_index),
+                node: capture_node,
+                name: capture_name.clone(),
+                ty: capture_value.ty.clone(),
+                kind: ParameterKind::Positional,
+            });
+        }
 
         let expected_result = expected_signature.map(|(_, result)| result);
         let output = match &closure.body {
@@ -2301,6 +2561,7 @@ fn lower_closure(
                     ty: parameter_ty,
                     kind: ParameterKind::Positional,
                 }],
+                captures,
                 return_type: output.ty,
                 nodes: closure_nodes,
                 output: Some(output.node),
@@ -2319,7 +2580,7 @@ fn lower_closure(
             closure.span,
             ty.clone(),
             EffectFacts::PURE,
-            Vec::new(),
+            capture_inputs,
             Op::Closure(id),
         ),
         ty,
