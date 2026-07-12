@@ -240,14 +240,17 @@ otherwise select native — pinning interpreter coverage against an OS-matrix ed
 that drops the windows / linux-aarch64 legs. The selection is bounded and exact
 (`package(vix) & (binary(ratchet_runner) | binary(cross_lane_differential))`)
 and reuses the existing container/node/rust-1.92/rust-cache conventions.
-Verified locally: `WEAVY_JIT=0` nextest of the exact filter is 98/98 pass;
-`actionlint` clean. Commit: `9443ac2f0`.
+Verified after integrating canonical snapshot rungs 060–061:
+`WEAVY_JIT=0` nextest of the exact filter is 108/108 pass; `actionlint` clean.
+Commit: `9443ac2f0`.
 
-Verification (local, macOS aarch64 = native): default-native filtered run 98/98
-pass (cross-lane cert genuinely two-lane); `WEAVY_JIT=0` filtered run 98/98 pass
-(cross-lane cert takes its non-native skip); `cargo check --workspace
---all-targets` clean; strict clippy (`-D warnings`) on weavy+vix clean; `cargo
-fmt --all --check` clean; weavy Auto-equivalence lane/fallback tests 52/52 pass.
+Verification (local, macOS aarch64 = native): the oracle-backed snapshot plus
+cross-lane filter is 11/11 pass (the corpus certificate genuinely drives both
+authorities through rung 061); the full Vix+Weavy suite is 694/694 pass;
+`WEAVY_JIT=0` on the pinned CI filter is 108/108 pass (the cross-lane cert takes
+its non-native skip); `cargo check --workspace --all-features --all-targets` is
+clean; strict workspace clippy with `-D warnings` is clean; and
+`cargo fmt --all --check` is clean.
 The `.config/nextest.toml` leash for the differential is `300s × 4` because it
 drives rungs 050/051 through the interpreter twice (~390s observed under full
 `--workspace` contention). Residual boundary: none beyond the *documented*
