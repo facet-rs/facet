@@ -1782,21 +1782,18 @@ impl<S: EventSink> Runtime<S> {
     /// through the store, so the text is a stable harness artifact — byte-
     /// identical across the plain and chaos lanes and the native and interpreter
     /// execution lanes.
-    pub(crate) fn render_snapshot(
-        &self,
-        handle: Handle,
-        ty: &Type,
-    ) -> Result<String, Box<MachineError>> {
+    ///
+    /// A render fault is a machine invariant (the published structure did not
+    /// match the declared type), returned as a typed detail so the harness can
+    /// attribute it to the snapshot site instead of aborting the whole run.
+    pub(crate) fn render_snapshot(&self, handle: Handle, ty: &Type) -> Result<String, String> {
         let frozen = self
             .store
             .entry(handle)
             .and_then(StoreEntry::frozen)
-            .ok_or_else(|| {
-                snapshot_render_fault("published snapshot value has no frozen structure")
-            })?;
+            .ok_or_else(|| "published snapshot value has no frozen structure".to_owned())?;
         let mut out = String::new();
-        render_frozen(&self.store, ty, frozen, 0, &mut out)
-            .map_err(|detail| snapshot_render_fault(&detail))?;
+        render_frozen(&self.store, ty, frozen, 0, &mut out)?;
         Ok(out)
     }
 
@@ -1809,17 +1806,6 @@ impl<S: EventSink> Runtime<S> {
     pub fn into_sink(self) -> S {
         self.sink
     }
-}
-
-fn snapshot_render_fault(detail: &str) -> Box<MachineError> {
-    Box::new(MachineError::runtime(
-        MachineOperation::Result,
-        RuntimeFault::SnapshotRender {
-            detail: detail.to_owned(),
-        },
-        None,
-        None,
-    ))
 }
 
 /// Type-directed structural rendering of a published snapshot value. It mirrors
@@ -1872,7 +1858,7 @@ fn render_frozen(
             let bytes = leaf_bytes(store, frozen)?;
             let text = core::str::from_utf8(&bytes)
                 .map_err(|_| "snapshot string is not utf-8".to_owned())?;
-            let _ = write!(out, "{text:?}");
+            escape_vix_string(text, out);
         }
         Type::Record(record) => {
             let FrozenValue::Product(fields) = frozen else {
@@ -2045,6 +2031,32 @@ fn render_mismatch(ty: &Type) -> String {
     format!("snapshot value shape does not match type {}", ty.name())
 }
 
+/// Canonical Vix string escaping for snapshot rendering. This is a defined rule,
+/// not Rust's `Debug`: the text is wrapped in double quotes; backslash and double
+/// quote are backslash-escaped; the three named whitespace controls use `\n`,
+/// `\t`, `\r`; every other C0 control (below `0x20`) and `0x7f` uses a lowercase
+/// `\u{h}` hex escape with no leading zeros; and every other scalar — including
+/// all printable non-ASCII — is emitted verbatim as UTF-8. Fixing this here means
+/// the escaping is a property of Vix, independent of the host language.
+fn escape_vix_string(text: &str, out: &mut String) {
+    out.push('"');
+    for ch in text.chars() {
+        match ch {
+            '\\' => out.push_str("\\\\"),
+            '"' => out.push_str("\\\""),
+            '\n' => out.push_str("\\n"),
+            '\t' => out.push_str("\\t"),
+            '\r' => out.push_str("\\r"),
+            '\u{7f}' => out.push_str("\\u{7f}"),
+            c if (c as u32) < 0x20 => {
+                let _ = write!(out, "\\u{{{:x}}}", c as u32);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push('"');
+}
+
 struct RealizedValue {
     node: FramedNode,
     resident: Vec<u8>,
@@ -2063,6 +2075,22 @@ fn realize_value(
         let selector = u32::try_from(result.enum_selector()?)
             .map_err(|_| invalid_realized_result(lowered, 0))?;
         let value = result.as_value().enum_field(selector, 0)?;
+        // A snapshot island realizes EVERY type through the structural walker so
+        // scalars, strings, and collections all attach a renderable frozen tree.
+        // Identity comes from the framed node, so the (empty) resident is fine.
+        if lowered.publishes_snapshot {
+            let (node, frozen, framed_bytes) =
+                realize_structural_node(&resolver, value, &lowered.output_type, store, lowered)?;
+            let (molten_nodes, molten_bytes) = resolver.molten_stats();
+            return Ok(RealizedValue {
+                node,
+                resident: Vec::new(),
+                framed_bytes,
+                molten_nodes,
+                molten_bytes,
+                frozen: Some(frozen),
+            });
+        }
         let (node, resident, framed_bytes, frozen) = match &lowered.output_type {
             Type::Map {
                 key,
@@ -2111,12 +2139,9 @@ fn realize_value(
                 };
                 let (node, resident, framed_bytes) =
                     realize_array(&resolver, value_ref, bytes, element, store, lowered)?;
-                // Freeze the dense array structurally as well, mirroring the
-                // nested array case, so a published array can be rendered
-                // structurally (e.g. by a snapshot). The frozen tree is read
-                // only off the publication path and never alters framing.
-                let frozen = freeze_dense_array(&resolver, value_ref, element, store, lowered)?;
-                (node, resident, framed_bytes, Some(frozen))
+                // A non-snapshot published array is not frozen: freezing is extra
+                // structural work with no consumer off the snapshot path.
+                (node, resident, framed_bytes, None)
             }
             _ => {
                 let value = value.value_ref()?;

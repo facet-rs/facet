@@ -1128,6 +1128,11 @@ pub enum IslandPurpose {
     Check,
     Generator,
     Value,
+    /// Publishes a value solely so a snapshot check can render it structurally.
+    /// Like [`Value`](IslandPurpose::Value) it realizes the value, but the outcome
+    /// envelope is forced for every type — including scalars and strings — so the
+    /// runtime always freezes a renderable structure.
+    Snapshot,
 }
 
 /// Content-free canonical graph provenance for a shared value producer. This
@@ -1555,13 +1560,15 @@ impl Module {
                 }
                 CheckRecipe::Snapshot { value, name } => {
                     // A snapshot publishes the value itself, so its island is a
-                    // value publication whose output is the value node.
+                    // value publication whose output is the value node. Its
+                    // dedicated purpose forces the outcome envelope for every
+                    // type so scalars and strings freeze renderably too.
                     let island = islands.len();
                     islands.push(self.partition_function_output_with_shared(
                         function,
                         *value,
                         IslandId(u32::try_from(island).expect("island index fits u32")),
-                        IslandPurpose::Value,
+                        IslandPurpose::Snapshot,
                         &IslandBoundary {
                             shared: &shared_ids,
                             wires: &wire_ids,
@@ -1740,7 +1747,8 @@ impl Module {
             parameters,
             value_inputs,
             wire_inputs,
-            forced_copy_value: purpose == IslandPurpose::Value && self.force_molten_copy,
+            forced_copy_value: matches!(purpose, IslandPurpose::Value | IslandPurpose::Snapshot)
+                && self.force_molten_copy,
             nodes,
             output,
             callees,
