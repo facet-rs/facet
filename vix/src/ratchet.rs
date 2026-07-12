@@ -14,9 +14,97 @@ use crate::runtime::{
     Runtime, SchemaId, TaskState, ValueId, WireDemand,
 };
 use crate::vir::{
-    DescribedWire, FunctionId, IslandId, PartitionedRecipe, PartitionedValue, TraceCheck,
-    ValueIslandId, WireArg,
+    DescribedWire, FunctionId, Island, IslandId, NodeId, Op, PartitionedRecipe, PartitionedValue,
+    TraceCheck, ValueIslandId, WireArg,
 };
+
+/// The user functions named by a test's described-wire trace checks. A bundled
+/// invocation observation is emitted only for these — the observation is bounded
+/// to the selected observers, never every call.
+fn selected_wire_functions(partitioned: &crate::vir::PartitionedTest) -> BTreeSet<FunctionId> {
+    partitioned
+        .sites
+        .iter()
+        .filter_map(|site| match &site.recipe {
+            PartitionedRecipe::Trace(
+                TraceCheck::Demanded { wire }
+                | TraceCheck::NeverDemanded { wire }
+                | TraceCheck::DemandedOnce { wire },
+            ) => Some(wire.function),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Record one realized demand per distinct executed invocation preimage that a
+/// described-wire observer selects, without adding a scheduler edge. The cost
+/// model may fuse a mapped element or bundle a single-consumer pure call into a
+/// direct `WeavyOp::Call`; this reads the executed island's demand-independent
+/// structure and retains the exact canonical preimage (callee + framed argument
+/// identities) so `demanded_once` distinguishes `costly(1)` from `costly(2)`.
+/// Only unconditional calls (never a control-region member) are observed, so an
+/// untaken arm's invocation is never fabricated; equal preimages share one entry.
+fn observe_bundled_invocations(
+    runtime: &mut Runtime<EventLog>,
+    island: &Island,
+    selected: &BTreeSet<FunctionId>,
+    seen: &mut BTreeSet<(FunctionId, Vec<ValueId>)>,
+) {
+    let mut controlled = BTreeSet::new();
+    for node in &island.nodes {
+        match &node.op {
+            Op::If {
+                consequent,
+                alternative,
+            } => {
+                controlled.extend(consequent.nodes.iter().copied());
+                controlled.extend(alternative.nodes.iter().copied());
+            }
+            Op::Match { arms } => {
+                for arm in arms {
+                    controlled.extend(arm.nodes.iter().copied());
+                }
+            }
+            Op::OrderedMatch { arms, fallback } => {
+                for arm in arms {
+                    controlled.extend(arm.condition.nodes.iter().copied());
+                    controlled.extend(arm.body.nodes.iter().copied());
+                }
+                controlled.extend(fallback.nodes.iter().copied());
+            }
+            _ => {}
+        }
+    }
+    let by_id: BTreeMap<NodeId, &crate::vir::Node> =
+        island.nodes.iter().map(|node| (node.id, node)).collect();
+    for node in &island.nodes {
+        let Op::Call(function) = node.op else {
+            continue;
+        };
+        if controlled.contains(&node.id) || !selected.contains(&function) {
+            continue;
+        }
+        let mut arguments = Vec::with_capacity(node.inputs.len());
+        let mut literal = true;
+        for input in &node.inputs {
+            match by_id.get(input).map(|node| &node.op) {
+                Some(Op::Int(value)) => arguments.push(WireArg::Int(*value)),
+                Some(Op::Bool(value)) => arguments.push(WireArg::Bool(*value)),
+                _ => {
+                    literal = false;
+                    break;
+                }
+            }
+        }
+        if !literal {
+            continue;
+        }
+        let identities: Vec<ValueId> = arguments.iter().map(wire_arg_identity).collect();
+        if seen.insert((function, identities.clone())) {
+            runtime.record_wire_demand(function, identities);
+        }
+    }
+}
 
 /// Owned backing for one island's flat wire-demand tree: everything a
 /// [`WireDemand`] borrows, kept alive alongside the island evaluation it feeds.
@@ -646,10 +734,15 @@ fn run_lane(
     // Trace checks are deferred until every selected value check completes; they
     // are evaluated once, together, against the frozen completed-run snapshot.
     let mut deferred_traces: Vec<(ProvenanceKey, TraceCheck)> = Vec::new();
+    // Distinct executed invocation preimages already observed for a described-wire
+    // observer, so equal preimages share one realized-demand entry.
+    let mut observed_invocations: BTreeSet<(FunctionId, Vec<ValueId>)> = BTreeSet::new();
     let mut kill_available = chaos.kill_first_running_task;
 
     for test in &module.tests {
         let partitioned = module.try_partition_test(test)?;
+        let selected = selected_wire_functions(&partitioned);
+        let mut evaluated_islands: Vec<usize> = Vec::new();
         let wire_lookup: BTreeMap<ValueIslandId, &PartitionedValue> = partitioned
             .wire_islands
             .iter()
@@ -780,6 +873,7 @@ fn run_lane(
                         })?;
                     match &partitioned_site.recipe {
                         PartitionedRecipe::Value { island } => {
+                            evaluated_islands.push(*island);
                             checks.push(evaluate_value_site(
                                 &mut runtime,
                                 cache,
@@ -807,6 +901,7 @@ fn run_lane(
                     let site = partitioned_site.id.0;
                     match &partitioned_site.recipe {
                         PartitionedRecipe::Value { island } => {
+                            evaluated_islands.push(*island);
                             checks.push(evaluate_value_site(
                                 &mut runtime,
                                 cache,
@@ -828,6 +923,21 @@ fn run_lane(
                         }
                     }
                 }
+            }
+        }
+
+        // Bounded Production observation: for every evaluated check island, retain
+        // one realized-demand entry per distinct executed invocation preimage a
+        // described-wire observer selects. This never adds a scheduler edge and
+        // never changes partitioning, execution, memoization, or results.
+        if !selected.is_empty() {
+            for island in evaluated_islands {
+                observe_bundled_invocations(
+                    &mut runtime,
+                    &partitioned.islands[island],
+                    &selected,
+                    &mut observed_invocations,
+                );
             }
         }
     }

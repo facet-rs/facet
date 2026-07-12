@@ -6,15 +6,13 @@
 //! executes. The executable demand graph for a test must be identical with the
 //! trace checks removed, modulo trace reporting.
 //!
-//! Rungs 055-056 are certified here: control flow and dead-let elimination make
-//! the untaken/unused invocation genuinely not execute (frame evidence: zero
-//! frame entries). The remaining rungs 053/054/057/058/059 require the general
-//! lazy-demand substrate (real wire arguments, independently demandable
-//! aggregate fields, keyed `Array.map` element demands, and shared memoized
-//! invocation identity) that is descriptor-independent; until inline frame
-//! events and the scheduler demand log agree on what executed, they are held
-//! red here rather than certified green by an observer that fabricates the
-//! behaviour it reports.
+//! Rungs 053-059 are certified green here through the lazy-demand substrate:
+//! call-site-specialized lazy where-parameters (053), independently-demandable
+//! aggregate fields (054), control-flow non-demand with frame evidence (055-056),
+//! and — for invocations the cost model fuses or bundles into a direct
+//! `WeavyOp::Call` — bounded Production observation of the exact executed
+//! preimage (057/058/059). Every observer stays pure: removing the trace checks
+//! leaves value results and the executed frame trace byte-identical.
 
 use std::collections::BTreeMap;
 
@@ -250,19 +248,33 @@ fn rung_054_projects_one_field_without_computing_the_other() {
     assert_eq!(call_events(&with), call_events(&without));
 }
 
-/// Rungs 057/059 remain the standing red boundary above the certified substrate.
-/// 057 needs keyed `Array.map` element demands; 059 needs the external observer to
-/// distinguish exact invocation preimages that the cost model fused into a direct
-/// `WeavyOp::Call` (rung 004). Their positive demand observers stay zero until each
-/// capability lands.
+/// Rungs 057 and 059 are certified green through bounded Production observation:
+/// the cost model fuses `ys[1]` and bundles single-consumer `costly(1)`/`costly(2)`
+/// into direct `WeavyOp::Call`s, and a described-wire observer retains one
+/// realized-demand entry per distinct executed invocation preimage (callee plus
+/// framed argument identities) without adding a scheduler edge. `demanded_once`
+/// distinguishes the exact preimages. The observation is a pure post-run read:
+/// removing the trace checks leaves value results and the executed frame trace
+/// byte-identical — only the selected observation entries differ.
 #[test]
-fn described_wire_rungs_await_the_lazy_demand_substrate() {
+fn rungs_057_059_observe_exact_bundled_preimages() {
     for source in [RUNG_057, RUNG_059] {
+        let report = run_source(source).expect("rung runs");
         assert!(
-            !run_source(source)
-                .expect("rung runs its value checks")
-                .passed(),
-            "positive-demand rung stays red until its invocation is a real shared demand",
+            report.passed() && report.agrees(),
+            "bundled invocation preimage is observed exactly: {report:?}",
+        );
+        let with = run_source(source).expect("rung with trace checks runs");
+        let without = run_source(&without_trace_checks(source)).expect("rung without runs");
+        assert_eq!(
+            value_check_identities(&with),
+            value_check_identities(&without),
+            "value results must not depend on the described-wire observation",
+        );
+        assert_eq!(
+            call_events(&with),
+            call_events(&without),
+            "the executed call/frame trace must not depend on the observation",
         );
     }
 }
