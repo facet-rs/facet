@@ -153,6 +153,15 @@ slow-timeout = { period = "300s", terminate-after = 2 }
 filter = 'package(vix) & binary(reloc_selection)'
 threads-required = "num-cpus"
 
+# This certificate measures the source-declared execution wall/RSS budget after
+# the child has completed compilation and signalled Ready. Sibling nextest jobs
+# are not part of that execution, so reserve the runner while the watchdog is
+# active rather than allowing scheduler contention to consume the program's
+# unchanged five-second wall budget.
+[[profile.default.overrides]]
+filter = 'package(vix) & binary(ratchet_runner) & test(=rung_050_deep_tail_recursion_runs_under_its_declared_budget)'
+threads-required = "num-cpus"
+
 # The vendored-playground sweeps now shell out to a real JS runtime (node)
 # once per bundle instead of an in-process Boa evaluator, and coverage
 # instrumentation makes subprocess-heavy tests noticeably slower in CI.
