@@ -4860,15 +4860,11 @@ fn map_and_set_surface_has_distinct_typed_vir_grains() {
             && !node.effect.fallible
     }));
 
-    assert_ordered_freeze_red(RUNG_041, "Map");
-    assert_ordered_freeze_red(RUNG_042, "Map");
-    assert_ordered_freeze_red(RUNG_044, "Set");
-
-    let report =
-        run_source(RUNG_043).expect("single-consumer map executes through ordered substrate");
-    assert!(report.passed());
-    assert!(report.agrees());
-    assert_eq!(report.plain.checks.len(), 1);
+    for source in [RUNG_041, RUNG_042, RUNG_043, RUNG_044] {
+        let report = run_source(source).expect("ordered collection publishes through production");
+        assert!(report.passed());
+        assert!(report.agrees());
+    }
 }
 
 #[test]
