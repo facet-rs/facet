@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::decode::{self, DecodeFormat, DecodedValue};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics, Label};
 use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
@@ -1636,6 +1637,9 @@ fn lower_value_expected(
         ast::Expr::Call(call) if call.callee.value == "Some" => {
             lower_some(nodes, bindings, context, call, expected)
         }
+        ast::Expr::Call(call) if decode_format(&call.callee.value).is_some() => {
+            lower_decode(nodes, call, expected)
+        }
         ast::Expr::Call(call) => lower_call(nodes, bindings, context, call),
         ast::Expr::Binary(binary) => lower_binary(nodes, bindings, context, binary),
         ast::Expr::Variant(variant) => lower_variant(nodes, bindings, context, variant, expected),
@@ -2201,6 +2205,130 @@ fn lower_some(
         ),
         ty,
     })
+}
+
+/// The decode intrinsics: one type-directed value-construction lane. The
+/// document is decoded against the compiler-known target type (the `let`/call
+/// site's expected type) in a single parser pass, then lowered to the exact
+/// typed-construction VIR a hand-written literal of the same value produces.
+fn decode_format(name: &str) -> Option<DecodeFormat> {
+    match name {
+        "json_decode" => Some(DecodeFormat::Json),
+        "toml_decode" => Some(DecodeFormat::Toml),
+        _ => None,
+    }
+}
+
+fn lower_decode(
+    nodes: &mut Vec<Node>,
+    call: &ast::Call,
+    expected: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    let format = decode_format(&call.callee.value).expect("decode intrinsic name");
+    if call.named_args.is_some() {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "named arguments on a decode call",
+        )));
+    }
+    check_arity(call, 1)?;
+    let ast::Expr::Str(document) = &call.args.args[0] else {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            expr_span(&call.args.args[0]),
+            "a decode source that is not a string literal",
+        )));
+    };
+    let target = expected.ok_or_else(|| {
+        Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "a decode whose target type is not known from context",
+        ))
+    })?;
+    let decoded = decode::decode(format, &document.value, target).map_err(|error| {
+        Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            format!(
+                "{} decode failed: {}",
+                match format {
+                    DecodeFormat::Json => "JSON",
+                    DecodeFormat::Toml => "TOML",
+                },
+                error.message
+            ),
+        ))
+    })?;
+    lower_decoded_value(nodes, &decoded, target, call.span)
+}
+
+/// Lower a type-directed decode result into typed-construction VIR. The
+/// `DecodedValue` is aligned to `ty` by construction, so a shape disagreement
+/// here is an internal decoder invariant break, not a source error.
+fn lower_decoded_value(
+    nodes: &mut Vec<Node>,
+    decoded: &DecodedValue,
+    ty: &Type,
+    span: Span,
+) -> Result<LoweredValue, Diagnostics> {
+    match (decoded, ty) {
+        (DecodedValue::Int(value), Type::Int) => lower_integer_literal(nodes, span, &value.to_string()),
+        (DecodedValue::Bool(value), Type::Bool) => Ok(lower_bool_constant(nodes, span, *value)),
+        (DecodedValue::Str(value), Type::String) => Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                span,
+                Type::String,
+                EffectFacts::PURE,
+                Vec::new(),
+                Op::String(value.clone()),
+            ),
+            ty: Type::String,
+        }),
+        (DecodedValue::Record(values), Type::Record(record)) if values.len() == record.fields.len() => {
+            let mut inputs = Vec::with_capacity(values.len());
+            for (value, field) in values.iter().zip(&record.fields) {
+                inputs.push(lower_decoded_value(nodes, value, &field.ty, span)?.node);
+            }
+            let ty = ty.clone();
+            Ok(LoweredValue {
+                node: push_node(nodes, span, ty.clone(), EffectFacts::PURE, inputs, Op::Record),
+                ty,
+            })
+        }
+        (DecodedValue::OptionSome(inner), _) if ty.option_inner().is_some() => {
+            let inner_ty = ty.option_inner().expect("option target").clone();
+            let payload = lower_decoded_value(nodes, inner, &inner_ty, span)?;
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    vec![payload.node],
+                    Op::Variant {
+                        variant: OPTION_SOME_VARIANT,
+                    },
+                ),
+                ty: ty.clone(),
+            })
+        }
+        (DecodedValue::OptionNone, _) if ty.option_inner().is_some() => Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                span,
+                ty.clone(),
+                EffectFacts::PURE,
+                Vec::new(),
+                Op::Variant {
+                    variant: OPTION_NONE_VARIANT,
+                },
+            ),
+            ty: ty.clone(),
+        }),
+        _ => Err(Diagnostics::one(Diagnostic::unsupported(
+            span,
+            format!("a decoded value that does not align with {}", ty.name()),
+        ))),
+    }
 }
 
 fn lower_closure(
