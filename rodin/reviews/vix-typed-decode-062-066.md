@@ -259,6 +259,18 @@ cargo nextest run -p vix -E 'test(decode::) | (binary(ratchet_runner) & (test(/d
 
 Run `a265d07b-57e6-47cf-a614-714db00cb56c`: 15/15 passed.
 
+Authoritative integration verification:
+
+- merged decode and cross-lane selection, default: run
+  `fc12ca5c…`, 16/16 passed;
+- the same selection under `WEAVY_JIT=0`: run
+  `0ee50c9a…`, 16/16 passed;
+- full Vix and Weavy suite: run
+  `4e7cd165…`, 709/709 passed;
+- the native-target CI interpreter selection after isolating the unchanged
+  source-budget certificate from sibling-runner contention: run
+  `ba042201-32f0-4055-a7b3-217f42949339`, 116/116 passed.
+
 ## Verification performed
 
 - `git rev-parse HEAD` == base; `git status --porcelain` empty before acting.
