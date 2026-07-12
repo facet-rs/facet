@@ -2506,6 +2506,7 @@ fn result_shape_attribution(
         | TaskFault::UnresidentCompareValueBytes { .. }
         | TaskFault::UnresidentStringConcatOperand { .. }
         | TaskFault::StringConcatAllocationFailed { .. }
+        | TaskFault::UnresidentByteProjectSource { .. }
         | TaskFault::ByteProjectionAllocationFailed { .. }
         | TaskFault::IntToStringAllocationFailed { .. }
         | TaskFault::UnresidentPathJoinOperand { .. }

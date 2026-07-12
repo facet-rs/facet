@@ -10432,6 +10432,7 @@ fn op_name(op: &Op) -> &'static str {
         Op::StringParseInt { .. } => "StringParseInt",
         Op::StringStatusIs { .. } => "StringStatusIs",
         Op::ByteProject { .. } => "ByteProject",
+        Op::IntToString { .. } => "IntToString",
         Op::PathJoin { .. } => "PathJoin",
         Op::Publish { .. } => "Publish",
         Op::ConstF64 { .. } => "ConstF64",
