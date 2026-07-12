@@ -4897,12 +4897,15 @@ fn lower_closure_typed_with_body_kind(
     let capture_inputs = captures
         .iter()
         .map(|(_, captured)| {
-            nodes.get(captured.node.0 as usize).map(|_| captured.node).ok_or_else(|| {
-                Diagnostics::one(Diagnostic::unsupported(
-                    closure.span,
-                    "captured value is absent",
-                ))
-            })
+            nodes
+                .get(captured.node.0 as usize)
+                .map(|_| captured.node)
+                .ok_or_else(|| {
+                    Diagnostics::one(Diagnostic::unsupported(
+                        closure.span,
+                        "captured value is absent",
+                    ))
+                })
         })
         .collect::<Result<Vec<_>, Diagnostics>>()?;
 

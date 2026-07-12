@@ -3456,35 +3456,34 @@ impl Task {
                                 let bytes = self.molten.env_bytes(handle).map_err(|fault| {
                                     environment_fault(verified, fn_id, pc, fault, handle)
                                 })?;
-                                for (index, field) in
-                                    callee_contract.environment.iter().enumerate()
+                                for (index, field) in callee_contract.environment.iter().enumerate()
                                 {
-                                        let entry = args.len() + index;
-                                        let region_id = callee_contract.entries[entry];
-                                        let region =
-                                            &callee_contract.frame.regions[region_id.0 as usize];
-                                        let off = field.offset as usize;
-                                        let len = field.shape.words.len() * 8;
-                                        if off + len > bytes.len() {
-                                            return Err(environment_fault(
-                                                verified,
-                                                fn_id,
-                                                pc,
-                                                EnvBoxFault::OutOfRange,
-                                                handle,
-                                            ));
-                                        }
-                                        writes.push((
-                                            callee_frame + region.offset as usize,
-                                            bytes[off..off + len].to_vec(),
+                                    let entry = args.len() + index;
+                                    let region_id = callee_contract.entries[entry];
+                                    let region =
+                                        &callee_contract.frame.regions[region_id.0 as usize];
+                                    let off = field.offset as usize;
+                                    let len = field.shape.words.len() * 8;
+                                    if off + len > bytes.len() {
+                                        return Err(environment_fault(
+                                            verified,
+                                            fn_id,
+                                            pc,
+                                            EnvBoxFault::OutOfRange,
+                                            handle,
                                         ));
                                     }
-                                }
-                                for (dst, data) in writes {
-                                    self.arena[dst..dst + data.len()].copy_from_slice(&data);
+                                    writes.push((
+                                        callee_frame + region.offset as usize,
+                                        bytes[off..off + len].to_vec(),
+                                    ));
                                 }
                             }
+                            for (dst, data) in writes {
+                                self.arena[dst..dst + data.len()].copy_from_slice(&data);
+                            }
                         }
+                    }
                     self.frames.push(FrameRecord {
                         fn_id: callee,
                         base: callee_frame,
@@ -4454,7 +4453,11 @@ impl Task {
                     base + region(*dst).offset as usize,
                 );
             }
-            Op::EnvBox { dst, callee, fields } => {
+            Op::EnvBox {
+                dst,
+                callee,
+                fields,
+            } => {
                 let environment = env_environment_of(verified, *callee);
                 let box_len = environment
                     .iter()

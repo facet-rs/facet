@@ -2156,25 +2156,20 @@ impl Verifier<'_> {
                 let leading = call.entries.len();
                 let entries_match = if contract.environment.is_empty() {
                     entries.len() == leading
-                        && entries.iter().zip(&call.entries).all(|(region, expected)| {
-                            &contract.frame.regions[*region] == expected
-                        })
+                        && entries
+                            .iter()
+                            .zip(&call.entries)
+                            .all(|(region, expected)| &contract.frame.regions[*region] == expected)
                 } else {
                     entries.len() == leading + contract.environment.len()
                         && entries
                             .iter()
                             .take(leading)
                             .zip(&call.entries)
-                            .all(|(region, expected)| {
-                                &contract.frame.regions[*region] == expected
-                            })
-                        && entries
-                            .iter()
-                            .skip(leading)
-                            .zip(&contract.environment)
-                            .all(|(region, field)| {
-                                contract.frame.regions[*region].shape == field.shape
-                            })
+                            .all(|(region, expected)| &contract.frame.regions[*region] == expected)
+                        && entries.iter().skip(leading).zip(&contract.environment).all(
+                            |(region, field)| contract.frame.regions[*region].shape == field.shape,
+                        )
                 };
                 let concrete_result = &contract.frame.regions[result];
                 let result_matches = concrete_result.shape == call.result.shape
@@ -2276,7 +2271,11 @@ impl Verifier<'_> {
                     declared,
                 )?;
             }
-            Op::EnvBox { dst, callee, fields } => {
+            Op::EnvBox {
+                dst,
+                callee,
+                fields,
+            } => {
                 let environment = self.env_contract(function_id, pc, *callee)?;
                 if environment.len() != fields.len() {
                     let expected = environment.len();
@@ -2290,8 +2289,10 @@ impl Verifier<'_> {
                         },
                     ));
                 }
-                let declared: Vec<RegionShape> =
-                    environment.iter().map(|field| field.shape.clone()).collect();
+                let declared: Vec<RegionShape> = environment
+                    .iter()
+                    .map(|field| field.shape.clone())
+                    .collect();
                 self.require_env_handle(function_id, pc, function_index, *dst)?;
                 for (index, source) in fields.iter().enumerate() {
                     let actual = self.plain_region(function_id, pc, function_index, *source)?;
@@ -3625,11 +3626,7 @@ impl Verifier<'_> {
             ));
         };
         if callee_contract.environment.is_empty() {
-            return Err(self.op(
-                function,
-                pc,
-                ProgramDefect::EnvironmentNotBoxed { callee },
-            ));
+            return Err(self.op(function, pc, ProgramDefect::EnvironmentNotBoxed { callee }));
         }
         Ok(&callee_contract.environment)
     }
@@ -7463,7 +7460,10 @@ mod tests {
 
         // A scalar capture projected into a scalar slot is the boxed convention.
         let (program, contract) = build(0, 0, vec![region(0, scalar.clone())], scalar.clone());
-        assert!(program.verify(contract).is_ok(), "boxed projection verifies");
+        assert!(
+            program.verify(contract).is_ok(),
+            "boxed projection verifies"
+        );
 
         let index = build(3, 0, vec![region(0, scalar.clone())], scalar.clone());
         let not_boxed = build(0, 0, vec![], scalar.clone());
