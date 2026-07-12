@@ -794,6 +794,9 @@ pub enum TaskFault {
     ByteProjectionAllocationFailed {
         site: FaultSite,
     },
+    IntToStringAllocationFailed {
+        site: FaultSite,
+    },
     UnresidentPathJoinOperand {
         site: FaultSite,
         side: CompareSide,

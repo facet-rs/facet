@@ -2189,6 +2189,7 @@ enum PreludeMethod {
     StreamFindMax,
     StreamSplitMin,
     PathToString,
+    IntToString,
 }
 
 #[derive(Clone, Copy)]
@@ -2391,6 +2392,12 @@ impl PreludeMethodRegistry {
                 name: "to_string",
                 arity: 0,
                 method: PreludeMethod::PathToString,
+            },
+            PreludeMethodEntry {
+                receiver: PreludeReceiverType::Int,
+                name: "to_string",
+                arity: 0,
+                method: PreludeMethod::IntToString,
             },
         ],
     };
@@ -3699,6 +3706,24 @@ fn lower_method_call(
             ),
             ty: Type::String,
         }),
+        PreludeMethod::IntToString => {
+            require_type(
+                &receiver,
+                &Type::Int,
+                expr_span(&call.receiver),
+            )?;
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    call.span,
+                    Type::String,
+                    EffectFacts::PURE,
+                    vec![receiver.node],
+                    Op::IntToString,
+                ),
+                ty: Type::String,
+            })
+        }
     }
 }
 

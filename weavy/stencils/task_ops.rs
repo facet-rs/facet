@@ -189,6 +189,11 @@ pub struct Ctx {
         i64,
         *mut i64,
     ) -> i64,
+    int_to_string: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        i64,
+        *mut i64,
+    ) -> i64,
     path_join: unsafe extern "C" fn(
         *const RawValueMemory,
         usize,
@@ -236,6 +241,7 @@ const EXIT_PATH_JOIN_BASE_UNRESIDENT: i64 = 20;
 const EXIT_PATH_JOIN_SEGMENT_UNRESIDENT: i64 = 21;
 const EXIT_PATH_JOIN_ALLOCATION: i64 = 22;
 
+const EXIT_INT_TO_STRING_ALLOCATION: i64 = 23;
 const LENT_MOLTEN_MIN: i64 = i64::MIN / 2;
 
 extern "C" {
@@ -1270,6 +1276,31 @@ pub unsafe extern "C" fn weavy_task_byte_project(cx: *mut Ctx) {
         _ => {
             *c.await_index = pc;
             *c.exit = EXIT_BYTE_PROJECT_ALLOCATION;
+        }
+    }
+}
+
+/// Render a signed `i64` as its canonical decimal String — immediates:
+/// [dst, src, pc]. The operand is an inline scalar; the helper allocates a
+/// by-value molten byte run. The only failure is allocation.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_int_to_string(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let src = *c.prog.add(1);
+    let pc = *c.prog.add(2);
+    c.prog = c.prog.add(3);
+    let value = read_i64(c.frame, src);
+    let mut handle = i64::MIN;
+    let status = (c.int_to_string)(c.molten, value, &raw mut handle);
+    match status {
+        0 => {
+            write_i64(c.frame, dst, handle);
+            cont!(cx);
+        }
+        _ => {
+            *c.await_index = pc;
+            *c.exit = EXIT_INT_TO_STRING_ALLOCATION;
         }
     }
 }

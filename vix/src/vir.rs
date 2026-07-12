@@ -859,6 +859,10 @@ pub enum Op {
     PathJoin,
     /// Render a relative Path as its String spelling.
     PathToString,
+    /// Render a signed Int as its canonical decimal String spelling.
+    /// The operand is an inline scalar; the result is a fresh resident
+    /// molten byte run, identical in byte semantics to a string literal.
+    IntToString,
 }
 
 /// One SSA-like operation. Dependencies are explicit node ids; no Rust
@@ -2190,6 +2194,7 @@ fn canonical_node(node: &Node, function_ids: &BTreeMap<FunctionId, u32>) -> Vec<
         Op::StringIsNumeric => op.push(65),
         Op::PathJoin => op.push(81),
         Op::PathToString => op.push(82),
+        Op::IntToString => op.push(84),
         Op::Range => op.push(83),
     }
     frame(&mut bytes, &op);

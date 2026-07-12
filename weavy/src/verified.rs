@@ -2731,6 +2731,30 @@ impl Verifier<'_> {
                     }
                 }
             }
+            Op::IntToString { dst, src } => {
+                let dst_schema =
+                    self.read_handle(function_id, pc, frame, *dst, AccessRole::Destination)?;
+                self.require_scalar_read(function_id, pc, frame, *src, AccessRole::Source)?;
+                let schema_index = usize::try_from(dst_schema.0).map_err(|_| {
+                    self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::SchemaNotByteComparable { schema: dst_schema },
+                    )
+                })?;
+                if !matches!(
+                    self.contract.schemas[schema_index].payload,
+                    PayloadKind::OpaqueBytes {
+                        byte_comparable: true
+                    }
+                ) {
+                    return Err(self.op(
+                        function_id,
+                        pc,
+                        ProgramDefect::SchemaNotByteComparable { schema: dst_schema },
+                    ));
+                }
+            }
             Op::PathJoin { dst, base, segment } => {
                 let dst_schema =
                     self.read_handle(function_id, pc, frame, *dst, AccessRole::Destination)?;
@@ -4627,7 +4651,8 @@ impl Verifier<'_> {
                     | Op::StringParseInt { .. }
                     | Op::StringStatusIs { .. }
                     | Op::ByteProject { .. }
-                    | Op::PathJoin { .. }
+                    | Op::IntToString { .. }
+                    | Op::PathJoin { .. } => pending.push(pc + 1),
                     | Op::Publish { .. }
                     | Op::ConstF64 { .. }
                     | Op::AddF64 { .. }

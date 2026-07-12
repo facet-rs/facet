@@ -6219,6 +6219,19 @@ fn lower_node(
                 ValueRepresentation::RealizedHandle,
             )
         }
+        Op::IntToString => {
+            require_node_type(node, Type::String)?;
+            require_input_count(node, 1)?;
+            let source = input_value(node, values, 0)?;
+            require_value(node, &source, &Type::Int, ValueRepresentation::Word)?;
+            (
+                vec![WeavyOp::IntToString {
+                    dst,
+                    src: source.region.start().byte_offset(),
+                }],
+                ValueRepresentation::RealizedHandle,
+            )
+        }
         Op::Variant { variant } => {
             lower_variant_node(node, dst_region, dst_region_id, values, *variant)?
         }

@@ -279,6 +279,26 @@ pub(crate) enum ByteProjectFault {
     AllocationFailed,
 }
 
+/// Why an [`Op::IntToString`] could not allocate its resident result value.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum IntToStringFault {
+    AllocationFailed,
+}
+
+impl IntToStringFault {
+    #[cfg_attr(not(feature = "jit"), allow(dead_code))]
+    const OK_STATUS: i64 = 0;
+    #[cfg_attr(not(feature = "jit"), allow(dead_code))]
+    const ALLOCATION_STATUS: i64 = 1;
+
+    #[cfg_attr(not(feature = "jit"), allow(dead_code))]
+    fn status(self) -> i64 {
+        match self {
+            IntToStringFault::AllocationFailed => Self::ALLOCATION_STATUS,
+        }
+    }
+}
+
 /// Why an [`Op::PathJoin`] could not produce a resident relative Path.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub(crate) enum PathJoinFault {
@@ -1510,6 +1530,24 @@ impl MoltenArena {
         Ok(handle)
     }
 
+    fn alloc_string_bytes(&mut self, bytes: &[u8]) -> Result<i64, StringConcatFault> {
+        let handle =
+            task_molten_handle(self.buffers.len()).ok_or(StringConcatFault::AllocationFailed)?;
+        let mut owned = Vec::new();
+        owned
+            .try_reserve_exact(bytes.len())
+            .map_err(|_| StringConcatFault::AllocationFailed)?;
+        owned.extend_from_slice(bytes);
+        self.buffers
+            .try_reserve_exact(1)
+            .map_err(|_| StringConcatFault::AllocationFailed)?;
+        self.buffers.push(MoltenBuffer {
+            bytes: owned,
+            initialized: Vec::new(),
+        });
+        Ok(handle)
+    }
+
     fn split_once_value_bytes(
         &mut self,
         memories: MemoryView<'_>,
@@ -1533,17 +1571,24 @@ impl MoltenArena {
         Ok((StringOpStatus::Ok, Some(left), Some(right)))
     }
 
-    fn alloc_string_bytes(&mut self, bytes: &[u8]) -> Result<i64, StringConcatFault> {
+    /// Render a signed `i64` as its canonical decimal spelling and allocate a
+    /// fresh task-local molten byte run. No operand handle is consulted: the
+    /// scalar is an inline frame word. The only failure is allocation.
+    fn int_to_string_bytes(&mut self, value: i64) -> Result<i64, IntToStringFault> {
+        // The decimal rendering of an i64 fits in at most 20 bytes
+        // (`-9223372036854775808`); format into a stack array then copy.
+        let mut buffer = [0u8; 20];
+        let bytes = write_i64_decimal(&mut buffer, value);
         let handle =
-            task_molten_handle(self.buffers.len()).ok_or(StringConcatFault::AllocationFailed)?;
+            task_molten_handle(self.buffers.len()).ok_or(IntToStringFault::AllocationFailed)?;
         let mut owned = Vec::new();
         owned
             .try_reserve_exact(bytes.len())
-            .map_err(|_| StringConcatFault::AllocationFailed)?;
+            .map_err(|_| IntToStringFault::AllocationFailed)?;
         owned.extend_from_slice(bytes);
         self.buffers
             .try_reserve_exact(1)
-            .map_err(|_| StringConcatFault::AllocationFailed)?;
+            .map_err(|_| IntToStringFault::AllocationFailed)?;
         self.buffers.push(MoltenBuffer {
             bytes: owned,
             initialized: Vec::new(),
@@ -2505,6 +2550,26 @@ pub(crate) unsafe extern "C" fn byte_project_abi(
 }
 
 #[cfg_attr(not(feature = "jit"), allow(dead_code))]
+pub(crate) unsafe extern "C" fn int_to_string_abi(
+    arena: *mut core::ffi::c_void,
+    value: i64,
+    out_handle: *mut i64,
+) -> i64 {
+    if out_handle.is_null() || arena.is_null() {
+        return IntToStringFault::ALLOCATION_STATUS;
+    }
+    unsafe { *out_handle = ARRAY_POISON_HANDLE };
+    let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
+    match arena.int_to_string_bytes(value) {
+        Ok(handle) => {
+            unsafe { *out_handle = handle };
+            IntToStringFault::OK_STATUS
+        }
+        Err(fault) => fault.status(),
+    }
+}
+
+#[cfg_attr(not(feature = "jit"), allow(dead_code))]
 pub(crate) unsafe extern "C" fn string_parse_int_abi(
     store: *const RawValueMemory,
     store_len: usize,
@@ -2893,6 +2958,14 @@ pub enum Op {
     StringParseInt { dst: u32, status: u32, text: u32 },
     /// Test whether a resident string is a non-empty run of ASCII digits.
     StringIsNumeric { dst: u32, text: u32 },
+    /// Render a signed `i64` as its canonical decimal String spelling.
+    ///
+    /// `frame[src]` is an inline scalar; its decimal rendering is copied into a
+    /// new task-local molten buffer whose handle is written to `frame[dst]`. The
+    /// result is itself a resident value handle with identical byte semantics
+    /// to an interned string literal. An allocation the arena cannot satisfy
+    /// faults rather than fabricating a handle or emitting an empty string.
+    IntToString { dst: u32, src: u32 },
     /// Compare a string-operation status with one closed status word.
     StringStatusIs {
         dst: u32,
@@ -3847,6 +3920,23 @@ impl Task {
                     write_i64_at(&mut self.arena, base + dst as usize, handle);
                     self.frames.last_mut().expect("frame").pc += 1;
                 }
+                Op::IntToString { dst, src } => {
+                    let value = read_i64_at(&self.arena, base + src as usize);
+                    let handle = match self.molten.int_to_string_bytes(value) {
+                        Ok(handle) => handle,
+                        Err(fault) => {
+                            let Some(verified) = verified else {
+                                panic!("legacy raw IntToString allocation failed");
+                            };
+                            return Err(int_to_string_fault(
+                                fault_site(verified, fn_id, pc)?,
+                                fault,
+                            ));
+                        }
+                    };
+                    write_i64_at(&mut self.arena, base + dst as usize, handle);
+                    self.frames.last_mut().expect("frame").pc += 1;
+                }
                 Op::PathJoin {
                     dst,
                     base: join_base,
@@ -4618,6 +4708,35 @@ fn read_i64_at(arena: &[u8], at: usize) -> i64 {
 fn write_i64_at(arena: &mut [u8], at: usize, value: i64) {
     arena[at..at + 8].copy_from_slice(&value.to_le_bytes());
 }
+/// Write the canonical decimal spelling of `value` into the front of `buffer`
+/// and return the slice written. No external allocation; the buffer must hold
+/// at least 20 bytes (the length of `i64::MIN`).
+fn write_i64_decimal<'b>(buffer: &'b mut [u8; 20], value: i64) -> &'b [u8] {
+    if value == 0 {
+        buffer[0] = b'0';
+        return &buffer[..1];
+    }
+    let negative = value < 0;
+    // Decompose into magnitude without overflowing on i64::MIN: render the
+    // absolute value via repeated unsigned division of the wrapped magnitude.
+    let magnitude = if negative {
+        (value as u64).wrapping_neg() as u64
+    } else {
+        value as u64
+    };
+    let mut index = buffer.len();
+    let mut remaining = magnitude;
+    while remaining != 0 {
+        index -= 1;
+        buffer[index] = b'0' + u8::try_from(remaining % 10).expect("digit fits u8");
+        remaining /= 10;
+    }
+    if negative {
+        index -= 1;
+        buffer[index] = b'-';
+    }
+    &buffer[index..]
+}
 
 /// Resolve a handle to its payload. Negative handles name molten values: the
 /// task-local and externally lent namespaces are disjoint. Nonnegative handles
@@ -4999,6 +5118,12 @@ fn byte_project_fault(site: FaultSite, fault: ByteProjectFault) -> TaskFault {
             TaskFault::UnresidentByteProjectSource { site, handle }
         }
         ByteProjectFault::AllocationFailed => TaskFault::ByteProjectionAllocationFailed { site },
+    }
+}
+
+fn int_to_string_fault(site: FaultSite, fault: IntToStringFault) -> TaskFault {
+    match fault {
+        IntToStringFault::AllocationFailed => TaskFault::IntToStringAllocationFailed { site },
     }
 }
 

@@ -2452,6 +2452,7 @@ fn task_fault_site(fault: &TaskFault) -> Option<&FaultSite> {
         | TaskFault::StringConcatAllocationFailed { site }
         | TaskFault::UnresidentByteProjectSource { site, .. }
         | TaskFault::ByteProjectionAllocationFailed { site }
+        | TaskFault::IntToStringAllocationFailed { site }
         | TaskFault::UnresidentPathJoinOperand { site, .. }
         | TaskFault::PathJoinAllocationFailed { site }
         | TaskFault::PublicationAllocationFailed { site }
@@ -2505,8 +2506,8 @@ fn result_shape_attribution(
         | TaskFault::UnresidentCompareValueBytes { .. }
         | TaskFault::UnresidentStringConcatOperand { .. }
         | TaskFault::StringConcatAllocationFailed { .. }
-        | TaskFault::UnresidentByteProjectSource { .. }
         | TaskFault::ByteProjectionAllocationFailed { .. }
+        | TaskFault::IntToStringAllocationFailed { .. }
         | TaskFault::UnresidentPathJoinOperand { .. }
         | TaskFault::PathJoinAllocationFailed { .. }
         | TaskFault::PublicationAllocationFailed { .. }

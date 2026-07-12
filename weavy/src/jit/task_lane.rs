@@ -187,6 +187,11 @@ struct Ctx {
         i64,
         *mut i64,
     ) -> i64,
+    int_to_string: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        i64,
+        *mut i64,
+    ) -> i64,
     path_join: unsafe extern "C" fn(
         *const crate::task::RawValueMemory,
         usize,
@@ -223,6 +228,7 @@ const EXIT_BYTE_PROJECT_ALLOCATION: i64 = 19;
 const EXIT_PATH_JOIN_BASE_UNRESIDENT: i64 = 20;
 const EXIT_PATH_JOIN_SEGMENT_UNRESIDENT: i64 = 21;
 const EXIT_PATH_JOIN_ALLOCATION: i64 = 22;
+const EXIT_INT_TO_STRING_ALLOCATION: i64 = 23;
 
 /// Whether the task JIT lane is usable on this target.
 pub fn available() -> bool {
@@ -579,6 +585,10 @@ fn compile_fn(
                 task_stencils::STRING_STATUS_IS,
                 Continuations::Fallthrough(task_stencils::STRING_STATUS_IS_CONT),
             ),
+            Op::IntToString { .. } => (
+                task_stencils::INT_TO_STRING,
+                Continuations::Fallthrough(task_stencils::INT_TO_STRING_CONT),
+            ),
             Op::ByteProject { .. } => (
                 task_stencils::BYTE_PROJECT,
                 Continuations::Fallthrough(task_stencils::BYTE_PROJECT_CONT),
@@ -719,6 +729,7 @@ fn compile_fn(
             Op::OrderedLen { .. } | Op::OrderedStatusIs { .. } => 4,
             Op::ArrayStoreWord { .. } | Op::LoadArray { .. } | Op::ArrayStore { .. } => 6,
             Op::LoadArrayWord { .. } => 5,
+            Op::IntToString { .. } => 3,
             Op::LoadArrayLen { .. } => 4,
             Op::ArrayStatusIs { .. } => 4,
             Op::CompareValueBytes { .. } => 4,
@@ -1322,6 +1333,12 @@ fn compile_fn(
                 }
                 layout.push_prog_word(root.prog_index, i as u64);
             }
+            Op::IntToString { dst, src } => {
+                for v in [dst, src] {
+                    layout.push_prog_word(root.prog_index, u64::from(*v));
+                }
+                layout.push_prog_word(root.prog_index, i as u64);
+            }
             Op::PathJoin { dst, base, segment } => {
                 for v in [dst, base, segment] {
                     layout.push_prog_word(root.prog_index, u64::from(*v));
@@ -1657,6 +1674,7 @@ impl JitTask {
                 ordered_iterate_row: crate::task::ordered_iterate_row_abi,
                 ordered_len: crate::task::ordered_len_abi,
                 string_concat: crate::task::string_concat_abi,
+                int_to_string: crate::task::int_to_string_abi,
                 string_contains: crate::task::string_contains_abi,
                 string_is_numeric: crate::task::string_is_numeric_abi,
                 string_split_once: crate::task::string_split_once_abi,
@@ -1865,6 +1883,15 @@ impl JitTask {
                     };
                     let pc = usize::try_from(index_scratch).expect("pc");
                     return Err(TaskFault::ByteProjectionAllocationFailed {
+                        site: fault_site(verified, frame.fn_id, pc)?,
+                    });
+                }
+                EXIT_INT_TO_STRING_ALLOCATION => {
+                    let Some(verified) = verified else {
+                        panic!("legacy raw IntToString allocation failed");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("pc");
+                    return Err(TaskFault::IntToStringAllocationFailed {
                         site: fault_site(verified, frame.fn_id, pc)?,
                     });
                 }
