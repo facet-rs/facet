@@ -1691,6 +1691,156 @@ pub(crate) unsafe extern "C" fn array_new_abi(
     }
 }
 
+/// Assemble a task-lifetime boxed capture environment from `count`
+/// `(src_off, box_off, field_len)` triples at `fields`, copying frame bytes into
+/// a fresh `total_len` box, then allocate it and write the opaque handle to
+/// `out_handle`. Returns `0` on success and `1` on allocation failure or a
+/// malformed field. Both lanes reach the same env arena through this.
+///
+/// # Safety
+/// `arena` must point to a live [`MoltenArena`]; `out_handle` must be non-null,
+/// writable, and not alias the arena; `frame` must be readable at each triple's
+/// `src_off..src_off+field_len`; `fields` must be readable for `count * 3` words.
+pub(crate) unsafe extern "C" fn env_alloc_abi(
+    arena: *mut core::ffi::c_void,
+    frame: *const u8,
+    fields: *const u64,
+    count: usize,
+    total_len: usize,
+    out_handle: *mut i64,
+) -> i64 {
+    if out_handle.is_null() {
+        return 1;
+    }
+    unsafe { *out_handle = 0 };
+    if arena.is_null() {
+        return 1;
+    }
+    let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
+    let mut bytes = vec![0u8; total_len];
+    for index in 0..count {
+        let triple = unsafe { fields.add(index * 3) };
+        let src = unsafe { *triple } as usize;
+        let box_off = unsafe { *triple.add(1) } as usize;
+        let len = unsafe { *triple.add(2) } as usize;
+        if box_off.saturating_add(len) > total_len {
+            return 1;
+        }
+        unsafe {
+            core::ptr::copy_nonoverlapping(
+                frame.add(src),
+                bytes.as_mut_ptr().add(box_off),
+                len,
+            );
+        }
+    }
+    match arena.alloc_env(bytes) {
+        Ok(handle) => {
+            unsafe { *out_handle = handle };
+            0
+        }
+        Err(_) => 1,
+    }
+}
+
+/// Resolve a boxed-environment handle to its bytes. Writes the byte length to
+/// `out_len` and a status to `out_status` (`0` ok, `1` stale/cross-task, `2`
+/// unresident) and returns the payload pointer (null on fault). Shared by both
+/// lanes so a fabricated handle fails closed identically.
+///
+/// # Safety
+/// `arena` must point to a live [`MoltenArena`]; `out_len`/`out_status` must be
+/// non-null, writable, and must not alias the arena.
+pub(crate) unsafe extern "C" fn env_bytes_abi(
+    arena: *const core::ffi::c_void,
+    handle: i64,
+    out_len: *mut usize,
+    out_status: *mut i64,
+) -> *const u8 {
+    if out_status.is_null() {
+        return core::ptr::null();
+    }
+    if arena.is_null() || out_len.is_null() {
+        unsafe { *out_status = 2 };
+        return core::ptr::null();
+    }
+    let arena = unsafe { &*arena.cast::<MoltenArena>() };
+    match arena.env_bytes(handle) {
+        Ok(bytes) => {
+            unsafe {
+                *out_len = bytes.len();
+                *out_status = 0;
+            }
+            bytes.as_ptr()
+        }
+        Err(EnvBoxFault::Stale) => {
+            unsafe {
+                *out_len = 0;
+                *out_status = 1;
+            }
+            core::ptr::null()
+        }
+        Err(_) => {
+            unsafe {
+                *out_len = 0;
+                *out_status = 2;
+            }
+            core::ptr::null()
+        }
+    }
+}
+
+/// Materialize a boxed closure's trailing capture entries into a freshly
+/// allocated callee frame, shared by the interpreter and native call drivers so
+/// both lanes use one env-arena and contract semantics. The captures beyond
+/// `arg_count` come from the environment box named by the closure value's
+/// environment word at `env_word`; a fabricated, stale, or short box fails
+/// closed with the same [`TaskFault::Environment`] and site.
+pub(crate) fn unbox_call_environment(
+    arena: &mut [u8],
+    molten: &MoltenArena,
+    verified: &VerifiedProgram,
+    callee: FnId,
+    env_word: usize,
+    callee_base: usize,
+    arg_count: usize,
+    fn_id: FnId,
+    pc: usize,
+) -> Result<(), TaskFault> {
+    let callee_contract = &verified.contract().functions[callee.0 as usize];
+    if callee_contract.environment.is_empty() || arg_count >= callee_contract.entries.len() {
+        return Ok(());
+    }
+    let handle = read_i64_at(arena, env_word);
+    let mut writes: Vec<(usize, Vec<u8>)> = Vec::new();
+    {
+        let bytes = molten
+            .env_bytes(handle)
+            .map_err(|fault| environment_fault(verified, fn_id, pc, fault, handle))?;
+        for (index, field) in callee_contract.environment.iter().enumerate() {
+            let entry = arg_count + index;
+            let region_id = callee_contract.entries[entry];
+            let region = &callee_contract.frame.regions[region_id.0 as usize];
+            let off = field.offset as usize;
+            let len = field.shape.words.len() * 8;
+            if off + len > bytes.len() {
+                return Err(environment_fault(
+                    verified,
+                    fn_id,
+                    pc,
+                    EnvBoxFault::OutOfRange,
+                    handle,
+                ));
+            }
+            writes.push((callee_base + region.offset as usize, bytes[off..off + len].to_vec()));
+        }
+    }
+    for (dst, data) in writes {
+        arena[dst..dst + data.len()].copy_from_slice(&data);
+    }
+    Ok(())
+}
+
 /// # Safety
 /// `arena` must point to a live [`MoltenArena`] for the duration of the call,
 /// and no other mutable or shared reference may concurrently access that arena.
@@ -3441,48 +3591,23 @@ impl Task {
                         self.arena.copy_within(src..src + copy.size as usize, dst);
                     }
                     // A closure value typed by its semantic signature carries
-                    // captures in a boxed environment. When the verified call
+                    // captures in a boxed environment: when the verified call
                     // arguments did not fill every callee entry, the remaining
                     // capture entries are materialized from the environment box
-                    // named by the closure value's environment word.
+                    // named by the closure value's environment word. Shared with
+                    // the native call driver so both lanes agree.
                     if let Some(verified) = verified {
-                        let callee_contract = &verified.contract().functions[callee.0 as usize];
-                        if !callee_contract.environment.is_empty()
-                            && args.len() < callee_contract.entries.len()
-                        {
-                            let handle = read_i64_at(&self.arena, environment_word);
-                            let mut writes: Vec<(usize, Vec<u8>)> = Vec::new();
-                            {
-                                let bytes = self.molten.env_bytes(handle).map_err(|fault| {
-                                    environment_fault(verified, fn_id, pc, fault, handle)
-                                })?;
-                                for (index, field) in callee_contract.environment.iter().enumerate()
-                                {
-                                    let entry = args.len() + index;
-                                    let region_id = callee_contract.entries[entry];
-                                    let region =
-                                        &callee_contract.frame.regions[region_id.0 as usize];
-                                    let off = field.offset as usize;
-                                    let len = field.shape.words.len() * 8;
-                                    if off + len > bytes.len() {
-                                        return Err(environment_fault(
-                                            verified,
-                                            fn_id,
-                                            pc,
-                                            EnvBoxFault::OutOfRange,
-                                            handle,
-                                        ));
-                                    }
-                                    writes.push((
-                                        callee_frame + region.offset as usize,
-                                        bytes[off..off + len].to_vec(),
-                                    ));
-                                }
-                            }
-                            for (dst, data) in writes {
-                                self.arena[dst..dst + data.len()].copy_from_slice(&data);
-                            }
-                        }
+                        unbox_call_environment(
+                            &mut self.arena,
+                            &self.molten,
+                            verified,
+                            callee,
+                            environment_word,
+                            callee_frame,
+                            args.len(),
+                            fn_id,
+                            pc,
+                        )?;
                     }
                     self.frames.push(FrameRecord {
                         fn_id: callee,

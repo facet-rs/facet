@@ -4091,6 +4091,30 @@ fn rung_052_functions_are_first_class_arguments_and_results() {
         assert!(lane.checks.iter().all(|check| check.passed));
         assert_eq!(lane.counters.pure_host_calls, 0);
     }
+
+    // Certificate: the boxed-environment closure executes natively through the
+    // JIT by default and on the interpreter under WEAVY_JIT=0 — never a
+    // per-program lane fallback — and both lanes produce identical checks.
+    let expected_lane = if std::env::var("WEAVY_JIT").as_deref() == Ok("0") {
+        vix::runtime::ExecutionLaneFact::Interpreter
+    } else {
+        vix::runtime::ExecutionLaneFact::Native
+    };
+    for lane in [&report.plain, &report.chaos] {
+        let selections = lane
+            .events
+            .iter()
+            .filter_map(|event| match event.kind {
+                EventKind::ExecutionLane { facts, .. } => Some(facts.selected),
+                _ => None,
+            })
+            .collect::<Vec<_>>();
+        assert!(!selections.is_empty(), "rung 052 records an execution lane");
+        assert!(
+            selections.iter().all(|selected| *selected == expected_lane),
+            "rung 052 selects {expected_lane:?}, got {selections:?}",
+        );
+    }
 }
 
 #[test]

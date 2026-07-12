@@ -203,6 +203,24 @@ pub struct Ctx {
     /// function below so both lanes share one log semantics.
     publications: *mut core::ffi::c_void,
     publish: unsafe extern "C" fn(*mut core::ffi::c_void, u64, i64, *const u8, usize) -> i64,
+    /// Assemble a task-lifetime boxed capture environment: for each of `count`
+    /// `(src_off, box_off, field_len)` triples at the fields pointer, copy the
+    /// frame bytes into a fresh `total_len` box, allocate it, and write the
+    /// opaque handle to the out-param; returns 0 on success, 1 on allocation
+    /// failure. Reaches the same env arena as the interpreter.
+    env_alloc: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        *const u8,
+        *const u64,
+        usize,
+        usize,
+        *mut i64,
+    ) -> i64,
+    /// Resolve a boxed-environment handle to its bytes: writes the length and a
+    /// status (0 ok, 1 stale/cross-task, 2 unresident) and returns the payload
+    /// pointer (null on fault).
+    env_bytes:
+        unsafe extern "C" fn(*const core::ffi::c_void, i64, *mut usize, *mut i64) -> *const u8,
 }
 
 /// Raw ABI descriptor; MUST match `crate::task::RawValueMemory`.
@@ -235,6 +253,10 @@ const EXIT_BYTE_PROJECT_ALLOCATION: i64 = 19;
 const EXIT_PATH_JOIN_BASE_UNRESIDENT: i64 = 20;
 const EXIT_PATH_JOIN_SEGMENT_UNRESIDENT: i64 = 21;
 const EXIT_PATH_JOIN_ALLOCATION: i64 = 22;
+const EXIT_ENV_UNRESIDENT: i64 = 23;
+const EXIT_ENV_STALE: i64 = 24;
+const EXIT_ENV_OUT_OF_RANGE: i64 = 25;
+const EXIT_ENV_ALLOCATION: i64 = 26;
 
 const LENT_MOLTEN_MIN: i64 = i64::MIN / 2;
 
@@ -1468,6 +1490,81 @@ pub unsafe extern "C" fn weavy_task_trace(cx: *mut Ctx) {
     *c.resume = continuation;
     *c.await_index = id;
     *c.exit = EXIT_TRACE_MARK;
+}
+
+/// Construct a boxed capture environment — immediates:
+/// `[dst, pc, total_len, count, (src_off, box_off, field_len) * count]`. The
+/// captures are copied from the frame into a fresh task-lifetime box; the opaque
+/// handle lands in `dst`. Allocation failure exits with the shared env fault.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_env_box(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let p = c.prog;
+    let dst = *p;
+    let pc = *p.add(1);
+    let total_len = *p.add(2) as usize;
+    let count = *p.add(3) as usize;
+    let fields = p.add(4);
+    let mut handle = 0i64;
+    let status = (c.env_alloc)(c.molten, c.frame, fields, count, total_len, &raw mut handle);
+    if status != 0 {
+        *c.await_index = pc;
+        *c.resume = 0;
+        *c.exit = EXIT_ENV_ALLOCATION;
+        return;
+    }
+    write_i64(c.frame, dst, handle);
+    c.prog = p.add(4 + count * 3);
+    cont!(cx);
+}
+
+/// Project one capture out of a boxed environment — immediates:
+/// `[dst, env_off, box_off, field_len, pc]`. The environment handle at
+/// `env_off` is resolved through the shared arena; a stale/cross-task,
+/// unresident, or short box fails closed with the matching env fault, otherwise
+/// `field_len` bytes at `box_off` are copied into `dst`.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_env_load(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let p = c.prog;
+    let dst = *p;
+    let env_off = *p.add(1);
+    let box_off = *p.add(2) as usize;
+    let field_len = *p.add(3) as usize;
+    let pc = *p.add(4);
+    let handle = read_i64(c.frame, env_off);
+    let mut len = 0usize;
+    let mut status = 0i64;
+    let ptr = (c.env_bytes)(
+        c.molten as *const core::ffi::c_void,
+        handle,
+        &raw mut len,
+        &raw mut status,
+    );
+    if status != 0 {
+        *c.await_index = pc;
+        *c.resume = handle as u64;
+        *c.exit = if status == 1 {
+            EXIT_ENV_STALE
+        } else {
+            EXIT_ENV_UNRESIDENT
+        };
+        return;
+    }
+    if box_off.saturating_add(field_len) > len {
+        *c.await_index = pc;
+        *c.resume = handle as u64;
+        *c.exit = EXIT_ENV_OUT_OF_RANGE;
+        return;
+    }
+    let mut index = 0usize;
+    while index < field_len {
+        let byte = *ptr.add(box_off + index);
+        c.frame.add(dst as usize + index).write(byte);
+        index += 1;
+    }
+    c.prog = p.add(5);
+    cont!(cx);
 }
 
 /// End of chain — reaching this is a lowering bug (RET is mandatory);
