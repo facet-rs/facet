@@ -11,7 +11,7 @@ use crate::lowering::{
 use crate::runtime::{
     ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog, FailureContext,
     FailureValue, FramedNode, GeneratorOutcome, IslandInputs, Location, MachineError, MemoVerdict,
-    Runtime, SchemaId, TaskState, ValueId, WireDemand,
+    Runtime, SchemaId, SnapshotCapture, TaskState, ValueId, WireDemand,
 };
 use crate::vir::{
     DescribedWire, FunctionId, Island, IslandId, NodeId, Op, PartitionedRecipe, PartitionedValue,
@@ -293,6 +293,9 @@ pub struct CheckRun {
     /// verdict and stays byte-identical across the plain and chaos lanes even
     /// though the observed counter differs between them.
     pub trace_failure: Option<TraceFailure>,
+    /// The structural rendering captured by an `expect_snapshot` value check.
+    /// Absent for every other check kind. Byte-identical across lanes.
+    pub snapshot: Option<SnapshotCapture>,
 }
 
 /// Why a trace check went red: the descriptor and the value observed in the
@@ -426,6 +429,7 @@ impl TraceSnapshot {
             failure: None,
             failure_context: None,
             trace_failure: (!passed).then_some(TraceFailure { check, observed }),
+            snapshot: None,
         }
     }
 }
@@ -592,8 +596,12 @@ fn prepare_source_with_cache(
             cache.get_or_lower(generator)?;
         }
         for site in &partitioned.sites {
-            if let PartitionedRecipe::Value { island } = &site.recipe {
-                cache.get_or_lower(&partitioned.islands[*island])?;
+            match &site.recipe {
+                PartitionedRecipe::Value { island }
+                | PartitionedRecipe::Snapshot { island, .. } => {
+                    cache.get_or_lower(&partitioned.islands[*island])?;
+                }
+                PartitionedRecipe::Trace(_) => {}
             }
         }
     }
@@ -716,6 +724,75 @@ fn evaluate_value_site(
         failure: evaluation.failure,
         failure_context: evaluation.failure_context,
         trace_failure: None,
+        snapshot: None,
+    })
+}
+
+/// Evaluate one `expect_snapshot` site: demand its value-publishing island, then
+/// render the published value structurally through the store, keyed by the stable
+/// snapshot name. The value publication is an ordinary demand, so plain/chaos and
+/// native/interpreter lanes agree on the same identity and the same rendering.
+#[allow(clippy::too_many_arguments)]
+fn evaluate_snapshot_site(
+    runtime: &mut Runtime<EventLog>,
+    cache: &mut LoweringCache,
+    context: &SiteContext<'_>,
+    island: &crate::vir::Island,
+    site: u32,
+    name: &str,
+    chaos: ChaosPolicy,
+) -> Result<CheckRun, RunError> {
+    cache.get_or_lower(island)?;
+    let lowered = cache
+        .lowered(island)
+        .expect("snapshot island is lowered");
+    let output_type = lowered.output_type.clone();
+    let attribution = attribution_for(island);
+    let provenance = ProvenanceKey::site(site);
+    let location = Location::for_test_provenance(context.test_name, site, &provenance.dynamic_keys);
+    let arguments = island
+        .value_inputs
+        .iter()
+        .map(|value| {
+            context
+                .published_values
+                .get(value)
+                .cloned()
+                .expect("partitioned value input was published")
+        })
+        .collect::<Vec<_>>();
+    let wires_backing = flat_wires(
+        cache,
+        context.wire_lookup,
+        &island.wire_inputs,
+        context.test_name,
+    );
+    let wires = wires_backing.demands();
+    let evaluation: Evaluation = runtime.evaluate(
+        island.id,
+        &location,
+        lowered,
+        &attribution,
+        IslandInputs {
+            arguments: &arguments,
+            wires: &wires,
+        },
+        chaos,
+    )?;
+    let rendered = runtime.render_snapshot(evaluation.handle, &output_type)?;
+    let argument_identities = arguments.iter().map(|argument| argument.identity).collect();
+    Ok(CheckRun {
+        provenance,
+        identity: Some(evaluation.identity),
+        arguments: argument_identities,
+        passed: evaluation.passed,
+        failure: evaluation.failure,
+        failure_context: evaluation.failure_context,
+        trace_failure: None,
+        snapshot: Some(SnapshotCapture {
+            name: name.to_owned(),
+            rendered,
+        }),
     })
 }
 
@@ -887,6 +964,22 @@ fn run_lane(
                                 ChaosPolicy::default(),
                             )?);
                         }
+                        PartitionedRecipe::Snapshot { island, name } => {
+                            evaluated_islands.push(*island);
+                            checks.push(evaluate_snapshot_site(
+                                &mut runtime,
+                                cache,
+                                &SiteContext {
+                                    test_name: &partitioned.name,
+                                    wire_lookup: &wire_lookup,
+                                    published_values: &published_values,
+                                },
+                                &partitioned.islands[*island],
+                                site,
+                                name,
+                                ChaosPolicy::default(),
+                            )?);
+                        }
                         PartitionedRecipe::Trace(trace) => {
                             deferred_traces.push((ProvenanceKey::site(site), trace.clone()));
                         }
@@ -912,6 +1005,25 @@ fn run_lane(
                                 },
                                 &partitioned.islands[*island],
                                 site,
+                                ChaosPolicy {
+                                    kill_first_running_task: kill_available,
+                                },
+                            )?);
+                            kill_available = false;
+                        }
+                        PartitionedRecipe::Snapshot { island, name } => {
+                            evaluated_islands.push(*island);
+                            checks.push(evaluate_snapshot_site(
+                                &mut runtime,
+                                cache,
+                                &SiteContext {
+                                    test_name: &partitioned.name,
+                                    wire_lookup: &wire_lookup,
+                                    published_values: &published_values,
+                                },
+                                &partitioned.islands[*island],
+                                site,
+                                name,
                                 ChaosPolicy {
                                     kill_first_running_task: kill_available,
                                 },

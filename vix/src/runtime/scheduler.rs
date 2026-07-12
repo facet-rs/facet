@@ -1,4 +1,5 @@
 use std::collections::BTreeMap;
+use std::fmt::Write as _;
 use std::ops::Deref;
 
 use weavy::exec::{
@@ -1776,6 +1777,29 @@ impl<S: EventSink> Runtime<S> {
         &self.store
     }
 
+    /// Render a published snapshot value structurally from its frozen store tree.
+    /// The walk is type-directed and resolves string and aggregate references
+    /// through the store, so the text is a stable harness artifact — byte-
+    /// identical across the plain and chaos lanes and the native and interpreter
+    /// execution lanes.
+    pub(crate) fn render_snapshot(
+        &self,
+        handle: Handle,
+        ty: &Type,
+    ) -> Result<String, Box<MachineError>> {
+        let frozen = self
+            .store
+            .entry(handle)
+            .and_then(StoreEntry::frozen)
+            .ok_or_else(|| {
+                snapshot_render_fault("published snapshot value has no frozen structure")
+            })?;
+        let mut out = String::new();
+        render_frozen(&self.store, ty, frozen, 0, &mut out)
+            .map_err(|detail| snapshot_render_fault(&detail))?;
+        Ok(out)
+    }
+
     #[must_use]
     pub fn sink(&self) -> &S {
         &self.sink
@@ -1785,6 +1809,236 @@ impl<S: EventSink> Runtime<S> {
     pub fn into_sink(self) -> S {
         self.sink
     }
+}
+
+fn snapshot_render_fault(detail: &str) -> Box<MachineError> {
+    Box::new(MachineError::runtime(
+        MachineOperation::Result,
+        RuntimeFault::SnapshotRender {
+            detail: detail.to_owned(),
+        },
+        None,
+        None,
+    ))
+}
+
+/// Type-directed structural rendering of a published snapshot value. It mirrors
+/// the structure of [`realize_structural_node`] — walking a record/tuple/enum/
+/// collection guided by the VIR type — but emits stable text instead of a store
+/// tree. String and aggregate references are resolved through the store. This is
+/// never a `Debug` impl: the shape and field names come from the type, not from
+/// any Rust formatting of a machine value.
+fn render_frozen(
+    store: &Store,
+    ty: &Type,
+    frozen: &FrozenValue,
+    indent: usize,
+    out: &mut String,
+) -> Result<(), String> {
+    // An aggregate value may be published as a reference to a frozen tree stored
+    // by an earlier publication; follow it before matching on structure.
+    if let FrozenValue::Reference(id) = frozen
+        && matches!(
+            ty,
+            Type::Array(_)
+                | Type::Set(_)
+                | Type::Map { .. }
+                | Type::Record(_)
+                | Type::Enum(_)
+                | Type::Tuple(_)
+        )
+    {
+        let referent = deref_frozen(store, *id)?;
+        return render_frozen(store, ty, referent, indent, out);
+    }
+    match ty {
+        Type::Bool => {
+            let bytes = leaf_bytes(store, frozen)?;
+            let word = bytes.first().copied().unwrap_or(0);
+            out.push_str(if word != 0 { "true" } else { "false" });
+        }
+        Type::Int => {
+            let bytes = leaf_bytes(store, frozen)?;
+            let word = i64::from_le_bytes(
+                bytes
+                    .get(..8)
+                    .ok_or_else(|| "snapshot Int is not a machine word".to_owned())?
+                    .try_into()
+                    .expect("eight bytes"),
+            );
+            let _ = write!(out, "{word}");
+        }
+        Type::String | Type::Path => {
+            let bytes = leaf_bytes(store, frozen)?;
+            let text = core::str::from_utf8(&bytes)
+                .map_err(|_| "snapshot string is not utf-8".to_owned())?;
+            let _ = write!(out, "{text:?}");
+        }
+        Type::Record(record) => {
+            let FrozenValue::Product(fields) = frozen else {
+                return Err(render_mismatch(ty));
+            };
+            if fields.len() != record.fields.len() {
+                return Err(render_mismatch(ty));
+            }
+            let _ = write!(out, "{} {{", record.name);
+            out.push('\n');
+            for (field, value) in record.fields.iter().zip(fields) {
+                push_indent(out, indent + 1);
+                let _ = write!(out, "{}: ", field.name);
+                render_frozen(store, &field.ty, value, indent + 1, out)?;
+                out.push_str(",\n");
+            }
+            push_indent(out, indent);
+            out.push('}');
+        }
+        Type::Tuple(elements) => {
+            let FrozenValue::Product(fields) = frozen else {
+                return Err(render_mismatch(ty));
+            };
+            if fields.len() != elements.len() {
+                return Err(render_mismatch(ty));
+            }
+            out.push('(');
+            for (index, (element, value)) in elements.iter().zip(fields).enumerate() {
+                if index > 0 {
+                    out.push_str(", ");
+                }
+                render_frozen(store, element, value, indent, out)?;
+            }
+            out.push(')');
+        }
+        Type::Enum(enumeration) => {
+            let FrozenValue::Variant { tag, fields } = frozen else {
+                return Err(render_mismatch(ty));
+            };
+            let variant = enumeration
+                .variants
+                .get(*tag as usize)
+                .ok_or_else(|| render_mismatch(ty))?;
+            out.push_str(&variant.name);
+            match &variant.payload {
+                VariantPayload::Unit => {}
+                VariantPayload::Tuple(elements) => {
+                    out.push('(');
+                    for (index, (element, value)) in elements.iter().zip(fields).enumerate() {
+                        if index > 0 {
+                            out.push_str(", ");
+                        }
+                        render_frozen(store, element, value, indent, out)?;
+                    }
+                    out.push(')');
+                }
+                VariantPayload::Record(record_fields) => {
+                    out.push_str(" {\n");
+                    for (field, value) in record_fields.iter().zip(fields) {
+                        push_indent(out, indent + 1);
+                        let _ = write!(out, "{}: ", field.name);
+                        render_frozen(store, &field.ty, value, indent + 1, out)?;
+                        out.push_str(",\n");
+                    }
+                    push_indent(out, indent);
+                    out.push('}');
+                }
+            }
+        }
+        Type::Array(element) => {
+            let FrozenValue::DenseArray(elements) = frozen else {
+                return Err(render_mismatch(ty));
+            };
+            render_sequence(store, element, elements, indent, out)?;
+        }
+        Type::Set(element) => {
+            let FrozenValue::OrderedSet(elements) = frozen else {
+                return Err(render_mismatch(ty));
+            };
+            render_sequence(store, element, elements, indent, out)?;
+        }
+        Type::Map { key, value } => {
+            let FrozenValue::OrderedMap(rows) = frozen else {
+                return Err(render_mismatch(ty));
+            };
+            if rows.is_empty() {
+                out.push_str("{}");
+            } else {
+                out.push_str("{\n");
+                for (row_key, row_value) in rows {
+                    push_indent(out, indent + 1);
+                    render_frozen(store, key, row_key, indent + 1, out)?;
+                    out.push_str(": ");
+                    render_frozen(store, value, row_value, indent + 1, out)?;
+                    out.push_str(",\n");
+                }
+                push_indent(out, indent);
+                out.push('}');
+            }
+        }
+        Type::Check | Type::StreamCheck | Type::Stream { .. } | Type::Order(_) | Type::Function { .. } => {
+            return Err(render_mismatch(ty));
+        }
+    }
+    Ok(())
+}
+
+fn render_sequence(
+    store: &Store,
+    element: &Type,
+    elements: &[FrozenValue],
+    indent: usize,
+    out: &mut String,
+) -> Result<(), String> {
+    if elements.is_empty() {
+        out.push_str("[]");
+        return Ok(());
+    }
+    out.push_str("[\n");
+    for value in elements {
+        push_indent(out, indent + 1);
+        render_frozen(store, element, value, indent + 1, out)?;
+        out.push_str(",\n");
+    }
+    push_indent(out, indent);
+    out.push(']');
+    Ok(())
+}
+
+/// Resolve a leaf value to its byte payload: inline scalar bytes, opaque molten
+/// bytes, or a store reference's resident bytes (a string/path constant).
+fn leaf_bytes(store: &Store, frozen: &FrozenValue) -> Result<Vec<u8>, String> {
+    match frozen {
+        FrozenValue::Inline(bytes) | FrozenValue::Opaque(bytes) => Ok(bytes.clone()),
+        FrozenValue::Reference(id) => {
+            let handle = store
+                .handle_for_identity(*id)
+                .ok_or_else(|| "snapshot reference is not resident in the store".to_owned())?;
+            store
+                .entry(handle)
+                .and_then(StoreEntry::resident_bytes)
+                .map(<[u8]>::to_vec)
+                .ok_or_else(|| "snapshot reference has no resident bytes".to_owned())
+        }
+        _ => Err("snapshot leaf is not a byte value".to_owned()),
+    }
+}
+
+fn deref_frozen(store: &Store, id: ValueId) -> Result<&FrozenValue, String> {
+    let handle = store
+        .handle_for_identity(id)
+        .ok_or_else(|| "snapshot reference is not resident in the store".to_owned())?;
+    store
+        .entry(handle)
+        .and_then(StoreEntry::frozen)
+        .ok_or_else(|| "snapshot reference has no frozen structure".to_owned())
+}
+
+fn push_indent(out: &mut String, indent: usize) {
+    for _ in 0..indent {
+        out.push_str("    ");
+    }
+}
+
+fn render_mismatch(ty: &Type) -> String {
+    format!("snapshot value shape does not match type {}", ty.name())
 }
 
 struct RealizedValue {

@@ -67,6 +67,7 @@ const RUNG_048: &str = include_str!("ratchet/048-closures-capture.vix");
 const RUNG_049: &str = include_str!("ratchet/049-recursion.vix");
 const RUNG_050: &str = include_str!("ratchet/050-deep-tail-recursion.vix");
 const RUNG_052: &str = include_str!("ratchet/052-higher-order.vix");
+const RUNG_060: &str = include_str!("ratchet/060-snapshot-record.vix");
 const RUNG_138: &str = include_str!("ratchet/138-map-accumulator.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
 const RUNG_145: &str = include_str!("ratchet/145-push.reject.vix");
@@ -5787,5 +5788,26 @@ fn tail_loop_backedge_adds_no_per_iteration_machinery() {
     assert_eq!(
         small_len, large_len,
         "the tail-loop task trace length is constant in the iteration count",
+    );
+}
+
+#[test]
+fn rung_060_snapshots_render_any_value_structurally() {
+    // Red production-path certificate against the merged base: a struct value
+    // renders structurally under a stable snapshot name, no Debug impls. The
+    // rendering is a harness artifact keyed by name.
+    let report = run_source(RUNG_060).expect("rung 060 compiles and runs");
+    assert!(report.passed(), "rung 060 snapshot check passes");
+    assert!(report.agrees(), "plain and chaos lanes agree on the snapshot");
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    let snapshot = report.plain.checks[0]
+        .snapshot
+        .as_ref()
+        .expect("rung 060 yields a snapshot check");
+    assert_eq!(snapshot.name, "dep-mio");
+    assert_eq!(
+        snapshot.rendered,
+        "Dep {\n    name: \"mio\",\n    req: \"^0.8\",\n    optional: false,\n}"
     );
 }

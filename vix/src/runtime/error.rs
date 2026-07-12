@@ -82,6 +82,12 @@ pub enum RuntimeFault {
         index: i64,
         length: i64,
     },
+    /// A published snapshot value could not be rendered structurally: its frozen
+    /// store tree did not match the declared type. A machine invariant, never a
+    /// language failure.
+    SnapshotRender {
+        detail: String,
+    },
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]

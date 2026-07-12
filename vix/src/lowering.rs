@@ -437,7 +437,12 @@ fn lower_island(
         )
         .into());
     }
-    let array_outcome = island_contains_checked_collection_ops(island)
+    // A value island that publishes a structural product or sum (a record,
+    // tuple, or enum) with no checked collection op still needs the outcome
+    // envelope so the result is decoded as a realized value, not a bare scalar.
+    let publishes_aggregate = island.purpose == IslandPurpose::Value
+        && matches!(&output.ty, Type::Record(_) | Type::Tuple(_) | Type::Enum(_));
+    let array_outcome = (island_contains_checked_collection_ops(island) || publishes_aggregate)
         .then(|| ArrayOutcomeAbi::for_value(output.ty.clone()));
     let schemas = SchemaAssignments::build(island, array_outcome.is_some())?;
 

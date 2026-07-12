@@ -209,6 +209,7 @@ impl YieldSite {
     pub fn value_check(&self) -> Option<NodeId> {
         match &self.recipe {
             CheckRecipe::Value { check } => Some(*check),
+            CheckRecipe::Snapshot { value, .. } => Some(*value),
             CheckRecipe::Trace(_) => None,
         }
     }
@@ -225,6 +226,10 @@ impl YieldSite {
 pub enum CheckRecipe {
     /// Roots a pure `Op::Expect` recipe in the enclosing function's node list.
     Value { check: NodeId },
+    /// Publishes the captured value structurally under a stable harness name.
+    /// The recipe root is the value node itself (a publication, not a boolean),
+    /// so the island realizes the value and the harness renders it type-directed.
+    Snapshot { value: NodeId, name: String },
     /// A post-run assertion over the frozen completed-run snapshot.
     Trace(TraceCheck),
 }
@@ -1212,6 +1217,7 @@ pub struct PartitionedSite {
 #[repr(u8)]
 pub enum PartitionedRecipe {
     Value { island: usize },
+    Snapshot { island: usize, name: String },
     Trace(TraceCheck),
 }
 
@@ -1546,6 +1552,26 @@ impl Module {
                         },
                     ));
                     PartitionedRecipe::Value { island }
+                }
+                CheckRecipe::Snapshot { value, name } => {
+                    // A snapshot publishes the value itself, so its island is a
+                    // value publication whose output is the value node.
+                    let island = islands.len();
+                    islands.push(self.partition_function_output_with_shared(
+                        function,
+                        *value,
+                        IslandId(u32::try_from(island).expect("island index fits u32")),
+                        IslandPurpose::Value,
+                        &IslandBoundary {
+                            shared: &shared_ids,
+                            wires: &wire_ids,
+                            lazy_arg_reps: &lazy_arg_reps,
+                        },
+                    ));
+                    PartitionedRecipe::Snapshot {
+                        island,
+                        name: name.clone(),
+                    }
                 }
                 CheckRecipe::Trace(trace) => PartitionedRecipe::Trace(trace.clone()),
             };
