@@ -606,6 +606,31 @@ pub enum ProgramTable {
     FrameRegions,
 }
 
+/// The exact structural difference between a function frame and the public
+/// call contract it claims to implement.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum FunctionCallContractMismatch {
+    EntryCount {
+        function_entries: usize,
+        call_entries: usize,
+        environment_entries: usize,
+    },
+    Entry {
+        index: usize,
+        function: FrameRegion,
+        call: FrameRegion,
+    },
+    EnvironmentEntry {
+        index: usize,
+        function: FrameRegion,
+        environment: FrameRegion,
+    },
+    Result {
+        function: FrameRegion,
+        call: FrameRegion,
+    },
+}
+
 /// Typed cause of a verification failure.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ProgramDefect {
@@ -760,6 +785,7 @@ pub enum ProgramDefect {
     },
     FunctionCallContractMismatch {
         contract: CallContractId,
+        mismatch: Box<FunctionCallContractMismatch>,
     },
     Access {
         role: AccessRole,
@@ -2154,31 +2180,61 @@ impl Verifier<'_> {
                 // materialized from the environment box and their shapes are
                 // proven against `environment` rather than call arguments.
                 let leading = call.entries.len();
-                let entries_match = if contract.environment.is_empty() {
-                    entries.len() == leading
-                        && entries
-                            .iter()
-                            .zip(&call.entries)
-                            .all(|(region, expected)| &contract.frame.regions[*region] == expected)
+                let entry_mismatch = if entries.len()
+                    != leading.saturating_add(contract.environment.len())
+                {
+                    Some(FunctionCallContractMismatch::EntryCount {
+                        function_entries: entries.len(),
+                        call_entries: leading,
+                        environment_entries: contract.environment.len(),
+                    })
                 } else {
-                    entries.len() == leading + contract.environment.len()
-                        && entries
-                            .iter()
-                            .take(leading)
-                            .zip(&call.entries)
-                            .all(|(region, expected)| &contract.frame.regions[*region] == expected)
-                        && entries.iter().skip(leading).zip(&contract.environment).all(
-                            |(region, field)| contract.frame.regions[*region].shape == field.shape,
-                        )
+                    entries
+                        .iter()
+                        .take(leading)
+                        .zip(&call.entries)
+                        .enumerate()
+                        .find_map(|(index, (region, expected))| {
+                            let function = &contract.frame.regions[*region];
+                            (function != expected).then(|| FunctionCallContractMismatch::Entry {
+                                index,
+                                function: function.clone(),
+                                call: expected.clone(),
+                            })
+                        })
+                        .or_else(|| {
+                            entries
+                                .iter()
+                                .skip(leading)
+                                .zip(&contract.environment)
+                                .enumerate()
+                                .find_map(|(index, (region, expected))| {
+                                    let function = &contract.frame.regions[*region];
+                                    (function.shape != expected.shape).then(|| {
+                                        FunctionCallContractMismatch::EnvironmentEntry {
+                                            index,
+                                            function: function.clone(),
+                                            environment: expected.clone(),
+                                        }
+                                    })
+                                })
+                        })
                 };
                 let concrete_result = &contract.frame.regions[result];
                 let result_matches = concrete_result.shape == call.result.shape
                     && concrete_result.value_shape == call.result.value_shape;
-                if !entries_match || !result_matches {
+                let mismatch = entry_mismatch.or_else(|| {
+                    (!result_matches).then(|| FunctionCallContractMismatch::Result {
+                        function: concrete_result.clone(),
+                        call: call.result.clone(),
+                    })
+                });
+                if let Some(mismatch) = mismatch {
                     return Err(self.function(
                         function_id,
                         ProgramDefect::FunctionCallContractMismatch {
                             contract: call_contract,
+                            mismatch: Box::new(mismatch),
                         },
                     ));
                 }
@@ -6083,6 +6139,10 @@ mod tests {
                 contract: result_shape_mismatch.1,
                 expected: function_error(ProgramDefect::FunctionCallContractMismatch {
                     contract: CallContractId(0),
+                    mismatch: Box::new(FunctionCallContractMismatch::Result {
+                        function: word_region(0, WordKind::Scalar),
+                        call: word_region(0, WordKind::Status),
+                    }),
                 }),
             },
             InvalidCase {
@@ -6091,6 +6151,11 @@ mod tests {
                 contract: entry_placement_mismatch.1,
                 expected: function_error(ProgramDefect::FunctionCallContractMismatch {
                     contract: CallContractId(0),
+                    mismatch: Box::new(FunctionCallContractMismatch::Entry {
+                        index: 0,
+                        function: word_region(8, WordKind::Scalar),
+                        call: word_region(0, WordKind::Scalar),
+                    }),
                 }),
             },
             InvalidCase {
