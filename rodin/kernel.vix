@@ -564,6 +564,97 @@ fn selected_maps_equal(left: Map<PackageId, SelectedPackage>) where { right: Map
         })
 }
 
+fn exclusion_pair(candidates: [String]) where { enabled: Set<String>, first: Option<String> } -> Option<(String, String)> {
+    match candidates.split_last() {
+        None => None,
+        Some((feature, rest)) => if enabled.has(feature) {
+            match first {
+                None => exclusion_pair(rest) where { enabled, first: Some(feature) },
+                Some(left) => Some((left, feature)),
+            }
+        } else {
+            exclusion_pair(rest) where { enabled, first }
+        },
+    }
+}
+
+fn check_exclusion_groups(groups: [Set<String>]) where { state: SolverState, package: PackageId } -> StateStep {
+    match groups.split_last() {
+        None => StateStep::Pass(state),
+        Some((group, rest)) => match exclusion_pair(group.values()) where {
+            enabled: feature_set(state) where { package },
+            first: None,
+        } {
+            Some((left, right)) => StateStep::Conflict(make_conflict(state) where {
+                cause: ConflictCause::FeatureExclusion { package, left, right },
+                provenance: ["mutually exclusive features"],
+            }),
+            None => check_exclusion_groups(rest) where { state, package },
+        },
+    }
+}
+
+fn check_exclusions(input: SolveInput) where { state: SolverState, packages: [PackageId] } -> StateStep {
+    match packages.split_last() {
+        None => StateStep::Pass(state),
+        Some((package, rest)) => match check_exclusion_groups(input.policy.mutually_exclusive_features.get(package)) where {
+            state,
+            package,
+        } {
+            StateStep::Conflict(conflict) => StateStep::Conflict(conflict),
+            StateStep::Pass(next) => check_exclusions(input) where { state: next, packages: rest },
+        },
+    }
+}
+
+fn check_links(input: SolveInput) where { state: SolverState, packages: [PackageId], seen: Map<String, PackageId> } -> StateStep {
+    match packages.split_last() {
+        None => StateStep::Pass(state),
+        Some((package, rest)) => {
+            let selected = state.selected.get(package);
+            match row_for(input.universe.rows.get(package)) where { version: selected.version } {
+                None => StateStep::Conflict(make_conflict(state) where {
+                    cause: ConflictCause::NoCandidates(package),
+                    provenance: ["selected links row disappeared"],
+                }),
+                Some(row) => match row.links {
+                    None => check_links(input) where { state, packages: rest, seen },
+                    Some(links) => if seen.has(links) && seen.get(links) != package {
+                        StateStep::Conflict(make_conflict(state) where {
+                            cause: ConflictCause::LinksCollision {
+                                links,
+                                left: seen.get(links),
+                                right: package,
+                            },
+                            provenance: ["duplicate native links key"],
+                        })
+                    } else {
+                        check_links(input) where {
+                            state,
+                            packages: rest,
+                            seen: seen.with (links, package),
+                        }
+                    },
+                },
+            }
+        },
+    }
+}
+
+fn check_invariants(input: SolveInput) where { state: SolverState } -> StateStep {
+    match check_exclusions(input) where {
+        state,
+        packages: input.policy.mutually_exclusive_features.keys(),
+    } {
+        StateStep::Conflict(conflict) => StateStep::Conflict(conflict),
+        StateStep::Pass(next) => check_links(input) where {
+            state: next,
+            packages: next.selected.keys(),
+            seen: %{},
+        },
+    }
+}
+
 fn propagation_equal(left: SolverState) where { right: SolverState } -> Bool {
     left.active == right.active
         && left.graph_active == right.graph_active
@@ -577,10 +668,13 @@ fn propagation_equal(left: SolverState) where { right: SolverState } -> Bool {
 fn propagate(input: SolveInput) where { state: SolverState } -> StateStep {
     match apply_selected(input) where { state, packages: state.selected.keys() } {
         StateStep::Conflict(conflict) => StateStep::Conflict(conflict),
-        StateStep::Pass(next) => if propagation_equal(next) where { right: state } {
-            StateStep::Pass(state)
-        } else {
-            propagate(input) where { state: next }
+        StateStep::Pass(next) => match check_invariants(input) where { state: next } {
+            StateStep::Conflict(conflict) => StateStep::Conflict(conflict),
+            StateStep::Pass(valid) => if propagation_equal(valid) where { right: state } {
+                StateStep::Pass(state)
+            } else {
+                propagate(input) where { state: valid }
+            },
         },
     }
 }
@@ -638,16 +732,25 @@ fn search(input: SolveInput) where { state: SolverState } -> SearchOutcome {
             state,
             package: choice.package,
             rows: eligible_rows(input) where { state, package: choice.package },
+            last: None,
         },
     }
 }
 
-fn try_rows(input: SolveInput) where { state: SolverState, package: PackageId, rows: [PackageRow] } -> SearchOutcome {
+fn try_rows(input: SolveInput) where {
+    state: SolverState,
+    package: PackageId,
+    rows: [PackageRow],
+    last: Option<Conflict>,
+} -> SearchOutcome {
     match highest_row(rows) {
         None => SearchOutcome::Dead(SearchDead {
-            conflict: make_conflict(state) where {
-                cause: ConflictCause::NoCandidates(package),
-                provenance: ["candidate exhaustion"],
+            conflict: match last {
+                Some(conflict) => conflict,
+                None => make_conflict(state) where {
+                    cause: ConflictCause::NoCandidates(package),
+                    provenance: ["candidate exhaustion"],
+                },
             },
             learned: state.learned,
         }),
@@ -655,19 +758,28 @@ fn try_rows(input: SolveInput) where { state: SolverState, package: PackageId, r
             let rest = without_version(rows) where { version: row.version, out: [] };
             let branch = SolverState { decisions: state.decisions.with (package, row.version), ..state };
             if state_is_learned(branch) {
-                try_rows(input) where { state, package, rows: rest }
+                try_rows(input) where { state, package, rows: rest, last }
             } else {
                 match select_row(input) where { state, package, row } {
                     StateStep::Conflict(conflict) => {
                         let learned = install_region(state.learned) where { region: point_dead_region(branch) };
-                        try_rows(input) where { state: SolverState { learned, ..state }, package, rows: rest }
+                        try_rows(input) where {
+                            state: SolverState { learned, ..state },
+                            package,
+                            rows: rest,
+                            last: Some(conflict),
+                        }
                     },
                     StateStep::Pass(next) => match search(input) where { state: next } {
                         SearchOutcome::Found(result) => SearchOutcome::Found(result),
-                        SearchOutcome::Dead(dead) => try_rows(input) where {
-                            state: SolverState { learned: dead.learned, ..state },
-                            package,
-                            rows: rest,
+                        SearchOutcome::Dead(dead) => {
+                            let learned = install_region(dead.learned) where { region: point_dead_region(branch) };
+                            try_rows(input) where {
+                                state: SolverState { learned, ..state },
+                                package,
+                                rows: rest,
+                                last: Some(dead.conflict),
+                            }
                         },
                     },
                 }

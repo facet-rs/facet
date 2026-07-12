@@ -2238,6 +2238,251 @@ fn native_rodin_line() -> Stream<Check> {
 }
 "#;
 
+const NATIVE_KERNEL_CONFLICT_FIXTURE: &str = r#"
+fn app_package() -> PackageId {
+    PackageId {
+        source: PackageSource::Path("fixture/app"),
+        name: "app",
+        compat: CompatClass::Major(1),
+    }
+}
+
+fn shared_package() -> PackageId {
+    PackageId {
+        source: PackageSource::Path("fixture/shared"),
+        name: "shared",
+        compat: CompatClass::Major(1),
+    }
+}
+
+fn native_target() -> TargetFacts {
+    TargetFacts {
+        triple: "x86_64-unknown-linux-gnu",
+        atoms: %["unix"],
+        values: %{"target_arch" => "x86_64", "target_os" => "linux"},
+    }
+}
+
+fn empty_policy() -> SolvePolicy {
+    SolvePolicy {
+        consume_build: true,
+        consume_dev: false,
+        mutually_exclusive_features: %{},
+    }
+}
+
+fn app_row(version: String) where { requirement: String } -> PackageRow {
+    PackageRow {
+        package: app_package(),
+        version: parse_version(version),
+        dependencies: [Dependency {
+            package: shared_package(),
+            requirement: parse_req(requirement),
+            kind: DependencyKind::Normal,
+            target: None,
+            optional: false,
+            default_features: true,
+            features: %[],
+        }],
+        features: [],
+        yanked: false,
+        links: None,
+        provenance: "fixture/app/Cargo.toml",
+    }
+}
+
+fn shared_row() -> PackageRow {
+    PackageRow {
+        package: shared_package(),
+        version: parse_version("1.0.0"),
+        dependencies: [],
+        features: [],
+        yanked: false,
+        links: None,
+        provenance: "fixture/shared/Cargo.toml",
+    }
+}
+
+fn search_input(include_low: Bool) -> SolveInput {
+    let app_rows = if include_low {
+        [
+            app_row("1.0.0") where { requirement: "=1.0.0" },
+            app_row("1.1.0") where { requirement: "=2.0.0" },
+        ]
+    } else {
+        [app_row("1.1.0") where { requirement: "=2.0.0" }]
+    };
+    SolveInput {
+        universe: PackageUniverse {
+            rows: %{app_package() => app_rows, shared_package() => [shared_row()]},
+        },
+        roots: [RootRequest {
+            package: app_package(),
+            requirement: universe(),
+            features: %[],
+            default_features: true,
+            graph: true,
+        }],
+        target: native_target(),
+        policy: empty_policy(),
+    }
+}
+
+#[test]
+fn native_backtracking() -> Stream<Check> {
+    yield match rodin_solve(search_input(true)) {
+        RodinOutcome::Solved(result) => {
+            yield expect_eq(result.selected.get(app_package()).version, parse_version("1.0.0"));
+            yield expect_eq(result.selected.get(shared_package()).version, parse_version("1.0.0"));
+            yield expect_eq(result.edges.len(), 1);
+        },
+        RodinOutcome::Failed(_) => expect(false),
+        RodinOutcome::Unsupported(_) => expect(false),
+    };
+}
+
+fn is_shared_exhaustion(conflict: Conflict) -> Bool {
+    match conflict.cause {
+        ConflictCause::EmptyDomain(_) => false,
+        ConflictCause::NoCandidates(package) => package == shared_package(),
+        ConflictCause::FeatureExclusion { package: _, left: _, right: _ } => false,
+        ConflictCause::LinksCollision { links: _, left: _, right: _ } => false,
+    }
+}
+
+#[test]
+fn native_exhaustion_conflict() -> Stream<Check> {
+    yield match rodin_solve(search_input(false)) {
+        RodinOutcome::Solved(_) => expect(false),
+        RodinOutcome::Unsupported(_) => expect(false),
+        RodinOutcome::Failed(conflict) => expect(is_shared_exhaustion(conflict)),
+    };
+}
+
+fn feature_conflict_package() -> PackageId {
+    PackageId {
+        source: PackageSource::Path("fixture/feature-conflict"),
+        name: "feature-conflict",
+        compat: CompatClass::ZeroMinor(1),
+    }
+}
+
+fn feature_conflict_input() -> SolveInput {
+    let package = feature_conflict_package();
+    let row = PackageRow {
+        package,
+        version: parse_version("0.1.0"),
+        dependencies: [],
+        features: [],
+        yanked: false,
+        links: None,
+        provenance: "fixture/feature-conflict/Cargo.toml",
+    };
+    SolveInput {
+        universe: PackageUniverse { rows: %{package => [row]} },
+        roots: [RootRequest {
+            package,
+            requirement: universe(),
+            features: %["left", "right"],
+            default_features: false,
+            graph: true,
+        }],
+        target: native_target(),
+        policy: SolvePolicy {
+            consume_build: true,
+            consume_dev: false,
+            mutually_exclusive_features: %{package => [%["left", "right"]]},
+        },
+    }
+}
+
+fn is_feature_conflict(conflict: Conflict) -> Bool {
+    match conflict.cause {
+        ConflictCause::EmptyDomain(_) => false,
+        ConflictCause::NoCandidates(_) => false,
+        ConflictCause::FeatureExclusion { package, left: _, right: _ } => {
+            package == feature_conflict_package()
+        },
+        ConflictCause::LinksCollision { links: _, left: _, right: _ } => false,
+    }
+}
+
+#[test]
+fn native_feature_conflict() -> Stream<Check> {
+    yield match rodin_solve(feature_conflict_input()) {
+        RodinOutcome::Solved(_) => expect(false),
+        RodinOutcome::Unsupported(_) => expect(false),
+        RodinOutcome::Failed(conflict) => expect(is_feature_conflict(conflict)),
+    };
+}
+
+fn links_package(name: String) -> PackageId {
+    PackageId {
+        source: PackageSource::Path("fixture/links"),
+        name,
+        compat: CompatClass::ZeroMinor(1),
+    }
+}
+
+fn links_row(name: String) -> PackageRow {
+    PackageRow {
+        package: links_package(name),
+        version: parse_version("0.1.0"),
+        dependencies: [],
+        features: [],
+        yanked: false,
+        links: Some("native"),
+        provenance: "fixture/links/Cargo.toml",
+    }
+}
+
+fn links_conflict_input() -> SolveInput {
+    let left = links_package("left");
+    let right = links_package("right");
+    SolveInput {
+        universe: PackageUniverse {
+            rows: %{left => [links_row("left")], right => [links_row("right")]},
+        },
+        roots: [
+            RootRequest {
+                package: left,
+                requirement: universe(),
+                features: %[],
+                default_features: false,
+                graph: true,
+            },
+            RootRequest {
+                package: right,
+                requirement: universe(),
+                features: %[],
+                default_features: false,
+                graph: false,
+            },
+        ],
+        target: native_target(),
+        policy: empty_policy(),
+    }
+}
+
+fn is_links_conflict(conflict: Conflict) -> Bool {
+    match conflict.cause {
+        ConflictCause::EmptyDomain(_) => false,
+        ConflictCause::NoCandidates(_) => false,
+        ConflictCause::FeatureExclusion { package: _, left: _, right: _ } => false,
+        ConflictCause::LinksCollision { links, left: _, right: _ } => links == "native",
+    }
+}
+
+#[test]
+fn native_links_conflict() -> Stream<Check> {
+    yield match rodin_solve(links_conflict_input()) {
+        RodinOutcome::Solved(_) => expect(false),
+        RodinOutcome::Unsupported(_) => expect(false),
+        RodinOutcome::Failed(conflict) => expect(is_links_conflict(conflict)),
+    };
+}
+"#;
+
 #[test]
 fn native_rodin_kernel_executes_typed_line_input() {
     let source = format!("{STD_VERSION}\n{NATIVE_RODIN_KERNEL}\n{NATIVE_KERNEL_RED_FIXTURE}");
@@ -2249,6 +2494,22 @@ fn native_rodin_kernel_executes_typed_line_input() {
     assert_eq!(report.plain.receipt_count, 0);
     assert_eq!(report.chaos.counters.pure_host_calls, 0);
     assert_eq!(report.chaos.receipt_count, 0);
+}
+
+#[test]
+fn native_rodin_kernel_backtracks_and_returns_typed_conflicts() {
+    let source = format!("{STD_VERSION}\n{NATIVE_RODIN_KERNEL}\n{NATIVE_KERNEL_CONFLICT_FIXTURE}");
+    let report = run_source(&source).expect("native Rodin search and conflicts execute");
+    assert!(
+        report.passed(),
+        "search/conflict certificates pass: {report:?}"
+    );
+    assert!(report.agrees(), "plain and chaos agree");
+    assert_eq!(report.plain.checks.len(), 6);
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+    }
 }
 
 fn vix_compat_class(version: &str) -> Result<String, String> {
