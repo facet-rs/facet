@@ -149,11 +149,14 @@ struct DeadRegion {
 
 struct SolverState {
     active: Set<PackageId>,
+    undecided: [PackageId],
     graph_active: Set<PackageId>,
+    dirty: [PackageId],
     activated_optional: Set<ResolvedEdge>,
     domains: Map<PackageId, VersionSet>,
     selected: Map<PackageId, SelectedPackage>,
     features: Map<PackageId, Set<String>>,
+    claimed_links: Map<String, PackageId>,
     edges: Set<ResolvedEdge>,
     decisions: Map<PackageId, Version>,
     learned: [DeadRegion],
@@ -184,11 +187,14 @@ fn empty_string_set() -> Set<String> { %[] }
 fn empty_state() -> SolverState {
     SolverState {
         active: %[],
+        undecided: [],
         graph_active: %[],
+        dirty: [],
         activated_optional: %[],
         domains: %{},
         selected: %{},
         features: %{},
+        claimed_links: %{},
         edges: %[],
         decisions: %{},
         learned: [],
@@ -209,14 +215,48 @@ fn feature_set(state: SolverState) where { package: PackageId } -> Set<String> {
     if state.features.has(package) { state.features.get(package) } else { empty_string_set() }
 }
 
+fn mark_dirty(state: SolverState) where { package: PackageId } -> SolverState {
+    if state.dirty.contains(package) { state } else { SolverState { dirty: state.dirty + package, ..state } }
+}
+
 fn with_features(state: SolverState) where { package: PackageId, features: Set<String> } -> SolverState {
-    let selected = if state.selected.has(package) {
-        let prior = state.selected.get(package);
-        state.selected.with (package, SelectedPackage { features, ..prior })
+    if (feature_set(state) where { package }) == features {
+        state
     } else {
-        state.selected
-    };
-    SolverState { features: state.features.with (package, features), selected, ..state }
+        let selected = if state.selected.has(package) {
+            let prior = state.selected.get(package);
+            state.selected.with (package, SelectedPackage { features, ..prior })
+        } else {
+            state.selected
+        };
+        mark_dirty(SolverState { features: state.features.with (package, features), selected, ..state }) where { package }
+    }
+}
+
+fn activate_optional(state: SolverState) where { edge: ResolvedEdge } -> SolverState {
+    if state.activated_optional.has(edge) {
+        state
+    } else {
+        mark_dirty(SolverState { activated_optional: state.activated_optional + edge, ..state }) where { package: edge.from }
+    }
+}
+
+fn add_undecided(state: SolverState) where { package: PackageId } -> SolverState {
+    if state.selected.has(package) || state.undecided.contains(package) {
+        state
+    } else {
+        SolverState { undecided: state.undecided + package, ..state }
+    }
+}
+
+fn without_package(packages: [PackageId]) where { package: PackageId, out: [PackageId] } -> [PackageId] {
+    match packages.split_last() {
+        None => out,
+        Some((candidate, rest)) => without_package(rest) where {
+            package,
+            out: if candidate == package { out } else { out + candidate },
+        },
+    }
 }
 
 fn make_conflict(state: SolverState) where { cause: ConflictCause, provenance: [String] } -> Conflict {
@@ -258,11 +298,13 @@ fn narrow(input: SolveInput) where { state: SolverState, package: PackageId, req
                 provenance: [provenance],
             })
         } else {
-            StateStep::Pass(SolverState {
+            let newly_active = !state.active.has(package);
+            let narrowed = SolverState {
                 active: state.active + package,
                 domains: state.domains.with (package, allowed),
                 ..state
-            })
+            };
+            StateStep::Pass(if newly_active { add_undecided(narrowed) where { package } } else { narrowed })
         }
     }
 }
@@ -352,7 +394,7 @@ fn better_choice(candidate: Choice) where { best: Choice } -> Bool {
 }
 
 fn choose_undecided(input: SolveInput) where { state: SolverState } -> Option<Choice> {
-    choose_from(input) where { state, packages: state.active.values(), best: None }
+    choose_from(input) where { state, packages: state.undecided, best: None }
 }
 
 fn choose_from(input: SolveInput) where { state: SolverState, packages: [PackageId], best: Option<Choice> } -> Option<Choice> {
@@ -428,14 +470,12 @@ fn apply_feature_effects(effects: [FeatureEffect]) where { state: SolverState, f
                     package: from,
                     features: feature_set(state) where { package: from } + feature,
                 },
-                FeatureEffect::Activate { package, kind } => SolverState {
-                    activated_optional: state.activated_optional + ResolvedEdge { from, to: package, kind },
-                    ..state
+                FeatureEffect::Activate { package, kind } => activate_optional(state) where {
+                    edge: ResolvedEdge { from, to: package, kind },
                 },
                 FeatureEffect::Strong { package, kind, feature } => {
-                    let activated = SolverState {
-                        activated_optional: state.activated_optional + ResolvedEdge { from, to: package, kind },
-                        ..state
+                    let activated = activate_optional(state) where {
+                        edge: ResolvedEdge { from, to: package, kind },
                     };
                     with_features(activated) where {
                         package,
@@ -479,8 +519,10 @@ fn apply_dependency(input: SolveInput) where { state: SolverState, from: Package
     if !enabled {
         StateStep::Pass(state)
     } else {
-        let with_edge = if state.graph_active.has(from)
-            && dependency_is_consumed(dependency) where { input } {
+        let graph_edge = state.graph_active.has(from)
+            && dependency_is_consumed(dependency) where { input };
+        let graph_was_active = state.graph_active.has(dependency.package);
+        let with_edge = if graph_edge {
             SolverState {
                 graph_active: state.graph_active + dependency.package,
                 edges: state.edges + ResolvedEdge { from, to: dependency.package, kind: dependency.kind },
@@ -489,7 +531,12 @@ fn apply_dependency(input: SolveInput) where { state: SolverState, from: Package
         } else {
             state
         };
-        let with_features = add_dependency_features(with_edge) where { dependency };
+        let with_graph_work = if graph_edge && !graph_was_active && with_edge.selected.has(dependency.package) {
+            mark_dirty(with_edge) where { package: dependency.package }
+        } else {
+            with_edge
+        };
+        let with_features = add_dependency_features(with_graph_work) where { dependency };
         narrow(input) where {
             state: with_features,
             package: dependency.package,
@@ -522,24 +569,29 @@ fn row_for(rows: [PackageRow]) where { version: Version } -> Option<PackageRow> 
     }
 }
 
-fn apply_selected(input: SolveInput) where { state: SolverState, packages: [PackageId] } -> StateStep {
-    match packages.split_last() {
+fn apply_dirty(input: SolveInput) where { state: SolverState } -> StateStep {
+    match state.dirty.split_last() {
         None => StateStep::Pass(state),
         Some((package, rest)) => {
-            let selected = state.selected.get(package);
-            match row_for(input.universe.rows.get(package)) where { version: selected.version } {
-                None => StateStep::Conflict(make_conflict(state) where {
-                    cause: ConflictCause::NoCandidates(package),
-                    provenance: ["selected row disappeared"],
-                }),
-                Some(row) => match apply_dependencies(input) where {
-                    state: apply_feature_rules(row.features) where { state, from: package },
-                    from: package,
-                    dependencies: row.dependencies,
-                } {
-                    StateStep::Conflict(conflict) => StateStep::Conflict(conflict),
-                    StateStep::Pass(next) => apply_selected(input) where { state: next, packages: rest },
-                },
+            let pending = SolverState { dirty: rest, ..state };
+            if !pending.selected.has(package) {
+                apply_dirty(input) where { state: pending }
+            } else {
+                let selected = pending.selected.get(package);
+                match row_for(input.universe.rows.get(package)) where { version: selected.version } {
+                    None => StateStep::Conflict(make_conflict(pending) where {
+                        cause: ConflictCause::NoCandidates(package),
+                        provenance: ["selected row disappeared"],
+                    }),
+                    Some(row) => match apply_dependencies(input) where {
+                        state: apply_feature_rules(row.features) where { state: pending, from: package },
+                        from: package,
+                        dependencies: row.dependencies,
+                    } {
+                        StateStep::Conflict(conflict) => StateStep::Conflict(conflict),
+                        StateStep::Pass(next) => apply_dirty(input) where { state: next },
+                    },
+                }
             }
         },
     }
@@ -553,15 +605,6 @@ fn domain_maps_equal(left: Map<PackageId, VersionSet>) where { right: Map<Packag
 fn feature_maps_equal(left: Map<PackageId, Set<String>>) where { right: Map<PackageId, Set<String>> } -> Bool {
     left.keys() == right.keys()
         && left.keys().all(|package| left.get(package) == right.get(package))
-}
-
-fn selected_maps_equal(left: Map<PackageId, SelectedPackage>) where { right: Map<PackageId, SelectedPackage> } -> Bool {
-    left.keys() == right.keys()
-        && left.keys().all(|package| {
-            let a = left.get(package);
-            let b = right.get(package);
-            a.package == b.package && a.version == b.version && a.features == b.features
-        })
 }
 
 fn exclusion_pair(candidates: [String]) where { enabled: Set<String>, first: Option<String> } -> Option<(String, String)> {
@@ -607,75 +650,17 @@ fn check_exclusions(input: SolveInput) where { state: SolverState, packages: [Pa
     }
 }
 
-fn check_links(input: SolveInput) where { state: SolverState, packages: [PackageId], seen: Map<String, PackageId> } -> StateStep {
-    match packages.split_last() {
-        None => StateStep::Pass(state),
-        Some((package, rest)) => {
-            let selected = state.selected.get(package);
-            match row_for(input.universe.rows.get(package)) where { version: selected.version } {
-                None => StateStep::Conflict(make_conflict(state) where {
-                    cause: ConflictCause::NoCandidates(package),
-                    provenance: ["selected links row disappeared"],
-                }),
-                Some(row) => match row.links {
-                    None => check_links(input) where { state, packages: rest, seen },
-                    Some(links) => if seen.has(links) && seen.get(links) != package {
-                        StateStep::Conflict(make_conflict(state) where {
-                            cause: ConflictCause::LinksCollision {
-                                links,
-                                left: seen.get(links),
-                                right: package,
-                            },
-                            provenance: ["duplicate native links key"],
-                        })
-                    } else {
-                        check_links(input) where {
-                            state,
-                            packages: rest,
-                            seen: seen.with (links, package),
-                        }
-                    },
-                },
-            }
-        },
-    }
-}
-
 fn check_invariants(input: SolveInput) where { state: SolverState } -> StateStep {
-    match check_exclusions(input) where {
+    check_exclusions(input) where {
         state,
         packages: input.policy.mutually_exclusive_features.keys(),
-    } {
-        StateStep::Conflict(conflict) => StateStep::Conflict(conflict),
-        StateStep::Pass(next) => check_links(input) where {
-            state: next,
-            packages: next.selected.keys(),
-            seen: %{},
-        },
     }
-}
-
-fn propagation_equal(left: SolverState) where { right: SolverState } -> Bool {
-    left.active == right.active
-        && left.graph_active == right.graph_active
-        && left.activated_optional == right.activated_optional
-        && domain_maps_equal(left.domains) where { right: right.domains }
-        && selected_maps_equal(left.selected) where { right: right.selected }
-        && feature_maps_equal(left.features) where { right: right.features }
-        && left.edges == right.edges
 }
 
 fn propagate(input: SolveInput) where { state: SolverState } -> StateStep {
-    match apply_selected(input) where { state, packages: state.selected.keys() } {
+    match apply_dirty(input) where { state } {
         StateStep::Conflict(conflict) => StateStep::Conflict(conflict),
-        StateStep::Pass(next) => match check_invariants(input) where { state: next } {
-            StateStep::Conflict(conflict) => StateStep::Conflict(conflict),
-            StateStep::Pass(valid) => if propagation_equal(valid) where { right: state } {
-                StateStep::Pass(state)
-            } else {
-                propagate(input) where { state: valid }
-            },
-        },
+        StateStep::Pass(next) => check_invariants(input) where { state: next },
     }
 }
 
@@ -706,17 +691,43 @@ fn install_region(learned: [DeadRegion]) where { region: DeadRegion } -> [DeadRe
     if learned.any(|existing| regions_equal(existing) where { right: region }) { learned } else { learned + region }
 }
 
+fn claim_links(state: SolverState) where { package: PackageId, row: PackageRow } -> StateStep {
+    match row.links {
+        None => StateStep::Pass(state),
+        Some(links) => if state.claimed_links.has(links) && state.claimed_links.get(links) != package {
+            StateStep::Conflict(make_conflict(state) where {
+                cause: ConflictCause::LinksCollision {
+                    links,
+                    left: state.claimed_links.get(links),
+                    right: package,
+                },
+                provenance: ["duplicate native links key"],
+            })
+        } else {
+            StateStep::Pass(SolverState {
+                claimed_links: state.claimed_links.with (links, package),
+                ..state
+            })
+        },
+    }
+}
+
 fn select_row(input: SolveInput) where { state: SolverState, package: PackageId, row: PackageRow } -> StateStep {
-    let selected = SelectedPackage {
-        package,
-        version: row.version,
-        features: feature_set(state) where { package },
-    };
-    propagate(input) where {
-        state: SolverState {
-            selected: state.selected.with (package, selected),
-            decisions: state.decisions.with (package, row.version),
-            ..state
+    match claim_links(state) where { package, row } {
+        StateStep::Conflict(conflict) => StateStep::Conflict(conflict),
+        StateStep::Pass(claimed) => {
+            let selected = SelectedPackage {
+                package,
+                version: row.version,
+                features: feature_set(claimed) where { package },
+            };
+            let selected_state = mark_dirty(SolverState {
+                undecided: without_package(claimed.undecided) where { package, out: [] },
+                selected: claimed.selected.with (package, selected),
+                decisions: claimed.decisions.with (package, row.version),
+                ..claimed
+            }) where { package };
+            propagate(input) where { state: selected_state }
         },
     }
 }

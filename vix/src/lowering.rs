@@ -1117,7 +1117,7 @@ impl SchemaAssignments {
                 add(&ArrayOutcomeAbi::for_value(function.return_type.clone()).ty);
             }
         }
-        types.sort_by_key(crate::vir::canonical_type);
+        types.sort_by_cached_key(crate::vir::canonical_type);
         types.dedup();
         if types.iter().any(|ty| matches!(ty, Type::StreamCheck)) {
             return Err(lowering_diagnostic(

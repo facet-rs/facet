@@ -60,11 +60,15 @@ use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 
 use facet::Facet;
 use semver::Version as SemVer;
+use vix::compiler::Compiler;
 use vix::machine::{DriveEvent, Machine, MachineArg, NamedArg, RenderedValue};
-use vix::ratchet::run_source;
+use vix::ratchet::{prepare_source, prepare_source_with_lane, run_source};
+use vix::runtime::EventKind;
+use weavy::exec::LaneRequest;
 
 const LINUX: &str = "x86_64-unknown-linux-gnu";
 const WINDOWS: &str = "x86_64-pc-windows-msvc";
@@ -2510,6 +2514,357 @@ fn native_rodin_kernel_backtracks_and_returns_typed_conflicts() {
         assert_eq!(lane.counters.pure_host_calls, 0);
         assert_eq!(lane.receipt_count, 0);
     }
+}
+
+#[derive(Facet, Clone, Debug)]
+struct FunctionFrameCount {
+    function: String,
+    entries: u64,
+}
+
+#[derive(Facet, Clone, Debug)]
+struct NativeKernelScaleProfile {
+    packages: u64,
+    prepare_micros: u64,
+    execute_micros: u64,
+    scheduler_requests: u64,
+    task_spawns: u64,
+    task_discards: u64,
+    native_task_spawns: u64,
+    interpreter_task_spawns: u64,
+    memo_hits_exact: u64,
+    memo_misses: u64,
+    store_interns: u64,
+    store_dedups: u64,
+    bytes_hashed: u64,
+    framed_bytes: u64,
+    value_island_spawns: u64,
+    successful_aggregate_freezes: u64,
+    active_molten_selections: u64,
+    forced_copy_selections: u64,
+    peak_molten_bytes: u64,
+    peak_molten_nodes: u64,
+    frame_entries: u64,
+    event_count: u64,
+    lowering_hits: u64,
+    lowering_misses: u64,
+    function_frames: Vec<FunctionFrameCount>,
+}
+
+fn native_scale_source(packages: usize) -> String {
+    assert!(packages > 0, "scale fixture needs at least one package");
+    let mut fixture = String::new();
+    fixture.push_str("fn native_scale_input() -> SolveInput {\n");
+    for index in 0..packages {
+        writeln!(&mut fixture, "    let p{index} = PackageId {{")
+            .expect("write package declaration");
+        writeln!(
+            &mut fixture,
+            "        source: PackageSource::Path(\"fixture/scale/p{index}\"),"
+        )
+        .expect("write package source");
+        writeln!(&mut fixture, "        name: \"p{index}\",").expect("write package name");
+        fixture.push_str("        compat: CompatClass::ZeroMinor(1),\n    };\n");
+    }
+    for index in 0..packages {
+        writeln!(&mut fixture, "    let r{index} = PackageRow {{").expect("write row declaration");
+        writeln!(&mut fixture, "        package: p{index},").expect("write row package");
+        fixture.push_str("        version: parse_version(\"0.1.0\"),\n");
+        if index + 1 == packages {
+            fixture.push_str("        dependencies: [],\n");
+        } else {
+            fixture.push_str("        dependencies: [Dependency {\n");
+            writeln!(&mut fixture, "            package: p{},", index + 1)
+                .expect("write dependency package");
+            fixture.push_str(concat!(
+                "            requirement: parse_req(\"=0.1.0\"),\n",
+                "            kind: DependencyKind::Normal,\n",
+                "            target: None,\n",
+                "            optional: false,\n",
+                "            default_features: false,\n",
+                "            features: %[],\n",
+                "        }],\n",
+            ));
+        }
+        fixture.push_str(concat!(
+            "        features: [],\n",
+            "        yanked: false,\n",
+            "        links: None,\n",
+        ));
+        writeln!(
+            &mut fixture,
+            "        provenance: \"fixture/scale/p{index}/Cargo.toml\","
+        )
+        .expect("write provenance");
+        fixture.push_str("    };\n");
+    }
+    fixture.push_str("    SolveInput {\n        universe: PackageUniverse { rows: %{");
+    for index in 0..packages {
+        if index > 0 {
+            fixture.push_str(", ");
+        }
+        write!(&mut fixture, "p{index} => [r{index}]").expect("write universe row");
+    }
+    fixture.push_str(concat!(
+        "} },\n",
+        "        roots: [RootRequest {\n",
+        "            package: p0,\n",
+        "            requirement: parse_req(\"=0.1.0\"),\n",
+        "            features: %[],\n",
+        "            default_features: false,\n",
+        "            graph: true,\n",
+        "        }],\n",
+        "        target: TargetFacts {\n",
+        "            triple: \"x86_64-unknown-linux-gnu\",\n",
+        "            atoms: %[\"unix\"],\n",
+        "            values: %{\"target_arch\" => \"x86_64\", \"target_os\" => \"linux\"},\n",
+        "        },\n",
+        "        policy: SolvePolicy {\n",
+        "            consume_build: true,\n",
+        "            consume_dev: false,\n",
+        "            mutually_exclusive_features: %{},\n",
+        "        },\n",
+        "    }\n",
+        "}\n\n",
+        "#[test]\n",
+        "fn native_scale() -> Stream<Check> {\n",
+        "    yield match rodin_solve(native_scale_input()) {\n",
+    ));
+    writeln!(
+        &mut fixture,
+        "        RodinOutcome::Solved(result) => expect(result.selected.len() == {packages} && result.edges.len() == {}),",
+        packages - 1
+    )
+    .expect("write scale expectation");
+    fixture.push_str(concat!(
+        "        RodinOutcome::Failed(_) => expect(false),\n",
+        "        RodinOutcome::Unsupported(_) => expect(false),\n",
+        "    };\n",
+        "}\n",
+    ));
+    format!("{STD_VERSION}\n{NATIVE_RODIN_KERNEL}\n{fixture}")
+}
+
+fn micros(elapsed: std::time::Duration) -> u64 {
+    u64::try_from(elapsed.as_micros()).unwrap_or(u64::MAX)
+}
+
+fn native_scale_profile(
+    packages: usize,
+    lane: LaneRequest,
+) -> (NativeKernelScaleProfile, vix::ratchet::RatchetReport) {
+    let source = native_scale_source(packages);
+    let prepare_started = Instant::now();
+    let prepared = match lane {
+        LaneRequest::Auto => prepare_source(&source),
+        LaneRequest::Interpreter | LaneRequest::Native => prepare_source_with_lane(&source, lane),
+    }
+    .unwrap_or_else(|error| panic!("prepare {packages}-package native kernel: {error:?}"));
+    let prepare_micros = micros(prepare_started.elapsed());
+    let execute_started = Instant::now();
+    let report = prepared
+        .execute()
+        .unwrap_or_else(|error| panic!("execute {packages}-package native kernel: {error:?}"));
+    let execute_micros = micros(execute_started.elapsed());
+    assert!(report.passed(), "{packages}-package scale solve passes");
+    assert!(report.agrees(), "{packages}-package plain and chaos agree");
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.counters.pure_host_calls, 0);
+    assert_eq!(report.plain.receipt_count, 0);
+    let counters = report.plain.counters;
+    let function_frames = if std::env::var_os("VIX_RODIN_SCALE_PROFILE").is_some() {
+        let compilation = Compiler::new()
+            .compile(&source)
+            .expect("compile scale source for function attribution");
+        let names = compilation
+            .module
+            .functions
+            .iter()
+            .map(|function| (function.id, function.name.as_str()))
+            .collect::<BTreeMap<_, _>>();
+        let mut counts = BTreeMap::new();
+        for event in &report.plain.events {
+            if let EventKind::WeavyFrameEntered { function, .. } = &event.kind {
+                *counts.entry(*function).or_insert(0u64) += 1;
+            }
+        }
+        let mut counts = counts
+            .into_iter()
+            .map(|(function, entries)| FunctionFrameCount {
+                function: names
+                    .get(&function)
+                    .copied()
+                    .unwrap_or("<lowered synthetic>")
+                    .to_owned(),
+                entries,
+            })
+            .collect::<Vec<_>>();
+        counts.sort_by(|left, right| {
+            right
+                .entries
+                .cmp(&left.entries)
+                .then_with(|| left.function.cmp(&right.function))
+        });
+        counts
+    } else {
+        Vec::new()
+    };
+    let profile = NativeKernelScaleProfile {
+        packages: packages.try_into().expect("package count fits u64"),
+        prepare_micros,
+        execute_micros,
+        scheduler_requests: counters.scheduler_requests,
+        task_spawns: counters.task_spawns,
+        task_discards: counters.task_discards,
+        native_task_spawns: counters.native_task_spawns,
+        interpreter_task_spawns: counters.interpreter_task_spawns,
+        memo_hits_exact: counters.memo_hits_exact,
+        memo_misses: counters.memo_misses,
+        store_interns: counters.store_interns,
+        store_dedups: counters.store_dedups,
+        bytes_hashed: counters.bytes_hashed,
+        framed_bytes: counters.framed_bytes,
+        value_island_spawns: counters.value_island_spawns,
+        successful_aggregate_freezes: counters.successful_aggregate_freezes,
+        active_molten_selections: counters.active_molten_selections,
+        forced_copy_selections: counters.forced_copy_selections,
+        peak_molten_bytes: counters.peak_molten_bytes,
+        peak_molten_nodes: counters.peak_molten_nodes,
+        frame_entries: report
+            .plain
+            .events
+            .iter()
+            .filter(|event| matches!(event.kind, EventKind::WeavyFrameEntered { .. }))
+            .count()
+            .try_into()
+            .expect("frame count fits u64"),
+        event_count: report
+            .plain
+            .events
+            .len()
+            .try_into()
+            .expect("event count fits u64"),
+        lowering_hits: report.lowering_cache.hits,
+        lowering_misses: report.lowering_cache.misses,
+        function_frames,
+    };
+    (profile, report)
+}
+
+fn maybe_write_scale_profiles(profiles: &[NativeKernelScaleProfile]) {
+    let Some(path) = std::env::var_os("VIX_RODIN_SCALE_PROFILE") else {
+        return;
+    };
+    let encoded = facet_json::to_string_pretty(profiles).expect("encode Rodin scale profile");
+    std::fs::write(path, encoded).expect("write Rodin scale profile");
+}
+
+#[test]
+fn native_rodin_kernel_scale_keeps_one_demand_shape() {
+    let mut profiles = Vec::new();
+    let packages = std::env::var("VIX_RODIN_SCALE_PACKAGES")
+        .map(|value| {
+            vec![
+                value
+                    .parse::<usize>()
+                    .expect("VIX_RODIN_SCALE_PACKAGES is a positive integer"),
+            ]
+        })
+        .unwrap_or_else(|_| vec![4, 16, 64]);
+    for packages in packages {
+        profiles.push(native_scale_profile(packages, LaneRequest::Auto).0);
+    }
+    maybe_write_scale_profiles(&profiles);
+
+    let demand_shape = (
+        profiles[0].scheduler_requests,
+        profiles[0].task_spawns,
+        profiles[0].memo_misses,
+        profiles[0].lowering_misses,
+    );
+    assert_eq!(demand_shape, (3, 3, 2, 5));
+    for profile in &profiles {
+        assert_eq!(
+            (
+                profile.scheduler_requests,
+                profile.task_spawns,
+                profile.memo_misses,
+                profile.lowering_misses,
+            ),
+            demand_shape,
+            "package count must not create scheduler tasks or lowering units"
+        );
+        assert_eq!(profile.memo_hits_exact, 0);
+        assert_eq!(profile.task_discards, 0);
+        assert_eq!(profile.value_island_spawns, 1);
+        assert_eq!(profile.successful_aggregate_freezes, 1);
+        assert_eq!(profile.active_molten_selections, 1);
+        assert_eq!(profile.forced_copy_selections, 0);
+        assert!(
+            profile.store_interns <= profile.packages * 4 + 32,
+            "Store interns must remain linear: {profile:?}"
+        );
+        assert!(
+            profile.store_dedups <= profile.packages * 3 + 32,
+            "Store deduplications must remain linear: {profile:?}"
+        );
+        assert!(
+            profile.bytes_hashed <= profile.packages * 64 + 256,
+            "identity hashing must remain linear: {profile:?}"
+        );
+        assert!(
+            profile.framed_bytes <= profile.packages * 56,
+            "published semantic bytes must remain linear: {profile:?}"
+        );
+        assert!(
+            profile.peak_molten_bytes <= profile.packages * 8_000,
+            "peak molten bytes must remain linear: {profile:?}"
+        );
+        assert!(
+            profile.peak_molten_nodes <= profile.packages * 130,
+            "peak molten nodes must remain linear: {profile:?}"
+        );
+        assert!(
+            profile.frame_entries <= profile.packages * 160,
+            "verified function entries must remain linear: {profile:?}"
+        );
+        assert!(
+            profile.event_count <= profile.packages * 340,
+            "bounded Production events must remain linear: {profile:?}"
+        );
+    }
+    for pair in profiles.windows(2) {
+        let [smaller, larger] = pair else {
+            unreachable!("windows(2) has two profiles")
+        };
+        assert!(smaller.store_interns <= larger.store_interns);
+        assert!(smaller.store_dedups <= larger.store_dedups);
+        assert!(smaller.framed_bytes <= larger.framed_bytes);
+        assert!(smaller.peak_molten_bytes <= larger.peak_molten_bytes);
+        assert!(smaller.peak_molten_nodes <= larger.peak_molten_nodes);
+        assert!(smaller.frame_entries <= larger.frame_entries);
+    }
+}
+
+#[test]
+fn native_rodin_kernel_scale_agrees_across_execution_lanes() {
+    if !weavy::jit::task_lane::available() {
+        return;
+    }
+    let (native_profile, native) = native_scale_profile(16, LaneRequest::Native);
+    let (interpreter_profile, interpreter) = native_scale_profile(16, LaneRequest::Interpreter);
+    assert_eq!(native.plain.checks, interpreter.plain.checks);
+    assert_eq!(native.plain.values, interpreter.plain.values);
+    assert_eq!(
+        native_profile.native_task_spawns,
+        native_profile.task_spawns
+    );
+    assert_eq!(native_profile.interpreter_task_spawns, 0);
+    assert_eq!(interpreter_profile.native_task_spawns, 0);
+    assert_eq!(
+        interpreter_profile.interpreter_task_spawns,
+        interpreter_profile.task_spawns
+    );
 }
 
 fn vix_compat_class(version: &str) -> Result<String, String> {
