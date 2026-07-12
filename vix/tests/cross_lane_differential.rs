@@ -63,65 +63,301 @@ struct Rung {
 /// they certify only that both lanes report the identical rejection; accepted
 /// rungs drive the full cross-lane semantic differential.
 const CORPUS: &[Rung] = &[
-    Rung { name: "001-harness", source: include_str!("ratchet/001-harness.vix"), reject: false },
-    Rung { name: "002-arithmetic", source: include_str!("ratchet/002-arithmetic.vix"), reject: false },
-    Rung { name: "003-bindings", source: include_str!("ratchet/003-bindings.vix"), reject: false },
-    Rung { name: "004-functions", source: include_str!("ratchet/004-functions.vix"), reject: false },
-    Rung { name: "005-tuples", source: include_str!("ratchet/005-tuples.vix"), reject: false },
-    Rung { name: "006-records", source: include_str!("ratchet/006-records.vix"), reject: false },
-    Rung { name: "007-enums", source: include_str!("ratchet/007-enums.vix"), reject: false },
-    Rung { name: "008-spread", source: include_str!("ratchet/008-spread.vix"), reject: false },
-    Rung { name: "009-structural-equality", source: include_str!("ratchet/009-structural-equality.vix"), reject: false },
-    Rung { name: "010-spaceship", source: include_str!("ratchet/010-spaceship.vix"), reject: false },
-    Rung { name: "011-derived-comparisons", source: include_str!("ratchet/011-derived-comparisons.vix"), reject: false },
-    Rung { name: "012-total-order", source: include_str!("ratchet/012-total-order.vix"), reject: false },
-    Rung { name: "013-expression-statement.reject", source: include_str!("ratchet/013-expression-statement.reject.vix"), reject: true },
-    Rung { name: "014-if-else", source: include_str!("ratchet/014-if-else.vix"), reject: false },
-    Rung { name: "015-boolean-operators", source: include_str!("ratchet/015-boolean-operators.vix"), reject: false },
-    Rung { name: "016-match-expressions", source: include_str!("ratchet/016-match-expressions.vix"), reject: false },
-    Rung { name: "017-match-guards", source: include_str!("ratchet/017-match-guards.vix"), reject: false },
-    Rung { name: "018-non-exhaustive.reject", source: include_str!("ratchet/018-non-exhaustive.reject.vix"), reject: true },
-    Rung { name: "019-let-destructuring", source: include_str!("ratchet/019-let-destructuring.vix"), reject: false },
-    Rung { name: "020-match-destructuring", source: include_str!("ratchet/020-match-destructuring.vix"), reject: false },
-    Rung { name: "021-closure-destructuring", source: include_str!("ratchet/021-closure-destructuring.vix"), reject: false },
-    Rung { name: "022-record-patterns", source: include_str!("ratchet/022-record-patterns.vix"), reject: false },
-    Rung { name: "023-option", source: include_str!("ratchet/023-option.vix"), reject: false },
-    Rung { name: "024-user-result", source: include_str!("ratchet/024-user-result.vix"), reject: false },
-    Rung { name: "025-ordering-enum", source: include_str!("ratchet/025-ordering-enum.vix"), reject: false },
-    Rung { name: "026-arrays", source: include_str!("ratchet/026-arrays.vix"), reject: false },
-    Rung { name: "027-array-map", source: include_str!("ratchet/027-array-map.vix"), reject: false },
-    Rung { name: "028-array-enumerate", source: include_str!("ratchet/028-array-enumerate.vix"), reject: false },
-    Rung { name: "029-array-fold", source: include_str!("ratchet/029-array-fold.vix"), reject: false },
-    Rung { name: "030-array-predicates", source: include_str!("ratchet/030-array-predicates.vix"), reject: false },
-    Rung { name: "031-split-last", source: include_str!("ratchet/031-split-last.vix"), reject: false },
-    Rung { name: "032-pop.reject", source: include_str!("ratchet/032-pop.reject.vix"), reject: true },
-    Rung { name: "033-multiset-conversion", source: include_str!("ratchet/033-multiset-conversion.vix"), reject: false },
-    Rung { name: "034-multiset-filter", source: include_str!("ratchet/034-multiset-filter.vix"), reject: false },
-    Rung { name: "035-canonical-order", source: include_str!("ratchet/035-canonical-order.vix"), reject: false },
-    Rung { name: "036-multiset-fold", source: include_str!("ratchet/036-multiset-fold.vix"), reject: false },
-    Rung { name: "037-filter-map-flat-map", source: include_str!("ratchet/037-filter-map-flat-map.vix"), reject: false },
-    Rung { name: "038-find-split-min-max", source: include_str!("ratchet/038-find-split-min-max.vix"), reject: false },
-    Rung { name: "039-indexed-roundtrip", source: include_str!("ratchet/039-indexed-roundtrip.vix"), reject: false },
-    Rung { name: "040-sorted-by", source: include_str!("ratchet/040-sorted-by.vix"), reject: false },
-    Rung { name: "041-maps", source: include_str!("ratchet/041-maps.vix"), reject: false },
-    Rung { name: "042-map-overwrite", source: include_str!("ratchet/042-map-overwrite.vix"), reject: false },
-    Rung { name: "043-map-keys-canonical", source: include_str!("ratchet/043-map-keys-canonical.vix"), reject: false },
-    Rung { name: "044-sets", source: include_str!("ratchet/044-sets.vix"), reject: false },
-    Rung { name: "045-strings", source: include_str!("ratchet/045-strings.vix"), reject: false },
-    Rung { name: "046-paths", source: include_str!("ratchet/046-paths.vix"), reject: false },
-    Rung { name: "047-string-to-path.reject", source: include_str!("ratchet/047-string-to-path.reject.vix"), reject: true },
-    Rung { name: "048-closures-capture", source: include_str!("ratchet/048-closures-capture.vix"), reject: false },
-    Rung { name: "049-recursion", source: include_str!("ratchet/049-recursion.vix"), reject: false },
-    Rung { name: "050-deep-tail-recursion", source: include_str!("ratchet/050-deep-tail-recursion.vix"), reject: false },
-    Rung { name: "051-molten-accumulator", source: include_str!("ratchet/051-molten-accumulator.vix"), reject: false },
-    Rung { name: "052-higher-order", source: include_str!("ratchet/052-higher-order.vix"), reject: false },
-    Rung { name: "053-args-are-wires", source: include_str!("ratchet/053-args-are-wires.vix"), reject: false },
-    Rung { name: "054-partial-dependency", source: include_str!("ratchet/054-partial-dependency.vix"), reject: false },
-    Rung { name: "055-match-defers", source: include_str!("ratchet/055-match-defers.vix"), reject: false },
-    Rung { name: "056-undemanded-is-free", source: include_str!("ratchet/056-undemanded-is-free.vix"), reject: false },
-    Rung { name: "057-element-independence", source: include_str!("ratchet/057-element-independence.vix"), reject: false },
-    Rung { name: "058-memo-within-run", source: include_str!("ratchet/058-memo-within-run.vix"), reject: false },
-    Rung { name: "059-distinct-args-distinct-demands", source: include_str!("ratchet/059-distinct-args-distinct-demands.vix"), reject: false },
+    Rung {
+        name: "001-harness",
+        source: include_str!("ratchet/001-harness.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "002-arithmetic",
+        source: include_str!("ratchet/002-arithmetic.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "003-bindings",
+        source: include_str!("ratchet/003-bindings.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "004-functions",
+        source: include_str!("ratchet/004-functions.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "005-tuples",
+        source: include_str!("ratchet/005-tuples.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "006-records",
+        source: include_str!("ratchet/006-records.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "007-enums",
+        source: include_str!("ratchet/007-enums.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "008-spread",
+        source: include_str!("ratchet/008-spread.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "009-structural-equality",
+        source: include_str!("ratchet/009-structural-equality.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "010-spaceship",
+        source: include_str!("ratchet/010-spaceship.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "011-derived-comparisons",
+        source: include_str!("ratchet/011-derived-comparisons.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "012-total-order",
+        source: include_str!("ratchet/012-total-order.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "013-expression-statement.reject",
+        source: include_str!("ratchet/013-expression-statement.reject.vix"),
+        reject: true,
+    },
+    Rung {
+        name: "014-if-else",
+        source: include_str!("ratchet/014-if-else.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "015-boolean-operators",
+        source: include_str!("ratchet/015-boolean-operators.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "016-match-expressions",
+        source: include_str!("ratchet/016-match-expressions.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "017-match-guards",
+        source: include_str!("ratchet/017-match-guards.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "018-non-exhaustive.reject",
+        source: include_str!("ratchet/018-non-exhaustive.reject.vix"),
+        reject: true,
+    },
+    Rung {
+        name: "019-let-destructuring",
+        source: include_str!("ratchet/019-let-destructuring.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "020-match-destructuring",
+        source: include_str!("ratchet/020-match-destructuring.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "021-closure-destructuring",
+        source: include_str!("ratchet/021-closure-destructuring.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "022-record-patterns",
+        source: include_str!("ratchet/022-record-patterns.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "023-option",
+        source: include_str!("ratchet/023-option.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "024-user-result",
+        source: include_str!("ratchet/024-user-result.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "025-ordering-enum",
+        source: include_str!("ratchet/025-ordering-enum.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "026-arrays",
+        source: include_str!("ratchet/026-arrays.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "027-array-map",
+        source: include_str!("ratchet/027-array-map.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "028-array-enumerate",
+        source: include_str!("ratchet/028-array-enumerate.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "029-array-fold",
+        source: include_str!("ratchet/029-array-fold.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "030-array-predicates",
+        source: include_str!("ratchet/030-array-predicates.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "031-split-last",
+        source: include_str!("ratchet/031-split-last.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "032-pop.reject",
+        source: include_str!("ratchet/032-pop.reject.vix"),
+        reject: true,
+    },
+    Rung {
+        name: "033-multiset-conversion",
+        source: include_str!("ratchet/033-multiset-conversion.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "034-multiset-filter",
+        source: include_str!("ratchet/034-multiset-filter.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "035-canonical-order",
+        source: include_str!("ratchet/035-canonical-order.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "036-multiset-fold",
+        source: include_str!("ratchet/036-multiset-fold.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "037-filter-map-flat-map",
+        source: include_str!("ratchet/037-filter-map-flat-map.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "038-find-split-min-max",
+        source: include_str!("ratchet/038-find-split-min-max.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "039-indexed-roundtrip",
+        source: include_str!("ratchet/039-indexed-roundtrip.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "040-sorted-by",
+        source: include_str!("ratchet/040-sorted-by.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "041-maps",
+        source: include_str!("ratchet/041-maps.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "042-map-overwrite",
+        source: include_str!("ratchet/042-map-overwrite.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "043-map-keys-canonical",
+        source: include_str!("ratchet/043-map-keys-canonical.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "044-sets",
+        source: include_str!("ratchet/044-sets.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "045-strings",
+        source: include_str!("ratchet/045-strings.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "046-paths",
+        source: include_str!("ratchet/046-paths.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "047-string-to-path.reject",
+        source: include_str!("ratchet/047-string-to-path.reject.vix"),
+        reject: true,
+    },
+    Rung {
+        name: "048-closures-capture",
+        source: include_str!("ratchet/048-closures-capture.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "049-recursion",
+        source: include_str!("ratchet/049-recursion.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "050-deep-tail-recursion",
+        source: include_str!("ratchet/050-deep-tail-recursion.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "051-molten-accumulator",
+        source: include_str!("ratchet/051-molten-accumulator.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "052-higher-order",
+        source: include_str!("ratchet/052-higher-order.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "053-args-are-wires",
+        source: include_str!("ratchet/053-args-are-wires.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "054-partial-dependency",
+        source: include_str!("ratchet/054-partial-dependency.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "055-match-defers",
+        source: include_str!("ratchet/055-match-defers.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "056-undemanded-is-free",
+        source: include_str!("ratchet/056-undemanded-is-free.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "057-element-independence",
+        source: include_str!("ratchet/057-element-independence.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "058-memo-within-run",
+        source: include_str!("ratchet/058-memo-within-run.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "059-distinct-args-distinct-demands",
+        source: include_str!("ratchet/059-distinct-args-distinct-demands.vix"),
+        reject: false,
+    },
 ];
 
 /// Assert the two suites publish an identical semantic family. This is the
@@ -259,8 +495,16 @@ fn accepted_corpus_agrees_across_native_and_interpreter_lanes() {
         );
 
         // The chaos discipline is preserved within each lane.
-        assert!(native.agrees(), "{}: native plain/chaos disagree", rung.name);
-        assert!(interp.agrees(), "{}: interp plain/chaos disagree", rung.name);
+        assert!(
+            native.agrees(),
+            "{}: native plain/chaos disagree",
+            rung.name
+        );
+        assert!(
+            interp.agrees(),
+            "{}: interp plain/chaos disagree",
+            rung.name
+        );
 
         differentiated += 1;
     }
