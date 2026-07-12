@@ -125,10 +125,15 @@ enum ConflictCause {
     LinksCollision { links: String, left: PackageId, right: PackageId },
 }
 
+struct DeadRegion {
+    versions: Map<PackageId, VersionSet>,
+    required_features: Map<PackageId, Set<String>>,
+}
+
 struct Conflict {
     cause: ConflictCause,
     decisions: Map<PackageId, Version>,
-    region: Map<PackageId, VersionSet>,
+    region: DeadRegion,
     provenance: [String],
 }
 
@@ -140,11 +145,6 @@ enum RodinOutcome {
     Solved(SolveResult),
     Failed(Conflict),
     Unsupported(UnsupportedInput),
-}
-
-struct DeadRegion {
-    versions: Map<PackageId, VersionSet>,
-    features: Map<PackageId, Set<String>>,
 }
 
 struct SolverState {
@@ -260,10 +260,11 @@ fn without_package(packages: [PackageId]) where { package: PackageId, out: [Pack
 }
 
 fn make_conflict(state: SolverState) where { cause: ConflictCause, provenance: [String] } -> Conflict {
+    let point = point_dead_region(state);
     Conflict {
         cause,
         decisions: state.decisions,
-        region: point_region(state.decisions.keys()) where { state, out: %{} },
+        region: widen_region(point) where { state, cause },
         provenance,
     }
 }
@@ -275,6 +276,21 @@ fn point_region(packages: [PackageId]) where { state: SolverState, out: Map<Pack
             state,
             out: out.with (package, exact_set(state.decisions.get(package))),
         },
+    }
+}
+
+fn widen_region(point: DeadRegion) where { state: SolverState, cause: ConflictCause } -> DeadRegion {
+    match cause {
+        ConflictCause::FeatureExclusion { package, left, right } => DeadRegion {
+            versions: %{},
+            required_features: %{package => empty_string_set() + left + right},
+        },
+        ConflictCause::LinksCollision { links: _, left, right } => DeadRegion {
+            versions: point_region([left, right]) where { state, out: %{} },
+            required_features: %{},
+        },
+        ConflictCause::EmptyDomain(_) => point,
+        ConflictCause::NoCandidates(_) => point,
     }
 }
 
@@ -597,16 +613,6 @@ fn apply_dirty(input: SolveInput) where { state: SolverState } -> StateStep {
     }
 }
 
-fn domain_maps_equal(left: Map<PackageId, VersionSet>) where { right: Map<PackageId, VersionSet> } -> Bool {
-    left.keys() == right.keys()
-        && left.keys().all(|package| left.get(package) == right.get(package))
-}
-
-fn feature_maps_equal(left: Map<PackageId, Set<String>>) where { right: Map<PackageId, Set<String>> } -> Bool {
-    left.keys() == right.keys()
-        && left.keys().all(|package| left.get(package) == right.get(package))
-}
-
 fn exclusion_pair(candidates: [String]) where { enabled: Set<String>, first: Option<String> } -> Option<(String, String)> {
     match candidates.split_last() {
         None => None,
@@ -667,28 +673,48 @@ fn propagate(input: SolveInput) where { state: SolverState } -> StateStep {
 fn point_dead_region(state: SolverState) -> DeadRegion {
     DeadRegion {
         versions: point_region(state.decisions.keys()) where { state, out: %{} },
-        features: state.features,
+        required_features: state.features,
     }
 }
 
 fn state_is_in_region(state: SolverState) where { region: DeadRegion } -> Bool {
     region.versions.keys().all(|package| state.decisions.has(package)
         && region.versions.get(package).contains(state.decisions.get(package)))
-        && region.features.keys().all(|package| state.features.has(package)
-            && state.features.get(package) == region.features.get(package))
+        && region.required_features.keys().all(|package| state.features.has(package)
+            && region.required_features.get(package).values().all(|feature| state.features.get(package).has(feature)))
 }
 
 fn state_is_learned(state: SolverState) -> Bool {
     state.learned.any(|region| state_is_in_region(state) where { region })
 }
 
-fn regions_equal(left: DeadRegion) where { right: DeadRegion } -> Bool {
-    domain_maps_equal(left.versions) where { right: right.versions }
-        && feature_maps_equal(left.features) where { right: right.features }
+fn version_set_contains(outer: VersionSet) where { inner: VersionSet } -> Bool {
+    outer.intersect(inner) == inner
+}
+
+fn region_contains(outer: DeadRegion) where { inner: DeadRegion } -> Bool {
+    outer.versions.keys().all(|package| inner.versions.has(package)
+        && version_set_contains(outer.versions.get(package)) where { inner: inner.versions.get(package) })
+        && outer.required_features.keys().all(|package| inner.required_features.has(package)
+            && outer.required_features.get(package).values().all(|feature| inner.required_features.get(package).has(feature)))
+}
+
+fn retain_unsubsumed(regions: [DeadRegion]) where { broader: DeadRegion, out: [DeadRegion] } -> [DeadRegion] {
+    match regions.split_last() {
+        None => out,
+        Some((region, rest)) => retain_unsubsumed(rest) where {
+            broader,
+            out: if region_contains(broader) where { inner: region } { out } else { out + region },
+        },
+    }
 }
 
 fn install_region(learned: [DeadRegion]) where { region: DeadRegion } -> [DeadRegion] {
-    if learned.any(|existing| regions_equal(existing) where { right: region }) { learned } else { learned + region }
+    if learned.any(|existing| region_contains(existing) where { inner: region }) {
+        learned
+    } else {
+        retain_unsubsumed(learned) where { broader: region, out: [] } + region
+    }
 }
 
 fn claim_links(state: SolverState) where { package: PackageId, row: PackageRow } -> StateStep {
@@ -713,20 +739,21 @@ fn claim_links(state: SolverState) where { package: PackageId, row: PackageRow }
 }
 
 fn select_row(input: SolveInput) where { state: SolverState, package: PackageId, row: PackageRow } -> StateStep {
-    match claim_links(state) where { package, row } {
+    let selected = SelectedPackage {
+        package,
+        version: row.version,
+        features: feature_set(state) where { package },
+    };
+    let decision = SolverState {
+        undecided: without_package(state.undecided) where { package, out: [] },
+        selected: state.selected.with (package, selected),
+        decisions: state.decisions.with (package, row.version),
+        ..state
+    };
+    match claim_links(decision) where { package, row } {
         StateStep::Conflict(conflict) => StateStep::Conflict(conflict),
         StateStep::Pass(claimed) => {
-            let selected = SelectedPackage {
-                package,
-                version: row.version,
-                features: feature_set(claimed) where { package },
-            };
-            let selected_state = mark_dirty(SolverState {
-                undecided: without_package(claimed.undecided) where { package, out: [] },
-                selected: claimed.selected.with (package, selected),
-                decisions: claimed.decisions.with (package, row.version),
-                ..claimed
-            }) where { package };
+            let selected_state = mark_dirty(claimed) where { package };
             propagate(input) where { state: selected_state }
         },
     }
@@ -773,7 +800,7 @@ fn try_rows(input: SolveInput) where {
             } else {
                 match select_row(input) where { state, package, row } {
                     StateStep::Conflict(conflict) => {
-                        let learned = install_region(state.learned) where { region: point_dead_region(branch) };
+                        let learned = install_region(state.learned) where { region: conflict.region };
                         try_rows(input) where {
                             state: SolverState { learned, ..state },
                             package,
@@ -784,7 +811,7 @@ fn try_rows(input: SolveInput) where {
                     StateStep::Pass(next) => match search(input) where { state: next } {
                         SearchOutcome::Found(result) => SearchOutcome::Found(result),
                         SearchOutcome::Dead(dead) => {
-                            let learned = install_region(dead.learned) where { region: point_dead_region(branch) };
+                            let learned = install_region(dead.learned) where { region: dead.conflict.region };
                             try_rows(input) where {
                                 state: SolverState { learned, ..state },
                                 package,

@@ -2348,7 +2348,8 @@ fn native_backtracking() -> Stream<Check> {
 fn is_shared_exhaustion(conflict: Conflict) -> Bool {
     match conflict.cause {
         ConflictCause::EmptyDomain(_) => false,
-        ConflictCause::NoCandidates(package) => package == shared_package(),
+        ConflictCause::NoCandidates(package) => package == shared_package()
+            && conflict.region.versions.has(app_package()),
         ConflictCause::FeatureExclusion { package: _, left: _, right: _ } => false,
         ConflictCause::LinksCollision { links: _, left: _, right: _ } => false,
     }
@@ -2406,6 +2407,10 @@ fn is_feature_conflict(conflict: Conflict) -> Bool {
         ConflictCause::NoCandidates(_) => false,
         ConflictCause::FeatureExclusion { package, left: _, right: _ } => {
             package == feature_conflict_package()
+                && conflict.region.versions.len() == 0
+                && conflict.region.required_features.has(package)
+                && conflict.region.required_features.get(package).has("left")
+                && conflict.region.required_features.get(package).has("right")
         },
         ConflictCause::LinksCollision { links: _, left: _, right: _ } => false,
     }
@@ -2473,7 +2478,11 @@ fn is_links_conflict(conflict: Conflict) -> Bool {
         ConflictCause::EmptyDomain(_) => false,
         ConflictCause::NoCandidates(_) => false,
         ConflictCause::FeatureExclusion { package: _, left: _, right: _ } => false,
-        ConflictCause::LinksCollision { links, left: _, right: _ } => links == "native",
+        ConflictCause::LinksCollision { links, left, right } => links == "native"
+            && conflict.region.versions.len() == 2
+            && conflict.region.versions.has(left)
+            && conflict.region.versions.has(right)
+            && conflict.region.required_features.len() == 0,
     }
 }
 
@@ -2484,6 +2493,38 @@ fn native_links_conflict() -> Stream<Check> {
         RodinOutcome::Unsupported(_) => expect(false),
         RodinOutcome::Failed(conflict) => expect(is_links_conflict(conflict)),
     };
+}
+
+fn exact_app_region() -> DeadRegion {
+    DeadRegion {
+        versions: %{app_package() => parse_req("=1.1.0")},
+        required_features: %{},
+    }
+}
+
+fn broad_app_region() -> DeadRegion {
+    DeadRegion {
+        versions: %{app_package() => parse_req(">=1.0.0,<2.0.0")},
+        required_features: %{},
+    }
+}
+
+fn region_subsumption_holds() -> Bool {
+    let point = exact_app_region();
+    let broad = broad_app_region();
+    match (install_region([point]) where { region: broad }).split_last() {
+        None => false,
+        Some((installed, rest)) => {
+            rest.len() == 0
+                && region_contains(installed) where { inner: point }
+                && !(region_contains(point) where { inner: installed })
+        },
+    }
+}
+
+#[test]
+fn native_region_subsumption() -> Stream<Check> {
+    yield expect(region_subsumption_holds());
 }
 "#;
 
@@ -2503,13 +2544,20 @@ fn native_rodin_kernel_executes_typed_line_input() {
 #[test]
 fn native_rodin_kernel_backtracks_and_returns_typed_conflicts() {
     let source = format!("{STD_VERSION}\n{NATIVE_RODIN_KERNEL}\n{NATIVE_KERNEL_CONFLICT_FIXTURE}");
+    if let Some(path) = std::env::var_os("VIX_RODIN_MODULE_DUMP") {
+        let module = Compiler::new()
+            .compile(&source)
+            .expect("compile native Rodin module for inspection")
+            .module;
+        std::fs::write(path, module.render()).expect("write native Rodin module dump");
+    }
     let report = run_source(&source).expect("native Rodin search and conflicts execute");
     assert!(
         report.passed(),
         "search/conflict certificates pass: {report:?}"
     );
     assert!(report.agrees(), "plain and chaos agree");
-    assert_eq!(report.plain.checks.len(), 6);
+    assert_eq!(report.plain.checks.len(), 7);
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.pure_host_calls, 0);
         assert_eq!(lane.receipt_count, 0);
