@@ -682,6 +682,49 @@ impl MoltenArena {
         Ok(handle)
     }
 
+    pub(crate) fn import_dense(
+        &mut self,
+        element_schema: i64,
+        width: usize,
+        elements: &[Vec<u8>],
+    ) -> Result<i64, ArrayOpStatus> {
+        if width == 0 || elements.iter().any(|element| element.len() != width) {
+            return Err(ArrayOpStatus::WidthMismatch);
+        }
+        let handle = self.alloc_array(
+            i64::try_from(elements.len()).map_err(|_| ArrayOpStatus::Overflow)?,
+            width,
+            element_schema,
+        )?;
+        let buffer = self
+            .buffer_mut(handle)
+            .ok_or(ArrayOpStatus::InvalidHandle)?;
+        for (index, element) in elements.iter().enumerate() {
+            let start = ARRAY_ELEMENTS_HEADER_SIZE
+                .checked_add(index.checked_mul(width).ok_or(ArrayOpStatus::Overflow)?)
+                .ok_or(ArrayOpStatus::Overflow)?;
+            buffer.bytes[start..start + width].copy_from_slice(element);
+            buffer.initialized[index] = true;
+        }
+        Ok(handle)
+    }
+
+    pub(crate) fn dense_elements(
+        &self,
+        handle: i64,
+        element_schema: i64,
+        element_width: usize,
+    ) -> Result<Vec<&[u8]>, ArrayOpStatus> {
+        let bytes = self.bytes(handle).ok_or(ArrayOpStatus::InvalidHandle)?;
+        let payload = parse_array_payload(bytes, element_schema, Some(element_width))?;
+        (0..payload.count)
+            .map(|index| {
+                let start = payload.body_offset + index * payload.elem_width;
+                Ok(&payload.bytes[start..start + payload.elem_width])
+            })
+            .collect()
+    }
+
     pub(crate) fn import_ordered(
         &mut self,
         schema: i64,
@@ -5002,10 +5045,10 @@ mod tests {
         assert_eq!(classify_handle(-1), Some(HandleKind::LentMolten(0)));
         assert_eq!(lent_molten_index(-1), Some(0));
 
-        let max_index_i64 = LENT_MOLTEN_MIN - TASK_MOLTEN_FIRST - 1;
+        let max_index_i64 = TASK_MOLTEN_LIMIT - TASK_MOLTEN_FIRST - 1;
         if let Ok(max_index) = usize::try_from(max_index_i64) {
             let last = task_molten_handle(max_index).expect("last encodable handle");
-            assert_eq!(last, LENT_MOLTEN_MIN - 1);
+            assert_eq!(last, TASK_MOLTEN_LIMIT - 1);
             assert_eq!(task_molten_index(last), Some(max_index));
             assert_eq!(task_molten_handle(max_index.saturating_add(1)), None);
         } else {
@@ -5072,7 +5115,7 @@ mod tests {
     #[test]
     fn begin_ordered_probe_decodes_roots_and_confines_the_cursor() {
         let mut arena = MoltenArena::default();
-        // Empty collection (canonical handle 0) begins a Probe cursor at no root.
+        // The disjoint empty ordered root begins a Probe cursor at no root.
         let token = arena
             .begin_ordered_probe(ORDERED_EMPTY_HANDLE, 7)
             .expect("empty probe begins");
@@ -5085,12 +5128,12 @@ mod tests {
             Ok(None)
         );
 
-        // A non-empty handle names arena node `n - 1`; a matching schema begins.
+        // A non-empty handle names one task-private ordered node.
         let leaf = arena
             .alloc_ordered_node(9, vec![1, 2], Some(vec![3, 4]), None, None)
             .expect("node allocation");
         let rooted = arena
-            .begin_ordered_probe(leaf as i64 + 1, 9)
+            .begin_ordered_probe(MoltenArena::ordered_child_handle(Some(leaf)), 9)
             .expect("rooted probe begins");
         assert_eq!(
             arena.consume_ordered_cursor(rooted, 9, OrderedCursorOperation::Probe),
@@ -5099,7 +5142,7 @@ mod tests {
 
         // Wrong schema for a rooted collection is a typed status, not a panic.
         assert_eq!(
-            arena.begin_ordered_probe(leaf as i64 + 1, 8),
+            arena.begin_ordered_probe(MoltenArena::ordered_child_handle(Some(leaf)), 8),
             Err(OrderedOpStatus::SchemaMismatch)
         );
         // An out-of-range handle never touches a node: it is InvalidHandle.
@@ -5123,12 +5166,14 @@ mod tests {
             .unwrap();
 
         // Probe at the root exposes its key and the two child collection handles.
-        let cursor = arena.begin_ordered_probe(root as i64 + 1, 9).unwrap();
+        let cursor = arena
+            .begin_ordered_probe(MoltenArena::ordered_child_handle(Some(root)), 9)
+            .unwrap();
         let step = arena.probe_ordered_key(cursor, 9).expect("root probe");
         assert!(step.present);
         assert_eq!(step.key, vec![2]);
-        assert_eq!(step.left, left as i64 + 1);
-        assert_eq!(step.right, right as i64 + 1);
+        assert_eq!(step.left, MoltenArena::ordered_child_handle(Some(left)));
+        assert_eq!(step.right, MoltenArena::ordered_child_handle(Some(right)));
         // The cursor is single-use: a second probe of the same token is stale.
         assert_eq!(
             arena.probe_ordered_key(cursor, 9),
@@ -5151,7 +5196,9 @@ mod tests {
         // A forged token (poison index) and a cross-schema consume are typed
         // statuses, never panics.
         assert!(OrderedCursorToken::from_words(ORDERED_CURSOR_POISON, 0).is_none());
-        let cursor = arena.begin_ordered_probe(root as i64 + 1, 9).unwrap();
+        let cursor = arena
+            .begin_ordered_probe(MoltenArena::ordered_child_handle(Some(root)), 9)
+            .unwrap();
         assert_eq!(
             arena.probe_ordered_key(cursor, 8),
             Err(OrderedOpStatus::SchemaMismatch)
@@ -5166,7 +5213,9 @@ mod tests {
             .unwrap();
 
         // A rooted probe exposes the node's value bytes.
-        let cursor = arena.begin_ordered_probe(node as i64 + 1, 9).unwrap();
+        let cursor = arena
+            .begin_ordered_probe(MoltenArena::ordered_child_handle(Some(node)), 9)
+            .unwrap();
         assert_eq!(
             arena.probe_ordered_value(cursor, 9),
             Ok((true, vec![9, 9, 9]))
@@ -5180,7 +5229,9 @@ mod tests {
         );
 
         // The value cursor is single-use, like the key cursor.
-        let cursor = arena.begin_ordered_probe(node as i64 + 1, 9).unwrap();
+        let cursor = arena
+            .begin_ordered_probe(MoltenArena::ordered_child_handle(Some(node)), 9)
+            .unwrap();
         arena
             .probe_ordered_value(cursor, 9)
             .expect("first value probe");

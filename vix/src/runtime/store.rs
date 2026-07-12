@@ -47,6 +47,7 @@ pub(crate) enum FrozenValue {
     Reference(ValueId),
     Product(Vec<FrozenValue>),
     Variant { tag: u32, fields: Vec<FrozenValue> },
+    DenseArray(Vec<FrozenValue>),
     OrderedMap(Vec<(FrozenValue, FrozenValue)>),
     OrderedSet(Vec<FrozenValue>),
 }

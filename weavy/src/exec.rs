@@ -117,6 +117,10 @@ pub enum FrozenValue {
         schema: SchemaRef,
         bytes: Vec<u8>,
     },
+    Dense {
+        schema: SchemaRef,
+        elements: Vec<FrozenInlineValue>,
+    },
     Ordered {
         schema: SchemaRef,
         rows: Vec<(FrozenInlineValue, Option<FrozenInlineValue>)>,
@@ -412,6 +416,7 @@ impl StructuralResult<'_> {
 
 /// Opaque task-result reference. Its machine word is private and its lifetime
 /// is minted only inside [`ExecTask::with_result_resolver`].
+#[derive(Clone, Copy)]
 pub struct TaskValueRef<'task> {
     word: i64,
     schema: SchemaRef,
@@ -446,6 +451,17 @@ impl<'task> ResolvedOrderedRow<'task> {
 
 pub struct ResolvedOrderedCollection<'task> {
     rows: Vec<ResolvedOrderedRow<'task>>,
+}
+
+pub struct ResolvedDenseArray<'task> {
+    elements: Vec<TaskStructuralValue<'task>>,
+}
+
+impl<'task> ResolvedDenseArray<'task> {
+    #[must_use]
+    pub fn elements(&self) -> &[TaskStructuralValue<'task>] {
+        &self.elements
+    }
 }
 
 impl<'task> ResolvedOrderedCollection<'task> {
@@ -540,6 +556,43 @@ impl<'task> TaskValueResolver<'task> {
             })
             .collect::<Result<Vec<_>, _>>()
             .map(|rows| ResolvedOrderedCollection { rows })
+    }
+
+    pub fn resolve_dense(
+        &self,
+        value: TaskValueRef<'task>,
+    ) -> Result<ResolvedDenseArray<'task>, TaskFault> {
+        let collection = self
+            .contract
+            .schemas
+            .get(value.schema.0 as usize)
+            .ok_or_else(|| self.invalid_ordered())?;
+        let crate::PayloadKind::DenseArray { element } = collection.payload else {
+            return Err(self.invalid_ordered());
+        };
+        let element_contract = self
+            .contract
+            .schemas
+            .get(element.0 as usize)
+            .ok_or_else(|| self.invalid_ordered())?;
+        let width = element_contract
+            .inline
+            .checked_byte_len()
+            .ok_or_else(|| self.invalid_ordered())?;
+        let elements = self
+            .molten
+            .dense_elements(value.word, i64::from(element.0), width)
+            .map_err(|_| self.invalid_ordered())?
+            .into_iter()
+            .map(|bytes| {
+                self.structural(
+                    bytes,
+                    &element_contract.inline,
+                    element_contract.value_shape,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ResolvedDenseArray { elements })
     }
 
     fn structural(
@@ -1365,6 +1418,26 @@ fn materialize_frozen(
             let handle = molten.import_opaque(bytes).map_err(|_| ())?;
             Ok(handle.to_le_bytes().to_vec())
         }
+        FrozenValue::Dense { schema, elements } => {
+            require_handle_schema(expected, *schema)?;
+            let collection = contract.schemas.get(schema.0 as usize).ok_or(())?;
+            let crate::PayloadKind::DenseArray { element } = &collection.payload else {
+                return Err(());
+            };
+            let element_contract = contract.schemas.get(element.0 as usize).ok_or(())?;
+            let elements = elements
+                .iter()
+                .map(|value| materialize_inline(value, &element_contract.inline, contract, molten))
+                .collect::<Result<Vec<_>, ()>>()?;
+            let handle = molten
+                .import_dense(
+                    i64::from(element.0),
+                    element_contract.inline.checked_byte_len().ok_or(())?,
+                    &elements,
+                )
+                .map_err(|_| ())?;
+            Ok(handle.to_le_bytes().to_vec())
+        }
         FrozenValue::Ordered { schema, rows } => {
             require_handle_schema(expected, *schema)?;
             let collection = contract.schemas.get(schema.0 as usize).ok_or(())?;
@@ -1421,6 +1494,7 @@ fn materialize_inline(
         let schema = match reference {
             FrozenValue::Store { schema, .. }
             | FrozenValue::Opaque { schema, .. }
+            | FrozenValue::Dense { schema, .. }
             | FrozenValue::Ordered { schema, .. } => *schema,
             FrozenValue::Inline(_) => return Err(()),
         };
@@ -2884,7 +2958,7 @@ mod tests {
             let interp = run_interpreter(
                 &verified,
                 |task| {
-                    task.write_i64(0, 0);
+                    task.write_i64(0, crate::task::ORDERED_EMPTY_HANDLE);
                     task.write_i64(8, cursor_seed);
                     task.write_i64(16, 0);
                 },
@@ -2900,7 +2974,7 @@ mod tests {
             if let Some(native) = run_native(
                 Arc::clone(&verified),
                 |task| {
-                    task.write_i64(0, 0);
+                    task.write_i64(0, crate::task::ORDERED_EMPTY_HANDLE);
                     task.write_i64(8, cursor_seed);
                     task.write_i64(16, 0);
                 },
@@ -2988,7 +3062,7 @@ mod tests {
             let interp = run_interpreter(
                 &verified,
                 |task| {
-                    task.write_i64(0, 0);
+                    task.write_i64(0, crate::task::ORDERED_EMPTY_HANDLE);
                     task.write_i64(8, cursor_seed);
                     task.write_i64(16, 0);
                 },
@@ -3003,7 +3077,7 @@ mod tests {
             if let Some(native) = run_native(
                 Arc::clone(&verified),
                 |task| {
-                    task.write_i64(0, 0);
+                    task.write_i64(0, crate::task::ORDERED_EMPTY_HANDLE);
                     task.write_i64(8, cursor_seed);
                     task.write_i64(16, 0);
                 },
@@ -3018,11 +3092,11 @@ mod tests {
     fn ordered_begin_probe_matches_across_public_executable_lanes() {
         use crate::task::OrderedOpStatus;
 
-        // The empty collection (canonical handle 0) begins a cursor: status Ok.
+        // The disjoint empty ordered root begins a cursor: status Ok.
         // A handle naming no resident node is InvalidHandle. Both outcomes must
         // agree between the interpreter and the native lane.
         for (handle, expected) in [
-            (0i64, OrderedOpStatus::Ok),
+            (crate::task::ORDERED_EMPTY_HANDLE, OrderedOpStatus::Ok),
             (5i64, OrderedOpStatus::InvalidHandle),
         ] {
             let verified = Arc::new(verify(ordered_begin_probe_program()));
@@ -3410,20 +3484,24 @@ mod tests {
     }
 
     #[test]
-    fn public_spawn_rejects_structural_entry_until_typed_writer_exists() {
+    fn public_spawn_accepts_structural_entry_for_typed_writer() {
         let executable = Executable::new(verify(structural_entry_program(Op::EnumIsVariant {
             dst: RegionId(1),
             value: RegionId(0),
             variant: 0,
         })));
-        assert!(matches!(
-            executable.spawn(FnId(0)),
-            Err(TaskFault::InvalidEntryShape {
-                entry: FnId(0),
-                index: 0,
-                region: RegionId(0),
-            })
-        ));
+        let mut task = executable
+            .spawn(FnId(0))
+            .expect("structural entry is admitted");
+        task.write_entry_frozen(
+            0,
+            &FrozenValue::Inline(FrozenInlineValue::new(
+                [0_i64.to_le_bytes(), 7_i64.to_le_bytes()].concat(),
+            )),
+        )
+        .expect("typed writer materializes the verified enum shape");
+        assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
+        assert_eq!(task.result_i64(), Ok(1));
     }
 
     #[test]

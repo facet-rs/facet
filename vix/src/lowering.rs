@@ -758,7 +758,7 @@ fn nodes_contain_checked_collection_ops(nodes: &[Node]) -> bool {
                 | Op::StreamFindMin
                 | Op::StreamFindMax
                 | Op::StreamSplitMin
-        ) || matches!(node.op, Op::Eq | Op::Ne)
+        ) || matches!(node.op, Op::Eq | Op::Ne | Op::Compare)
             && node.inputs.iter().any(|input| {
                 nodes
                     .iter()

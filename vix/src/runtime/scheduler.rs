@@ -1606,13 +1606,25 @@ fn realize_value(
                 )?;
                 (node, Vec::new(), framed_bytes, Some(frozen))
             }
+            Type::Array(element) => {
+                let value_ref = value.value_ref()?;
+                let resolved = resolver
+                    .resolve(value_ref)
+                    .ok_or_else(|| invalid_realized_result(lowered, 0))?;
+                let ResolvedTaskValue::TaskMolten(bytes) = resolved else {
+                    return Err(invalid_realized_result(lowered, 0));
+                };
+                let (node, resident, framed_bytes) =
+                    realize_array(&resolver, value_ref, bytes, element, store, lowered)?;
+                (node, resident, framed_bytes, None)
+            }
             _ => {
                 let value = value.value_ref()?;
                 let resolved = resolver
                     .resolve(value)
                     .ok_or_else(|| invalid_realized_result(lowered, 0))?;
                 let (node, resident, framed_bytes) =
-                    realize_resolved(&resolver, resolved, &lowered.output_type, store, lowered)?;
+                    realize_resolved(resolved, &lowered.output_type, store, lowered)?;
                 (node, resident, framed_bytes, None)
             }
         };
@@ -1738,8 +1750,7 @@ fn realize_structural_node<'task>(
             ty,
             0,
             elements.iter(),
-            store,
-            lowered,
+            RealizeContext { store, lowered },
             false,
         ),
         Type::Record(record) => realize_structural_fields(
@@ -1748,8 +1759,7 @@ fn realize_structural_node<'task>(
             ty,
             0,
             record.fields.iter().map(|field| &field.ty),
-            store,
-            lowered,
+            RealizeContext { store, lowered },
             false,
         ),
         Type::Enum(enumeration) => {
@@ -1769,23 +1779,34 @@ fn realize_structural_node<'task>(
                 ty,
                 tag,
                 fields.into_iter(),
-                store,
-                lowered,
+                RealizeContext { store, lowered },
                 true,
             )
         }
         Type::Array(_) => {
+            let value_ref = value.value_ref()?;
             let resolved = resolver
-                .resolve(value.value_ref()?)
+                .resolve(value_ref)
                 .ok_or_else(|| invalid_realized_result(lowered, 0))?;
-            let ResolvedTaskValue::Store(handle) = resolved else {
-                return Err(invalid_realized_result(lowered, 0));
-            };
-            let entry = store
-                .entry_by_weavy_handle(handle)
-                .ok_or_else(|| invalid_realized_result(lowered, 0))?;
-            let node = FramedNode::Reference(entry.identity);
-            Ok((node, FrozenValue::Reference(entry.identity), 0))
+            match resolved {
+                ResolvedTaskValue::Store(handle) => {
+                    let entry = store
+                        .entry_by_weavy_handle(handle)
+                        .ok_or_else(|| invalid_realized_result(lowered, 0))?;
+                    let node = FramedNode::Reference(entry.identity);
+                    Ok((node, FrozenValue::Reference(entry.identity), 0))
+                }
+                ResolvedTaskValue::TaskMolten(bytes) => {
+                    let Type::Array(element) = ty else {
+                        unreachable!("array arm has array type")
+                    };
+                    let (node, _, framed_bytes) =
+                        realize_array(resolver, value_ref, bytes, element, store, lowered)?;
+                    let frozen = freeze_dense_array(resolver, value_ref, element, store, lowered)?;
+                    Ok((node, frozen, framed_bytes))
+                }
+                ResolvedTaskValue::LentMolten { .. } => Err(invalid_realized_result(lowered, 0)),
+            }
         }
         Type::Function { .. } | Type::StreamCheck | Type::Stream { .. } | Type::Order(_) => {
             Err(invalid_realized_result(lowered, 0))
@@ -1793,15 +1814,19 @@ fn realize_structural_node<'task>(
     }
 }
 
-#[allow(clippy::too_many_arguments)]
+#[derive(Clone, Copy)]
+struct RealizeContext<'a> {
+    store: &'a Store,
+    lowered: &'a LoweringArtifact,
+}
+
 fn realize_structural_fields<'task, 'ty>(
     resolver: &TaskValueResolver<'task>,
     value: TaskStructuralValue<'task>,
     ty: &Type,
     tag: u32,
     field_types: impl Iterator<Item = &'ty Type>,
-    store: &Store,
-    lowered: &LoweringArtifact,
+    context: RealizeContext<'_>,
     enumeration: bool,
 ) -> Result<(FramedNode, FrozenValue, usize), TaskFault> {
     let mut fields = Vec::new();
@@ -1814,14 +1839,14 @@ fn realize_structural_fields<'task, 'ty>(
             value.product_field(index as u32)?
         };
         let (node, frozen_field, bytes) =
-            realize_structural_node(resolver, field, field_ty, store, lowered)?;
+            realize_structural_node(resolver, field, field_ty, context.store, context.lowered)?;
         let identity = node.identity();
         framed_bytes = framed_bytes.saturating_add(bytes);
         fields.push(FramedField {
             schema: semantic_schema_id(field_ty),
             value: if matches!(field_ty, Type::Bool | Type::Int | Type::Check) {
                 let FrozenValue::Inline(bytes) = &frozen_field else {
-                    return Err(invalid_realized_result(lowered, 0));
+                    return Err(invalid_realized_result(context.lowered, 0));
                 };
                 FramedValue::Bytes(bytes.clone())
             } else {
@@ -1849,7 +1874,6 @@ fn realize_structural_fields<'task, 'ty>(
 }
 
 fn realize_resolved<'task>(
-    resolver: &TaskValueResolver<'task>,
     resolved: ResolvedTaskValue<'task>,
     ty: &Type,
     store: &Store,
@@ -1857,7 +1881,6 @@ fn realize_resolved<'task>(
 ) -> Result<(FramedNode, Vec<u8>, usize), TaskFault> {
     match resolved {
         ResolvedTaskValue::TaskMolten(bytes) => match ty {
-            Type::Array(element) => realize_array(resolver, bytes, element, store, lowered),
             Type::String | Type::Path => Ok((
                 FramedNode::leaf(semantic_schema_id(ty), bytes.to_vec()),
                 bytes.to_vec(),
@@ -1881,8 +1904,29 @@ fn realize_resolved<'task>(
     }
 }
 
+fn freeze_dense_array<'task>(
+    resolver: &TaskValueResolver<'task>,
+    value: weavy::exec::TaskValueRef<'task>,
+    element: &Type,
+    store: &Store,
+    lowered: &LoweringArtifact,
+) -> Result<FrozenValue, TaskFault> {
+    let elements = resolver
+        .resolve_dense(value)?
+        .elements()
+        .iter()
+        .copied()
+        .map(|value| {
+            realize_structural_node(resolver, value, element, store, lowered)
+                .map(|(_, frozen, _)| frozen)
+        })
+        .collect::<Result<Vec<_>, _>>()?;
+    Ok(FrozenValue::DenseArray(elements))
+}
+
 fn realize_array<'task>(
     resolver: &TaskValueResolver<'task>,
+    value: weavy::exec::TaskValueRef<'task>,
     bytes: &'task [u8],
     element: &Type,
     store: &Store,
@@ -1944,14 +1988,17 @@ fn realize_array<'task>(
     if width != expected_width {
         return Err(invalid_realized_result(lowered, bytes.len()));
     }
+    let dense = resolver.resolve_dense(value)?;
+    if dense.elements().len() != count {
+        return Err(invalid_realized_result(lowered, bytes.len()));
+    }
     let mut children = Vec::with_capacity(count);
     let mut framed_bytes = 0usize;
-    for index in 0..count {
-        let offset = HEADER + index * width;
-        let (identity, nested_bytes) =
-            realize_inline_identity(resolver, bytes, offset, element, store, lowered)?;
+    for element_value in dense.elements().iter().copied() {
+        let (node, _, nested_bytes) =
+            realize_structural_node(resolver, element_value, element, store, lowered)?;
         framed_bytes = framed_bytes.saturating_add(nested_bytes);
-        children.push(identity);
+        children.push(node.identity());
     }
     Ok((
         FramedNode::SeqChildren {
@@ -1960,162 +2007,6 @@ fn realize_array<'task>(
             children,
         },
         bytes.to_vec(),
-        framed_bytes,
-    ))
-}
-
-fn realize_inline_identity<'task>(
-    resolver: &TaskValueResolver<'task>,
-    container: &'task [u8],
-    offset: usize,
-    ty: &Type,
-    store: &Store,
-    lowered: &LoweringArtifact,
-) -> Result<(ValueId, usize), TaskFault> {
-    match ty {
-        Type::String | Type::Path | Type::Array(_) | Type::Map { .. } | Type::Set(_) => {
-            let child = resolver
-                .resolve_nested(container, offset)
-                .ok_or_else(|| invalid_realized_result(lowered, container.len()))?;
-            match child {
-                ResolvedTaskValue::Store(handle) => Ok((
-                    store
-                        .entry_by_weavy_handle(handle)
-                        .ok_or_else(|| invalid_realized_result(lowered, container.len()))?
-                        .identity,
-                    0,
-                )),
-                ResolvedTaskValue::TaskMolten(_) => {
-                    let (node, _, framed_bytes) =
-                        realize_resolved(resolver, child, ty, store, lowered)?;
-                    Ok((node.identity(), framed_bytes))
-                }
-                ResolvedTaskValue::LentMolten { .. } => {
-                    Err(invalid_realized_result(lowered, container.len()))
-                }
-            }
-        }
-        Type::Tuple(elements) => realize_composite_identity(
-            resolver,
-            container,
-            offset,
-            ty,
-            0,
-            elements.iter(),
-            RealizeEnvironment { store, lowered },
-        ),
-        Type::Record(record) => realize_composite_identity(
-            resolver,
-            container,
-            offset,
-            ty,
-            0,
-            record.fields.iter().map(|field| &field.ty),
-            RealizeEnvironment { store, lowered },
-        ),
-        Type::Enum(enumeration) => {
-            let tag = u64::try_from(
-                read_payload_word(container, offset)
-                    .ok_or_else(|| invalid_realized_result(lowered, container.len()))?,
-            )
-            .map_err(|_| invalid_realized_result(lowered, container.len()))?;
-            let variant = enumeration
-                .variants
-                .get(
-                    usize::try_from(tag)
-                        .map_err(|_| invalid_realized_result(lowered, container.len()))?,
-                )
-                .ok_or_else(|| invalid_realized_result(lowered, container.len()))?;
-            let fields = match &variant.payload {
-                VariantPayload::Unit => Vec::new(),
-                VariantPayload::Tuple(elements) => elements.iter().collect(),
-                VariantPayload::Record(fields) => fields.iter().map(|field| &field.ty).collect(),
-            };
-            realize_composite_identity(
-                resolver,
-                container,
-                offset + 8,
-                ty,
-                tag,
-                fields.into_iter(),
-                RealizeEnvironment { store, lowered },
-            )
-        }
-        Type::Bool | Type::Int | Type::Check => {
-            let width = ty
-                .word_width()
-                .and_then(|words| words.checked_mul(8))
-                .ok_or_else(|| invalid_realized_result(lowered, container.len()))?;
-            let bytes = container
-                .get(offset..offset + width)
-                .ok_or_else(|| invalid_realized_result(lowered, container.len()))?;
-            Ok((
-                FramedNode::leaf(semantic_schema_id(ty), bytes.to_vec()).identity(),
-                width,
-            ))
-        }
-        Type::Function { .. } | Type::StreamCheck | Type::Stream { .. } | Type::Order(_) => {
-            Err(invalid_realized_result(lowered, container.len()))
-        }
-    }
-}
-
-#[derive(Clone, Copy)]
-struct RealizeEnvironment<'a> {
-    store: &'a Store,
-    lowered: &'a LoweringArtifact,
-}
-
-fn realize_composite_identity<'task, 'ty>(
-    resolver: &TaskValueResolver<'task>,
-    container: &'task [u8],
-    offset: usize,
-    ty: &Type,
-    tag: u64,
-    field_types: impl Iterator<Item = &'ty Type>,
-    environment: RealizeEnvironment<'_>,
-) -> Result<(ValueId, usize), TaskFault> {
-    let mut cursor = offset;
-    let mut framed_bytes = 0usize;
-    let mut fields = Vec::new();
-    for field_ty in field_types {
-        let width = field_ty
-            .word_width()
-            .and_then(|words| words.checked_mul(8))
-            .ok_or_else(|| invalid_realized_result(environment.lowered, container.len()))?;
-        let value = if type_contains_handle(field_ty) {
-            let (identity, nested_bytes) = realize_inline_identity(
-                resolver,
-                container,
-                cursor,
-                field_ty,
-                environment.store,
-                environment.lowered,
-            )?;
-            framed_bytes = framed_bytes.saturating_add(nested_bytes);
-            FramedValue::Optional(Some(identity))
-        } else {
-            let bytes = container
-                .get(cursor..cursor + width)
-                .ok_or_else(|| invalid_realized_result(environment.lowered, container.len()))?;
-            framed_bytes = framed_bytes.saturating_add(bytes.len());
-            FramedValue::Bytes(bytes.to_vec())
-        };
-        fields.push(FramedField {
-            schema: semantic_schema_id(field_ty),
-            value,
-        });
-        cursor = cursor
-            .checked_add(width)
-            .ok_or_else(|| invalid_realized_result(environment.lowered, container.len()))?;
-    }
-    Ok((
-        FramedNode::Variant {
-            schema: semantic_schema_id(ty),
-            tag,
-            fields,
-        }
-        .identity(),
         framed_bytes,
     ))
 }
@@ -2215,6 +2106,16 @@ fn frozen_to_weavy(
             Ok(weavy::exec::FrozenValue::Ordered {
                 schema: publication_schema(binding, ty)?,
                 rows,
+            })
+        }
+        (FrozenValue::DenseArray(elements), Type::Array(element)) => {
+            let elements = elements
+                .iter()
+                .map(|value| Ok(frozen_inline(value, element, binding, store)?.into_weavy()))
+                .collect::<Result<Vec<_>, ()>>()?;
+            Ok(weavy::exec::FrozenValue::Dense {
+                schema: publication_schema(binding, ty)?,
+                elements,
             })
         }
         (FrozenValue::Product(_) | FrozenValue::Variant { .. }, _) => {
