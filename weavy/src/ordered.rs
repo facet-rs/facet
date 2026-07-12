@@ -43,6 +43,10 @@ pub enum InsertError<K> {
     Duplicate(K),
 }
 
+/// A spine-rebuilt root paired with whether the key count grew, or the first
+/// structural key that conflicted with a known-new insertion.
+type InsertOutcome<K, V> = Result<(Arc<Node<K, V>>, bool), InsertError<K>>;
+
 impl<K: Clone + Ord, V: Clone> Default for PersistentMap<K, V> {
     fn default() -> Self {
         Self {
@@ -56,6 +60,11 @@ impl<K: Clone + Ord, V: Clone> PersistentMap<K, V> {
     #[must_use]
     pub fn len(&self) -> usize {
         self.len
+    }
+
+    #[must_use]
+    pub fn is_empty(&self) -> bool {
+        self.len == 0
     }
 
     #[must_use]
@@ -155,7 +164,7 @@ fn insert<K: Clone + Ord, V: Clone>(
     key: K,
     value: V,
     replace: bool,
-) -> Result<(Arc<Node<K, V>>, bool), InsertError<K>> {
+) -> InsertOutcome<K, V> {
     match Arc::make_mut(&mut node) {
         Node::Empty => Ok((
             Arc::new(Node::Branch {

@@ -6,13 +6,15 @@ use std::fmt::Write;
 use weavy::exec::Executable;
 use weavy::mem::Layout;
 use weavy::task::{
-    ArgCopy, ArrayOpStatus, Fn as WeavyFn, FnId as WeavyFnId, Op as WeavyOp,
-    Program as WeavyProgram, StructuralFieldSource,
+    ArgCopy, ArrayOpStatus, Fn as WeavyFn, FnId as WeavyFnId, Op as WeavyOp, OrderedOpStatus,
+    Program as WeavyProgram, StructuralFieldSource, TraceMode,
 };
 use weavy::{
     CallContract as WeavyCallContract, CallContractId as WeavyCallContractId,
     FrameContract as WeavyFrameContract, FrameRegion as WeavyFrameRegion,
-    FunctionContract as WeavyFunctionContract, PayloadKind as WeavyPayloadKind,
+    FunctionContract as WeavyFunctionContract,
+    OrderedCollectionContract as WeavyOrderedCollectionContract,
+    OrderedCollectionKind as WeavyOrderedCollectionKind, PayloadKind as WeavyPayloadKind,
     ProgramContract as WeavyProgramContract, RegionId as WeavyRegionId,
     RegionShape as WeavyRegionShape, SchemaContract as WeavySchemaContract,
     SchemaRef as WeavySchemaRef, ValueFieldUse as WeavyValueFieldUse,
@@ -28,9 +30,10 @@ use crate::runtime::{
 };
 use crate::support::Span;
 use crate::vir::{
-    EnumType, EnumVariant, Function, FunctionId, Island, Node, NodeId, NodeRef,
+    ArrayMapExecutionShape, ArrayMapPartition, EnumType, EnumVariant, Function, FunctionId, Island,
+    IslandPurpose, Node, NodeId, NodeRef, OPTION_NONE_VARIANT, OPTION_SOME_VARIANT,
     ORDERING_EQUAL_VARIANT, ORDERING_GREATER_VARIANT, ORDERING_LESS_VARIANT, Op, Type,
-    VariantPayload,
+    ValueIslandId, VariantPayload, YieldSiteId,
 };
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -85,6 +88,15 @@ pub struct ValueConstant {
     pub bytes: Vec<u8>,
 }
 
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ValueInputBinding {
+    pub value: ValueIslandId,
+    pub entry: usize,
+    pub schema: WeavySchemaRef,
+    pub store_schema: SchemaId,
+    pub payload_element_schema: Option<WeavySchemaRef>,
+}
+
 /// The internal result ABI carried by every function in an array-bearing
 /// island. It is metadata for the verified artifact, not a source-level type.
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -95,6 +107,10 @@ pub struct ArrayOutcomeAbi {
     pub array_machine_variant: u32,
     pub missing_key_variant: u32,
     pub duplicate_key_variant: u32,
+    pub ordered_machine_variant: u32,
+    pub string_missing_delimiter_variant: u32,
+    pub string_invalid_integer_variant: u32,
+    pub string_integer_overflow_variant: u32,
 }
 
 impl ArrayOutcomeAbi {
@@ -124,6 +140,22 @@ impl ArrayOutcomeAbi {
                         name: "DuplicateKey".to_owned(),
                         payload: VariantPayload::Tuple(vec![Type::Int]),
                     },
+                    EnumVariant {
+                        name: "OrderedMachine".to_owned(),
+                        payload: VariantPayload::Tuple(vec![Type::Int, Type::Int]),
+                    },
+                    EnumVariant {
+                        name: "StringMissingDelimiter".to_owned(),
+                        payload: VariantPayload::Tuple(vec![Type::Int]),
+                    },
+                    EnumVariant {
+                        name: "StringInvalidInteger".to_owned(),
+                        payload: VariantPayload::Tuple(vec![Type::Int]),
+                    },
+                    EnumVariant {
+                        name: "StringIntegerOverflow".to_owned(),
+                        payload: VariantPayload::Tuple(vec![Type::Int]),
+                    },
                 ],
             }),
             ok_variant: 0,
@@ -131,6 +163,10 @@ impl ArrayOutcomeAbi {
             array_machine_variant: 2,
             missing_key_variant: 3,
             duplicate_key_variant: 4,
+            ordered_machine_variant: 5,
+            string_missing_delimiter_variant: 6,
+            string_invalid_integer_variant: 7,
+            string_integer_overflow_variant: 8,
         }
     }
 }
@@ -154,6 +190,10 @@ pub struct LoweringArtifact {
     pub array_outcome: Option<ArrayOutcomeAbi>,
     pub pc_nodes: Vec<Vec<NodeRef>>,
     pub constants: Vec<ValueConstant>,
+    pub value_inputs: Vec<ValueInputBinding>,
+    pub output_type: Type,
+    pub output_schema: SchemaId,
+    pub forced_copy_value: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -200,6 +240,10 @@ impl LoweringArtifact {
             array_outcome: self.array_outcome.clone(),
             pc_nodes: self.pc_nodes.clone(),
             constants: self.constants.clone(),
+            value_inputs: self.value_inputs.clone(),
+            output_type: self.output_type.clone(),
+            output_schema: self.output_schema,
+            forced_copy_value: self.forced_copy_value,
         }
     }
 
@@ -255,13 +299,34 @@ pub struct LoweringCacheCounters {
 /// memo: eviction can only cause recompilation.
 ///
 /// r[impl machine.lowering.cache]
-#[derive(Default)]
 pub struct LoweringCache {
     entries: BTreeMap<RecipeId, LoweringArtifact>,
     counters: LoweringCacheCounters,
+    trace_mode: TraceMode,
+}
+
+impl Default for LoweringCache {
+    fn default() -> Self {
+        Self {
+            entries: BTreeMap::new(),
+            counters: LoweringCacheCounters::default(),
+            trace_mode: TraceMode::Production,
+        }
+    }
 }
 
 impl LoweringCache {
+    /// Construct an explicit diagnostic cache that retains interior source
+    /// marks. Ordinary production lowering uses [`Default`] and strips only
+    /// these unbounded marks while preserving structural task events.
+    #[must_use]
+    pub fn innards() -> Self {
+        Self {
+            trace_mode: TraceMode::Innards,
+            ..Self::default()
+        }
+    }
+
     pub fn get_or_lower(&mut self, island: &Island) -> Result<&LoweringArtifact, LoweringError> {
         let recipe = RecipeId::from_canonical_vir(&island.canonical_recipe_bytes());
         if self.entries.contains_key(&recipe) {
@@ -269,7 +334,7 @@ impl LoweringCache {
             return Ok(self.entries.get(&recipe).expect("entry was just observed"));
         }
         self.counters.misses += 1;
-        let lowered = lower_island(island, recipe)?;
+        let lowered = lower_island(island, recipe, self.trace_mode)?;
         self.entries.insert(recipe, lowered);
         Ok(self.entries.get(&recipe).expect("entry was just inserted"))
     }
@@ -323,14 +388,32 @@ fn push_source_entries(entries: &mut Vec<SourceMapEntry>, function: FunctionId, 
     }
 }
 
-fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, LoweringError> {
+fn lower_island(
+    island: &Island,
+    recipe: RecipeId,
+    trace_mode: TraceMode,
+) -> Result<LoweringArtifact, LoweringError> {
     let output = island
         .nodes
         .iter()
         .find(|node| node.id == island.output)
         .ok_or_else(|| lowering_diagnostic(Span { start: 0, end: 0 }, "missing island output"))?;
-    if output.ty != Type::Check {
+    if island.purpose == IslandPurpose::Generator {
+        if output.ty != Type::Int {
+            return Err(lowering_diagnostic(
+                output.span,
+                "generator-task island output is not the placeholder scalar",
+            )
+            .into());
+        }
+    } else if island.purpose == IslandPurpose::Check && output.ty != Type::Check {
         return Err(lowering_diagnostic(output.span, "island output is not a Check").into());
+    } else if island.purpose == IslandPurpose::Value && !matches!(output.ty, Type::Array(_)) {
+        return Err(lowering_diagnostic(
+            output.span,
+            "value-island output lacks a registered publication capability",
+        )
+        .into());
     }
     let array_outcome = island_contains_checked_collection_ops(island)
         .then(|| ArrayOutcomeAbi::for_value(output.ty.clone()));
@@ -363,6 +446,8 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
         FunctionLayout::build(
             island.function,
             &island.nodes,
+            &island.parameters,
+            Some(island.output),
             constant_closures.get(&island.function).ok_or_else(|| {
                 lowering_diagnostic(output.span, "island function has no constant closure")
             })?,
@@ -376,6 +461,8 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
             FunctionLayout::build(
                 function.id,
                 &function.nodes,
+                &function.parameters,
+                function.output,
                 constant_closures.get(&function.id).ok_or_else(|| {
                     lowering_diagnostic(function.span, "called function has no constant closure")
                 })?,
@@ -393,6 +480,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
         layouts: &layouts,
         regions: &regions,
         schemas: &schemas,
+        array_map_partitions: &island.array_map_partitions,
     };
 
     let mut pending_constants = BTreeMap::new();
@@ -401,7 +489,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
     let lowered_root = lower_vir_function(
         island.function,
         &island.nodes,
-        &[],
+        &island.parameters,
         island.output,
         &context,
         &mut pending_constants,
@@ -439,6 +527,7 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
         &layouts,
         &function_ids,
     )?;
+    let value_inputs = bind_value_inputs(island, &contract, &schemas)?;
     let demand_preimage = DemandPreimage {
         closure: recipe,
         arguments: Vec::new(),
@@ -457,42 +546,166 @@ fn lower_island(island: &Island, recipe: RecipeId) -> Result<LoweringArtifact, L
         recipe,
         demand_key,
         demand_preimage,
-        executable: Executable::new(verified),
+        // Keep source-attributed `Op::Trace` nodes in the verified program. The
+        // cache chooses bounded Production tracing for ordinary execution or
+        // explicit Innards tracing for diagnostics.
+        executable: Executable::with_trace_mode(verified, trace_mode),
         array_outcome,
         pc_nodes,
         constants,
+        value_inputs,
+        output_type: output.ty.clone(),
+        output_schema: semantic_schema_id(&output.ty),
+        forced_copy_value: island.forced_copy_value,
     })
 }
 
-fn island_contains_checked_collection_ops(island: &Island) -> bool {
+fn semantic_schema_id(ty: &Type) -> SchemaId {
+    SchemaId::named(&format!("vix.semantic.v1:{}", ty.name()))
+}
+
+fn bind_value_inputs(
+    island: &Island,
+    contract: &WeavyProgramContract,
+    schemas: &SchemaAssignments,
+) -> Result<Vec<ValueInputBinding>, Diagnostics> {
+    let root = contract.functions.first().ok_or_else(|| {
+        lowering_diagnostic(Span { start: 0, end: 0 }, "island has no root contract")
+    })?;
     island
-        .nodes
+        .parameters
         .iter()
-        .chain(island.callees.iter().flat_map(|function| &function.nodes))
-        .any(|node| {
-            matches!(
-                node.op,
-                Op::Array
-                    | Op::ArrayIndex
-                    | Op::ArrayLen
-                    | Op::ArrayAppend
-                    | Op::ArrayConcat
-                    | Op::Map
-                    | Op::MapAdd
-                    | Op::MapConcat
-                    | Op::MapWith
-                    | Op::MapGet
-                    | Op::MapHas
-                    | Op::MapLen
-                    | Op::MapKeys
-                    | Op::Set
-                    | Op::SetAdd
-                    | Op::SetConcat
-                    | Op::SetHas
-                    | Op::SetLen
-                    | Op::SetValues
-            )
+        .zip(&island.value_inputs)
+        .enumerate()
+        .map(|(entry, (parameter, value))| {
+            let span = island
+                .nodes
+                .iter()
+                .find(|node| node.id == parameter.node)
+                .map_or(Span { start: 0, end: 0 }, |node| node.span);
+            let region = root.entries.get(entry).copied().ok_or_else(|| {
+                lowering_diagnostic(span, "shared value parameter has no root entry")
+            })?;
+            let region = &contract.functions[0].frame.regions[region.0 as usize];
+            let schema = match region.shape.words.as_slice() {
+                [kinds] => match kinds.as_slice() {
+                    [WeavyWordKind::Handle(schema)] => *schema,
+                    _ => {
+                        return Err(lowering_diagnostic(
+                            span,
+                            "shared value parameter is not a typed handle entry",
+                        ));
+                    }
+                },
+                _ => {
+                    return Err(lowering_diagnostic(
+                        span,
+                        "shared value parameter is not a one-word handle entry",
+                    ));
+                }
+            };
+            Ok(ValueInputBinding {
+                value: *value,
+                entry,
+                schema,
+                store_schema: semantic_schema_id(&parameter.ty),
+                payload_element_schema: match &parameter.ty {
+                    Type::Array(element) => Some(schemas.schema_for(element, span)?),
+                    _ => None,
+                },
+            })
         })
+        .collect()
+}
+
+fn island_contains_checked_collection_ops(island: &Island) -> bool {
+    nodes_contain_checked_collection_ops(&island.nodes)
+        || island
+            .callees
+            .iter()
+            .any(|function| nodes_contain_checked_collection_ops(&function.nodes))
+}
+
+fn nodes_contain_checked_collection_ops(nodes: &[Node]) -> bool {
+    nodes.iter().any(|node| {
+        matches!(
+            node.op,
+            Op::Array
+                | Op::ArrayIndex
+                | Op::ArrayLen
+                | Op::ArrayMap { .. }
+                | Op::ArrayFold
+                | Op::ArraySplitLast
+                | Op::ArrayAll
+                | Op::ArrayAny
+                | Op::ArrayContains
+                | Op::ArraySorted
+                | Op::Range
+                | Op::ArrayAppend
+                | Op::ArrayConcat
+                | Op::Map
+                | Op::MapAdd
+                | Op::MapConcat
+                | Op::MapWith
+                | Op::MapGet
+                | Op::MapHas
+                | Op::MapLen
+                | Op::MapKeys
+                | Op::MapValues
+                | Op::Set
+                | Op::SetAdd
+                | Op::SetConcat
+                | Op::SetHas
+                | Op::SetLen
+                | Op::SetValues
+                | Op::StringSplitOnce
+                | Op::StringParseInt
+                | Op::StreamCollect
+                | Op::StreamFindMin
+                | Op::StreamFindMax
+                | Op::StreamSplitMin
+        ) || matches!(node.op, Op::Eq | Op::Ne)
+            && node.inputs.iter().any(|input| {
+                nodes
+                    .iter()
+                    .find(|candidate| candidate.id == *input)
+                    .is_some_and(|candidate| type_contains_array(&candidate.ty))
+            })
+    })
+}
+
+fn type_contains_array(ty: &Type) -> bool {
+    match ty {
+        Type::Array(_) => true,
+        Type::Tuple(fields) => fields.iter().any(type_contains_array),
+        Type::Record(record) => record
+            .fields
+            .iter()
+            .any(|field| type_contains_array(&field.ty)),
+        Type::Enum(enumeration) => {
+            enumeration
+                .variants
+                .iter()
+                .any(|variant| match &variant.payload {
+                    VariantPayload::Unit => false,
+                    VariantPayload::Tuple(fields) => fields.iter().any(type_contains_array),
+                    VariantPayload::Record(fields) => {
+                        fields.iter().any(|field| type_contains_array(&field.ty))
+                    }
+                })
+        }
+        Type::Function { parameter, result } => {
+            type_contains_array(parameter) || type_contains_array(result)
+        }
+        Type::Map { key, value } => type_contains_array(key) || type_contains_array(value),
+        Type::Set(element) => type_contains_array(element),
+        Type::Stream { key, value } => type_contains_array(key) || type_contains_array(value),
+        // An `Order<T>` is never a realized frame value.
+        Type::Order(_) => false,
+        Type::Bool | Type::Int | Type::Check | Type::StreamCheck | Type::String | Type::Path => {
+            false
+        }
+    }
 }
 
 fn program_error_attribution(
@@ -526,7 +739,7 @@ fn bind_constants(
         .into_values()
         .map(|pending| {
             let owner_parameters = if pending.node.function == island.function {
-                0
+                island.parameters.len()
             } else {
                 island
                     .callees
@@ -534,8 +747,13 @@ fn bind_constants(
                     .find(|function| function.id == pending.node.function)
                     .map_or(0, |function| function.parameters.len())
             };
-            let root_entry =
-                constant_entry_index(island.function, pending.node, 0, layouts, pending.span)?;
+            let root_entry = constant_entry_index(
+                island.function,
+                pending.node,
+                island.parameters.len(),
+                layouts,
+                pending.span,
+            )?;
             let owner_entry = constant_entry_index(
                 pending.node.function,
                 pending.node,
@@ -668,11 +886,12 @@ struct ProgramContractBuilder<'a> {
     schemas_preassigned: &'a SchemaAssignments,
     function_order: Vec<FunctionContractSource<'a>>,
     closure_targets: BTreeSet<FunctionId>,
+    callable_outcomes: bool,
     calls: Vec<WeavyCallContract>,
     schemas: Vec<WeavySchemaContract>,
     schema_ready: Vec<bool>,
     value_shapes: Vec<WeavyValueShapeContract>,
-    value_shape_keys: Vec<Type>,
+    value_shape_types: Vec<(Type, WeavyValueShapeRef)>,
 }
 
 fn empty_schema() -> WeavySchemaContract {
@@ -683,11 +902,26 @@ fn empty_schema() -> WeavySchemaContract {
     }
 }
 
+/// The single scalar publication-record schema used by every generator-task
+/// `Op::Publish`: a one-word scalar run carrying the taken site's stable
+/// selector, with no value shape and no handle word (no handle leakage).
+fn publication_record_schema() -> WeavySchemaContract {
+    WeavySchemaContract {
+        inline: WeavyRegionShape::word(WeavyWordKind::Scalar),
+        value_shape: None,
+        payload: WeavyPayloadKind::PublicationRecord,
+    }
+}
+
 /// Closed program-local schema order. It is sorted by Vix's canonical semantic
 /// type encoding, so source spans and lowering traversal cannot affect a
 /// Weavy `SchemaRef` witness.
 struct SchemaAssignments {
     types: Vec<Type>,
+    /// Whether this island publishes generator yield sites and therefore needs
+    /// a single trailing scalar `PublicationRecord` schema after the closed type
+    /// schemas.
+    publications: bool,
 }
 
 impl SchemaAssignments {
@@ -729,7 +963,35 @@ impl SchemaAssignments {
                 "Stream<Check> cannot be a dynamic program payload schema",
             ));
         }
-        Ok(Self { types })
+        let publications = island
+            .nodes
+            .iter()
+            .any(|node| matches!(node.op, Op::PublishSite(_)));
+        Ok(Self {
+            types,
+            publications,
+        })
+    }
+
+    /// Total closed schema slots: the canonical type schemas plus one trailing
+    /// scalar publication-record schema when the island publishes sites.
+    fn schema_count(&self) -> usize {
+        self.types.len() + usize::from(self.publications)
+    }
+
+    /// The `SchemaRef` of the trailing scalar publication-record schema. It rides
+    /// immediately after the closed type schemas, so its witness is stable and
+    /// span-insensitive.
+    fn publication_record(&self, span: Span) -> Result<WeavySchemaRef, Diagnostics> {
+        if !self.publications {
+            return Err(lowering_diagnostic(
+                span,
+                "publication-record schema requested by a non-publishing island",
+            ));
+        }
+        u32::try_from(self.types.len())
+            .map(WeavySchemaRef)
+            .map_err(|_| lowering_diagnostic(span, "publication-record schema index overflow"))
     }
 
     fn schema_for(&self, ty: &Type, span: Span) -> Result<WeavySchemaRef, Diagnostics> {
@@ -748,6 +1010,16 @@ impl SchemaAssignments {
 }
 
 fn collect_schema_types(ty: &Type, out: &mut Vec<Type>) {
+    if let Type::Stream { key, value } = ty {
+        collect_schema_types(key, out);
+        collect_schema_types(value, out);
+        return;
+    }
+    // An `Order<T>` recipe never becomes a schema; it is consumed at compile
+    // time and never realized in a frame.
+    if matches!(ty, Type::Order(_)) {
+        return;
+    }
     out.push(ty.clone());
     match ty {
         Type::Function { parameter, result } => {
@@ -782,7 +1054,9 @@ fn collect_schema_types(ty: &Type, out: &mut Vec<Type>) {
             );
         }
         Type::Set(element) => collect_schema_types(element, out),
-        Type::Bool | Type::Int | Type::Check | Type::StreamCheck | Type::String => {}
+        Type::Stream { .. } => unreachable!("stream schemas return before insertion"),
+        Type::Order(_) => unreachable!("order recipes return before insertion"),
+        Type::Bool | Type::Int | Type::Check | Type::StreamCheck | Type::String | Type::Path => {}
     }
 }
 
@@ -816,6 +1090,43 @@ fn lower_equality_node(
     let accumulator = temps.take(&Type::Int, node.span)?;
     let work = temps.take(&Type::Int, node.span)?;
     let equal = temps.take(&Type::Int, node.span)?;
+    let array = if type_contains_array(&a.ty) {
+        let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+            lowering_diagnostic(node.span, "array equality has no checked outcome scratch")
+        })?;
+        let assigned = sequence
+            .lowering
+            .regions
+            .outcome_scratch(sequence.function.id, node.span)?;
+        let outcome = sequence
+            .lowering
+            .regions
+            .array_outcome(sequence.function.id, node.span)?;
+        let return_label = sequence.array_return.ok_or_else(|| {
+            lowering_diagnostic(node.span, "array equality has no checked outcome return")
+        })?;
+        let site = sequence
+            .lowering
+            .trace_ids
+            .get(&NodeRef {
+                function: sequence.function.id,
+                node: node.id,
+            })
+            .copied()
+            .ok_or_else(|| {
+                lowering_diagnostic(node.span, "array equality has no stable trace site")
+            })?;
+        Some(ArrayEqualityContext {
+            schemas: sequence.lowering.schemas,
+            scratch,
+            assigned,
+            outcome,
+            return_label,
+            site,
+        })
+    } else {
+        None
+    };
     outputs.code.push(WeavyOp::ConstI64 {
         dst: accumulator.region.start().byte_offset(),
         value: 1,
@@ -827,6 +1138,7 @@ fn lower_equality_node(
         equal: equal.region.start(),
         temps: &mut temps,
         code: outputs.code,
+        array,
     }
     .emit(&a.ty, &a, &b)?;
     if matches!(node.op, Op::Ne) {
@@ -855,6 +1167,17 @@ struct SemanticEqualityEmitter<'node, 'temps, 'code> {
     equal: FrameSlot,
     temps: &'node mut TemporaryCursor<'temps>,
     code: &'code mut CodeBuilder,
+    array: Option<ArrayEqualityContext<'node>>,
+}
+
+#[derive(Clone, Copy)]
+struct ArrayEqualityContext<'a> {
+    schemas: &'a SchemaAssignments,
+    scratch: OutcomeScratch,
+    assigned: AssignedOutcomeScratch,
+    outcome: WeavyRegionId,
+    return_label: CodeLabel,
+    site: u32,
 }
 
 impl SemanticEqualityEmitter<'_, '_, '_> {
@@ -876,7 +1199,7 @@ impl SemanticEqualityEmitter<'_, '_, '_> {
                     b: work.byte_offset(),
                 });
             }
-            Type::String => {
+            Type::String | Type::Path => {
                 self.code.push(WeavyOp::CompareValueBytes {
                     dst: work.byte_offset(),
                     a: a.region.start().byte_offset(),
@@ -1002,11 +1325,125 @@ impl SemanticEqualityEmitter<'_, '_, '_> {
                     self.code.bind(next, node.span)?;
                 }
             }
-            Type::Array(_)
-            | Type::Map { .. }
+            Type::Array(element) => {
+                let array = self.array.ok_or_else(|| {
+                    lowering_diagnostic(node.span, "array equality has no checked access context")
+                })?;
+                let left_length = self.temps.take(&Type::Int, node.span)?;
+                let right_length = self.temps.take(&Type::Int, node.span)?;
+                let index = self.temps.take(&Type::Int, node.span)?;
+                let left = self.temps.take(element, node.span)?;
+                let right = self.temps.take(element, node.span)?;
+                let element_schema = array.schemas.schema_for(element, node.span)?;
+                let element_width = element_byte_width(element, node.span)?;
+
+                self.code.push(WeavyOp::LoadArrayLen {
+                    dst: left_length.region.start().byte_offset(),
+                    status: array.scratch.status.byte_offset(),
+                    array: a.region.start().byte_offset(),
+                    elem_schema_ref: i64::from(element_schema.0),
+                });
+                emit_array_status_machine_checks(
+                    node,
+                    array.site,
+                    array.scratch,
+                    array.assigned,
+                    array.outcome,
+                    array.return_label,
+                    self.code,
+                )?;
+                self.code.push(WeavyOp::LoadArrayLen {
+                    dst: right_length.region.start().byte_offset(),
+                    status: array.scratch.status.byte_offset(),
+                    array: b.region.start().byte_offset(),
+                    elem_schema_ref: i64::from(element_schema.0),
+                });
+                emit_array_status_machine_checks(
+                    node,
+                    array.site,
+                    array.scratch,
+                    array.assigned,
+                    array.outcome,
+                    array.return_label,
+                    self.code,
+                )?;
+                self.code.push(WeavyOp::EqI64 {
+                    dst: work.byte_offset(),
+                    a: left_length.region.start().byte_offset(),
+                    b: right_length.region.start().byte_offset(),
+                });
+                self.code.push(WeavyOp::MulI64 {
+                    dst: accumulator.byte_offset(),
+                    a: accumulator.byte_offset(),
+                    b: work.byte_offset(),
+                });
+                let done = self.code.label();
+                self.code.jump_if_zero(work, done);
+                self.code.push(WeavyOp::ConstI64 {
+                    dst: index.region.start().byte_offset(),
+                    value: 0,
+                });
+                let next = self.code.label();
+                self.code.bind(next, node.span)?;
+                self.code.push(WeavyOp::LtI64 {
+                    dst: work.byte_offset(),
+                    a: index.region.start().byte_offset(),
+                    b: left_length.region.start().byte_offset(),
+                });
+                self.code.jump_if_zero(work, done);
+                self.code.push(WeavyOp::LoadArray {
+                    dst: left.region.start().byte_offset(),
+                    status: array.scratch.status.byte_offset(),
+                    array: a.region.start().byte_offset(),
+                    index: index.region.start().byte_offset(),
+                    elem_width: element_width,
+                    elem_schema_ref: i64::from(element_schema.0),
+                });
+                emit_array_status_machine_checks(
+                    node,
+                    array.site,
+                    array.scratch,
+                    array.assigned,
+                    array.outcome,
+                    array.return_label,
+                    self.code,
+                )?;
+                self.code.push(WeavyOp::LoadArray {
+                    dst: right.region.start().byte_offset(),
+                    status: array.scratch.status.byte_offset(),
+                    array: b.region.start().byte_offset(),
+                    index: index.region.start().byte_offset(),
+                    elem_width: element_width,
+                    elem_schema_ref: i64::from(element_schema.0),
+                });
+                emit_array_status_machine_checks(
+                    node,
+                    array.site,
+                    array.scratch,
+                    array.assigned,
+                    array.outcome,
+                    array.return_label,
+                    self.code,
+                )?;
+                self.emit(element, &left, &right)?;
+                self.code.push(WeavyOp::ConstI64 {
+                    dst: equal.byte_offset(),
+                    value: 1,
+                });
+                self.code.push(WeavyOp::AddI64 {
+                    dst: index.region.start().byte_offset(),
+                    a: index.region.start().byte_offset(),
+                    b: equal.byte_offset(),
+                });
+                self.code.jump(next);
+                self.code.bind(done, node.span)?;
+            }
+            Type::Map { .. }
             | Type::Set(_)
             | Type::Function { .. }
-            | Type::StreamCheck => {
+            | Type::StreamCheck
+            | Type::Stream { .. }
+            | Type::Order(_) => {
                 return Err(lowering_diagnostic(
                     node.span,
                     "equality lowering is not implemented for this VIR type",
@@ -1014,6 +1451,354 @@ impl SemanticEqualityEmitter<'_, '_, '_> {
             }
         }
         Ok(())
+    }
+}
+
+/// Emits the machine's structural total order for one VIR type into a single
+/// Ordering-discriminant word (`0` Less / `1` Equal / `2` Greater), recursing
+/// through products, enums, and arrays over the same checked Weavy operations
+/// that structural equality uses. Enum order is variant/declaration order first,
+/// then lexicographic payload order within the shared variant; array order is
+/// lexicographic by element with length as the exhausted-prefix tie-break. No
+/// handle or physical-layout bytes are ever compared for a semantic order.
+struct SemanticOrderingEmitter<'node, 'temps, 'code> {
+    node: &'node Node,
+    temps: &'node mut TemporaryCursor<'temps>,
+    code: &'code mut CodeBuilder,
+    array: Option<ArrayEqualityContext<'node>>,
+}
+
+impl SemanticOrderingEmitter<'_, '_, '_> {
+    fn emit(
+        &mut self,
+        ty: &Type,
+        a: &LoweredSlot,
+        b: &LoweredSlot,
+        out: FrameSlot,
+    ) -> Result<(), Diagnostics> {
+        match ty {
+            Type::Bool | Type::Int => self.emit_signed(a.region.start(), b.region.start(), out),
+            Type::String | Type::Path => {
+                self.code.push(WeavyOp::CompareValueBytes {
+                    dst: out.byte_offset(),
+                    a: a.region.start().byte_offset(),
+                    b: b.region.start().byte_offset(),
+                });
+                Ok(())
+            }
+            Type::Tuple(fields) => {
+                let field_tys: Vec<Type> = fields.clone();
+                self.emit_product(&field_tys, a, b, out)
+            }
+            Type::Record(record) => {
+                let field_tys: Vec<Type> =
+                    record.fields.iter().map(|field| field.ty.clone()).collect();
+                self.emit_product(&field_tys, a, b, out)
+            }
+            Type::Enum(enumeration) => self.emit_enum(&enumeration.clone(), a, b, out),
+            Type::Array(element) => self.emit_array(&element.as_ref().clone(), a, b, out),
+            Type::Map { .. }
+            | Type::Set(_)
+            | Type::Function { .. }
+            | Type::Check
+            | Type::StreamCheck
+            | Type::Stream { .. }
+            | Type::Order(_) => Err(lowering_diagnostic(
+                self.node.span,
+                "structural order is not defined for this VIR type",
+            )),
+        }
+    }
+
+    fn push_const(&mut self, dst: FrameSlot, value: i64) {
+        self.code.push(WeavyOp::ConstI64 {
+            dst: dst.byte_offset(),
+            value,
+        });
+    }
+
+    /// Three-way order of two signed words into `out`, using `out` as its own
+    /// scratch. Takes no temporaries.
+    fn emit_signed(
+        &mut self,
+        a: FrameSlot,
+        b: FrameSlot,
+        out: FrameSlot,
+    ) -> Result<(), Diagnostics> {
+        let span = self.node.span;
+        let done = self.code.label();
+        let not_less = self.code.label();
+        self.code.push(WeavyOp::LtI64 {
+            dst: out.byte_offset(),
+            a: a.byte_offset(),
+            b: b.byte_offset(),
+        });
+        self.code.jump_if_zero(out, not_less);
+        self.push_const(out, i64::from(ORDERING_LESS_VARIANT));
+        self.code.jump(done);
+        self.code.bind(not_less, span)?;
+        let not_greater = self.code.label();
+        self.code.push(WeavyOp::GtI64 {
+            dst: out.byte_offset(),
+            a: a.byte_offset(),
+            b: b.byte_offset(),
+        });
+        self.code.jump_if_zero(out, not_greater);
+        self.push_const(out, i64::from(ORDERING_GREATER_VARIANT));
+        self.code.jump(done);
+        self.code.bind(not_greater, span)?;
+        self.push_const(out, i64::from(ORDERING_EQUAL_VARIANT));
+        self.code.bind(done, span)
+    }
+
+    /// Emit `if out != Equal { jump target }`, using `probe` as scratch.
+    fn short_circuit(&mut self, out: FrameSlot, probe: FrameSlot, target: CodeLabel) {
+        self.push_const(probe, i64::from(ORDERING_EQUAL_VARIANT));
+        self.code.push(WeavyOp::EqI64 {
+            dst: probe.byte_offset(),
+            a: out.byte_offset(),
+            b: probe.byte_offset(),
+        });
+        self.code.jump_if_zero(probe, target);
+    }
+
+    fn emit_product(
+        &mut self,
+        fields: &[Type],
+        a: &LoweredSlot,
+        b: &LoweredSlot,
+        out: FrameSlot,
+    ) -> Result<(), Diagnostics> {
+        let span = self.node.span;
+        let ford = self.temps.take(&Type::Int, span)?.region.start();
+        let probe = self.temps.take(&Type::Int, span)?.region.start();
+        self.push_const(out, i64::from(ORDERING_EQUAL_VARIANT));
+        let done = self.code.label();
+        for (index, field) in fields.iter().enumerate() {
+            let left = self.temps.take(field, span)?;
+            let right = self.temps.take(field, span)?;
+            let field_index = u32::try_from(index)
+                .map_err(|_| lowering_diagnostic(span, "product field index overflow"))?;
+            self.code.push(WeavyOp::ProductProject {
+                dst: left.region_id,
+                product: a.region_id,
+                field: field_index,
+            });
+            self.code.push(WeavyOp::ProductProject {
+                dst: right.region_id,
+                product: b.region_id,
+                field: field_index,
+            });
+            self.emit(field, &left, &right, ford)?;
+            self.code.push(WeavyOp::CopyI64 {
+                dst: out.byte_offset(),
+                src: ford.byte_offset(),
+            });
+            self.short_circuit(out, probe, done);
+        }
+        self.code.bind(done, span)
+    }
+
+    fn emit_enum(
+        &mut self,
+        enumeration: &EnumType,
+        a: &LoweredSlot,
+        b: &LoweredSlot,
+        out: FrameSlot,
+    ) -> Result<(), Diagnostics> {
+        let span = self.node.span;
+        let idx_a = self.temps.take(&Type::Int, span)?.region.start();
+        let idx_b = self.temps.take(&Type::Int, span)?.region.start();
+        let isv = self.temps.take(&Type::Int, span)?.region.start();
+        let probe = self.temps.take(&Type::Int, span)?.region.start();
+        let ford = self.temps.take(&Type::Int, span)?.region.start();
+        self.variant_index(a, enumeration, idx_a, isv, probe)?;
+        self.variant_index(b, enumeration, idx_b, isv, probe)?;
+        self.emit_signed(idx_a, idx_b, out)?;
+        let done = self.code.label();
+        self.short_circuit(out, probe, done);
+        for (variant_index, variant) in enumeration.variants.iter().enumerate() {
+            let variant_index = u32::try_from(variant_index)
+                .map_err(|_| lowering_diagnostic(span, "enum variant index overflow"))?;
+            let fields: Vec<Type> = match &variant.payload {
+                VariantPayload::Unit => Vec::new(),
+                VariantPayload::Tuple(fields) => fields.clone(),
+                VariantPayload::Record(fields) => {
+                    fields.iter().map(|field| field.ty.clone()).collect()
+                }
+            };
+            self.code.push(WeavyOp::EnumIsVariant {
+                dst: work_region_id(isv, self.temps, span)?,
+                value: a.region_id,
+                variant: variant_index,
+            });
+            let next = self.code.label();
+            self.code.jump_if_zero(isv, next);
+            self.push_const(out, i64::from(ORDERING_EQUAL_VARIANT));
+            for (field_index, field) in fields.iter().enumerate() {
+                let left = self.temps.take(field, span)?;
+                let right = self.temps.take(field, span)?;
+                let field_index = u32::try_from(field_index)
+                    .map_err(|_| lowering_diagnostic(span, "enum field index overflow"))?;
+                self.code.push(WeavyOp::EnumProjectChecked {
+                    dst: left.region_id,
+                    value: a.region_id,
+                    variant: variant_index,
+                    field: field_index,
+                });
+                self.code.push(WeavyOp::EnumProjectChecked {
+                    dst: right.region_id,
+                    value: b.region_id,
+                    variant: variant_index,
+                    field: field_index,
+                });
+                self.emit(field, &left, &right, ford)?;
+                self.code.push(WeavyOp::CopyI64 {
+                    dst: out.byte_offset(),
+                    src: ford.byte_offset(),
+                });
+                self.short_circuit(out, probe, done);
+            }
+            self.code.jump(done);
+            self.code.bind(next, span)?;
+        }
+        self.code.bind(done, span)
+    }
+
+    /// `idx = sum over variants of is_variant(value, i) * i`.
+    fn variant_index(
+        &mut self,
+        value: &LoweredSlot,
+        enumeration: &EnumType,
+        idx: FrameSlot,
+        isv: FrameSlot,
+        probe: FrameSlot,
+    ) -> Result<(), Diagnostics> {
+        let span = self.node.span;
+        self.push_const(idx, 0);
+        for (variant_index, _variant) in enumeration.variants.iter().enumerate() {
+            let variant = u32::try_from(variant_index)
+                .map_err(|_| lowering_diagnostic(span, "enum variant index overflow"))?;
+            self.code.push(WeavyOp::EnumIsVariant {
+                dst: work_region_id(isv, self.temps, span)?,
+                value: value.region_id,
+                variant,
+            });
+            self.push_const(probe, variant_index as i64);
+            self.code.push(WeavyOp::MulI64 {
+                dst: isv.byte_offset(),
+                a: isv.byte_offset(),
+                b: probe.byte_offset(),
+            });
+            self.code.push(WeavyOp::AddI64 {
+                dst: idx.byte_offset(),
+                a: idx.byte_offset(),
+                b: isv.byte_offset(),
+            });
+        }
+        Ok(())
+    }
+
+    fn emit_array(
+        &mut self,
+        element: &Type,
+        a: &LoweredSlot,
+        b: &LoweredSlot,
+        out: FrameSlot,
+    ) -> Result<(), Diagnostics> {
+        let span = self.node.span;
+        let array = self.array.ok_or_else(|| {
+            lowering_diagnostic(span, "array comparison has no checked access context")
+        })?;
+        let len_a = self.temps.take(&Type::Int, span)?.region.start();
+        let len_b = self.temps.take(&Type::Int, span)?.region.start();
+        let index = self.temps.take(&Type::Int, span)?.region.start();
+        let one = self.temps.take(&Type::Int, span)?.region.start();
+        let probe = self.temps.take(&Type::Int, span)?.region.start();
+        let ford = self.temps.take(&Type::Int, span)?.region.start();
+        let left = self.temps.take(element, span)?;
+        let right = self.temps.take(element, span)?;
+        let schema = array.schemas.schema_for(element, span)?;
+        let width = element_byte_width(element, span)?;
+
+        self.code.push(WeavyOp::LoadArrayLen {
+            dst: len_a.byte_offset(),
+            status: array.scratch.status.byte_offset(),
+            array: a.region.start().byte_offset(),
+            elem_schema_ref: i64::from(schema.0),
+        });
+        self.array_checks(array)?;
+        self.code.push(WeavyOp::LoadArrayLen {
+            dst: len_b.byte_offset(),
+            status: array.scratch.status.byte_offset(),
+            array: b.region.start().byte_offset(),
+            elem_schema_ref: i64::from(schema.0),
+        });
+        self.array_checks(array)?;
+        self.push_const(out, i64::from(ORDERING_EQUAL_VARIANT));
+        self.push_const(index, 0);
+        self.push_const(one, 1);
+        let loop_top = self.code.label();
+        let lentie = self.code.label();
+        let done = self.code.label();
+        self.code.bind(loop_top, span)?;
+        self.code.push(WeavyOp::LtI64 {
+            dst: probe.byte_offset(),
+            a: index.byte_offset(),
+            b: len_a.byte_offset(),
+        });
+        self.code.jump_if_zero(probe, lentie);
+        self.code.push(WeavyOp::LtI64 {
+            dst: probe.byte_offset(),
+            a: index.byte_offset(),
+            b: len_b.byte_offset(),
+        });
+        self.code.jump_if_zero(probe, lentie);
+        self.code.push(WeavyOp::LoadArray {
+            dst: left.region.start().byte_offset(),
+            status: array.scratch.status.byte_offset(),
+            array: a.region.start().byte_offset(),
+            index: index.byte_offset(),
+            elem_width: width,
+            elem_schema_ref: i64::from(schema.0),
+        });
+        self.array_checks(array)?;
+        self.code.push(WeavyOp::LoadArray {
+            dst: right.region.start().byte_offset(),
+            status: array.scratch.status.byte_offset(),
+            array: b.region.start().byte_offset(),
+            index: index.byte_offset(),
+            elem_width: width,
+            elem_schema_ref: i64::from(schema.0),
+        });
+        self.array_checks(array)?;
+        self.emit(element, &left, &right, ford)?;
+        self.code.push(WeavyOp::CopyI64 {
+            dst: out.byte_offset(),
+            src: ford.byte_offset(),
+        });
+        self.short_circuit(out, probe, done);
+        self.code.push(WeavyOp::AddI64 {
+            dst: index.byte_offset(),
+            a: index.byte_offset(),
+            b: one.byte_offset(),
+        });
+        self.code.jump(loop_top);
+        self.code.bind(lentie, span)?;
+        self.emit_signed(len_a, len_b, out)?;
+        self.code.bind(done, span)
+    }
+
+    fn array_checks(&mut self, array: ArrayEqualityContext<'_>) -> Result<(), Diagnostics> {
+        emit_array_status_machine_checks(
+            self.node,
+            array.site,
+            array.scratch,
+            array.assigned,
+            array.outcome,
+            array.return_label,
+            self.code,
+        )
     }
 }
 
@@ -1057,7 +1842,7 @@ impl<'a> ProgramContractBuilder<'a> {
         function_order.push(FunctionContractSource {
             id: island.function,
             span: Span { start: 0, end: 0 },
-            parameters: &[],
+            parameters: island.parameters.as_slice(),
             nodes: island.nodes.as_slice(),
             output: root_output,
         });
@@ -1081,6 +1866,12 @@ impl<'a> ProgramContractBuilder<'a> {
                 Op::Closure(callee) => Some(callee),
                 _ => None,
             })
+            .chain(function_order.iter().flat_map(|function| {
+                function.nodes.iter().filter_map(move |node| {
+                    matches!(node.op, Op::Call(callee) if callee == function.id)
+                        .then_some(function.id)
+                })
+            }))
             .collect();
 
         let mut builder = Self {
@@ -1090,14 +1881,21 @@ impl<'a> ProgramContractBuilder<'a> {
             schemas_preassigned,
             function_order,
             closure_targets,
+            callable_outcomes: layouts
+                .values()
+                .any(|layout| layout.array_outcome.is_some()),
             calls: Vec::new(),
-            schemas: vec![empty_schema(); schemas_preassigned.types.len()],
+            schemas: vec![empty_schema(); schemas_preassigned.schema_count()],
             schema_ready: vec![false; schemas_preassigned.types.len()],
             value_shapes: Vec::new(),
-            value_shape_keys: Vec::new(),
+            value_shape_types: Vec::new(),
         };
         for ty in builder.schemas_preassigned.types.clone() {
             builder.schema_for_type(&ty, Span { start: 0, end: 0 })?;
+        }
+        if builder.schemas_preassigned.publications {
+            let index = builder.schemas_preassigned.types.len();
+            builder.schemas[index] = publication_record_schema();
         }
 
         let mut functions = Vec::with_capacity(program.fns.len());
@@ -1105,7 +1903,8 @@ impl<'a> ProgramContractBuilder<'a> {
             let source = builder.function_order[function_index];
             functions.push(builder.function_contract(source, function)?);
         }
-        for (function_index, source) in builder.function_order.iter().enumerate() {
+        let function_order = builder.function_order.clone();
+        for (function_index, source) in function_order.iter().enumerate() {
             for node in source
                 .nodes
                 .iter()
@@ -1123,14 +1922,40 @@ impl<'a> ProgramContractBuilder<'a> {
                     lowering_diagnostic(node.span, "closure target has no exact call ABI")
                 })?;
                 let (callee_region, _) = builder.regions.closure(source.id, node.id, node.span)?;
-                let region = functions[function_index]
+                let callee = functions[function_index]
                     .frame
                     .regions
                     .get_mut(callee_region.0 as usize)
                     .ok_or_else(|| {
                         lowering_diagnostic(node.span, "closure callee region is absent")
                     })?;
-                region.shape = WeavyRegionShape::word(WeavyWordKind::Callable(call));
+                callee.shape = WeavyRegionShape::word(WeavyWordKind::Callable(call));
+
+                let Type::Function { parameter, result } = &node.ty else {
+                    return Err(lowering_diagnostic(
+                        node.span,
+                        "closure node does not have a function type",
+                    ));
+                };
+                let semantic_call =
+                    builder.call_contract_for_signature(parameter, result, node.span)?;
+                if !builder.call_contract_extends_signature(call, semantic_call) {
+                    return Err(lowering_diagnostic(
+                        node.span,
+                        "closure target ABI disagrees with its semantic function type",
+                    ));
+                }
+                let (shape, value_shape) = builder.intern_callable_value_shape(call);
+                let closure_region = builder.regions.node(source.id, node.id, node.span)?;
+                let closure = functions[function_index]
+                    .frame
+                    .regions
+                    .get_mut(closure_region.0 as usize)
+                    .ok_or_else(|| {
+                        lowering_diagnostic(node.span, "closure value region is absent")
+                    })?;
+                closure.shape = shape;
+                closure.value_shape = Some(value_shape);
             }
         }
         Ok(WeavyProgramContract {
@@ -1199,6 +2024,29 @@ impl<'a> ProgramContractBuilder<'a> {
                 regions.push(self.frame_region(temp.region.start(), &temp.ty)?);
             }
         }
+        for (&node, cursors) in &layout.ordered_cursors {
+            let assigned = self
+                .regions
+                .ordered_cursors(function.id, node, function.span)?;
+            if assigned.len() != cursors.len() {
+                return Err(lowering_diagnostic(
+                    function.span,
+                    "ordered cursor contract assignment has the wrong length",
+                ));
+            }
+            for (cursor, region_id) in cursors.iter().zip(assigned) {
+                if region_id.0 as usize != regions.len() {
+                    return Err(lowering_diagnostic(
+                        function.span,
+                        "ordered cursor contract order is not canonical",
+                    ));
+                }
+                regions.push(WeavyFrameRegion::new(
+                    cursor.start().byte_offset(),
+                    WeavyRegionShape::new(vec![WeavyWordKind::Opaque.into(); 2]),
+                ));
+            }
+        }
         for (&node, (callee, environment)) in &layout.closure_temps {
             let node_source = function
                 .nodes
@@ -1236,6 +2084,25 @@ impl<'a> ProgramContractBuilder<'a> {
                 environment.start().byte_offset(),
                 WeavyRegionShape::word(WeavyWordKind::Scalar),
             ));
+        }
+        for (&node, (input, output)) in &layout.array_map_temps {
+            let (input_id, output_id) =
+                self.regions
+                    .array_map_temps(function.id, node, function.span)?;
+            if input_id.0 as usize != regions.len() {
+                return Err(lowering_diagnostic(
+                    function.span,
+                    "array map input temporary contract order is not canonical",
+                ));
+            }
+            regions.push(self.frame_region(input.region.start(), &input.ty)?);
+            if output_id.0 as usize != regions.len() {
+                return Err(lowering_diagnostic(
+                    function.span,
+                    "array map output temporary contract order is not canonical",
+                ));
+            }
+            regions.push(self.frame_region(output.region.start(), &output.ty)?);
         }
         let local_constants = self
             .constant_closures
@@ -1336,7 +2203,7 @@ impl<'a> ProgramContractBuilder<'a> {
             })?,
         };
         let call_contract = if self.closure_targets.contains(&function.id) {
-            let call = self.call_contract_for_function(function, &entries, result, &regions)?;
+            let call = self.call_contract_for_function(&entries, result, &regions)?;
             Some(call)
         } else {
             None
@@ -1354,14 +2221,12 @@ impl<'a> ProgramContractBuilder<'a> {
 
     fn call_contract_for_function(
         &mut self,
-        function: FunctionContractSource<'_>,
         entries: &[WeavyRegionId],
         result: WeavyRegionId,
         regions: &[WeavyFrameRegion],
     ) -> Result<WeavyCallContractId, Diagnostics> {
-        let parameter_len = function.parameters.len();
         let call = WeavyCallContract {
-            entries: entries[..parameter_len]
+            entries: entries
                 .iter()
                 .map(|entry| regions[entry.0 as usize].clone())
                 .collect(),
@@ -1375,7 +2240,6 @@ impl<'a> ProgramContractBuilder<'a> {
         slot: FrameSlot,
         ty: &Type,
     ) -> Result<WeavyFrameRegion, Diagnostics> {
-        self.schema_for_type(ty, Span { start: 0, end: 0 })?;
         let shape = self.shape_for_type(ty, Span { start: 0, end: 0 })?;
         let mut region = WeavyFrameRegion::new(slot.byte_offset(), shape);
         if let Some(value_shape) = self.value_shape_for_type(ty, Span { start: 0, end: 0 })? {
@@ -1389,7 +2253,7 @@ impl<'a> ProgramContractBuilder<'a> {
             Type::Bool | Type::Int | Type::Check => {
                 Ok(WeavyRegionShape::word(WeavyWordKind::Scalar))
             }
-            Type::String => Ok(WeavyRegionShape::word(WeavyWordKind::Handle(
+            Type::String | Type::Path => Ok(WeavyRegionShape::word(WeavyWordKind::Handle(
                 self.schema_for_type(ty, span)?,
             ))),
             Type::StreamCheck => Err(lowering_diagnostic(
@@ -1410,6 +2274,11 @@ impl<'a> ProgramContractBuilder<'a> {
             Type::Enum(enumeration) => self.enum_shape(enumeration, span),
             Type::Array(_) | Type::Map { .. } | Type::Set(_) => Ok(WeavyRegionShape::word(
                 WeavyWordKind::Handle(self.schema_for_type(ty, span)?),
+            )),
+            Type::Stream { .. } => Ok(WeavyRegionShape::default()),
+            Type::Order(_) => Err(lowering_diagnostic(
+                span,
+                "Order<T> has no contract frame shape",
             )),
         }
     }
@@ -1461,28 +2330,38 @@ impl<'a> ProgramContractBuilder<'a> {
         }
         self.schema_ready[index] = true;
         let inline = match ty {
-            Type::String | Type::Array(_) | Type::Map { .. } | Type::Set(_) => {
+            Type::String | Type::Path | Type::Array(_) | Type::Map { .. } | Type::Set(_) => {
                 WeavyRegionShape::word(WeavyWordKind::Handle(schema))
             }
             _ => self.shape_for_type(ty, span)?,
         };
         let value_shape = self.value_shape_for_type(ty, span)?;
         let payload = match ty {
-            Type::String => WeavyPayloadKind::OpaqueBytes {
+            Type::String | Type::Path => WeavyPayloadKind::OpaqueBytes {
                 byte_comparable: true,
             },
             Type::Array(element) => WeavyPayloadKind::DenseArray {
                 element: self.schema_for_type(element, span)?,
             },
-            Type::Map { key, value } => WeavyPayloadKind::DenseArray {
-                element: self.schema_for_type(
-                    &Type::Tuple(vec![key.as_ref().clone(), value.as_ref().clone()]),
-                    span,
-                )?,
-            },
-            Type::Set(element) => WeavyPayloadKind::DenseArray {
-                element: self.schema_for_type(element, span)?,
-            },
+            Type::Map { key, value } => {
+                let row = Type::Tuple(vec![key.as_ref().clone(), value.as_ref().clone()]);
+                WeavyPayloadKind::OrderedCollection(WeavyOrderedCollectionContract {
+                    kind: WeavyOrderedCollectionKind::Map,
+                    key: self.schema_for_type(key, span)?,
+                    value: Some(self.schema_for_type(value, span)?),
+                    row: self.schema_for_type(&row, span)?,
+                    fanout: 2,
+                })
+            }
+            Type::Set(element) => {
+                WeavyPayloadKind::OrderedCollection(WeavyOrderedCollectionContract {
+                    kind: WeavyOrderedCollectionKind::Set,
+                    key: self.schema_for_type(element, span)?,
+                    value: None,
+                    row: self.schema_for_type(element, span)?,
+                    fanout: 2,
+                })
+            }
             _ => WeavyPayloadKind::Inline,
         };
         self.schemas[index] = WeavySchemaContract {
@@ -1499,19 +2378,26 @@ impl<'a> ProgramContractBuilder<'a> {
         span: Span,
     ) -> Result<Option<WeavyValueShapeRef>, Diagnostics> {
         match ty {
-            Type::Function { .. } | Type::Tuple(_) | Type::Record(_) | Type::Enum(_) => {
-                Ok(Some(self.intern_value_shape_for_type(ty, span)?))
-            }
+            Type::Function { .. }
+            | Type::Tuple(_)
+            | Type::Record(_)
+            | Type::Enum(_)
+            | Type::Stream { .. } => Ok(Some(self.intern_value_shape_for_type(ty, span)?)),
             Type::Bool
             | Type::Int
             | Type::Check
             | Type::String
+            | Type::Path
             | Type::Array(_)
             | Type::Map { .. }
             | Type::Set(_) => Ok(None),
             Type::StreamCheck => Err(lowering_diagnostic(
                 span,
                 "Stream<Check> has no contract value shape",
+            )),
+            Type::Order(_) => Err(lowering_diagnostic(
+                span,
+                "Order<T> has no contract value shape",
             )),
         }
     }
@@ -1521,12 +2407,12 @@ impl<'a> ProgramContractBuilder<'a> {
         ty: &Type,
         span: Span,
     ) -> Result<WeavyValueShapeRef, Diagnostics> {
-        if let Some(index) = self
-            .value_shape_keys
+        if let Some((_, value_shape)) = self
+            .value_shape_types
             .iter()
-            .position(|candidate| candidate == ty)
+            .find(|(candidate, _)| candidate == ty)
         {
-            return Ok(WeavyValueShapeRef(index as u32));
+            return Ok(*value_shape);
         }
         let shape = self.shape_for_type(ty, span)?;
         let kind = match ty {
@@ -1550,6 +2436,7 @@ impl<'a> ProgramContractBuilder<'a> {
                 fields: self.value_fields(record.fields.iter().map(|field| &field.ty), span)?,
             },
             Type::Enum(enumeration) => self.enum_value_shape_kind(enumeration, span)?,
+            Type::Stream { .. } => WeavyValueShapeKind::Product { fields: Vec::new() },
             _ => {
                 return Err(lowering_diagnostic(
                     span,
@@ -1557,11 +2444,45 @@ impl<'a> ProgramContractBuilder<'a> {
                 ));
             }
         };
-        let value_shape = WeavyValueShapeRef(self.value_shapes.len() as u32);
-        self.value_shape_keys.push(ty.clone());
-        self.value_shapes
-            .push(WeavyValueShapeContract { shape, kind });
+        let value_shape = self.intern_value_shape(WeavyValueShapeContract { shape, kind });
+        self.value_shape_types.push((ty.clone(), value_shape));
         Ok(value_shape)
+    }
+
+    fn intern_callable_value_shape(
+        &mut self,
+        call: WeavyCallContractId,
+    ) -> (WeavyRegionShape, WeavyValueShapeRef) {
+        let callable = WeavyRegionShape::word(WeavyWordKind::Callable(call));
+        let environment = WeavyRegionShape::word(WeavyWordKind::Scalar);
+        let shape = WeavyRegionShape::new(vec![
+            WeavyWordKind::Callable(call).into(),
+            WeavyWordKind::Scalar.into(),
+        ]);
+        let kind = WeavyValueShapeKind::Product {
+            fields: vec![
+                WeavyValueFieldUse::new(0, callable),
+                WeavyValueFieldUse::new(FrameSlot::word_size(), environment),
+            ],
+        };
+        let value_shape = self.intern_value_shape(WeavyValueShapeContract {
+            shape: shape.clone(),
+            kind,
+        });
+        (shape, value_shape)
+    }
+
+    fn intern_value_shape(&mut self, value_shape: WeavyValueShapeContract) -> WeavyValueShapeRef {
+        if let Some(index) = self
+            .value_shapes
+            .iter()
+            .position(|candidate| candidate == &value_shape)
+        {
+            return WeavyValueShapeRef(index as u32);
+        }
+        let reference = WeavyValueShapeRef(self.value_shapes.len() as u32);
+        self.value_shapes.push(value_shape);
+        reference
     }
 
     fn value_fields<'t>(
@@ -1579,8 +2500,8 @@ impl<'a> ProgramContractBuilder<'a> {
                     .byte_offset(),
                 shape.clone(),
             );
-            if self.field_requires_nested_ref(&shape) {
-                field = field.with_value_shape(self.intern_value_shape_for_type(ty, span)?);
+            if let Some(value_shape) = self.value_shape_for_type(ty, span)? {
+                field = field.with_value_shape(value_shape);
             }
             offset_words = offset_words
                 .checked_add(shape.words.len())
@@ -1612,9 +2533,8 @@ impl<'a> ProgramContractBuilder<'a> {
                         .byte_offset(),
                     shape.clone(),
                 );
-                if self.field_requires_nested_ref(&shape) {
-                    field =
-                        field.with_value_shape(self.intern_value_shape_for_type(element.ty, span)?);
+                if let Some(value_shape) = self.value_shape_for_type(element.ty, span)? {
+                    field = field.with_value_shape(value_shape);
                 }
                 fields.push(field);
             }
@@ -1629,10 +2549,6 @@ impl<'a> ProgramContractBuilder<'a> {
         })
     }
 
-    fn field_requires_nested_ref(&self, shape: &WeavyRegionShape) -> bool {
-        !(shape.words.len() == 1 && shape.words[0].as_slice().len() == 1)
-    }
-
     fn call_contract_for_signature(
         &mut self,
         parameter: &Type,
@@ -1643,14 +2559,29 @@ impl<'a> ProgramContractBuilder<'a> {
         if let Some(value_shape) = self.value_shape_for_type(parameter, span)? {
             entry = entry.with_value_shape(value_shape);
         }
-        let mut result_region = WeavyFrameRegion::new(0, self.shape_for_type(result, span)?);
-        if let Some(value_shape) = self.value_shape_for_type(result, span)? {
+        let result = if self.callable_outcomes {
+            ArrayOutcomeAbi::for_value(result.clone()).ty
+        } else {
+            result.clone()
+        };
+        let mut result_region = WeavyFrameRegion::new(0, self.shape_for_type(&result, span)?);
+        if let Some(value_shape) = self.value_shape_for_type(&result, span)? {
             result_region = result_region.with_value_shape(value_shape);
         }
         Ok(self.intern_call(WeavyCallContract {
             entries: vec![entry],
             result: result_region,
         }))
+    }
+
+    fn call_contract_extends_signature(
+        &self,
+        concrete: WeavyCallContractId,
+        semantic: WeavyCallContractId,
+    ) -> bool {
+        let concrete = &self.calls[concrete.0 as usize];
+        let semantic = &self.calls[semantic.0 as usize];
+        concrete.entries.starts_with(&semantic.entries) && concrete.result == semantic.result
     }
 
     fn intern_call(&mut self, call: WeavyCallContract) -> WeavyCallContractId {
@@ -1679,7 +2610,7 @@ fn constant_closures(island: &Island) -> BTreeMap<FunctionId, BTreeSet<NodeRef>>
             function,
             nodes
                 .iter()
-                .filter(|node| matches!(node.op, Op::String(_)))
+                .filter(|node| matches!(node.op, Op::String(_) | Op::Path(_)))
                 .map(|node| NodeRef {
                     function,
                     node: node.id,
@@ -1733,6 +2664,22 @@ struct LoweringContext<'a> {
     layouts: &'a BTreeMap<FunctionId, FunctionLayout>,
     regions: &'a RegionAssignments,
     schemas: &'a SchemaAssignments,
+    array_map_partitions: &'a [ArrayMapPartition],
+}
+
+impl LoweringContext<'_> {
+    fn array_map_shape(
+        &self,
+        function: FunctionId,
+        node: NodeId,
+        span: Span,
+    ) -> Result<ArrayMapExecutionShape, Diagnostics> {
+        self.array_map_partitions
+            .iter()
+            .find(|partition| partition.node == NodeRef { function, node })
+            .map(|partition| partition.shape)
+            .ok_or_else(|| lowering_diagnostic(span, "array map has no partition decision"))
+    }
 }
 
 /// The contract and the instruction stream share this canonical region order.
@@ -1742,7 +2689,9 @@ struct RegionAssignments {
     nodes: BTreeMap<FunctionId, BTreeMap<NodeId, WeavyRegionId>>,
     control: BTreeMap<FunctionId, AssignedControlRegions>,
     temps: BTreeMap<FunctionId, BTreeMap<NodeId, Vec<WeavyRegionId>>>,
+    ordered_cursors: BTreeMap<FunctionId, BTreeMap<NodeId, Vec<WeavyRegionId>>>,
     closures: BTreeMap<FunctionId, BTreeMap<NodeId, (WeavyRegionId, WeavyRegionId)>>,
+    array_map_temps: BTreeMap<FunctionId, BTreeMap<NodeId, (WeavyRegionId, WeavyRegionId)>>,
     outcomes: BTreeMap<FunctionId, WeavyRegionId>,
     outcome_scratch: BTreeMap<FunctionId, AssignedOutcomeScratch>,
     call_outcomes: BTreeMap<FunctionId, BTreeMap<NodeId, WeavyRegionId>>,
@@ -1769,7 +2718,9 @@ impl RegionAssignments {
         let mut nodes = BTreeMap::new();
         let mut control = BTreeMap::new();
         let mut temps = BTreeMap::new();
+        let mut ordered_cursors = BTreeMap::new();
         let mut closures = BTreeMap::new();
+        let mut array_map_temps = BTreeMap::new();
         let mut outcomes = BTreeMap::new();
         let mut outcome_scratch = BTreeMap::new();
         let mut call_outcomes = BTreeMap::new();
@@ -1825,6 +2776,19 @@ impl RegionAssignments {
                 }
                 assigned_temps.insert(node, ids);
             }
+            let mut assigned_ordered_cursors = BTreeMap::new();
+            for (&node, cursors) in &layout.ordered_cursors {
+                let mut ids = Vec::with_capacity(cursors.len());
+                for _ in cursors {
+                    ids.push(WeavyRegionId(u32::try_from(next).map_err(|_| {
+                        lowering_diagnostic(span, "ordered cursor assignment exceeds u32")
+                    })?));
+                    next = next.checked_add(1).ok_or_else(|| {
+                        lowering_diagnostic(span, "ordered cursor assignment overflow")
+                    })?;
+                }
+                assigned_ordered_cursors.insert(node, ids);
+            }
             let mut assigned_closures = BTreeMap::new();
             for &node in layout.closure_temps.keys() {
                 let callee = WeavyRegionId(u32::try_from(next).map_err(|_| {
@@ -1840,6 +2804,22 @@ impl RegionAssignments {
                     lowering_diagnostic(span, "closure temporary assignment overflow")
                 })?;
                 assigned_closures.insert(node, (callee, environment));
+            }
+            let mut assigned_array_map_temps = BTreeMap::new();
+            for &node in layout.array_map_temps.keys() {
+                let input = WeavyRegionId(u32::try_from(next).map_err(|_| {
+                    lowering_diagnostic(span, "array map temporary assignment exceeds u32")
+                })?);
+                next = next.checked_add(1).ok_or_else(|| {
+                    lowering_diagnostic(span, "array map temporary assignment overflow")
+                })?;
+                let output = WeavyRegionId(u32::try_from(next).map_err(|_| {
+                    lowering_diagnostic(span, "array map temporary assignment exceeds u32")
+                })?);
+                next = next.checked_add(1).ok_or_else(|| {
+                    lowering_diagnostic(span, "array map temporary assignment overflow")
+                })?;
+                assigned_array_map_temps.insert(node, (input, output));
             }
             let constants = constant_closures.get(&function).ok_or_else(|| {
                 lowering_diagnostic(span, "missing constants for region assignment")
@@ -1894,7 +2874,9 @@ impl RegionAssignments {
             }
             nodes.insert(function, assigned);
             temps.insert(function, assigned_temps);
+            ordered_cursors.insert(function, assigned_ordered_cursors);
             closures.insert(function, assigned_closures);
+            array_map_temps.insert(function, assigned_array_map_temps);
             Ok(())
         };
         insert(island.function, &island.nodes, Span { start: 0, end: 0 })?;
@@ -1905,7 +2887,9 @@ impl RegionAssignments {
             nodes,
             control,
             temps,
+            ordered_cursors,
             closures,
+            array_map_temps,
             outcomes,
             outcome_scratch,
             call_outcomes,
@@ -1964,6 +2948,32 @@ impl RegionAssignments {
             .ok_or_else(|| lowering_diagnostic(span, "closure node has no assigned typed regions"))
     }
 
+    fn ordered_cursors(
+        &self,
+        function: FunctionId,
+        node: NodeId,
+        span: Span,
+    ) -> Result<&[WeavyRegionId], Diagnostics> {
+        self.ordered_cursors
+            .get(&function)
+            .and_then(|nodes| nodes.get(&node))
+            .map(Vec::as_slice)
+            .ok_or_else(|| lowering_diagnostic(span, "collection node has no ordered cursors"))
+    }
+
+    fn array_map_temps(
+        &self,
+        function: FunctionId,
+        node: NodeId,
+        span: Span,
+    ) -> Result<(WeavyRegionId, WeavyRegionId), Diagnostics> {
+        self.array_map_temps
+            .get(&function)
+            .and_then(|nodes| nodes.get(&node))
+            .copied()
+            .ok_or_else(|| lowering_diagnostic(span, "array map node has no typed temporaries"))
+    }
+
     fn array_outcome(
         &self,
         function: FunctionId,
@@ -2001,16 +3011,113 @@ impl RegionAssignments {
     }
 }
 
+/// Compute the set of VIR `Op::Call` node ids that are terminal self-calls of
+/// `function`: the call sits in tail position (the function output, or the
+/// output of a nested pure `If`/`Match`/`OrderedMatch` reached from the output)
+/// and its value flows only to the return. Ordinary recursion, mutual recursion,
+/// and non-tail self-calls are excluded and keep the Weavy `Call` path; rung 049
+/// is the control certificate for that boundary.
+///
+/// r[impl machine.safepoint.two-classes]
+fn tail_self_call_nodes(
+    function: FunctionId,
+    nodes: &[Node],
+    parameters: &[crate::vir::Parameter],
+    output: Option<NodeId>,
+) -> BTreeSet<NodeId> {
+    let mut result = BTreeSet::new();
+    let Some(output) = output else {
+        return result;
+    };
+    // A tail self-call re-enters with exactly this function's parameters, each of
+    // which must be a frame value we can stage and copy in place.
+    if !parameters
+        .iter()
+        .all(|parameter| type_is_tail_copyable(&parameter.ty))
+    {
+        return result;
+    }
+    let by_id: BTreeMap<NodeId, &Node> = nodes.iter().map(|node| (node.id, node)).collect();
+    // A call whose result is read by any other node is not purely terminal.
+    let mut consumed = BTreeSet::new();
+    for node in nodes {
+        for input in &node.inputs {
+            consumed.insert(*input);
+        }
+    }
+    let mut pending = vec![output];
+    let mut seen = BTreeSet::new();
+    while let Some(id) = pending.pop() {
+        if !seen.insert(id) {
+            continue;
+        }
+        let Some(node) = by_id.get(&id) else {
+            continue;
+        };
+        match &node.op {
+            Op::Call(callee)
+                if *callee == function
+                    && node.inputs.len() == parameters.len()
+                    && !consumed.contains(&id) =>
+            {
+                result.insert(id);
+            }
+            Op::If {
+                consequent,
+                alternative,
+            } => {
+                pending.push(consequent.output);
+                pending.push(alternative.output);
+            }
+            Op::Match { arms } => {
+                for arm in arms {
+                    pending.push(arm.output);
+                }
+            }
+            Op::OrderedMatch { arms, fallback } => {
+                for arm in arms {
+                    pending.push(arm.body.output);
+                }
+                pending.push(fallback.output);
+            }
+            _ => {}
+        }
+    }
+    result
+}
+
+/// A parameter type can seed a tail loop only when it has an island-interior
+/// frame representation that `copy_lowered_value` can stage and write back.
+fn type_is_tail_copyable(ty: &Type) -> bool {
+    matches!(
+        representation_for_type(ty, Span { start: 0, end: 0 }),
+        Ok(ValueRepresentation::Word
+            | ValueRepresentation::RealizedHandle
+            | ValueRepresentation::InlineComposite)
+    )
+}
+
 struct FunctionLayout {
     regions: BTreeMap<NodeId, FrameRegion>,
     typed_temps: BTreeMap<NodeId, Vec<TemporaryRegion>>,
+    ordered_cursors: BTreeMap<NodeId, Vec<FrameRegion>>,
     closure_temps: BTreeMap<NodeId, (FrameRegion, FrameRegion)>,
+    array_map_temps: BTreeMap<NodeId, (TemporaryRegion, TemporaryRegion)>,
     constant_slots: BTreeMap<NodeRef, FrameSlot>,
     scratch: Option<FrameSlot>,
     control_scratch: Option<ControlScratch>,
     array_outcome: Option<TemporaryRegion>,
     outcome_scratch: Option<OutcomeScratch>,
     call_outcomes: BTreeMap<NodeId, TemporaryRegion>,
+    /// VIR `Op::Call` node ids that are terminal self-calls: the call is the
+    /// tail value of the function (directly, or through nested pure
+    /// `If`/`Match`/`OrderedMatch` outputs) and its result flows only to the
+    /// return. Each such call lowers to an in-place next-argument copy plus a
+    /// backedge `Jump` to the function's loop entry rather than a Weavy `Call`.
+    /// The staging regions live in `typed_temps` under the same node id.
+    ///
+    /// r[impl machine.safepoint.two-classes]
+    tail_self_calls: BTreeSet<NodeId>,
     frame_size: usize,
 }
 
@@ -2037,10 +3144,19 @@ impl FunctionLayout {
     fn build(
         function: FunctionId,
         nodes: &[Node],
+        parameters: &[crate::vir::Parameter],
+        output: Option<NodeId>,
         constants: &BTreeSet<NodeRef>,
         outcome_value: Option<Type>,
         span: Span,
     ) -> Result<Self, Diagnostics> {
+        // Terminal self-calls become in-place loops; a function that carries an
+        // array outcome ABI takes the checked-call path and is out of scope here.
+        let tail_self_calls = if outcome_value.is_some() {
+            BTreeSet::new()
+        } else {
+            tail_self_call_nodes(function, nodes, parameters, output)
+        };
         let mut regions = BTreeMap::new();
         let mut next_word = 0usize;
         for node in nodes {
@@ -2108,6 +3224,13 @@ impl FunctionLayout {
                     | Op::Compare
                     | Op::ArrayAppend
                     | Op::ArrayConcat
+                    | Op::ArrayFold
+                    | Op::ArraySplitLast
+                    | Op::ArrayAll
+                    | Op::ArrayAny
+                    | Op::ArrayContains
+                    | Op::ArraySorted
+                    | Op::Range
                     | Op::Map
                     | Op::MapAdd
                     | Op::MapConcat
@@ -2115,21 +3238,40 @@ impl FunctionLayout {
                     | Op::MapGet
                     | Op::MapHas
                     | Op::MapKeys
+                    | Op::MapValues
                     | Op::Set
                     | Op::SetAdd
                     | Op::SetConcat
                     | Op::SetHas
                     | Op::SetValues
+                    | Op::StreamCollect
+                    | Op::StreamFindMin
+                    | Op::StreamFindMax
+                    | Op::StreamSplitMin
             )
         }) {
             let mut types = if matches!(node.op, Op::Eq | Op::Ne) {
                 vec![Type::Int, Type::Int, Type::Int]
             } else if matches!(node.op, Op::Compare) {
                 vec![Type::Int, Type::Int]
-            } else if let Type::Array(element) = &node.ty {
-                vec![element.as_ref().clone()]
+            } else if matches!(node.op, Op::ArrayFold) {
+                array_fold_temporary_types(node, nodes)?
+            } else if matches!(node.op, Op::ArraySplitLast) {
+                array_split_last_temporary_types(node, nodes)?
+            } else if matches!(node.op, Op::ArrayAll | Op::ArrayAny) {
+                array_predicate_temporary_types(node, nodes)?
+            } else if matches!(node.op, Op::ArrayContains) {
+                array_contains_temporary_types(node, nodes)?
+            } else if matches!(node.op, Op::ArraySorted) {
+                array_sorted_temporary_types(node)?
+            } else if matches!(node.op, Op::StreamFindMin | Op::StreamFindMax) {
+                stream_selection_temporary_types(node, nodes)?
+            } else if matches!(node.op, Op::StreamSplitMin) {
+                stream_split_min_temporary_types(node, nodes)?
             } else if let Some(types) = collection_temporary_types(node, nodes)? {
                 types
+            } else if let Type::Array(element) = &node.ty {
+                vec![element.as_ref().clone()]
             } else {
                 return Err(lowering_diagnostic(
                     node.span,
@@ -2144,7 +3286,11 @@ impl FunctionLayout {
                     .ok_or_else(|| {
                         lowering_diagnostic(node.span, "comparison node has no first operand")
                     })?;
-                comparison_temporary_types(&operand.ty, &mut types);
+                if matches!(node.op, Op::Compare) {
+                    ordering_temporary_types(&operand.ty, &mut types);
+                } else {
+                    comparison_temporary_types(&operand.ty, &mut types);
+                }
             }
             let mut temps = Vec::with_capacity(types.len());
             for ty in types {
@@ -2158,6 +3304,42 @@ impl FunctionLayout {
                 temps.push(TemporaryRegion { region, ty });
             }
             typed_temps.insert(node.id, temps);
+        }
+
+        let mut ordered_cursors = BTreeMap::new();
+        for node in nodes.iter().filter(|node| {
+            matches!(
+                node.op,
+                Op::Map
+                    | Op::MapAdd
+                    | Op::MapConcat
+                    | Op::MapWith
+                    | Op::MapGet
+                    | Op::MapHas
+                    | Op::MapKeys
+                    | Op::MapValues
+                    | Op::Set
+                    | Op::SetAdd
+                    | Op::SetConcat
+                    | Op::SetHas
+                    | Op::SetValues
+                    | Op::StreamCollect
+            )
+        }) {
+            let count = usize::from(matches!(node.op, Op::MapConcat | Op::SetConcat)) + 1;
+            let mut cursors = Vec::with_capacity(count);
+            for _ in 0..count {
+                let region = FrameRegion::for_words(
+                    next_word,
+                    FrameWords::from_usize(2).expect("two cursor words"),
+                )
+                .ok_or_else(|| lowering_diagnostic(node.span, "ordered cursor region overflow"))?;
+                next_word = next_word.checked_add(2).ok_or_else(|| {
+                    lowering_diagnostic(node.span, "function frame size overflow")
+                })?;
+                cursors.push(region);
+            }
+            ordered_cursors.insert(node.id, cursors);
         }
 
         let mut constant_slots = BTreeMap::new();
@@ -2181,6 +3363,57 @@ impl FunctionLayout {
                 .ok_or_else(|| lowering_diagnostic(node.span, "function frame size overflow"))?;
             closure_temps.insert(node.id, (callee, environment));
         }
+        let mut array_map_temps = BTreeMap::new();
+        for node in nodes
+            .iter()
+            .filter(|node| matches!(node.op, Op::ArrayMap { .. }))
+        {
+            let source = node
+                .inputs
+                .first()
+                .and_then(|input| nodes.iter().find(|candidate| candidate.id == *input))
+                .ok_or_else(|| lowering_diagnostic(node.span, "array map source is missing"))?;
+            let Type::Array(input_ty) = &source.ty else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "array map source does not have array type",
+                ));
+            };
+            let Type::Array(output_ty) = &node.ty else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "array map result does not have array type",
+                ));
+            };
+            let input_words = type_words(input_ty, node.span)?;
+            let input_region = FrameRegion::for_words(next_word, input_words).ok_or_else(|| {
+                lowering_diagnostic(node.span, "array map input temporary overflow")
+            })?;
+            next_word = next_word
+                .checked_add(input_words.as_usize())
+                .ok_or_else(|| lowering_diagnostic(node.span, "function frame size overflow"))?;
+            let output_words = type_words(output_ty, node.span)?;
+            let output_region =
+                FrameRegion::for_words(next_word, output_words).ok_or_else(|| {
+                    lowering_diagnostic(node.span, "array map output temporary overflow")
+                })?;
+            next_word = next_word
+                .checked_add(output_words.as_usize())
+                .ok_or_else(|| lowering_diagnostic(node.span, "function frame size overflow"))?;
+            array_map_temps.insert(
+                node.id,
+                (
+                    TemporaryRegion {
+                        region: input_region,
+                        ty: input_ty.as_ref().clone(),
+                    },
+                    TemporaryRegion {
+                        region: output_region,
+                        ty: output_ty.as_ref().clone(),
+                    },
+                ),
+            );
+        }
         for &constant in constants {
             let slot = if constant.function == function {
                 let node = nodes
@@ -2189,17 +3422,17 @@ impl FunctionLayout {
                     .ok_or_else(|| {
                         lowering_diagnostic(span, "closure names a missing local constant")
                     })?;
-                if !matches!(node.op, Op::String(_)) {
+                if !matches!(node.op, Op::String(_) | Op::Path(_)) {
                     return Err(lowering_diagnostic(
                         node.span,
-                        "closure constant is not a String node",
+                        "closure constant is not a realized byte-value node",
                     ));
                 }
                 regions
                     .get(&constant.node)
                     .copied()
                     .ok_or_else(|| {
-                        lowering_diagnostic(node.span, "String constant has no frame region")
+                        lowering_diagnostic(node.span, "byte-value constant has no frame region")
                     })?
                     .start()
             } else {
@@ -2247,8 +3480,34 @@ impl FunctionLayout {
         };
         let mut call_outcomes = BTreeMap::new();
         if array_outcome.is_some() {
-            for node in nodes.iter().filter(|node| matches!(node.op, Op::Call(_))) {
-                let ty = ArrayOutcomeAbi::for_value(node.ty.clone()).ty;
+            for node in nodes.iter().filter(|node| {
+                matches!(
+                    node.op,
+                    Op::Call(_)
+                        | Op::CallValue
+                        | Op::ArrayMap { .. }
+                        | Op::ArrayFold
+                        | Op::StreamCollect
+                        | Op::StreamFindMin
+                        | Op::StreamFindMax
+                        | Op::StreamSplitMin
+                        | Op::ArrayAll
+                        | Op::ArrayAny
+                )
+            }) {
+                let value_ty = match &node.op {
+                    Op::ArrayMap { .. } => node
+                        .ty
+                        .array_element()
+                        .ok_or_else(|| {
+                            lowering_diagnostic(node.span, "array map result is not an array")
+                        })?
+                        .clone(),
+                    Op::StreamCollect => stream_collect_call_outcome_type(node, nodes)?,
+                    Op::StreamFindMin | Op::StreamFindMax | Op::StreamSplitMin => Type::Bool,
+                    _ => node.ty.clone(),
+                };
+                let ty = ArrayOutcomeAbi::for_value(value_ty).ty;
                 let words = type_words(&ty, node.span)?;
                 let region = FrameRegion::for_words(next_word, words).ok_or_else(|| {
                     lowering_diagnostic(node.span, "array call outcome frame region overflow")
@@ -2257,18 +3516,48 @@ impl FunctionLayout {
                 call_outcomes.insert(node.id, TemporaryRegion { region, ty });
             }
         }
+        // Reserve one exact typed next-argument staging region per parameter for
+        // every terminal self-call. Staging through these disjoint regions makes
+        // the write-back to the parameter slots overlap-safe regardless of source
+        // order. The regions ride the `typed_temps` contract machinery so they are
+        // verifier-visible declared frame regions, not raw scratch bytes.
+        for &call in &tail_self_calls {
+            let mut temps = Vec::with_capacity(parameters.len());
+            for parameter in parameters {
+                let words = type_words(&parameter.ty, span)?;
+                let region = FrameRegion::for_words(next_word, words).ok_or_else(|| {
+                    lowering_diagnostic(span, "tail-call next-argument region overflow")
+                })?;
+                next_word = next_word
+                    .checked_add(words.as_usize())
+                    .ok_or_else(|| lowering_diagnostic(span, "function frame size overflow"))?;
+                temps.push(TemporaryRegion {
+                    region,
+                    ty: parameter.ty.clone(),
+                });
+            }
+            if typed_temps.insert(call, temps).is_some() {
+                return Err(lowering_diagnostic(
+                    span,
+                    "tail-call node already carries typed temporaries",
+                ));
+            }
+        }
         let frame_size = FrameSlot::frame_size(next_word)
             .ok_or_else(|| lowering_diagnostic(span, "function frame size overflow"))?;
         Ok(Self {
             regions,
             typed_temps,
+            ordered_cursors,
             closure_temps,
+            array_map_temps,
             constant_slots,
             scratch,
             control_scratch,
             array_outcome,
             outcome_scratch,
             call_outcomes,
+            tail_self_calls,
             frame_size,
         })
     }
@@ -2294,6 +3583,13 @@ impl FunctionLayout {
             .ok_or_else(|| lowering_diagnostic(span, "VIR node has no typed temporary regions"))
     }
 
+    fn ordered_cursors(&self, node: NodeId, span: Span) -> Result<&[FrameRegion], Diagnostics> {
+        self.ordered_cursors
+            .get(&node)
+            .map(Vec::as_slice)
+            .ok_or_else(|| lowering_diagnostic(span, "VIR node has no ordered cursor regions"))
+    }
+
     fn closure_temps(
         &self,
         node: NodeId,
@@ -2304,6 +3600,361 @@ impl FunctionLayout {
             .copied()
             .ok_or_else(|| lowering_diagnostic(span, "closure node has no typed temporary regions"))
     }
+
+    fn array_map_temps(
+        &self,
+        node: NodeId,
+        span: Span,
+    ) -> Result<&(TemporaryRegion, TemporaryRegion), Diagnostics> {
+        self.array_map_temps
+            .get(&node)
+            .ok_or_else(|| lowering_diagnostic(span, "array map node has no temporary layout"))
+    }
+}
+
+fn array_fold_temporary_types(node: &Node, nodes: &[Node]) -> Result<Vec<Type>, Diagnostics> {
+    if node.inputs.len() != 3 {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array fold does not have source, initial value, and callable inputs",
+        ));
+    }
+    let source = nodes
+        .iter()
+        .find(|candidate| candidate.id == node.inputs[0])
+        .ok_or_else(|| lowering_diagnostic(node.span, "array fold source is unavailable"))?;
+    let Type::Array(element) = &source.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array fold source is not an array",
+        ));
+    };
+    let initial = nodes
+        .iter()
+        .find(|candidate| candidate.id == node.inputs[1])
+        .ok_or_else(|| lowering_diagnostic(node.span, "array fold initial value is unavailable"))?;
+    if initial.ty != node.ty {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array fold result does not match its initial value",
+        ));
+    }
+    Ok(vec![
+        element.as_ref().clone(),
+        Type::Tuple(vec![node.ty.clone(), element.as_ref().clone()]),
+        node.ty.clone(),
+    ])
+}
+
+fn array_split_last_temporary_types(node: &Node, nodes: &[Node]) -> Result<Vec<Type>, Diagnostics> {
+    require_input_count(node, 1)?;
+    let source = nodes
+        .iter()
+        .find(|candidate| candidate.id == node.inputs[0])
+        .ok_or_else(|| lowering_diagnostic(node.span, "split_last source is unavailable"))?;
+    let Type::Array(element) = &source.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "split_last source is not an array",
+        ));
+    };
+    let rest = Type::array(element.as_ref().clone());
+    let payload = Type::Tuple(vec![element.as_ref().clone(), rest.clone()]);
+    if node.ty != Type::option(payload.clone()) {
+        return Err(lowering_diagnostic(
+            node.span,
+            "split_last result is not its optional partition type",
+        ));
+    }
+    Ok(vec![
+        element.as_ref().clone(),
+        element.as_ref().clone(),
+        rest,
+        payload,
+    ])
+}
+
+fn array_predicate_temporary_types(node: &Node, nodes: &[Node]) -> Result<Vec<Type>, Diagnostics> {
+    if node.inputs.len() != 2 {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array predicate does not have source and callable inputs",
+        ));
+    }
+    let source = nodes
+        .iter()
+        .find(|candidate| candidate.id == node.inputs[0])
+        .ok_or_else(|| lowering_diagnostic(node.span, "array predicate source is unavailable"))?;
+    let Type::Array(element) = &source.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array predicate source is not an array",
+        ));
+    };
+    Ok(vec![element.as_ref().clone(), Type::Bool])
+}
+
+fn array_contains_temporary_types(node: &Node, nodes: &[Node]) -> Result<Vec<Type>, Diagnostics> {
+    if node.inputs.len() != 2 {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array contains does not have source and value inputs",
+        ));
+    }
+    let source = nodes
+        .iter()
+        .find(|candidate| candidate.id == node.inputs[0])
+        .ok_or_else(|| lowering_diagnostic(node.span, "array contains source is unavailable"))?;
+    let Type::Array(element) = &source.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array contains source is not an array",
+        ));
+    };
+    let mut types = vec![element.as_ref().clone(), Type::Int, Type::Int, Type::Int];
+    comparison_temporary_types(element, &mut types);
+    Ok(types)
+}
+
+/// The value type a keyed-codata stream operation ranges over.
+fn stream_value_type(node: &Node, nodes: &[Node]) -> Result<Type, Diagnostics> {
+    let stream = node
+        .inputs
+        .first()
+        .and_then(|input| nodes.iter().find(|candidate| candidate.id == *input))
+        .ok_or_else(|| lowering_diagnostic(node.span, "stream operation source is unavailable"))?;
+    let Type::Stream { value, .. } = &stream.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "stream operation source is not keyed codata",
+        ));
+    };
+    Ok(value.as_ref().clone())
+}
+
+/// `find_min`/`find_max` keep a running structural extremum: the current best
+/// value, the freshly loaded value, the loop's `one` increment, the ordering
+/// discriminant, and whatever leaves the structural-order comparison needs.
+fn stream_selection_temporary_types(node: &Node, nodes: &[Node]) -> Result<Vec<Type>, Diagnostics> {
+    let element = stream_value_type(node, nodes)?;
+    let mut types = vec![element.clone(), element.clone(), Type::Int, Type::Int];
+    comparison_temporary_types(&element, &mut types);
+    Ok(types)
+}
+
+/// `split_min` selects the least value (stable key tie-break), then realizes the
+/// remaining values as a fresh dense array in canonical key order. It needs the
+/// running best value, the loaded value, the loop `one`, the ordering
+/// discriminant, the selected index, the found flag, the surviving-row count,
+/// the remainder array, the remainder write cursor, the `(V, [V])` payload, and
+/// the structural-order comparison leaves the min-scan needs.
+fn stream_split_min_temporary_types(node: &Node, nodes: &[Node]) -> Result<Vec<Type>, Diagnostics> {
+    let value = stream_value_type(node, nodes)?;
+    let rest = Type::array(value.clone());
+    let payload = Type::Tuple(vec![value.clone(), rest.clone()]);
+    if node.ty != Type::option(payload.clone()) {
+        return Err(lowering_diagnostic(
+            node.span,
+            "split_min result is not its optional decomposition type",
+        ));
+    }
+    let mut types = vec![
+        value.clone(), // best value
+        value.clone(), // current value
+        Type::Int,     // one
+        Type::Int,     // ordering discriminant
+        Type::Int,     // selected index
+        Type::Int,     // found flag
+        Type::Int,     // surviving-row count
+        rest,          // remainder dense array
+        Type::Int,     // remainder write cursor
+        payload,       // (V, [V]) payload
+    ];
+    comparison_temporary_types(&value, &mut types);
+    Ok(types)
+}
+
+/// Resolve a keyed-codata recipe (`ArrayStream`, optionally wrapped by one
+/// `StreamFilter`) to the underlying dense array, its element type, and the
+/// optional value predicate the filter applies.
+struct ResolvedStreamRecipe {
+    source: LoweredSlot,
+    element: Type,
+    predicate: Option<LoweredSlot>,
+}
+
+fn resolve_stream_recipe(
+    node: &Node,
+    stream_id: NodeId,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+) -> Result<ResolvedStreamRecipe, Diagnostics> {
+    let stream = values.get(&stream_id).ok_or_else(|| {
+        lowering_diagnostic(node.span, "stream recipe is not topologically prior")
+    })?;
+    let recipe = sequence
+        .nodes
+        .get(&stream_id)
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(node.span, "stream input has no VIR recipe"))?;
+    require_value(node, stream, &recipe.ty, ValueRepresentation::CodataRecipe)?;
+    let (array_stream, predicate) = match recipe.op {
+        Op::ArrayStream => (recipe, None),
+        Op::StreamFilter => {
+            require_input_count(recipe, 2)?;
+            let upstream = input_value(recipe, values, 0)?;
+            require_value(
+                recipe,
+                &upstream,
+                &recipe.ty,
+                ValueRepresentation::CodataRecipe,
+            )?;
+            let predicate = input_value(recipe, values, 1)?;
+            let array_stream = sequence
+                .nodes
+                .get(&recipe.inputs[0])
+                .copied()
+                .ok_or_else(|| {
+                    lowering_diagnostic(node.span, "stream filter input has no VIR recipe")
+                })?;
+            if !matches!(array_stream.op, Op::ArrayStream) {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "nested stream filter source is not implemented",
+                ));
+            }
+            (array_stream, Some(predicate))
+        }
+        _ => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "stream recipe source is not implemented",
+            ));
+        }
+    };
+    require_input_count(array_stream, 1)?;
+    let source = values
+        .get(&array_stream.inputs[0])
+        .cloned()
+        .ok_or_else(|| {
+            lowering_diagnostic(node.span, "array stream source is not topologically prior")
+        })?;
+    let Type::Array(element) = &source.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array stream source is not a dense array",
+        ));
+    };
+    let element = element.as_ref().clone();
+    require_value(
+        node,
+        &source,
+        &Type::array(element.clone()),
+        ValueRepresentation::RealizedHandle,
+    )?;
+    if let Some(predicate) = &predicate {
+        let predicate_ty = Type::Function {
+            parameter: Box::new(element.clone()),
+            result: Box::new(Type::Bool),
+        };
+        require_value(
+            node,
+            predicate,
+            &predicate_ty,
+            ValueRepresentation::InlineComposite,
+        )?;
+    }
+    Ok(ResolvedStreamRecipe {
+        source,
+        element,
+        predicate,
+    })
+}
+
+/// The immediate codata recipe feeding a `StreamCollect`, resolved within a
+/// function's node slice.
+fn stream_collect_source<'n>(node: &'n Node, nodes: &'n [Node]) -> Result<&'n Node, Diagnostics> {
+    let stream_id = *node
+        .inputs
+        .first()
+        .ok_or_else(|| lowering_diagnostic(node.span, "stream collect has no source recipe"))?;
+    nodes
+        .iter()
+        .find(|candidate| candidate.id == stream_id)
+        .ok_or_else(|| lowering_diagnostic(node.span, "stream collect source recipe is missing"))
+}
+
+/// Extra persistent temporaries a `StreamCollect` needs beyond the ordered
+/// collection scaffolding. A `filter_map` collect loads each source value and
+/// the optional transform result, so it reserves one slot for each.
+fn stream_collect_extra_temporary_types(
+    node: &Node,
+    nodes: &[Node],
+) -> Result<Vec<Type>, Diagnostics> {
+    if !matches!(node.op, Op::StreamCollect) {
+        return Ok(Vec::new());
+    }
+    let source = stream_collect_source(node, nodes)?;
+    let upstream_value = |span| -> Result<Type, Diagnostics> {
+        let upstream = source
+            .inputs
+            .first()
+            .and_then(|input| nodes.iter().find(|candidate| candidate.id == *input))
+            .ok_or_else(|| lowering_diagnostic(span, "stream transform has no upstream recipe"))?;
+        let (_, source_value) = upstream
+            .ty
+            .stream_types()
+            .ok_or_else(|| lowering_diagnostic(span, "stream transform upstream is not codata"))?;
+        Ok(source_value.clone())
+    };
+    match source.op {
+        Op::StreamFilterMap => {
+            let source_value = upstream_value(node.span)?;
+            let (_, collected) = node.ty.map_types().ok_or_else(|| {
+                lowering_diagnostic(node.span, "filter_map collect result is not a map")
+            })?;
+            Ok(vec![source_value, Type::option(collected.clone())])
+        }
+        Op::StreamFlatMap => {
+            let source_value = upstream_value(node.span)?;
+            let (_, collected) = node.ty.map_types().ok_or_else(|| {
+                lowering_diagnostic(node.span, "flat_map collect result is not a map")
+            })?;
+            // outer value, inner dense array, then the four nested-loop counters
+            // (outer index, outer length, inner index, inner length).
+            Ok(vec![
+                source_value,
+                Type::array(collected.clone()),
+                Type::Int,
+                Type::Int,
+                Type::Int,
+                Type::Int,
+            ])
+        }
+        _ => Ok(Vec::new()),
+    }
+}
+
+/// The value type carried by a `StreamCollect`'s single indirect call outcome.
+/// A `filter_map` transform returns `Option<W>`; every other recipe uses a
+/// boolean predicate outcome (unused when there is no predicate at all).
+fn stream_collect_call_outcome_type(node: &Node, nodes: &[Node]) -> Result<Type, Diagnostics> {
+    let source = stream_collect_source(node, nodes)?;
+    match source.op {
+        Op::StreamFilterMap => {
+            let (_, collected) = node.ty.map_types().ok_or_else(|| {
+                lowering_diagnostic(node.span, "filter_map collect result is not a map")
+            })?;
+            Ok(Type::option(collected.clone()))
+        }
+        Op::StreamFlatMap => {
+            let (_, collected) = node.ty.map_types().ok_or_else(|| {
+                lowering_diagnostic(node.span, "flat_map collect result is not a map")
+            })?;
+            Ok(Type::array(collected.clone()))
+        }
+        _ => Ok(Type::Bool),
+    }
 }
 
 fn collection_temporary_types(
@@ -2311,19 +3962,21 @@ fn collection_temporary_types(
     nodes: &[Node],
 ) -> Result<Option<Vec<Type>>, Diagnostics> {
     let collection = match node.op {
-        Op::Map
-        | Op::MapAdd
+        Op::Map | Op::StreamCollect => node.ty.clone(),
+        Op::MapAdd
         | Op::MapConcat
         | Op::MapWith
         | Op::MapGet
         | Op::MapHas
-        | Op::MapKeys => node
+        | Op::MapKeys
+        | Op::MapValues => node
             .inputs
             .first()
             .and_then(|input| nodes.iter().find(|candidate| candidate.id == *input))
             .map(|input| input.ty.clone())
             .unwrap_or_else(|| node.ty.clone()),
-        Op::Set | Op::SetAdd | Op::SetConcat | Op::SetHas | Op::SetValues => node
+        Op::Set => node.ty.clone(),
+        Op::SetAdd | Op::SetConcat | Op::SetHas | Op::SetValues => node
             .inputs
             .first()
             .and_then(|input| nodes.iter().find(|candidate| candidate.id == *input))
@@ -2331,11 +3984,24 @@ fn collection_temporary_types(
             .unwrap_or_else(|| node.ty.clone()),
         _ => return Ok(None),
     };
-    let mut types = vec![Type::Int, Type::Int, Type::Int, collection.clone()];
+    let mut types = vec![
+        Type::Int,
+        Type::Int,
+        Type::Int,
+        collection.clone(),
+        collection.clone(),
+        collection.clone(),
+    ];
     match collection {
         Type::Map { key, value } => {
             let row = Type::Tuple(vec![key.as_ref().clone(), value.as_ref().clone()]);
-            types.extend([row.clone(), row, key.as_ref().clone(), key.as_ref().clone()]);
+            types.extend([
+                row,
+                key.as_ref().clone(),
+                key.as_ref().clone(),
+                value.as_ref().clone(),
+            ]);
+            types.extend(stream_collect_extra_temporary_types(node, nodes)?);
             comparison_temporary_types(&key, &mut types);
         }
         Type::Set(element) => {
@@ -2350,6 +4016,74 @@ fn collection_temporary_types(
         }
     }
     Ok(Some(types))
+}
+
+/// The pre-allocated temporary regions `SemanticOrderingEmitter::emit` takes, in
+/// exact order. Must stay in lockstep with that emitter: products reserve two
+/// scratch Ints then `(left, right, recurse)` per field; enums reserve five
+/// scratch Ints then `(left, right, recurse)` per payload field across variants;
+/// arrays reserve six scratch Ints, then `(left, right)` element slots, then
+/// recurse on the element.
+fn ordering_temporary_types(ty: &Type, out: &mut Vec<Type>) {
+    match ty {
+        Type::Bool
+        | Type::Int
+        | Type::Check
+        | Type::String
+        | Type::Path
+        | Type::Map { .. }
+        | Type::Set(_)
+        | Type::Function { .. }
+        | Type::StreamCheck
+        | Type::Stream { .. }
+        | Type::Order(_) => {}
+        Type::Tuple(fields) => {
+            out.extend([Type::Int, Type::Int]);
+            for field in fields {
+                out.push(field.clone());
+                out.push(field.clone());
+                ordering_temporary_types(field, out);
+            }
+        }
+        Type::Record(record) => {
+            out.extend([Type::Int, Type::Int]);
+            for field in &record.fields {
+                out.push(field.ty.clone());
+                out.push(field.ty.clone());
+                ordering_temporary_types(&field.ty, out);
+            }
+        }
+        Type::Enum(enumeration) => {
+            out.extend([Type::Int, Type::Int, Type::Int, Type::Int, Type::Int]);
+            for variant in &enumeration.variants {
+                let fields: Vec<&Type> = match &variant.payload {
+                    VariantPayload::Unit => Vec::new(),
+                    VariantPayload::Tuple(fields) => fields.iter().collect(),
+                    VariantPayload::Record(fields) => {
+                        fields.iter().map(|field| &field.ty).collect()
+                    }
+                };
+                for field in fields {
+                    out.push(field.clone());
+                    out.push(field.clone());
+                    ordering_temporary_types(field, out);
+                }
+            }
+        }
+        Type::Array(element) => {
+            out.extend([
+                Type::Int,
+                Type::Int,
+                Type::Int,
+                Type::Int,
+                Type::Int,
+                Type::Int,
+            ]);
+            out.push(element.as_ref().clone());
+            out.push(element.as_ref().clone());
+            ordering_temporary_types(element, out);
+        }
+    }
 }
 
 fn comparison_temporary_types(ty: &Type, out: &mut Vec<Type>) {
@@ -2384,15 +4118,23 @@ fn comparison_temporary_types(ty: &Type, out: &mut Vec<Type>) {
                 }
             }
         }
+        Type::Array(element) => {
+            out.extend([Type::Int, Type::Int, Type::Int]);
+            out.push(element.as_ref().clone());
+            out.push(element.as_ref().clone());
+            comparison_temporary_types(element, out);
+        }
         Type::Bool
         | Type::Int
         | Type::Check
         | Type::String
-        | Type::Array(_)
+        | Type::Path
         | Type::Map { .. }
         | Type::Set(_)
         | Type::Function { .. }
-        | Type::StreamCheck => {}
+        | Type::StreamCheck
+        | Type::Stream { .. }
+        | Type::Order(_) => {}
     }
 }
 
@@ -2546,18 +4288,38 @@ fn lower_vir_function(
     let mut values = BTreeMap::new();
     let mut code = CodeBuilder::with_capacity(nodes.len().saturating_mul(2) + 1);
     let array_return = layout.array_outcome.as_ref().map(|_| code.label());
+    // The loop entry is the first body instruction: a terminal self-call updates
+    // the parameters in place and jumps here, reusing the current frame.
+    let loop_entry = code.label();
+    code.bind(loop_entry, output_node.span)?;
     {
         let sequence = SequenceContext {
             nodes: &nodes_by_id,
             function: &function_context,
             lowering: context,
             array_return,
+            loop_entry,
         };
         let mut outputs = SequenceOutputs {
             constants,
             code: &mut code,
         };
         lower_node_sequence(&node_ids, &mut values, &sequence, &mut outputs, None)?;
+    }
+    // A function whose output is itself a terminal self-call has no return value:
+    // every path leaves through a backedge, so no `Ret` is emitted.
+    if layout.tail_self_calls.contains(&output) {
+        let (code, pc_nodes) = code.finish(output_node.span)?;
+        return Ok(LoweredWeavyFunction {
+            function: WeavyFn {
+                frame: Layout {
+                    size: layout.frame_size,
+                    align: FrameSlot::word_align(),
+                },
+                code,
+            },
+            pc_nodes,
+        });
     }
     let output_value = values.get(&output).cloned().ok_or_else(|| {
         lowering_diagnostic(output_node.span, "function output has no frame region")
@@ -2614,6 +4376,10 @@ struct SequenceContext<'nodes, 'function, 'lowering> {
     function: &'function FunctionLoweringContext<'function>,
     lowering: &'lowering LoweringContext<'lowering>,
     array_return: Option<CodeLabel>,
+    /// The instruction index a terminal self-call jumps back to. Bound at the
+    /// first body instruction so the reused frame re-enters with the updated
+    /// parameters in place.
+    loop_entry: CodeLabel,
 }
 
 struct SequenceOutputs<'constants, 'code> {
@@ -2689,12 +4455,56 @@ fn lower_node_sequence(
             .ok_or_else(|| lowering_diagnostic(node.span, "VIR node has no trace attribution"))?;
         let previous_source = outputs.code.swap_source(Some(node_ref));
         outputs.code.push(WeavyOp::Trace { id: trace_id });
+        // A terminal self-call diverges through a backedge instead of producing a
+        // value: it re-enters the loop rather than writing `dst`. The preceding
+        // `Trace` stays as this pc's attributed interior pollpoint (inert in
+        // Production mode); the backedge inherits the same node source.
+        if sequence.function.layout.tail_self_calls.contains(&node.id) {
+            lower_tail_self_call(node, values, sequence, outputs)?;
+            outputs.code.swap_source(previous_source);
+            continue;
+        }
         let representation = match &node.op {
             Op::Call(callee) if sequence.function.layout.array_outcome.is_some() => {
                 lower_array_call_node(node, dst_region_id, values, *callee, sequence, outputs)?
             }
-            Op::Array | Op::ArrayIndex | Op::ArrayLen | Op::ArrayAppend | Op::ArrayConcat => {
+            Op::CallValue if sequence.function.layout.array_outcome.is_some() => {
+                lower_checked_call_value_node(node, dst, dst_region_id, values, sequence, outputs)?
+            }
+            Op::Array | Op::ArrayIndex | Op::ArrayLen | Op::ArrayMap { .. } => {
+                lower_partitioned_array_node(node, dst, dst_region_id, values, sequence, outputs)?
+            }
+            Op::ArrayAppend | Op::ArrayConcat => {
                 lower_checked_array_node(node, dst, values, sequence, outputs)?
+            }
+            Op::ArraySorted => lower_array_sorted_node(node, dst, values, sequence, outputs)?,
+            Op::Range => lower_range_node(node, dst, values, sequence, outputs)?,
+            Op::ArrayFold => {
+                lower_checked_array_fold_node(node, dst, dst_region_id, values, sequence, outputs)?
+            }
+            Op::ArraySplitLast => {
+                lower_checked_array_split_last_node(node, dst_region_id, values, sequence, outputs)?
+            }
+            Op::ArrayAll | Op::ArrayAny => lower_checked_array_predicate_node(
+                node,
+                dst,
+                dst_region_id,
+                values,
+                sequence,
+                outputs,
+            )?,
+            Op::ArrayContains => lower_checked_array_contains_node(
+                node,
+                dst,
+                dst_region_id,
+                values,
+                sequence,
+                outputs,
+            )?,
+            Op::StringContains => lower_string_contains_node(node, dst, values, outputs)?,
+            Op::StringIsNumeric => lower_string_is_numeric_node(node, dst, values, outputs)?,
+            Op::StringSplitOnce | Op::StringParseInt => {
+                lower_checked_string_node(node, dst, values, sequence, outputs)?
             }
             Op::Map
             | Op::MapAdd
@@ -2704,13 +4514,21 @@ fn lower_node_sequence(
             | Op::MapHas
             | Op::MapLen
             | Op::MapKeys
+            | Op::MapValues
             | Op::Set
             | Op::SetAdd
             | Op::SetConcat
             | Op::SetHas
             | Op::SetLen
-            | Op::SetValues => {
+            | Op::SetValues
+            | Op::StreamCollect => {
                 lower_checked_collection_node(node, dst, dst_region_id, values, sequence, outputs)?
+            }
+            Op::StreamFindMin | Op::StreamFindMax => {
+                lower_checked_stream_selection_node(node, dst_region_id, values, sequence, outputs)?
+            }
+            Op::StreamSplitMin => {
+                lower_checked_stream_split_min_node(node, dst_region_id, values, sequence, outputs)?
             }
             Op::Match { .. } => {
                 lower_match_node(node, dst, dst_region_id, values, sequence, outputs)?
@@ -2735,10 +4553,12 @@ fn lower_node_sequence(
             )?,
             Op::Compare => lower_compare_node(node, dst, dst_region_id, values, sequence, outputs)?,
             Op::Eq | Op::Ne => lower_equality_node(node, dst, values, sequence, outputs)?,
+            Op::PublishSite(site) => lower_publish_site_node(node, dst, *site, sequence, outputs)?,
             _ => {
                 let mut lowering = NodeLoweringContext {
                     function: sequence.function,
                     context: sequence.lowering,
+                    nodes: sequence.nodes,
                     constants: outputs.constants,
                 };
                 let lowered = lower_node(node, dst, dst_region_id, values, &mut lowering)?;
@@ -2758,6 +4578,211 @@ fn lower_node_sequence(
         );
     }
     Ok(())
+}
+
+fn lower_string_contains_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_node_type(node, Type::Bool)?;
+    let (text, needle) = binary_values(node, values)?;
+    require_value(
+        node,
+        &text,
+        &Type::String,
+        ValueRepresentation::RealizedHandle,
+    )?;
+    require_value(
+        node,
+        &needle,
+        &Type::String,
+        ValueRepresentation::RealizedHandle,
+    )?;
+    outputs.code.push(WeavyOp::StringContains {
+        dst: dst.start().byte_offset(),
+        text: text.region.start().byte_offset(),
+        needle: needle.region.start().byte_offset(),
+    });
+    Ok(ValueRepresentation::Word)
+}
+
+fn lower_string_is_numeric_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_node_type(node, Type::Bool)?;
+    require_input_count(node, 1)?;
+    let text = input_value(node, values, 0)?;
+    require_value(
+        node,
+        &text,
+        &Type::String,
+        ValueRepresentation::RealizedHandle,
+    )?;
+    outputs.code.push(WeavyOp::StringIsNumeric {
+        dst: dst.start().byte_offset(),
+        text: text.region.start().byte_offset(),
+    });
+    Ok(ValueRepresentation::Word)
+}
+
+fn lower_checked_string_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(
+            node.span,
+            "fallible string operation has no outcome scratch",
+        )
+    })?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(node.span, "fallible string operation has no outcome return")
+    })?;
+    let site = *sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .ok_or_else(|| {
+            lowering_diagnostic(node.span, "string operation has no trace attribution")
+        })?;
+    match node.op {
+        Op::StringSplitOnce => {
+            let (text, delimiter) = binary_values(node, values)?;
+            require_node_type(node, Type::Tuple(vec![Type::String, Type::String]))?;
+            require_value(
+                node,
+                &text,
+                &Type::String,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            require_value(
+                node,
+                &delimiter,
+                &Type::String,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            outputs.code.push(WeavyOp::StringSplitOnce {
+                left: dst.start().byte_offset(),
+                right: dst.start().byte_offset() + FrameSlot::word_size(),
+                status: scratch.status.byte_offset(),
+                text: text.region.start().byte_offset(),
+                delimiter: delimiter.region.start().byte_offset(),
+            });
+            emit_string_status_checks(
+                node,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            Ok(ValueRepresentation::InlineComposite)
+        }
+        Op::StringParseInt => {
+            require_node_type(node, Type::Int)?;
+            require_input_count(node, 1)?;
+            let text = input_value(node, values, 0)?;
+            require_value(
+                node,
+                &text,
+                &Type::String,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            outputs.code.push(WeavyOp::StringParseInt {
+                dst: dst.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                text: text.region.start().byte_offset(),
+            });
+            emit_string_status_checks(
+                node,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            Ok(ValueRepresentation::Word)
+        }
+        _ => unreachable!("only checked string nodes reach this lowering"),
+    }
+}
+
+fn emit_string_status_checks(
+    node: &Node,
+    site: u32,
+    scratch: OutcomeScratch,
+    assigned: AssignedOutcomeScratch,
+    outcome: WeavyRegionId,
+    return_label: CodeLabel,
+    code: &mut CodeBuilder,
+) -> Result<(), Diagnostics> {
+    let success = code.label();
+    for status in [
+        weavy::task::StringOpStatus::Ok,
+        weavy::task::StringOpStatus::MissingDelimiter,
+        weavy::task::StringOpStatus::InvalidInteger,
+        weavy::task::StringOpStatus::IntegerOverflow,
+    ] {
+        let next = code.label();
+        code.push(WeavyOp::StringStatusIs {
+            dst: scratch.condition.byte_offset(),
+            status: scratch.status.byte_offset(),
+            expected: status,
+        });
+        code.jump_if_zero(scratch.condition, next);
+        if status == weavy::task::StringOpStatus::Ok {
+            code.jump(success);
+        } else {
+            let variant = match status {
+                weavy::task::StringOpStatus::MissingDelimiter => {
+                    ArrayOutcomeAbi::for_value(node.ty.clone()).string_missing_delimiter_variant
+                }
+                weavy::task::StringOpStatus::InvalidInteger => {
+                    ArrayOutcomeAbi::for_value(node.ty.clone()).string_invalid_integer_variant
+                }
+                weavy::task::StringOpStatus::IntegerOverflow => {
+                    ArrayOutcomeAbi::for_value(node.ty.clone()).string_integer_overflow_variant
+                }
+                weavy::task::StringOpStatus::Ok => unreachable!("handled above"),
+            };
+            code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[0].byte_offset(),
+                value: i64::from(site),
+            });
+            code.push(WeavyOp::EnumConstruct {
+                dst: outcome,
+                variant,
+                fields: vec![StructuralFieldSource {
+                    field: 0,
+                    source: assigned.fields[0],
+                }],
+            });
+            code.jump(return_label);
+        }
+        code.bind(next, node.span)?;
+    }
+    code.bind(success, node.span)
 }
 
 fn lower_ordered_match_node(
@@ -2804,14 +4829,21 @@ fn lower_ordered_match_node(
             outputs,
             active_variant,
         )?;
-        let body = body_values.get(&arm.body.output).ok_or_else(|| {
-            lowering_diagnostic(node.span, "ordered-match body has no lowered value")
-        })?;
-        require_value(node, body, &node.ty, result_representation)?;
-        outputs
-            .code
-            .extend(copy_lowered_value(node, body, dst, dst_region)?);
-        outputs.code.jump(end);
+        if !sequence
+            .function
+            .layout
+            .tail_self_calls
+            .contains(&arm.body.output)
+        {
+            let body = body_values.get(&arm.body.output).ok_or_else(|| {
+                lowering_diagnostic(node.span, "ordered-match body has no lowered value")
+            })?;
+            require_value(node, body, &node.ty, result_representation)?;
+            outputs
+                .code
+                .extend(copy_lowered_value(node, body, dst, dst_region)?);
+            outputs.code.jump(end);
+        }
         outputs.code.bind(next, node.span)?;
     }
 
@@ -2823,13 +4855,20 @@ fn lower_ordered_match_node(
         outputs,
         active_variant,
     )?;
-    let fallback = fallback_values.get(&fallback.output).ok_or_else(|| {
-        lowering_diagnostic(node.span, "ordered-match fallback has no lowered value")
-    })?;
-    require_value(node, fallback, &node.ty, result_representation)?;
-    outputs
-        .code
-        .extend(copy_lowered_value(node, fallback, dst, dst_region)?);
+    if !sequence
+        .function
+        .layout
+        .tail_self_calls
+        .contains(&fallback.output)
+    {
+        let fallback = fallback_values.get(&fallback.output).ok_or_else(|| {
+            lowering_diagnostic(node.span, "ordered-match fallback has no lowered value")
+        })?;
+        require_value(node, fallback, &node.ty, result_representation)?;
+        outputs
+            .code
+            .extend(copy_lowered_value(node, fallback, dst, dst_region)?);
+    }
     outputs.code.bind(end, node.span)?;
 
     Ok(result_representation)
@@ -2873,17 +4912,26 @@ fn lower_if_node(
         outputs,
         active_variant,
     )?;
-    let consequent_output = consequent_values.get(&consequent.output).ok_or_else(|| {
-        lowering_diagnostic(node.span, "if consequent output has no lowered value")
-    })?;
-    require_value(node, consequent_output, &node.ty, result_representation)?;
-    outputs.code.extend(copy_lowered_value(
-        node,
-        consequent_output,
-        dst,
-        dst_region,
-    )?);
-    outputs.code.jump(end);
+    // A branch whose output is a terminal self-call has already left through a
+    // backedge; there is no value to merge into `dst` and no jump to the merge.
+    if !sequence
+        .function
+        .layout
+        .tail_self_calls
+        .contains(&consequent.output)
+    {
+        let consequent_output = consequent_values.get(&consequent.output).ok_or_else(|| {
+            lowering_diagnostic(node.span, "if consequent output has no lowered value")
+        })?;
+        require_value(node, consequent_output, &node.ty, result_representation)?;
+        outputs.code.extend(copy_lowered_value(
+            node,
+            consequent_output,
+            dst,
+            dst_region,
+        )?);
+        outputs.code.jump(end);
+    }
 
     outputs.code.bind(alternative_label, node.span)?;
     let mut alternative_values = values.clone();
@@ -2894,16 +4942,23 @@ fn lower_if_node(
         outputs,
         active_variant,
     )?;
-    let alternative_output = alternative_values.get(&alternative.output).ok_or_else(|| {
-        lowering_diagnostic(node.span, "if alternative output has no lowered value")
-    })?;
-    require_value(node, alternative_output, &node.ty, result_representation)?;
-    outputs.code.extend(copy_lowered_value(
-        node,
-        alternative_output,
-        dst,
-        dst_region,
-    )?);
+    if !sequence
+        .function
+        .layout
+        .tail_self_calls
+        .contains(&alternative.output)
+    {
+        let alternative_output = alternative_values.get(&alternative.output).ok_or_else(|| {
+            lowering_diagnostic(node.span, "if alternative output has no lowered value")
+        })?;
+        require_value(node, alternative_output, &node.ty, result_representation)?;
+        outputs.code.extend(copy_lowered_value(
+            node,
+            alternative_output,
+            dst,
+            dst_region,
+        )?);
+    }
     outputs.code.bind(end, node.span)?;
 
     Ok(result_representation)
@@ -2986,18 +5041,53 @@ fn lower_match_node(
             outputs,
             Some(arm.variant),
         )?;
-        let output = arm_values.get(&arm.output).ok_or_else(|| {
-            lowering_diagnostic(node.span, "match arm output has no lowered value")
-        })?;
-        require_value(node, output, &node.ty, result_representation)?;
-        outputs
-            .code
-            .extend(copy_lowered_value(node, output, dst, dst_region)?);
-        outputs.code.jump(end);
+        if !sequence
+            .function
+            .layout
+            .tail_self_calls
+            .contains(&arm.output)
+        {
+            let output = arm_values.get(&arm.output).ok_or_else(|| {
+                lowering_diagnostic(node.span, "match arm output has no lowered value")
+            })?;
+            require_value(node, output, &node.ty, result_representation)?;
+            outputs
+                .code
+                .extend(copy_lowered_value(node, output, dst, dst_region)?);
+            outputs.code.jump(end);
+        }
         outputs.code.bind(next, node.span)?;
     }
     outputs.code.bind(end, node.span)?;
     Ok(result_representation)
+}
+
+/// Lower an [`Op::PublishSite`] to a scalar `Op::Publish`: write the taken site's
+/// stable selector into the node's own scalar region and append it to the task's
+/// append-only codata log under that selector as the opaque provenance key. No
+/// check operand is lowered here — publication is a pure control-flow effect on
+/// the taken path, with no host observer.
+fn lower_publish_site_node(
+    node: &Node,
+    dst: FrameRegion,
+    site: YieldSiteId,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_input_count(node, 0)?;
+    let schema = sequence.lowering.schemas.publication_record(node.span)?;
+    let record = dst.start().byte_offset();
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: record,
+        value: i64::from(site.0),
+    });
+    outputs.code.push(WeavyOp::Publish {
+        site: u64::from(site.0),
+        record,
+        record_width: 8,
+        record_schema_ref: i64::from(schema.0),
+    });
+    Ok(ValueRepresentation::Word)
 }
 
 #[derive(Clone, Copy)]
@@ -3054,79 +5144,51 @@ fn lower_compare_node(
     )?;
     let ordering = temps.take(&Type::Int, node.span)?;
     let test = temps.take(&Type::Int, node.span)?;
-    let mut leaves = Vec::new();
-    collect_typed_compare_leaves(node, &a.ty, &a, &b, &mut temps, outputs.code, &mut leaves)?;
     let dst = ordering.region.start();
-    let end = outputs.code.label();
-    if leaves.is_empty() {
-        outputs.code.push(WeavyOp::ConstI64 {
-            dst: dst.byte_offset(),
-            value: i64::from(ORDERING_EQUAL_VARIANT),
-        });
-    }
-    for (index, leaf) in leaves.iter().enumerate() {
-        let is_last = index + 1 == leaves.len();
-        match leaf.kind {
-            CompareLeafKind::SignedWord => {
-                let not_less = outputs.code.label();
-                outputs.code.push(WeavyOp::LtI64 {
-                    dst: dst.byte_offset(),
-                    a: leaf.a.byte_offset(),
-                    b: leaf.b.byte_offset(),
-                });
-                outputs.code.jump_if_zero(dst, not_less);
-                outputs.code.push(WeavyOp::ConstI64 {
-                    dst: dst.byte_offset(),
-                    value: i64::from(ORDERING_LESS_VARIANT),
-                });
-                outputs.code.jump(end);
-                outputs.code.bind(not_less, node.span)?;
-
-                let equal = outputs.code.label();
-                outputs.code.push(WeavyOp::GtI64 {
-                    dst: dst.byte_offset(),
-                    a: leaf.a.byte_offset(),
-                    b: leaf.b.byte_offset(),
-                });
-                outputs.code.jump_if_zero(dst, equal);
-                outputs.code.push(WeavyOp::ConstI64 {
-                    dst: dst.byte_offset(),
-                    value: i64::from(ORDERING_GREATER_VARIANT),
-                });
-                outputs.code.jump(end);
-                outputs.code.bind(equal, node.span)?;
-                if is_last {
-                    outputs.code.push(WeavyOp::ConstI64 {
-                        dst: dst.byte_offset(),
-                        value: i64::from(ORDERING_EQUAL_VARIANT),
-                    });
-                }
-            }
-            CompareLeafKind::ValueBytes => {
-                outputs.code.push(WeavyOp::CompareValueBytes {
-                    dst: dst.byte_offset(),
-                    a: leaf.a.byte_offset(),
-                    b: leaf.b.byte_offset(),
-                });
-                if !is_last {
-                    let scratch = sequence.function.layout.scratch.ok_or_else(|| {
-                        lowering_diagnostic(node.span, "comparison has no scratch word")
-                    })?;
-                    outputs.code.push(WeavyOp::ConstI64 {
-                        dst: scratch.byte_offset(),
-                        value: i64::from(ORDERING_EQUAL_VARIANT),
-                    });
-                    outputs.code.push(WeavyOp::EqI64 {
-                        dst: scratch.byte_offset(),
-                        a: dst.byte_offset(),
-                        b: scratch.byte_offset(),
-                    });
-                    outputs.code.jump_if_zero(scratch, end);
-                }
-            }
-        }
-    }
-    outputs.code.bind(end, node.span)?;
+    let array = if type_contains_array(&a.ty) {
+        let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+            lowering_diagnostic(node.span, "array comparison has no checked outcome scratch")
+        })?;
+        let assigned = sequence
+            .lowering
+            .regions
+            .outcome_scratch(sequence.function.id, node.span)?;
+        let outcome = sequence
+            .lowering
+            .regions
+            .array_outcome(sequence.function.id, node.span)?;
+        let return_label = sequence.array_return.ok_or_else(|| {
+            lowering_diagnostic(node.span, "array comparison has no checked outcome return")
+        })?;
+        let site = sequence
+            .lowering
+            .trace_ids
+            .get(&NodeRef {
+                function: sequence.function.id,
+                node: node.id,
+            })
+            .copied()
+            .ok_or_else(|| {
+                lowering_diagnostic(node.span, "array comparison has no stable trace site")
+            })?;
+        Some(ArrayEqualityContext {
+            schemas: sequence.lowering.schemas,
+            scratch,
+            assigned,
+            outcome,
+            return_label,
+            site,
+        })
+    } else {
+        None
+    };
+    let mut emitter = SemanticOrderingEmitter {
+        node,
+        temps: &mut temps,
+        code: outputs.code,
+        array,
+    };
+    emitter.emit(&a.ty, &a, &b, dst)?;
     let not_less = outputs.code.label();
     let not_equal = outputs.code.label();
     let done = outputs.code.label();
@@ -3189,7 +5251,7 @@ fn collect_typed_compare_leaves(
             a: a.region.start(),
             b: b.region.start(),
         }),
-        Type::String => leaves.push(CompareLeaf {
+        Type::String | Type::Path => leaves.push(CompareLeaf {
             kind: CompareLeafKind::ValueBytes,
             a: a.region.start(),
             b: b.region.start(),
@@ -3256,7 +5318,7 @@ fn collect_typed_compare_leaves(
                 "function comparison requires stable closure identity",
             ));
         }
-        Type::Check | Type::StreamCheck => {
+        Type::Check | Type::StreamCheck | Type::Stream { .. } | Type::Order(_) => {
             return Err(lowering_diagnostic(
                 node.span,
                 "comparison reached a non-orderable VIR type",
@@ -3266,16 +5328,24 @@ fn collect_typed_compare_leaves(
     Ok(())
 }
 
+struct StructuralOrderOutput {
+    ordering: FrameSlot,
+    condition: FrameSlot,
+}
+
 fn emit_structural_order(
     node: &Node,
     ty: &Type,
     a: &LoweredSlot,
     b: &LoweredSlot,
-    dst: FrameSlot,
-    condition: FrameSlot,
+    output: StructuralOrderOutput,
     temps: &mut TemporaryCursor<'_>,
     code: &mut CodeBuilder,
 ) -> Result<(), Diagnostics> {
+    let StructuralOrderOutput {
+        ordering: dst,
+        condition,
+    } = output;
     let mut leaves = Vec::new();
     collect_typed_compare_leaves(node, ty, a, b, temps, code, &mut leaves)?;
     let done = code.label();
@@ -3351,6 +5421,7 @@ enum ValueRepresentation {
     Word,
     RealizedHandle,
     InlineComposite,
+    CodataRecipe,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -3416,6 +5487,29 @@ impl<'a> TemporaryCursor<'a> {
         })
     }
 
+    fn checkpoint(&self) -> usize {
+        self.next
+    }
+
+    fn rewind(&mut self, checkpoint: usize, span: Span) -> Result<(), Diagnostics> {
+        if checkpoint > self.regions.len() {
+            return Err(lowering_diagnostic(
+                span,
+                "typed temporary checkpoint is out of range",
+            ));
+        }
+        self.next = checkpoint;
+        Ok(())
+    }
+
+    fn drain(&mut self, span: Span) -> Result<(), Diagnostics> {
+        while self.next < self.regions.len() {
+            let ty = self.regions[self.next].ty.clone();
+            self.take(&ty, span)?;
+        }
+        Ok(())
+    }
+
     fn finish(self, span: Span) -> Result<(), Diagnostics> {
         if self.next != self.regions.len() {
             return Err(lowering_diagnostic(
@@ -3436,6 +5530,7 @@ struct FunctionLoweringContext<'a> {
 struct NodeLoweringContext<'function, 'lowering, 'constants> {
     function: &'function FunctionLoweringContext<'function>,
     context: &'lowering LoweringContext<'lowering>,
+    nodes: &'function BTreeMap<NodeId, &'function Node>,
     constants: &'constants mut BTreeMap<NodeRef, PendingValueConstant>,
 }
 
@@ -3450,6 +5545,12 @@ fn lower_node(
     let dst_slot = dst.start();
     let dst = dst_slot.byte_offset();
     let (ops, representation) = match &node.op {
+        Op::PublishSite(_) => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "PublishSite is lowered by the generator-task control dispatch, not the value path",
+            ));
+        }
         Op::Bool(value) => {
             require_input_count(node, 0)?;
             require_node_type(node, Type::Bool)?;
@@ -3514,6 +5615,52 @@ fn lower_node(
             }
             (Vec::new(), ValueRepresentation::RealizedHandle)
         }
+        Op::Path(value) => {
+            require_input_count(node, 0)?;
+            require_node_type(node, Type::Path)?;
+            let constant = NodeRef {
+                function: lowering.function.id,
+                node: node.id,
+            };
+            if lowering
+                .function
+                .layout
+                .constant_slot(constant, node.span)?
+                != dst_slot
+            {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "Path node does not occupy its local closure slot",
+                ));
+            }
+            let root_layout = lowering
+                .context
+                .layouts
+                .get(&lowering.context.root_function)
+                .ok_or_else(|| lowering_diagnostic(node.span, "missing island root layout"))?;
+            let root_slot = root_layout.constant_slot(constant, node.span)?;
+            let store_schema = SchemaId::named("vix.Path.v1");
+            let pending = PendingValueConstant {
+                node: constant,
+                root_slot,
+                owner_slot: dst_slot,
+                store_schema,
+                bytes: value.as_bytes().to_vec(),
+                span: node.span,
+            };
+            if let Some(previous) = lowering.constants.insert(constant, pending)
+                && (previous.root_slot != root_slot
+                    || previous.owner_slot != dst_slot
+                    || previous.store_schema != store_schema
+                    || previous.bytes != value.as_bytes())
+            {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "constant NodeRef was lowered with conflicting metadata",
+                ));
+            }
+            (Vec::new(), ValueRepresentation::RealizedHandle)
+        }
         Op::Parameter(parameter_id) => {
             require_input_count(node, 0)?;
             let parameter = lowering
@@ -3543,25 +5690,7 @@ fn lower_node(
             )?;
             (vec![op], representation_for_type(&node.ty, node.span)?)
         }
-        Op::Capture { .. } => {
-            return Err(lowering_diagnostic(
-                node.span,
-                "closure environment capture is not yet lowered to Weavy: the boxed \
-                 environment ABI (EnvBox/EnvLoad + call-contract environment) is unimplemented",
-            ));
-        }
-        Op::Closure(callee) if !node.inputs.is_empty() => {
-            let _ = callee;
-            return Err(lowering_diagnostic(
-                node.span,
-                "capturing closure is not yet lowered to Weavy: the returned closure \
-                 references captured values, which require the boxed environment ABI \
-                 (a one-word Handle environment plus EnvBox at construction and EnvLoad \
-                 in the callee prologue)",
-            ));
-        }
         Op::Closure(callee) => {
-            require_input_count(node, 0)?;
             if !matches!(node.ty, Type::Function { .. }) || dst_region.words().as_usize() != 2 {
                 return Err(lowering_diagnostic(
                     node.span,
@@ -3582,12 +5711,24 @@ fn lower_node(
             let Type::Function { parameter, result } = &node.ty else {
                 unreachable!("closure type was checked above")
             };
-            let [target_parameter] = target.parameters.as_slice() else {
+            let Some(target_parameter) = target.parameters.first() else {
                 return Err(lowering_diagnostic(
                     node.span,
-                    "closure function does not have exactly one parameter",
+                    "closure function does not have its callable parameter",
                 ));
             };
+            if node.inputs.len() != target.parameters.len().saturating_sub(1) {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "closure capture count does not match its callable ABI",
+                ));
+            }
+            if node.inputs.len() > 1 {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "closure environment currently carries exactly one captured word",
+                ));
+            }
             if &target_parameter.ty != parameter.as_ref()
                 || &target.return_type != result.as_ref()
                 || target_layout
@@ -3598,12 +5739,6 @@ fn lower_node(
                 return Err(lowering_diagnostic(
                     node.span,
                     "closure function does not satisfy the callable ABI",
-                ));
-            }
-            if !target_layout.constant_slots.is_empty() {
-                return Err(lowering_diagnostic(
-                    node.span,
-                    "indirect closure constants require an environment",
                 ));
             }
             let callee = lowering
@@ -3621,16 +5756,26 @@ fn lower_node(
                     .closure(lowering.function.id, node.id, node.span)?;
             let (callee_temp, environment_temp) =
                 lowering.function.layout.closure_temps(node.id, node.span)?;
+            let environment = if !node.inputs.is_empty() {
+                let capture = input_value(node, values, 0)?;
+                require_value(node, &capture, &Type::Int, ValueRepresentation::Word)?;
+                WeavyOp::CopyI64 {
+                    dst: environment_temp.start().byte_offset(),
+                    src: capture.region.start().byte_offset(),
+                }
+            } else {
+                WeavyOp::ConstI64 {
+                    dst: environment_temp.start().byte_offset(),
+                    value: 0,
+                }
+            };
             (
                 vec![
                     WeavyOp::ConstI64 {
                         dst: callee_temp.start().byte_offset(),
                         value: i64::from(callee),
                     },
-                    WeavyOp::ConstI64 {
-                        dst: environment_temp.start().byte_offset(),
-                        value: 0,
-                    },
+                    environment,
                     WeavyOp::ProductConstruct {
                         dst: dst_region_id,
                         fields: vec![
@@ -3649,7 +5794,7 @@ fn lower_node(
             )
         }
         Op::CallValue => {
-            let op = lower_call_value_node(node, dst_region, values)?;
+            let op = lower_call_value_node(node, dst_region, values, lowering)?;
             (vec![op], representation_for_type(&node.ty, node.span)?)
         }
         Op::Add | Op::Sub | Op::Mul | Op::Div => {
@@ -3717,10 +5862,185 @@ fn lower_node(
                 "array length lowering is not implemented",
             ));
         }
+        Op::ArrayMap { .. } => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "array map lowering is not implemented",
+            ));
+        }
+        Op::ArrayFold => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "array fold did not reach checked lowering",
+            ));
+        }
+        Op::ArraySplitLast => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "array split_last lowering is not implemented",
+            ));
+        }
+        Op::ArrayAll | Op::ArrayAny => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "array predicate did not reach checked lowering",
+            ));
+        }
+        Op::ArrayContains => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "array contains did not reach checked lowering",
+            ));
+        }
+        Op::ArrayStream => {
+            require_input_count(node, 1)?;
+            let source = input_value(node, values, 0)?;
+            let Type::Array(element) = &source.ty else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "array stream source is not an array",
+                ));
+            };
+            require_value(
+                node,
+                &source,
+                &Type::array(element.as_ref().clone()),
+                ValueRepresentation::RealizedHandle,
+            )?;
+            require_node_type(node, Type::stream(Type::Int, element.as_ref().clone()))?;
+            (Vec::new(), ValueRepresentation::CodataRecipe)
+        }
+        Op::StreamFilter => {
+            require_input_count(node, 2)?;
+            let source = input_value(node, values, 0)?;
+            let predicate = input_value(node, values, 1)?;
+            let Type::Stream { value, .. } = &source.ty else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "stream filter source is not keyed codata",
+                ));
+            };
+            require_value(node, &source, &node.ty, ValueRepresentation::CodataRecipe)?;
+            let predicate_ty = Type::Function {
+                parameter: Box::new(value.as_ref().clone()),
+                result: Box::new(Type::Bool),
+            };
+            require_value(
+                node,
+                &predicate,
+                &predicate_ty,
+                ValueRepresentation::InlineComposite,
+            )?;
+            (Vec::new(), ValueRepresentation::CodataRecipe)
+        }
+        Op::StreamFilterMap => {
+            require_input_count(node, 2)?;
+            let source = input_value(node, values, 0)?;
+            let mapper = input_value(node, values, 1)?;
+            let Type::Stream {
+                value: source_value,
+                ..
+            } = &source.ty
+            else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "stream filter_map source is not keyed codata",
+                ));
+            };
+            let Type::Stream {
+                value: output_value,
+                ..
+            } = &node.ty
+            else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "stream filter_map result is not keyed codata",
+                ));
+            };
+            require_value(node, &source, &source.ty, ValueRepresentation::CodataRecipe)?;
+            let mapper_ty = Type::Function {
+                parameter: Box::new(source_value.as_ref().clone()),
+                result: Box::new(Type::option(output_value.as_ref().clone())),
+            };
+            require_value(
+                node,
+                &mapper,
+                &mapper_ty,
+                ValueRepresentation::InlineComposite,
+            )?;
+            (Vec::new(), ValueRepresentation::CodataRecipe)
+        }
+        Op::StreamFlatMap => {
+            require_input_count(node, 2)?;
+            let source = input_value(node, values, 0)?;
+            let mapper = input_value(node, values, 1)?;
+            let Type::Stream {
+                value: source_value,
+                ..
+            } = &source.ty
+            else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "stream flat_map source is not keyed codata",
+                ));
+            };
+            let Type::Stream {
+                value: output_value,
+                ..
+            } = &node.ty
+            else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "stream flat_map result is not keyed codata",
+                ));
+            };
+            require_value(node, &source, &source.ty, ValueRepresentation::CodataRecipe)?;
+            let mapper_ty = Type::Function {
+                parameter: Box::new(source_value.as_ref().clone()),
+                result: Box::new(Type::array(output_value.as_ref().clone())),
+            };
+            require_value(
+                node,
+                &mapper,
+                &mapper_ty,
+                ValueRepresentation::InlineComposite,
+            )?;
+            (Vec::new(), ValueRepresentation::CodataRecipe)
+        }
+        Op::StreamCollect => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "stream collect did not reach checked lowering",
+            ));
+        }
+        Op::StreamFindMin | Op::StreamFindMax => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "stream selection did not reach checked lowering",
+            ));
+        }
+        Op::StreamSplitMin => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "stream split_min did not reach checked lowering",
+            ));
+        }
         Op::ArrayAppend | Op::ArrayConcat => {
             return Err(lowering_diagnostic(
                 node.span,
                 "collection addition lowering is not implemented",
+            ));
+        }
+        Op::ArraySorted => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "array sorting did not reach checked lowering",
+            ));
+        }
+        Op::Range => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "range did not reach checked lowering",
             ));
         }
         Op::Map
@@ -3732,6 +6052,7 @@ fn lower_node(
         | Op::MapHas
         | Op::MapLen
         | Op::MapKeys
+        | Op::MapValues
         | Op::SetAdd
         | Op::SetConcat
         | Op::SetHas
@@ -3743,10 +6064,66 @@ fn lower_node(
             ));
         }
         Op::StringConcat => {
+            require_node_type(node, Type::String)?;
+            let (a, b) = binary_values(node, values)?;
+            require_value(node, &a, &Type::String, ValueRepresentation::RealizedHandle)?;
+            require_value(node, &b, &Type::String, ValueRepresentation::RealizedHandle)?;
+            (
+                vec![WeavyOp::StringConcat {
+                    dst,
+                    a: a.region.start().byte_offset(),
+                    b: b.region.start().byte_offset(),
+                }],
+                ValueRepresentation::RealizedHandle,
+            )
+        }
+        Op::StringContains | Op::StringIsNumeric | Op::StringSplitOnce | Op::StringParseInt => {
             return Err(lowering_diagnostic(
                 node.span,
-                "string concatenation lowering is not implemented",
+                "string operation did not reach checked lowering",
             ));
+        }
+        Op::PathJoin => {
+            require_node_type(node, Type::Path)?;
+            let (base, suffix) = binary_values(node, values)?;
+            require_value(
+                node,
+                &base,
+                &Type::Path,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            require_value(
+                node,
+                &suffix,
+                &Type::Path,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            (
+                vec![WeavyOp::PathJoin {
+                    dst,
+                    base: base.region.start().byte_offset(),
+                    segment: suffix.region.start().byte_offset(),
+                }],
+                ValueRepresentation::RealizedHandle,
+            )
+        }
+        Op::PathToString => {
+            require_node_type(node, Type::String)?;
+            require_input_count(node, 1)?;
+            let path = input_value(node, values, 0)?;
+            require_value(
+                node,
+                &path,
+                &Type::Path,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            (
+                vec![WeavyOp::ByteProject {
+                    dst,
+                    source: path.region.start().byte_offset(),
+                }],
+                ValueRepresentation::RealizedHandle,
+            )
         }
         Op::Variant { variant } => {
             lower_variant_node(node, dst_region, dst_region_id, values, *variant)?
@@ -3930,6 +6307,73 @@ fn lower_call_node(
     })
 }
 
+/// Lower a terminal self-call as an in-place loop backedge. Every next-argument
+/// node is already evaluated in `values`; each is copied into its disjoint
+/// next-argument staging region, then written back to its parameter slot, then a
+/// `Jump` returns to the loop entry. Staging through disjoint regions keeps the
+/// write-back overlap-safe regardless of source order, and reusing the current
+/// frame means the backedge creates no scheduler request, memo cell, store
+/// identity, host call, or new call frame — only typed frame copies and a branch.
+///
+/// r[impl machine.safepoint.two-classes]
+fn lower_tail_self_call(
+    node: &Node,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<(), Diagnostics> {
+    let function = sequence.function;
+    let parameters = function.parameters;
+    require_input_count(node, parameters.len())?;
+    // Stage 1: evaluate ALL next arguments into disjoint staging regions before
+    // any parameter is overwritten.
+    let mut staging = TemporaryCursor::new(
+        function.layout,
+        sequence.lowering.regions,
+        function.id,
+        node,
+    )?;
+    let mut staged = Vec::with_capacity(parameters.len());
+    for (index, parameter) in parameters.iter().enumerate() {
+        let source = input_value(node, values, index)?;
+        require_value(
+            node,
+            &source,
+            &parameter.ty,
+            representation_for_type(&parameter.ty, node.span)?,
+        )?;
+        let next_arg = staging.take(&parameter.ty, node.span)?;
+        outputs.code.extend(copy_lowered_value(
+            node,
+            &source,
+            next_arg.region,
+            next_arg.region_id,
+        )?);
+        staged.push(next_arg);
+    }
+    staging.finish(node.span)?;
+    // Stage 2: overlap-safe write-back from the disjoint staging regions into the
+    // parameter slots.
+    for (parameter, next_arg) in parameters.iter().zip(&staged) {
+        let param_region = function.layout.region(parameter.node, node.span)?;
+        let param_region_id =
+            sequence
+                .lowering
+                .regions
+                .node(function.id, parameter.node, node.span)?;
+        outputs.code.extend(copy_lowered_value(
+            node,
+            next_arg,
+            param_region,
+            param_region_id,
+        )?);
+    }
+    // Backedge to the loop entry; the active source keeps it attributed to the
+    // terminal self-call for the PC/source map.
+    outputs.code.jump(sequence.loop_entry);
+    Ok(())
+}
+
 fn lower_array_call_node(
     node: &Node,
     dst_region: WeavyRegionId,
@@ -4050,23 +6494,275 @@ fn lower_array_call_node(
     });
     outputs.code.jump(done);
     outputs.code.bind(failures, node.span)?;
-    for (variant, field_count) in [(1u32, 3usize), (2u32, 2usize)] {
-        let next = outputs.code.label();
-        outputs.code.push(WeavyOp::EnumIsVariant {
+    propagate_checked_call_failure(
+        node,
+        call_outcome_id,
+        own_outcome,
+        scratch,
+        assigned,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.bind(done, node.span)?;
+    representation_for_type(&node.ty, node.span)
+}
+
+fn lower_partitioned_array_node(
+    node: &Node,
+    dst: FrameRegion,
+    dst_region_id: WeavyRegionId,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    match node.op {
+        Op::ArrayMap { .. } => {
+            match sequence
+                .lowering
+                .array_map_shape(sequence.function.id, node.id, node.span)?
+            {
+                ArrayMapExecutionShape::FusedProjection => {
+                    validate_array_map(node, values)?;
+                    Ok(ValueRepresentation::RealizedHandle)
+                }
+                ArrayMapExecutionShape::MaterializedLoop => {
+                    lower_materialized_array_map(node, dst, values, sequence, outputs)
+                }
+            }
+        }
+        Op::ArrayIndex | Op::ArrayLen => {
+            let map = node
+                .inputs
+                .first()
+                .and_then(|input| sequence.nodes.get(input).copied())
+                .filter(|input| matches!(input.op, Op::ArrayMap { .. }));
+            if let Some(map) = map
+                && sequence
+                    .lowering
+                    .array_map_shape(sequence.function.id, map.id, map.span)?
+                    == ArrayMapExecutionShape::FusedProjection
+            {
+                return lower_fused_array_map_projection(
+                    node,
+                    map,
+                    dst,
+                    dst_region_id,
+                    values,
+                    sequence,
+                    outputs,
+                );
+            }
+            lower_checked_array_node(node, dst, values, sequence, outputs)
+        }
+        Op::Array => lower_checked_array_node(node, dst, values, sequence, outputs),
+        _ => unreachable!("partitioned array lowering receives only array operations"),
+    }
+}
+
+fn validate_array_map(
+    map: &Node,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+) -> Result<(), Diagnostics> {
+    require_input_count(map, 2)?;
+    let source = input_value(map, values, 0)?;
+    let mapper = input_value(map, values, 1)?;
+    let Type::Array(input) = &source.ty else {
+        return Err(lowering_diagnostic(
+            map.span,
+            "array map source is not an array",
+        ));
+    };
+    let Type::Array(output) = &map.ty else {
+        return Err(lowering_diagnostic(
+            map.span,
+            "array map result is not an array",
+        ));
+    };
+    let Type::Function { parameter, result } = &mapper.ty else {
+        return Err(lowering_diagnostic(
+            map.span,
+            "array map mapper is not callable",
+        ));
+    };
+    if parameter.as_ref() != input.as_ref() || result.as_ref() != output.as_ref() {
+        return Err(lowering_diagnostic(
+            map.span,
+            "array map callable signature does not match its array types",
+        ));
+    }
+    require_value(
+        map,
+        &source,
+        &source.ty,
+        ValueRepresentation::RealizedHandle,
+    )?;
+    require_value(
+        map,
+        &mapper,
+        &mapper.ty,
+        ValueRepresentation::InlineComposite,
+    )
+}
+
+fn array_map_temporary_slots(
+    map: &Node,
+    sequence: &SequenceContext<'_, '_, '_>,
+) -> Result<(LoweredSlot, LoweredSlot), Diagnostics> {
+    let (input, output) = sequence.function.layout.array_map_temps(map.id, map.span)?;
+    let (input_id, output_id) =
+        sequence
+            .lowering
+            .regions
+            .array_map_temps(sequence.function.id, map.id, map.span)?;
+    Ok((
+        LoweredSlot {
+            region: input.region,
+            region_id: input_id,
+            ty: input.ty.clone(),
+            representation: representation_for_type(&input.ty, map.span)?,
+        },
+        LoweredSlot {
+            region: output.region,
+            region_id: output_id,
+            ty: output.ty.clone(),
+            representation: representation_for_type(&output.ty, map.span)?,
+        },
+    ))
+}
+
+fn emit_checked_call_indirect(
+    node: &Node,
+    mapper: &LoweredSlot,
+    input: &LoweredSlot,
+    output: &LoweredSlot,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<(), Diagnostics> {
+    let Type::Function { parameter, result } = &mapper.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "indirect callee is not callable",
+        ));
+    };
+    require_value(
+        node,
+        input,
+        parameter,
+        representation_for_type(parameter, node.span)?,
+    )?;
+    require_value(
+        node,
+        output,
+        result,
+        representation_for_type(result, node.span)?,
+    )?;
+    let call_outcome = sequence
+        .function
+        .layout
+        .call_outcomes
+        .get(&node.id)
+        .ok_or_else(|| lowering_diagnostic(node.span, "indirect call has no outcome layout"))?;
+    let call_outcome_id =
+        sequence
+            .lowering
+            .regions
+            .call_outcome(sequence.function.id, node.id, node.span)?;
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(node.span, "indirect call has no checked outcome scratch")
+    })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let own_outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(node.span, "indirect call has no checked outcome return")
+    })?;
+    let mut args = vec![ArgCopy {
+        src: input.region.start().byte_offset(),
+        dst: 0,
+        size: input
+            .region
+            .byte_size()
+            .ok_or_else(|| lowering_diagnostic(node.span, "indirect argument size overflow"))?,
+    }];
+    if let Some((_, extra)) = static_closure_call_args(
+        mapper,
+        sequence.nodes,
+        sequence.function.layout,
+        sequence.lowering,
+        node.span,
+    )? {
+        args.extend(extra);
+    }
+    outputs.code.push(WeavyOp::CallIndirect {
+        callee: mapper.region.start().byte_offset(),
+        args,
+        ret: call_outcome.region.start().byte_offset(),
+    });
+    let failures = outputs.code.label();
+    let done = outputs.code.label();
+    outputs.code.push(WeavyOp::EnumIsVariant {
+        dst: assigned.condition,
+        value: call_outcome_id,
+        variant: 0,
+    });
+    outputs.code.jump_if_zero(scratch.condition, failures);
+    outputs.code.push(WeavyOp::EnumProjectChecked {
+        dst: output.region_id,
+        value: call_outcome_id,
+        variant: 0,
+        field: 0,
+    });
+    outputs.code.jump(done);
+    outputs.code.bind(failures, node.span)?;
+    propagate_checked_call_failure(
+        node,
+        call_outcome_id,
+        own_outcome,
+        scratch,
+        assigned,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.bind(done, node.span)
+}
+
+fn propagate_checked_call_failure(
+    node: &Node,
+    call_outcome: WeavyRegionId,
+    own_outcome: WeavyRegionId,
+    scratch: OutcomeScratch,
+    assigned: AssignedOutcomeScratch,
+    return_label: CodeLabel,
+    code: &mut CodeBuilder,
+) -> Result<(), Diagnostics> {
+    for (variant, field_count) in [
+        (1u32, 3usize),
+        (2u32, 2usize),
+        (3u32, 1usize),
+        (4u32, 1usize),
+        (5u32, 2usize),
+    ] {
+        let next = code.label();
+        code.push(WeavyOp::EnumIsVariant {
             dst: assigned.condition,
-            value: call_outcome_id,
+            value: call_outcome,
             variant,
         });
-        outputs.code.jump_if_zero(scratch.condition, next);
+        code.jump_if_zero(scratch.condition, next);
         for field in 0..field_count {
-            outputs.code.push(WeavyOp::EnumProjectChecked {
+            code.push(WeavyOp::EnumProjectChecked {
                 dst: assigned.fields[field],
-                value: call_outcome_id,
+                value: call_outcome,
                 variant,
                 field: field as u32,
             });
         }
-        outputs.code.push(WeavyOp::EnumConstruct {
+        code.push(WeavyOp::EnumConstruct {
             dst: own_outcome,
             variant,
             fields: (0..field_count)
@@ -4076,19 +6772,1710 @@ fn lower_array_call_node(
                 })
                 .collect(),
         });
-        outputs.code.jump(return_label);
-        outputs.code.bind(next, node.span)?;
+        code.jump(return_label);
+        code.bind(next, node.span)?;
     }
-    // Both checked selectors above validate the closed source enum; a surviving
-    // path is unreachable for a valid selector and is deliberately loud.
-    outputs.code.push(WeavyOp::EnumProjectChecked {
+    // Every selector probe validates the closed enum. Reaching this operation
+    // is impossible for a valid selector and remains a typed dynamic fault.
+    code.push(WeavyOp::EnumProjectChecked {
         dst: assigned.fields[0],
-        value: call_outcome_id,
-        variant: 2,
+        value: call_outcome,
+        variant: 5,
         field: 0,
     });
+    Ok(())
+}
+
+fn lower_checked_call_value_node(
+    node: &Node,
+    dst: FrameRegion,
+    dst_region_id: WeavyRegionId,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_input_count(node, 2)?;
+    let callee = input_value(node, values, 0)?;
+    let argument = input_value(node, values, 1)?;
+    let output = LoweredSlot {
+        region: dst,
+        region_id: dst_region_id,
+        ty: node.ty.clone(),
+        representation: representation_for_type(&node.ty, node.span)?,
+    };
+    emit_checked_call_indirect(node, &callee, &argument, &output, sequence, outputs)?;
+    Ok(output.representation)
+}
+
+struct ArrayMapFacts {
+    source: LoweredSlot,
+    mapper: LoweredSlot,
+    output_ty: Type,
+    input_schema: i64,
+    output_schema: i64,
+    input_width: u32,
+    output_width: u32,
+}
+
+fn array_map_array_facts(
+    map: &Node,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+) -> Result<ArrayMapFacts, Diagnostics> {
+    validate_array_map(map, values)?;
+    let source = input_value(map, values, 0)?;
+    let mapper = input_value(map, values, 1)?;
+    let Type::Array(input_ty) = &source.ty else {
+        unreachable!("validated array map source")
+    };
+    let Type::Array(output_ty) = &map.ty else {
+        unreachable!("validated array map result")
+    };
+    let input_ty = input_ty.as_ref().clone();
+    let output_ty = output_ty.as_ref().clone();
+    let input_schema = sequence.lowering.schemas.schema_for(&input_ty, map.span)?;
+    let output_schema = sequence.lowering.schemas.schema_for(&output_ty, map.span)?;
+    let word_bytes = usize::try_from(FrameSlot::word_size()).expect("word size fits usize");
+    let input_width = u32::try_from(type_words(&input_ty, map.span)?.as_usize() * word_bytes)
+        .map_err(|_| lowering_diagnostic(map.span, "array map input width overflow"))?;
+    let output_width = u32::try_from(type_words(&output_ty, map.span)?.as_usize() * word_bytes)
+        .map_err(|_| lowering_diagnostic(map.span, "array map output width overflow"))?;
+    Ok(ArrayMapFacts {
+        source,
+        mapper,
+        output_ty,
+        input_schema: i64::from(input_schema.0),
+        output_schema: i64::from(output_schema.0),
+        input_width,
+        output_width,
+    })
+}
+
+fn lower_materialized_array_map(
+    map: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    // r[impl lang.collection.array-map]
+    let ArrayMapFacts {
+        source,
+        mapper,
+        input_schema,
+        output_schema,
+        input_width,
+        output_width,
+        ..
+    } = array_map_array_facts(map, values, sequence)?;
+    let (input, output) = array_map_temporary_slots(map, sequence)?;
+    let scratch =
+        sequence.function.layout.outcome_scratch.ok_or_else(|| {
+            lowering_diagnostic(map.span, "array map has no checked outcome scratch")
+        })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, map.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, map.span)?;
+    let return_label = sequence
+        .array_return
+        .ok_or_else(|| lowering_diagnostic(map.span, "array map has no checked outcome return"))?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: map.id,
+        })
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(map.span, "array map has no stable trace site"))?;
+
+    outputs.code.push(WeavyOp::LoadArrayLen {
+        dst: scratch.fields[2].byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        elem_schema_ref: input_schema,
+    });
+    emit_array_status_machine_checks(
+        map,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ArrayNew {
+        dst: dst.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        count_slot: scratch.fields[2].byte_offset(),
+        elem_width: output_width,
+        elem_schema_ref: output_schema,
+    });
+    emit_array_status_machine_checks(
+        map,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 0,
+    });
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[1].byte_offset(),
+        value: 1,
+    });
+    let loop_start = outputs.code.label();
+    let done = outputs.code.label();
+    outputs.code.bind(loop_start, map.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[2].byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, done);
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: input.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        index: scratch.fields[0].byte_offset(),
+        elem_width: input_width,
+        elem_schema_ref: input_schema,
+    });
+    emit_array_load_status_checks(ArrayLoadStatusContext {
+        node: map,
+        site,
+        index: assigned.fields[0],
+        length: assigned.fields[2],
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code: outputs.code,
+    })?;
+    emit_checked_call_indirect(map, &mapper, &input, &output, sequence, outputs)?;
+    outputs.code.push(WeavyOp::ArrayStore {
+        status: scratch.status.byte_offset(),
+        array: dst.start().byte_offset(),
+        index: scratch.fields[0].byte_offset(),
+        src: output.region.start().byte_offset(),
+        elem_width: output_width,
+        elem_schema_ref: output_schema,
+    });
+    emit_array_status_machine_checks(
+        map,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: scratch.fields[0].byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[1].byte_offset(),
+    });
+    outputs.code.jump(loop_start);
+    outputs.code.bind(done, map.span)?;
+    Ok(ValueRepresentation::RealizedHandle)
+}
+
+fn lower_fused_array_map_projection(
+    node: &Node,
+    map: &Node,
+    dst: FrameRegion,
+    dst_region_id: WeavyRegionId,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    let ArrayMapFacts {
+        source,
+        mapper,
+        output_ty,
+        input_schema,
+        input_width,
+        ..
+    } = array_map_array_facts(map, values, sequence)?;
+    let (input, output) = array_map_temporary_slots(map, sequence)?;
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(node.span, "fused array map has no checked outcome scratch")
+    })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(node.span, "fused array map has no checked outcome return")
+    })?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(node.span, "projection has no stable trace site"))?;
+    match node.op {
+        Op::ArrayLen => {
+            require_input_count(node, 1)?;
+            outputs.code.push(WeavyOp::LoadArrayLen {
+                dst: dst.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                array: source.region.start().byte_offset(),
+                elem_schema_ref: input_schema,
+            });
+            emit_array_status_machine_checks(
+                node,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            Ok(ValueRepresentation::Word)
+        }
+        Op::ArrayIndex => {
+            require_input_count(node, 2)?;
+            let index = input_value(node, values, 1)?;
+            require_value(node, &index, &Type::Int, ValueRepresentation::Word)?;
+            outputs.code.push(WeavyOp::LoadArrayLen {
+                dst: scratch.fields[2].byte_offset(),
+                status: scratch.status.byte_offset(),
+                array: source.region.start().byte_offset(),
+                elem_schema_ref: input_schema,
+            });
+            emit_array_status_machine_checks(
+                node,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            outputs.code.push(WeavyOp::LoadArray {
+                dst: input.region.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                array: source.region.start().byte_offset(),
+                index: index.region.start().byte_offset(),
+                elem_width: input_width,
+                elem_schema_ref: input_schema,
+            });
+            emit_array_load_status_checks(ArrayLoadStatusContext {
+                node,
+                site,
+                index: index.region_id,
+                length: assigned.fields[2],
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                code: outputs.code,
+            })?;
+            emit_checked_call_indirect(map, &mapper, &input, &output, sequence, outputs)?;
+            if node.ty != output_ty {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "fused array map projection type does not match mapper result",
+                ));
+            }
+            outputs
+                .code
+                .extend(copy_lowered_value(node, &output, dst, dst_region_id)?);
+            representation_for_type(&output_ty, node.span)
+        }
+        _ => unreachable!("fused map projection is index or length"),
+    }
+}
+
+/// Lower `range where { from, to }` to one in-frame dense fill.
+///
+/// The element count `to - from` is computed once; `ArrayNew` allocates exactly
+/// that many `Int` slots as one task-local molten array and interns it once when
+/// the value crosses the island edge. The fill loop writes `from + i` into slot
+/// `i` using the same cheap interior vocabulary as rung 050's tail loop — a
+/// `LtI64` guard, whole-element `ArrayStore`, and an `AddI64` backedge — with no
+/// per-iteration trace mark, scheduler contact, store operation, or identity.
+///
+/// A half-open empty range (`from == to`) is the empty array. Reversed bounds
+/// (`from > to`) and a width that overflows the representable element count feed
+/// a negative or unrepresentable count to `ArrayNew`, which faults with a typed
+/// `ArrayOpStatus` — the deliberately unspecified edge is a typed red seam, not
+/// a silent clamp.
+fn lower_range_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_input_count(node, 2)?;
+    require_node_type(node, Type::array(Type::Int))?;
+    let from = input_value(node, values, 0)?;
+    let to = input_value(node, values, 1)?;
+    require_value(node, &from, &Type::Int, ValueRepresentation::Word)?;
+    require_value(node, &to, &Type::Int, ValueRepresentation::Word)?;
+    let scratch =
+        sequence.function.layout.outcome_scratch.ok_or_else(|| {
+            lowering_diagnostic(node.span, "range has no checked outcome scratch")
+        })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence
+        .array_return
+        .ok_or_else(|| lowering_diagnostic(node.span, "range has no checked outcome return"))?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(node.span, "range has no stable trace site"))?;
+    let element_schema = sequence
+        .lowering
+        .schemas
+        .schema_for(&Type::Int, node.span)?;
+    let width = element_byte_width(&Type::Int, node.span)?;
+    let mut temps = TemporaryCursor::new(
+        sequence.function.layout,
+        sequence.lowering.regions,
+        sequence.function.id,
+        node,
+    )?;
+    let element_slot = temps.take(&Type::Int, node.span)?;
+
+    // count = to - from. A reversed range makes this negative; an overflowing
+    // width makes it unrepresentable. Both reach `ArrayNew` as an out-of-range
+    // count and fault below.
+    outputs.code.push(WeavyOp::SubI64 {
+        dst: scratch.fields[2].byte_offset(),
+        a: to.region.start().byte_offset(),
+        b: from.region.start().byte_offset(),
+    });
+    outputs.code.push(WeavyOp::ArrayNew {
+        dst: dst.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        count_slot: scratch.fields[2].byte_offset(),
+        elem_width: width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+
+    // Fill loop: out[i] = from + i for i in 0..count.
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 0,
+    });
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[1].byte_offset(),
+        value: 1,
+    });
+    let loop_start = outputs.code.label();
+    let done = outputs.code.label();
+    outputs.code.bind(loop_start, node.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[2].byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, done);
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: element_slot.region.start().byte_offset(),
+        a: from.region.start().byte_offset(),
+        b: scratch.fields[0].byte_offset(),
+    });
+    outputs.code.push(WeavyOp::ArrayStore {
+        status: scratch.status.byte_offset(),
+        array: dst.start().byte_offset(),
+        index: scratch.fields[0].byte_offset(),
+        src: element_slot.region.start().byte_offset(),
+        elem_width: width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: scratch.fields[0].byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[1].byte_offset(),
+    });
+    outputs.code.jump(loop_start);
     outputs.code.bind(done, node.span)?;
-    representation_for_type(&node.ty, node.span)
+    temps.finish(node.span)?;
+    Ok(ValueRepresentation::RealizedHandle)
+}
+
+fn lower_checked_array_fold_node(
+    node: &Node,
+    dst: FrameRegion,
+    dst_region_id: WeavyRegionId,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_input_count(node, 3)?;
+    let source = input_value(node, values, 0)?;
+    let initial = input_value(node, values, 1)?;
+    let folder = input_value(node, values, 2)?;
+    let Type::Array(element) = &source.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array fold source is not an array",
+        ));
+    };
+    require_value(
+        node,
+        &source,
+        &Type::array(element.as_ref().clone()),
+        ValueRepresentation::RealizedHandle,
+    )?;
+    require_value(
+        node,
+        &initial,
+        &node.ty,
+        representation_for_type(&node.ty, node.span)?,
+    )?;
+    let parameter_ty = Type::Tuple(vec![node.ty.clone(), element.as_ref().clone()]);
+    require_value(
+        node,
+        &folder,
+        &Type::Function {
+            parameter: Box::new(parameter_ty.clone()),
+            result: Box::new(node.ty.clone()),
+        },
+        ValueRepresentation::InlineComposite,
+    )?;
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(node.span, "array fold has no checked outcome scratch")
+    })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(node.span, "array fold has no checked outcome return")
+    })?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(node.span, "array fold has no stable trace site"))?;
+    let element_schema = sequence.lowering.schemas.schema_for(element, node.span)?;
+    let element_width = element_byte_width(element, node.span)?;
+    let mut temps = TemporaryCursor::new(
+        sequence.function.layout,
+        sequence.lowering.regions,
+        sequence.function.id,
+        node,
+    )?;
+    let element_slot = temps.take(element, node.span)?;
+    let parameter = temps.take(&parameter_ty, node.span)?;
+    let result = temps.take(&node.ty, node.span)?;
+    let accumulator = LoweredSlot {
+        region: dst,
+        region_id: dst_region_id,
+        ty: node.ty.clone(),
+        representation: representation_for_type(&node.ty, node.span)?,
+    };
+    outputs
+        .code
+        .extend(copy_lowered_value(node, &initial, dst, dst_region_id)?);
+    outputs.code.push(WeavyOp::LoadArrayLen {
+        dst: scratch.fields[1].byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 0,
+    });
+    let next = outputs.code.label();
+    let done = outputs.code.label();
+    outputs.code.bind(next, node.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[1].byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, done);
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: element_slot.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        index: scratch.fields[0].byte_offset(),
+        elem_width: element_width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ProductConstruct {
+        dst: parameter.region_id,
+        fields: vec![
+            StructuralFieldSource {
+                field: 0,
+                source: accumulator.region_id,
+            },
+            StructuralFieldSource {
+                field: 1,
+                source: element_slot.region_id,
+            },
+        ],
+    });
+    emit_checked_call_indirect(node, &folder, &parameter, &result, sequence, outputs)?;
+    outputs
+        .code
+        .extend(copy_lowered_value(node, &result, dst, dst_region_id)?);
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[2].byte_offset(),
+        value: 1,
+    });
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: scratch.fields[0].byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[2].byte_offset(),
+    });
+    outputs.code.jump(next);
+    outputs.code.bind(done, node.span)?;
+    temps.finish(node.span)?;
+    Ok(accumulator.representation)
+}
+
+fn lower_checked_array_split_last_node(
+    node: &Node,
+    dst_region_id: WeavyRegionId,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_input_count(node, 1)?;
+    let source = input_value(node, values, 0)?;
+    let Type::Array(element) = &source.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "split_last source is not an array",
+        ));
+    };
+    require_value(
+        node,
+        &source,
+        &source.ty,
+        ValueRepresentation::RealizedHandle,
+    )?;
+    let rest_ty = Type::array(element.as_ref().clone());
+    let payload_ty = Type::Tuple(vec![element.as_ref().clone(), rest_ty.clone()]);
+    require_node_type(node, Type::option(payload_ty.clone()))?;
+
+    let scratch =
+        sequence.function.layout.outcome_scratch.ok_or_else(|| {
+            lowering_diagnostic(node.span, "split_last has no typed outcome scratch")
+        })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence
+        .array_return
+        .ok_or_else(|| lowering_diagnostic(node.span, "split_last has no typed outcome return"))?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(node.span, "split_last has no stable trace site"))?;
+    let element_schema = sequence.lowering.schemas.schema_for(element, node.span)?;
+    let element_width = element_byte_width(element, node.span)?;
+    let mut temps = TemporaryCursor::new(
+        sequence.function.layout,
+        sequence.lowering.regions,
+        sequence.function.id,
+        node,
+    )?;
+    let last = temps.take(element, node.span)?;
+    let copy = temps.take(element, node.span)?;
+    let rest = temps.take(&rest_ty, node.span)?;
+    let payload = temps.take(&payload_ty, node.span)?;
+
+    outputs.code.push(WeavyOp::LoadArrayLen {
+        dst: scratch.fields[2].byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 0,
+    });
+    outputs.code.push(WeavyOp::EqI64 {
+        dst: scratch.condition.byte_offset(),
+        a: scratch.fields[2].byte_offset(),
+        b: scratch.fields[0].byte_offset(),
+    });
+    let nonempty = outputs.code.label();
+    let done = outputs.code.label();
+    outputs.code.jump_if_zero(scratch.condition, nonempty);
+    outputs.code.push(WeavyOp::EnumConstruct {
+        dst: dst_region_id,
+        variant: OPTION_NONE_VARIANT,
+        fields: Vec::new(),
+    });
+    outputs.code.jump(done);
+
+    outputs.code.bind(nonempty, node.span)?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 1,
+    });
+    outputs.code.push(WeavyOp::SubI64 {
+        dst: scratch.fields[1].byte_offset(),
+        a: scratch.fields[2].byte_offset(),
+        b: scratch.fields[0].byte_offset(),
+    });
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: last.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        index: scratch.fields[1].byte_offset(),
+        elem_width: element_width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ArrayNew {
+        dst: rest.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        count_slot: scratch.fields[1].byte_offset(),
+        elem_width: element_width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 0,
+    });
+    emit_array_copy_loop(ArrayCopyLoopContext {
+        node,
+        site,
+        source: &source,
+        destination: rest.region,
+        source_index: scratch.fields[0],
+        source_index_region: assigned.fields[0],
+        destination_index: scratch.fields[0],
+        length: scratch.fields[1],
+        length_region: assigned.fields[1],
+        temp: &copy,
+        elem_width: element_width,
+        elem_schema_ref: element_schema,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code: outputs.code,
+    })?;
+    outputs.code.push(WeavyOp::ProductConstruct {
+        dst: payload.region_id,
+        fields: vec![
+            StructuralFieldSource {
+                field: 0,
+                source: last.region_id,
+            },
+            StructuralFieldSource {
+                field: 1,
+                source: rest.region_id,
+            },
+        ],
+    });
+    outputs.code.push(WeavyOp::EnumConstruct {
+        dst: dst_region_id,
+        variant: OPTION_SOME_VARIANT,
+        fields: vec![StructuralFieldSource {
+            field: 0,
+            source: payload.region_id,
+        }],
+    });
+    outputs.code.bind(done, node.span)?;
+    temps.finish(node.span)?;
+    Ok(ValueRepresentation::InlineComposite)
+}
+
+/// Test authored array positions left-to-right through one typed predicate,
+/// short-circuiting as soon as the outcome (`all`/`any`) is decided.
+fn lower_checked_array_predicate_node(
+    node: &Node,
+    dst: FrameRegion,
+    _dst_region_id: WeavyRegionId,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_input_count(node, 2)?;
+    let source = input_value(node, values, 0)?;
+    let predicate = input_value(node, values, 1)?;
+    let Type::Array(element) = &source.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array predicate source is not an array",
+        ));
+    };
+    require_value(
+        node,
+        &source,
+        &Type::array(element.as_ref().clone()),
+        ValueRepresentation::RealizedHandle,
+    )?;
+    require_value(
+        node,
+        &predicate,
+        &Type::Function {
+            parameter: Box::new(element.as_ref().clone()),
+            result: Box::new(Type::Bool),
+        },
+        ValueRepresentation::InlineComposite,
+    )?;
+    require_node_type(node, Type::Bool)?;
+    let is_all = matches!(node.op, Op::ArrayAll);
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(node.span, "array predicate has no checked outcome scratch")
+    })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(node.span, "array predicate has no checked outcome return")
+    })?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .copied()
+        .ok_or_else(|| {
+            lowering_diagnostic(node.span, "array predicate has no stable trace site")
+        })?;
+    let element_schema = sequence.lowering.schemas.schema_for(element, node.span)?;
+    let element_width = element_byte_width(element, node.span)?;
+    let mut temps = TemporaryCursor::new(
+        sequence.function.layout,
+        sequence.lowering.regions,
+        sequence.function.id,
+        node,
+    )?;
+    let element_slot = temps.take(element, node.span)?;
+    let result = temps.take(&Type::Bool, node.span)?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: dst.start().byte_offset(),
+        value: i64::from(is_all),
+    });
+    outputs.code.push(WeavyOp::LoadArrayLen {
+        dst: scratch.fields[1].byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 0,
+    });
+    let next = outputs.code.label();
+    let done = outputs.code.label();
+    let short_circuit = outputs.code.label();
+    outputs.code.bind(next, node.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[1].byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, done);
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: element_slot.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        index: scratch.fields[0].byte_offset(),
+        elem_width: element_width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    emit_checked_call_indirect(node, &predicate, &element_slot, &result, sequence, outputs)?;
+    if is_all {
+        outputs
+            .code
+            .jump_if_zero(result.region.start(), short_circuit);
+    } else {
+        let continue_label = outputs.code.label();
+        outputs
+            .code
+            .jump_if_zero(result.region.start(), continue_label);
+        outputs.code.jump(short_circuit);
+        outputs.code.bind(continue_label, node.span)?;
+    }
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[2].byte_offset(),
+        value: 1,
+    });
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: scratch.fields[0].byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[2].byte_offset(),
+    });
+    outputs.code.jump(next);
+    outputs.code.bind(short_circuit, node.span)?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: dst.start().byte_offset(),
+        value: i64::from(!is_all),
+    });
+    outputs.code.bind(done, node.span)?;
+    temps.finish(node.span)?;
+    representation_for_type(&Type::Bool, node.span)
+}
+
+/// Test whether the array holds an element structurally equal to the given
+/// value, short-circuiting on the first match.
+fn lower_checked_array_contains_node(
+    node: &Node,
+    dst: FrameRegion,
+    _dst_region_id: WeavyRegionId,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_input_count(node, 2)?;
+    let source = input_value(node, values, 0)?;
+    let target = input_value(node, values, 1)?;
+    let Type::Array(element) = &source.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array contains source is not an array",
+        ));
+    };
+    require_value(
+        node,
+        &source,
+        &Type::array(element.as_ref().clone()),
+        ValueRepresentation::RealizedHandle,
+    )?;
+    if &target.ty != element.as_ref() || !target.ty.equality_is_structural() {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array contains value does not have one structural element type",
+        ));
+    }
+    require_node_type(node, Type::Bool)?;
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(node.span, "array contains has no checked outcome scratch")
+    })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(node.span, "array contains has no checked outcome return")
+    })?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(node.span, "array contains has no stable trace site"))?;
+    let element_schema = sequence.lowering.schemas.schema_for(element, node.span)?;
+    let element_width = element_byte_width(element, node.span)?;
+    let mut temps = TemporaryCursor::new(
+        sequence.function.layout,
+        sequence.lowering.regions,
+        sequence.function.id,
+        node,
+    )?;
+    let element_slot = temps.take(element, node.span)?;
+    let accumulator = temps.take(&Type::Int, node.span)?;
+    let work = temps.take(&Type::Int, node.span)?;
+    let equal = temps.take(&Type::Int, node.span)?;
+    let array_equality = if type_contains_array(element) {
+        Some(ArrayEqualityContext {
+            schemas: sequence.lowering.schemas,
+            scratch,
+            assigned,
+            outcome,
+            return_label,
+            site,
+        })
+    } else {
+        None
+    };
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: dst.start().byte_offset(),
+        value: 0,
+    });
+    outputs.code.push(WeavyOp::LoadArrayLen {
+        dst: scratch.fields[1].byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 0,
+    });
+    let next = outputs.code.label();
+    let done = outputs.code.label();
+    outputs.code.bind(next, node.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[1].byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, done);
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: element_slot.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        index: scratch.fields[0].byte_offset(),
+        elem_width: element_width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: accumulator.region.start().byte_offset(),
+        value: 1,
+    });
+    SemanticEqualityEmitter {
+        node,
+        accumulator: accumulator.region.start(),
+        work: work.region.start(),
+        equal: equal.region.start(),
+        temps: &mut temps,
+        code: outputs.code,
+        array: array_equality,
+    }
+    .emit(element, &element_slot, &target)?;
+    let continue_label = outputs.code.label();
+    outputs
+        .code
+        .jump_if_zero(accumulator.region.start(), continue_label);
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: dst.start().byte_offset(),
+        value: 1,
+    });
+    outputs.code.jump(done);
+    outputs.code.bind(continue_label, node.span)?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[2].byte_offset(),
+        value: 1,
+    });
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: scratch.fields[0].byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[2].byte_offset(),
+    });
+    outputs.code.jump(next);
+    outputs.code.bind(done, node.span)?;
+    temps.finish(node.span)?;
+    representation_for_type(&Type::Bool, node.span)
+}
+
+/// A synthesized one-word Bool slot aliasing the outcome-scratch condition word,
+/// used to receive a predicate's checked-call result before branching on it.
+fn outcome_condition_slot(
+    scratch: OutcomeScratch,
+    assigned: AssignedOutcomeScratch,
+) -> LoweredSlot {
+    LoweredSlot {
+        region: FrameRegion::for_words(scratch.condition.word_index(), FrameWords::ONE)
+            .expect("outcome condition scratch is one frame word"),
+        region_id: assigned.condition,
+        ty: Type::Bool,
+        representation: ValueRepresentation::Word,
+    }
+}
+
+/// `find_min`/`find_max`: walk the resolved recipe, keep the structural extremum
+/// among values whose row survives the recipe filter and satisfies the selection
+/// predicate, break ties by the stable (ascending) key, and return `Option<V>`.
+fn lower_checked_stream_selection_node(
+    node: &Node,
+    dst_region_id: WeavyRegionId,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_input_count(node, 2)?;
+    let selection = input_value(node, values, 1)?;
+    let resolved = resolve_stream_recipe(node, node.inputs[0], values, sequence)?;
+    let element = resolved.element.clone();
+    let predicate_ty = Type::Function {
+        parameter: Box::new(element.clone()),
+        result: Box::new(Type::Bool),
+    };
+    require_value(
+        node,
+        &selection,
+        &predicate_ty,
+        ValueRepresentation::InlineComposite,
+    )?;
+    require_node_type(node, Type::option(element.clone()))?;
+    let want_greater = matches!(node.op, Op::StreamFindMax);
+
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(node.span, "stream selection has no checked outcome scratch")
+    })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(node.span, "stream selection has no checked outcome return")
+    })?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .copied()
+        .ok_or_else(|| {
+            lowering_diagnostic(node.span, "stream selection has no stable trace site")
+        })?;
+    let element_schema = sequence.lowering.schemas.schema_for(&element, node.span)?;
+    let element_width = element_byte_width(&element, node.span)?;
+
+    let mut temps = TemporaryCursor::new(
+        sequence.function.layout,
+        sequence.lowering.regions,
+        sequence.function.id,
+        node,
+    )?;
+    let best = temps.take(&element, node.span)?;
+    let current = temps.take(&element, node.span)?;
+    let one = temps.take(&Type::Int, node.span)?;
+    let ordering = temps.take(&Type::Int, node.span)?;
+    let comparison = temps.checkpoint();
+    let predicate_result = outcome_condition_slot(scratch, assigned);
+
+    outputs.code.push(WeavyOp::LoadArrayLen {
+        dst: scratch.fields[1].byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: resolved.source.region.start().byte_offset(),
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: one.region.start().byte_offset(),
+        value: 1,
+    });
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[2].byte_offset(),
+        value: 0,
+    });
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 0,
+    });
+    let next = outputs.code.label();
+    let done = outputs.code.label();
+    let advance = outputs.code.label();
+    let take = outputs.code.label();
+    outputs.code.bind(next, node.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[1].byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, done);
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: current.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: resolved.source.region.start().byte_offset(),
+        index: scratch.fields[0].byte_offset(),
+        elem_width: element_width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    if let Some(recipe_predicate) = &resolved.predicate {
+        emit_checked_call_indirect(
+            node,
+            recipe_predicate,
+            &current,
+            &predicate_result,
+            sequence,
+            outputs,
+        )?;
+        outputs.code.jump_if_zero(scratch.condition, advance);
+    }
+    emit_checked_call_indirect(
+        node,
+        &selection,
+        &current,
+        &predicate_result,
+        sequence,
+        outputs,
+    )?;
+    outputs.code.jump_if_zero(scratch.condition, advance);
+    outputs.code.jump_if_zero(scratch.fields[2], take);
+    temps.rewind(comparison, node.span)?;
+    emit_structural_order(
+        node,
+        &element,
+        &current,
+        &best,
+        StructuralOrderOutput {
+            ordering: ordering.region.start(),
+            condition: scratch.condition,
+        },
+        &mut temps,
+        outputs.code,
+    )?;
+    let better = if want_greater {
+        WeavyOp::GtI64 {
+            dst: scratch.condition.byte_offset(),
+            a: ordering.region.start().byte_offset(),
+            b: one.region.start().byte_offset(),
+        }
+    } else {
+        WeavyOp::LtI64 {
+            dst: scratch.condition.byte_offset(),
+            a: ordering.region.start().byte_offset(),
+            b: one.region.start().byte_offset(),
+        }
+    };
+    outputs.code.push(better);
+    outputs.code.jump_if_zero(scratch.condition, advance);
+    outputs.code.bind(take, node.span)?;
+    outputs.code.extend(copy_lowered_value(
+        node,
+        &current,
+        best.region,
+        best.region_id,
+    )?);
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[2].byte_offset(),
+        value: 1,
+    });
+    outputs.code.bind(advance, node.span)?;
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: scratch.fields[0].byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: one.region.start().byte_offset(),
+    });
+    outputs.code.jump(next);
+    outputs.code.bind(done, node.span)?;
+    let none_case = outputs.code.label();
+    let built = outputs.code.label();
+    outputs.code.jump_if_zero(scratch.fields[2], none_case);
+    outputs.code.push(WeavyOp::EnumConstruct {
+        dst: dst_region_id,
+        variant: OPTION_SOME_VARIANT,
+        fields: vec![StructuralFieldSource {
+            field: 0,
+            source: best.region_id,
+        }],
+    });
+    outputs.code.jump(built);
+    outputs.code.bind(none_case, node.span)?;
+    outputs.code.push(WeavyOp::EnumConstruct {
+        dst: dst_region_id,
+        variant: OPTION_NONE_VARIANT,
+        fields: Vec::new(),
+    });
+    outputs.code.bind(built, node.span)?;
+    temps.finish(node.span)?;
+    Ok(ValueRepresentation::InlineComposite)
+}
+
+/// `split_min` selects the structurally-least value (stable ascending-key
+/// tie-break), then realizes the remaining values as a fresh dense array in
+/// canonical key order with exactly the selected row omitted. Equal duplicate
+/// values at other keys remain. Realization is explicit in the `(V, [V])`
+/// result type; no stream recipe is placed inside the `Option`. Empty streams
+/// yield `None`.
+fn lower_checked_stream_split_min_node(
+    node: &Node,
+    dst_region_id: WeavyRegionId,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_input_count(node, 1)?;
+    let resolved = resolve_stream_recipe(node, node.inputs[0], values, sequence)?;
+    let element = resolved.element.clone();
+    let rest_ty = Type::array(element.clone());
+    let payload_ty = Type::Tuple(vec![element.clone(), rest_ty.clone()]);
+    require_node_type(node, Type::option(payload_ty.clone()))?;
+
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(node.span, "stream split_min has no checked outcome scratch")
+    })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(node.span, "stream split_min has no checked outcome return")
+    })?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .copied()
+        .ok_or_else(|| {
+            lowering_diagnostic(node.span, "stream split_min has no stable trace site")
+        })?;
+    let element_schema = sequence.lowering.schemas.schema_for(&element, node.span)?;
+    let element_width = element_byte_width(&element, node.span)?;
+
+    let mut temps = TemporaryCursor::new(
+        sequence.function.layout,
+        sequence.lowering.regions,
+        sequence.function.id,
+        node,
+    )?;
+    let best = temps.take(&element, node.span)?;
+    let current = temps.take(&element, node.span)?;
+    let one = temps.take(&Type::Int, node.span)?;
+    let ordering = temps.take(&Type::Int, node.span)?;
+    let best_index = temps.take(&Type::Int, node.span)?;
+    let found = temps.take(&Type::Int, node.span)?;
+    let surviving = temps.take(&Type::Int, node.span)?;
+    let remainder = temps.take(&rest_ty, node.span)?;
+    let write_index = temps.take(&Type::Int, node.span)?;
+    let payload = temps.take(&payload_ty, node.span)?;
+    let comparison = temps.checkpoint();
+    let predicate_result = outcome_condition_slot(scratch, assigned);
+
+    // ---- pass 1: min-scan over surviving rows ----
+    outputs.code.push(WeavyOp::LoadArrayLen {
+        dst: scratch.fields[1].byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: resolved.source.region.start().byte_offset(),
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: one.region.start().byte_offset(),
+        value: 1,
+    });
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: found.region.start().byte_offset(),
+        value: 0,
+    });
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: surviving.region.start().byte_offset(),
+        value: 0,
+    });
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 0,
+    });
+    let scan_next = outputs.code.label();
+    let scan_done = outputs.code.label();
+    let scan_advance = outputs.code.label();
+    let scan_take = outputs.code.label();
+    outputs.code.bind(scan_next, node.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[1].byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, scan_done);
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: current.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: resolved.source.region.start().byte_offset(),
+        index: scratch.fields[0].byte_offset(),
+        elem_width: element_width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    if let Some(recipe_predicate) = &resolved.predicate {
+        emit_checked_call_indirect(
+            node,
+            recipe_predicate,
+            &current,
+            &predicate_result,
+            sequence,
+            outputs,
+        )?;
+        outputs.code.jump_if_zero(scratch.condition, scan_advance);
+    }
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: surviving.region.start().byte_offset(),
+        a: surviving.region.start().byte_offset(),
+        b: one.region.start().byte_offset(),
+    });
+    outputs.code.jump_if_zero(found.region.start(), scan_take);
+    temps.rewind(comparison, node.span)?;
+    emit_structural_order(
+        node,
+        &element,
+        &current,
+        &best,
+        StructuralOrderOutput {
+            ordering: ordering.region.start(),
+            condition: scratch.condition,
+        },
+        &mut temps,
+        outputs.code,
+    )?;
+    // Replace only on a strictly-lesser value, so the earliest (lowest) key
+    // wins every tie: `ordering < 1` is exactly `Ordering::Less`.
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: ordering.region.start().byte_offset(),
+        b: one.region.start().byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, scan_advance);
+    outputs.code.bind(scan_take, node.span)?;
+    outputs.code.extend(copy_lowered_value(
+        node,
+        &current,
+        best.region,
+        best.region_id,
+    )?);
+    outputs.code.push(WeavyOp::CopyI64 {
+        dst: best_index.region.start().byte_offset(),
+        src: scratch.fields[0].byte_offset(),
+    });
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: found.region.start().byte_offset(),
+        value: 1,
+    });
+    outputs.code.bind(scan_advance, node.span)?;
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: scratch.fields[0].byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: one.region.start().byte_offset(),
+    });
+    outputs.code.jump(scan_next);
+    outputs.code.bind(scan_done, node.span)?;
+
+    let none_case = outputs.code.label();
+    let built = outputs.code.label();
+    outputs.code.jump_if_zero(found.region.start(), none_case);
+
+    // ---- pass 2: realize the remainder in canonical (ascending) key order ----
+    outputs.code.push(WeavyOp::SubI64 {
+        dst: scratch.fields[2].byte_offset(),
+        a: surviving.region.start().byte_offset(),
+        b: one.region.start().byte_offset(),
+    });
+    outputs.code.push(WeavyOp::ArrayNew {
+        dst: remainder.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        count_slot: scratch.fields[2].byte_offset(),
+        elem_width: element_width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: write_index.region.start().byte_offset(),
+        value: 0,
+    });
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 0,
+    });
+    let fill_next = outputs.code.label();
+    let fill_done = outputs.code.label();
+    let fill_advance = outputs.code.label();
+    let fill_store = outputs.code.label();
+    outputs.code.bind(fill_next, node.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[1].byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, fill_done);
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: current.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: resolved.source.region.start().byte_offset(),
+        index: scratch.fields[0].byte_offset(),
+        elem_width: element_width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    if let Some(recipe_predicate) = &resolved.predicate {
+        emit_checked_call_indirect(
+            node,
+            recipe_predicate,
+            &current,
+            &predicate_result,
+            sequence,
+            outputs,
+        )?;
+        outputs.code.jump_if_zero(scratch.condition, fill_advance);
+    }
+    // Omit exactly the selected row (its key), keeping every other surviving row
+    // including equal duplicate values at other keys.
+    outputs.code.push(WeavyOp::EqI64 {
+        dst: scratch.fields[2].byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: best_index.region.start().byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.fields[2], fill_store);
+    outputs.code.jump(fill_advance);
+    outputs.code.bind(fill_store, node.span)?;
+    outputs.code.push(WeavyOp::ArrayStore {
+        status: scratch.status.byte_offset(),
+        array: remainder.region.start().byte_offset(),
+        index: write_index.region.start().byte_offset(),
+        src: current.region.start().byte_offset(),
+        elem_width: element_width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: write_index.region.start().byte_offset(),
+        a: write_index.region.start().byte_offset(),
+        b: one.region.start().byte_offset(),
+    });
+    outputs.code.bind(fill_advance, node.span)?;
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: scratch.fields[0].byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: one.region.start().byte_offset(),
+    });
+    outputs.code.jump(fill_next);
+    outputs.code.bind(fill_done, node.span)?;
+
+    outputs.code.push(WeavyOp::ProductConstruct {
+        dst: payload.region_id,
+        fields: vec![
+            StructuralFieldSource {
+                field: 0,
+                source: best.region_id,
+            },
+            StructuralFieldSource {
+                field: 1,
+                source: remainder.region_id,
+            },
+        ],
+    });
+    outputs.code.push(WeavyOp::EnumConstruct {
+        dst: dst_region_id,
+        variant: OPTION_SOME_VARIANT,
+        fields: vec![StructuralFieldSource {
+            field: 0,
+            source: payload.region_id,
+        }],
+    });
+    outputs.code.jump(built);
+    outputs.code.bind(none_case, node.span)?;
+    outputs.code.push(WeavyOp::EnumConstruct {
+        dst: dst_region_id,
+        variant: OPTION_NONE_VARIANT,
+        fields: Vec::new(),
+    });
+    outputs.code.bind(built, node.span)?;
+    temps.finish(node.span)?;
+    Ok(ValueRepresentation::InlineComposite)
 }
 
 fn lower_checked_array_node(
@@ -4512,14 +8899,990 @@ fn lower_checked_array_node(
     }
 }
 
-fn lower_checked_collection_node(
+/// Typed temporaries for a structural array sort: two element registers to
+/// hold the pair under comparison, five integer registers (length, the two
+/// loop indices, the three-way ordering word, and the loop stride), followed
+/// by the exact recursive temporary contract of `SemanticOrderingEmitter`.
+/// The sequence must match `lower_array_sorted_node`'s `take` order.
+fn array_sorted_temporary_types(node: &Node) -> Result<Vec<Type>, Diagnostics> {
+    let Type::Array(element) = &node.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array sorting result is not an array",
+        ));
+    };
+    let element = element.as_ref().clone();
+    let mut types = vec![
+        element.clone(),
+        element.clone(),
+        Type::Int,
+        Type::Int,
+        Type::Int,
+        Type::Int,
+        Type::Int,
+    ];
+    ordering_temporary_types(&element, &mut types);
+    Ok(types)
+}
+
+/// Lower `Array.sorted()` as a structural-order permutation of a fresh copy.
+///
+/// The receiver is copied element-for-element into a new molten array, then
+/// selection-sorted in place using the element type's structural three-way
+/// order. Every comparison and swap runs through the same verified machine
+/// ops that array equality and array concatenation already use, so the
+/// interpreter and JIT agree by construction and no host call is reached.
+/// Duplicates survive because the sort only ever permutes the copied
+/// elements.
+fn lower_array_sorted_node(
     node: &Node,
     dst: FrameRegion,
-    dst_region: WeavyRegionId,
     values: &BTreeMap<NodeId, LoweredSlot>,
     sequence: &SequenceContext<'_, '_, '_>,
     outputs: &mut SequenceOutputs<'_, '_>,
 ) -> Result<ValueRepresentation, Diagnostics> {
+    require_input_count(node, 1)?;
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(node.span, "array sorting has no typed outcome scratch")
+    })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(node.span, "array sorting has no typed outcome return")
+    })?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(node.span, "array sorting has no stable trace site"))?;
+
+    let Type::Array(element) = &node.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array sorting result is not an array",
+        ));
+    };
+    let element = element.as_ref();
+    let source = input_value(node, values, 0)?;
+    require_value(node, &source, &node.ty, ValueRepresentation::RealizedHandle)?;
+    let element_schema = sequence.lowering.schemas.schema_for(element, node.span)?;
+    let width = element_byte_width(element, node.span)?;
+
+    let mut temps = TemporaryCursor::new(
+        sequence.function.layout,
+        sequence.lowering.regions,
+        sequence.function.id,
+        node,
+    )?;
+    let ei = temps.take(element, node.span)?;
+    let ej = temps.take(element, node.span)?;
+    let len = temps.take(&Type::Int, node.span)?;
+    let i = temps.take(&Type::Int, node.span)?;
+    let j = temps.take(&Type::Int, node.span)?;
+    let ordering = temps.take(&Type::Int, node.span)?;
+    let one = temps.take(&Type::Int, node.span)?;
+    let comparison_checkpoint = temps.checkpoint();
+
+    let len_slot = len.region.start();
+    let i_slot = i.region.start();
+    let j_slot = j.region.start();
+    let ordering_slot = ordering.region.start();
+    let one_slot = one.region.start();
+
+    // Length of the source array.
+    outputs.code.push(WeavyOp::LoadArrayLen {
+        dst: len_slot.byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+
+    // Fresh destination array of the same length.
+    outputs.code.push(WeavyOp::ArrayNew {
+        dst: dst.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        count_slot: len_slot.byte_offset(),
+        elem_width: width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+
+    // Copy the source into the destination, preserving every element.
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: i_slot.byte_offset(),
+        value: 0,
+    });
+    emit_array_copy_loop(ArrayCopyLoopContext {
+        node,
+        site,
+        source: &source,
+        destination: dst,
+        source_index: i_slot,
+        source_index_region: i.region_id,
+        destination_index: i_slot,
+        length: len_slot,
+        length_region: len.region_id,
+        temp: &ei,
+        elem_width: width,
+        elem_schema_ref: element_schema,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code: outputs.code,
+    })?;
+
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: one_slot.byte_offset(),
+        value: 1,
+    });
+
+    // Ascending structural selection: for each position i, sink every later
+    // element that is structurally smaller, so the least survivor settles in.
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: i_slot.byte_offset(),
+        value: 0,
+    });
+    let outer = outputs.code.label();
+    let outer_done = outputs.code.label();
+    outputs.code.bind(outer, node.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: i_slot.byte_offset(),
+        b: len_slot.byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, outer_done);
+
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: j_slot.byte_offset(),
+        a: i_slot.byte_offset(),
+        b: one_slot.byte_offset(),
+    });
+    let inner = outputs.code.label();
+    let inner_done = outputs.code.label();
+    outputs.code.bind(inner, node.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: j_slot.byte_offset(),
+        b: len_slot.byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, inner_done);
+
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: ei.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: dst.start().byte_offset(),
+        index: i_slot.byte_offset(),
+        elem_width: width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: ej.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: dst.start().byte_offset(),
+        index: j_slot.byte_offset(),
+        elem_width: width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+
+    // Structural three-way order of out[i] against out[j]. This is the same
+    // variant- and array-directed emitter that lowers ordinary `<=>`; the
+    // sort owns the checked array-access context required by nested arrays.
+    temps.rewind(comparison_checkpoint, node.span)?;
+    SemanticOrderingEmitter {
+        node,
+        temps: &mut temps,
+        code: outputs.code,
+        array: Some(ArrayEqualityContext {
+            schemas: sequence.lowering.schemas,
+            scratch,
+            assigned,
+            outcome,
+            return_label,
+            site,
+        }),
+    }
+    .emit(element, &ei, &ej, ordering_slot)?;
+
+    // Swap when out[i] is structurally greater than out[j].
+    let no_swap = outputs.code.label();
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: i64::from(ORDERING_GREATER_VARIANT),
+    });
+    outputs.code.push(WeavyOp::EqI64 {
+        dst: scratch.condition.byte_offset(),
+        a: ordering_slot.byte_offset(),
+        b: scratch.fields[0].byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, no_swap);
+    outputs.code.push(WeavyOp::ArrayStore {
+        status: scratch.status.byte_offset(),
+        array: dst.start().byte_offset(),
+        index: i_slot.byte_offset(),
+        src: ej.region.start().byte_offset(),
+        elem_width: width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ArrayStore {
+        status: scratch.status.byte_offset(),
+        array: dst.start().byte_offset(),
+        index: j_slot.byte_offset(),
+        src: ei.region.start().byte_offset(),
+        elem_width: width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.bind(no_swap, node.span)?;
+
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: j_slot.byte_offset(),
+        a: j_slot.byte_offset(),
+        b: one_slot.byte_offset(),
+    });
+    outputs.code.jump(inner);
+    outputs.code.bind(inner_done, node.span)?;
+
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: i_slot.byte_offset(),
+        a: i_slot.byte_offset(),
+        b: one_slot.byte_offset(),
+    });
+    outputs.code.jump(outer);
+    outputs.code.bind(outer_done, node.span)?;
+
+    temps.drain(node.span)?;
+    temps.finish(node.span)?;
+    Ok(ValueRepresentation::RealizedHandle)
+}
+
+/// How a `StreamCollect` derives each row's value from the source array value.
+/// Every transform keeps the source position as the collected key.
+enum StreamCollectTransform {
+    /// The source value is the collected value.
+    Identity,
+    /// A `V -> Bool` predicate; rows failing it are dropped.
+    Filter(LoweredSlot),
+    /// A `V -> Option<W>` transform; `Some(w)` keeps the source key with value
+    /// `w`, `None` drops the row.
+    FilterMap(LoweredSlot),
+}
+
+/// Resolve the base `ArrayStream` beneath a stream transform recipe. Only a
+/// single transform layer over a dense array stream is supported today.
+fn stream_transform_base<'n>(
+    node: &Node,
+    recipe: &Node,
+    sequence: &SequenceContext<'n, '_, '_>,
+) -> Result<&'n Node, Diagnostics> {
+    let array_stream = sequence
+        .nodes
+        .get(&recipe.inputs[0])
+        .copied()
+        .ok_or_else(|| {
+            lowering_diagnostic(node.span, "stream transform input has no VIR recipe")
+        })?;
+    if !matches!(array_stream.op, Op::ArrayStream) {
+        return Err(lowering_diagnostic(
+            node.span,
+            "nested stream transform source is not implemented",
+        ));
+    }
+    Ok(array_stream)
+}
+
+fn lower_array_stream_collect_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_input_count(node, 1)?;
+    let stream_id = node.inputs[0];
+    let stream = values.get(&stream_id).ok_or_else(|| {
+        lowering_diagnostic(
+            node.span,
+            "stream collect recipe is not topologically prior",
+        )
+    })?;
+    let recipe =
+        sequence.nodes.get(&stream_id).copied().ok_or_else(|| {
+            lowering_diagnostic(node.span, "stream collect input has no VIR recipe")
+        })?;
+    if matches!(recipe.op, Op::StreamFlatMap) {
+        return lower_stream_flat_map_collect_node(node, dst, values, sequence, outputs, recipe);
+    }
+    let (array_stream, transform) = match recipe.op {
+        Op::ArrayStream => (recipe, StreamCollectTransform::Identity),
+        Op::StreamFilter => {
+            require_input_count(recipe, 2)?;
+            let upstream = input_value(recipe, values, 0)?;
+            require_value(
+                recipe,
+                &upstream,
+                &upstream.ty,
+                ValueRepresentation::CodataRecipe,
+            )?;
+            let predicate = input_value(recipe, values, 1)?;
+            let array_stream = stream_transform_base(node, recipe, sequence)?;
+            (array_stream, StreamCollectTransform::Filter(predicate))
+        }
+        Op::StreamFilterMap => {
+            require_input_count(recipe, 2)?;
+            let upstream = input_value(recipe, values, 0)?;
+            require_value(
+                recipe,
+                &upstream,
+                &upstream.ty,
+                ValueRepresentation::CodataRecipe,
+            )?;
+            let mapper = input_value(recipe, values, 1)?;
+            let array_stream = stream_transform_base(node, recipe, sequence)?;
+            (array_stream, StreamCollectTransform::FilterMap(mapper))
+        }
+        _ => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "stream collect recipe source is not implemented",
+            ));
+        }
+    };
+    require_input_count(array_stream, 1)?;
+    let source = values
+        .get(&array_stream.inputs[0])
+        .cloned()
+        .ok_or_else(|| {
+            lowering_diagnostic(node.span, "array stream source is not topologically prior")
+        })?;
+    let Type::Array(element) = &source.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "array stream source is not a dense array",
+        ));
+    };
+    let element = element.as_ref().clone();
+    require_value(node, stream, &recipe.ty, ValueRepresentation::CodataRecipe)?;
+    require_value(
+        node,
+        &source,
+        &Type::array(element.clone()),
+        ValueRepresentation::RealizedHandle,
+    )?;
+    let collection_ty = node.ty.clone();
+    let (collection_key, collection_value) = collection_ty
+        .map_types()
+        .ok_or_else(|| lowering_diagnostic(node.span, "stream collect result is not a map"))?;
+    if collection_key != &Type::Int {
+        return Err(lowering_diagnostic(
+            node.span,
+            "stream collect does not preserve integer source keys",
+        ));
+    }
+    let collection_value = collection_value.clone();
+    match &transform {
+        StreamCollectTransform::Identity => {
+            if collection_value != element {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "array stream collect changes the source value type",
+                ));
+            }
+        }
+        StreamCollectTransform::Filter(predicate) => {
+            if collection_value != element {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "stream filter collect changes the source value type",
+                ));
+            }
+            let predicate_ty = Type::Function {
+                parameter: Box::new(element.clone()),
+                result: Box::new(Type::Bool),
+            };
+            require_value(
+                node,
+                predicate,
+                &predicate_ty,
+                ValueRepresentation::InlineComposite,
+            )?;
+        }
+        StreamCollectTransform::FilterMap(mapper) => {
+            let mapper_ty = Type::Function {
+                parameter: Box::new(element.clone()),
+                result: Box::new(Type::option(collection_value.clone())),
+            };
+            require_value(
+                node,
+                mapper,
+                &mapper_ty,
+                ValueRepresentation::InlineComposite,
+            )?;
+        }
+    }
+
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(node.span, "stream collect has no typed outcome scratch")
+    })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(node.span, "stream collect has no typed outcome return")
+    })?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(node.span, "stream collect has no trace site"))?;
+    let collection_schema = sequence
+        .lowering
+        .schemas
+        .schema_for(&collection_ty, node.span)?;
+    let element_schema = sequence.lowering.schemas.schema_for(&element, node.span)?;
+    let element_width = element_byte_width(&element, node.span)?;
+    let mut temps = ordered_collection_temps(node, &collection_ty, sequence)?;
+    // filter_map loads the source value into its own slot, calls the mapper, and
+    // projects the `Some` payload into the collected value. These two extra
+    // persistent temporaries are provisioned right after the ordered scaffolding
+    // (see `stream_collect_extra_temporary_types`).
+    let filter_map_slots = match &transform {
+        StreamCollectTransform::FilterMap(_) => {
+            let source_value = temps.cursor.take(&element, node.span)?;
+            let mapped = temps
+                .cursor
+                .take(&Type::option(collection_value.clone()), node.span)?;
+            Some((source_value, mapped))
+        }
+        _ => None,
+    };
+    let comparison = temps.cursor.checkpoint();
+    let cursor = ordered_cursor(node, sequence, 0)?;
+
+    outputs.code.push(WeavyOp::OrderedEmpty {
+        dst: dst.start().byte_offset(),
+        collection_schema_ref: i64::from(collection_schema.0),
+    });
+    outputs.code.push(WeavyOp::LoadArrayLen {
+        dst: scratch.fields[1].byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 0,
+    });
+    let next = outputs.code.label();
+    let done = outputs.code.label();
+    outputs.code.bind(next, node.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[1].byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, done);
+    // Identity and filter keep source == collected, so the loaded value lands
+    // directly in the collected slot. filter_map loads into its own source slot.
+    let load_target = match &filter_map_slots {
+        Some((source_value, _)) => source_value,
+        None => &temps.projected_value,
+    };
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: load_target.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        index: scratch.fields[0].byte_offset(),
+        elem_width: element_width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    let skip_insert = match &transform {
+        StreamCollectTransform::Identity => None,
+        StreamCollectTransform::Filter(_) | StreamCollectTransform::FilterMap(_) => {
+            Some(outputs.code.label())
+        }
+    };
+    match (&transform, &filter_map_slots) {
+        (StreamCollectTransform::Identity, _) => {}
+        (StreamCollectTransform::Filter(predicate), _) => {
+            let predicate_result = LoweredSlot {
+                region: FrameRegion::for_words(scratch.condition.word_index(), FrameWords::ONE)
+                    .expect("outcome condition scratch is one frame word"),
+                region_id: assigned.condition,
+                ty: Type::Bool,
+                representation: ValueRepresentation::Word,
+            };
+            emit_checked_call_indirect(
+                node,
+                predicate,
+                &temps.projected_value,
+                &predicate_result,
+                sequence,
+                outputs,
+            )?;
+            outputs
+                .code
+                .jump_if_zero(scratch.condition, skip_insert.expect("filter skip label"));
+        }
+        (StreamCollectTransform::FilterMap(mapper), Some((source_value, mapped))) => {
+            // Map the source value to Option<W>; `None` drops the row, `Some(w)`
+            // projects `w` into the collected slot while the source key is kept.
+            emit_checked_call_indirect(node, mapper, source_value, mapped, sequence, outputs)?;
+            outputs.code.push(WeavyOp::EnumIsVariant {
+                dst: assigned.condition,
+                value: mapped.region_id,
+                variant: OPTION_SOME_VARIANT,
+            });
+            outputs.code.jump_if_zero(
+                scratch.condition,
+                skip_insert.expect("filter_map skip label"),
+            );
+            outputs.code.push(WeavyOp::EnumProjectChecked {
+                dst: temps.projected_value.region_id,
+                value: mapped.region_id,
+                variant: OPTION_SOME_VARIANT,
+                field: 0,
+            });
+        }
+        (StreamCollectTransform::FilterMap(_), None) => {
+            return Err(lowering_diagnostic(
+                node.span,
+                "filter_map collect has no provisioned mapper temporaries",
+            ));
+        }
+    }
+    let key = LoweredSlot {
+        region: FrameRegion::for_words(scratch.fields[0].word_index(), FrameWords::ONE)
+            .expect("scratch scalar is one frame word"),
+        region_id: assigned.fields[0],
+        ty: Type::Int,
+        representation: ValueRepresentation::Word,
+    };
+    temps.cursor.rewind(comparison, node.span)?;
+    emit_ordered_insert(OrderedInsertLowering {
+        node,
+        site,
+        collection: dst.start(),
+        destination: dst.start(),
+        key: &key,
+        value: Some(&temps.projected_value),
+        key_ty: &Type::Int,
+        collection_schema,
+        cursor,
+        candidate: &temps.candidate,
+        ordering: &temps.ordering,
+        ready: &temps.ready,
+        present: &temps.present,
+        duplicate: DuplicateDisposition::LanguageFailure,
+        comparison_checkpoint: comparison,
+        temps: &mut temps.cursor,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code: outputs.code,
+    })?;
+    if let Some(skip_insert) = skip_insert {
+        outputs.code.bind(skip_insert, node.span)?;
+    }
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[2].byte_offset(),
+        value: 1,
+    });
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: scratch.fields[0].byte_offset(),
+        a: scratch.fields[0].byte_offset(),
+        b: scratch.fields[2].byte_offset(),
+    });
+    outputs.code.jump(next);
+    outputs.code.bind(done, node.span)?;
+    temps.cursor.drain(node.span)?;
+    temps.cursor.finish(node.span)?;
+    Ok(ValueRepresentation::RealizedHandle)
+}
+
+/// Lower a `flat_map` collect: for each outer source row, call the mapper to
+/// produce a dense inner array, then stream every inner position into the
+/// ordered map under a composed `(outer_key, inner_key)` tuple key. Collisions
+/// (a duplicate composed key) fail through the declared language failure
+/// semantics, exactly like any other keyed insertion.
+fn lower_stream_flat_map_collect_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+    recipe: &Node,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_input_count(recipe, 2)?;
+    let stream = values.get(&node.inputs[0]).ok_or_else(|| {
+        lowering_diagnostic(
+            node.span,
+            "flat_map collect recipe is not topologically prior",
+        )
+    })?;
+    let mapper = input_value(recipe, values, 1)?;
+    let array_stream = stream_transform_base(node, recipe, sequence)?;
+    require_input_count(array_stream, 1)?;
+    let source = values
+        .get(&array_stream.inputs[0])
+        .cloned()
+        .ok_or_else(|| {
+            lowering_diagnostic(
+                node.span,
+                "flat_map source array is not topologically prior",
+            )
+        })?;
+    let Type::Array(element) = &source.ty else {
+        return Err(lowering_diagnostic(
+            node.span,
+            "flat_map source stream is not a dense array",
+        ));
+    };
+    let element = element.as_ref().clone();
+    require_value(node, stream, &recipe.ty, ValueRepresentation::CodataRecipe)?;
+    require_value(
+        node,
+        &source,
+        &Type::array(element.clone()),
+        ValueRepresentation::RealizedHandle,
+    )?;
+    let collection_ty = node.ty.clone();
+    let (collection_key, collection_value) = collection_ty
+        .map_types()
+        .ok_or_else(|| lowering_diagnostic(node.span, "flat_map collect result is not a map"))?;
+    let composed_key = Type::Tuple(vec![Type::Int, Type::Int]);
+    if collection_key != &composed_key {
+        return Err(lowering_diagnostic(
+            node.span,
+            "flat_map does not compose position keys into a pair",
+        ));
+    }
+    let inner_value = collection_value.clone();
+    let mapper_ty = Type::Function {
+        parameter: Box::new(element.clone()),
+        result: Box::new(Type::array(inner_value.clone())),
+    };
+    require_value(
+        node,
+        &mapper,
+        &mapper_ty,
+        ValueRepresentation::InlineComposite,
+    )?;
+
+    let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
+        lowering_diagnostic(node.span, "flat_map collect has no typed outcome scratch")
+    })?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let return_label = sequence.array_return.ok_or_else(|| {
+        lowering_diagnostic(node.span, "flat_map collect has no typed outcome return")
+    })?;
+    let site = sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(node.span, "flat_map collect has no trace site"))?;
+    let collection_schema = sequence
+        .lowering
+        .schemas
+        .schema_for(&collection_ty, node.span)?;
+    let element_schema = sequence.lowering.schemas.schema_for(&element, node.span)?;
+    let element_width = element_byte_width(&element, node.span)?;
+    let inner_schema = sequence
+        .lowering
+        .schemas
+        .schema_for(&inner_value, node.span)?;
+    let inner_width = element_byte_width(&inner_value, node.span)?;
+
+    let mut temps = ordered_collection_temps(node, &collection_ty, sequence)?;
+    // Persistent temporaries, provisioned in this exact order by
+    // `stream_collect_extra_temporary_types`.
+    let outer_value = temps.cursor.take(&element, node.span)?;
+    let inner_array = temps
+        .cursor
+        .take(&Type::array(inner_value.clone()), node.span)?;
+    let outer_index = temps.cursor.take(&Type::Int, node.span)?;
+    let outer_len = temps.cursor.take(&Type::Int, node.span)?;
+    let inner_index = temps.cursor.take(&Type::Int, node.span)?;
+    let inner_len = temps.cursor.take(&Type::Int, node.span)?;
+    let comparison = temps.cursor.checkpoint();
+    let cursor = ordered_cursor(node, sequence, 0)?;
+
+    outputs.code.push(WeavyOp::OrderedEmpty {
+        dst: dst.start().byte_offset(),
+        collection_schema_ref: i64::from(collection_schema.0),
+    });
+    outputs.code.push(WeavyOp::LoadArrayLen {
+        dst: outer_len.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: outer_index.region.start().byte_offset(),
+        value: 0,
+    });
+    let outer_next = outputs.code.label();
+    let outer_done = outputs.code.label();
+    outputs.code.bind(outer_next, node.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: outer_index.region.start().byte_offset(),
+        b: outer_len.region.start().byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, outer_done);
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: outer_value.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: source.region.start().byte_offset(),
+        index: outer_index.region.start().byte_offset(),
+        elem_width: element_width,
+        elem_schema_ref: i64::from(element_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    // Materialize the inner dense array for this outer row.
+    emit_checked_call_indirect(node, &mapper, &outer_value, &inner_array, sequence, outputs)?;
+    outputs.code.push(WeavyOp::LoadArrayLen {
+        dst: inner_len.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: inner_array.region.start().byte_offset(),
+        elem_schema_ref: i64::from(inner_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: inner_index.region.start().byte_offset(),
+        value: 0,
+    });
+    let inner_next = outputs.code.label();
+    let inner_done = outputs.code.label();
+    outputs.code.bind(inner_next, node.span)?;
+    outputs.code.push(WeavyOp::LtI64 {
+        dst: scratch.condition.byte_offset(),
+        a: inner_index.region.start().byte_offset(),
+        b: inner_len.region.start().byte_offset(),
+    });
+    outputs.code.jump_if_zero(scratch.condition, inner_done);
+    outputs.code.push(WeavyOp::LoadArray {
+        dst: temps.projected_value.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        array: inner_array.region.start().byte_offset(),
+        index: inner_index.region.start().byte_offset(),
+        elem_width: inner_width,
+        elem_schema_ref: i64::from(inner_schema.0),
+    });
+    emit_array_status_machine_checks(
+        node,
+        site,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        outputs.code,
+    )?;
+    // Compose the tuple key (outer_index, inner_index) structurally, so the key
+    // region keeps its declared product shape instead of raw word writes.
+    outputs.code.push(WeavyOp::ProductConstruct {
+        dst: temps.projected_key.region_id,
+        fields: vec![
+            StructuralFieldSource {
+                field: 0,
+                source: outer_index.region_id,
+            },
+            StructuralFieldSource {
+                field: 1,
+                source: inner_index.region_id,
+            },
+        ],
+    });
+    temps.cursor.rewind(comparison, node.span)?;
+    emit_ordered_insert(OrderedInsertLowering {
+        node,
+        site,
+        collection: dst.start(),
+        destination: dst.start(),
+        key: &temps.projected_key,
+        value: Some(&temps.projected_value),
+        key_ty: &composed_key,
+        collection_schema,
+        cursor,
+        candidate: &temps.candidate,
+        ordering: &temps.ordering,
+        ready: &temps.ready,
+        present: &temps.present,
+        duplicate: DuplicateDisposition::LanguageFailure,
+        comparison_checkpoint: comparison,
+        temps: &mut temps.cursor,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code: outputs.code,
+    })?;
+    // inner_index += 1
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 1,
+    });
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: inner_index.region.start().byte_offset(),
+        a: inner_index.region.start().byte_offset(),
+        b: scratch.fields[0].byte_offset(),
+    });
+    outputs.code.jump(inner_next);
+    outputs.code.bind(inner_done, node.span)?;
+    // outer_index += 1
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: 1,
+    });
+    outputs.code.push(WeavyOp::AddI64 {
+        dst: outer_index.region.start().byte_offset(),
+        a: outer_index.region.start().byte_offset(),
+        b: scratch.fields[0].byte_offset(),
+    });
+    outputs.code.jump(outer_next);
+    outputs.code.bind(outer_done, node.span)?;
+    temps.cursor.drain(node.span)?;
+    temps.cursor.finish(node.span)?;
+    Ok(ValueRepresentation::RealizedHandle)
+}
+
+fn lower_checked_collection_node(
+    node: &Node,
+    dst: FrameRegion,
+    _dst_region: WeavyRegionId,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    if matches!(node.op, Op::StreamCollect) {
+        return lower_array_stream_collect_node(node, dst, values, sequence, outputs);
+    }
     let scratch = sequence.function.layout.outcome_scratch.ok_or_else(|| {
         lowering_diagnostic(
             node.span,
@@ -4550,87 +9913,364 @@ fn lower_checked_collection_node(
         .copied()
         .ok_or_else(|| lowering_diagnostic(node.span, "collection operation has no trace site"))?;
 
+    let collection_ty = if matches!(node.op, Op::Map | Op::Set) {
+        node.ty.clone()
+    } else {
+        node.inputs
+            .first()
+            .and_then(|input| values.get(input))
+            .map(|value| value.ty.clone())
+            .ok_or_else(|| lowering_diagnostic(node.span, "collection receiver is unavailable"))?
+    };
+    let collection_schema = sequence
+        .lowering
+        .schemas
+        .schema_for(&collection_ty, node.span)?;
+
     match node.op {
-        Op::MapLen | Op::SetLen => {
-            require_input_count(node, 1)?;
-            let collection = input_value(node, values, 0)?;
-            let element = collection_element_type(&collection.ty, node.span)?;
-            let schema = sequence.lowering.schemas.schema_for(&element, node.span)?;
-            outputs.code.push(WeavyOp::LoadArrayLen {
+        Op::Map | Op::Set => {
+            outputs.code.push(WeavyOp::OrderedEmpty {
                 dst: dst.start().byte_offset(),
-                status: scratch.status.byte_offset(),
-                array: collection.region.start().byte_offset(),
-                elem_schema_ref: i64::from(schema.0),
+                collection_schema_ref: i64::from(collection_schema.0),
             });
-            emit_array_status_machine_checks(
+            let mut temps = ordered_collection_temps(node, &collection_ty, sequence)?;
+            let cursor = ordered_cursor(node, sequence, 0)?;
+            let comparison = temps.cursor.checkpoint();
+            match &collection_ty {
+                Type::Map { key, value } => {
+                    if !node.inputs.len().is_multiple_of(2) {
+                        return Err(lowering_diagnostic(
+                            node.span,
+                            "map literal does not contain key/value pairs",
+                        ));
+                    }
+                    for pair in node.inputs.chunks_exact(2) {
+                        let key_value = values.get(&pair[0]).ok_or_else(|| {
+                            lowering_diagnostic(node.span, "map literal key is unavailable")
+                        })?;
+                        let value_value = values.get(&pair[1]).ok_or_else(|| {
+                            lowering_diagnostic(node.span, "map literal value is unavailable")
+                        })?;
+                        require_value(
+                            node,
+                            key_value,
+                            key,
+                            representation_for_type(key, node.span)?,
+                        )?;
+                        require_value(
+                            node,
+                            value_value,
+                            value,
+                            representation_for_type(value, node.span)?,
+                        )?;
+                        temps.cursor.rewind(comparison, node.span)?;
+                        emit_ordered_insert(OrderedInsertLowering {
+                            node,
+                            site,
+                            collection: dst.start(),
+                            destination: dst.start(),
+                            key: key_value,
+                            value: Some(value_value),
+                            key_ty: key,
+                            collection_schema,
+                            cursor,
+                            candidate: &temps.candidate,
+                            ordering: &temps.ordering,
+                            ready: &temps.ready,
+                            present: &temps.present,
+                            duplicate: DuplicateDisposition::LanguageFailure,
+                            comparison_checkpoint: comparison,
+                            temps: &mut temps.cursor,
+                            scratch,
+                            assigned,
+                            outcome,
+                            return_label,
+                            code: outputs.code,
+                        })?;
+                    }
+                }
+                Type::Set(element) => {
+                    for input in &node.inputs {
+                        let element_value = values.get(input).ok_or_else(|| {
+                            lowering_diagnostic(node.span, "set literal element is unavailable")
+                        })?;
+                        require_value(
+                            node,
+                            element_value,
+                            element,
+                            representation_for_type(element, node.span)?,
+                        )?;
+                        temps.cursor.rewind(comparison, node.span)?;
+                        emit_ordered_insert(OrderedInsertLowering {
+                            node,
+                            site,
+                            collection: dst.start(),
+                            destination: dst.start(),
+                            key: element_value,
+                            value: None,
+                            key_ty: element,
+                            collection_schema,
+                            cursor,
+                            candidate: &temps.candidate,
+                            ordering: &temps.ordering,
+                            ready: &temps.ready,
+                            present: &temps.present,
+                            duplicate: DuplicateDisposition::Success,
+                            comparison_checkpoint: comparison,
+                            temps: &mut temps.cursor,
+                            scratch,
+                            assigned,
+                            outcome,
+                            return_label,
+                            code: outputs.code,
+                        })?;
+                    }
+                }
+                _ => unreachable!(),
+            }
+            temps.cursor.drain(node.span)?;
+            temps.cursor.finish(node.span)?;
+            Ok(ValueRepresentation::RealizedHandle)
+        }
+        Op::MapAdd | Op::MapWith | Op::SetAdd => {
+            let expected = if matches!(node.op, Op::MapWith) { 3 } else { 2 };
+            require_input_count(node, expected)?;
+            let collection = input_value(node, values, 0)?;
+            require_value(
+                node,
+                &collection,
+                &collection_ty,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            let mut temps = ordered_collection_temps(node, &collection_ty, sequence)?;
+            let (key_ty, value, duplicate) = match &collection_ty {
+                Type::Map { key: key_ty, value } => {
+                    if matches!(node.op, Op::MapAdd) {
+                        let row = input_value(node, values, 1)?;
+                        let row_ty =
+                            Type::Tuple(vec![key_ty.as_ref().clone(), value.as_ref().clone()]);
+                        require_value(node, &row, &row_ty, ValueRepresentation::InlineComposite)?;
+                        outputs.code.push(WeavyOp::ProductProject {
+                            dst: temps.projected_key.region_id,
+                            product: row.region_id,
+                            field: 0,
+                        });
+                        outputs.code.push(WeavyOp::ProductProject {
+                            dst: temps.projected_value.region_id,
+                            product: row.region_id,
+                            field: 1,
+                        });
+                        (
+                            key_ty.as_ref(),
+                            Some(temps.projected_value.clone()),
+                            DuplicateDisposition::LanguageFailure,
+                        )
+                    } else {
+                        let value_slot = input_value(node, values, 2)?;
+                        require_value(
+                            node,
+                            &value_slot,
+                            value,
+                            representation_for_type(value, node.span)?,
+                        )?;
+                        (
+                            key_ty.as_ref(),
+                            Some(value_slot),
+                            DuplicateDisposition::Machine,
+                        )
+                    }
+                }
+                Type::Set(element) => (element.as_ref(), None, DuplicateDisposition::Success),
+                _ => unreachable!(),
+            };
+            let key = if matches!(node.op, Op::MapAdd) {
+                temps.projected_key.clone()
+            } else {
+                input_value(node, values, 1)?
+            };
+            require_value(
+                node,
+                &key,
+                key_ty,
+                representation_for_type(key_ty, node.span)?,
+            )?;
+            let comparison = temps.cursor.checkpoint();
+            emit_ordered_insert(OrderedInsertLowering {
                 node,
                 site,
+                collection: collection.region.start(),
+                destination: dst.start(),
+                key: &key,
+                value: value.as_ref(),
+                key_ty,
+                collection_schema,
+                cursor: ordered_cursor(node, sequence, 0)?,
+                candidate: &temps.candidate,
+                ordering: &temps.ordering,
+                ready: &temps.ready,
+                present: &temps.present,
+                duplicate,
+                comparison_checkpoint: comparison,
+                temps: &mut temps.cursor,
                 scratch,
                 assigned,
                 outcome,
                 return_label,
-                outputs.code,
-            )?;
-            Ok(ValueRepresentation::Word)
+                code: outputs.code,
+            })?;
+            temps.cursor.drain(node.span)?;
+            temps.cursor.finish(node.span)?;
+            Ok(ValueRepresentation::RealizedHandle)
         }
-        Op::MapHas | Op::MapGet | Op::SetHas => {
+        Op::MapConcat | Op::SetConcat => {
+            require_input_count(node, 2)?;
+            let left = input_value(node, values, 0)?;
+            let right = input_value(node, values, 1)?;
+            require_value(
+                node,
+                &left,
+                &collection_ty,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            require_value(
+                node,
+                &right,
+                &collection_ty,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            outputs.code.push(WeavyOp::CopyI64 {
+                dst: dst.start().byte_offset(),
+                src: left.region.start().byte_offset(),
+            });
+            let mut temps = ordered_collection_temps(node, &collection_ty, sequence)?;
+            let comparison = temps.cursor.checkpoint();
+            let iterate_cursor = ordered_cursor(node, sequence, 1)?;
+            outputs.code.push(WeavyOp::OrderedBeginIterate {
+                cursor: iterate_cursor.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                collection: right.region.start().byte_offset(),
+                collection_schema_ref: i64::from(collection_schema.0),
+            });
+            emit_ordered_status_checks(OrderedStatusLowering {
+                node,
+                site,
+                duplicate: DuplicateDisposition::Machine,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                code: outputs.code,
+            })?;
+            let next = outputs.code.label();
+            let done = outputs.code.label();
+            outputs.code.bind(next, node.span)?;
+            outputs.code.push(WeavyOp::OrderedIterateRow {
+                cursor: iterate_cursor.start().byte_offset(),
+                present: temps.present.region.start().byte_offset(),
+                row: temps.row.region.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                row_width: element_byte_width(
+                    &collection_element_type(&collection_ty, node.span)?,
+                    node.span,
+                )?,
+                collection_schema_ref: i64::from(collection_schema.0),
+            });
+            emit_ordered_status_checks(OrderedStatusLowering {
+                node,
+                site,
+                duplicate: DuplicateDisposition::Machine,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                code: outputs.code,
+            })?;
+            outputs
+                .code
+                .jump_if_zero(temps.present.region.start(), done);
+            let (key, value, key_ty, duplicate) = match &collection_ty {
+                Type::Map { key, .. } => {
+                    outputs.code.push(WeavyOp::ProductProject {
+                        dst: temps.projected_key.region_id,
+                        product: temps.row.region_id,
+                        field: 0,
+                    });
+                    outputs.code.push(WeavyOp::ProductProject {
+                        dst: temps.projected_value.region_id,
+                        product: temps.row.region_id,
+                        field: 1,
+                    });
+                    (
+                        &temps.projected_key,
+                        Some(&temps.projected_value),
+                        key.as_ref(),
+                        DuplicateDisposition::LanguageFailure,
+                    )
+                }
+                Type::Set(element) => (
+                    &temps.row,
+                    None,
+                    element.as_ref(),
+                    DuplicateDisposition::Success,
+                ),
+                _ => unreachable!(),
+            };
+            temps.cursor.rewind(comparison, node.span)?;
+            emit_ordered_insert(OrderedInsertLowering {
+                node,
+                site,
+                collection: dst.start(),
+                destination: dst.start(),
+                key,
+                value,
+                key_ty,
+                collection_schema,
+                cursor: ordered_cursor(node, sequence, 0)?,
+                candidate: &temps.candidate,
+                ordering: &temps.ordering,
+                ready: &temps.ready,
+                present: &temps.present,
+                duplicate,
+                comparison_checkpoint: comparison,
+                temps: &mut temps.cursor,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                code: outputs.code,
+            })?;
+            outputs.code.jump(next);
+            outputs.code.bind(done, node.span)?;
+            temps.cursor.drain(node.span)?;
+            temps.cursor.finish(node.span)?;
+            Ok(ValueRepresentation::RealizedHandle)
+        }
+        Op::MapGet | Op::MapHas | Op::SetHas => {
             require_input_count(node, 2)?;
             let collection = input_value(node, values, 0)?;
             let sought = input_value(node, values, 1)?;
-            let element = collection_element_type(&collection.ty, node.span)?;
-            let key = match &collection.ty {
+            require_value(
+                node,
+                &collection,
+                &collection_ty,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            let key_ty = match &collection_ty {
                 Type::Map { key, .. } => key.as_ref(),
                 Type::Set(element) => element.as_ref(),
-                _ => {
-                    return Err(lowering_diagnostic(
-                        node.span,
-                        "membership receiver is not a collection",
-                    ));
-                }
+                _ => unreachable!(),
             };
-            require_value(node, &sought, key, representation_for_type(key, node.span)?)?;
-            let schema = sequence.lowering.schemas.schema_for(&element, node.span)?;
-            let width = element_byte_width(&element, node.span)?;
-            let mut temps = TemporaryCursor::new(
-                sequence.function.layout,
-                sequence.lowering.regions,
-                sequence.function.id,
+            require_value(
                 node,
+                &sought,
+                key_ty,
+                representation_for_type(key_ty, node.span)?,
             )?;
-            let order = temps.take(&Type::Int, node.span)?;
-            let _ = temps.take(&Type::Int, node.span)?;
-            let _ = temps.take(&Type::Int, node.span)?;
-            let _old = temps.take(&collection.ty, node.span)?;
-            let row = temps.take(&element, node.span)?;
-            let _ = temps.take(&element, node.span)?;
-            let row_key = if matches!(collection.ty, Type::Map { .. }) {
-                Some(temps.take(key, node.span)?)
-            } else {
-                None
-            };
-            let _ = if matches!(collection.ty, Type::Map { .. }) {
-                Some(temps.take(key, node.span)?)
-            } else {
-                None
-            };
-            outputs.code.push(WeavyOp::LoadArrayLen {
-                dst: scratch.fields[0].byte_offset(),
-                status: scratch.status.byte_offset(),
-                array: collection.region.start().byte_offset(),
-                elem_schema_ref: i64::from(schema.0),
-            });
-            emit_array_status_machine_checks(
-                node,
-                site,
-                scratch,
-                assigned,
-                outcome,
-                return_label,
-                outputs.code,
-            )?;
-            outputs.code.push(WeavyOp::ConstI64 {
-                dst: scratch.fields[1].byte_offset(),
-                value: 0,
+            let mut temps = ordered_collection_temps(node, &collection_ty, sequence)?;
+            let comparison = temps.cursor.checkpoint();
+            outputs.code.push(WeavyOp::CopyI64 {
+                dst: temps.current.region.start().byte_offset(),
+                src: collection.region.start().byte_offset(),
             });
             if !matches!(node.op, Op::MapGet) {
                 outputs.code.push(WeavyOp::ConstI64 {
@@ -4639,89 +10279,144 @@ fn lower_checked_collection_node(
                 });
             }
             let scan = outputs.code.label();
-            let next = outputs.code.label();
+            let choose_right = outputs.code.label();
             let absent = outputs.code.label();
+            let found = outputs.code.label();
             let done = outputs.code.label();
             outputs.code.bind(scan, node.span)?;
-            outputs.code.push(WeavyOp::LtI64 {
-                dst: scratch.condition.byte_offset(),
-                a: scratch.fields[1].byte_offset(),
-                b: scratch.fields[0].byte_offset(),
-            });
-            outputs.code.jump_if_zero(scratch.condition, absent);
-            outputs.code.push(WeavyOp::LoadArray {
-                dst: row.region.start().byte_offset(),
+            let cursor = ordered_cursor(node, sequence, 0)?;
+            outputs.code.push(WeavyOp::OrderedBeginProbe {
+                cursor: cursor.start().byte_offset(),
                 status: scratch.status.byte_offset(),
-                array: collection.region.start().byte_offset(),
-                index: scratch.fields[1].byte_offset(),
-                elem_width: width,
-                elem_schema_ref: i64::from(schema.0),
+                collection: temps.current.region.start().byte_offset(),
+                collection_schema_ref: i64::from(collection_schema.0),
             });
-            emit_array_status_machine_checks(
+            emit_ordered_status_checks(OrderedStatusLowering {
                 node,
                 site,
+                duplicate: DuplicateDisposition::Machine,
                 scratch,
                 assigned,
                 outcome,
                 return_label,
-                outputs.code,
-            )?;
-            let compared = if let Some(row_key) = &row_key {
-                outputs.code.push(WeavyOp::ProductProject {
-                    dst: row_key.region_id,
-                    product: row.region_id,
-                    field: 0,
-                });
-                row_key
-            } else {
-                &row
-            };
+                code: outputs.code,
+            })?;
+            outputs.code.push(WeavyOp::OrderedProbeKey {
+                cursor: cursor.start().byte_offset(),
+                present: temps.present.region.start().byte_offset(),
+                key: temps.candidate.region.start().byte_offset(),
+                left: temps.left.region.start().byte_offset(),
+                right: temps.right.region.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                key_width: element_byte_width(key_ty, node.span)?,
+                collection_schema_ref: i64::from(collection_schema.0),
+            });
+            emit_ordered_status_checks(OrderedStatusLowering {
+                node,
+                site,
+                duplicate: DuplicateDisposition::Machine,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                code: outputs.code,
+            })?;
+            outputs
+                .code
+                .jump_if_zero(temps.present.region.start(), absent);
+            temps.cursor.rewind(comparison, node.span)?;
             emit_structural_order(
                 node,
-                key,
-                compared,
+                key_ty,
                 &sought,
-                order.region.start(),
-                scratch.condition,
-                &mut temps,
+                &temps.candidate,
+                StructuralOrderOutput {
+                    ordering: temps.ordering.region.start(),
+                    condition: scratch.condition,
+                },
+                &mut temps.cursor,
                 outputs.code,
             )?;
             outputs.code.push(WeavyOp::ConstI64 {
-                dst: scratch.fields[2].byte_offset(),
+                dst: scratch.fields[0].byte_offset(),
                 value: i64::from(ORDERING_EQUAL_VARIANT),
             });
             outputs.code.push(WeavyOp::EqI64 {
                 dst: scratch.condition.byte_offset(),
-                a: order.region.start().byte_offset(),
-                b: scratch.fields[2].byte_offset(),
+                a: temps.ordering.region.start().byte_offset(),
+                b: scratch.fields[0].byte_offset(),
             });
-            outputs.code.jump_if_zero(scratch.condition, next);
-            match node.op {
-                Op::MapGet => {
-                    outputs.code.push(WeavyOp::ProductProject {
-                        dst: dst_region,
-                        product: row.region_id,
-                        field: 1,
-                    });
-                }
-                Op::MapHas | Op::SetHas => outputs.code.push(WeavyOp::ConstI64 {
-                    dst: dst.start().byte_offset(),
-                    value: 1,
-                }),
-                _ => unreachable!(),
-            }
-            outputs.code.jump(done);
-            outputs.code.bind(next, node.span)?;
+            outputs.code.jump_if_zero(scratch.condition, choose_right);
+            outputs.code.jump(found);
+            outputs.code.bind(choose_right, node.span)?;
             outputs.code.push(WeavyOp::ConstI64 {
-                dst: scratch.fields[2].byte_offset(),
-                value: 1,
+                dst: scratch.fields[0].byte_offset(),
+                value: i64::from(ORDERING_LESS_VARIANT),
             });
-            outputs.code.push(WeavyOp::AddI64 {
-                dst: scratch.fields[1].byte_offset(),
-                a: scratch.fields[1].byte_offset(),
-                b: scratch.fields[2].byte_offset(),
+            outputs.code.push(WeavyOp::EqI64 {
+                dst: scratch.condition.byte_offset(),
+                a: temps.ordering.region.start().byte_offset(),
+                b: scratch.fields[0].byte_offset(),
+            });
+            let descend_right = outputs.code.label();
+            outputs.code.jump_if_zero(scratch.condition, descend_right);
+            outputs.code.push(WeavyOp::CopyI64 {
+                dst: temps.current.region.start().byte_offset(),
+                src: temps.left.region.start().byte_offset(),
             });
             outputs.code.jump(scan);
+            outputs.code.bind(descend_right, node.span)?;
+            outputs.code.push(WeavyOp::CopyI64 {
+                dst: temps.current.region.start().byte_offset(),
+                src: temps.right.region.start().byte_offset(),
+            });
+            outputs.code.jump(scan);
+            outputs.code.bind(found, node.span)?;
+            if matches!(node.op, Op::MapGet) {
+                outputs.code.push(WeavyOp::OrderedBeginProbe {
+                    cursor: cursor.start().byte_offset(),
+                    status: scratch.status.byte_offset(),
+                    collection: temps.current.region.start().byte_offset(),
+                    collection_schema_ref: i64::from(collection_schema.0),
+                });
+                emit_ordered_status_checks(OrderedStatusLowering {
+                    node,
+                    site,
+                    duplicate: DuplicateDisposition::Machine,
+                    scratch,
+                    assigned,
+                    outcome,
+                    return_label,
+                    code: outputs.code,
+                })?;
+                outputs.code.push(WeavyOp::OrderedProbeValue {
+                    cursor: cursor.start().byte_offset(),
+                    present: temps.present.region.start().byte_offset(),
+                    value: dst.start().byte_offset(),
+                    status: scratch.status.byte_offset(),
+                    value_width: element_byte_width(&node.ty, node.span)?,
+                    collection_schema_ref: i64::from(collection_schema.0),
+                });
+                emit_ordered_status_checks(OrderedStatusLowering {
+                    node,
+                    site,
+                    duplicate: DuplicateDisposition::Machine,
+                    scratch,
+                    assigned,
+                    outcome,
+                    return_label,
+                    code: outputs.code,
+                })?;
+                outputs
+                    .code
+                    .jump_if_zero(temps.present.region.start(), absent);
+            } else {
+                outputs.code.push(WeavyOp::ConstI64 {
+                    dst: dst.start().byte_offset(),
+                    value: 1,
+                });
+            }
+            outputs.code.jump(done);
             outputs.code.bind(absent, node.span)?;
             if matches!(node.op, Op::MapGet) {
                 outputs.code.push(WeavyOp::ConstI64 {
@@ -4739,14 +10434,526 @@ fn lower_checked_collection_node(
                 outputs.code.jump(return_label);
             }
             outputs.code.bind(done, node.span)?;
-            temps.finish(node.span)?;
+            temps.cursor.drain(node.span)?;
+            temps.cursor.finish(node.span)?;
             representation_for_type(&node.ty, node.span)
+        }
+        Op::MapLen | Op::SetLen => {
+            require_input_count(node, 1)?;
+            let collection = input_value(node, values, 0)?;
+            require_value(
+                node,
+                &collection,
+                &collection_ty,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            outputs.code.push(WeavyOp::OrderedLen {
+                dst: dst.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                collection: collection.region.start().byte_offset(),
+                collection_schema_ref: i64::from(collection_schema.0),
+            });
+            emit_ordered_status_checks(OrderedStatusLowering {
+                node,
+                site,
+                duplicate: DuplicateDisposition::Machine,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                code: outputs.code,
+            })?;
+            Ok(ValueRepresentation::Word)
+        }
+        Op::MapKeys | Op::MapValues | Op::SetValues => {
+            require_input_count(node, 1)?;
+            let collection = input_value(node, values, 0)?;
+            require_value(
+                node,
+                &collection,
+                &collection_ty,
+                ValueRepresentation::RealizedHandle,
+            )?;
+            let Type::Array(output_element) = &node.ty else {
+                return Err(lowering_diagnostic(
+                    node.span,
+                    "collection projection result is not an array",
+                ));
+            };
+            let output_schema = sequence
+                .lowering
+                .schemas
+                .schema_for(output_element, node.span)?;
+            let output_width = element_byte_width(output_element, node.span)?;
+            let row_ty = collection_element_type(&collection_ty, node.span)?;
+            let row_width = element_byte_width(&row_ty, node.span)?;
+            let mut temps = ordered_collection_temps(node, &collection_ty, sequence)?;
+            outputs.code.push(WeavyOp::OrderedLen {
+                dst: scratch.fields[0].byte_offset(),
+                status: scratch.status.byte_offset(),
+                collection: collection.region.start().byte_offset(),
+                collection_schema_ref: i64::from(collection_schema.0),
+            });
+            emit_ordered_status_checks(OrderedStatusLowering {
+                node,
+                site,
+                duplicate: DuplicateDisposition::Machine,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                code: outputs.code,
+            })?;
+            outputs.code.push(WeavyOp::ArrayNew {
+                dst: dst.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                count_slot: scratch.fields[0].byte_offset(),
+                elem_width: output_width,
+                elem_schema_ref: i64::from(output_schema.0),
+            });
+            emit_array_status_machine_checks(
+                node,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            let cursor = ordered_cursor(node, sequence, 0)?;
+            outputs.code.push(WeavyOp::OrderedBeginIterate {
+                cursor: cursor.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                collection: collection.region.start().byte_offset(),
+                collection_schema_ref: i64::from(collection_schema.0),
+            });
+            emit_ordered_status_checks(OrderedStatusLowering {
+                node,
+                site,
+                duplicate: DuplicateDisposition::Machine,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                code: outputs.code,
+            })?;
+            outputs.code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[1].byte_offset(),
+                value: 0,
+            });
+            let next = outputs.code.label();
+            let done = outputs.code.label();
+            outputs.code.bind(next, node.span)?;
+            outputs.code.push(WeavyOp::OrderedIterateRow {
+                cursor: cursor.start().byte_offset(),
+                present: temps.present.region.start().byte_offset(),
+                row: temps.row.region.start().byte_offset(),
+                status: scratch.status.byte_offset(),
+                row_width,
+                collection_schema_ref: i64::from(collection_schema.0),
+            });
+            emit_ordered_status_checks(OrderedStatusLowering {
+                node,
+                site,
+                duplicate: DuplicateDisposition::Machine,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                code: outputs.code,
+            })?;
+            outputs
+                .code
+                .jump_if_zero(temps.present.region.start(), done);
+            let source = match node.op {
+                Op::MapKeys => {
+                    outputs.code.push(WeavyOp::ProductProject {
+                        dst: temps.projected_key.region_id,
+                        product: temps.row.region_id,
+                        field: 0,
+                    });
+                    &temps.projected_key
+                }
+                Op::MapValues => {
+                    outputs.code.push(WeavyOp::ProductProject {
+                        dst: temps.projected_value.region_id,
+                        product: temps.row.region_id,
+                        field: 1,
+                    });
+                    &temps.projected_value
+                }
+                Op::SetValues => &temps.row,
+                _ => unreachable!("collection projection operation is closed"),
+            };
+            outputs.code.push(WeavyOp::ArrayStore {
+                status: scratch.status.byte_offset(),
+                array: dst.start().byte_offset(),
+                index: scratch.fields[1].byte_offset(),
+                src: source.region.start().byte_offset(),
+                elem_width: output_width,
+                elem_schema_ref: i64::from(output_schema.0),
+            });
+            emit_array_status_machine_checks(
+                node,
+                site,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                outputs.code,
+            )?;
+            outputs.code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[2].byte_offset(),
+                value: 1,
+            });
+            outputs.code.push(WeavyOp::AddI64 {
+                dst: scratch.fields[1].byte_offset(),
+                a: scratch.fields[1].byte_offset(),
+                b: scratch.fields[2].byte_offset(),
+            });
+            outputs.code.jump(next);
+            outputs.code.bind(done, node.span)?;
+            temps.cursor.drain(node.span)?;
+            temps.cursor.finish(node.span)?;
+            Ok(ValueRepresentation::RealizedHandle)
+        }
+        _ => unreachable!("collection lowering dispatched only Map/Set operations"),
+    }
+}
+
+#[derive(Clone, Copy)]
+enum DuplicateDisposition {
+    LanguageFailure,
+    Success,
+    Machine,
+}
+
+struct OrderedCollectionTemps<'a> {
+    cursor: TemporaryCursor<'a>,
+    ordering: LoweredSlot,
+    ready: LoweredSlot,
+    present: LoweredSlot,
+    current: LoweredSlot,
+    left: LoweredSlot,
+    right: LoweredSlot,
+    row: LoweredSlot,
+    candidate: LoweredSlot,
+    projected_key: LoweredSlot,
+    projected_value: LoweredSlot,
+}
+
+fn ordered_collection_temps<'a>(
+    node: &Node,
+    collection: &Type,
+    sequence: &'a SequenceContext<'_, '_, '_>,
+) -> Result<OrderedCollectionTemps<'a>, Diagnostics> {
+    let mut cursor = TemporaryCursor::new(
+        sequence.function.layout,
+        sequence.lowering.regions,
+        sequence.function.id,
+        node,
+    )?;
+    let ordering = cursor.take(&Type::Int, node.span)?;
+    let ready = cursor.take(&Type::Int, node.span)?;
+    let present = cursor.take(&Type::Int, node.span)?;
+    let current = cursor.take(collection, node.span)?;
+    let left = cursor.take(collection, node.span)?;
+    let right = cursor.take(collection, node.span)?;
+    match collection {
+        Type::Map { key, value } => {
+            let row_ty = Type::Tuple(vec![key.as_ref().clone(), value.as_ref().clone()]);
+            let row = cursor.take(&row_ty, node.span)?;
+            let candidate = cursor.take(key, node.span)?;
+            let projected_key = cursor.take(key, node.span)?;
+            let projected_value = cursor.take(value, node.span)?;
+            Ok(OrderedCollectionTemps {
+                cursor,
+                ordering,
+                ready,
+                present,
+                current,
+                left,
+                right,
+                row,
+                candidate,
+                projected_key,
+                projected_value,
+            })
+        }
+        Type::Set(element) => {
+            let row = cursor.take(element, node.span)?;
+            let candidate = cursor.take(element, node.span)?;
+            Ok(OrderedCollectionTemps {
+                cursor,
+                ordering,
+                ready,
+                present,
+                current,
+                left,
+                right,
+                projected_key: row.clone(),
+                projected_value: row.clone(),
+                row,
+                candidate,
+            })
         }
         _ => Err(lowering_diagnostic(
             node.span,
-            "map/set lowering is not implemented",
+            "ordered temporary receiver is not Map or Set",
         )),
     }
+}
+
+fn ordered_cursor(
+    node: &Node,
+    sequence: &SequenceContext<'_, '_, '_>,
+    index: usize,
+) -> Result<FrameRegion, Diagnostics> {
+    sequence
+        .function
+        .layout
+        .ordered_cursors(node.id, node.span)?
+        .get(index)
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(node.span, "ordered cursor index is unavailable"))
+}
+
+struct OrderedInsertLowering<'a, 'temps, 'code> {
+    node: &'a Node,
+    site: u32,
+    collection: FrameSlot,
+    destination: FrameSlot,
+    key: &'a LoweredSlot,
+    value: Option<&'a LoweredSlot>,
+    key_ty: &'a Type,
+    collection_schema: WeavySchemaRef,
+    cursor: FrameRegion,
+    candidate: &'a LoweredSlot,
+    ordering: &'a LoweredSlot,
+    ready: &'a LoweredSlot,
+    present: &'a LoweredSlot,
+    duplicate: DuplicateDisposition,
+    comparison_checkpoint: usize,
+    temps: &'a mut TemporaryCursor<'temps>,
+    scratch: OutcomeScratch,
+    assigned: AssignedOutcomeScratch,
+    outcome: WeavyRegionId,
+    return_label: CodeLabel,
+    code: &'code mut CodeBuilder,
+}
+
+fn emit_ordered_insert(context: OrderedInsertLowering<'_, '_, '_>) -> Result<(), Diagnostics> {
+    let OrderedInsertLowering {
+        node,
+        site,
+        collection,
+        destination,
+        key,
+        value,
+        key_ty,
+        collection_schema,
+        cursor,
+        candidate,
+        ordering,
+        ready,
+        present,
+        duplicate,
+        comparison_checkpoint,
+        temps,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code,
+    } = context;
+    code.push(WeavyOp::OrderedBeginInsert {
+        cursor: cursor.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        collection: collection.byte_offset(),
+        collection_schema_ref: i64::from(collection_schema.0),
+    });
+    emit_ordered_status_checks(OrderedStatusLowering {
+        node,
+        site,
+        duplicate: DuplicateDisposition::Machine,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code,
+    })?;
+    let inspect = code.label();
+    let commit = code.label();
+    code.bind(inspect, node.span)?;
+    code.push(WeavyOp::OrderedInsertInspect {
+        cursor: cursor.start().byte_offset(),
+        present: present.region.start().byte_offset(),
+        key: candidate.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        key_width: element_byte_width(key_ty, node.span)?,
+        collection_schema_ref: i64::from(collection_schema.0),
+    });
+    emit_ordered_status_checks(OrderedStatusLowering {
+        node,
+        site,
+        duplicate: DuplicateDisposition::Machine,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code,
+    })?;
+    code.jump_if_zero(present.region.start(), commit);
+    temps.rewind(comparison_checkpoint, node.span)?;
+    emit_structural_order(
+        node,
+        key_ty,
+        key,
+        candidate,
+        StructuralOrderOutput {
+            ordering: ordering.region.start(),
+            condition: scratch.condition,
+        },
+        temps,
+        code,
+    )?;
+    code.push(WeavyOp::OrderedInsertAdvance {
+        cursor: cursor.start().byte_offset(),
+        ordering: ordering.region.start().byte_offset(),
+        ready: ready.region.start().byte_offset(),
+        status: scratch.status.byte_offset(),
+        collection_schema_ref: i64::from(collection_schema.0),
+    });
+    emit_ordered_status_checks(OrderedStatusLowering {
+        node,
+        site,
+        duplicate: DuplicateDisposition::Machine,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code,
+    })?;
+    code.jump_if_zero(ready.region.start(), inspect);
+    code.bind(commit, node.span)?;
+    code.push(WeavyOp::OrderedInsertCommit {
+        dst: destination.byte_offset(),
+        cursor: cursor.start().byte_offset(),
+        key: key.region.start().byte_offset(),
+        value: value.map(|value| value.region.start().byte_offset()),
+        status: scratch.status.byte_offset(),
+        key_width: element_byte_width(key_ty, node.span)?,
+        value_width: value
+            .map(|value| element_byte_width(&value.ty, node.span))
+            .transpose()?
+            .unwrap_or(0),
+        collection_schema_ref: i64::from(collection_schema.0),
+        replace: matches!(
+            duplicate,
+            DuplicateDisposition::Machine | DuplicateDisposition::Success
+        ),
+    });
+    emit_ordered_status_checks(OrderedStatusLowering {
+        node,
+        site,
+        duplicate,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code,
+    })
+}
+
+struct OrderedStatusLowering<'a, 'code> {
+    node: &'a Node,
+    site: u32,
+    duplicate: DuplicateDisposition,
+    scratch: OutcomeScratch,
+    assigned: AssignedOutcomeScratch,
+    outcome: WeavyRegionId,
+    return_label: CodeLabel,
+    code: &'code mut CodeBuilder,
+}
+
+fn emit_ordered_status_checks(context: OrderedStatusLowering<'_, '_>) -> Result<(), Diagnostics> {
+    let OrderedStatusLowering {
+        node,
+        site,
+        duplicate,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        code,
+    } = context;
+    let success = code.label();
+    for expected in [
+        OrderedOpStatus::Ok,
+        OrderedOpStatus::InvalidHandle,
+        OrderedOpStatus::SchemaMismatch,
+        OrderedOpStatus::OperationMismatch,
+        OrderedOpStatus::Stale,
+        OrderedOpStatus::AllocationFailed,
+        OrderedOpStatus::DuplicateKey,
+        OrderedOpStatus::InvalidOrdering,
+    ] {
+        let next = code.label();
+        code.push(WeavyOp::OrderedStatusIs {
+            dst: scratch.condition.byte_offset(),
+            status: scratch.status.byte_offset(),
+            expected,
+        });
+        code.jump_if_zero(scratch.condition, next);
+        if expected == OrderedOpStatus::Ok
+            || (expected == OrderedOpStatus::DuplicateKey
+                && matches!(duplicate, DuplicateDisposition::Success))
+        {
+            code.jump(success);
+        } else if expected == OrderedOpStatus::DuplicateKey
+            && matches!(duplicate, DuplicateDisposition::LanguageFailure)
+        {
+            code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[0].byte_offset(),
+                value: i64::from(site),
+            });
+            code.push(WeavyOp::EnumConstruct {
+                dst: outcome,
+                variant: ArrayOutcomeAbi::for_value(node.ty.clone()).duplicate_key_variant,
+                fields: vec![StructuralFieldSource {
+                    field: 0,
+                    source: assigned.fields[0],
+                }],
+            });
+            code.jump(return_label);
+        } else {
+            code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[0].byte_offset(),
+                value: i64::from(site),
+            });
+            code.push(WeavyOp::ConstI64 {
+                dst: scratch.fields[1].byte_offset(),
+                value: expected as i64,
+            });
+            code.push(WeavyOp::EnumConstruct {
+                dst: outcome,
+                variant: ArrayOutcomeAbi::for_value(node.ty.clone()).ordered_machine_variant,
+                fields: vec![
+                    StructuralFieldSource {
+                        field: 0,
+                        source: assigned.fields[0],
+                    },
+                    StructuralFieldSource {
+                        field: 1,
+                        source: assigned.fields[1],
+                    },
+                ],
+            });
+            code.jump(return_label);
+        }
+        code.bind(next, node.span)?;
+    }
+    code.bind(success, node.span)
 }
 
 fn collection_element_type(collection: &Type, span: Span) -> Result<Type, Diagnostics> {
@@ -4994,10 +11201,78 @@ fn emit_array_load_status_checks(context: ArrayLoadStatusContext<'_>) -> Result<
     code.bind(success, node.span)
 }
 
+fn static_closure_call_args(
+    callee: &LoweredSlot,
+    nodes: &BTreeMap<NodeId, &Node>,
+    caller_layout: &FunctionLayout,
+    context: &LoweringContext<'_>,
+    span: Span,
+) -> Result<Option<(FunctionId, Vec<ArgCopy>)>, Diagnostics> {
+    let Some(closure) = nodes.values().copied().find(|candidate| {
+        matches!(candidate.op, Op::Closure(_))
+            && candidate.ty == callee.ty
+            && caller_layout.region(candidate.id, candidate.span).ok() == Some(callee.region)
+    }) else {
+        return Ok(None);
+    };
+    let Op::Closure(target_id) = closure.op else {
+        unreachable!("selected static closure node")
+    };
+    let target = context
+        .functions
+        .get(&target_id)
+        .copied()
+        .ok_or_else(|| lowering_diagnostic(span, "closure target is absent from the island"))?;
+    if target.parameters.len() != closure.inputs.len() + 1 {
+        return Err(lowering_diagnostic(
+            span,
+            "closure capture inputs do not match the callable ABI",
+        ));
+    }
+    let mut args = Vec::with_capacity(
+        closure.inputs.len().saturating_add(
+            context
+                .layouts
+                .get(&target_id)
+                .map_or(0, |layout| layout.constant_slots.len()),
+        ),
+    );
+    for (index, capture) in closure.inputs.iter().enumerate() {
+        let source = caller_layout.region(*capture, span)?;
+        let destination = target.parameters[index + 1].node;
+        let target_layout = context
+            .layouts
+            .get(&target_id)
+            .ok_or_else(|| lowering_diagnostic(span, "closure target has no frame layout"))?;
+        let destination = target_layout.region(destination, span)?;
+        args.push(ArgCopy {
+            src: source.start().byte_offset(),
+            dst: destination.start().byte_offset(),
+            size: source
+                .byte_size()
+                .ok_or_else(|| lowering_diagnostic(span, "closure capture size overflow"))?,
+        });
+    }
+    let target_layout = context
+        .layouts
+        .get(&target_id)
+        .ok_or_else(|| lowering_diagnostic(span, "closure target has no frame layout"))?;
+    for (&constant, &destination) in &target_layout.constant_slots {
+        let source = caller_layout.constant_slot(constant, span)?;
+        args.push(ArgCopy {
+            src: source.byte_offset(),
+            dst: destination.byte_offset(),
+            size: FrameSlot::word_size(),
+        });
+    }
+    Ok(Some((target_id, args)))
+}
+
 fn lower_call_value_node(
     node: &Node,
     dst: FrameRegion,
     values: &BTreeMap<NodeId, LoweredSlot>,
+    lowering: &NodeLoweringContext<'_, '_, '_>,
 ) -> Result<WeavyOp, Diagnostics> {
     require_input_count(node, 2)?;
     let callee = input_value(node, values, 0)?;
@@ -5026,16 +11301,26 @@ fn lower_call_value_node(
         parameter,
         representation_for_type(parameter, node.span)?,
     )?;
+    let mut args = vec![ArgCopy {
+        src: argument.region.start().byte_offset(),
+        dst: 0,
+        size: argument
+            .region
+            .byte_size()
+            .ok_or_else(|| lowering_diagnostic(node.span, "argument size overflow"))?,
+    }];
+    if let Some((_, extra)) = static_closure_call_args(
+        &callee,
+        lowering.nodes,
+        lowering.function.layout,
+        lowering.context,
+        node.span,
+    )? {
+        args.extend(extra);
+    }
     Ok(WeavyOp::CallIndirect {
         callee: callee.region.start().byte_offset(),
-        args: vec![ArgCopy {
-            src: argument.region.start().byte_offset(),
-            dst: 0,
-            size: argument
-                .region
-                .byte_size()
-                .ok_or_else(|| lowering_diagnostic(node.span, "argument size overflow"))?,
-        }],
+        args,
         ret: dst.start().byte_offset(),
     })
 }
@@ -5406,6 +11691,10 @@ fn copy_lowered_value(
             dst: destination_region,
             src: source.region_id,
         }]),
+        ValueRepresentation::CodataRecipe => Err(lowering_diagnostic(
+            node.span,
+            "codata recipes cannot be copied as frame values",
+        )),
     }
 }
 
@@ -5418,14 +11707,19 @@ fn type_words(ty: &Type, span: Span) -> Result<FrameWords, Diagnostics> {
 fn representation_for_type(ty: &Type, span: Span) -> Result<ValueRepresentation, Diagnostics> {
     match ty {
         Type::Bool | Type::Int | Type::Check => Ok(ValueRepresentation::Word),
-        Type::String => Ok(ValueRepresentation::RealizedHandle),
+        Type::String | Type::Path => Ok(ValueRepresentation::RealizedHandle),
         Type::Function { .. } | Type::Tuple(_) | Type::Record(_) | Type::Enum(_) => {
             Ok(ValueRepresentation::InlineComposite)
         }
         Type::Array(_) | Type::Map { .. } | Type::Set(_) => Ok(ValueRepresentation::RealizedHandle),
+        Type::Stream { .. } => Ok(ValueRepresentation::CodataRecipe),
         Type::StreamCheck => Err(lowering_diagnostic(
             span,
             "Stream<Check> has no island-interior word representation",
+        )),
+        Type::Order(_) => Err(lowering_diagnostic(
+            span,
+            "Order<T> has no island-interior word representation",
         )),
     }
 }
@@ -5547,7 +11841,9 @@ fn schema_order() -> Stream<Check> {
             nodes: BTreeMap::new(),
             control: BTreeMap::new(),
             temps: BTreeMap::new(),
+            ordered_cursors: BTreeMap::new(),
             closures: BTreeMap::new(),
+            array_map_temps: BTreeMap::new(),
             outcomes: BTreeMap::new(),
             outcome_scratch: BTreeMap::new(),
             call_outcomes: BTreeMap::new(),
@@ -5559,11 +11855,12 @@ fn schema_order() -> Stream<Check> {
             schemas_preassigned: &assignments,
             function_order: Vec::new(),
             closure_targets: BTreeSet::new(),
+            callable_outcomes: false,
             calls: Vec::new(),
             schemas: vec![empty_schema(); assignments.types.len()],
             schema_ready: vec![false; assignments.types.len()],
             value_shapes: Vec::new(),
-            value_shape_keys: Vec::new(),
+            value_shape_types: Vec::new(),
         };
         for ty in assignments.types.clone() {
             builder

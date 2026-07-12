@@ -43,6 +43,12 @@ pub enum MachineOperation {
 pub enum RuntimeFault {
     MissingMemoStoreHandle,
     MissingConstantStoreHandle,
+    MissingValueInputStoreHandle,
+    ValueInputCardinality {
+        expected: usize,
+        actual: usize,
+    },
+    ValueInputSchemaMismatch,
     MissingDemandRecord {
         key: DemandKey,
     },
@@ -60,6 +66,10 @@ pub enum RuntimeFault {
     ArrayMachineStatus {
         site: u32,
         status: weavy::task::ArrayOpStatus,
+    },
+    OrderedMachineStatus {
+        site: u32,
+        status: weavy::task::OrderedOpStatus,
     },
     LanguageFailurePending {
         site: u32,

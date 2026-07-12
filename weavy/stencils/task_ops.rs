@@ -87,6 +87,122 @@ pub struct Ctx {
         i64,
         *mut i64,
     ) -> i64,
+    ordered_begin_probe:
+        unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *mut i64, *mut i64) -> i64,
+    ordered_probe_key: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        i64,
+        usize,
+        *mut i64,
+        *mut i64,
+        *mut i64,
+        *mut u8,
+    ) -> i64,
+    ordered_probe_value: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        i64,
+        usize,
+        *mut i64,
+        *mut u8,
+    ) -> i64,
+    ordered_begin_insert:
+        unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *mut i64, *mut i64) -> i64,
+    ordered_insert_inspect: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        i64,
+        usize,
+        *mut i64,
+        *mut u8,
+    ) -> i64,
+    ordered_insert_advance: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        i64,
+        i64,
+        *mut i64,
+    ) -> i64,
+    ordered_insert_commit: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        i64,
+        *const u8,
+        usize,
+        *const u8,
+        usize,
+        i64,
+        i64,
+        *mut i64,
+    ) -> i64,
+    ordered_begin_iterate:
+        unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *mut i64, *mut i64) -> i64,
+    ordered_iterate_row: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        i64,
+        usize,
+        *mut i64,
+        *mut u8,
+    ) -> i64,
+    ordered_len:
+        unsafe extern "C" fn(*mut core::ffi::c_void, i64, i64, *mut i64) -> i64,
+    string_concat: unsafe extern "C" fn(
+        *const RawValueMemory,
+        usize,
+        *const RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        *mut i64,
+    ) -> i64,
+    string_contains: unsafe extern "C" fn(
+        *const RawValueMemory, usize, *const RawValueMemory, usize,
+        *mut core::ffi::c_void, i64, i64, *mut i64,
+    ) -> i64,
+    string_is_numeric: unsafe extern "C" fn(
+        *const RawValueMemory, usize, *const RawValueMemory, usize,
+        *mut core::ffi::c_void, i64, *mut i64,
+    ) -> i64,
+    string_split_once: unsafe extern "C" fn(
+        *const RawValueMemory, usize, *const RawValueMemory, usize,
+        *mut core::ffi::c_void, i64, i64, *mut i64, *mut i64,
+    ) -> i64,
+    string_parse_int: unsafe extern "C" fn(
+        *const RawValueMemory, usize, *const RawValueMemory, usize,
+        *mut core::ffi::c_void, i64, *mut i64,
+    ) -> i64,
+    byte_project: unsafe extern "C" fn(
+        *const RawValueMemory,
+        usize,
+        *const RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        *mut i64,
+    ) -> i64,
+    path_join: unsafe extern "C" fn(
+        *const RawValueMemory,
+        usize,
+        *const RawValueMemory,
+        usize,
+        *mut core::ffi::c_void,
+        i64,
+        i64,
+        *mut i64,
+    ) -> i64,
+    /// The task's append-only publication log, reached only through the ABI
+    /// function below so both lanes share one log semantics.
+    publications: *mut core::ffi::c_void,
+    publish: unsafe extern "C" fn(*mut core::ffi::c_void, u64, i64, *const u8, usize) -> i64,
 }
 
 /// Raw ABI descriptor; MUST match `crate::task::RawValueMemory`.
@@ -108,6 +224,17 @@ const EXIT_COMPARE_RIGHT_UNRESIDENT: i64 = 8;
 const EXIT_INVALID_ENUM_SELECTOR: i64 = 9;
 const EXIT_ENUM_PROJECTION_MISMATCH: i64 = 10;
 const EXIT_INVALID_ARRAY_STATUS: i64 = 11;
+const EXIT_INVALID_ORDERED_STATUS: i64 = 12;
+const EXIT_STRING_CONCAT_LEFT_UNRESIDENT: i64 = 13;
+const EXIT_STRING_CONCAT_RIGHT_UNRESIDENT: i64 = 14;
+const EXIT_STRING_CONCAT_ALLOCATION: i64 = 15;
+const EXIT_PUBLICATION_ALLOCATION: i64 = 16;
+const EXIT_INVALID_STRING_STATUS: i64 = 17;
+const EXIT_BYTE_PROJECT_SOURCE_UNRESIDENT: i64 = 18;
+const EXIT_BYTE_PROJECT_ALLOCATION: i64 = 19;
+const EXIT_PATH_JOIN_BASE_UNRESIDENT: i64 = 20;
+const EXIT_PATH_JOIN_SEGMENT_UNRESIDENT: i64 = 21;
+const EXIT_PATH_JOIN_ALLOCATION: i64 = 22;
 
 const LENT_MOLTEN_MIN: i64 = i64::MIN / 2;
 
@@ -576,6 +703,308 @@ pub unsafe extern "C" fn weavy_task_array_new(cx: *mut Ctx) {
     cont!(cx);
 }
 
+/// Begin a probe cursor over an ordered collection — immediates:
+/// [cursor, status, collection, schema]. Writes the two-word opaque cursor
+/// token (arena index, task generation) at `cursor`/`cursor + 8` and the
+/// operation status at `status`.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_empty(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    c.prog = c.prog.add(2);
+    write_i64(c.frame, dst, 0);
+    cont!(cx);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_begin_probe(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let cursor = *c.prog;
+    let status = *c.prog.add(1);
+    let collection = *c.prog.add(2);
+    let schema = *c.prog.add(3) as i64;
+    c.prog = c.prog.add(4);
+    let mut index = -1i64;
+    let mut generation = 0i64;
+    let op_status = (c.ordered_begin_probe)(
+        c.molten,
+        read_i64(c.frame, collection),
+        schema,
+        &raw mut index,
+        &raw mut generation,
+    );
+    write_i64(c.frame, cursor, index);
+    write_i64(c.frame, cursor + 8, generation);
+    write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+/// Consume a Probe cursor and expose one probe step — immediates:
+/// [cursor, present, key, left, right, status, key_width, schema]. The ABI
+/// clears and fills the `key_width` key bytes in the frame; this stencil
+/// writes the present flag, the child collection handles, and the status.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_probe_key(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let cursor = *c.prog;
+    let present = *c.prog.add(1);
+    let key = *c.prog.add(2);
+    let left = *c.prog.add(3);
+    let right = *c.prog.add(4);
+    let status = *c.prog.add(5);
+    let key_width = *c.prog.add(6) as usize;
+    let schema = *c.prog.add(7) as i64;
+    c.prog = c.prog.add(8);
+    let index = read_i64(c.frame, cursor);
+    let generation = read_i64(c.frame, cursor + 8);
+    let mut present_out = 0i64;
+    let mut left_out = 0i64;
+    let mut right_out = 0i64;
+    let op_status = (c.ordered_probe_key)(
+        c.molten,
+        index,
+        generation,
+        schema,
+        key_width,
+        &raw mut present_out,
+        &raw mut left_out,
+        &raw mut right_out,
+        c.frame.add(key as usize),
+    );
+    write_i64(c.frame, present, present_out);
+    write_i64(c.frame, left, left_out);
+    write_i64(c.frame, right, right_out);
+    write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+/// Consume a Probe cursor and expose the current node's Map value — immediates:
+/// [cursor, present, value, status, value_width, schema]. The ABI clears and
+/// fills the `value_width` value bytes in the frame; this stencil writes the
+/// present flag and the status.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_probe_value(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let cursor = *c.prog;
+    let present = *c.prog.add(1);
+    let value = *c.prog.add(2);
+    let status = *c.prog.add(3);
+    let value_width = *c.prog.add(4) as usize;
+    let schema = *c.prog.add(5) as i64;
+    c.prog = c.prog.add(6);
+    let index = read_i64(c.frame, cursor);
+    let generation = read_i64(c.frame, cursor + 8);
+    let mut present_out = 0i64;
+    let op_status = (c.ordered_probe_value)(
+        c.molten,
+        index,
+        generation,
+        schema,
+        value_width,
+        &raw mut present_out,
+        c.frame.add(value as usize),
+    );
+    write_i64(c.frame, present, present_out);
+    write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_begin_insert(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let cursor = *c.prog;
+    let status = *c.prog.add(1);
+    let collection = *c.prog.add(2);
+    let schema = *c.prog.add(3) as i64;
+    c.prog = c.prog.add(4);
+    let mut index = -1i64;
+    let mut generation = 0i64;
+    let op_status = (c.ordered_begin_insert)(
+        c.molten,
+        read_i64(c.frame, collection),
+        schema,
+        &raw mut index,
+        &raw mut generation,
+    );
+    write_i64(c.frame, cursor, index);
+    write_i64(c.frame, cursor + 8, generation);
+    write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_insert_inspect(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let cursor = *c.prog;
+    let present = *c.prog.add(1);
+    let key = *c.prog.add(2);
+    let status = *c.prog.add(3);
+    let key_width = *c.prog.add(4) as usize;
+    let schema = *c.prog.add(5) as i64;
+    c.prog = c.prog.add(6);
+    let mut present_out = 0i64;
+    let op_status = (c.ordered_insert_inspect)(
+        c.molten,
+        read_i64(c.frame, cursor),
+        read_i64(c.frame, cursor + 8),
+        schema,
+        key_width,
+        &raw mut present_out,
+        c.frame.add(key as usize),
+    );
+    write_i64(c.frame, present, present_out);
+    write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_insert_advance(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let cursor = *c.prog;
+    let ordering = *c.prog.add(1);
+    let ready = *c.prog.add(2);
+    let status = *c.prog.add(3);
+    let schema = *c.prog.add(4) as i64;
+    c.prog = c.prog.add(5);
+    let mut ready_out = 0i64;
+    let op_status = (c.ordered_insert_advance)(
+        c.molten,
+        read_i64(c.frame, cursor),
+        read_i64(c.frame, cursor + 8),
+        schema,
+        read_i64(c.frame, ordering),
+        &raw mut ready_out,
+    );
+    write_i64(c.frame, ready, ready_out);
+    write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_insert_commit(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let cursor = *c.prog.add(1);
+    let key = *c.prog.add(2);
+    let value = *c.prog.add(3);
+    let status = *c.prog.add(4);
+    let key_width = *c.prog.add(5) as usize;
+    let value_width = *c.prog.add(6) as usize;
+    let schema = *c.prog.add(7) as i64;
+    let replace = *c.prog.add(8) as i64;
+    c.prog = c.prog.add(9);
+    let has_value = i64::from(value != u64::MAX);
+    let value_ptr = if has_value == 0 {
+        core::ptr::null()
+    } else {
+        c.frame.add(value as usize).cast_const()
+    };
+    let mut collection = -1i64;
+    let op_status = (c.ordered_insert_commit)(
+        c.molten,
+        read_i64(c.frame, cursor),
+        read_i64(c.frame, cursor + 8),
+        schema,
+        c.frame.add(key as usize).cast_const(),
+        key_width,
+        value_ptr,
+        value_width,
+        has_value,
+        replace,
+        &raw mut collection,
+    );
+    write_i64(c.frame, dst, collection);
+    write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_begin_iterate(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let cursor = *c.prog;
+    let status = *c.prog.add(1);
+    let collection = *c.prog.add(2);
+    let schema = *c.prog.add(3) as i64;
+    c.prog = c.prog.add(4);
+    let mut index = -1i64;
+    let mut generation = 0i64;
+    let op_status = (c.ordered_begin_iterate)(
+        c.molten,
+        read_i64(c.frame, collection),
+        schema,
+        &raw mut index,
+        &raw mut generation,
+    );
+    write_i64(c.frame, cursor, index);
+    write_i64(c.frame, cursor + 8, generation);
+    write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_iterate_row(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let cursor = *c.prog;
+    let present = *c.prog.add(1);
+    let row = *c.prog.add(2);
+    let status = *c.prog.add(3);
+    let row_width = *c.prog.add(4) as usize;
+    let schema = *c.prog.add(5) as i64;
+    c.prog = c.prog.add(6);
+    let mut present_out = 0i64;
+    let op_status = (c.ordered_iterate_row)(
+        c.molten,
+        read_i64(c.frame, cursor),
+        read_i64(c.frame, cursor + 8),
+        schema,
+        row_width,
+        &raw mut present_out,
+        c.frame.add(row as usize),
+    );
+    write_i64(c.frame, present, present_out);
+    write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_len(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let status = *c.prog.add(1);
+    let collection = *c.prog.add(2);
+    let schema = *c.prog.add(3) as i64;
+    c.prog = c.prog.add(4);
+    let mut len = 0i64;
+    let op_status = (c.ordered_len)(
+        c.molten,
+        read_i64(c.frame, collection),
+        schema,
+        &raw mut len,
+    );
+    write_i64(c.frame, dst, len);
+    write_i64(c.frame, status, op_status);
+    cont!(cx);
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_ordered_status_is(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let status = *c.prog.add(1);
+    let expected = *c.prog.add(2) as i64;
+    let pc = *c.prog.add(3);
+    let actual = read_i64(c.frame, status);
+    if !(1..=8).contains(&actual) {
+        *c.await_index = pc;
+        *c.resume = actual as u64;
+        *c.exit = EXIT_INVALID_ORDERED_STATUS;
+        return;
+    }
+    c.prog = c.prog.add(4);
+    write_i64(c.frame, dst, i64::from(actual == expected));
+    cont!(cx);
+}
+
 /// Fill one whole element of a molten array — immediates:
 /// [status, array, index, src, elem_width, elem_schema_ref].
 #[no_mangle]
@@ -691,6 +1120,226 @@ pub unsafe extern "C" fn weavy_task_compare_value_bytes(cx: *mut Ctx) {
     {
         write_i64(c.frame, dst, ordering);
         cont!(cx);
+    }
+}
+
+/// Join two resident value-byte runs into a fresh molten string — immediates:
+/// [dst, a, b, pc]. Writes the result handle to `frame[dst]` on success; a
+/// non-resident operand or an unsatisfiable allocation exits to the driver with
+/// the precise fault code and the offending handle in `resume`.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_string_concat(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let a = *c.prog.add(1);
+    let b = *c.prog.add(2);
+    let pc = *c.prog.add(3);
+    c.prog = c.prog.add(4);
+    let a_handle = read_i64(c.frame, a);
+    let b_handle = read_i64(c.frame, b);
+    let mut handle = i64::MIN;
+    let status = (c.string_concat)(
+        c.store_value_memories,
+        c.store_value_memory_count,
+        c.lent_molten_value_memories,
+        c.lent_molten_value_memory_count,
+        c.molten,
+        a_handle,
+        b_handle,
+        &raw mut handle,
+    );
+    match status {
+        0 => {
+            write_i64(c.frame, dst, handle);
+            cont!(cx);
+        }
+        1 => {
+            *c.await_index = pc;
+            *c.resume = a_handle as u64;
+            *c.exit = EXIT_STRING_CONCAT_LEFT_UNRESIDENT;
+        }
+        2 => {
+            *c.await_index = pc;
+            *c.resume = b_handle as u64;
+            *c.exit = EXIT_STRING_CONCAT_RIGHT_UNRESIDENT;
+        }
+        _ => {
+            *c.await_index = pc;
+            *c.exit = EXIT_STRING_CONCAT_ALLOCATION;
+        }
+    }
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_string_contains(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog; let text = *c.prog.add(1); let needle = *c.prog.add(2); let pc = *c.prog.add(3);
+    c.prog = c.prog.add(4);
+    let mut value = 0;
+    let result = (c.string_contains)(c.store_value_memories, c.store_value_memory_count, c.lent_molten_value_memories, c.lent_molten_value_memory_count, c.molten, read_i64(c.frame, text), read_i64(c.frame, needle), &raw mut value);
+    if result == 0 { write_i64(c.frame, dst, value); cont!(cx); }
+    *c.await_index = pc; *c.resume = if result == 4 { read_i64(c.frame, text) as u64 } else { read_i64(c.frame, needle) as u64 };
+    *c.exit = if result == 4 { EXIT_STRING_CONCAT_LEFT_UNRESIDENT } else if result == 5 { EXIT_STRING_CONCAT_RIGHT_UNRESIDENT } else { EXIT_STRING_CONCAT_ALLOCATION };
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_string_is_numeric(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog; let text = *c.prog.add(1); let pc = *c.prog.add(2);
+    c.prog = c.prog.add(3);
+    let mut value = 0;
+    let result = (c.string_is_numeric)(c.store_value_memories, c.store_value_memory_count, c.lent_molten_value_memories, c.lent_molten_value_memory_count, c.molten, read_i64(c.frame, text), &raw mut value);
+    if result == 0 { write_i64(c.frame, dst, value); cont!(cx); }
+    *c.await_index = pc; *c.resume = read_i64(c.frame, text) as u64;
+    *c.exit = if result == 4 { EXIT_STRING_CONCAT_LEFT_UNRESIDENT } else { EXIT_STRING_CONCAT_ALLOCATION };
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_string_split_once(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let left = *c.prog; let right = *c.prog.add(1); let status = *c.prog.add(2); let text = *c.prog.add(3); let delimiter = *c.prog.add(4); let pc = *c.prog.add(5);
+    c.prog = c.prog.add(6);
+    let mut left_value = 0; let mut right_value = 0;
+    let result = (c.string_split_once)(c.store_value_memories, c.store_value_memory_count, c.lent_molten_value_memories, c.lent_molten_value_memory_count, c.molten, read_i64(c.frame, text), read_i64(c.frame, delimiter), &raw mut left_value, &raw mut right_value);
+    if result <= 3 { write_i64(c.frame, status, result); if result == 0 { write_i64(c.frame, left, left_value); write_i64(c.frame, right, right_value); } cont!(cx); }
+    *c.await_index = pc; *c.resume = if result == 4 { read_i64(c.frame, text) as u64 } else { read_i64(c.frame, delimiter) as u64 };
+    *c.exit = if result == 4 { EXIT_STRING_CONCAT_LEFT_UNRESIDENT } else if result == 5 { EXIT_STRING_CONCAT_RIGHT_UNRESIDENT } else { EXIT_STRING_CONCAT_ALLOCATION };
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_string_parse_int(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog; let status = *c.prog.add(1); let text = *c.prog.add(2); let pc = *c.prog.add(3);
+    c.prog = c.prog.add(4);
+    let mut value = 0;
+    let result = (c.string_parse_int)(c.store_value_memories, c.store_value_memory_count, c.lent_molten_value_memories, c.lent_molten_value_memory_count, c.molten, read_i64(c.frame, text), &raw mut value);
+    if result <= 3 { write_i64(c.frame, status, result); write_i64(c.frame, dst, value); cont!(cx); }
+    *c.await_index = pc; *c.resume = read_i64(c.frame, text) as u64;
+    *c.exit = if result == 4 { EXIT_STRING_CONCAT_LEFT_UNRESIDENT } else { EXIT_STRING_CONCAT_ALLOCATION };
+}
+
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_string_status_is(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog; let status = *c.prog.add(1); let expected = *c.prog.add(2) as i64; let pc = *c.prog.add(3);
+    c.prog = c.prog.add(4);
+    let actual = read_i64(c.frame, status);
+    if !(0..=3).contains(&actual) {
+        *c.await_index = pc;
+        *c.resume = actual as u64;
+        *c.exit = EXIT_INVALID_STRING_STATUS;
+        return;
+    }
+    write_i64(c.frame, dst, i64::from(actual == expected));
+    cont!(cx);
+}
+
+/// Copy one resident byte run into a fresh molten value — immediates:
+/// [dst, source, pc]. The verifier separately witnesses both source and
+/// destination opaque-byte schemas, so this stencil only performs by-value
+/// byte residency and allocation.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_byte_project(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let source = *c.prog.add(1);
+    let pc = *c.prog.add(2);
+    c.prog = c.prog.add(3);
+    let source_handle = read_i64(c.frame, source);
+    let mut handle = i64::MIN;
+    let status = (c.byte_project)(
+        c.store_value_memories,
+        c.store_value_memory_count,
+        c.lent_molten_value_memories,
+        c.lent_molten_value_memory_count,
+        c.molten,
+        source_handle,
+        &raw mut handle,
+    );
+    match status {
+        0 => {
+            write_i64(c.frame, dst, handle);
+            cont!(cx);
+        }
+        1 => {
+            *c.await_index = pc;
+            *c.resume = source_handle as u64;
+            *c.exit = EXIT_BYTE_PROJECT_SOURCE_UNRESIDENT;
+        }
+        _ => {
+            *c.await_index = pc;
+            *c.exit = EXIT_BYTE_PROJECT_ALLOCATION;
+        }
+    }
+}
+
+/// Join a Path and one validated segment — immediates: [dst, base, segment,
+/// pc]. The verified contract requires all three handles to name the same
+/// byte-comparable Path schema; the helper allocates a by-value result.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_path_join(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let dst = *c.prog;
+    let base = *c.prog.add(1);
+    let segment = *c.prog.add(2);
+    let pc = *c.prog.add(3);
+    c.prog = c.prog.add(4);
+    let base_handle = read_i64(c.frame, base);
+    let segment_handle = read_i64(c.frame, segment);
+    let mut handle = i64::MIN;
+    let status = (c.path_join)(
+        c.store_value_memories,
+        c.store_value_memory_count,
+        c.lent_molten_value_memories,
+        c.lent_molten_value_memory_count,
+        c.molten,
+        base_handle,
+        segment_handle,
+        &raw mut handle,
+    );
+    match status {
+        0 => {
+            write_i64(c.frame, dst, handle);
+            cont!(cx);
+        }
+        1 => {
+            *c.await_index = pc;
+            *c.resume = base_handle as u64;
+            *c.exit = EXIT_PATH_JOIN_BASE_UNRESIDENT;
+        }
+        2 => {
+            *c.await_index = pc;
+            *c.resume = segment_handle as u64;
+            *c.exit = EXIT_PATH_JOIN_SEGMENT_UNRESIDENT;
+        }
+        _ => {
+            *c.await_index = pc;
+            *c.exit = EXIT_PATH_JOIN_ALLOCATION;
+        }
+    }
+}
+
+/// PUBLISH — immediates: [site, record_off, record_width, schema_ref, pc].
+/// Copies the `record_width`-byte record at `frame[record_off]` into the task's
+/// append-only log under the opaque provenance `site` and the record schema
+/// witness. An allocation the log cannot satisfy exits to the driver with the
+/// publication-allocation fault; nothing partial is written.
+#[no_mangle]
+pub unsafe extern "C" fn weavy_task_publish(cx: *mut Ctx) {
+    let c = &mut *cx;
+    let site = *c.prog;
+    let record_off = *c.prog.add(1);
+    let record_width = *c.prog.add(2) as usize;
+    let schema_ref = *c.prog.add(3) as i64;
+    let pc = *c.prog.add(4);
+    c.prog = c.prog.add(5);
+    let src = c.frame.add(record_off as usize) as *const u8;
+    let status = (c.publish)(c.publications, site, schema_ref, src, record_width);
+    if status == 0 {
+        cont!(cx);
+    } else {
+        *c.await_index = pc;
+        *c.exit = EXIT_PUBLICATION_ALLOCATION;
     }
 }
 
