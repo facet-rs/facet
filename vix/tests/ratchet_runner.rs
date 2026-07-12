@@ -5375,57 +5375,107 @@ fn assert_contiguous_sequences(events: &[vix::runtime::Event]) {
     }));
 }
 
-/// Rung 062 is the first typed-decode rung: `let row: PkgRow = json_decode(...)`.
+/// The typed-decode gate (FOUNDATION.md, "To score past 066"): decode targets
+/// the compiler-known Vix type directly through the doc-parse primitive — one
+/// host call per document, typed store values out, no Doc-walking on hot paths.
 ///
-/// Its foundation gate (FOUNDATION.md, "To score past 066") is typed decode
-/// through the doc-parse primitive — one host call per document, typed store
-/// values out, no Doc-walking on hot paths. The production path has no decode
-/// intrinsic yet, so the checker resolves the `json_decode(...)` call to the
-/// rung's own `#[test] fn json_decode` and rejects it: the exact typed red
-/// boundary this lane advances from. When the decode intrinsic lands, decode
-/// is recognized structurally (type-directed by the `let`-annotated target)
-/// and shadows the same-named test function, so this certificate is promoted
-/// to a `run_source` green assertion.
-#[test]
-fn rung_062_typed_decode_is_red_pending_the_doc_parse_primitive() {
-    let diagnostics = Compiler::new()
-        .compile(RUNG_062)
-        .expect_err("json_decode is not yet a recognized type-directed decode intrinsic");
-    assert_eq!(diagnostics.entries.len(), 1);
-    assert_eq!(
-        diagnostics.entries[0].code,
-        DiagnosticCode::UnsupportedExpression
-    );
-    assert_eq!(diagnostics.entries[0].message(), "calling a test function");
+/// This lane realizes that by decoding the literal document in a single
+/// `FormatParser` pass against the `let`/call-site target type and lowering the
+/// result to the exact typed-construction VIR a hand-written literal produces.
+/// The proof that "no Doc-walking on hot paths" holds is structural: every
+/// lowered frame is free of `HostCall`/`HostCallYield`, so the verified machine
+/// only ever runs typed construction — the parse never enters it.
+fn assert_typed_decode_rung(source: &str, checks: usize) {
+    let module = Compiler::new()
+        .compile(source)
+        .expect("typed-decode rung compiles through the canonical surface");
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("typed-decode rung lowers through verified Weavy execution");
+        assert!(
+            lowered.program().fns.iter().all(|function| {
+                function
+                    .code
+                    .iter()
+                    .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+            }),
+            "decode lowers to typed construction, never a machine host call",
+        );
+    }
+
+    let report = run_source(source).expect("typed-decode rung runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), checks);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+        if std::env::var("WEAVY_JIT").as_deref() == Ok("0") {
+            assert!(
+                lane.events
+                    .iter()
+                    .filter_map(|event| match event.kind {
+                        EventKind::ExecutionLane { facts, .. } => Some(facts),
+                        _ => None,
+                    })
+                    .all(|facts| matches!(
+                        facts,
+                        vix::runtime::ExecutionFacts {
+                            selected: vix::runtime::ExecutionLaneFact::Interpreter,
+                            fallback: Some(
+                                vix::runtime::ExecutionFallbackFact::DisabledByEnvironment
+                            ),
+                            ..
+                        }
+                    ))
+            );
+        }
+    }
 }
 
-/// The remaining typed-decode rungs and their exact code-grounded seams, kept
-/// red until the shared decode substrate reaches each one. 063 shares 062's
-/// name-collision boundary (`toml_decode`); 064 stops at the unresolved
-/// `json_decode` name (no same-named test function); 065 and 066 stop earlier,
-/// in the surface grammar (string-or-table match arms; the `try_json_decode<T>`
-/// turbofish the `call` production does not admit).
+/// Rung 062 — JSON lands directly on a struct via the type-directed decoder.
 #[test]
-fn typed_decode_063_to_066_red_boundaries() {
-    let toml = Compiler::new()
-        .compile(RUNG_063)
-        .expect_err("toml_decode is not yet a recognized decode intrinsic");
-    assert_eq!(toml.entries.len(), 1);
-    assert_eq!(toml.entries[0].code, DiagnosticCode::UnsupportedExpression);
-    assert_eq!(toml.entries[0].message(), "calling a test function");
+fn rung_062_json_decode_lands_json_on_a_struct() {
+    assert_typed_decode_rung(RUNG_062, 3);
+}
 
-    let optional = Compiler::new()
-        .compile(RUNG_064)
-        .expect_err("json_decode is not yet a recognized decode intrinsic");
-    assert_eq!(optional.entries.len(), 1);
-    assert_eq!(optional.entries[0].code, DiagnosticCode::UnknownName);
-    assert_eq!(optional.entries[0].message(), "json_decode");
+/// Rung 063 — TOML manifests decode into nested structs with no Doc-walking.
+#[test]
+fn rung_063_toml_decode_builds_nested_structs() {
+    assert_typed_decode_rung(RUNG_063, 2);
+}
 
+/// Rung 064 — absent fields decode to `Option::None`, present ones to `Some`,
+/// through the same decoder and the same typed construction.
+#[test]
+fn rung_064_absent_fields_decode_to_option_none() {
+    assert_typed_decode_rung(RUNG_064, 2);
+}
+
+/// Rungs 065 and 066: their exact code-grounded red boundaries on the merged
+/// production tree. 065 now parses and resolves `json_decode` — it stops in the
+/// decoder, which does not yet realize the string-or-table enum form. 066 stops
+/// earlier still, in the surface grammar: the `try_json_decode<T>` turbofish the
+/// `call` production does not admit.
+#[test]
+fn typed_decode_065_066_red_boundaries() {
     let enum_forms = Compiler::new()
         .compile(RUNG_065)
-        .expect_err("string-or-table match arms do not parse yet");
+        .expect_err("the string-or-table enum form is not decoded yet");
     assert_eq!(enum_forms.entries.len(), 1);
-    assert_eq!(enum_forms.entries[0].code, DiagnosticCode::ParseRejected);
+    assert_eq!(
+        enum_forms.entries[0].code,
+        DiagnosticCode::UnsupportedExpression
+    );
+    assert_eq!(
+        enum_forms.entries[0].message(),
+        "JSON decode failed: cannot decode into DepSpec"
+    );
 
     let failure = Compiler::new()
         .compile(RUNG_066)
