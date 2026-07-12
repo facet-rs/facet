@@ -9,6 +9,10 @@ on:
     branches: [main]
   merge_group:
 
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+
 jobs:
   workspace:
     name: Workspace (${{ matrix.partition }})
