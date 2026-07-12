@@ -5799,7 +5799,10 @@ fn rung_060_snapshots_render_any_value_structurally() {
     // rendering is a harness artifact keyed by name.
     let report = run_source(RUNG_060).expect("rung 060 compiles and runs");
     assert!(report.passed(), "rung 060 snapshot check passes");
-    assert!(report.agrees(), "plain and chaos lanes agree on the snapshot");
+    assert!(
+        report.agrees(),
+        "plain and chaos lanes agree on the snapshot"
+    );
     assert_eq!(report.plain.checks.len(), 1);
     assert_eq!(report.plain.checks, report.chaos.checks);
     let snapshot = report.plain.checks[0]
@@ -5819,7 +5822,10 @@ fn rung_061_snapshots_sorted_stream_values_are_canonical() {
     // stable forever: alpha, beta, gamma regardless of authored order.
     let report = run_source(RUNG_061).expect("rung 061 compiles and runs");
     assert!(report.passed(), "rung 061 snapshot check passes");
-    assert!(report.agrees(), "plain and chaos lanes agree on the snapshot");
+    assert!(
+        report.agrees(),
+        "plain and chaos lanes agree on the snapshot"
+    );
     assert_eq!(report.plain.checks.len(), 1);
     assert_eq!(report.plain.checks, report.chaos.checks);
     let snapshot = report.plain.checks[0]
