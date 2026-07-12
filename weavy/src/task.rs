@@ -1727,11 +1727,7 @@ pub(crate) unsafe extern "C" fn env_alloc_abi(
             return 1;
         }
         unsafe {
-            core::ptr::copy_nonoverlapping(
-                frame.add(src),
-                bytes.as_mut_ptr().add(box_off),
-                len,
-            );
+            core::ptr::copy_nonoverlapping(frame.add(src), bytes.as_mut_ptr().add(box_off), len);
         }
     }
     match arena.alloc_env(bytes) {
@@ -1832,7 +1828,10 @@ pub(crate) fn unbox_call_environment(
                     handle,
                 ));
             }
-            writes.push((callee_base + region.offset as usize, bytes[off..off + len].to_vec()));
+            writes.push((
+                callee_base + region.offset as usize,
+                bytes[off..off + len].to_vec(),
+            ));
         }
     }
     for (dst, data) in writes {

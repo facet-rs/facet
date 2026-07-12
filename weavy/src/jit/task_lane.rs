@@ -765,7 +765,11 @@ fn compile_fn(
     let mut calls = HashMap::new();
     for (i, op) in f.code.iter().enumerate() {
         match op {
-            Op::EnvBox { dst, callee, fields } => {
+            Op::EnvBox {
+                dst,
+                callee,
+                fields,
+            } => {
                 let (function_contract, program_contract) =
                     verified_compile_contracts(function_contract, program_contract);
                 let environment = &program_contract.functions[callee.0 as usize].environment;
