@@ -3,7 +3,7 @@ use std::path::Path;
 
 use vix::budget::{BudgetOutcome, ChildReport, run_source_under_declared_budget};
 use vix::compiler::Compiler;
-use vix::diagnostic::{DiagnosticCode, DiagnosticSeverity};
+use vix::diagnostic::{DiagnosticCode, DiagnosticPayload, DiagnosticSeverity};
 use vix::lowering::{LoweringCache, attribution_for, source_map_for};
 use vix::ratchet::{
     RunError, SnapshotExpectations, run_source, run_source_innards, run_source_with_snapshots,
@@ -74,6 +74,11 @@ const RUNG_050: &str = include_str!("ratchet/050-deep-tail-recursion.vix");
 const RUNG_052: &str = include_str!("ratchet/052-higher-order.vix");
 const RUNG_060: &str = include_str!("ratchet/060-snapshot-record.vix");
 const RUNG_061: &str = include_str!("ratchet/061-snapshot-canonical.vix");
+const RUNG_062: &str = include_str!("ratchet/062-json-decode.vix");
+const RUNG_063: &str = include_str!("ratchet/063-toml-decode.vix");
+const RUNG_064: &str = include_str!("ratchet/064-decode-optional.vix");
+const RUNG_065: &str = include_str!("ratchet/065-decode-enum-forms.vix");
+const RUNG_066: &str = include_str!("ratchet/066-decode-failure.vix");
 const RUNG_138: &str = include_str!("ratchet/138-map-accumulator.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
 const RUNG_145: &str = include_str!("ratchet/145-push.reject.vix");
@@ -4136,12 +4141,15 @@ fn rung_050_deep_tail_recursion_runs_under_its_declared_budget() {
         Path::new(env!("CARGO_BIN_EXE_vix-budget-child")),
         RUNG_050,
     );
-    assert!(matches!(
-        outcome,
-        BudgetOutcome::Within {
-            report: ChildReport::RanSource { passed: true, .. },
-        }
-    ));
+    assert!(
+        matches!(
+            &outcome,
+            BudgetOutcome::Within {
+                report: ChildReport::RanSource { passed: true, .. },
+            }
+        ),
+        "unexpected budget outcome: {outcome:?}"
+    );
 }
 
 /// The ordinary ratchet path is production execution, not an innards
@@ -5375,6 +5383,284 @@ fn assert_contiguous_sequences(events: &[vix::runtime::Event]) {
     assert!(events.iter().enumerate().all(|(index, event)| {
         event.sequence == u64::try_from(index).expect("event count fits u64")
     }));
+}
+
+/// Certifies the **constant-fold subset** of the typed-decode gate
+/// (FOUNDATION.md, "To score past 066"). These rungs decode compile-time-
+/// constant document literals against the `let`/call-site target type in a
+/// single `FormatParser` pass inside `Compiler::compile`, and lower the result
+/// to the exact typed-construction VIR a hand-written literal produces. This is
+/// a legitimate as-if fold of the doctrine primitive's constant-input case — it
+/// is *not* the runtime `r[machine.primitive.typed-deserialization]` doc-parse
+/// primitive, which serves dynamic documents and returns a runtime `Outcome`.
+///
+/// The zero-`HostCall`/`HostCallYield` assertion below is therefore an **as-if
+/// optimization certificate** — proof the fold keeps the parse out of the
+/// verified machine — not proof the runtime primitive exists. The runtime seam
+/// for dynamic/unknown-target decodes is named explicitly elsewhere
+/// (`DiagnosticCode::RuntimeDecodeUnavailable`), never satisfied here.
+fn assert_typed_decode_rung(source: &str, checks: usize) {
+    let module = Compiler::new()
+        .compile(source)
+        .expect("typed-decode rung compiles through the canonical surface");
+    let partitioned = module.partition_test(&module.tests[0]);
+    let mut lowering_cache = LoweringCache::default();
+    for island in &partitioned.islands {
+        let lowered = lowering_cache
+            .get_or_lower(island)
+            .expect("typed-decode rung lowers through verified Weavy execution");
+        assert!(
+            lowered.program().fns.iter().all(|function| {
+                function.code.iter().all(|op| {
+                    !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. })
+                })
+            }),
+            "decode lowers to typed construction, never a machine host call",
+        );
+    }
+
+    let report = run_source(source).expect("typed-decode rung runs through Executable");
+    assert!(report.passed());
+    assert!(report.agrees());
+    assert_eq!(report.plain.checks.len(), checks);
+    assert_eq!(report.plain.checks, report.chaos.checks);
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.checks.iter().all(|check| check.passed));
+        assert_eq!(lane.counters.pure_host_calls, 0);
+        assert_eq!(lane.receipt_count, 0);
+        if std::env::var("WEAVY_JIT").as_deref() == Ok("0") {
+            assert!(
+                lane.events
+                    .iter()
+                    .filter_map(|event| match event.kind {
+                        EventKind::ExecutionLane { facts, .. } => Some(facts),
+                        _ => None,
+                    })
+                    .all(|facts| matches!(
+                        facts,
+                        vix::runtime::ExecutionFacts {
+                            selected: vix::runtime::ExecutionLaneFact::Interpreter,
+                            fallback: Some(
+                                vix::runtime::ExecutionFallbackFact::DisabledByEnvironment
+                            ),
+                            ..
+                        }
+                    ))
+            );
+        }
+    }
+}
+
+/// Rung 062 — JSON lands directly on a struct via the type-directed decoder.
+#[test]
+fn rung_062_json_decode_lands_json_on_a_struct() {
+    assert_typed_decode_rung(RUNG_062, 3);
+}
+
+/// Rung 063 — TOML manifests decode into nested structs with no Doc-walking.
+#[test]
+fn rung_063_toml_decode_builds_nested_structs() {
+    assert_typed_decode_rung(RUNG_063, 2);
+}
+
+/// Rung 064 — absent fields decode to `Option::None`, present ones to `Some`,
+/// through the same decoder and the same typed construction.
+#[test]
+fn rung_064_absent_fields_decode_to_option_none() {
+    assert_typed_decode_rung(RUNG_064, 2);
+}
+
+/// Rung 065 — the string-or-table enum form (the Cargo dependency shape): a
+/// scalar string decodes to the short single-`String` tuple variant, an object
+/// to the detailed record variant, both through the same decoder and lowered to
+/// ordinary `Op::Variant` construction.
+#[test]
+fn rung_065_decodes_string_or_table_enum_forms() {
+    assert_typed_decode_rung(RUNG_065, 3);
+}
+
+/// Adversarial identity oracle for the constant fold: a successfully folded
+/// decoded value must be *the same value* as the equivalent authored typed
+/// construction — proven through the production canonical-recipe and Store
+/// framed-identity paths, not merely by both `expect_eq`s passing.
+///
+/// Two programs identical except decode-vs-literal fold to identical canonical
+/// VIR, so they share a `RecipeId` and `DemandKey`; run through `run_source`
+/// they intern the *same* framed value identities and produce identical check
+/// identities. A negative control (a different authored value) must diverge, so
+/// the oracle is discriminating rather than trivially true.
+#[test]
+fn decoded_value_is_identity_equivalent_to_authored_construction() {
+    const AUTHORED: &str = "\
+struct PkgRow { name: String, vers: String, yanked: Bool }
+#[test]
+fn t() -> Stream<Check> {
+    let row = PkgRow { name: \"mio\", vers: \"0.8.11\", yanked: false };
+    yield expect_eq(row.name, \"mio\");
+    yield expect_eq(row.vers, \"0.8.11\");
+}
+";
+    const DECODED: &str = "\
+struct PkgRow { name: String, vers: String, yanked: Bool }
+#[test]
+fn t() -> Stream<Check> {
+    let row: PkgRow = json_decode(\"{\\\"name\\\":\\\"mio\\\",\\\"vers\\\":\\\"0.8.11\\\",\\\"yanked\\\":false}\");
+    yield expect_eq(row.name, \"mio\");
+    yield expect_eq(row.vers, \"0.8.11\");
+}
+";
+    // A different authored value: same shape, different `vers`. The fold must be
+    // discriminating — this must NOT collide with the decoded recipe/identity.
+    const OTHER: &str = "\
+struct PkgRow { name: String, vers: String, yanked: Bool }
+#[test]
+fn t() -> Stream<Check> {
+    let row = PkgRow { name: \"mio\", vers: \"9.9.9\", yanked: false };
+    yield expect_eq(row.name, \"mio\");
+    yield expect_eq(row.vers, \"0.8.11\");
+}
+";
+
+    // 1. Canonical-recipe / framed-identity path: the folded decode is
+    //    byte-identical VIR to the authored construction, hence one recipe and
+    //    one demand key; the negative control diverges.
+    let lower = |source: &str| {
+        let module = Compiler::new().compile(source).expect("compiles");
+        let partitioned = module.partition_test(&module.tests[0]);
+        let canonical = partitioned.islands[0].canonical_recipe_bytes();
+        let mut cache = LoweringCache::default();
+        let lowered = cache.get_or_lower(&partitioned.islands[0]).expect("lowers");
+        (canonical, lowered.recipe, lowered.demand_key)
+    };
+    let (authored_vir, authored_recipe, authored_key) = lower(AUTHORED);
+    let (decoded_vir, decoded_recipe, decoded_key) = lower(DECODED);
+    let (other_vir, other_recipe, _other_key) = lower(OTHER);
+    assert_eq!(
+        authored_vir, decoded_vir,
+        "the fold emits byte-identical canonical VIR to the authored construction"
+    );
+    assert_eq!(authored_recipe, decoded_recipe, "one canonical recipe");
+    assert_eq!(authored_key, decoded_key, "one demand key");
+    assert_ne!(
+        authored_vir, other_vir,
+        "a different authored value must produce a different recipe"
+    );
+    assert_ne!(authored_recipe, other_recipe);
+
+    // 2. Production Store path: running both interns the same framed value
+    //    identities and yields identical check identities.
+    let store_identities = |run: &vix::ratchet::SuiteRun| {
+        run.events
+            .iter()
+            .filter_map(|event| match event.kind {
+                EventKind::StoreAlloc { identity, .. } => Some(identity),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let authored_run = run_source(AUTHORED).expect("authored runs");
+    let decoded_run = run_source(DECODED).expect("decoded runs");
+    assert!(authored_run.passed() && decoded_run.passed());
+    let authored_ids = store_identities(&authored_run.plain);
+    let decoded_ids = store_identities(&decoded_run.plain);
+    assert!(
+        !authored_ids.is_empty(),
+        "the construction interns at least one framed value"
+    );
+    assert_eq!(
+        authored_ids, decoded_ids,
+        "decode and authored construction intern the same framed store identities"
+    );
+    assert_eq!(
+        authored_run.plain.checks, decoded_run.plain.checks,
+        "identical check identities (ValueId) through the production path"
+    );
+}
+
+/// A decode whose document is not a compile-time-constant literal cannot be
+/// folded; rather than silently accept or host-evaluate the dynamic string, the
+/// compiler names the unavailable runtime doc-parse seam with the format and
+/// target type. (A no-target decode is the same seam with `target: None`.)
+#[test]
+fn nonliteral_decode_names_the_runtime_seam() {
+    const SOURCE: &str = "\
+struct PkgRow { name: String }
+#[test]
+fn t() -> Stream<Check> {
+    let src = \"{}\";
+    let row: PkgRow = json_decode(src);
+    yield expect_eq(row.name, \"x\");
+}
+";
+    let diagnostics = Compiler::new()
+        .compile(SOURCE)
+        .expect_err("a nonliteral decode document is the runtime seam, not a fold");
+    assert_eq!(diagnostics.entries.len(), 1);
+    assert_eq!(
+        diagnostics.entries[0].code,
+        DiagnosticCode::RuntimeDecodeUnavailable
+    );
+    assert_eq!(
+        diagnostics.entries[0].payload,
+        DiagnosticPayload::RuntimeDecode {
+            format: "JSON".to_owned(),
+            target: Some("PkgRow".to_owned()),
+        }
+    );
+}
+
+/// A malformed constant document fails as a *structured typed* diagnostic — a
+/// stable kind label, a structured field path, and the offending document byte
+/// span — never a stringly `UnsupportedExpression`. No identity depends on the
+/// rendered prose.
+#[test]
+fn malformed_literal_decode_is_a_structured_typed_failure() {
+    const SOURCE: &str = "\
+struct PkgRow { name: String, vers: String }
+#[test]
+fn t() -> Stream<Check> {
+    let row: PkgRow = json_decode(\"{\\\"name\\\": 42, \\\"vers\\\": \\\"x\\\"}\");
+    yield expect_eq(row.vers, \"x\");
+}
+";
+    let diagnostics = Compiler::new()
+        .compile(SOURCE)
+        .expect_err("an integer where a String is expected fails the fold");
+    assert_eq!(diagnostics.entries.len(), 1);
+    assert_eq!(diagnostics.entries[0].code, DiagnosticCode::DecodeFailed);
+    let DiagnosticPayload::Decode {
+        format,
+        target,
+        kind,
+        path,
+        doc_offset,
+        doc_len,
+        ..
+    } = &diagnostics.entries[0].payload
+    else {
+        panic!("expected a structured Decode payload");
+    };
+    assert_eq!(format, "JSON");
+    assert_eq!(target, "PkgRow");
+    assert_eq!(kind, "expected-scalar");
+    assert_eq!(path, &["name".to_owned()]);
+    // The document span points at the offending `42` inside the decoded literal.
+    let document = "{\"name\": 42, \"vers\": \"x\"}";
+    let offset = doc_offset.expect("document offset preserved") as usize;
+    let len = doc_len.expect("document length preserved") as usize;
+    assert_eq!(&document[offset..offset + len], "42");
+}
+
+/// Rung 066's exact code-grounded red boundary on the merged production tree: it
+/// stops in the surface grammar, before any decode — the `call` production does
+/// not admit the `try_json_decode<T>` turbofish that names the target type.
+#[test]
+fn typed_decode_066_red_boundary() {
+    let failure = Compiler::new()
+        .compile(RUNG_066)
+        .expect_err("the try_json_decode<T> turbofish does not parse yet");
+    assert_eq!(failure.entries.len(), 1);
+    assert_eq!(failure.entries[0].code, DiagnosticCode::ParseRejected);
 }
 
 // ---------------------------------------------------------------------------

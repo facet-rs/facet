@@ -23,6 +23,7 @@ pub mod binder;
 pub mod budget;
 pub mod compiler;
 pub(crate) mod data;
+pub mod decode;
 pub mod diagnostic;
 pub mod exec;
 pub mod fetch;

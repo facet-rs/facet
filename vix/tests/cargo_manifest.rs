@@ -560,7 +560,12 @@ fn real_workspace_metadata_baseline_is_counted() -> Result<(), String> {
     // vix gained one dependency (libc) for the outer budget runner's
     // cross-process resident-set observation. It is a workspace-inherited
     // dependency, so it also adds one to the workspace-allowlist count.
-    assert_eq!(total_oracle_deps, 1136);
+    //
+    // vix then gained one more (facet-format), a path dependency used by the
+    // typed-decode lane to drive the shared `FormatParser` trait against the
+    // compiler-known target type. Being a plain path dependency it adds to the
+    // oracle dependency total but not to the workspace-allowlist count.
+    assert_eq!(total_oracle_deps, 1137);
     assert_eq!(before_workspace_allowlist_failures, 766);
     assert_eq!(target_cfg_represented, 55);
 

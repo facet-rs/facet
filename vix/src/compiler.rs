@@ -3,6 +3,7 @@
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet};
 
+use crate::decode::{self, DecodeFormat, DecodedValue};
 use crate::diagnostic::{Diagnostic, DiagnosticCode, DiagnosticPayload, Diagnostics, Label};
 use crate::support::{Span, Spanned};
 use crate::surface::{SurfaceParser, ast};
@@ -2645,6 +2646,9 @@ fn lower_value_expected(
         ast::Expr::Call(call) if call.callee.value == "Some" => {
             lower_some(nodes, bindings, context, call, expected)
         }
+        ast::Expr::Call(call) if decode_format(&call.callee.value).is_some() => {
+            lower_decode(nodes, call, expected)
+        }
         ast::Expr::Call(call) => lower_call(nodes, bindings, context, call),
         ast::Expr::WhereCall(call) => lower_where_call(nodes, bindings, context, call),
         ast::Expr::Binary(binary) => lower_binary(nodes, bindings, context, binary),
@@ -4016,6 +4020,236 @@ fn lower_some(
         ),
         ty,
     })
+}
+
+/// The decode intrinsics: a compile-time **constant fold** of typed decode,
+/// restricted to compile-time-constant document literals. The literal is decoded
+/// against the compiler-known target type (the `let`/call-site expected type) in
+/// a single parser pass and lowered to the exact typed-construction VIR a
+/// hand-written literal of the same value produces. For a constant, pure,
+/// deterministic decode this is a legitimate as-if rewrite; it is **not** the
+/// runtime `r[machine.primitive.typed-deserialization]` doc-parse primitive
+/// (which serves *dynamic* documents and returns a runtime `Outcome`). When that
+/// primitive lands, this fold must become the constant-folded case *of* it, not
+/// a replacement — nonliteral sources are rejected at a named runtime seam
+/// ([`DiagnosticCode::RuntimeDecodeUnavailable`]) rather than host-evaluated.
+fn decode_format(name: &str) -> Option<DecodeFormat> {
+    match name {
+        "json_decode" => Some(DecodeFormat::Json),
+        "toml_decode" => Some(DecodeFormat::Toml),
+        _ => None,
+    }
+}
+
+fn decode_format_label(format: DecodeFormat) -> &'static str {
+    match format {
+        DecodeFormat::Json => "JSON",
+        DecodeFormat::Toml => "TOML",
+    }
+}
+
+/// The named runtime seam a decode that cannot be constant-folded would need:
+/// a nonliteral document, or a target type not known from context.
+fn runtime_decode_unavailable(
+    span: Span,
+    format: DecodeFormat,
+    target: Option<&Type>,
+) -> Diagnostics {
+    Diagnostics::one(Diagnostic {
+        code: DiagnosticCode::RuntimeDecodeUnavailable,
+        primary: span,
+        labels: Vec::new(),
+        payload: DiagnosticPayload::RuntimeDecode {
+            format: decode_format_label(format).to_owned(),
+            target: target.map(Type::name),
+        },
+    })
+}
+
+fn lower_decode(
+    nodes: &mut Vec<Node>,
+    call: &ast::Call,
+    expected: Option<&Type>,
+) -> Result<LoweredValue, Diagnostics> {
+    let format = decode_format(&call.callee.value).expect("decode intrinsic name");
+    if call.named_args.is_some() {
+        return Err(Diagnostics::one(Diagnostic::unsupported(
+            call.span,
+            "named arguments on a decode call",
+        )));
+    }
+    check_arity(call, 1)?;
+    // The fold's precondition: a known target type and a constant document
+    // literal. Either missing names the runtime doc-parse seam — never a
+    // host-evaluation of a dynamic string.
+    let Some(target) = expected else {
+        return Err(runtime_decode_unavailable(call.span, format, None));
+    };
+    let ast::Expr::Str(document) = &call.args.args[0] else {
+        return Err(runtime_decode_unavailable(
+            expr_span(&call.args.args[0]),
+            format,
+            Some(target),
+        ));
+    };
+    let decoded = decode::decode(format, &document.value, target)
+        .map_err(|error| decode_failed_diagnostic(call.span, format, target, &error))?;
+    lower_decoded_value(nodes, &decoded, target, call.span)
+}
+
+/// Render a typed [`decode::DecodeError`] into a structured compiler
+/// diagnostic. The kind label, field path, and document byte span are preserved
+/// as structured payload fields; the prose `detail` is a rendering convenience
+/// and is never an identity-bearing value.
+fn decode_failed_diagnostic(
+    span: Span,
+    format: DecodeFormat,
+    target: &Type,
+    error: &decode::DecodeError,
+) -> Diagnostics {
+    let (doc_offset, doc_len) = match error.span {
+        Some(document) => (Some(document.offset), Some(document.len)),
+        None => (None, None),
+    };
+    Diagnostics::one(Diagnostic {
+        code: DiagnosticCode::DecodeFailed,
+        primary: span,
+        labels: Vec::new(),
+        payload: DiagnosticPayload::Decode {
+            format: decode_format_label(format).to_owned(),
+            target: target.name(),
+            kind: error.kind.label().to_owned(),
+            path: error.path_names(),
+            doc_offset,
+            doc_len,
+            detail: error.render(),
+        },
+    })
+}
+
+/// Lower a type-directed decode result into typed-construction VIR. The
+/// `DecodedValue` is aligned to `ty` by construction, so a shape disagreement
+/// here is an internal decoder invariant break, not a source error.
+fn lower_decoded_value(
+    nodes: &mut Vec<Node>,
+    decoded: &DecodedValue,
+    ty: &Type,
+    span: Span,
+) -> Result<LoweredValue, Diagnostics> {
+    match (decoded, ty) {
+        (DecodedValue::Int(value), Type::Int) => {
+            lower_integer_literal(nodes, span, &value.to_string())
+        }
+        (DecodedValue::Bool(value), Type::Bool) => Ok(lower_bool_constant(nodes, span, *value)),
+        (DecodedValue::Str(value), Type::String) => Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                span,
+                Type::String,
+                EffectFacts::PURE,
+                Vec::new(),
+                Op::String(value.clone()),
+            ),
+            ty: Type::String,
+        }),
+        (DecodedValue::Record(values), Type::Record(record))
+            if values.len() == record.fields.len() =>
+        {
+            let mut inputs = Vec::with_capacity(values.len());
+            for (value, field) in values.iter().zip(&record.fields) {
+                inputs.push(lower_decoded_value(nodes, value, &field.ty, span)?.node);
+            }
+            let ty = ty.clone();
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    inputs,
+                    Op::Record,
+                ),
+                ty,
+            })
+        }
+        (DecodedValue::OptionSome(inner), _) if ty.option_inner().is_some() => {
+            let inner_ty = ty.option_inner().expect("option target").clone();
+            let payload = lower_decoded_value(nodes, inner, &inner_ty, span)?;
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    vec![payload.node],
+                    Op::Variant {
+                        variant: OPTION_SOME_VARIANT,
+                    },
+                ),
+                ty: ty.clone(),
+            })
+        }
+        (DecodedValue::OptionNone, _) if ty.option_inner().is_some() => Ok(LoweredValue {
+            node: push_node(
+                nodes,
+                span,
+                ty.clone(),
+                EffectFacts::PURE,
+                Vec::new(),
+                Op::Variant {
+                    variant: OPTION_NONE_VARIANT,
+                },
+            ),
+            ty: ty.clone(),
+        }),
+        (DecodedValue::Variant { index, fields }, Type::Enum(enumeration)) => {
+            let variant = enumeration.variants.get(*index as usize).ok_or_else(|| {
+                Diagnostics::one(Diagnostic::unsupported(
+                    span,
+                    format!(
+                        "a decoded variant index out of range for {}",
+                        enumeration.name
+                    ),
+                ))
+            })?;
+            let field_types: Vec<Type> = match &variant.payload {
+                VariantPayload::Tuple(types) => types.clone(),
+                VariantPayload::Record(record_fields) => {
+                    record_fields.iter().map(|field| field.ty.clone()).collect()
+                }
+                VariantPayload::Unit => Vec::new(),
+            };
+            if field_types.len() != fields.len() {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    span,
+                    format!(
+                        "a decoded {}::{} payload with the wrong field count",
+                        enumeration.name, variant.name
+                    ),
+                )));
+            }
+            let mut inputs = Vec::with_capacity(fields.len());
+            for (value, field_ty) in fields.iter().zip(&field_types) {
+                inputs.push(lower_decoded_value(nodes, value, field_ty, span)?.node);
+            }
+            let ty = ty.clone();
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    inputs,
+                    Op::Variant { variant: *index },
+                ),
+                ty,
+            })
+        }
+        _ => Err(Diagnostics::one(Diagnostic::unsupported(
+            span,
+            format!("a decoded value that does not align with {}", ty.name()),
+        ))),
+    }
 }
 
 /// Names introduced by an irrefutable (or refutable) pattern. Used to subtract
