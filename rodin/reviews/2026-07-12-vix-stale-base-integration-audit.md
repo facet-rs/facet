@@ -215,7 +215,7 @@ the production-shaped path as `ratchet::{run_source_with_lane,
 prepare_source_with_lane}`. The certificate
 `vix/tests/cross_lane_differential.rs`
 (`accepted_corpus_agrees_across_native_and_interpreter_lanes`) sweeps the
-accepted canonical corpus through rung 061 (respecting reject semantics): on a
+accepted canonical corpus through rung 065 (respecting reject semantics): on a
 native-capable host each accepted rung compiles once and executes through an
 explicitly-selected native `Executable` and an explicitly-selected interpreter
 `Executable`, and the full provenance-keyed check/failure family

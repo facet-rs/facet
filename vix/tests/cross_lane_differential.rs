@@ -1,7 +1,7 @@
 //! Cross-lane differential certificate (audit finding F1).
 //!
 //! A production-shaped, in-process differential over the accepted canonical rung
-//! corpus (through rung 061). On a native-capable host each accepted rung is
+//! corpus (through rung 065). On a native-capable host each accepted rung is
 //! compiled and lowered once, then executed through an explicitly selected
 //! *native* [`weavy::exec::Executable`] and an explicitly selected *interpreter*
 //! [`weavy::exec::Executable`] — the same compiled/lowered semantics driven
@@ -64,7 +64,7 @@ const DEP_MIO_GOLDEN: &str =
     "Dep {\n    name: \"mio\",\n    req: \"^0.8\",\n    optional: false,\n}";
 const GREEK_LETTERS_GOLDEN: &str = "[\n    \"alpha\",\n    \"beta\",\n    \"gamma\",\n]";
 
-/// The accepted canonical corpus through rung 061, with reject fixtures marked.
+/// The accepted canonical corpus through rung 065, with reject fixtures marked.
 /// Reject rungs are rejected at compile time (before any lane is selected), so
 /// they certify only that both lanes report the identical rejection; accepted
 /// rungs drive the full cross-lane semantic differential.
@@ -372,6 +372,26 @@ const CORPUS: &[Rung] = &[
     Rung {
         name: "061-snapshot-canonical",
         source: include_str!("ratchet/061-snapshot-canonical.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "062-json-decode",
+        source: include_str!("ratchet/062-json-decode.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "063-toml-decode",
+        source: include_str!("ratchet/063-toml-decode.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "064-decode-optional",
+        source: include_str!("ratchet/064-decode-optional.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "065-decode-enum-forms",
+        source: include_str!("ratchet/065-decode-enum-forms.vix"),
         reject: false,
     },
 ];
