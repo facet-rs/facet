@@ -22,14 +22,34 @@ double 21             // call double with 21
 Parentheses are **grouping**. They are never call syntax. So `parse (root)` is
 `parse root`, and `(a + b)` is what you expect.
 
-**Coming from Rust/JS**: `f(x)` still works, because it is `f` applied to the
-group `(x)`, which is `x`. But `f(a, b)` is `f` applied to the *tuple* `(a, b)`,
-which is a different thing and almost never what you want.
+The parentheses do not make the tuple. **The comma does.** These are four
+different arguments:
+
+```vix
+f ()              // unit: the empty tuple
+f (argument)      // argument: grouping is transparent
+f (argument,)     // a one-element tuple
+f (left, right)   // a two-element tuple
+```
+
+So `f(argument)` still works for readers coming from Rust or JavaScript, but not
+for the reason it works there: it is `f` juxtaposed with the group `(argument)`,
+and that group is just `argument`. `f(left, right)` applies `f` to one pair.
+
+Sometimes a pair is exactly the API. Equality consumes the two comparable values
+as one pair, and snapshotting consumes the value and its stable name as one pair:
+
+```vix
+expect_eq (actual, expected)
+expect_snapshot (value, "stable-name")
+```
 
 ## At most one positional argument
 
 The one positional argument is the **subject** — the thing being acted on.
-Everything else is named.
+Everything else is named. A tuple or record is still one value, so an API may
+deliberately take a structured subject without acquiring multiple positional
+arguments.
 
 ```vix
 exec cc`-c input.c -o input.o` where { mounts, writable: [p"out"] }
