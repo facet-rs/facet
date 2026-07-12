@@ -113,6 +113,7 @@ pub struct ArrayOutcomeAbi {
     pub string_missing_delimiter_variant: u32,
     pub string_invalid_integer_variant: u32,
     pub string_integer_overflow_variant: u32,
+    pub int_division_by_zero_variant: u32,
 }
 
 impl ArrayOutcomeAbi {
@@ -158,6 +159,10 @@ impl ArrayOutcomeAbi {
                         name: "StringIntegerOverflow".to_owned(),
                         payload: VariantPayload::Tuple(vec![Type::Int]),
                     },
+                    EnumVariant {
+                        name: "IntDivisionByZero".to_owned(),
+                        payload: VariantPayload::Tuple(vec![Type::Int]),
+                    },
                 ],
             }),
             ok_variant: 0,
@@ -169,6 +174,7 @@ impl ArrayOutcomeAbi {
             string_missing_delimiter_variant: 6,
             string_invalid_integer_variant: 7,
             string_integer_overflow_variant: 8,
+            int_division_by_zero_variant: 9,
         }
     }
 }
@@ -341,6 +347,16 @@ impl LoweringCache {
         let lowered = lower_island(island, recipe, self.trace_mode)?;
         self.entries.insert(recipe, lowered);
         Ok(self.entries.get(&recipe).expect("entry was just inserted"))
+    }
+
+    /// The already-lowered artifact for `island`, without lowering it or counting
+    /// a hit. Returns `None` if the island was never lowered. This lets a caller
+    /// hold several immutable artifacts at once — needed to build a wire-demand
+    /// tree — after every island has been lowered up front.
+    #[must_use]
+    pub fn lowered(&self, island: &Island) -> Option<&LoweringArtifact> {
+        let recipe = RecipeId::from_canonical_vir(&island.canonical_recipe_bytes());
+        self.entries.get(&recipe)
     }
 
     #[must_use]
@@ -758,6 +774,7 @@ fn nodes_contain_checked_collection_ops(nodes: &[Node]) -> bool {
                 | Op::StreamFindMin
                 | Op::StreamFindMax
                 | Op::StreamSplitMin
+                | Op::Div
         ) || matches!(node.op, Op::Eq | Op::Ne | Op::Compare)
             && node.inputs.iter().any(|input| {
                 nodes
@@ -4646,6 +4663,9 @@ fn lower_node_sequence(
             Op::StringSplitOnce | Op::StringParseInt => {
                 lower_checked_string_node(node, dst, values, sequence, outputs)?
             }
+            Op::Div if sequence.function.layout.array_outcome.is_some() => {
+                lower_checked_division_node(node, dst, values, sequence, outputs)?
+            }
             Op::Map
             | Op::MapAdd
             | Op::MapConcat
@@ -4923,6 +4943,83 @@ fn emit_string_status_checks(
         code.bind(next, node.span)?;
     }
     code.bind(success, node.span)
+}
+
+/// Lower `a / b` as a checked Int division: a zero divisor is a typed language
+/// failure carrying the operation's source site, never a wrong value and never a
+/// crash. The failure is constructed only on the zero-divisor path and returned
+/// through the island's outcome ABI; the non-zero path emits the ordinary
+/// `DivI64`, so the raw division op and its verified frame are preserved. Uses
+/// only existing verified ops, so the interpreter and native JIT share the
+/// semantics and the typed fault with no lane-specific handling.
+fn lower_checked_division_node(
+    node: &Node,
+    dst: FrameRegion,
+    values: &BTreeMap<NodeId, LoweredSlot>,
+    sequence: &SequenceContext<'_, '_, '_>,
+    outputs: &mut SequenceOutputs<'_, '_>,
+) -> Result<ValueRepresentation, Diagnostics> {
+    require_node_type(node, Type::Int)?;
+    let (a, b) = binary_values(node, values)?;
+    require_value(node, &a, &Type::Int, ValueRepresentation::Word)?;
+    require_value(node, &b, &Type::Int, ValueRepresentation::Word)?;
+    let outcome = sequence
+        .lowering
+        .regions
+        .array_outcome(sequence.function.id, node.span)?;
+    let assigned = sequence
+        .lowering
+        .regions
+        .outcome_scratch(sequence.function.id, node.span)?;
+    let scratch =
+        sequence.function.layout.outcome_scratch.ok_or_else(|| {
+            lowering_diagnostic(node.span, "checked division has no outcome scratch")
+        })?;
+    let return_label = sequence
+        .array_return
+        .ok_or_else(|| lowering_diagnostic(node.span, "checked division has no outcome return"))?;
+    let site = *sequence
+        .lowering
+        .trace_ids
+        .get(&NodeRef {
+            function: sequence.function.id,
+            node: node.id,
+        })
+        .ok_or_else(|| lowering_diagnostic(node.span, "division has no trace attribution"))?;
+    let divide = outputs.code.label();
+    // condition = (divisor == 0); the zero constant occupies a general scratch
+    // field, never the status word (which carries a typed status kind).
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[1].byte_offset(),
+        value: 0,
+    });
+    outputs.code.push(WeavyOp::EqI64 {
+        dst: scratch.condition.byte_offset(),
+        a: b.region.start().byte_offset(),
+        b: scratch.fields[1].byte_offset(),
+    });
+    // Non-zero divisor divides; a zero divisor falls through to the typed fault.
+    outputs.code.jump_if_zero(scratch.condition, divide);
+    outputs.code.push(WeavyOp::ConstI64 {
+        dst: scratch.fields[0].byte_offset(),
+        value: i64::from(site),
+    });
+    outputs.code.push(WeavyOp::EnumConstruct {
+        dst: outcome,
+        variant: ArrayOutcomeAbi::for_value(node.ty.clone()).int_division_by_zero_variant,
+        fields: vec![StructuralFieldSource {
+            field: 0,
+            source: assigned.fields[0],
+        }],
+    });
+    outputs.code.jump(return_label);
+    outputs.code.bind(divide, node.span)?;
+    outputs.code.push(WeavyOp::DivI64 {
+        dst: dst.start().byte_offset(),
+        a: a.region.start().byte_offset(),
+        b: b.region.start().byte_offset(),
+    });
+    Ok(ValueRepresentation::Word)
 }
 
 fn lower_ordered_match_node(
@@ -5707,6 +5804,15 @@ fn lower_node(
             require_node_type(node, Type::Int)?;
             (
                 vec![WeavyOp::ConstI64 { dst, value: *value }],
+                ValueRepresentation::Word,
+            )
+        }
+        Op::AwaitWire { input } => {
+            // Demand a wire: park until the scheduler resolves this wire input
+            // through the memo path, then resume with the scalar result word.
+            require_input_count(node, 0)?;
+            (
+                vec![WeavyOp::Await { dst, input: *input }],
                 ValueRepresentation::Word,
             )
         }
@@ -6905,12 +7011,21 @@ fn propagate_checked_call_failure(
     return_label: CodeLabel,
     code: &mut CodeBuilder,
 ) -> Result<(), Diagnostics> {
+    // Every closed outcome fault variant a callee can return is re-raised into
+    // this frame's outcome. `Ok` (variant 0) is handled by the caller; the rest
+    // — index/key/machine faults, string faults, and Int division-by-zero —
+    // forward field-for-field so a demanded failure keeps its typed identity and
+    // source site across the call boundary.
     for (variant, field_count) in [
         (1u32, 3usize),
         (2u32, 2usize),
         (3u32, 1usize),
         (4u32, 1usize),
         (5u32, 2usize),
+        (6u32, 1usize),
+        (7u32, 1usize),
+        (8u32, 1usize),
+        (9u32, 1usize),
     ] {
         let next = code.label();
         code.push(WeavyOp::EnumIsVariant {

@@ -98,6 +98,7 @@ struct SolverState {
 
 struct DeadRegion { selections: Map<PackageId, Version> }
 struct Choice { package: PackageId, candidates: Int }
+struct SearchResult { solution: Option<Map<String, Version>>, learned: [DeadRegion] }
 enum SolveStep { Pass(SolverState), Conflict(DeadRegion) }
 
 fn empty_state() -> SolverState {
@@ -296,16 +297,16 @@ fn selected_result(packages: [PackageId]) where { state: SolverState, out: Map<S
     }
 }
 
-fn search(universe: PackageUniverse) where { state: SolverState } -> Option<Map<String, Version>> {
+fn search(universe: PackageUniverse) where { state: SolverState } -> SearchResult {
     match choose_undecided(universe) where { state } {
-        None => selected_result(state.domains.keys()) where { state, out: %{} },
+        None => SearchResult { solution: selected_result(state.domains.keys()) where { state, out: %{} }, learned: state.learned },
         Some(choice) => try_rows(universe) where { state, package: choice.package, rows: eligible_rows(universe) where { state, package: choice.package } },
     }
 }
 
-fn try_rows(universe: PackageUniverse) where { state: SolverState, package: PackageId, rows: [PackageRow] } -> Option<Map<String, Version>> {
+fn try_rows(universe: PackageUniverse) where { state: SolverState, package: PackageId, rows: [PackageRow] } -> SearchResult {
     match highest_row(rows) {
-        None => None,
+        None => SearchResult { solution: None, learned: state.learned },
         Some(row) => {
             let rest = without_version(rows) where { version: row.version, out: [] };
             let branch = SolverState { selected: state.selected.with (package, row.version), ..state };
@@ -314,9 +315,12 @@ fn try_rows(universe: PackageUniverse) where { state: SolverState, package: Pack
             } else {
                 match select_row(universe) where { state, package, row } {
                     SolveStep::Conflict(region) => try_rows(universe) where { state: remember(state) where { region }, package, rows: rest },
-                    SolveStep::Pass(next) => match search(universe) where { state: next } {
-                        Some(solution) => Some(solution),
-                        None => try_rows(universe) where { state, package, rows: rest },
+                    SolveStep::Pass(next) => {
+                        let nested = search(universe) where { state: next };
+                        match nested.solution {
+                            Some(solution) => SearchResult { solution: Some(solution), learned: nested.learned },
+                            None => try_rows(universe) where { state: SolverState { learned: nested.learned, ..state }, package, rows: rest },
+                        }
                     },
                 }
             }
@@ -327,7 +331,7 @@ fn try_rows(universe: PackageUniverse) where { state: SolverState, package: Pack
 fn mini_solve(universe: PackageUniverse) where { requirements: Map<String, VersionSet> } -> Option<Map<String, Version>> {
     match seed_requirements(universe) where { names: requirements.keys(), requirements, state: empty_state() } {
         None => None,
-        Some(state) => search(universe) where { state },
+        Some(state) => (search(universe) where { state }).solution,
     }
 }
 "#;
@@ -421,7 +425,23 @@ fn rung_092_shares_solution_between_generator_control_and_selected_check() {
 
 #[test]
 fn rung_093_preserves_the_demanded_once_red_boundary() {
-    assert_eq!(unknown_name(&solver_lane(RUNG_093)), "demanded_once");
+    // `demanded_once` is now a described-wire intrinsic, but rung 093 selects a
+    // let-bound wire (`demanded_once(solve)`) rather than a direct invocation.
+    // Resolving a bound wire to its underlying demand is a separate solver-lane
+    // capability, so 093 stays red at the described-wire operand boundary.
+    let Err(RunError::Diagnostics(diagnostics)) = run_source(&solver_lane(RUNG_093)) else {
+        panic!("rung 093 remains red at the described-wire operand boundary");
+    };
+    assert_eq!(diagnostics.entries.len(), 1, "one red boundary");
+    let entry = &diagnostics.entries[0];
+    assert_eq!(entry.code, DiagnosticCode::UnsupportedExpression);
+    let DiagnosticPayload::Unsupported { construct } = &entry.payload else {
+        panic!("described-wire operand boundary carries an unsupported payload: {entry:?}");
+    };
+    assert_eq!(
+        construct,
+        "a described-wire trace check takes a direct function invocation"
+    );
 }
 
 #[test]

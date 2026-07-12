@@ -4,12 +4,191 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::compiler::{Compiler, CompilerConfig};
 use crate::diagnostic::Diagnostics;
-use crate::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
+use crate::lowering::{
+    LoweringArtifact, LoweringAttribution, LoweringCache, LoweringCacheCounters, LoweringError,
+    attribution_for,
+};
 use crate::runtime::{
     ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog, FailureContext,
-    FailureValue, GeneratorOutcome, Location, MachineError, Runtime, TaskState, ValueId,
+    FailureValue, FramedNode, GeneratorOutcome, IslandInputs, Location, MachineError, MemoVerdict,
+    Runtime, SchemaId, TaskState, ValueId, WireDemand,
 };
-use crate::vir::{FunctionId, PartitionedRecipe, TraceCheck, ValueIslandId};
+use crate::vir::{
+    DescribedWire, FunctionId, Island, IslandId, NodeId, Op, PartitionedRecipe, PartitionedValue,
+    TraceCheck, ValueIslandId, WireArg,
+};
+
+/// The user functions named by a test's described-wire trace checks. A bundled
+/// invocation observation is emitted only for these — the observation is bounded
+/// to the selected observers, never every call.
+fn selected_wire_functions(partitioned: &crate::vir::PartitionedTest) -> BTreeSet<FunctionId> {
+    partitioned
+        .sites
+        .iter()
+        .filter_map(|site| match &site.recipe {
+            PartitionedRecipe::Trace(
+                TraceCheck::Demanded { wire }
+                | TraceCheck::NeverDemanded { wire }
+                | TraceCheck::DemandedOnce { wire },
+            ) => Some(wire.function),
+            _ => None,
+        })
+        .collect()
+}
+
+/// Record one realized demand per distinct executed invocation preimage that a
+/// described-wire observer selects, without adding a scheduler edge. The cost
+/// model may fuse a mapped element or bundle a single-consumer pure call into a
+/// direct `WeavyOp::Call`; this reads the executed island's demand-independent
+/// structure and retains the exact canonical preimage (callee + framed argument
+/// identities) so `demanded_once` distinguishes `costly(1)` from `costly(2)`.
+/// Only unconditional calls (never a control-region member) are observed, so an
+/// untaken arm's invocation is never fabricated; equal preimages share one entry.
+fn observe_bundled_invocations(
+    runtime: &mut Runtime<EventLog>,
+    island: &Island,
+    selected: &BTreeSet<FunctionId>,
+    seen: &mut BTreeSet<(FunctionId, Vec<ValueId>)>,
+) {
+    let mut controlled = BTreeSet::new();
+    for node in &island.nodes {
+        match &node.op {
+            Op::If {
+                consequent,
+                alternative,
+            } => {
+                controlled.extend(consequent.nodes.iter().copied());
+                controlled.extend(alternative.nodes.iter().copied());
+            }
+            Op::Match { arms } => {
+                for arm in arms {
+                    controlled.extend(arm.nodes.iter().copied());
+                }
+            }
+            Op::OrderedMatch { arms, fallback } => {
+                for arm in arms {
+                    controlled.extend(arm.condition.nodes.iter().copied());
+                    controlled.extend(arm.body.nodes.iter().copied());
+                }
+                controlled.extend(fallback.nodes.iter().copied());
+            }
+            _ => {}
+        }
+    }
+    let by_id: BTreeMap<NodeId, &crate::vir::Node> =
+        island.nodes.iter().map(|node| (node.id, node)).collect();
+    for node in &island.nodes {
+        let Op::Call(function) = node.op else {
+            continue;
+        };
+        if controlled.contains(&node.id) || !selected.contains(&function) {
+            continue;
+        }
+        let mut arguments = Vec::with_capacity(node.inputs.len());
+        let mut literal = true;
+        for input in &node.inputs {
+            match by_id.get(input).map(|node| &node.op) {
+                Some(Op::Int(value)) => arguments.push(WireArg::Int(*value)),
+                Some(Op::Bool(value)) => arguments.push(WireArg::Bool(*value)),
+                _ => {
+                    literal = false;
+                    break;
+                }
+            }
+        }
+        if !literal {
+            continue;
+        }
+        let identities: Vec<ValueId> = arguments.iter().map(wire_arg_identity).collect();
+        if seen.insert((function, identities.clone())) {
+            runtime.record_wire_demand(function, identities);
+        }
+    }
+}
+
+/// Owned backing for one island's flat wire-demand tree: everything a
+/// [`WireDemand`] borrows, kept alive alongside the island evaluation it feeds.
+/// A leaf argument island has no realized value inputs and no nested wires, so
+/// each wire's `arguments`/`wires` are empty; deeper argument graphs are built
+/// by the same lazy seam once their rungs are reached.
+struct FlatWires<'a> {
+    islands: Vec<IslandId>,
+    locations: Vec<Location>,
+    attributions: Vec<LoweringAttribution>,
+    functions: Vec<FunctionId>,
+    demand_args: Vec<Vec<ValueId>>,
+    artifacts: Vec<&'a LoweringArtifact>,
+}
+
+impl<'a> FlatWires<'a> {
+    fn demands(&'a self) -> Vec<WireDemand<'a>> {
+        self.islands
+            .iter()
+            .enumerate()
+            .map(|(index, &island)| WireDemand {
+                island,
+                location: &self.locations[index],
+                lowered: self.artifacts[index],
+                attribution: &self.attributions[index],
+                arguments: &[],
+                wires: &[],
+                function: self.functions[index],
+                demand_arguments: &self.demand_args[index],
+            })
+            .collect()
+    }
+}
+
+/// Build the flat wire-demand backing for an island's `wire_inputs`. Every named
+/// argument island was lowered up front, so this only looks it up and pins its
+/// cost-model location — one location per representative wire island, so
+/// structurally equal awaits share one memo cell and realize once.
+fn flat_wires<'a>(
+    cache: &'a LoweringCache,
+    wire_lookup: &BTreeMap<ValueIslandId, &PartitionedValue>,
+    wire_inputs: &[ValueIslandId],
+    test_name: &str,
+) -> FlatWires<'a> {
+    let mut backing = FlatWires {
+        islands: Vec::with_capacity(wire_inputs.len()),
+        locations: Vec::with_capacity(wire_inputs.len()),
+        attributions: Vec::with_capacity(wire_inputs.len()),
+        functions: Vec::with_capacity(wire_inputs.len()),
+        demand_args: Vec::with_capacity(wire_inputs.len()),
+        artifacts: Vec::with_capacity(wire_inputs.len()),
+    };
+    for value in wire_inputs {
+        let wire = wire_lookup
+            .get(value)
+            .expect("a wire input names a partitioned argument island");
+        assert!(
+            wire.island.value_inputs.is_empty() && wire.island.wire_inputs.is_empty(),
+            "argument island with nested inputs awaits the general wire seam",
+        );
+        let artifact = cache
+            .lowered(&wire.island)
+            .expect("argument island was lowered before execution");
+        backing.islands.push(wire.island.id);
+        backing.locations.push(Location::for_test_value(
+            test_name,
+            &format!("wire-{}", value.stable_segment()),
+        ));
+        backing.attributions.push(attribution_for(&wire.island));
+        let provenance = wire.wire.as_ref();
+        backing.functions.push(
+            provenance
+                .map(|provenance| provenance.function)
+                .unwrap_or(wire.island.function),
+        );
+        backing.demand_args.push(
+            provenance
+                .map(|provenance| provenance.arguments.iter().map(wire_arg_identity).collect())
+                .unwrap_or_default(),
+        );
+        backing.artifacts.push(artifact);
+    }
+    backing
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunError {
@@ -118,7 +297,7 @@ pub struct CheckRun {
 
 /// Why a trace check went red: the descriptor and the value observed in the
 /// frozen completed-run snapshot. Only present on a failing trace check.
-#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct TraceFailure {
     pub check: TraceCheck,
     pub observed: u64,
@@ -142,38 +321,102 @@ struct TraceSnapshot {
     peak_molten_bytes: u64,
     peak_molten_nodes: u64,
     function_calls: BTreeMap<FunctionId, u64>,
+    /// One entry per realized wire demand (a computation the memo path actually
+    /// ran). Repeated identical `recipe + argument` demands memoize to a single
+    /// realization, so a call-site selector observes at most one entry; distinct
+    /// arguments contribute distinct entries. This is the frozen log the
+    /// described-wire trace checks read; it retains only the callee identity and
+    /// argument identities a trace descriptor can select on.
+    wire_demands: Vec<RealizedWireDemand>,
+}
+
+/// One realized invocation recorded for described-wire observation: which user
+/// function was demanded and with which canonical argument identities. Recorded
+/// only when a wire demand actually computes (a memo miss that ran), so the log
+/// counts realizations, never re-demands of an already-memoized key.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct RealizedWireDemand {
+    pub function: FunctionId,
+    pub arguments: Vec<ValueId>,
+}
+
+/// The canonical identity of one described-wire scalar argument. Computed the
+/// same way an evaluated scalar value interns, so a described literal selects
+/// the exact realized argument identity without demanding anything.
+fn wire_arg_identity(arg: &WireArg) -> ValueId {
+    let (ty_name, bytes) = match arg {
+        WireArg::Int(value) => ("Int", value.to_le_bytes().to_vec()),
+        WireArg::Bool(value) => ("Bool", i64::from(*value).to_le_bytes().to_vec()),
+    };
+    FramedNode::leaf(
+        SchemaId::named(&format!("vix.semantic.v1:{ty_name}")),
+        bytes,
+    )
+    .identity()
+}
+
+/// An at-most trace comparison: the observed counter and whether it stays
+/// within the surface literal bound. Compared in i128 so an observed counter
+/// cannot wrap past the contract.
+fn at_most(observed: u64, bound: i64) -> (u64, bool) {
+    (observed, i128::from(observed) <= i128::from(bound))
 }
 
 impl TraceSnapshot {
+    /// Count the realized demands that match a described wire. A name-level
+    /// selector matches every realization of the callee; a call-site selector
+    /// matches only the exact described argument identities. The described
+    /// literals are resolved to identities here — never demanded or counted.
+    fn wire_matches(&self, wire: &DescribedWire) -> u64 {
+        let described: Vec<ValueId> = wire.arguments.iter().map(wire_arg_identity).collect();
+        self.wire_demands
+            .iter()
+            .filter(|demand| {
+                demand.function == wire.function
+                    && (wire.name_level || demand.arguments == described)
+            })
+            .count() as u64
+    }
+
     /// Evaluate one trace check against the frozen snapshot.
     fn evaluate(&self, provenance: ProvenanceKey, check: TraceCheck) -> CheckRun {
-        let (observed, bound) = match check {
-            TraceCheck::SchedulerRequestsAtMost { bound } => (self.scheduler_requests, bound),
-            TraceCheck::MemoEntriesAtMost { bound } => (self.memo_entries, bound),
-            TraceCheck::StoreInternsAtMost { bound } => (self.store_interns, bound),
-            TraceCheck::ValueIslandSpawnsAtMost { bound } => (self.value_island_spawns, bound),
+        let (observed, passed) = match &check {
+            TraceCheck::SchedulerRequestsAtMost { bound } => {
+                at_most(self.scheduler_requests, *bound)
+            }
+            TraceCheck::MemoEntriesAtMost { bound } => at_most(self.memo_entries, *bound),
+            TraceCheck::StoreInternsAtMost { bound } => at_most(self.store_interns, *bound),
+            TraceCheck::ValueIslandSpawnsAtMost { bound } => {
+                at_most(self.value_island_spawns, *bound)
+            }
             TraceCheck::SuccessfulAggregateFreezesAtMost { bound } => {
-                (self.successful_aggregate_freezes, bound)
+                at_most(self.successful_aggregate_freezes, *bound)
             }
             TraceCheck::ActiveMoltenSelectionsAtMost { bound } => {
-                (self.active_molten_selections, bound)
+                at_most(self.active_molten_selections, *bound)
             }
             TraceCheck::ForcedCopySelectionsAtMost { bound } => {
-                (self.forced_copy_selections, bound)
+                at_most(self.forced_copy_selections, *bound)
             }
-            TraceCheck::FramedBytesAtMost { bound } => (self.framed_bytes, bound),
-            TraceCheck::PeakMoltenBytesAtMost { bound } => (self.peak_molten_bytes, bound),
-            TraceCheck::PeakMoltenNodesAtMost { bound } => (self.peak_molten_nodes, bound),
-            TraceCheck::FunctionCallsExactly { function, times } => (
-                self.function_calls.get(&function).copied().unwrap_or(0),
-                times,
-            ),
-        };
-        // Bounds and exact demand counts are surface literals; compare in i128
-        // so an observed counter cannot wrap past either contract.
-        let passed = match check {
-            TraceCheck::FunctionCallsExactly { .. } => i128::from(observed) == i128::from(bound),
-            _ => i128::from(observed) <= i128::from(bound),
+            TraceCheck::FramedBytesAtMost { bound } => at_most(self.framed_bytes, *bound),
+            TraceCheck::PeakMoltenBytesAtMost { bound } => at_most(self.peak_molten_bytes, *bound),
+            TraceCheck::PeakMoltenNodesAtMost { bound } => at_most(self.peak_molten_nodes, *bound),
+            TraceCheck::FunctionCallsExactly { function, times } => {
+                let observed = self.function_calls.get(function).copied().unwrap_or(0);
+                (observed, i128::from(observed) == i128::from(*times))
+            }
+            TraceCheck::Demanded { wire } => {
+                let observed = self.wire_matches(wire);
+                (observed, observed >= 1)
+            }
+            TraceCheck::NeverDemanded { wire } => {
+                let observed = self.wire_matches(wire);
+                (observed, observed == 0)
+            }
+            TraceCheck::DemandedOnce { wire } => {
+                let observed = self.wire_matches(wire);
+                (observed, observed == 1)
+            }
         };
         CheckRun {
             provenance,
@@ -340,6 +583,11 @@ fn prepare_source_with_cache(
         for value in &partitioned.values {
             cache.get_or_lower(&value.island)?;
         }
+        // Argument islands demanded lazily through force-on-park are compiled now
+        // so a park resolves through a warm cache hit, never a compilation.
+        for wire in &partitioned.wire_islands {
+            cache.get_or_lower(&wire.island)?;
+        }
         if let Some(generator) = &partitioned.generator {
             cache.get_or_lower(generator)?;
         }
@@ -398,6 +646,15 @@ impl PreparedRun {
     }
 }
 
+/// The per-test context an evaluated value-check site reads: the test name for
+/// its cost-model location, the argument-island lookup backing its wires, and the
+/// shared publications available as value inputs.
+struct SiteContext<'a> {
+    test_name: &'a str,
+    wire_lookup: &'a BTreeMap<ValueIslandId, &'a PartitionedValue>,
+    published_values: &'a BTreeMap<ValueIslandId, Evaluation>,
+}
+
 /// Evaluate one value-check island as an ordinary pure demand and record its
 /// provenance-keyed outcome. Provenance is the site's stable `YieldSiteId`, and
 /// with no dynamic keys the demand location is byte-identical to the historical
@@ -405,32 +662,49 @@ impl PreparedRun {
 fn evaluate_value_site(
     runtime: &mut Runtime<EventLog>,
     cache: &mut LoweringCache,
-    test_name: &str,
+    context: &SiteContext<'_>,
     island: &crate::vir::Island,
-    published_values: &BTreeMap<ValueIslandId, Evaluation>,
     site: u32,
     chaos: ChaosPolicy,
 ) -> Result<CheckRun, RunError> {
-    let lowered = cache.get_or_lower(island)?;
+    // The island was lowered up front; re-lower to guarantee the cache entry,
+    // then hold every borrow immutably so the wire-demand tree can be built.
+    cache.get_or_lower(island)?;
+    let lowered = cache
+        .lowered(island)
+        .expect("value-check island is lowered");
     let attribution = attribution_for(island);
     let provenance = ProvenanceKey::site(site);
-    let location = Location::for_test_provenance(test_name, site, &provenance.dynamic_keys);
+    let location = Location::for_test_provenance(context.test_name, site, &provenance.dynamic_keys);
     let arguments = island
         .value_inputs
         .iter()
         .map(|value| {
-            published_values
+            context
+                .published_values
                 .get(value)
                 .cloned()
                 .expect("partitioned value input was published")
         })
         .collect::<Vec<_>>();
+    // Each `AwaitWire` in this island forces its argument island lazily through
+    // the memo path; an untaken control region never parks, so it never demands.
+    let wires_backing = flat_wires(
+        cache,
+        context.wire_lookup,
+        &island.wire_inputs,
+        context.test_name,
+    );
+    let wires = wires_backing.demands();
     let evaluation: Evaluation = runtime.evaluate(
         island.id,
         &location,
         lowered,
         &attribution,
-        &arguments,
+        IslandInputs {
+            arguments: &arguments,
+            wires: &wires,
+        },
         chaos,
     )?;
     let argument_identities = arguments.iter().map(|argument| argument.identity).collect();
@@ -460,10 +734,20 @@ fn run_lane(
     // Trace checks are deferred until every selected value check completes; they
     // are evaluated once, together, against the frozen completed-run snapshot.
     let mut deferred_traces: Vec<(ProvenanceKey, TraceCheck)> = Vec::new();
+    // Distinct executed invocation preimages already observed for a described-wire
+    // observer, so equal preimages share one realized-demand entry.
+    let mut observed_invocations: BTreeSet<(FunctionId, Vec<ValueId>)> = BTreeSet::new();
     let mut kill_available = chaos.kill_first_running_task;
 
     for test in &module.tests {
         let partitioned = module.try_partition_test(test)?;
+        let selected = selected_wire_functions(&partitioned);
+        let mut evaluated_islands: Vec<usize> = Vec::new();
+        let wire_lookup: BTreeMap<ValueIslandId, &PartitionedValue> = partitioned
+            .wire_islands
+            .iter()
+            .map(|wire| (wire.id, wire))
+            .collect();
         let mut published_values = BTreeMap::new();
         for value in &partitioned.values {
             let lowered = cache.get_or_lower(&value.island)?;
@@ -485,12 +769,25 @@ fn run_lane(
                 &location,
                 lowered,
                 &attribution,
-                &arguments,
+                IslandInputs {
+                    arguments: &arguments,
+                    wires: &[],
+                },
                 ChaosPolicy {
                     kill_first_running_task: kill_available,
                 },
             )?;
             kill_available = false;
+            // A hoisted wire island that actually computed (a memo miss) records
+            // one realized demand for its described invocation. A memoized
+            // re-demand of the same recipe+argument is a hit and adds nothing, so
+            // repeated identical wires memoize to a single realization.
+            if let Some(wire) = &value.wire
+                && evaluation.memo == MemoVerdict::Miss
+            {
+                let arguments = wire.arguments.iter().map(wire_arg_identity).collect();
+                runtime.record_wire_demand(wire.function, arguments);
+            }
             values.push(ValuePublicationRun {
                 provenance: value.id,
                 identity: evaluation.identity,
@@ -576,18 +873,22 @@ fn run_lane(
                         })?;
                     match &partitioned_site.recipe {
                         PartitionedRecipe::Value { island } => {
+                            evaluated_islands.push(*island);
                             checks.push(evaluate_value_site(
                                 &mut runtime,
                                 cache,
-                                &partitioned.name,
+                                &SiteContext {
+                                    test_name: &partitioned.name,
+                                    wire_lookup: &wire_lookup,
+                                    published_values: &published_values,
+                                },
                                 &partitioned.islands[*island],
-                                &published_values,
                                 site,
                                 ChaosPolicy::default(),
                             )?);
                         }
                         PartitionedRecipe::Trace(trace) => {
-                            deferred_traces.push((ProvenanceKey::site(site), *trace));
+                            deferred_traces.push((ProvenanceKey::site(site), trace.clone()));
                         }
                     }
                 }
@@ -600,12 +901,16 @@ fn run_lane(
                     let site = partitioned_site.id.0;
                     match &partitioned_site.recipe {
                         PartitionedRecipe::Value { island } => {
+                            evaluated_islands.push(*island);
                             checks.push(evaluate_value_site(
                                 &mut runtime,
                                 cache,
-                                &partitioned.name,
+                                &SiteContext {
+                                    test_name: &partitioned.name,
+                                    wire_lookup: &wire_lookup,
+                                    published_values: &published_values,
+                                },
                                 &partitioned.islands[*island],
-                                &published_values,
                                 site,
                                 ChaosPolicy {
                                     kill_first_running_task: kill_available,
@@ -614,10 +919,25 @@ fn run_lane(
                             kill_available = false;
                         }
                         PartitionedRecipe::Trace(trace) => {
-                            deferred_traces.push((ProvenanceKey::site(site), *trace));
+                            deferred_traces.push((ProvenanceKey::site(site), trace.clone()));
                         }
                     }
                 }
+            }
+        }
+
+        // Bounded Production observation: for every evaluated check island, retain
+        // one realized-demand entry per distinct executed invocation preimage a
+        // described-wire observer selects. This never adds a scheduler edge and
+        // never changes partitioning, execution, memoization, or results.
+        if !selected.is_empty() {
+            for island in evaluated_islands {
+                observe_bundled_invocations(
+                    &mut runtime,
+                    &partitioned.islands[island],
+                    &selected,
+                    &mut observed_invocations,
+                );
             }
         }
     }
@@ -645,6 +965,14 @@ fn run_lane(
         peak_molten_bytes: counters.peak_molten_bytes,
         peak_molten_nodes: counters.peak_molten_nodes,
         function_calls,
+        wire_demands: runtime
+            .realized_wire_demands()
+            .iter()
+            .map(|(function, arguments)| RealizedWireDemand {
+                function: *function,
+                arguments: arguments.clone(),
+            })
+            .collect(),
     };
     for (provenance, trace) in deferred_traces {
         checks.push(snapshot.evaluate(provenance, trace));
