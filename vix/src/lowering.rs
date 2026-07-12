@@ -863,18 +863,29 @@ fn program_error_attribution(
     pc_nodes: &[Vec<NodeRef>],
     attribution: &LoweringAttribution,
 ) -> Option<MachineAttribution> {
-    let (function, pc) = (error.function?, error.pc?);
-    let node = pc_nodes
-        .get(function.0 as usize)
-        .and_then(|nodes| nodes.get(pc))
-        .copied()?;
-    let source = attribution.source_for_node(node)?;
+    let function = error.function?;
+    let (source, pc) = if let Some(pc) = error.pc {
+        let node = pc_nodes
+            .get(function.0 as usize)
+            .and_then(|nodes| nodes.get(pc))
+            .copied()?;
+        (attribution.source_for_node(node)?, Some(pc))
+    } else {
+        let vix_function = attribution.function_for_frame(function.0)?;
+        (
+            attribution
+                .source_map
+                .iter()
+                .find(|source| source.function == vix_function)?,
+            None,
+        )
+    };
     Some(MachineAttribution {
         function: source.function,
         node: source.node,
         span: source.span,
         weavy_function: Some(function),
-        weavy_pc: Some(pc),
+        weavy_pc: pc,
     })
 }
 
@@ -4198,11 +4209,11 @@ fn collection_temporary_types(
                 value.as_ref().clone(),
             ]);
             types.extend(stream_collect_extra_temporary_types(node, nodes)?);
-            comparison_temporary_types(&key, &mut types);
+            ordering_temporary_types(&key, &mut types);
         }
         Type::Set(element) => {
             types.extend([element.as_ref().clone(), element.as_ref().clone()]);
-            comparison_temporary_types(&element, &mut types);
+            ordering_temporary_types(&element, &mut types);
         }
         _ => {
             return Err(lowering_diagnostic(
@@ -9875,6 +9886,7 @@ fn lower_array_stream_collect_node(
         key: &key,
         value: Some(&temps.projected_value),
         key_ty: &Type::Int,
+        schemas: sequence.lowering.schemas,
         collection_schema,
         cursor,
         candidate: &temps.candidate,
@@ -10147,6 +10159,7 @@ fn lower_stream_flat_map_collect_node(
         key: &temps.projected_key,
         value: Some(&temps.projected_value),
         key_ty: &composed_key,
+        schemas: sequence.lowering.schemas,
         collection_schema,
         cursor,
         candidate: &temps.candidate,
@@ -10291,6 +10304,7 @@ fn lower_checked_collection_node(
                             key: key_value,
                             value: Some(value_value),
                             key_ty: key,
+                            schemas: sequence.lowering.schemas,
                             collection_schema,
                             cursor,
                             candidate: &temps.candidate,
@@ -10328,6 +10342,7 @@ fn lower_checked_collection_node(
                             key: element_value,
                             value: None,
                             key_ty: element,
+                            schemas: sequence.lowering.schemas,
                             collection_schema,
                             cursor,
                             candidate: &temps.candidate,
@@ -10422,6 +10437,7 @@ fn lower_checked_collection_node(
                 key: &key,
                 value: value.as_ref(),
                 key_ty,
+                schemas: sequence.lowering.schemas,
                 collection_schema,
                 cursor: ordered_cursor(node, sequence, 0)?,
                 candidate: &temps.candidate,
@@ -10543,6 +10559,7 @@ fn lower_checked_collection_node(
                 key,
                 value,
                 key_ty,
+                schemas: sequence.lowering.schemas,
                 collection_schema,
                 cursor: ordered_cursor(node, sequence, 0)?,
                 candidate: &temps.candidate,
@@ -10644,17 +10661,25 @@ fn lower_checked_collection_node(
                 .code
                 .jump_if_zero(temps.present.region.start(), absent);
             temps.cursor.rewind(comparison, node.span)?;
-            emit_structural_order(
+            let array = type_contains_array(key_ty).then_some(ArrayEqualityContext {
+                schemas: sequence.lowering.schemas,
+                scratch,
+                assigned,
+                outcome,
+                return_label,
+                site,
+            });
+            SemanticOrderingEmitter {
                 node,
+                temps: &mut temps.cursor,
+                code: outputs.code,
+                array,
+            }
+            .emit(
                 key_ty,
                 &sought,
                 &temps.candidate,
-                StructuralOrderOutput {
-                    ordering: temps.ordering.region.start(),
-                    condition: scratch.condition,
-                },
-                &mut temps.cursor,
-                outputs.code,
+                temps.ordering.region.start(),
             )?;
             outputs.code.push(WeavyOp::ConstI64 {
                 dst: scratch.fields[0].byte_offset(),
@@ -11045,6 +11070,7 @@ struct OrderedInsertLowering<'a, 'temps, 'code> {
     key: &'a LoweredSlot,
     value: Option<&'a LoweredSlot>,
     key_ty: &'a Type,
+    schemas: &'a SchemaAssignments,
     collection_schema: WeavySchemaRef,
     cursor: FrameRegion,
     candidate: &'a LoweredSlot,
@@ -11070,6 +11096,7 @@ fn emit_ordered_insert(context: OrderedInsertLowering<'_, '_, '_>) -> Result<(),
         key,
         value,
         key_ty,
+        schemas,
         collection_schema,
         cursor,
         candidate,
@@ -11124,18 +11151,21 @@ fn emit_ordered_insert(context: OrderedInsertLowering<'_, '_, '_>) -> Result<(),
     })?;
     code.jump_if_zero(present.region.start(), commit);
     temps.rewind(comparison_checkpoint, node.span)?;
-    emit_structural_order(
+    let array = type_contains_array(key_ty).then_some(ArrayEqualityContext {
+        schemas,
+        scratch,
+        assigned,
+        outcome,
+        return_label,
+        site,
+    });
+    SemanticOrderingEmitter {
         node,
-        key_ty,
-        key,
-        candidate,
-        StructuralOrderOutput {
-            ordering: ordering.region.start(),
-            condition: scratch.condition,
-        },
         temps,
         code,
-    )?;
+        array,
+    }
+    .emit(key_ty, key, candidate, ordering.region.start())?;
     code.push(WeavyOp::OrderedInsertAdvance {
         cursor: cursor.start().byte_offset(),
         ordering: ordering.region.start().byte_offset(),

@@ -67,9 +67,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use facet::Facet;
 use semver::Version as SemVer;
-use vix::diagnostic::{DiagnosticCode, DiagnosticPayload};
 use vix::machine::{DriveEvent, Machine, MachineArg, NamedArg, RenderedValue};
-use vix::ratchet::{RunError, run_source};
+use vix::ratchet::run_source;
 
 const LINUX: &str = "x86_64-unknown-linux-gnu";
 const WINDOWS: &str = "x86_64-pc-windows-msvc";
@@ -2172,22 +2171,16 @@ fn native_rodin_line() -> Stream<Check> {
 "#;
 
 #[test]
-fn native_rodin_kernel_starts_at_the_typed_entrypoint_boundary() {
+fn native_rodin_kernel_executes_typed_line_input() {
     let source = format!("{STD_VERSION}\n{NATIVE_RODIN_KERNEL}\n{NATIVE_KERNEL_RED_FIXTURE}");
-    let Err(RunError::Diagnostics(diagnostics)) = run_source(&source) else {
-        panic!("the first native kernel checkpoint is red at its typed solver entrypoint");
-    };
-    assert_eq!(diagnostics.entries.len(), 1, "one exact red boundary");
-    let entry = &diagnostics.entries[0];
-    assert_eq!(
-        entry.code,
-        DiagnosticCode::UnknownName,
-        "typed contract stopped before the entrypoint boundary: {entry:?}"
-    );
-    let DiagnosticPayload::Name { name } = &entry.payload else {
-        panic!("UnknownName carries the missing typed entrypoint: {entry:?}");
-    };
-    assert_eq!(name, "rodin_solve");
+    let report = run_source(&source).expect("native Rodin kernel runs through production Vix");
+    assert!(report.passed(), "typed line solve passes: {report:?}");
+    assert!(report.agrees(), "plain and chaos agree");
+    assert_eq!(report.plain.checks.len(), 1);
+    assert_eq!(report.plain.counters.pure_host_calls, 0);
+    assert_eq!(report.plain.receipt_count, 0);
+    assert_eq!(report.chaos.counters.pure_host_calls, 0);
+    assert_eq!(report.chaos.receipt_count, 0);
 }
 
 /// A trivial three-crate line workspace: `app -> mid -> leaf`, all `0.1.0`, all

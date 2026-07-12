@@ -140,3 +140,474 @@ enum RodinOutcome {
     Failed(Conflict),
     Unsupported(UnsupportedInput),
 }
+
+struct DeadRegion {
+    versions: Map<PackageId, VersionSet>,
+    features: Map<PackageId, Set<String>>,
+}
+
+struct SolverState {
+    active: Set<PackageId>,
+    domains: Map<PackageId, VersionSet>,
+    selected: Map<PackageId, SelectedPackage>,
+    features: Map<PackageId, Set<String>>,
+    edges: Set<ResolvedEdge>,
+    decisions: Map<PackageId, Version>,
+    learned: [DeadRegion],
+}
+
+struct Choice {
+    package: PackageId,
+    candidates: Int,
+}
+
+struct SearchDead {
+    conflict: Conflict,
+    learned: [DeadRegion],
+}
+
+enum StateStep {
+    Pass(SolverState),
+    Conflict(Conflict),
+}
+
+enum SearchOutcome {
+    Found(SolveResult),
+    Dead(SearchDead),
+}
+
+fn empty_string_set() -> Set<String> { %[] }
+
+fn empty_state() -> SolverState {
+    SolverState {
+        active: %[],
+        domains: %{},
+        selected: %{},
+        features: %{},
+        edges: %[],
+        decisions: %{},
+        learned: [],
+    }
+}
+
+fn exact_set(version: Version) -> VersionSet {
+    VersionSet {
+        intervals: [Interval {
+            lower: LowerBound::Inclusive(version),
+            upper: UpperBound::Inclusive(version),
+            prerelease_lines: admission_for(version),
+        }],
+    }
+}
+
+fn feature_set(state: SolverState) where { package: PackageId } -> Set<String> {
+    if state.features.has(package) { state.features.get(package) } else { empty_string_set() }
+}
+
+fn with_features(state: SolverState) where { package: PackageId, features: Set<String> } -> SolverState {
+    let selected = if state.selected.has(package) {
+        let prior = state.selected.get(package);
+        state.selected.with (package, SelectedPackage { features, ..prior })
+    } else {
+        state.selected
+    };
+    SolverState { features: state.features.with (package, features), selected, ..state }
+}
+
+fn make_conflict(state: SolverState) where { cause: ConflictCause, provenance: [String] } -> Conflict {
+    Conflict {
+        cause,
+        decisions: state.decisions,
+        region: point_region(state.decisions.keys()) where { state, out: %{} },
+        provenance,
+    }
+}
+
+fn point_region(packages: [PackageId]) where { state: SolverState, out: Map<PackageId, VersionSet> } -> Map<PackageId, VersionSet> {
+    match packages.split_last() {
+        None => out,
+        Some((package, rest)) => point_region(rest) where {
+            state,
+            out: out.with (package, exact_set(state.decisions.get(package))),
+        },
+    }
+}
+
+fn narrow(input: SolveInput) where { state: SolverState, package: PackageId, requirement: VersionSet, provenance: String } -> StateStep {
+    if !input.universe.rows.has(package) {
+        StateStep::Conflict(make_conflict(state) where {
+            cause: ConflictCause::EmptyDomain(package),
+            provenance: [provenance],
+        })
+    } else {
+        let prior = if state.domains.has(package) { state.domains.get(package) } else { universe() };
+        let allowed = prior.intersect(requirement);
+        if allowed.is_empty() {
+            StateStep::Conflict(make_conflict(state) where {
+                cause: ConflictCause::EmptyDomain(package),
+                provenance: [provenance],
+            })
+        } else if state.selected.has(package) && !allowed.contains(state.selected.get(package).version) {
+            StateStep::Conflict(make_conflict(state) where {
+                cause: ConflictCause::EmptyDomain(package),
+                provenance: [provenance],
+            })
+        } else {
+            StateStep::Pass(SolverState {
+                active: state.active + package,
+                domains: state.domains.with (package, allowed),
+                ..state
+            })
+        }
+    }
+}
+
+fn seed_roots(input: SolveInput) where { roots: [RootRequest], state: SolverState } -> StateStep {
+    match roots.split_last() {
+        None => StateStep::Pass(state),
+        Some((root, rest)) => {
+            let requested = if root.default_features { root.features + "default" } else { root.features };
+            let with_root_features = with_features(state) where {
+                package: root.package,
+                features: feature_set(state) where { package: root.package } ++ requested,
+            };
+            match narrow(input) where {
+                state: with_root_features,
+                package: root.package,
+                requirement: root.requirement,
+                provenance: "root request",
+            } {
+                StateStep::Conflict(conflict) => StateStep::Conflict(conflict),
+                StateStep::Pass(next) => seed_roots(input) where { roots: rest, state: next },
+            }
+        },
+    }
+}
+
+fn eligible_rows(input: SolveInput) where { state: SolverState, package: PackageId } -> [PackageRow] {
+    eligible_from(input.universe.rows.get(package)) where {
+        allowed: state.domains.get(package),
+        out: [],
+    }
+}
+
+fn eligible_from(rows: [PackageRow]) where { allowed: VersionSet, out: [PackageRow] } -> [PackageRow] {
+    match rows.split_last() {
+        None => out,
+        Some((row, rest)) => {
+            let next = if !row.yanked && allowed.contains(row.version) { out + row } else { out };
+            eligible_from(rest) where { allowed, out: next }
+        },
+    }
+}
+
+fn higher_version(left: Version) where { right: Version } -> Bool {
+    match version_precedence(left) where { right } {
+        Ordering::Greater => true,
+        Ordering::Less => false,
+        Ordering::Equal => (left <=> right) == Ordering::Greater,
+    }
+}
+
+fn highest_row(rows: [PackageRow]) -> Option<PackageRow> {
+    highest_from(rows) where { best: None }
+}
+
+fn highest_from(rows: [PackageRow]) where { best: Option<PackageRow> } -> Option<PackageRow> {
+    match rows.split_last() {
+        None => best,
+        Some((row, rest)) => match best {
+            None => highest_from(rest) where { best: Some(row) },
+            Some(current) => {
+                let next = if higher_version(row.version) where { right: current.version } { row } else { current };
+                highest_from(rest) where { best: Some(next) }
+            },
+        },
+    }
+}
+
+fn without_version(rows: [PackageRow]) where { version: Version, out: [PackageRow] } -> [PackageRow] {
+    match rows.split_last() {
+        None => out,
+        Some((row, rest)) => {
+            let next = if row.version == version { out } else { out + row };
+            without_version(rest) where { version, out: next }
+        },
+    }
+}
+
+fn better_choice(candidate: Choice) where { best: Choice } -> Bool {
+    candidate.candidates < best.candidates
+        || (candidate.candidates == best.candidates && (candidate.package <=> best.package) == Ordering::Less)
+}
+
+fn choose_undecided(input: SolveInput) where { state: SolverState } -> Option<Choice> {
+    choose_from(input) where { state, packages: state.active.values(), best: None }
+}
+
+fn choose_from(input: SolveInput) where { state: SolverState, packages: [PackageId], best: Option<Choice> } -> Option<Choice> {
+    match packages.split_last() {
+        None => best,
+        Some((package, rest)) => {
+            if state.selected.has(package) {
+                choose_from(input) where { state, packages: rest, best }
+            } else {
+                let candidate = Choice {
+                    package,
+                    candidates: (eligible_rows(input) where { state, package }).len(),
+                };
+                match best {
+                    None => choose_from(input) where { state, packages: rest, best: Some(candidate) },
+                    Some(current) => choose_from(input) where {
+                        state,
+                        packages: rest,
+                        best: Some(if better_choice(candidate) where { best: current } { candidate } else { current }),
+                    },
+                }
+            }
+        },
+    }
+}
+
+fn conjunction_matches(conjunction: CfgConjunction) where { target: TargetFacts } -> Bool {
+    conjunction.required_atoms.values().all(|atom| target.atoms.has(atom))
+        && conjunction.forbidden_atoms.values().all(|atom| !target.atoms.has(atom))
+        && conjunction.required_values.keys().all(|key| target.values.has(key)
+            && target.values.get(key) == conjunction.required_values.get(key))
+}
+
+fn predicate_matches(predicate: TargetPredicate) where { target: TargetFacts } -> Bool {
+    (predicate.triples.len() == 0 || predicate.triples.has(target.triple))
+        && (predicate.any.len() == 0 || predicate.any.any(|clause| conjunction_matches(clause) where { target }))
+}
+
+fn dependency_is_consumed(dependency: Dependency) where { input: SolveInput } -> Bool {
+    let kind = match dependency.kind {
+        DependencyKind::Normal => true,
+        DependencyKind::Build => input.policy.consume_build,
+        DependencyKind::Dev => input.policy.consume_dev,
+    };
+    kind && match dependency.target {
+        None => true,
+        Some(predicate) => predicate_matches(predicate) where { target: input.target },
+    }
+}
+
+fn add_dependency_features(state: SolverState) where { dependency: Dependency } -> SolverState {
+    let requested = if dependency.default_features {
+        dependency.features + "default"
+    } else {
+        dependency.features
+    };
+    with_features(state) where {
+        package: dependency.package,
+        features: feature_set(state) where { package: dependency.package } ++ requested,
+    }
+}
+
+fn apply_dependency(input: SolveInput) where { state: SolverState, from: PackageId, dependency: Dependency, force_optional: Bool, provenance: String } -> StateStep {
+    if !dependency_is_consumed(dependency) where { input }
+        || (dependency.optional && !force_optional) {
+        StateStep::Pass(state)
+    } else {
+        let with_edge = SolverState {
+            edges: state.edges + ResolvedEdge { from, to: dependency.package, kind: dependency.kind },
+            ..state
+        };
+        let with_features = add_dependency_features(with_edge) where { dependency };
+        narrow(input) where {
+            state: with_features,
+            package: dependency.package,
+            requirement: dependency.requirement,
+            provenance,
+        }
+    }
+}
+
+fn apply_dependencies(input: SolveInput) where { state: SolverState, from: PackageId, dependencies: [Dependency] } -> StateStep {
+    match dependencies.split_last() {
+        None => StateStep::Pass(state),
+        Some((dependency, rest)) => match apply_dependency(input) where {
+            state,
+            from,
+            dependency,
+            force_optional: false,
+            provenance: "dependency edge",
+        } {
+            StateStep::Conflict(conflict) => StateStep::Conflict(conflict),
+            StateStep::Pass(next) => apply_dependencies(input) where { state: next, from, dependencies: rest },
+        },
+    }
+}
+
+fn row_for(rows: [PackageRow]) where { version: Version } -> Option<PackageRow> {
+    match rows.split_last() {
+        None => None,
+        Some((row, rest)) => if row.version == version { Some(row) } else { row_for(rest) where { version } },
+    }
+}
+
+fn apply_selected(input: SolveInput) where { state: SolverState, packages: [PackageId] } -> StateStep {
+    match packages.split_last() {
+        None => StateStep::Pass(state),
+        Some((package, rest)) => {
+            let selected = state.selected.get(package);
+            match row_for(input.universe.rows.get(package)) where { version: selected.version } {
+                None => StateStep::Conflict(make_conflict(state) where {
+                    cause: ConflictCause::NoCandidates(package),
+                    provenance: ["selected row disappeared"],
+                }),
+                Some(row) => match apply_dependencies(input) where {
+                    state,
+                    from: package,
+                    dependencies: row.dependencies,
+                } {
+                    StateStep::Conflict(conflict) => StateStep::Conflict(conflict),
+                    StateStep::Pass(next) => apply_selected(input) where { state: next, packages: rest },
+                },
+            }
+        },
+    }
+}
+
+fn domain_maps_equal(left: Map<PackageId, VersionSet>) where { right: Map<PackageId, VersionSet> } -> Bool {
+    left.keys() == right.keys()
+        && left.keys().all(|package| left.get(package) == right.get(package))
+}
+
+fn feature_maps_equal(left: Map<PackageId, Set<String>>) where { right: Map<PackageId, Set<String>> } -> Bool {
+    left.keys() == right.keys()
+        && left.keys().all(|package| left.get(package) == right.get(package))
+}
+
+fn selected_maps_equal(left: Map<PackageId, SelectedPackage>) where { right: Map<PackageId, SelectedPackage> } -> Bool {
+    left.keys() == right.keys()
+        && left.keys().all(|package| {
+            let a = left.get(package);
+            let b = right.get(package);
+            a.package == b.package && a.version == b.version && a.features == b.features
+        })
+}
+
+fn propagation_equal(left: SolverState) where { right: SolverState } -> Bool {
+    left.active == right.active
+        && domain_maps_equal(left.domains) where { right: right.domains }
+        && selected_maps_equal(left.selected) where { right: right.selected }
+        && feature_maps_equal(left.features) where { right: right.features }
+        && left.edges == right.edges
+}
+
+fn propagate(input: SolveInput) where { state: SolverState } -> StateStep {
+    match apply_selected(input) where { state, packages: state.selected.keys() } {
+        StateStep::Conflict(conflict) => StateStep::Conflict(conflict),
+        StateStep::Pass(next) => if propagation_equal(next) where { right: state } {
+            StateStep::Pass(state)
+        } else {
+            propagate(input) where { state: next }
+        },
+    }
+}
+
+fn point_dead_region(state: SolverState) -> DeadRegion {
+    DeadRegion {
+        versions: point_region(state.decisions.keys()) where { state, out: %{} },
+        features: state.features,
+    }
+}
+
+fn state_is_in_region(state: SolverState) where { region: DeadRegion } -> Bool {
+    region.versions.keys().all(|package| state.decisions.has(package)
+        && region.versions.get(package).contains(state.decisions.get(package)))
+        && region.features.keys().all(|package| state.features.has(package)
+            && state.features.get(package) == region.features.get(package))
+}
+
+fn state_is_learned(state: SolverState) -> Bool {
+    state.learned.any(|region| state_is_in_region(state) where { region })
+}
+
+fn regions_equal(left: DeadRegion) where { right: DeadRegion } -> Bool {
+    domain_maps_equal(left.versions) where { right: right.versions }
+        && feature_maps_equal(left.features) where { right: right.features }
+}
+
+fn install_region(learned: [DeadRegion]) where { region: DeadRegion } -> [DeadRegion] {
+    if learned.any(|existing| regions_equal(existing) where { right: region }) { learned } else { learned + region }
+}
+
+fn select_row(input: SolveInput) where { state: SolverState, package: PackageId, row: PackageRow } -> StateStep {
+    let selected = SelectedPackage {
+        package,
+        version: row.version,
+        features: feature_set(state) where { package },
+    };
+    propagate(input) where {
+        state: SolverState {
+            selected: state.selected.with (package, selected),
+            decisions: state.decisions.with (package, row.version),
+            ..state
+        },
+    }
+}
+
+fn solved_result(state: SolverState) -> SolveResult {
+    SolveResult { selected: state.selected, edges: state.edges }
+}
+
+fn search(input: SolveInput) where { state: SolverState } -> SearchOutcome {
+    match choose_undecided(input) where { state } {
+        None => SearchOutcome::Found(solved_result(state)),
+        Some(choice) => try_rows(input) where {
+            state,
+            package: choice.package,
+            rows: eligible_rows(input) where { state, package: choice.package },
+        },
+    }
+}
+
+fn try_rows(input: SolveInput) where { state: SolverState, package: PackageId, rows: [PackageRow] } -> SearchOutcome {
+    match highest_row(rows) {
+        None => SearchOutcome::Dead(SearchDead {
+            conflict: make_conflict(state) where {
+                cause: ConflictCause::NoCandidates(package),
+                provenance: ["candidate exhaustion"],
+            },
+            learned: state.learned,
+        }),
+        Some(row) => {
+            let rest = without_version(rows) where { version: row.version, out: [] };
+            let branch = SolverState { decisions: state.decisions.with (package, row.version), ..state };
+            if state_is_learned(branch) {
+                try_rows(input) where { state, package, rows: rest }
+            } else {
+                match select_row(input) where { state, package, row } {
+                    StateStep::Conflict(conflict) => {
+                        let learned = install_region(state.learned) where { region: point_dead_region(branch) };
+                        try_rows(input) where { state: SolverState { learned, ..state }, package, rows: rest }
+                    },
+                    StateStep::Pass(next) => match search(input) where { state: next } {
+                        SearchOutcome::Found(result) => SearchOutcome::Found(result),
+                        SearchOutcome::Dead(dead) => try_rows(input) where {
+                            state: SolverState { learned: dead.learned, ..state },
+                            package,
+                            rows: rest,
+                        },
+                    },
+                }
+            }
+        },
+    }
+}
+
+pub fn rodin_solve(input: SolveInput) -> RodinOutcome {
+    match seed_roots(input) where { roots: input.roots, state: empty_state() } {
+        StateStep::Conflict(conflict) => RodinOutcome::Failed(conflict),
+        StateStep::Pass(seed) => match propagate(input) where { state: seed } {
+            StateStep::Conflict(conflict) => RodinOutcome::Failed(conflict),
+            StateStep::Pass(state) => match search(input) where { state } {
+                SearchOutcome::Found(result) => RodinOutcome::Solved(result),
+                SearchOutcome::Dead(dead) => RodinOutcome::Failed(dead.conflict),
+            },
+        },
+    }
+}
