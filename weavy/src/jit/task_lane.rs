@@ -1491,6 +1491,11 @@ impl JitTask {
         self.frames.len()
     }
 
+    #[must_use]
+    pub fn frame_arena_bytes(&self) -> usize {
+        self.arena.len()
+    }
+
     pub fn result_i64(&self) -> i64 {
         i64::from_le_bytes(self.result[..8].try_into().expect("8-byte result"))
     }
@@ -1499,6 +1504,10 @@ impl JitTask {
     #[must_use]
     pub(crate) fn publications(&self) -> &crate::task::PublicationLog {
         &self.publications
+    }
+
+    pub(crate) fn molten(&self) -> &crate::task::MoltenArena {
+        &self.molten
     }
 
     /// Write an i64 into the CURRENT frame at `offset` — used for

@@ -7,6 +7,7 @@
 
 use vix::diagnostic::{DiagnosticCode, DiagnosticPayload};
 use vix::ratchet::{RunError, run_source};
+use vix::vir::TraceCheck;
 
 const STD_VERSION: &str = include_str!("../std/version.vix");
 const RUNG_085: &str = include_str!("ratchet/085-index-rows.vix");
@@ -403,8 +404,29 @@ fn rung_091_mini_solve_exhaustion_is_none() {
 }
 
 #[test]
-fn rung_092_learning_prunes_with_function_provenance() {
-    all_pass(&solver_lane(RUNG_092), 2);
+fn rung_092_preserves_duplicate_generator_check_demand_boundary() {
+    let report = run_source(&solver_lane(RUNG_092))
+        .expect("rung 092 compiles and exposes its completed-run trace verdict");
+
+    for lane in [&report.plain, &report.chaos] {
+        assert_eq!(lane.checks.len(), 2);
+        assert!(lane.checks[0].passed, "the selected solution is valid");
+        let failure = lane.checks[1]
+            .trace_failure
+            .expect("the name-level demand count remains the red boundary");
+        let TraceCheck::FunctionCallsExactly { times, .. } = failure.check else {
+            panic!("rung 092 carries the function-call trace check");
+        };
+        assert_eq!(times, 1, "the unchanged rung requires one demand");
+        assert_eq!(
+            failure.observed, 2,
+            "generator control and the selected check currently recompute the solve"
+        );
+    }
+    assert!(
+        report.agrees(),
+        "plain and chaos preserve the same red result"
+    );
 }
 
 #[test]

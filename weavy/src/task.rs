@@ -446,6 +446,12 @@ pub(crate) struct MoltenArena {
     task_generation: u64,
 }
 
+pub(crate) enum ResolvedHandle<'a> {
+    Store(usize),
+    TaskMolten(&'a [u8]),
+    LentMolten(usize),
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct OrderedNode {
     schema: i64,
@@ -654,6 +660,30 @@ struct MoltenBuffer {
 }
 
 impl MoltenArena {
+    pub(crate) fn resolve_handle(&self, handle: i64) -> Option<ResolvedHandle<'_>> {
+        match classify_handle(handle)? {
+            HandleKind::Store(index) => Some(ResolvedHandle::Store(index)),
+            HandleKind::TaskMolten(_) => Some(ResolvedHandle::TaskMolten(self.bytes(handle)?)),
+            HandleKind::LentMolten(index) => Some(ResolvedHandle::LentMolten(index)),
+        }
+    }
+
+    pub(crate) fn stats(&self) -> (usize, usize) {
+        (
+            self.buffers.len().saturating_add(self.ordered_nodes.len()),
+            self.buffers
+                .iter()
+                .map(|buffer| buffer.bytes.len())
+                .sum::<usize>()
+                .saturating_add(
+                    self.ordered_nodes
+                        .iter()
+                        .map(|node| node.key.len() + node.value.as_ref().map_or(0, Vec::len))
+                        .sum::<usize>(),
+                ),
+        )
+    }
+
     pub(crate) fn alloc_ordered_node(
         &mut self,
         schema: i64,
@@ -3025,6 +3055,11 @@ impl Task {
         self.frames.len()
     }
 
+    #[must_use]
+    pub fn frame_arena_bytes(&self) -> usize {
+        self.arena.len()
+    }
+
     /// Write an i64 into the CURRENT frame at `offset` — used for
     /// entry arguments and by tests to poke frames.
     pub fn write_i64(&mut self, offset: u32, value: i64) {
@@ -3042,6 +3077,10 @@ impl Task {
     #[must_use]
     pub(crate) fn publications(&self) -> &PublicationLog {
         &self.publications
+    }
+
+    pub(crate) fn molten(&self) -> &MoltenArena {
+        &self.molten
     }
 
     fn alloc_frame(&mut self, layout: Layout) -> usize {

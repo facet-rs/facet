@@ -35,12 +35,13 @@ Cargo fixtures.
 ## Current checkpoint
 
 At the time of the latest authoritative integration checkpoint
-(`910edfd1e`):
+(`43470cd47`):
 
-- the canonical rung prefix is green through rung 050. Exact-root full Vix run
-  `4bc4084c-75ba-402f-b94e-8ab0e8a6a4b5` passed 404/404 tests with 33 skipped,
-  including the unchanged budgeted rung 050, range/molten certificates, live
-  Cargo oracles, and the continuous solver-readiness band through rung 088. The
+- the canonical rung prefix is green through rung 051. The merged root has the
+  same source tree as the publication branch whose full Vix run
+  `3ff216cd-bd05-4e10-96e7-f72db701f361` passed 418/418 tests. This includes the
+  unchanged budgeted rung 050, the million-element shared-publication rung 051,
+  live Cargo oracles, and the solver-readiness band through rung 091. The
   integrated full Weavy release run
   `8fce57b6-18d8-41e2-a206-2f1ef4f36a34` passed 228/228. Workspace all-target
   check, strict all-feature/all-target Clippy, formatting, and diff checks are
@@ -99,19 +100,21 @@ At the time of the latest authoritative integration checkpoint
   `22096e4f-993e-469d-a34f-8eb7f733e346` and interpreter run
   `20a90f10-41ef-4345-b50a-4590fcc715ac` each pass the unchanged 10-million-step
   budgeted rung. Ordinary recursion remains the rung-049 call-frame path;
-- the persistent AVL core has a 200k insertion scaling oracle, but the
-  end-to-end rung-138 Map proof is not yet established. The explicit framed
-  value-identity epoch, compact inline sequence writer, semantic tree, and
-  `Store::intern_tree` identity monopoly are folded at `e5e82357b`.
-  Verifier-visible in-frame `range` construction and the strictly recognized
-  molten one-item-append fold are folded at `1c50c3b58`; exact-root default run
-  `5227e53d-f423-456d-b8a6-5e280eb4fa80` and interpreter run
-  `eecb2780-334b-4874-af20-902519bf2f87` each passed 11/11 focused checks.
-  Growing the input from 16 to 4096 leaves scheduler requests, store interns,
-  memo misses, and per-element marks unchanged, while the bounded forced-copy
-  differential preserves identical value identities, duplicates, and order.
-  Shared-demand extraction, molten-to-store publication, disjoint live/frozen
-  handles, and production aggregate-freeze observability remain explicit seams;
+- rung 051 is green unchanged. Shared dense-Array expressions are extracted by
+  canonical VIR graph provenance into ordinary value islands. Completed tasks
+  expose values only through the borrow-scoped `TaskValueResolver`; scheduler-
+  owned realization recursively builds semantic `FramedNode`s, resolves nested
+  referents by `ValueId`, and calls `Store::intern_tree` once for the published
+  root. Consumers receive that identity through `DemandPreimage.arguments`.
+  The million-element certificate proves one value-island spawn, one aggregate
+  freeze, one active-molten selection, zero forced-copy selections, and
+  8,000,000 framed bytes, while the forced-copy differential preserves value
+  identity, duplicates, and order. Exact-root default run
+  `08d025ec-8e5e-44a8-819f-46e574538413` passed all 20 range, molten, identity,
+  failure, and publication checks; integrated interpreter run
+  `b11c9dbf-b56c-4a09-8241-f457a0755f37` passed the same 20. Shared Map/Set
+  publication remains a typed diagnostic until canonical ordered freeze lands
+  with rung 138; single-consumer ordered execution remains available;
 - the Rodin-readiness track is continuously green through rungs 083-088.
   Ordinary Vix `std/version.vix`, prepended by the readiness harness while the
   compiler lacks an ambient prelude, defines full SemVer values and normalized
@@ -125,9 +128,16 @@ At the time of the latest authoritative integration checkpoint
   conflict values. Exact-root default run
   `c138b5fd-bd9c-45ef-a111-cb115bb0c401` and interpreter run
   `9dcb7203-6790-4c3f-8918-9afa9f456b5d` each passed all 16 Version, structural
-  order, package-row, domain, narrowing, and conflict certificates. The first
-  solver-semantic boundary is now rung 089's Vix-native `mini_solve`; this
-  readiness progress does not renumber the canonical prefix;
+  order, package-row, domain, narrowing, and conflict certificates. A
+  Vix-native persistent `mini_solve` now makes rungs 089-091 green: it selects
+  the highest viable version, retries from immutable old state, and returns
+  `None` on exhaustion without a host solver or legacy evaluator. Exact-root
+  default run `0fa6e1bd-4a2e-44e2-8503-f1a1a76f34f5` and interpreter run
+  `8552be41-a7cd-4cec-97d2-cd5d23898764` each passed 089-091. Rung 092 remains
+  red at the generator/check sharing boundary (required one name-level
+  `conflict_analysis` demand, observed two); rung 093 remains red pending the
+  value-level described-wire trace contract. This readiness progress does not
+  renumber the canonical prefix;
 - the live Cargo oracle is folded at `a1be1fa6e`. One shared materialized
   workspace is queried through `cargo metadata --offline`, preserving exact
   source/name/version package identities, target-projected normal/build graph
@@ -420,13 +430,12 @@ Rung 051 lands through these forward checkpoints:
    wall/RSS watchdog and TraceCheck substrate then assert those facts in the
    unchanged canonical rung.
 
-Checkpoint 1 is folded at `e5e82357b`; checkpoints 2 and 4 are folded at
-`1c50c3b58`. Checkpoint 4 recognizes only a single-consumption append fold and
-leaves every other fold on the semantic path. The standing rung-051 boundary is
-therefore checkpoints 3 and 5-8: extract one shared aggregate demand, resolve
-its molten result without leaking a handle, publish it once through the Store's
-framed identity authority, and bind every ValueCheck consumer to that one
-published value.
+All eight rung-051 checkpoints are folded at `43470cd47`. The molten fast path
+recognizes only a single-consumption append fold and leaves every other fold on
+the semantic path. Shared value-island extraction, borrow-scoped result
+resolution, scheduler-owned framed publication, consumer arguments, failure
+context rebuilding, and production counters are exercised together by the
+unchanged million-element rung. The canonical next boundary is rung 052.
 
 Before any composite dynamic key or completed aggregate crosses that boundary,
 the runtime Store must intern it through the canonical framed value walk:

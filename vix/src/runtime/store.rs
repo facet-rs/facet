@@ -164,6 +164,10 @@ impl Store {
         self.entries.get(handle.0 as usize)
     }
 
+    pub(crate) fn entry_by_weavy_handle(&self, handle: StoreHandle) -> Option<&StoreEntry> {
+        self.entries.get(handle.index())
+    }
+
     /// Convert only a live store-owned handle to Weavy's opaque entry handle.
     pub(crate) fn weavy_handle(&self, handle: Handle) -> Option<StoreHandle> {
         self.entry(handle)?;
@@ -176,12 +180,30 @@ impl Store {
         &self,
         use_memories: impl FnOnce(ValueMemories<'_>) -> R,
     ) -> R {
+        self.with_value_memory_overrides(&[], use_memories)
+    }
+
+    /// Lend store memory with invocation-local ABI views for published values.
+    /// Overrides alter only the verified consumer's schema witness bytes; the
+    /// store's canonical resident body and semantic identity remain unchanged.
+    pub(crate) fn with_value_memory_overrides<R>(
+        &self,
+        overrides: &[(Handle, Vec<u8>)],
+        use_memories: impl FnOnce(ValueMemories<'_>) -> R,
+    ) -> R {
         let store = self
             .entries
             .iter()
-            .map(|entry| match &entry.residence {
-                Residence::Resident(bytes) => ValueMemory::from_slice(bytes),
-                Residence::Evicted { .. } => ValueMemory::empty(),
+            .map(|entry| {
+                if let Some((_, bytes)) =
+                    overrides.iter().find(|(handle, _)| *handle == entry.handle)
+                {
+                    return ValueMemory::from_slice(bytes);
+                }
+                match &entry.residence {
+                    Residence::Resident(bytes) => ValueMemory::from_slice(bytes),
+                    Residence::Evicted { .. } => ValueMemory::empty(),
+                }
             })
             .collect::<Vec<_>>();
         use_memories(ValueMemories {

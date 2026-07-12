@@ -77,6 +77,21 @@ pub struct Location {
 
 impl Location {
     #[must_use]
+    pub fn for_test_value(test_name: &str, stable_id: &str) -> Self {
+        let segments = vec![
+            "test".to_owned(),
+            test_name.to_owned(),
+            "value".to_owned(),
+            stable_id.to_owned(),
+        ];
+        let fields = segments.iter().map(String::as_bytes).collect::<Vec<_>>();
+        Self {
+            id: LocationId(hash_framed(b"vix.location.v1", &fields)),
+            segments,
+        }
+    }
+
+    #[must_use]
     pub fn for_test_island(test_name: &str, island: u32) -> Self {
         let segments = vec![
             "test".to_owned(),

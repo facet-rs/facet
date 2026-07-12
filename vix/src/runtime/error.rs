@@ -43,6 +43,12 @@ pub enum MachineOperation {
 pub enum RuntimeFault {
     MissingMemoStoreHandle,
     MissingConstantStoreHandle,
+    MissingValueInputStoreHandle,
+    ValueInputCardinality {
+        expected: usize,
+        actual: usize,
+    },
+    ValueInputSchemaMismatch,
     MissingDemandRecord {
         key: DemandKey,
     },
