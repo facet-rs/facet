@@ -198,6 +198,63 @@ read frozen counters). The generator-failure and fold-seed regressions that stal
 refactors *did* introduce were caught and corrected on trunk, and the corrections
 are complete in current source.
 
+## 8. Resolution (2026-07-12, both findings closed)
+
+Both ranked findings are now closed by corrective certificates on this branch,
+built forward from the audit merge `c9819bbf8`.
+
+**F1 — cross-lane equivalence granularity.** The `force_interpreter` seam named
+in §4/§5 was environment-only (`WEAVY_JIT`, `weavy/src/exec.rs:1582`), which
+races parallel nextest, so instead of a shared toggle a *typed per-executable*
+lane seam was added: `weavy::exec::LaneRequest { Auto, Interpreter, Native }` +
+`Executable::with_lane` (`with_trace_mode` now delegates to `with_lane(Auto)`,
+preserving the exact environment-driven production policy; a forced interpreter
+reports the new `FallbackReason::DisabledByRequest`). Vix threads the request
+per-executable through `LoweringCache::for_lane` → `lower_island`, and exposes
+the production-shaped path as `ratchet::{run_source_with_lane,
+prepare_source_with_lane}`. The certificate
+`vix/tests/cross_lane_differential.rs`
+(`accepted_corpus_agrees_across_native_and_interpreter_lanes`) sweeps the
+accepted canonical corpus through rung 059 (respecting reject semantics): on a
+native-capable host each accepted rung compiles once and executes through an
+explicitly-selected native `Executable` and an explicitly-selected interpreter
+`Executable`, and the full provenance-keyed check/failure family
+(`SuiteRun::check_family` — carrying value identities, demand-argument
+identities, failure values, and failure-context attribution), the published
+`value_family`, the completion facts, and the lane-invariant counters are
+asserted identical across *both* the plain and chaos suites. The two
+lane-attribution spawn counters are the documented semantic-boundary exclusion,
+and are used positively to prove lane purity so a silent native→interpreter
+fallback cannot manufacture a false-green. On non-native targets it skips through
+`weavy::jit::task_lane::available()`, the same rule the other in-tree cross-lane
+tests use. Green on the native lane (all accepted rungs differentiated; reject
+semantics certified). Commits: red `a8f4a3311`, green `f6a3eff76`.
+
+**F2 — incidental interpreter coverage.** A pinned CI leg `vix-interpreter-lane`
+(`.github/workflows/test.yml`) runs on `bearcove-ubuntu-24.04` — a native
+copy-patch target — with `WEAVY_JIT=0`. Because `WEAVY_JIT` is a build-time cfg
+gate, the whole build is interpreter-only, so the canonical corpus runner
+(`accepted_rungs_verify_and_execute_through_one_executable` and the rest of
+`binary(ratchet_runner)`) executes on the interpreter even on a box that would
+otherwise select native — pinning interpreter coverage against an OS-matrix edit
+that drops the windows / linux-aarch64 legs. The selection is bounded and exact
+(`package(vix) & (binary(ratchet_runner) | binary(cross_lane_differential))`)
+and reuses the existing container/node/rust-1.92/rust-cache conventions.
+Verified locally: `WEAVY_JIT=0` nextest of the exact filter is 98/98 pass;
+`actionlint` clean. Commit: `9443ac2f0`.
+
+Verification (local, macOS aarch64 = native): default-native filtered run 98/98
+pass (cross-lane cert genuinely two-lane); `WEAVY_JIT=0` filtered run 98/98 pass
+(cross-lane cert takes its non-native skip); `cargo check --workspace
+--all-targets` clean; strict clippy (`-D warnings`) on weavy+vix clean; `cargo
+fmt --all --check` clean; weavy Auto-equivalence lane/fallback tests 52/52 pass.
+The `.config/nextest.toml` leash for the differential is `300s × 4` because it
+drives rungs 050/051 through the interpreter twice (~390s observed under full
+`--workspace` contention). Residual boundary: none beyond the *documented*
+exclusion of the two lane-attribution spawn counters — every other semantic
+dimension of the run is compared. (Follow-up commits `305219c64` rustfmt,
+`ab6da45e9` leash.)
+
 ## Evidence / commands used
 
 - `git rev-parse HEAD` → base confirmed; `git status --porcelain` → clean.
