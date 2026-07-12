@@ -2111,7 +2111,12 @@ fn realize_value(
                 };
                 let (node, resident, framed_bytes) =
                     realize_array(&resolver, value_ref, bytes, element, store, lowered)?;
-                (node, resident, framed_bytes, None)
+                // Freeze the dense array structurally as well, mirroring the
+                // nested array case, so a published array can be rendered
+                // structurally (e.g. by a snapshot). The frozen tree is read
+                // only off the publication path and never alters framing.
+                let frozen = freeze_dense_array(&resolver, value_ref, element, store, lowered)?;
+                (node, resident, framed_bytes, Some(frozen))
             }
             _ => {
                 let value = value.value_ref()?;
