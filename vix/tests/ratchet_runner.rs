@@ -5412,13 +5412,37 @@ fn drive(echo: Echo) -> Stream<Check> {
 ///     advances *past* the `exec` juncture to the built-in outcome pattern
 ///     `Ok(_)` / `Err(_)`, which the grammar does not yet carry (`ParseRejected`).
 ///
-/// Remaining typed seams to green, each below the live runtime frontier
-/// (map/set lowering is "the next runtime boundary"): capability types
-/// (`Echo`/`Sh`) and `ExecOutcome`, the `ByteStream`/`Stream` value surface
-/// (`.stdout.collect().values()`), the built-in `Result`/outcome surface with
-/// `Ok`/`Err` patterns, `parse_int`, the `?`/outcome VIR lowering, and the
-/// scheduler-owned process effect (demand keyed by canonical preimage ×
-/// capability, memoized `FailureValue` for nonzero exit, `ran_processes`).
+/// The value-surface-coherence root (folded in at the enclosing merge)
+/// **refutes** several seams the stale base reported as missing; they are
+/// withdrawn: streams are real (`Type::Stream`; `.stream()/.collect()/.values()`
+/// live in the `PreludeMethod` table), `parse_int` exists with a typed
+/// `FailureValue::InvalidInteger`, integer overflow / division-by-zero /
+/// missing-delimiter are typed failures too, and the ordered Map/Set arena
+/// runs rungs 041-044 with typed `MissingKey`/`DuplicateKey` — map/set lowering
+/// is no longer "the next runtime boundary". Critically, a task is no longer a
+/// pure computation whose park is a fault: the scheduler drives a task and, on
+/// `TaskStep::Parked { input }`, resolves that wire's canonical `DemandPreimage`
+/// through the memo state machine and resumes the same task (the force-on-park/
+/// resume protocol). That is exactly the seam a scheduler-owned exec effect
+/// plugs into.
+///
+/// True live boundary to green, in dependency order:
+///   1. Parameterized tests — `check_test_signature` rejects any test with
+///      parameters (`InvalidTestSignature`); the harness must admit and supply
+///      capability values (`echo: Echo`, `sh: Sh`).
+///   2. Capability types (`Echo`/`Sh`) and the `ExecOutcome` shape whose
+///      `.stdout` is a byte stream feeding `.collect().values()`.
+///   3. The built-in outcome surface: `Ok`/`Err` patterns and `?`/outcome VIR
+///      lowering over the existing typed `FailureValue`.
+///   4. The exec effect: an exec wire demand the scheduler resolves by running
+///      the capability executor rather than evaluating an island — keyed by
+///      canonical preimage × capability value, memoized so two identical exec
+///      demands run once (069), nonzero exit interned as a `FailureValue` that
+///      `?` catches without losing the expression address (068), and
+///      `ran_processes(n)` observing the frozen effect trace over the memo
+///      misses. The existing request/receipt infra, `exec.rs` two-tier
+///      `ExecCache`, and `real_process` capability executors are the reuse
+///      targets; no host call runs inside Weavy.
 #[test]
 fn exec_effect_rungs_are_red_at_the_moved_seam() {
     // The `exec <capability>`…`` juncture the byte-level parser used to reject.
