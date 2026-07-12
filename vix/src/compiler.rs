@@ -4890,29 +4890,19 @@ fn lower_closure_typed_with_body_kind(
     let (function, ty) = lowered?;
     context.insert_closure(function);
 
+    // The closure closes over the enclosing values by reference to their VIR
+    // nodes; lowering decides per capture whether the environment word carries
+    // it inline (a single word) or through a boxed environment (wider captures,
+    // e.g. a captured callable).
     let capture_inputs = captures
         .iter()
         .map(|(_, captured)| {
-            let source = nodes.get(captured.node.0 as usize).ok_or_else(|| {
+            nodes.get(captured.node.0 as usize).map(|_| captured.node).ok_or_else(|| {
                 Diagnostics::one(Diagnostic::unsupported(
                     closure.span,
                     "captured value is absent",
                 ))
-            })?;
-            let Op::Int(value) = source.op else {
-                return Err(Diagnostics::one(Diagnostic::unsupported(
-                    closure.span,
-                    "closure capture currently requires an Int value at construction",
-                )));
-            };
-            Ok(push_node(
-                nodes,
-                closure.span,
-                Type::Int,
-                EffectFacts::PURE,
-                Vec::new(),
-                Op::Int(value),
-            ))
+            })
         })
         .collect::<Result<Vec<_>, Diagnostics>>()?;
 

@@ -38,7 +38,7 @@ use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
 use crate::exec::{CompareSide, EnvironmentFaultKind, FaultSite, TaskFault, fault_site};
 use crate::mem::Layout;
-use crate::{CallContractId, CallSiteFacts, RegionId, VerifiedProgram};
+use crate::{CallSiteFacts, RegionId, VerifiedProgram};
 
 /// One immutable value payload made visible to task code for native reads.
 #[repr(C)]
@@ -1558,6 +1558,16 @@ fn env_handle_parts(handle: i64) -> (u32, u32) {
     ((bits >> 32) as u32, bits as u32)
 }
 
+/// The boxed environment contract of a closure callee. The verifier has
+/// already proven the callee is boxed (its call contract's `environment` is
+/// non-empty), so this resolution is total for a verified program.
+fn env_contract_of(verified: &VerifiedProgram, callee: FnId) -> &crate::CallContract {
+    let contract = verified.contract().functions[callee.0 as usize]
+        .call_contract
+        .expect("boxed closure callee carries a call contract");
+    &verified.contract().calls[contract.0 as usize]
+}
+
 /// Build the task fault for a boxed-environment access failure at the given
 /// instruction, resolving its fault site.
 fn environment_fault(
@@ -2623,20 +2633,22 @@ pub enum Op {
     /// Construct a task-lifetime boxed capture environment from its declared
     /// capture regions, writing an opaque environment handle into `dst`. The
     /// environment's field layout is the boxed callable's environment contract,
-    /// named by `contract`. The handle lives in a task-local namespace, is
-    /// stale/cross-task detectable, and is only interpretable by [`Op::EnvLoad`].
+    /// named by the closure `callee`'s call contract. The handle lives in a
+    /// task-local namespace, is stale/cross-task detectable, and is only
+    /// interpretable by [`Op::EnvLoad`].
     EnvBox {
         dst: RegionId,
-        contract: CallContractId,
+        callee: FnId,
         fields: Vec<RegionId>,
     },
     /// Project one declared capture out of a boxed environment handle into its
-    /// exact typed capture region. Faults on an unresident, stale, or
-    /// cross-task handle, or an out-of-range capture index.
+    /// exact typed capture region, per the closure `callee`'s environment
+    /// contract. Faults on an unresident, stale, or cross-task handle, or an
+    /// out-of-range capture index.
     EnvLoad {
         dst: RegionId,
         env: RegionId,
-        contract: CallContractId,
+        callee: FnId,
         field: u32,
     },
     /// Copy one complete structural value between exact equal value shapes.
@@ -4396,12 +4408,8 @@ impl Task {
                     base + region(*dst).offset as usize,
                 );
             }
-            Op::EnvBox {
-                dst,
-                contract: call_id,
-                fields,
-            } => {
-                let call = &verified.contract().calls[call_id.0 as usize];
+            Op::EnvBox { dst, callee, fields } => {
+                let call = env_contract_of(verified, *callee);
                 let box_len = call
                     .environment
                     .iter()
@@ -4426,10 +4434,10 @@ impl Task {
             Op::EnvLoad {
                 dst,
                 env,
-                contract: call_id,
+                callee,
                 field,
             } => {
-                let call = &verified.contract().calls[call_id.0 as usize];
+                let call = env_contract_of(verified, *callee);
                 let field_desc = &call.environment[*field as usize];
                 let len = field_desc.shape.words.len() * 8;
                 let off = field_desc.offset as usize;

@@ -829,33 +829,33 @@ pub enum ProgramDefect {
         expected: usize,
         actual: usize,
     },
-    /// An `EnvBox`/`EnvLoad` named a call contract that does not exist.
+    /// An `EnvBox`/`EnvLoad` named a closure callee that does not exist.
     EnvironmentContractOutOfRange {
-        contract: CallContractId,
-        contract_count: usize,
+        callee: FnId,
+        function_count: usize,
     },
-    /// An `EnvBox`/`EnvLoad` addressed a call contract that carries no boxed
+    /// An `EnvBox`/`EnvLoad` addressed a closure callee that carries no boxed
     /// environment (its `environment` is empty — it uses the static convention).
     EnvironmentNotBoxed {
-        contract: CallContractId,
+        callee: FnId,
     },
     /// An `EnvBox` supplied the wrong number of capture field sources for its
     /// environment contract.
     EnvironmentFieldCount {
-        contract: CallContractId,
+        callee: FnId,
         expected: usize,
         actual: usize,
     },
     /// An `EnvLoad` addressed a capture index beyond the environment contract.
     EnvironmentFieldIndex {
-        contract: CallContractId,
+        callee: FnId,
         field: u32,
         field_count: usize,
     },
     /// An `EnvBox` source or `EnvLoad` destination did not match the declared
     /// shape of its capture field (wrong schema, kind, or width).
     EnvironmentFieldShape {
-        contract: CallContractId,
+        callee: FnId,
         field: u32,
         expected: RegionShape,
         actual: RegionShape,
@@ -2246,19 +2246,15 @@ impl Verifier<'_> {
                     declared,
                 )?;
             }
-            Op::EnvBox {
-                dst,
-                contract,
-                fields,
-            } => {
-                let environment = self.env_contract(function_id, pc, *contract)?;
+            Op::EnvBox { dst, callee, fields } => {
+                let environment = self.env_contract(function_id, pc, *callee)?;
                 if environment.len() != fields.len() {
                     let expected = environment.len();
                     return Err(self.op(
                         function_id,
                         pc,
                         ProgramDefect::EnvironmentFieldCount {
-                            contract: *contract,
+                            callee: *callee,
                             expected,
                             actual: fields.len(),
                         },
@@ -2274,7 +2270,7 @@ impl Verifier<'_> {
                             function_id,
                             pc,
                             ProgramDefect::EnvironmentFieldShape {
-                                contract: *contract,
+                                callee: *callee,
                                 field: index as u32,
                                 expected: declared[index].clone(),
                                 actual: actual.shape.clone(),
@@ -2286,10 +2282,10 @@ impl Verifier<'_> {
             Op::EnvLoad {
                 dst,
                 env,
-                contract,
+                callee,
                 field,
             } => {
-                let environment = self.env_contract(function_id, pc, *contract)?;
+                let environment = self.env_contract(function_id, pc, *callee)?;
                 let Some(declared) = environment.get(*field as usize).map(|f| f.shape.clone())
                 else {
                     let field_count = environment.len();
@@ -2297,7 +2293,7 @@ impl Verifier<'_> {
                         function_id,
                         pc,
                         ProgramDefect::EnvironmentFieldIndex {
-                            contract: *contract,
+                            callee: *callee,
                             field: *field,
                             field_count,
                         },
@@ -2310,7 +2306,7 @@ impl Verifier<'_> {
                         function_id,
                         pc,
                         ProgramDefect::EnvironmentFieldShape {
-                            contract: *contract,
+                            callee: *callee,
                             field: *field,
                             expected: declared,
                             actual: destination.shape.clone(),
@@ -3580,32 +3576,43 @@ impl Verifier<'_> {
         Ok(region_contract)
     }
 
-    /// The boxed environment layout of a call contract, or a defect if the
-    /// contract is out of range or uses the static (non-boxed) convention.
+    /// The boxed environment layout of a closure callee, or a defect if the
+    /// callee is out of range or uses the static (non-boxed) convention.
     fn env_contract(
         &self,
         function: FnId,
         pc: usize,
-        contract: CallContractId,
+        callee: FnId,
     ) -> Result<&[FrameRegion], ProgramError> {
-        let Some(call) = usize::try_from(contract.0)
-            .ok()
-            .and_then(|index| self.contract.calls.get(index))
+        let Some(contract) = self
+            .contract
+            .functions
+            .get(callee.0 as usize)
+            .and_then(|function| function.call_contract)
         else {
+            let function_count = self.contract.functions.len();
+            if (callee.0 as usize) >= function_count {
+                return Err(self.op(
+                    function,
+                    pc,
+                    ProgramDefect::EnvironmentContractOutOfRange {
+                        callee,
+                        function_count,
+                    },
+                ));
+            }
             return Err(self.op(
                 function,
                 pc,
-                ProgramDefect::EnvironmentContractOutOfRange {
-                    contract,
-                    contract_count: self.contract.calls.len(),
-                },
+                ProgramDefect::EnvironmentNotBoxed { callee },
             ));
         };
+        let call = &self.contract.calls[contract.0 as usize];
         if call.environment.is_empty() {
             return Err(self.op(
                 function,
                 pc,
-                ProgramDefect::EnvironmentNotBoxed { contract },
+                ProgramDefect::EnvironmentNotBoxed { callee },
             ));
         }
         Ok(&call.environment)
