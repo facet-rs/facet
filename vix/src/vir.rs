@@ -209,6 +209,7 @@ impl YieldSite {
     pub fn value_check(&self) -> Option<NodeId> {
         match &self.recipe {
             CheckRecipe::Value { check } => Some(*check),
+            CheckRecipe::Snapshot { value, .. } => Some(*value),
             CheckRecipe::Trace(_) => None,
         }
     }
@@ -225,6 +226,10 @@ impl YieldSite {
 pub enum CheckRecipe {
     /// Roots a pure `Op::Expect` recipe in the enclosing function's node list.
     Value { check: NodeId },
+    /// Publishes the captured value structurally under a stable harness name.
+    /// The recipe root is the value node itself (a publication, not a boolean),
+    /// so the island realizes the value and the harness renders it type-directed.
+    Snapshot { value: NodeId, name: String },
     /// A post-run assertion over the frozen completed-run snapshot.
     Trace(TraceCheck),
 }
@@ -1123,6 +1128,11 @@ pub enum IslandPurpose {
     Check,
     Generator,
     Value,
+    /// Publishes a value solely so a snapshot check can render it structurally.
+    /// Like [`Value`](IslandPurpose::Value) it realizes the value, but the outcome
+    /// envelope is forced for every type — including scalars and strings — so the
+    /// runtime always freezes a renderable structure.
+    Snapshot,
 }
 
 /// Content-free canonical graph provenance for a shared value producer. This
@@ -1212,6 +1222,7 @@ pub struct PartitionedSite {
 #[repr(u8)]
 pub enum PartitionedRecipe {
     Value { island: usize },
+    Snapshot { island: usize, name: String },
     Trace(TraceCheck),
 }
 
@@ -1547,6 +1558,28 @@ impl Module {
                     ));
                     PartitionedRecipe::Value { island }
                 }
+                CheckRecipe::Snapshot { value, name } => {
+                    // A snapshot publishes the value itself, so its island is a
+                    // value publication whose output is the value node. Its
+                    // dedicated purpose forces the outcome envelope for every
+                    // type so scalars and strings freeze renderably too.
+                    let island = islands.len();
+                    islands.push(self.partition_function_output_with_shared(
+                        function,
+                        *value,
+                        IslandId(u32::try_from(island).expect("island index fits u32")),
+                        IslandPurpose::Snapshot,
+                        &IslandBoundary {
+                            shared: &shared_ids,
+                            wires: &wire_ids,
+                            lazy_arg_reps: &lazy_arg_reps,
+                        },
+                    ));
+                    PartitionedRecipe::Snapshot {
+                        island,
+                        name: name.clone(),
+                    }
+                }
                 CheckRecipe::Trace(trace) => PartitionedRecipe::Trace(trace.clone()),
             };
             sites.push(PartitionedSite {
@@ -1714,7 +1747,8 @@ impl Module {
             parameters,
             value_inputs,
             wire_inputs,
-            forced_copy_value: purpose == IslandPurpose::Value && self.force_molten_copy,
+            forced_copy_value: matches!(purpose, IslandPurpose::Value | IslandPurpose::Snapshot)
+                && self.force_molten_copy,
             nodes,
             output,
             callees,

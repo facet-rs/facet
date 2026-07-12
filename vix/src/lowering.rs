@@ -3,7 +3,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 use std::fmt::Write;
 
-use weavy::exec::Executable;
+use weavy::exec::{Executable, LaneRequest};
 use weavy::mem::Layout;
 use weavy::task::{
     ArgCopy, ArrayOpStatus, Fn as WeavyFn, FnId as WeavyFnId, Op as WeavyOp, OrderedOpStatus,
@@ -203,6 +203,10 @@ pub struct LoweringArtifact {
     pub output_schema: SchemaId,
     pub forced_copy_value: bool,
     pub publishes_value: bool,
+    /// This island exists only to publish a value for a snapshot check. Its
+    /// result is realized structurally for every type (scalars included) so the
+    /// harness can render it.
+    pub publishes_snapshot: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -254,6 +258,7 @@ impl LoweringArtifact {
             output_schema: self.output_schema,
             forced_copy_value: self.forced_copy_value,
             publishes_value: self.publishes_value,
+            publishes_snapshot: self.publishes_snapshot,
         }
     }
 
@@ -313,6 +318,12 @@ pub struct LoweringCache {
     entries: BTreeMap<RecipeId, LoweringArtifact>,
     counters: LoweringCacheCounters,
     trace_mode: TraceMode,
+    /// The typed lane every executable in this cache is compiled for. The
+    /// ordinary production cache uses [`LaneRequest::Auto`] (Weavy's own
+    /// native/interpreter policy); a cross-lane differential builds one cache per
+    /// forced lane so both authorities can run in one process without touching
+    /// the `WEAVY_JIT` environment variable.
+    lane: LaneRequest,
 }
 
 impl Default for LoweringCache {
@@ -321,6 +332,7 @@ impl Default for LoweringCache {
             entries: BTreeMap::new(),
             counters: LoweringCacheCounters::default(),
             trace_mode: TraceMode::Production,
+            lane: LaneRequest::Auto,
         }
     }
 }
@@ -337,6 +349,17 @@ impl LoweringCache {
         }
     }
 
+    /// Construct a production-trace cache whose executables are compiled for an
+    /// explicit [`LaneRequest`]. This is the seam the cross-lane differential
+    /// uses to lower the same island once per authority.
+    #[must_use]
+    pub fn for_lane(lane: LaneRequest) -> Self {
+        Self {
+            lane,
+            ..Self::default()
+        }
+    }
+
     pub fn get_or_lower(&mut self, island: &Island) -> Result<&LoweringArtifact, LoweringError> {
         let recipe = RecipeId::from_canonical_vir(&island.canonical_recipe_bytes());
         if self.entries.contains_key(&recipe) {
@@ -344,7 +367,7 @@ impl LoweringCache {
             return Ok(self.entries.get(&recipe).expect("entry was just observed"));
         }
         self.counters.misses += 1;
-        let lowered = lower_island(island, recipe, self.trace_mode)?;
+        let lowered = lower_island(island, recipe, self.trace_mode, self.lane)?;
         self.entries.insert(recipe, lowered);
         Ok(self.entries.get(&recipe).expect("entry was just inserted"))
     }
@@ -412,6 +435,7 @@ fn lower_island(
     island: &Island,
     recipe: RecipeId,
     trace_mode: TraceMode,
+    lane: LaneRequest,
 ) -> Result<LoweringArtifact, LoweringError> {
     let output = island
         .nodes
@@ -428,8 +452,10 @@ fn lower_island(
         }
     } else if island.purpose == IslandPurpose::Check && output.ty != Type::Check {
         return Err(lowering_diagnostic(output.span, "island output is not a Check").into());
-    } else if island.purpose == IslandPurpose::Value
-        && !publication_capability_registered(&output.ty)
+    } else if matches!(
+        island.purpose,
+        IslandPurpose::Value | IslandPurpose::Snapshot
+    ) && !publication_capability_registered(&output.ty)
     {
         return Err(lowering_diagnostic(
             output.span,
@@ -437,8 +463,17 @@ fn lower_island(
         )
         .into());
     }
-    let array_outcome = island_contains_checked_collection_ops(island)
-        .then(|| ArrayOutcomeAbi::for_value(output.ty.clone()));
+    let is_snapshot = island.purpose == IslandPurpose::Snapshot;
+    // A value island that publishes a structural product or sum (a record,
+    // tuple, or enum) with no checked collection op still needs the outcome
+    // envelope so the result is decoded as a realized value, not a bare scalar.
+    // A snapshot island forces the envelope for EVERY type so scalars and
+    // strings are decoded as realized values and freeze renderably.
+    let publishes_aggregate = island.purpose == IslandPurpose::Value
+        && matches!(&output.ty, Type::Record(_) | Type::Tuple(_) | Type::Enum(_));
+    let array_outcome =
+        (island_contains_checked_collection_ops(island) || publishes_aggregate || is_snapshot)
+            .then(|| ArrayOutcomeAbi::for_value(output.ty.clone()));
     let schemas = SchemaAssignments::build(island, array_outcome.is_some())?;
 
     let function_ids = island.local_function_ids();
@@ -571,7 +606,7 @@ fn lower_island(
         // Keep source-attributed `Op::Trace` nodes in the verified program. The
         // cache chooses bounded Production tracing for ordinary execution or
         // explicit Innards tracing for diagnostics.
-        executable: Executable::with_trace_mode(verified, trace_mode),
+        executable: Executable::with_lane(verified, trace_mode, lane),
         array_outcome,
         pc_nodes,
         constants,
@@ -579,7 +614,11 @@ fn lower_island(
         output_type: output.ty.clone(),
         output_schema: semantic_schema_id(&output.ty),
         forced_copy_value: island.forced_copy_value,
-        publishes_value: island.purpose == IslandPurpose::Value,
+        publishes_value: matches!(
+            island.purpose,
+            IslandPurpose::Value | IslandPurpose::Snapshot
+        ),
+        publishes_snapshot: is_snapshot,
     })
 }
 
