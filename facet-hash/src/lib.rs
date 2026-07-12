@@ -27,21 +27,39 @@ use weavy::ir::{
 use weavy::{BlockRef, Control, DenseLowered, Lowered, Program, RunError, RunStats, Step};
 
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
 mod native;
+#[cfg(not(all(
+    facet_hash_jit_active,
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+)))]
+mod native_stub;
 #[cfg(all(
-    feature = "jit",
+    facet_hash_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
     )
 ))]
 pub use native::{
+    NativeEqualityPlan, NativeEqualityPlanStats, NativeHashPlan, NativeHashPlanStats,
+};
+#[cfg(not(all(
+    facet_hash_jit_active,
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+)))]
+pub use native_stub::{
     NativeEqualityPlan, NativeEqualityPlanStats, NativeHashPlan, NativeHashPlanStats,
 };
 

@@ -1,0 +1,227 @@
+use crate::support::Span;
+
+/// Stable diagnostic identity. Rendered prose is deliberately not the API.
+///
+/// r[impl lang.diagnostics.typed]
+/// r[impl machine.ir.inspectable]
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u8)]
+pub enum DiagnosticCode {
+    ParseRejected,
+    DuplicateDefinition,
+    InvalidTestSignature,
+    UnsupportedExpression,
+    TypeMismatch,
+    StringIsNotPath,
+    UnknownName,
+    InvalidArity,
+    LoweringUnsupported,
+    RuntimeInvariant,
+    DuplicateBinding,
+    UnknownField,
+    MissingField,
+    DuplicateField,
+    UnknownVariant,
+    DuplicateVariant,
+    VariantPayloadMismatch,
+    NonExhaustiveMatch,
+    ExpressionStatement,
+    UnusedMustUse,
+    UnknownMethod,
+    /// A compile-time constant-fold decode of a literal document failed: the
+    /// document did not match the compiler-known target type.
+    DecodeFailed,
+    /// A decode call whose document is not a compile-time-constant literal, or
+    /// whose target type is not known from context: the runtime doc-parse
+    /// primitive that would serve it does not exist yet.
+    RuntimeDecodeUnavailable,
+}
+
+#[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord, Hash)]
+#[repr(u8)]
+pub enum DiagnosticSeverity {
+    Error,
+    Warning,
+}
+
+impl DiagnosticCode {
+    #[must_use]
+    pub const fn severity(self) -> DiagnosticSeverity {
+        match self {
+            Self::UnusedMustUse => DiagnosticSeverity::Warning,
+            _ => DiagnosticSeverity::Error,
+        }
+    }
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct Label {
+    pub span: Span,
+    pub text: String,
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+#[repr(u8)]
+pub enum DiagnosticPayload {
+    Parse {
+        detail: String,
+    },
+    Name {
+        name: String,
+    },
+    Type {
+        expected: String,
+        found: String,
+    },
+    Arity {
+        expected: u32,
+        found: u32,
+    },
+    Unsupported {
+        construct: String,
+    },
+    Invariant {
+        detail: String,
+    },
+    Field {
+        record: String,
+        field: String,
+    },
+    Variant {
+        enumeration: String,
+        variant: String,
+    },
+    Match {
+        missing: Vec<String>,
+    },
+    ExpressionStatement,
+    UnusedResult {
+        operation: String,
+    },
+    /// A typed decode failure at a compile-time constant fold. The structured
+    /// fields (kind label, field path, document byte span) are the machine-
+    /// consumable truth; `detail` is a rendered convenience for `message()` and
+    /// is never an identity-bearing value.
+    Decode {
+        format: String,
+        target: String,
+        kind: String,
+        path: Vec<String>,
+        doc_offset: Option<u32>,
+        doc_len: Option<u32>,
+        detail: String,
+    },
+    /// The runtime typed-decode seam a nonliteral/untyped-context decode would
+    /// need, named explicitly rather than swallowed as a generic rejection.
+    RuntimeDecode {
+        format: String,
+        target: Option<String>,
+    },
+}
+
+#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
+pub struct Diagnostic {
+    pub code: DiagnosticCode,
+    pub primary: Span,
+    pub labels: Vec<Label>,
+    pub payload: DiagnosticPayload,
+}
+
+impl Diagnostic {
+    #[must_use]
+    pub fn unsupported(span: Span, construct: impl Into<String>) -> Self {
+        Self {
+            code: DiagnosticCode::UnsupportedExpression,
+            primary: span,
+            labels: Vec::new(),
+            payload: DiagnosticPayload::Unsupported {
+                construct: construct.into(),
+            },
+        }
+    }
+
+    #[must_use]
+    pub fn message(&self) -> String {
+        match &self.payload {
+            DiagnosticPayload::Parse { detail } | DiagnosticPayload::Invariant { detail } => {
+                detail.clone()
+            }
+            DiagnosticPayload::Name { name } => match self.code {
+                DiagnosticCode::UnknownMethod => format!("unknown method {name}"),
+                _ => name.clone(),
+            },
+            DiagnosticPayload::Type { expected, found } => match self.code {
+                DiagnosticCode::StringIsNotPath => "no conversion from String to Path".to_owned(),
+                _ => format!("expected {expected}, found {found}"),
+            },
+            DiagnosticPayload::Arity { expected, found } => {
+                format!("expected {expected} arguments, found {found}")
+            }
+            DiagnosticPayload::Unsupported { construct } => construct.clone(),
+            DiagnosticPayload::Field { field, .. } => match self.code {
+                DiagnosticCode::UnknownField => format!("unknown field {field}"),
+                DiagnosticCode::MissingField => format!("missing field {field}"),
+                DiagnosticCode::DuplicateField => format!("duplicate field {field}"),
+                _ => field.clone(),
+            },
+            DiagnosticPayload::Variant { variant, .. } => match self.code {
+                DiagnosticCode::UnknownVariant => format!("unknown variant {variant}"),
+                DiagnosticCode::DuplicateVariant => format!("duplicate variant {variant}"),
+                _ => variant.clone(),
+            },
+            DiagnosticPayload::Match { .. } => "non-exhaustive match".to_owned(),
+            DiagnosticPayload::ExpressionStatement => "expression statement".to_owned(),
+            DiagnosticPayload::UnusedResult { operation } => {
+                format!("unused result of `{operation}`")
+            }
+            DiagnosticPayload::Decode {
+                format,
+                target,
+                path,
+                detail,
+                ..
+            } => {
+                let at = if path.is_empty() {
+                    String::new()
+                } else {
+                    format!(" at {}", path.join("."))
+                };
+                format!("{format} decode into {target} failed{at}: {detail}")
+            }
+            DiagnosticPayload::RuntimeDecode { format, target } => match target {
+                Some(target) => format!(
+                    "runtime typed decode is unavailable: {format} decode into {target} needs the \
+                     runtime doc-parse primitive (r[machine.primitive.typed-deserialization], not \
+                     yet implemented); only compile-time-constant document literals are folded"
+                ),
+                None => format!(
+                    "runtime typed decode is unavailable: {format} decode has no target type known \
+                     from context; only compile-time-constant document literals with a known target \
+                     are folded"
+                ),
+            },
+        }
+    }
+}
+
+#[derive(facet::Facet, Clone, Debug, Default, PartialEq, Eq)]
+pub struct Diagnostics {
+    pub entries: Vec<Diagnostic>,
+}
+
+impl Diagnostics {
+    #[must_use]
+    pub fn one(diagnostic: Diagnostic) -> Self {
+        Self {
+            entries: vec![diagnostic],
+        }
+    }
+}
+
+impl core::fmt::Display for Diagnostics {
+    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
+        write!(f, "{} Vix diagnostic(s)", self.entries.len())
+    }
+}
+
+impl std::error::Error for Diagnostics {}

@@ -1,0 +1,26 @@
+// Compatibility prelude owned exclusively by the retiring machine compiler.
+// The new compiler owns version.vix and does not load this module.
+
+pub enum Ordering {
+    Less,
+    Equal,
+    Greater,
+}
+
+pub fn parse_version(s: String) -> Version {
+    version(s)
+}
+
+pub fn version_lte(a: Version, b: Version) -> Bool {
+    a <= b
+}
+
+pub fn version_cmp(a: Version, b: Version) -> Ordering {
+    match a < b {
+        true => Ordering::Less,
+        false => match a > b {
+            true => Ordering::Greater,
+            false => Ordering::Equal,
+        },
+    }
+}

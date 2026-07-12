@@ -74,7 +74,7 @@ PHON        ──┘            │    ControlOp / MemoryOp / InitOp / Aggregat
                            │    thunk vtables for Vec, HashMap, &str, Box<T>, …
                            │
                            ├─ interpreter  (weavy::run / run_dense)
-                           └─ copy-and-patch JIT  (weavy::jit, feature = "jit")
+                           └─ copy-and-patch JIT  (weavy::jit, Weavy's sole `jit` feature)
 ```
 
 The `Lowered<BlockId, Op>` type uses caller-defined symbolic block ids during

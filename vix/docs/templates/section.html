@@ -1,0 +1,40 @@
+{% extends "base.html" %}
+
+{% block title %}{{ section.title }} - {{ config.title }}{% endblock %}
+
+{% block breadcrumb %}
+<span>{{ section.title }}</span>
+{% endblock %}
+
+{% block content %}
+<article class="doc">
+    <header class="doc-header">
+        <h1>{{ section.title }}</h1>
+    </header>
+    <div class="doc-body">
+        {{ section.content | safe }}
+    </div>
+
+    {% if section.pages %}
+    <section class="link-panel">
+        <h2>Pages</h2>
+        <div class="page-list">
+            {% for item in section.pages | sort(attribute="weight") %}
+            <a class="page-row" href="{{ item.permalink }}"><span>{{ item.title }}</span></a>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+
+    {% if section.subsections %}
+    <section class="link-panel">
+        <h2>Sections</h2>
+        <div class="section-grid">
+            {% for sub in section.subsections | sort(attribute="weight") %}
+            <a class="section-card" href="{{ sub.permalink }}"><span>{{ sub.title }}</span>{% if sub.pages %}<small>{{ sub.pages | length }} pages</small>{% endif %}</a>
+            {% endfor %}
+        </div>
+    </section>
+    {% endif %}
+</article>
+{% endblock %}

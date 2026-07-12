@@ -222,19 +222,16 @@ pub struct Shape {
 
     /// Container-level proxy for custom serialization/deserialization.
     /// Set by `#[facet(proxy = ProxyType)]` on the container.
-    #[cfg(feature = "alloc")]
     pub proxy: Option<&'static crate::ProxyDef>,
 
     /// Format-specific container-level proxy definitions.
     /// Set by `#[facet(xml::proxy = ProxyType)]`, `#[facet(json::proxy = ProxyType)]`, etc.
     ///
     /// These take precedence over the format-agnostic `proxy` field when the format matches.
-    #[cfg(feature = "alloc")]
     pub format_proxies: &'static [crate::FormatProxy],
 
     /// Container-level opaque adapter for custom opaque serialization/deserialization.
     /// Set by `#[facet(opaque = AdapterType)]` on the container.
-    #[cfg(feature = "alloc")]
     pub opaque_adapter: Option<&'static crate::OpaqueAdapterDef>,
 
     /// Declarative variance description for this type.
@@ -574,7 +571,6 @@ impl Shape {
     ///
     /// # Returns
     /// The proxy definition for this format, or `None` if no format-specific proxy is defined.
-    #[cfg(feature = "alloc")]
     #[inline]
     pub fn format_proxy(&self, format: &str) -> Option<&'static crate::ProxyDef> {
         self.format_proxies
@@ -594,7 +590,6 @@ impl Shape {
     ///
     /// # Returns
     /// The appropriate proxy definition, or `None` if no proxy is defined.
-    #[cfg(feature = "alloc")]
     #[inline]
     pub fn effective_proxy(&self, format: Option<&str>) -> Option<&'static crate::ProxyDef> {
         // First try format-specific proxy
@@ -608,14 +603,12 @@ impl Shape {
     }
 
     /// Returns true if this shape has any proxy (format-specific or format-agnostic).
-    #[cfg(feature = "alloc")]
     #[inline]
     pub fn has_any_proxy(&self) -> bool {
         self.proxy.is_some() || !self.format_proxies.is_empty()
     }
 
     /// Returns true if this shape has a container-level opaque adapter.
-    #[cfg(feature = "alloc")]
     #[inline]
     pub const fn has_opaque_adapter(&self) -> bool {
         self.opaque_adapter.is_some()

@@ -1,0 +1,12 @@
+
+// Rung 128 — progressive exec trees, the primary exec shape: stage one
+// writes early.txt immediately, then sleeps before finishing its tree.
+// Stage two consumes ONLY early.txt — and must complete before stage
+// one's process exits. Subfile demand, not whole-output demand.
+#[test { budget_wall: 2s, budget_rss: 256MB }]
+fn progressive_tree(sh: Sh) -> Stream<Check> {
+    let producer = exec sh`-c "mkdir -p out; echo ready > out/early.txt; sleep 1.5; echo done > out/late.txt"`;
+    let consumer = (producer.tree / "out" / "early.txt").text();
+    yield expect_eq(consumer.trim(), "ready");
+    yield finished_before(consumer, producer);
+}

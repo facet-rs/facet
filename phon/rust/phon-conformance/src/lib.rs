@@ -82,7 +82,7 @@ fn prim(p: Primitive) -> SchemaRef {
 
 fn schema(key: u64, kind: SchemaKind) -> Schema {
     Schema {
-        id: SchemaId(key),
+        id: SchemaId::from_raw(key),
         type_params: Vec::new(),
         kind,
     }
@@ -90,7 +90,7 @@ fn schema(key: u64, kind: SchemaKind) -> Schema {
 
 fn parametric(key: u64, type_params: &[&str], kind: SchemaKind) -> Schema {
     Schema {
-        id: SchemaId(key),
+        id: SchemaId::from_raw(key),
         type_params: type_params.iter().map(|s| (*s).to_string()).collect(),
         kind,
     }
@@ -201,14 +201,14 @@ fn linked_list() -> Case {
             name: "Node".to_string(),
             fields: vec![
                 field("value", prim(Primitive::U32), true),
-                field("next", SchemaRef::concrete(SchemaId(20)), true),
+                field("next", SchemaRef::concrete(SchemaId::from_raw(20)), true),
             ],
         },
     );
     let opt = schema(
         20,
         SchemaKind::Option {
-            element: SchemaRef::concrete(SchemaId(10)),
+            element: SchemaRef::concrete(SchemaId::from_raw(10)),
         },
     );
     Case {
@@ -235,7 +235,7 @@ fn generics() -> Case {
                 field(
                     "pair",
                     SchemaRef::generic(
-                        SchemaId(1),
+                        SchemaId::from_raw(1),
                         vec![SchemaRef::var("T"), prim(Primitive::U32)],
                     ),
                     true,

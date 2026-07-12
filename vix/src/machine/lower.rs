@@ -17,36 +17,38 @@
 
 use std::cell::RefCell;
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::rc::Rc;
 use std::sync::Arc;
 
-use sha2::{Digest, Sha256};
-use weavy::mem::Descriptor;
+use taxon::Primitive;
 use weavy::mem::Layout;
 use weavy::mem::declared as declared_mem;
 use weavy::task::{Fn as TaskFn, FnId, Op, Program};
 
 use super::TotalF64;
 use super::driver::{
-    ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_FILTER_EXCLUDE_HOST, ARRAY_JOIN_HOST,
-    ARRAY_LEN_HOST, ARRAY_MAP_PENDING_HOST, ARRAY_POP_HOST, ARRAY_PUSH_HOST, ARRAY_SET_HOST,
-    AST_DOC_HOST, AST_FN_HOST, CRATE_ARCHIVE_HOST, CodeBundle, DOC_COERCE_HOST, DOC_GET_HOST, DOC_PACKAGE_HOST,
-    DOC_PARSE_HOST, DriveEvent, DriveEventSink, Driver, ELF_DOC_HOST, EXEC_HOST, FETCH_HOST,
-    FLESH_DUP_HOST, GLOB_HOST, INVOKE_HOST, Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST,
-    MAP_INSERT_HOST, MachineExecBackend, OCI_DOC_HOST, OPTION_UNWRAP_HOST, PATH_WITH_EXT_HOST,
-    PENDING_ALLOC_HOST, PENDING_COERCE_HOST, PENDING_INVOKE_HOST, RECORD_UPDATE_HOST, RenderNames,
-    RenderVariant, RenderedValue, SEALED_DECLASSIFY_HOST, SEALED_SEAL_HOST, SEALED_TO_STRING_HOST,
-    STORE_ALLOC_HOST, STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_DEFAULT_HOST,
-    STRING_LOWER_HOST, STRING_UPPER_HOST, SemanticComparator, StepMode, StoreHandle, TARGET_HOST,
-    TREE_PROJECT_HOST, VALUE_COMPARE_HOST, VERSION_PARSE_HOST, VERSION_SET_OP_HOST,
-    VERSION_SET_PARSE_HOST, ValueBundle,
-
+    ACQUIRE_HOST, ARRAY_ALLOC_HOST, ARRAY_COLLECT_HOST, ARRAY_FILTER_EXCLUDE_HOST, ARRAY_GET_HOST,
+    ARRAY_JOIN_HOST, ARRAY_LEN_HOST, ARRAY_MAP_PENDING_HOST, ARRAY_POP_HOST, ARRAY_PUSH_HOST,
+    ARRAY_SET_HOST, AST_DOC_HOST, AST_FN_HOST, CRATE_ARCHIVE_HOST, CodeBundle, DOC_COERCE_HOST,
+    DOC_GET_HOST, DOC_IS_MAP_HOST, DOC_KEYS_HOST, DOC_PACKAGE_HOST, DOC_PARSE_HOST, DriveEvent,
+    DriveEventSink, Driver, ELF_DOC_HOST, EXEC_HOST, FETCH_HOST, FnRef, GLOB_HOST, INVOKE_HOST,
+    Lane, LoweredFn, MAP_EMPTY_HOST, MAP_GET_HOST, MAP_INSERT_HOST, MOLTEN_DUP_HOST,
+    MachineExecBackend, MapInternStats, MoltenStats, NATIVE_OPTION_UNWRAP_NONE_HOST, OCI_DOC_HOST,
+    OPTION_CONSTRUCT_HOST, OPTION_DESTRUCT_HOST, OPTION_UNWRAP_HOST, PATH_JOIN_HOST,
+    PATH_TO_STRING_HOST, PATH_WITH_EXT_HOST, PENDING_ALLOC_HOST, PENDING_COERCE_HOST,
+    PENDING_INVOKE_HOST, RECORD_UPDATE_HOST, RenderNames, RenderVariant, RenderedValue,
+    SEALED_DECLASSIFY_HOST, SEALED_SEAL_HOST, SEALED_TO_STRING_HOST, STORE_ALLOC_HOST,
+    STORE_READ_HOST, STORE_TAG_HOST, STRING_CONCAT_HOST, STRING_CONTAINS_HOST, STRING_DEFAULT_HOST,
+    STRING_IS_NUMERIC_HOST, STRING_LOWER_HOST, STRING_PARSE_INT_HOST, STRING_SPLIT_HOST,
+    STRING_UPPER_HOST, SemanticComparator, StepMode, StoreHandle, TARGET_HOST, TREE_PROJECT_HOST,
+    TREE_TEXT_HOST, VALUE_COMPARE_HOST, VERSION_FIELD_HOST, VERSION_PARSE_HOST,
+    VERSION_SET_OP_HOST, VERSION_SET_PARSE_HOST, ValueBundle,
 };
 use crate::ast;
 use crate::fetch::FetchBackend;
 use crate::module::{
-    ModuleTables, VariantShape, load_module_tables_from_modules, type_schema_name,
+    DescriptorMap, ModuleTables, SchemaTables, VariantShape, VixDescriptor,
+    load_module_tables_from_modules, type_schema_name,
 };
 
 /// The machine facade for this slice: load source, demand a function's
@@ -58,8 +60,12 @@ pub struct Machine {
     fn_param_names: BTreeMap<String, Vec<String>>,
     fn_returns: BTreeMap<String, String>,
     render_names: RenderNames,
+    root: String,
+    modules: BTreeMap<String, String>,
     source: String,
     module_hash: Vec<u8>,
+    lower_options: LowerOptions,
+    diagnostics: Vec<String>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -107,205 +113,32 @@ impl Machine {
         modules: BTreeMap<String, String>,
         lane: Lane,
     ) -> Result<Machine, String> {
-        let module_hash = module_set_hash(root, &modules);
-        let tables = load_module_tables_from_modules(root, &modules)?;
-
-        // Deterministic fn_ref assignment: sorted names.
-        let mut names: Vec<&String> = tables.fns.keys().collect();
-        names.sort();
-        let fn_refs: HashMap<String, usize> = names
-            .iter()
-            .enumerate()
-            .map(|(ix, name)| ((*name).clone(), ix))
-            .collect();
-        let fn_returns: HashMap<String, String> = names
-            .iter()
-            .map(|name| {
-                let item = &tables.fns[*name];
-                let schema = item
-                    .return_type
-                    .as_ref()
-                    .map(type_schema_name)
-                    .transpose()?
-                    .unwrap_or_else(|| "Int".into());
-                Ok(((*name).clone(), schema))
-            })
-            .collect::<Result<_, String>>()?;
-        let fn_params: HashMap<String, Vec<String>> = names
-            .iter()
-            .map(|name| {
-                let item = &tables.fns[*name];
-                Ok((
-                    (*name).clone(),
-                    item.params
-                        .params
-                        .iter()
-                        .map(|param| type_schema_name(&param.ty))
-                        .collect::<Result<Vec<_>, _>>()?,
-                ))
-            })
-            .collect::<Result<_, String>>()?;
-        let fn_param_names: HashMap<String, Vec<String>> = names
-            .iter()
-            .map(|name| {
-                let item = &tables.fns[*name];
-                (
-                    (*name).clone(),
-                    item.params
-                        .params
-                        .iter()
-                        .map(|param| param.name.value.clone())
-                        .collect(),
-                )
-            })
-            .collect();
-        let mut schema_names = schema_names_for(&tables, &fn_returns, &fn_params)?;
-        schema_names.sort();
-        schema_names.dedup();
-        let render_names = render_names_for(&tables);
-        let schema_refs: HashMap<String, i64> = schema_names
-            .iter()
-            .enumerate()
-            .map(|(ix, name)| {
-                (
-                    name.clone(),
-                    i64::try_from(ix).expect("schema ref fits i64"),
-                )
-            })
-            .collect();
-        let string_handles = string_handles(&tables);
-        let path_handles = path_handles(&tables, string_handles.len());
-        let flag_handles = flag_handles(&tables, string_handles.len() + path_handles.len());
-        let template_handles = template_handles(
-            &tables,
-            string_handles.len() + path_handles.len() + flag_handles.len(),
-        );
-        let literal_handles = LiteralHandles {
-            strings: &string_handles,
-            paths: &path_handles,
-            flags: &flag_handles,
-            templates: &template_handles,
-        };
-        let signatures = FnSignatures {
-            returns: &fn_returns,
-            params: &fn_params,
-            param_names: &fn_param_names,
-        };
-
-        let mut task_fns = Vec::with_capacity(names.len());
-        let mut lowered = Vec::with_capacity(names.len());
-        for (ix, name) in names.iter().enumerate() {
-            let item = &tables.fns[*name];
-            let hash = tables.fn_hashes[*name];
-            let (task_fn, info) = if parked_generic_or_fn_typed(item) {
-                parked_stub(item)?
-            } else {
-                FnLowerer::lower(
-                    item,
-                    &tables,
-                    &tables.fn_modules[*name],
-                    &fn_refs,
-                    signatures,
-                    &schema_refs,
-                    literal_handles,
-                )
-                .map_err(|e| format!("lowering {name}: {e}"))?
-            };
-            task_fns.push(task_fn);
-            let arg_schemas = item
-                .params
-                .params
-                .iter()
-                .map(|param| type_schema_name(&param.ty))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| format!("lowering {name}: {e}"))?;
-            let param_names = item
-                .params
-                .params
-                .iter()
-                .map(|param| param.name.value.clone())
-                .collect::<Vec<_>>();
-            let semantic_comparators = semantic_comparators_for(
-                name,
-                &arg_schemas,
-                &param_names,
-                &fn_refs,
-                &fn_params,
-                &fn_returns,
-            )?;
-            let hash = hash_with_semantic_comparators(hash, &semantic_comparators, &names, &tables);
-            lowered.push(LoweredFn {
-                hash,
-                task_fn: FnId(u32::try_from(ix).expect("fn count fits u32")),
-                arg_offsets: info.arg_offsets,
-                arg_schemas,
-                return_schema: fn_returns[*name].clone(),
-                semantic_comparators,
-                invoke_region: info.invoke_region,
-                store_alloc_region: info.store_alloc_region,
-                store_read_region: info.store_read_region,
-                store_tag_region: info.store_tag_region,
-                primitive_region: info.primitive_region,
-            });
-        }
-
-        let mut descriptors = tables.descriptors;
-        add_builtin_descriptors(&mut descriptors);
-        for name in &schema_names {
-            if let Some(descriptor) = derived_descriptor(name) {
-                descriptors.entry(name.clone()).or_insert(descriptor);
-            }
-        }
+        let mut modules = modules;
+        inject_legacy_std_module(&mut modules);
+        let lower_options = LowerOptions::from_env();
+        let c = compile_module_set(root, &modules, RefSource::Fresh, lower_options)?;
 
         let mut driver =
-            Driver::try_with_descriptors(Program { fns: task_fns }, lowered, descriptors, lane)?;
-        for name in &schema_names {
-            let actual = driver.intern_schema_ref(name.clone());
-            assert_eq!(
-                actual, schema_refs[name],
-                "schema ref assignment is deterministic"
-            );
-        }
-        let mut string_handles_sorted: Vec<(&String, &i64)> = string_handles.iter().collect();
-        string_handles_sorted.sort_by_key(|(_, handle)| **handle);
-        for (value, expected) in string_handles_sorted {
-            let (actual, _) = driver.intern_raw_value("String", value.as_bytes().to_vec());
-            assert_eq!(
-                actual, *expected,
-                "string handle assignment is deterministic"
-            );
-        }
-        let mut path_handles_sorted: Vec<(&String, &i64)> = path_handles.iter().collect();
-        path_handles_sorted.sort_by_key(|(_, handle)| **handle);
-        for (value, expected) in path_handles_sorted {
-            let (actual, _) = driver.intern_raw_value("Path", value.as_bytes().to_vec());
-            assert_eq!(actual, *expected, "path handle assignment is deterministic");
-        }
-        let mut flag_handles_sorted: Vec<(&String, &i64)> = flag_handles.iter().collect();
-        flag_handles_sorted.sort_by_key(|(_, handle)| **handle);
-        for (value, expected) in flag_handles_sorted {
-            let (actual, _) = driver.intern_raw_value("Flag", value.as_bytes().to_vec());
-            assert_eq!(actual, *expected, "flag handle assignment is deterministic");
-        }
-        let mut template_handles_sorted: Vec<(&String, &i64)> = template_handles.iter().collect();
-        template_handles_sorted.sort_by_key(|(_, handle)| **handle);
-        for (value, expected) in template_handles_sorted {
-            let (actual, _) = driver.intern_raw_value("Template", value.as_bytes().to_vec());
-            assert_eq!(
-                actual, *expected,
-                "template handle assignment is deterministic"
-            );
-        }
+            Driver::try_with_schema_tables(c.program, c.lowered, c.descriptors, c.schemas, lane)?;
+        assert_literal_handles(&mut driver, "String", &c.literal_handles.strings);
+        assert_literal_handles(&mut driver, "Path", &c.literal_handles.paths);
+        assert_literal_handles(&mut driver, "Flag", &c.literal_handles.flags);
+        assert_literal_handles(&mut driver, "Template", &c.literal_handles.templates);
 
+        let source = modules.get(root).cloned().unwrap_or_default();
         Ok(Machine {
             driver,
-            fn_refs,
-            fn_params: fn_params.into_iter().collect(),
-            fn_param_names: fn_param_names.into_iter().collect(),
-            fn_returns: fn_returns.into_iter().collect(),
-            render_names,
-            source: modules.get(root).cloned().unwrap_or_default(),
-            module_hash,
+            fn_refs: c.fn_refs,
+            fn_params: c.fn_params.into_iter().collect(),
+            fn_param_names: c.fn_param_names.into_iter().collect(),
+            fn_returns: c.fn_returns.into_iter().collect(),
+            render_names: c.render_names,
+            root: root.to_string(),
+            modules,
+            source,
+            module_hash: c.module_hash,
+            lower_options,
+            diagnostics: c.diagnostics,
         })
     }
 
@@ -335,152 +168,28 @@ impl Machine {
         root: &str,
         modules: BTreeMap<String, String>,
     ) -> Result<ReloadDiff, String> {
+        let mut modules = modules;
+        inject_legacy_std_module(&mut modules);
         let before = self.fn_hashes();
-        let module_hash = module_set_hash(root, &modules);
-        let tables = load_module_tables_from_modules(root, &modules)?;
+        let c = compile_module_set(
+            root,
+            &modules,
+            RefSource::Existing(&mut self.driver),
+            self.lower_options,
+        )?;
 
-        let mut names: Vec<&String> = tables.fns.keys().collect();
-        names.sort();
-        let fn_refs: HashMap<String, usize> = names
-            .iter()
-            .enumerate()
-            .map(|(ix, name)| ((*name).clone(), ix))
-            .collect();
-        let fn_returns: HashMap<String, String> = names
-            .iter()
-            .map(|name| {
-                let item = &tables.fns[*name];
-                let schema = item
-                    .return_type
-                    .as_ref()
-                    .map(type_schema_name)
-                    .transpose()?
-                    .unwrap_or_else(|| "Int".into());
-                Ok(((*name).clone(), schema))
-            })
-            .collect::<Result<_, String>>()?;
-        let fn_params: HashMap<String, Vec<String>> = names
-            .iter()
-            .map(|name| {
-                let item = &tables.fns[*name];
-                Ok((
-                    (*name).clone(),
-                    item.params
-                        .params
-                        .iter()
-                        .map(|param| type_schema_name(&param.ty))
-                        .collect::<Result<Vec<_>, _>>()?,
-                ))
-            })
-            .collect::<Result<_, String>>()?;
-        let fn_param_names: HashMap<String, Vec<String>> = names
-            .iter()
-            .map(|name| {
-                let item = &tables.fns[*name];
-                (
-                    (*name).clone(),
-                    item.params
-                        .params
-                        .iter()
-                        .map(|param| param.name.value.clone())
-                        .collect(),
-                )
-            })
-            .collect();
-        let mut schema_names = schema_names_for(&tables, &fn_returns, &fn_params)?;
-        schema_names.sort();
-        schema_names.dedup();
-        let render_names = render_names_for(&tables);
-        let schema_refs = self.driver.schema_ref_map_for(&schema_names);
-        let string_handles = live_string_handles(&self.driver, &tables);
-        let path_handles = live_path_handles(&self.driver, &tables);
-        let flag_handles = live_flag_handles(&self.driver, &tables);
-        let template_handles = live_template_handles(&self.driver, &tables);
-        let literal_handles = LiteralHandles {
-            strings: &string_handles,
-            paths: &path_handles,
-            flags: &flag_handles,
-            templates: &template_handles,
-        };
-        let signatures = FnSignatures {
-            returns: &fn_returns,
-            params: &fn_params,
-            param_names: &fn_param_names,
-        };
-
-        let mut task_fns = Vec::with_capacity(names.len());
-        let mut lowered = Vec::with_capacity(names.len());
-        for (ix, name) in names.iter().enumerate() {
-            let item = &tables.fns[*name];
-            let hash = tables.fn_hashes[*name];
-            let (task_fn, info) = if parked_generic_or_fn_typed(item) {
-                parked_stub(item)?
-            } else {
-                FnLowerer::lower(
-                    item,
-                    &tables,
-                    &tables.fn_modules[*name],
-                    &fn_refs,
-                    signatures,
-                    &schema_refs,
-                    literal_handles,
-                )
-                .map_err(|e| format!("lowering {name}: {e}"))?
-            };
-            task_fns.push(task_fn);
-            let arg_schemas = item
-                .params
-                .params
-                .iter()
-                .map(|param| type_schema_name(&param.ty))
-                .collect::<Result<Vec<_>, _>>()
-                .map_err(|e| format!("lowering {name}: {e}"))?;
-            let param_names = item
-                .params
-                .params
-                .iter()
-                .map(|param| param.name.value.clone())
-                .collect::<Vec<_>>();
-            let semantic_comparators = semantic_comparators_for(
-                name,
-                &arg_schemas,
-                &param_names,
-                &fn_refs,
-                &fn_params,
-                &fn_returns,
-            )?;
-            let hash = hash_with_semantic_comparators(hash, &semantic_comparators, &names, &tables);
-            lowered.push(LoweredFn {
-                hash,
-                task_fn: FnId(u32::try_from(ix).expect("fn count fits u32")),
-                arg_offsets: info.arg_offsets,
-                arg_schemas,
-                return_schema: fn_returns[*name].clone(),
-                semantic_comparators,
-                invoke_region: info.invoke_region,
-                store_alloc_region: info.store_alloc_region,
-                store_read_region: info.store_read_region,
-                store_tag_region: info.store_tag_region,
-                primitive_region: info.primitive_region,
-            });
-        }
-
-        let mut descriptors = tables.descriptors;
-        add_builtin_descriptors(&mut descriptors);
-        for name in &schema_names {
-            if let Some(descriptor) = derived_descriptor(name) {
-                descriptors.entry(name.clone()).or_insert(descriptor);
-            }
-        }
         self.driver
-            .reload(Program { fns: task_fns }, lowered, descriptors)?;
-        self.fn_refs = fn_refs;
-        self.fn_params = fn_params.into_iter().collect();
-        self.fn_param_names = fn_param_names.into_iter().collect();
-        self.fn_returns = fn_returns.into_iter().collect();
-        self.render_names = render_names;
+            .reload(c.program, c.lowered, c.descriptors, c.schemas)?;
+        self.fn_refs = c.fn_refs;
+        self.fn_params = c.fn_params.into_iter().collect();
+        self.fn_param_names = c.fn_param_names.into_iter().collect();
+        self.fn_returns = c.fn_returns.into_iter().collect();
+        self.render_names = c.render_names;
+        self.root = root.to_string();
         self.source = modules.get(root).cloned().unwrap_or_default();
-        self.module_hash = module_hash;
+        self.modules = modules;
+        self.module_hash = c.module_hash;
+        self.diagnostics = c.diagnostics;
 
         let after = self.fn_hashes();
         let changed = before
@@ -498,7 +207,7 @@ impl Machine {
             .fn_refs
             .get(name)
             .ok_or_else(|| format!("no function named {name}"))?;
-        self.driver.demand(fn_ref, args)
+        self.driver.demand(FnRef::new(fn_ref), args)
     }
 
     pub fn demand_f64(&mut self, name: &str, args: Vec<i64>) -> Result<f64, String> {
@@ -618,7 +327,7 @@ impl Machine {
             return Err(format!("pending args for {name} must be a prefix"));
         }
         let words = words.into_iter().map(|(_, word)| word).collect();
-        let (handle, _) = self.driver.pending_for_fn(fn_ref, words)?;
+        let (handle, _) = self.driver.pending_for_fn(FnRef::new(fn_ref), words)?;
         let handle = StoreHandle(handle);
         let bundle = self.export_value(handle)?;
         Ok((handle, bundle))
@@ -682,8 +391,19 @@ impl Machine {
         self.driver.set_step_mode(mode);
     }
 
-    pub fn set_force_flesh_copy(&mut self, force: bool) {
-        self.driver.set_force_flesh_copy(force);
+    pub fn set_force_molten_copy(&mut self, force: bool) {
+        self.driver.set_force_molten_copy(force);
+    }
+
+    pub fn set_force_tail_invoke(&mut self, force: bool) -> Result<ReloadDiff, String> {
+        self.lower_options.force_tail_invoke = force;
+        let root = self.root.clone();
+        let modules = self.modules.clone();
+        self.reload_modules(&root, modules)
+    }
+
+    pub fn diagnostics(&self) -> &[String] {
+        &self.diagnostics
     }
 
     pub fn entry_param_schemas(&self, name: &str) -> Option<&[String]> {
@@ -709,6 +429,18 @@ impl Machine {
         self.driver.store_len()
     }
 
+    pub fn molten_debug_counts(&self) -> (usize, usize, usize, usize, usize, usize) {
+        self.driver.molten_debug_counts()
+    }
+
+    pub fn molten_stats(&self) -> MoltenStats {
+        self.driver.molten_stats()
+    }
+
+    pub fn map_intern_stats(&self) -> MapInternStats {
+        self.driver.map_intern_stats()
+    }
+
     pub fn tree_entries(
         &mut self,
         handle: i64,
@@ -731,7 +463,7 @@ impl Machine {
     pub fn fn_hash(&self, name: &str) -> Option<u64> {
         self.fn_refs
             .get(name)
-            .map(|&fn_ref| self.driver.fn_hash(fn_ref))
+            .map(|&fn_ref| self.driver.fn_hash(FnRef::new(fn_ref)))
     }
 
     pub fn fn_hashes(&self) -> BTreeMap<String, u64> {
@@ -745,22 +477,325 @@ impl Machine {
     fn fn_ops(&self, name: &str) -> Option<&[Op]> {
         self.fn_refs
             .get(name)
-            .map(|&fn_ref| self.driver.fn_ops(fn_ref))
+            .map(|&fn_ref| self.driver.fn_ops(FnRef::new(fn_ref)))
     }
 
     #[cfg(test)]
     fn semantic_comparator_len(&self, name: &str) -> Option<usize> {
         self.fn_refs
             .get(name)
-            .map(|&fn_ref| self.driver.semantic_comparator_len(fn_ref))
+            .map(|&fn_ref| self.driver.semantic_comparator_len(FnRef::new(fn_ref)))
     }
 }
 
 fn module_hash(source: &str) -> Vec<u8> {
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hasher.update(b"vix-machine-module");
     hasher.update(source.as_bytes());
-    hasher.finalize().to_vec()
+    hasher.finalize().as_bytes().to_vec()
+}
+
+/// The interned handle tables for a compiled module set. Fresh (0-based) on a
+/// cold load; preserved from the live driver on reload so warm memo/store stay
+/// valid.
+struct LiteralHandleMaps {
+    strings: HashMap<String, i64>,
+    paths: HashMap<String, i64>,
+    flags: HashMap<String, i64>,
+    templates: HashMap<String, i64>,
+}
+
+#[derive(Clone, Copy)]
+struct LowerOptions {
+    force_tail_invoke: bool,
+}
+
+impl LowerOptions {
+    fn from_env() -> Self {
+        Self {
+            force_tail_invoke: std::env::var_os("VIX_FORCE_TAIL_INVOKE").is_some(),
+        }
+    }
+}
+
+/// Where schema-refs and literal handles come from — the one axis on which cold
+/// load and warm reload differ. Fresh assigns 0..N; Existing preserves the live
+/// driver's numbering (and extends it), which is what keeps warm state valid.
+enum RefSource<'a> {
+    Fresh,
+    Existing(&'a mut Driver),
+}
+
+impl RefSource<'_> {
+    fn literal_handles(&mut self, tables: &ModuleTables) -> LiteralHandleMaps {
+        match self {
+            RefSource::Fresh => {
+                let strings = string_handles(tables);
+                let paths = path_handles(tables, strings.len());
+                let flags = flag_handles(tables, strings.len() + paths.len());
+                let templates = template_handles(tables, strings.len() + paths.len() + flags.len());
+                LiteralHandleMaps {
+                    strings,
+                    paths,
+                    flags,
+                    templates,
+                }
+            }
+            RefSource::Existing(driver) => {
+                let driver: &Driver = driver;
+                LiteralHandleMaps {
+                    strings: live_string_handles(driver, tables),
+                    paths: live_path_handles(driver, tables),
+                    flags: live_flag_handles(driver, tables),
+                    templates: live_template_handles(driver, tables),
+                }
+            }
+        }
+    }
+}
+
+/// Everything a module set lowers to, before it is handed to a driver — the
+/// single shared pipeline behind both cold load and warm reload.
+struct Compiled {
+    program: Program,
+    lowered: Vec<LoweredFn>,
+    descriptors: DescriptorMap,
+    schemas: SchemaTables,
+    fn_refs: HashMap<String, usize>,
+    fn_returns: HashMap<String, String>,
+    fn_params: HashMap<String, Vec<String>>,
+    fn_param_names: HashMap<String, Vec<String>>,
+    render_names: RenderNames,
+    literal_handles: LiteralHandleMaps,
+    module_hash: Vec<u8>,
+    diagnostics: Vec<String>,
+}
+
+/// Compile a module set into a lowered program: the whole of loading a vix
+/// program *except* interning into a driver. Cold load and warm reload share it
+/// verbatim, differing only in `ref_source` (fresh vs. driver-backed) and in
+/// what they do with the `Compiled` result.
+fn compile_module_set(
+    root: &str,
+    modules: &BTreeMap<String, String>,
+    mut ref_source: RefSource,
+    lower_options: LowerOptions,
+) -> Result<Compiled, String> {
+    let module_hash = module_set_hash(root, modules);
+    let tables = load_module_tables_from_modules(root, modules)?;
+    debug_assert!(tables.has_schema("Int"));
+    debug_assert!(tables.has_schema("Map"));
+
+    // Deterministic fn_ref assignment: sorted names.
+    let mut names: Vec<&String> = tables.fns.keys().collect();
+    names.sort();
+    let fn_refs: HashMap<String, usize> = names
+        .iter()
+        .enumerate()
+        .map(|(ix, name)| ((*name).clone(), ix))
+        .collect();
+    let fn_returns: HashMap<String, String> = names
+        .iter()
+        .map(|name| {
+            let item = &tables.fns[*name];
+            let schema = item
+                .return_type
+                .as_ref()
+                .map(type_schema_name)
+                .transpose()?
+                .unwrap_or_else(|| "Int".into());
+            Ok(((*name).clone(), schema))
+        })
+        .collect::<Result<_, String>>()?;
+    let fn_params: HashMap<String, Vec<String>> = names
+        .iter()
+        .map(|name| {
+            let item = &tables.fns[*name];
+            Ok((
+                (*name).clone(),
+                item.params
+                    .params
+                    .iter()
+                    .map(|param| type_schema_name(&param.ty))
+                    .collect::<Result<Vec<_>, _>>()?,
+            ))
+        })
+        .collect::<Result<_, String>>()?;
+    let fn_param_names: HashMap<String, Vec<String>> = names
+        .iter()
+        .map(|name| {
+            let item = &tables.fns[*name];
+            (
+                (*name).clone(),
+                item.params
+                    .params
+                    .iter()
+                    .map(|param| param.name.value.clone())
+                    .collect(),
+            )
+        })
+        .collect();
+    let mut schema_names = schema_names_for(&tables, &fn_returns, &fn_params)?;
+    schema_names.sort();
+    schema_names.dedup();
+    let mut schemas = tables.schemas.clone();
+    schemas.register_frame_names(schema_names.clone());
+    let render_names = render_names_for(&tables);
+    let schema_words = schema_names
+        .iter()
+        .map(|name| (name.clone(), schemas.frame_word_for_name(name)))
+        .collect::<HashMap<_, _>>();
+    let handles = ref_source.literal_handles(&tables);
+    let literal_handles = LiteralHandles {
+        strings: &handles.strings,
+        paths: &handles.paths,
+        flags: &handles.flags,
+        templates: &handles.templates,
+    };
+    let signatures = FnSignatures {
+        returns: &fn_returns,
+        params: &fn_params,
+        param_names: &fn_param_names,
+    };
+
+    let mut task_fns = Vec::with_capacity(names.len());
+    let mut lowered = Vec::with_capacity(names.len());
+    let mut diagnostics = Vec::new();
+    for (ix, name) in names.iter().enumerate() {
+        let item = &tables.fns[*name];
+        let hash = tables.fn_hashes[*name];
+        diagnostics.extend(tail_self_call_diagnostics(
+            item,
+            &tables,
+            &tables.fn_modules[*name],
+            name,
+        ));
+        let (task_fn, info, mut lower_diagnostics) = if parked_generic_or_fn_typed(item) {
+            let (task_fn, info) = parked_stub(item)?;
+            (task_fn, info, Vec::new())
+        } else {
+            FnLowerer::lower(
+                item,
+                LowerEnv {
+                    tables: &tables,
+                    current_module: &tables.fn_modules[*name],
+                    current_fn_name: name,
+                    current_fn_ref: ix,
+                    fn_refs: &fn_refs,
+                    signatures,
+                    schema_words: &schema_words,
+                    literal_handles,
+                    lower_options,
+                },
+            )
+            .map_err(|e| format!("lowering {name}: {e}"))?
+        };
+        diagnostics.append(&mut lower_diagnostics);
+        task_fns.push(task_fn);
+        let arg_schemas = item
+            .params
+            .params
+            .iter()
+            .map(|param| type_schema_name(&param.ty))
+            .collect::<Result<Vec<_>, _>>()
+            .map_err(|e| format!("lowering {name}: {e}"))?;
+        let param_names = item
+            .params
+            .params
+            .iter()
+            .map(|param| param.name.value.clone())
+            .collect::<Vec<_>>();
+        let semantic_comparators = semantic_comparators_for(
+            name,
+            &arg_schemas,
+            &param_names,
+            &fn_refs,
+            &fn_params,
+            &fn_returns,
+        )?;
+        let hash = hash_with_semantic_comparators(hash, &semantic_comparators, &names, &tables);
+        lowered.push(LoweredFn {
+            hash,
+            task_fn: FnId(u32::try_from(ix).expect("fn count fits u32")),
+            arg_offsets: info.arg_offsets,
+            arg_schemas,
+            return_schema: fn_returns[*name].clone(),
+            semantic_comparators,
+            invoke_region: info.invoke_region,
+            store_alloc_region: info.store_alloc_region,
+            store_read_region: info.store_read_region,
+            store_tag_region: info.store_tag_region,
+            primitive_region: info.primitive_region,
+        });
+    }
+
+    let mut descriptors = tables.descriptors;
+    add_builtin_descriptors(&mut descriptors, &schemas);
+    for name in &schema_names {
+        if let Some(descriptor) = derived_descriptor(&schemas, name) {
+            descriptors.insert_named_if_absent(&schemas, name, || descriptor);
+        }
+    }
+
+    Ok(Compiled {
+        program: Program { fns: task_fns },
+        lowered,
+        descriptors,
+        schemas,
+        fn_refs,
+        fn_returns,
+        fn_params,
+        fn_param_names,
+        render_names,
+        literal_handles: handles,
+        module_hash,
+        diagnostics,
+    })
+}
+
+/// On a cold load the driver's interning must reproduce the fresh handle
+/// assignment exactly — assert it, in handle order.
+fn assert_literal_handles(driver: &mut Driver, schema: &str, handles: &HashMap<String, i64>) {
+    let mut sorted: Vec<(&String, &i64)> = handles.iter().collect();
+    sorted.sort_by_key(|(_, handle)| **handle);
+    for (value, expected) in sorted {
+        let (actual, _) = driver.intern_raw_value(schema, value.as_bytes().to_vec());
+        assert_eq!(
+            actual, *expected,
+            "{schema} handle assignment is deterministic"
+        );
+    }
+}
+
+fn inject_legacy_std_module(modules: &mut BTreeMap<String, String>) {
+    if modules.contains_key("vix") || !references_legacy_std(modules) {
+        return;
+    }
+    modules.insert(
+        "vix".to_string(),
+        include_str!("../../std/version-legacy.vix").to_string(),
+    );
+}
+
+fn references_legacy_std(modules: &BTreeMap<String, String>) -> bool {
+    const NAMES: &[&str] = &[
+        "Version",
+        "parse_version",
+        "version_lte",
+        "version_cmp",
+        "Ordering",
+    ];
+    modules
+        .values()
+        .any(|source| NAMES.iter().any(|name| contains_word(source, name)))
+}
+
+fn contains_word(haystack: &str, word: &str) -> bool {
+    let is_boundary = |ch: Option<char>| ch.is_none_or(|c| !c.is_alphanumeric() && c != '_');
+    haystack.match_indices(word).any(|(start, _)| {
+        is_boundary(haystack[..start].chars().next_back())
+            && is_boundary(haystack[start + word.len()..].chars().next())
+    })
 }
 
 fn module_set_hash(root: &str, modules: &BTreeMap<String, String>) -> Vec<u8> {
@@ -770,15 +805,15 @@ fn module_set_hash(root: &str, modules: &BTreeMap<String, String>) -> Vec<u8> {
     {
         return module_hash(source);
     }
-    let mut hasher = Sha256::new();
+    let mut hasher = blake3::Hasher::new();
     hasher.update(b"vix-machine-module-set");
     hasher.update(root.as_bytes());
     for (path, source) in modules {
         hasher.update(path.as_bytes());
-        hasher.update((source.len() as u64).to_le_bytes());
+        hasher.update(&(source.len() as u64).to_le_bytes());
         hasher.update(source.as_bytes());
     }
-    hasher.finalize().to_vec()
+    hasher.finalize().as_bytes().to_vec()
 }
 
 fn schema_names_for(
@@ -800,10 +835,14 @@ fn schema_names_for(
         "Rustc".to_string(),
         "Run".to_string(),
         "Flag".to_string(),
+        "Arg".to_string(),
         "Template".to_string(),
         "Sealed".to_string(),
         "Tree".to_string(),
         "Array".to_string(),
+        "Array<Arg>".to_string(),
+        "Array<Doc>".to_string(),
+        "Array<Path>".to_string(),
         "Map".to_string(),
         "Doc".to_string(),
         "Version".to_string(),
@@ -825,7 +864,7 @@ fn schema_names_for(
         }
     }
     for descriptor in tables.descriptors.values() {
-        collect_descriptor_schemas(descriptor, &mut schema_names);
+        collect_descriptor_schemas(&tables.schemas, descriptor, &mut schema_names);
     }
     for item in tables.fns.values() {
         collect_block_type_schemas(&item.body, &mut schema_names)?;
@@ -911,20 +950,28 @@ fn push_schema_closure(schema: &str, schema_names: &mut Vec<String>) {
     }
 }
 
-fn collect_descriptor_schemas(descriptor: &Descriptor<String>, out: &mut Vec<String>) {
-    push_schema_closure(&descriptor.schema, out);
+fn collect_descriptor_schemas(
+    schemas: &SchemaTables,
+    descriptor: &VixDescriptor,
+    out: &mut Vec<String>,
+) {
+    push_schema_closure(&schemas.display_ref(&descriptor.schema), out);
     match &descriptor.access {
-        weavy::mem::Access::Handle { target } => push_schema_closure(target, out),
-        weavy::mem::Access::Array { element, .. } => collect_descriptor_schemas(element, out),
+        weavy::mem::Access::Handle { target } => {
+            push_schema_closure(&schemas.display_ref(target), out)
+        }
+        weavy::mem::Access::Array { element, .. } => {
+            collect_descriptor_schemas(schemas, element, out)
+        }
         weavy::mem::Access::Record(record) => {
             for field in &record.fields {
-                collect_descriptor_schemas(&field.descriptor, out);
+                collect_descriptor_schemas(schemas, &field.descriptor, out);
             }
         }
         weavy::mem::Access::Enum(access) => {
             for variant in &access.variants {
                 for field in &variant.payload.fields {
-                    collect_descriptor_schemas(&field.descriptor, out);
+                    collect_descriptor_schemas(schemas, &field.descriptor, out);
                 }
             }
         }
@@ -1589,6 +1636,563 @@ fn collect_expr_identifiers(expr: &ast::Expr, out: &mut BTreeSet<String>) {
     }
 }
 
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum TailPosition {
+    Tail,
+    NonTail,
+}
+
+fn tail_self_call_diagnostics(
+    item: &ast::FnItem,
+    tables: &ModuleTables,
+    current_module: &str,
+    fn_name: &str,
+) -> Vec<String> {
+    let mut out = Vec::new();
+    collect_tail_self_calls_in_block(&item.body, tables, current_module, fn_name, &mut out);
+    out
+}
+
+fn collect_tail_self_calls_in_block(
+    block: &ast::Block,
+    tables: &ModuleTables,
+    current_module: &str,
+    fn_name: &str,
+    out: &mut Vec<String>,
+) {
+    for stmt in &block.stmts {
+        match stmt {
+            ast::Stmt::Let(stmt) => collect_tail_self_calls_expr(
+                &stmt.value,
+                TailPosition::NonTail,
+                tables,
+                current_module,
+                fn_name,
+                out,
+            ),
+            ast::Stmt::Expr(stmt) => collect_tail_self_calls_expr(
+                &stmt.expr,
+                TailPosition::NonTail,
+                tables,
+                current_module,
+                fn_name,
+                out,
+            ),
+        }
+    }
+    if let Some(tail) = &block.tail {
+        collect_tail_self_calls_expr(
+            tail,
+            TailPosition::Tail,
+            tables,
+            current_module,
+            fn_name,
+            out,
+        );
+    }
+}
+
+fn collect_tail_self_calls_expr(
+    expr: &ast::Expr,
+    position: TailPosition,
+    tables: &ModuleTables,
+    current_module: &str,
+    fn_name: &str,
+    out: &mut Vec<String>,
+) {
+    match expr {
+        ast::Expr::Call(call) => {
+            if position == TailPosition::NonTail
+                && call_resolves_to(call, tables, current_module, fn_name)
+            {
+                let span = expr_span(expr);
+                out.push(format!(
+                    "self-call at {}..{} is a demand boundary (not tail position) - not looped",
+                    span.start, span.end
+                ));
+            }
+            collect_tail_self_calls_args(&call.args, tables, current_module, fn_name, out);
+        }
+        ast::Expr::Match(m) => {
+            collect_tail_self_calls_expr(
+                &m.scrutinee,
+                TailPosition::NonTail,
+                tables,
+                current_module,
+                fn_name,
+                out,
+            );
+            for arm in &m.arms {
+                if let Some(guard) = &arm.guard {
+                    collect_tail_self_calls_expr(
+                        guard,
+                        TailPosition::NonTail,
+                        tables,
+                        current_module,
+                        fn_name,
+                        out,
+                    );
+                }
+                collect_tail_self_calls_expr(
+                    &arm.value,
+                    position,
+                    tables,
+                    current_module,
+                    fn_name,
+                    out,
+                );
+            }
+        }
+        ast::Expr::Paren(paren) => collect_tail_self_calls_expr(
+            &paren.inner,
+            position,
+            tables,
+            current_module,
+            fn_name,
+            out,
+        ),
+        ast::Expr::Binary(binary) => {
+            collect_tail_self_calls_expr(
+                &binary.left,
+                TailPosition::NonTail,
+                tables,
+                current_module,
+                fn_name,
+                out,
+            );
+            collect_tail_self_calls_expr(
+                &binary.right,
+                TailPosition::NonTail,
+                tables,
+                current_module,
+                fn_name,
+                out,
+            );
+        }
+        ast::Expr::Unary(unary) => collect_tail_self_calls_expr(
+            &unary.operand,
+            TailPosition::NonTail,
+            tables,
+            current_module,
+            fn_name,
+            out,
+        ),
+        ast::Expr::MethodCall(call) => {
+            collect_tail_self_calls_expr(
+                &call.receiver,
+                TailPosition::NonTail,
+                tables,
+                current_module,
+                fn_name,
+                out,
+            );
+            collect_tail_self_calls_args(&call.args, tables, current_module, fn_name, out);
+        }
+        ast::Expr::Field(field) => collect_tail_self_calls_expr(
+            &field.receiver,
+            TailPosition::NonTail,
+            tables,
+            current_module,
+            fn_name,
+            out,
+        ),
+        ast::Expr::StructLit(lit) => {
+            for field in &lit.fields {
+                collect_tail_self_calls_expr(
+                    &field.value,
+                    TailPosition::NonTail,
+                    tables,
+                    current_module,
+                    fn_name,
+                    out,
+                );
+            }
+            for spread in &lit.spreads {
+                if let Some(base) = &spread.base {
+                    collect_tail_self_calls_expr(
+                        base,
+                        TailPosition::NonTail,
+                        tables,
+                        current_module,
+                        fn_name,
+                        out,
+                    );
+                }
+            }
+        }
+        ast::Expr::Map(map) => {
+            for entry in &map.entries {
+                collect_tail_self_calls_expr(
+                    &entry.key,
+                    TailPosition::NonTail,
+                    tables,
+                    current_module,
+                    fn_name,
+                    out,
+                );
+                collect_tail_self_calls_expr(
+                    &entry.value,
+                    TailPosition::NonTail,
+                    tables,
+                    current_module,
+                    fn_name,
+                    out,
+                );
+            }
+        }
+        ast::Expr::Tuple(tuple) => {
+            for elem in &tuple.elems {
+                collect_tail_self_calls_expr(
+                    elem,
+                    TailPosition::NonTail,
+                    tables,
+                    current_module,
+                    fn_name,
+                    out,
+                );
+            }
+        }
+        ast::Expr::Array(array) => {
+            for elem in &array.elems {
+                if let ast::ArrayElem::Expr(expr) = elem {
+                    collect_tail_self_calls_expr(
+                        expr,
+                        TailPosition::NonTail,
+                        tables,
+                        current_module,
+                        fn_name,
+                        out,
+                    );
+                }
+            }
+        }
+        ast::Expr::Closure(closure) => collect_tail_self_calls_expr(
+            &closure.body,
+            TailPosition::NonTail,
+            tables,
+            current_module,
+            fn_name,
+            out,
+        ),
+        ast::Expr::Command(command) => {
+            for part in &command.parts {
+                if let ast::CommandPart::Splice(splice) = part {
+                    collect_tail_self_calls_expr(
+                        &splice.expr,
+                        TailPosition::NonTail,
+                        tables,
+                        current_module,
+                        fn_name,
+                        out,
+                    );
+                }
+            }
+        }
+        ast::Expr::Scoped(_)
+        | ast::Expr::Identifier(_)
+        | ast::Expr::Template(_)
+        | ast::Expr::Str(_)
+        | ast::Expr::Path(_)
+        | ast::Expr::Number(_)
+        | ast::Expr::Bool(_) => {}
+    }
+}
+
+fn collect_tail_self_calls_args(
+    args: &ast::ArgList,
+    tables: &ModuleTables,
+    current_module: &str,
+    fn_name: &str,
+    out: &mut Vec<String>,
+) {
+    for arg in &args.args {
+        match arg {
+            ast::Arg::Expr(expr) => collect_tail_self_calls_expr(
+                expr,
+                TailPosition::NonTail,
+                tables,
+                current_module,
+                fn_name,
+                out,
+            ),
+            ast::Arg::Kwarg(kwarg) => collect_tail_self_calls_expr(
+                &kwarg.value,
+                TailPosition::NonTail,
+                tables,
+                current_module,
+                fn_name,
+                out,
+            ),
+            ast::Arg::Partial(_) => {}
+        }
+    }
+}
+
+fn call_resolves_to(
+    call: &ast::Call,
+    tables: &ModuleTables,
+    current_module: &str,
+    fn_name: &str,
+) -> bool {
+    let ast::PathRef::Identifier(name) = &call.callee else {
+        return false;
+    };
+    tables.resolve_fn(current_module, &name.value) == Some(fn_name)
+}
+
+fn expr_span(expr: &ast::Expr) -> ast::Span {
+    match expr {
+        ast::Expr::Binary(expr) => expr.span,
+        ast::Expr::Unary(expr) => expr.span,
+        ast::Expr::Call(expr) => expr.span,
+        ast::Expr::MethodCall(expr) => expr.span,
+        ast::Expr::Field(expr) => expr.span,
+        ast::Expr::Match(expr) => expr.span,
+        ast::Expr::Closure(expr) => expr.span,
+        ast::Expr::Command(expr) => expr.span,
+        ast::Expr::StructLit(expr) => expr.span,
+        ast::Expr::Map(expr) => expr.span,
+        ast::Expr::Tuple(expr) => expr.span,
+        ast::Expr::Array(expr) => expr.span,
+        ast::Expr::Paren(expr) => expr.span,
+        ast::Expr::Scoped(expr) => expr.span,
+        ast::Expr::Identifier(expr)
+        | ast::Expr::Template(expr)
+        | ast::Expr::Str(expr)
+        | ast::Expr::Path(expr)
+        | ast::Expr::Number(expr) => expr.span,
+        ast::Expr::Bool(expr) => expr.span,
+    }
+}
+
+fn consuming_rebind_receiver(binding_name: &str, value: &ast::Expr) -> Option<String> {
+    consuming_update_receiver(value)
+        .filter(|receiver| *receiver == binding_name)
+        .map(str::to_string)
+}
+
+fn consuming_update_receiver(value: &ast::Expr) -> Option<&str> {
+    match unparen_expr(value) {
+        ast::Expr::MethodCall(call) if aggregate_update_method(call.name.value.as_str()) => {
+            plain_identifier_expr(&call.receiver)
+        }
+        ast::Expr::Field(field) if matches!(&field.name, ast::Member::Index(index) if index.value == "1") =>
+        {
+            let receiver = unparen_expr(&field.receiver);
+            if let ast::Expr::MethodCall(call) = receiver
+                && call.name.value == "pop"
+            {
+                return plain_identifier_expr(&call.receiver);
+            }
+            None
+        }
+        _ => None,
+    }
+}
+
+fn aggregate_update_method(name: &str) -> bool {
+    matches!(name, "push" | "pop" | "set" | "insert")
+}
+
+fn plain_identifier_expr(expr: &ast::Expr) -> Option<&str> {
+    match unparen_expr(expr) {
+        ast::Expr::Identifier(name) => Some(name.value.as_str()),
+        _ => None,
+    }
+}
+
+fn identifier_uses_in_arg_list(args: &ast::ArgList) -> HashMap<String, usize> {
+    let mut uses = HashMap::new();
+    count_identifier_uses_in_args(args, &mut uses);
+    uses
+}
+
+fn count_identifier_uses_in_args(args: &ast::ArgList, uses: &mut HashMap<String, usize>) {
+    for arg in &args.args {
+        match arg {
+            ast::Arg::Expr(expr) => count_identifier_uses_in_expr(expr, uses),
+            ast::Arg::Kwarg(kwarg) => count_identifier_uses_in_expr(&kwarg.value, uses),
+            ast::Arg::Partial(_) => {}
+        }
+    }
+}
+
+fn count_identifier_uses_in_expr(expr: &ast::Expr, uses: &mut HashMap<String, usize>) {
+    match expr {
+        ast::Expr::Identifier(name) => {
+            *uses.entry(name.value.clone()).or_default() += 1;
+        }
+        ast::Expr::Paren(paren) => count_identifier_uses_in_expr(&paren.inner, uses),
+        ast::Expr::Binary(binary) => {
+            count_identifier_uses_in_expr(&binary.left, uses);
+            count_identifier_uses_in_expr(&binary.right, uses);
+        }
+        ast::Expr::Unary(unary) => count_identifier_uses_in_expr(&unary.operand, uses),
+        ast::Expr::Call(call) => count_identifier_uses_in_args(&call.args, uses),
+        ast::Expr::MethodCall(call) => {
+            count_identifier_uses_in_expr(&call.receiver, uses);
+            count_identifier_uses_in_args(&call.args, uses);
+        }
+        ast::Expr::Field(field) => count_identifier_uses_in_expr(&field.receiver, uses),
+        ast::Expr::Match(m) => {
+            count_identifier_uses_in_expr(&m.scrutinee, uses);
+            for arm in &m.arms {
+                if let Some(guard) = &arm.guard {
+                    count_identifier_uses_in_expr(guard, uses);
+                }
+                count_identifier_uses_in_expr(&arm.value, uses);
+            }
+        }
+        ast::Expr::StructLit(lit) => {
+            for field in &lit.fields {
+                count_identifier_uses_in_expr(&field.value, uses);
+            }
+            for spread in &lit.spreads {
+                if let Some(base) = &spread.base {
+                    count_identifier_uses_in_expr(base, uses);
+                }
+            }
+        }
+        ast::Expr::Map(map) => {
+            for entry in &map.entries {
+                count_identifier_uses_in_expr(&entry.key, uses);
+                count_identifier_uses_in_expr(&entry.value, uses);
+            }
+        }
+        ast::Expr::Tuple(tuple) => {
+            for elem in &tuple.elems {
+                count_identifier_uses_in_expr(elem, uses);
+            }
+        }
+        ast::Expr::Array(array) => {
+            for elem in &array.elems {
+                if let ast::ArrayElem::Expr(expr) = elem {
+                    count_identifier_uses_in_expr(expr, uses);
+                }
+            }
+        }
+        ast::Expr::Closure(closure) => count_identifier_uses_in_expr(&closure.body, uses),
+        ast::Expr::Command(command) => {
+            for part in &command.parts {
+                if let ast::CommandPart::Splice(splice) = part {
+                    count_identifier_uses_in_expr(&splice.expr, uses);
+                }
+            }
+        }
+        ast::Expr::Scoped(_)
+        | ast::Expr::Template(_)
+        | ast::Expr::Str(_)
+        | ast::Expr::Path(_)
+        | ast::Expr::Number(_)
+        | ast::Expr::Bool(_) => {}
+    }
+}
+
+fn collect_consuming_update_receivers_in_expr(expr: &ast::Expr, out: &mut BTreeSet<String>) {
+    if let Some(receiver) = consuming_update_receiver(expr) {
+        out.insert(receiver.to_string());
+    }
+    match expr {
+        ast::Expr::Identifier(_)
+        | ast::Expr::Scoped(_)
+        | ast::Expr::Template(_)
+        | ast::Expr::Str(_)
+        | ast::Expr::Path(_)
+        | ast::Expr::Number(_)
+        | ast::Expr::Bool(_) => {}
+        ast::Expr::Paren(paren) => collect_consuming_update_receivers_in_expr(&paren.inner, out),
+        ast::Expr::Binary(binary) => {
+            collect_consuming_update_receivers_in_expr(&binary.left, out);
+            collect_consuming_update_receivers_in_expr(&binary.right, out);
+        }
+        ast::Expr::Unary(unary) => collect_consuming_update_receivers_in_expr(&unary.operand, out),
+        ast::Expr::Call(call) => {
+            for arg in &call.args.args {
+                match arg {
+                    ast::Arg::Expr(expr) => collect_consuming_update_receivers_in_expr(expr, out),
+                    ast::Arg::Kwarg(kwarg) => {
+                        collect_consuming_update_receivers_in_expr(&kwarg.value, out)
+                    }
+                    ast::Arg::Partial(_) => {}
+                }
+            }
+        }
+        ast::Expr::MethodCall(call) => {
+            collect_consuming_update_receivers_in_expr(&call.receiver, out);
+            for arg in &call.args.args {
+                match arg {
+                    ast::Arg::Expr(expr) => collect_consuming_update_receivers_in_expr(expr, out),
+                    ast::Arg::Kwarg(kwarg) => {
+                        collect_consuming_update_receivers_in_expr(&kwarg.value, out)
+                    }
+                    ast::Arg::Partial(_) => {}
+                }
+            }
+        }
+        ast::Expr::Field(field) => collect_consuming_update_receivers_in_expr(&field.receiver, out),
+        ast::Expr::Match(m) => {
+            collect_consuming_update_receivers_in_expr(&m.scrutinee, out);
+            for arm in &m.arms {
+                if let Some(guard) = &arm.guard {
+                    collect_consuming_update_receivers_in_expr(guard, out);
+                }
+                collect_consuming_update_receivers_in_expr(&arm.value, out);
+            }
+        }
+        ast::Expr::StructLit(lit) => {
+            for field in &lit.fields {
+                collect_consuming_update_receivers_in_expr(&field.value, out);
+            }
+            for spread in &lit.spreads {
+                if let Some(base) = &spread.base {
+                    collect_consuming_update_receivers_in_expr(base, out);
+                }
+            }
+        }
+        ast::Expr::Map(map) => {
+            for entry in &map.entries {
+                collect_consuming_update_receivers_in_expr(&entry.key, out);
+                collect_consuming_update_receivers_in_expr(&entry.value, out);
+            }
+        }
+        ast::Expr::Tuple(tuple) => {
+            for elem in &tuple.elems {
+                collect_consuming_update_receivers_in_expr(elem, out);
+            }
+        }
+        ast::Expr::Array(array) => {
+            for elem in &array.elems {
+                if let ast::ArrayElem::Expr(expr) = elem {
+                    collect_consuming_update_receivers_in_expr(expr, out);
+                }
+            }
+        }
+        ast::Expr::Closure(closure) => {
+            collect_consuming_update_receivers_in_expr(&closure.body, out)
+        }
+        ast::Expr::Command(command) => {
+            for part in &command.parts {
+                if let ast::CommandPart::Splice(splice) = part {
+                    collect_consuming_update_receivers_in_expr(&splice.expr, out);
+                }
+            }
+        }
+    }
+}
+
+fn arg_list_has_partial(args: &ast::ArgList) -> bool {
+    args.args
+        .iter()
+        .any(|arg| matches!(arg, ast::Arg::Partial(_)))
+}
+
+fn unparen_expr(mut expr: &ast::Expr) -> &ast::Expr {
+    while let ast::Expr::Paren(paren) = expr {
+        expr = &paren.inner;
+    }
+    expr
+}
+
 fn collect_pattern_bindings(pattern: &ast::Pattern, out: &mut BTreeSet<String>) {
     match pattern {
         ast::Pattern::Identifier(name) => {
@@ -1748,29 +2352,62 @@ fn collect_expr_schemas(
             }
             match (call.name.value.as_str(), receiver_schema.as_deref()) {
                 ("with_ext", Some("Path")) => Ok(Some("Path".into())),
+                ("glob", Some("Tree")) => Ok(Some(array_schema("Path"))),
+                ("text", Some("Tree")) => Ok(Some("String".into())),
                 ("insert", Some(schema)) if map_schemas(schema).is_some() => {
                     Ok(Some(schema.to_string()))
                 }
+                ("len", Some(schema)) if tables.schemas.is_list(schema) => Ok(Some("Int".into())),
+                ("push" | "set" | "filter", Some(schema)) if tables.schemas.is_list(schema) => {
+                    Ok(Some(schema.to_string()))
+                }
+                ("pop", Some(schema)) if tables.schemas.is_list(schema) => {
+                    let elem_schema = array_element_schema(schema)
+                        .ok_or_else(|| format!("{schema} is not an Array<T>"))?
+                        .to_string();
+                    let tuple = tuple_schema(&[elem_schema, schema.to_string()]);
+                    push_schema_closure(&tuple, out);
+                    Ok(Some(tuple))
+                }
+                ("get", Some(schema)) if tables.schemas.is_list(schema) => {
+                    let elem_schema = array_element_schema(schema)
+                        .ok_or_else(|| format!("{schema} is not an Array<T>"))?
+                        .to_string();
+                    push_schema_closure(&elem_schema, out);
+                    Ok(Some(elem_schema))
+                }
                 ("get", Some("Doc")) | ("get", Some("Realized<Doc>")) => {
                     Ok(Some(option_schema("Realized<Doc>")))
+                }
+                ("keys", Some("Doc")) | ("keys", Some("Realized<Doc>")) => {
+                    Ok(Some(array_schema("String")))
                 }
                 ("package", Some("Doc")) | ("package", Some("Realized<Doc>")) => {
                     Ok(Some(option_schema("Realized<Doc>")))
                 }
                 ("get", Some(schema)) => Ok(map_value_schema(schema).map(option_schema)),
                 ("unwrap", Some(schema)) => Ok(option_value_schema(schema).map(str::to_string)),
-                ("join", Some("Array" | "Doc" | "Realized<Doc>")) => Ok(Some("String".into())),
+                ("join", Some(schema))
+                    if tables.schemas.is_list(schema)
+                        || matches!(schema, "Doc" | "Realized<Doc>") =>
+                {
+                    Ok(Some("String".into()))
+                }
                 ("union" | "intersect" | "complement", Some("VersionSet")) => {
                     Ok(Some("VersionSet".into()))
                 }
                 ("subset" | "contains", Some("VersionSet")) => Ok(Some("Bool".into())),
+                ("before" | "after" | "strip_prefix", Some("String")) => Ok(Some("String".into())),
+                ("parse_int", Some("String")) => Ok(Some("Int".into())),
+                ("contains" | "is_numeric", Some("String")) => Ok(Some("Bool".into())),
                 _ => Ok(None),
             }
         }
         ast::Expr::Field(field) => {
             let receiver = collect_expr_schemas(&field.receiver, out, tables, fn_returns, env)?;
-            if let (Some(schema), ast::Member::Index(index)) = (receiver, &field.name)
-                && let Some(fields) = tuple_schema_fields(&schema)
+            if let Some(schema) = &receiver
+                && let ast::Member::Index(index) = &field.name
+                && let Some(fields) = tuple_schema_fields(schema)
                 && let Ok(field_index) = index.value.parse::<usize>()
             {
                 return Ok(fields.get(field_index).cloned());
@@ -1835,12 +2472,20 @@ fn collect_expr_schemas(
             }
         }
         ast::Expr::Array(array) => {
+            let mut elem_schema = None::<String>;
             for elem in &array.elems {
                 if let ast::ArrayElem::Expr(expr) = elem {
-                    let _ = collect_expr_schemas(expr, out, tables, fn_returns, env)?;
+                    elem_schema =
+                        elem_schema.or(collect_expr_schemas(expr, out, tables, fn_returns, env)?);
                 }
             }
-            Ok(None)
+            if let Some(elem_schema) = elem_schema {
+                let schema = array_schema(&elem_schema);
+                push_schema_closure(&schema, out);
+                Ok(Some(schema))
+            } else {
+                Ok(None)
+            }
         }
         ast::Expr::Paren(paren) => collect_expr_schemas(&paren.inner, out, tables, fn_returns, env),
         ast::Expr::Closure(closure) => {
@@ -1906,99 +2551,182 @@ fn collect_type_schema(ty: &ast::Type, out: &mut Vec<String>) -> Result<(), Stri
     Ok(())
 }
 
-fn add_builtin_descriptors(descriptors: &mut HashMap<String, Descriptor<String>>) {
-    descriptors
-        .entry("Bool".into())
-        .or_insert_with(|| declared_mem::i64_("Bool".into()));
-    descriptors
-        .entry("Sealed".into())
-        .or_insert_with(|| declared_mem::handle("SealedRef".into(), "Sealed".into()));
-    descriptors.entry("Target".into()).or_insert_with(|| {
+fn add_builtin_descriptors(descriptors: &mut DescriptorMap, schemas: &SchemaTables) {
+    descriptors.insert_named_if_absent(schemas, "Bool", || {
+        declared_mem::i64_(schemas.legacy_ref("Bool"))
+    });
+    descriptors.insert_named_if_absent(schemas, "Sealed", || {
+        declared_mem::handle(
+            schemas.legacy_ref("SealedRef"),
+            schemas.legacy_ref("Sealed"),
+        )
+    });
+    descriptors.insert_named_if_absent(schemas, "Target", || {
         declared_mem::declared_struct(
-            "Target".into(),
+            schemas.legacy_ref("Target"),
             vec![
-                declared_mem::handle("OsRef".into(), "Os".into()),
-                declared_mem::handle("ArchRef".into(), "Arch".into()),
+                declared_mem::handle(schemas.legacy_ref("OsRef"), schemas.legacy_ref("Os")),
+                declared_mem::handle(schemas.legacy_ref("ArchRef"), schemas.legacy_ref("Arch")),
             ],
         )
     });
-    descriptors
-        .entry("Os".into())
-        .or_insert_with(|| declared_mem::declared_enum("Os".into(), vec![vec![], vec![], vec![]]));
-    descriptors.entry("Arch".into()).or_insert_with(|| {
+    descriptors.insert_named_if_absent(schemas, "Os", || {
+        declared_mem::declared_enum(schemas.legacy_ref("Os"), vec![vec![], vec![], vec![]])
+    });
+    descriptors.insert_named_if_absent(schemas, "Arch", || {
         declared_mem::declared_enum(
-            "Arch".into(),
+            schemas.legacy_ref("Arch"),
             vec![vec![], vec![], vec![], vec![], vec![], vec![]],
         )
     });
-    descriptors.entry("Run".into()).or_insert_with(|| {
+    descriptors.insert_named_if_absent(schemas, "Run", || {
         declared_mem::declared_struct(
-            "Run".into(),
+            schemas.legacy_ref("Run"),
             vec![
-                declared_mem::i64_("RunOk".into()),
-                declared_mem::handle("RunOut".into(), "Tree".into()),
+                declared_mem::i64_(schemas.legacy_ref("RunOk")),
+                declared_mem::handle(schemas.legacy_ref("RunOut"), schemas.legacy_ref("Tree")),
             ],
         )
     });
-    descriptors.entry("Doc".into()).or_insert_with(|| {
+    descriptors.insert_named_if_absent(schemas, "Arg", || {
         declared_mem::declared_enum(
-            "Doc".into(),
+            schemas.legacy_ref("Arg"),
+            vec![
+                vec![declared_mem::handle(
+                    schemas.legacy_ref("ArgStr"),
+                    schemas.legacy_ref("String"),
+                )],
+                vec![declared_mem::handle(
+                    schemas.legacy_ref("ArgPath"),
+                    schemas.legacy_ref("Path"),
+                )],
+                vec![
+                    declared_mem::handle(
+                        schemas.legacy_ref("ArgInterpolationTree"),
+                        schemas.legacy_ref("Tree"),
+                    ),
+                    declared_mem::handle(
+                        schemas.legacy_ref("ArgInterpolationSubpath"),
+                        schemas.legacy_ref("Path"),
+                    ),
+                ],
+            ],
+        )
+    });
+    descriptors.insert_named_if_absent(schemas, "Doc", || {
+        declared_mem::declared_enum(
+            schemas.legacy_ref("Doc"),
             vec![
                 vec![],
-                vec![declared_mem::i64_("DocBool".into())],
-                vec![declared_mem::i64_("DocInt".into())],
-                vec![declared_mem::f64_("DocFloat".into())],
-                vec![declared_mem::handle("DocString".into(), "String".into())],
-                vec![declared_mem::handle("DocArray".into(), "Array".into())],
+                vec![declared_mem::i64_(schemas.legacy_ref("DocBool"))],
+                vec![declared_mem::i64_(schemas.legacy_ref("DocInt"))],
+                vec![declared_mem::f64_(schemas.legacy_ref("DocFloat"))],
                 vec![declared_mem::handle(
-                    "DocMap".into(),
-                    "Map<String,Doc>".into(),
+                    schemas.legacy_ref("DocString"),
+                    schemas.legacy_ref("String"),
                 )],
-                vec![declared_mem::handle("DocVirtual".into(), "String".into())],
-                vec![declared_mem::handle("DocBlob".into(), "Blob".into())],
+                vec![declared_mem::handle(
+                    schemas.legacy_ref("DocArray"),
+                    schemas.legacy_ref("Array<Doc>"),
+                )],
+                vec![declared_mem::handle(
+                    schemas.legacy_ref("DocMap"),
+                    schemas.legacy_ref("Map<String,Doc>"),
+                )],
+                vec![declared_mem::handle(
+                    schemas.legacy_ref("DocVirtual"),
+                    schemas.legacy_ref("String"),
+                )],
+                vec![declared_mem::handle(
+                    schemas.legacy_ref("DocBlob"),
+                    schemas.legacy_ref("Blob"),
+                )],
             ],
         )
     });
 }
 
-fn derived_descriptor(schema: &str) -> Option<Descriptor<String>> {
+fn derived_descriptor(schemas: &SchemaTables, schema: &str) -> Option<VixDescriptor> {
+    if schemas.is_list(schema)
+        && let Some(elem_schema) = array_element_schema(schema)
+    {
+        return Some(declared_mem::sequence(
+            schemas.legacy_ref(schema),
+            word_descriptor_for_schema(schemas, elem_schema),
+        ));
+    }
+    if schemas.is_map(schema)
+        && let Some((key_schema, value_schema)) = schemas.map_schema_names(schema)
+    {
+        return Some(declared_mem::map(
+            schemas.legacy_ref(schema),
+            word_descriptor_for_schema(schemas, &key_schema),
+            word_descriptor_for_schema(schemas, &value_schema),
+        ));
+    }
+    if schemas.is_option(schema)
+        && let Some(value_schema) = schemas.option_value_schema_name(schema)
+    {
+        return Some(declared_mem::option(
+            schemas.legacy_ref(schema),
+            declared_mem::declared_struct(
+                schemas.legacy_ref(&format!("{schema}::Some")),
+                vec![
+                    declared_mem::i64_(schemas.legacy_ref(&format!("{schema}::value_schema"))),
+                    word_descriptor_for_schema(schemas, &value_schema),
+                    declared_mem::i64_(schemas.legacy_ref(&format!("{schema}::realization"))),
+                ],
+            ),
+        ));
+    }
     if let Some(value_schema) = realized_value_schema(schema) {
         return Some(declared_mem::declared_struct(
-            schema.to_string(),
+            schemas.legacy_ref(schema),
             vec![
-                word_descriptor_for_schema(value_schema),
-                declared_mem::i64_(format!("{schema}::realization_bitset")),
+                word_descriptor_for_schema(schemas, value_schema),
+                declared_mem::i64_(schemas.legacy_ref(&format!("{schema}::realization_bitset"))),
             ],
         ));
     }
     if let Some(fields) = tuple_schema_fields(schema) {
         return Some(declared_mem::declared_struct(
-            schema.to_string(),
+            schemas.legacy_ref(schema),
             fields
                 .into_iter()
                 .enumerate()
-                .map(|(index, field)| word_descriptor_for_schema_with_name(&field, index))
+                .map(|(index, field)| word_descriptor_for_schema_with_name(schemas, &field, index))
                 .collect(),
         ));
     }
     None
 }
 
-fn word_descriptor_for_schema(schema: &str) -> Descriptor<String> {
-    word_descriptor_for_schema_with_name(schema, 0)
+fn word_descriptor_for_schema(schemas: &SchemaTables, schema: &str) -> VixDescriptor {
+    word_descriptor_for_schema_with_name(schemas, schema, 0)
 }
 
-fn word_descriptor_for_schema_with_name(schema: &str, index: usize) -> Descriptor<String> {
-    match schema {
-        "Int" => declared_mem::i64_(format!("Int{index}")),
-        "Float" => declared_mem::f64_(format!("Float{index}")),
-        "Bool" => declared_mem::i64_(format!("Bool{index}")),
-        other => declared_mem::handle(format!("{other}Ref{index}"), other.to_string()),
+fn word_descriptor_for_schema_with_name(
+    schemas: &SchemaTables,
+    schema: &str,
+    index: usize,
+) -> VixDescriptor {
+    if schemas.is_primitive(schema, Primitive::I64) {
+        declared_mem::i64_(schemas.legacy_ref(schema))
+    } else if schemas.is_primitive(schema, Primitive::F64) {
+        declared_mem::f64_(schemas.legacy_ref(schema))
+    } else if schemas.is_primitive(schema, Primitive::Bool) {
+        declared_mem::i64_(schemas.legacy_ref(schema))
+    } else {
+        declared_mem::handle(
+            schemas.legacy_ref(&format!("{schema}Ref{index}")),
+            schemas.legacy_ref(schema),
+        )
     }
 }
 
 fn descriptor_field_schema(
-    descriptor: &Descriptor<String>,
+    schemas: &SchemaTables,
+    descriptor: &VixDescriptor,
     field_index: usize,
 ) -> Result<String, String> {
     let field = match &descriptor.access {
@@ -2006,14 +2734,19 @@ fn descriptor_field_schema(
         other => {
             return Err(format!(
                 "descriptor `{}` has access {other:?}, not fields",
-                descriptor.schema
+                schemas.display_ref(&descriptor.schema)
             ));
         }
     }
-    .ok_or_else(|| format!("missing field {field_index} on `{}`", descriptor.schema))?;
+    .ok_or_else(|| {
+        format!(
+            "missing field {field_index} on `{}`",
+            schemas.display_ref(&descriptor.schema)
+        )
+    })?;
     match &field.descriptor.access {
-        weavy::mem::Access::Handle { target } => Ok(target.clone()),
-        _ => Ok(field.descriptor.schema.clone()),
+        weavy::mem::Access::Handle { target } => Ok(schemas.display_ref(target)),
+        _ => Ok(schemas.display_ref(&field.descriptor.schema)),
     }
 }
 
@@ -2105,7 +2838,7 @@ fn semantic_comparators_for(
                 "semantic comparator `{comparator_name}` must return Bool, got {return_schema}"
             ));
         }
-        comparators.push(SemanticComparator { arg_index, fn_ref });
+        comparators.push(SemanticComparator::new(arg_index, FnRef::new(fn_ref)));
     }
     Ok(comparators)
 }
@@ -2119,16 +2852,21 @@ fn hash_with_semantic_comparators(
     if comparators.is_empty() {
         return base;
     }
-    let mut hasher = DefaultHasher::new();
-    "vix-semantic-comparator-hash".hash(&mut hasher);
-    base.hash(&mut hasher);
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"vix-semantic-comparator-hash");
+    hasher.update(&base.to_le_bytes());
     for comparator in comparators {
-        comparator.arg_index.hash(&mut hasher);
-        if let Some(name) = fn_names.get(comparator.fn_ref) {
-            tables.fn_hashes[*name].hash(&mut hasher);
+        hasher.update(
+            &u64::try_from(comparator.arg_index)
+                .expect("comparator arg index fits u64")
+                .to_le_bytes(),
+        );
+        if let Some(name) = fn_names.get(comparator.fn_ref().index()) {
+            hasher.update(&tables.fn_hashes[*name].to_le_bytes());
         }
     }
-    hasher.finish()
+    let hash = hasher.finalize();
+    u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("blake3 prefix"))
 }
 
 struct LoweredInfo {
@@ -2166,6 +2904,26 @@ struct BoundCall {
     args: Vec<ValueSlot>,
     partial: bool,
     given: usize,
+}
+
+struct BindCallSpec<'a> {
+    fn_name: &'a str,
+    param_names: &'a [String],
+    param_schemas: &'a [String],
+    args: &'a ast::ArgList,
+    start: usize,
+    allow_partial: bool,
+    tail_identifier_uses: Option<&'a HashMap<String, usize>>,
+}
+
+enum TailOutcome {
+    Value(ValueSlot),
+    Jumped,
+}
+
+enum TailJump {
+    Emitted,
+    FellOff(String),
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -2290,6 +3048,18 @@ struct FnSignatures<'a> {
 
 type Bindings = HashMap<String, BindingCell>;
 
+struct LowerEnv<'a> {
+    tables: &'a ModuleTables,
+    current_module: &'a str,
+    current_fn_name: &'a str,
+    current_fn_ref: usize,
+    fn_refs: &'a HashMap<String, usize>,
+    signatures: FnSignatures<'a>,
+    schema_words: &'a HashMap<String, i64>,
+    literal_handles: LiteralHandles<'a>,
+    lower_options: LowerOptions,
+}
+
 #[derive(Clone)]
 struct BindingCell(Rc<RefCell<BindingState>>);
 
@@ -2300,6 +3070,7 @@ enum BindingState {
         value: ast::Expr,
         expected: Option<String>,
         env: Bindings,
+        consume_receiver: Option<String>,
     },
 }
 
@@ -2308,11 +3079,17 @@ impl BindingCell {
         Self(Rc::new(RefCell::new(BindingState::Value(slot))))
     }
 
-    fn lazy(value: ast::Expr, expected: Option<String>, env: Bindings) -> Self {
+    fn lazy(
+        value: ast::Expr,
+        expected: Option<String>,
+        env: Bindings,
+        consume_receiver: Option<String>,
+    ) -> Self {
         Self(Rc::new(RefCell::new(BindingState::Lazy {
             value,
             expected,
             env,
+            consume_receiver,
         })))
     }
 }
@@ -2331,69 +3108,87 @@ fn fork_binding_cell(cell: &BindingCell) -> BindingCell {
             value,
             expected,
             env,
-        } => BindingCell::lazy(value, expected, fork_bindings(&env)),
+            consume_receiver,
+        } => BindingCell::lazy(value, expected, fork_bindings(&env), consume_receiver),
     }
 }
 
 struct FnLowerer<'a> {
     tables: &'a ModuleTables,
     current_module: &'a str,
+    current_fn_name: &'a str,
+    current_fn_ref: usize,
     fn_refs: &'a HashMap<String, usize>,
     signatures: FnSignatures<'a>,
-    schema_refs: &'a HashMap<String, i64>,
+    schema_words: &'a HashMap<String, i64>,
     literal_handles: LiteralHandles<'a>,
     slots: Bindings,
+    param_slots: Vec<ValueSlot>,
     next: u32,
     code: Vec<Op>,
+    loop_header: u32,
     invoke_region: u32,
     store_alloc_region: u32,
     store_read_region: u32,
     store_tag_region: u32,
     primitive_region: u32,
     next_input_slot: i64,
+    consume_receiver: Option<String>,
+    force_tail_invoke: bool,
+    diagnostics: Vec<String>,
+}
+
+struct FnLowererSnapshot {
+    slots: Bindings,
+    next: u32,
+    code: Vec<Op>,
+    next_input_slot: i64,
+    consume_receiver: Option<String>,
 }
 
 impl<'a> FnLowerer<'a> {
     fn lower(
         item: &ast::FnItem,
-        tables: &'a ModuleTables,
-        current_module: &'a str,
-        fn_refs: &'a HashMap<String, usize>,
-        signatures: FnSignatures<'a>,
-        schema_refs: &'a HashMap<String, i64>,
-        literal_handles: LiteralHandles<'a>,
-    ) -> Result<(TaskFn, LoweredInfo), String> {
+        env: LowerEnv<'a>,
+    ) -> Result<(TaskFn, LoweredInfo, Vec<String>), String> {
         let mut this = FnLowerer {
-            tables,
-            current_module,
-            fn_refs,
-            signatures,
-            schema_refs,
-            literal_handles,
+            tables: env.tables,
+            current_module: env.current_module,
+            current_fn_name: env.current_fn_name,
+            current_fn_ref: env.current_fn_ref,
+            fn_refs: env.fn_refs,
+            signatures: env.signatures,
+            schema_words: env.schema_words,
+            literal_handles: env.literal_handles,
             slots: HashMap::new(),
+            param_slots: Vec::new(),
             next: 0,
             code: Vec::new(),
+            loop_header: 0,
             invoke_region: 0,
             store_alloc_region: 0,
             store_read_region: 0,
             store_tag_region: 0,
             primitive_region: 0,
             next_input_slot: 0,
+            consume_receiver: None,
+            force_tail_invoke: env.lower_options.force_tail_invoke,
+            diagnostics: Vec::new(),
         };
 
         let mut arg_offsets = Vec::new();
         for param in &item.params.params {
             let slot = this.alloc();
             let schema = type_schema_name(&param.ty)?;
-            this.slots.insert(
-                param.name.value.clone(),
-                BindingCell::value(ValueSlot {
-                    slot,
-                    schema,
-                    realization: None,
-                    pending: None,
-                }),
-            );
+            let value = ValueSlot {
+                slot,
+                schema,
+                realization: None,
+                pending: None,
+            };
+            this.slots
+                .insert(param.name.value.clone(), BindingCell::value(value.clone()));
+            this.param_slots.push(value);
             arg_offsets.push(slot);
         }
 
@@ -2410,8 +3205,11 @@ impl<'a> FnLowerer<'a> {
         this.store_tag_region = this.next;
         this.next += 8 * 2;
         this.primitive_region = this.next;
-        let primitive_words = max_store_fields.max(max_argc);
+        let primitive_words = max_store_fields
+            .max(max_argc)
+            .max(max_command_part_words(&item.body));
         this.next += 8 * (128 + u32::try_from(primitive_words).expect("primitive word count"));
+        this.loop_header = u32::try_from(this.code.len()).expect("code len fits u32");
 
         let return_schema = item
             .return_type
@@ -2419,17 +3217,22 @@ impl<'a> FnLowerer<'a> {
             .map(type_schema_name)
             .transpose()?
             .unwrap_or_else(|| "Int".into());
-        let result = this.block(&item.body, Some(&return_schema))?;
-        let result = this.coerce_to_schema(result, &return_schema)?;
-        this.code.push(Op::Ret {
-            src: result.slot,
-            size: 8,
-        });
+        match this.tail_block(&item.body, Some(&return_schema))? {
+            TailOutcome::Value(result) => {
+                let result = this.coerce_to_schema(result, &return_schema)?;
+                this.code.push(Op::Ret {
+                    src: result.slot,
+                    size: 8,
+                });
+            }
+            TailOutcome::Jumped => {}
+        }
 
         let frame = Layout {
             size: this.next as usize,
             align: 8,
         };
+        let diagnostics = this.diagnostics;
         Ok((
             TaskFn {
                 frame,
@@ -2443,6 +3246,7 @@ impl<'a> FnLowerer<'a> {
                 store_tag_region: this.store_tag_region,
                 primitive_region: this.primitive_region,
             },
+            diagnostics,
         ))
     }
 
@@ -2452,18 +3256,42 @@ impl<'a> FnLowerer<'a> {
         slot
     }
 
-    fn block(
+    fn snapshot(&self) -> FnLowererSnapshot {
+        FnLowererSnapshot {
+            slots: fork_bindings(&self.slots),
+            next: self.next,
+            code: self.code.clone(),
+            next_input_slot: self.next_input_slot,
+            consume_receiver: self.consume_receiver.clone(),
+        }
+    }
+
+    fn restore(&mut self, snapshot: FnLowererSnapshot) {
+        self.slots = snapshot.slots;
+        self.next = snapshot.next;
+        self.code = snapshot.code;
+        self.next_input_slot = snapshot.next_input_slot;
+        self.consume_receiver = snapshot.consume_receiver;
+    }
+
+    fn tail_block(
         &mut self,
         block: &ast::Block,
         tail_expected: Option<&str>,
-    ) -> Result<ValueSlot, String> {
+    ) -> Result<TailOutcome, String> {
         for stmt in &block.stmts {
             match stmt {
                 ast::Stmt::Let(l) => {
                     let expected = l.ty.as_ref().map(type_schema_name).transpose()?;
+                    let consume_receiver = consuming_rebind_receiver(&l.name.value, &l.value);
                     self.slots.insert(
                         l.name.value.clone(),
-                        BindingCell::lazy(l.value.clone(), expected, self.slots.clone()),
+                        BindingCell::lazy(
+                            l.value.clone(),
+                            expected,
+                            self.slots.clone(),
+                            consume_receiver,
+                        ),
                     );
                 }
                 ast::Stmt::Expr(_) => {
@@ -2475,12 +3303,31 @@ impl<'a> FnLowerer<'a> {
             .tail
             .as_ref()
             .ok_or("slice-1 functions must end in a tail expression")?;
-        self.expr_expected(tail, tail_expected)
+        self.tail_expr_expected(tail, tail_expected)
     }
 
     /// Compile an expression; returns the frame slot holding its value.
     fn expr(&mut self, e: &ast::Expr) -> Result<ValueSlot, String> {
         self.expr_expected(e, None)
+    }
+
+    fn tail_expr_expected(
+        &mut self,
+        e: &ast::Expr,
+        expected: Option<&str>,
+    ) -> Result<TailOutcome, String> {
+        match e {
+            ast::Expr::Paren(paren) => self.tail_expr_expected(&paren.inner, expected),
+            ast::Expr::Match(m) => self.tail_match_expr(m, expected),
+            ast::Expr::Call(call) => {
+                if let Some(outcome) = self.self_tail_call(call)? {
+                    Ok(outcome)
+                } else {
+                    self.expr_expected(e, expected).map(TailOutcome::Value)
+                }
+            }
+            _ => self.expr_expected(e, expected).map(TailOutcome::Value),
+        }
     }
 
     fn expr_expected(
@@ -2490,7 +3337,11 @@ impl<'a> FnLowerer<'a> {
     ) -> Result<ValueSlot, String> {
         match e {
             ast::Expr::Number(n) => {
-                if n.value.contains('.') || expected == Some("Float") {
+                if n.value.contains('.')
+                    || expected.is_some_and(|schema| {
+                        self.tables.schemas.is_primitive(schema, Primitive::F64)
+                    })
+                {
                     let value: f64 = n
                         .value
                         .parse()
@@ -2579,6 +3430,9 @@ impl<'a> FnLowerer<'a> {
                 })
             }
             ast::Expr::Identifier(name) => {
+                if name.value == "None" && !self.slots.contains_key("None") {
+                    return self.option_none(expected);
+                }
                 if let Some(info) = self.tables.structs.get(&name.value)
                     && info.is_unit
                     && !self.slots.contains_key(&name.value)
@@ -2609,32 +3463,77 @@ impl<'a> FnLowerer<'a> {
             ast::Expr::Binary(b) => {
                 let mut a = self.expr(&b.left)?;
                 let mut r = self.expr(&b.right)?;
+                // Comparison operators derive from a user-defined spaceship
+                // `fn <=>(self: T, other) -> Ordering`: `a < b` ≡ `(a <=> b)` is
+                // Less, etc. Only ordering is overridable this way; `==`/`!=` stay
+                // structural (identity). The `<=>` name is a normal function name
+                // (the grammar allows operator symbols).
+                if matches!(b.op.as_str(), "<" | "<=" | ">" | ">=") {
+                    let dispatch = self
+                        .resolve_function_name("<=>")
+                        .map(str::to_string)
+                        .and_then(|resolved| {
+                            let fn_ref = *self.fn_refs.get(&resolved)?;
+                            let params = self.signatures.params.get(&resolved)?;
+                            (params.first() == Some(&a.schema))
+                                .then(|| (fn_ref, params.get(1).cloned()))
+                        });
+                    if let Some((fn_ref, p1)) = dispatch {
+                        let r = match &p1 {
+                            Some(p1) => self.coerce_to_schema(r, p1)?,
+                            None => r,
+                        };
+                        let ord = self.invoke_fn(fn_ref, vec![a, r], "Ordering".into())?;
+                        return Ok(self.ordering_to_bool(&ord, b.op.as_str()));
+                    }
+                }
                 if b.op == "+"
-                    && matches!(a.schema.as_str(), "String" | "Sealed")
-                    && matches!(r.schema.as_str(), "String" | "Sealed")
+                    && self.schema_is_stringish(&a.schema)
+                    && self.schema_is_stringish(&r.schema)
                 {
                     a = self.coerce_to_schema(a, "String")?;
                     r = self.coerce_to_schema(r, "String")?;
                     return self.string_concat(&a, &r);
                 }
                 if let Some(schema) =
-                    strict_binary_operand_schema(&b.op, &a.schema, &r.schema).map(str::to_string)
+                    strict_binary_operand_schema(&self.tables.schemas, &b.op, &a.schema, &r.schema)
+                        .map(str::to_string)
                 {
                     a = self.coerce_to_schema(a, &schema)?;
                     r = self.coerce_to_schema(r, &schema)?;
                 }
-                if b.op == "+" && a.schema == "String" && r.schema == "String" {
+                if b.op == "+"
+                    && self
+                        .tables
+                        .schemas
+                        .is_primitive(&a.schema, Primitive::String)
+                    && self
+                        .tables
+                        .schemas
+                        .is_primitive(&r.schema, Primitive::String)
+                {
                     return self.string_concat(&a, &r);
                 }
-                if a.schema == "Version"
-                    && r.schema == "Version"
+                if a.schema == r.schema
+                    && (self
+                        .tables
+                        .schemas
+                        .is_primitive(&a.schema, Primitive::String)
+                        || self.tables.schemas.is_external(&a.schema, "Version"))
                     && matches!(b.op.as_str(), "==" | "!=" | "<" | "<=" | ">" | ">=")
                 {
-                    return self.compare_value(b.op.as_str(), &a, &r, "Version");
+                    let schema = a.schema.clone();
+                    return self.compare_value(b.op.as_str(), &a, &r, &schema);
                 }
                 let dst = self.alloc();
-                let (op, schema) = match (b.op.as_str(), a.schema.as_str(), r.schema.as_str()) {
-                    ("+", "Int", "Int") => (
+                let a_int = self.tables.schemas.is_primitive(&a.schema, Primitive::I64);
+                let r_int = self.tables.schemas.is_primitive(&r.schema, Primitive::I64);
+                let a_float = self.tables.schemas.is_primitive(&a.schema, Primitive::F64);
+                let r_float = self.tables.schemas.is_primitive(&r.schema, Primitive::F64);
+                let a_bool = self.tables.schemas.is_primitive(&a.schema, Primitive::Bool);
+                let r_bool = self.tables.schemas.is_primitive(&r.schema, Primitive::Bool);
+                let (op, schema) = match b.op.as_str() {
+                    "+" if a_int && r_int => (
                         Op::AddI64 {
                             dst,
                             a: a.slot,
@@ -2642,7 +3541,7 @@ impl<'a> FnLowerer<'a> {
                         },
                         "Int",
                     ),
-                    ("-", "Int", "Int") => (
+                    "-" if a_int && r_int => (
                         Op::SubI64 {
                             dst,
                             a: a.slot,
@@ -2650,7 +3549,7 @@ impl<'a> FnLowerer<'a> {
                         },
                         "Int",
                     ),
-                    ("*", "Int", "Int") => (
+                    "*" if a_int && r_int => (
                         Op::MulI64 {
                             dst,
                             a: a.slot,
@@ -2658,7 +3557,7 @@ impl<'a> FnLowerer<'a> {
                         },
                         "Int",
                     ),
-                    ("+", "Float", "Float") => (
+                    "+" if a_float && r_float => (
                         Op::AddF64 {
                             dst,
                             a: a.slot,
@@ -2666,7 +3565,7 @@ impl<'a> FnLowerer<'a> {
                         },
                         "Float",
                     ),
-                    ("*", "Float", "Float") => (
+                    "*" if a_float && r_float => (
                         Op::MulF64 {
                             dst,
                             a: a.slot,
@@ -2674,7 +3573,7 @@ impl<'a> FnLowerer<'a> {
                         },
                         "Float",
                     ),
-                    ("==", _, _) => {
+                    "==" => {
                         if a.schema != r.schema {
                             return Err(format!(
                                 "cannot compare {} to {} in the machine slice-2 subset",
@@ -2690,7 +3589,7 @@ impl<'a> FnLowerer<'a> {
                             "Bool",
                         )
                     }
-                    ("!=", _, _) => {
+                    "!=" => {
                         if a.schema != r.schema {
                             return Err(format!(
                                 "cannot compare {} to {} in the machine B4 subset",
@@ -2706,7 +3605,7 @@ impl<'a> FnLowerer<'a> {
                             "Bool",
                         )
                     }
-                    ("<", "Int", "Int") => (
+                    "<" if a_int && r_int => (
                         Op::LtI64 {
                             dst,
                             a: a.slot,
@@ -2714,7 +3613,7 @@ impl<'a> FnLowerer<'a> {
                         },
                         "Bool",
                     ),
-                    ("<=", "Int", "Int") => (
+                    "<=" if a_int && r_int => (
                         Op::LeI64 {
                             dst,
                             a: a.slot,
@@ -2722,7 +3621,7 @@ impl<'a> FnLowerer<'a> {
                         },
                         "Bool",
                     ),
-                    (">", "Int", "Int") => (
+                    ">" if a_int && r_int => (
                         Op::GtI64 {
                             dst,
                             a: a.slot,
@@ -2730,7 +3629,7 @@ impl<'a> FnLowerer<'a> {
                         },
                         "Bool",
                     ),
-                    (">=", "Int", "Int") => (
+                    ">=" if a_int && r_int => (
                         Op::GeI64 {
                             dst,
                             a: a.slot,
@@ -2738,7 +3637,7 @@ impl<'a> FnLowerer<'a> {
                         },
                         "Bool",
                     ),
-                    ("&&", "Bool", "Bool") => (
+                    "&&" if a_bool && r_bool => (
                         Op::MulI64 {
                             dst,
                             a: a.slot,
@@ -2746,7 +3645,7 @@ impl<'a> FnLowerer<'a> {
                         },
                         "Bool",
                     ),
-                    (other, _, _) => {
+                    other => {
                         return Err(format!(
                             "operator {other:?} on {} and {} is outside the machine slice-3 subset",
                             a.schema, r.schema
@@ -2761,10 +3660,18 @@ impl<'a> FnLowerer<'a> {
                     pending: None,
                 })
             }
+            ast::Expr::Call(call)
+                if matches!(
+                    &call.callee,
+                    ast::PathRef::Identifier(name) if name.value == "json_typed"
+                ) =>
+            {
+                self.typed_doc_parse_call(call, 1, expected)
+            }
             ast::Expr::Call(call) => self.call(call),
             ast::Expr::MethodCall(call) => self.method_call(call, expected),
             ast::Expr::Map(map) => self.map_literal(map, expected),
-            ast::Expr::Array(array) => self.array_literal(array),
+            ast::Expr::Array(array) => self.array_literal(array, expected),
             ast::Expr::Command(command) => self.command_block(command),
             ast::Expr::Match(m) => self.match_expr(m, expected),
             other => Err(format!(
@@ -2786,8 +3693,8 @@ impl<'a> FnLowerer<'a> {
         let state = cell.0.borrow().clone();
         match state {
             BindingState::Value(slot) => {
-                if self.schema_can_be_flesh(&slot.schema) {
-                    self.flesh_dup(&slot)
+                if self.schema_can_be_molten(&slot.schema) {
+                    self.molten_dup(&slot)
                 } else {
                     Ok(slot)
                 }
@@ -2796,14 +3703,18 @@ impl<'a> FnLowerer<'a> {
                 value,
                 expected,
                 env,
+                consume_receiver,
             } => {
                 let saved = std::mem::replace(&mut self.slots, env);
+                let saved_consume_receiver =
+                    std::mem::replace(&mut self.consume_receiver, consume_receiver);
                 let slot =
                     self.expr_expected(&value, contextual_expected.or(expected.as_deref()))?;
                 *cell.0.borrow_mut() = BindingState::Value(slot.clone());
+                self.consume_receiver = saved_consume_receiver;
                 self.slots = saved;
-                if self.schema_can_be_flesh(&slot.schema) {
-                    self.flesh_dup(&slot)
+                if self.schema_can_be_molten(&slot.schema) {
+                    self.molten_dup(&slot)
                 } else {
                     Ok(slot)
                 }
@@ -2811,11 +3722,84 @@ impl<'a> FnLowerer<'a> {
         }
     }
 
-    fn schema_can_be_flesh(&self, schema: &str) -> bool {
-        schema == "Array"
-            || schema.starts_with("Map<")
-            || self.tables.structs.contains_key(schema)
-            || self.tables.enums.contains_key(schema)
+    fn resolve_binding_consuming_move(
+        &mut self,
+        name: &str,
+        contextual_expected: Option<&str>,
+    ) -> Result<ValueSlot, String> {
+        let cell = self
+            .slots
+            .get(name)
+            .cloned()
+            .ok_or_else(|| format!("unbound name {name}"))?;
+        let state = cell.0.borrow().clone();
+        let slot = match state {
+            BindingState::Value(slot) => slot,
+            BindingState::Lazy {
+                value,
+                expected,
+                env,
+                consume_receiver,
+            } => {
+                let saved = std::mem::replace(&mut self.slots, env);
+                let saved_consume_receiver =
+                    std::mem::replace(&mut self.consume_receiver, consume_receiver);
+                let slot =
+                    self.expr_expected(&value, contextual_expected.or(expected.as_deref()))?;
+                *cell.0.borrow_mut() = BindingState::Value(slot.clone());
+                self.consume_receiver = saved_consume_receiver;
+                self.slots = saved;
+                slot
+            }
+        };
+        Ok(self.copy_value(&slot))
+    }
+
+    fn copy_value(&mut self, value: &ValueSlot) -> ValueSlot {
+        let dst = self.alloc();
+        self.code.push(Op::CopyI64 {
+            dst,
+            src: value.slot,
+        });
+        ValueSlot {
+            slot: dst,
+            schema: value.schema.clone(),
+            realization: value.realization,
+            pending: value.pending,
+        }
+    }
+
+    fn pending_lazy_alias_reads(&self, name: &str) -> bool {
+        self.slots.iter().any(|(binding_name, cell)| {
+            if binding_name == name {
+                return false;
+            }
+            let BindingState::Lazy { value, env, .. } = &*cell.0.borrow() else {
+                return false;
+            };
+            if !env.contains_key(name) {
+                return false;
+            }
+            let mut identifiers = BTreeSet::new();
+            collect_expr_identifiers(value, &mut identifiers);
+            identifiers.contains(name)
+        })
+    }
+
+    fn schema_can_be_molten(&self, schema: &str) -> bool {
+        self.tables.schemas.is_list(schema)
+            || self.tables.schemas.is_map(schema)
+            || self.tables.schemas.is_struct_or_enum(schema)
+    }
+
+    fn schema_is_stringish(&self, schema: &str) -> bool {
+        self.tables.schemas.is_primitive(schema, Primitive::String)
+            || self.tables.schemas.is_external(schema, "Sealed")
+    }
+
+    fn value_schema_is_realized_named(&self, schema: &str, name: &str) -> bool {
+        realized_value_schema(schema)
+            .is_some_and(|inner| self.tables.schemas.is_named_schema(inner, name))
     }
 
     /// Match on scalars: literal arms compile to EqI64 + JumpIfZero
@@ -2829,10 +3813,30 @@ impl<'a> FnLowerer<'a> {
         m: &ast::MatchExpr,
         expected: Option<&str>,
     ) -> Result<ValueSlot, String> {
+        match self.match_expr_outcome(m, expected, false)? {
+            TailOutcome::Value(value) => Ok(value),
+            TailOutcome::Jumped => Err("non-tail match arm unexpectedly jumped".into()),
+        }
+    }
+
+    fn tail_match_expr(
+        &mut self,
+        m: &ast::MatchExpr,
+        expected: Option<&str>,
+    ) -> Result<TailOutcome, String> {
+        self.match_expr_outcome(m, expected, true)
+    }
+
+    fn match_expr_outcome(
+        &mut self,
+        m: &ast::MatchExpr,
+        expected: Option<&str>,
+        tail: bool,
+    ) -> Result<TailOutcome, String> {
         let scrut = self.expr(&m.scrutinee)?;
         let scrut = self.coerce_inner(scrut)?;
         self.hoist_bindings_used_by_multiple_arms(m)?;
-        let result = self.alloc();
+        let mut result = None;
         let mut result_schema: Option<String> = None;
         let mut jump_to_end: Vec<usize> = Vec::new();
         let mut bool_covered = BTreeSet::new();
@@ -2905,6 +3909,31 @@ impl<'a> FnLowerer<'a> {
                     let (enum_name, variant_index, _) = self.resolve_scoped_variant(path)?;
                     self.variant_match_test(&scrut, &enum_name, variant_index, &mut skip_patches)?;
                 }
+                ast::Pattern::Variant(p)
+                    if self
+                        .tables
+                        .schemas
+                        .option_value_schema_name(&scrut.schema)
+                        .is_some() =>
+                {
+                    let segments = path_ref_segments(&p.path)?;
+                    let variant = segments.last().map(String::as_str).unwrap_or_default();
+                    if variant != "Some" {
+                        return Err(format!("Option pattern `{variant}` is not Some or None"));
+                    }
+                    let value_schema = self
+                        .tables
+                        .schemas
+                        .option_value_schema_name(&scrut.schema)
+                        .ok_or_else(|| format!("scrutinee {} is not an Option", scrut.schema))?
+                        .to_string();
+                    self.option_tag_test(&scrut, 1, &mut skip_patches);
+                    let [pattern] = p.args.as_slice() else {
+                        return Err("Some pattern takes one binding".into());
+                    };
+                    let payload = self.option_destruct(&scrut, 1, &value_schema);
+                    self.bind_option_payload(pattern, payload)?;
+                }
                 ast::Pattern::Variant(p) => {
                     let (enum_name, variant_index, shape) = self.resolve_path_variant(&p.path)?;
                     self.variant_match_test(&scrut, &enum_name, variant_index, &mut skip_patches)?;
@@ -2954,6 +3983,16 @@ impl<'a> FnLowerer<'a> {
                         return Err("wildcard arm must be last".into());
                     }
                 }
+                ast::Pattern::Identifier(name)
+                    if self
+                        .tables
+                        .schemas
+                        .option_value_schema_name(&scrut.schema)
+                        .is_some()
+                        && name.value == "None" =>
+                {
+                    self.option_tag_test(&scrut, 0, &mut skip_patches);
+                }
                 ast::Pattern::Identifier(name) => {
                     if let Some(variant_index) =
                         self.shorthand_unit_variant(&scrut.schema, &name.value)
@@ -2983,7 +4022,10 @@ impl<'a> FnLowerer<'a> {
                     value: self.expect_schema(&guard, "Bool")?,
                     target: 0,
                 });
-            } else if scrut.schema == "Bool"
+            } else if self
+                .tables
+                .schemas
+                .is_primitive(&scrut.schema, Primitive::Bool)
                 && let Some(value) = bool_pattern
             {
                 bool_covered.insert(value);
@@ -2991,29 +4033,46 @@ impl<'a> FnLowerer<'a> {
             if skip_patches.is_empty() && i != last {
                 return Err("irrefutable arm before the last arm".into());
             }
-            let v = self.expr(&arm.value)?;
-            let v = if let Some(expected) = expected {
-                self.coerce_to_schema(v, expected)?
+            let outcome = if tail {
+                self.tail_expr_expected(&arm.value, expected)?
             } else {
-                v
+                let v = self.expr_expected(&arm.value, expected)?;
+                let v = if let Some(expected) = expected {
+                    self.coerce_to_schema(v, expected)?
+                } else {
+                    v
+                };
+                TailOutcome::Value(v)
             };
-            match &result_schema {
-                Some(schema) if schema != &v.schema => {
-                    return Err(format!(
-                        "match arm returned {}, previous arm returned {schema}",
-                        v.schema
-                    ));
+            let outcome = match (outcome, expected) {
+                (TailOutcome::Value(v), Some(expected)) => {
+                    TailOutcome::Value(self.coerce_to_schema(v, expected)?)
                 }
-                None => result_schema = Some(v.schema.clone()),
-                _ => {}
-            }
-            self.code.push(Op::CopyI64 {
-                dst: result,
-                src: v.slot,
-            });
-            if i != last {
-                jump_to_end.push(self.code.len());
-                self.code.push(Op::Jump { target: 0 });
+                (outcome, _) => outcome,
+            };
+            match outcome {
+                TailOutcome::Value(v) => {
+                    match &result_schema {
+                        Some(schema) if schema != &v.schema => {
+                            return Err(format!(
+                                "match arm returned {}, previous arm returned {schema}",
+                                v.schema
+                            ));
+                        }
+                        None => result_schema = Some(v.schema.clone()),
+                        _ => {}
+                    }
+                    let result = *result.get_or_insert_with(|| self.alloc());
+                    self.code.push(Op::CopyI64 {
+                        dst: result,
+                        src: v.slot,
+                    });
+                    if i != last {
+                        jump_to_end.push(self.code.len());
+                        self.code.push(Op::Jump { target: 0 });
+                    }
+                }
+                TailOutcome::Jumped => {}
             }
             for at in skip_patches {
                 let next = u32::try_from(self.code.len()).expect("code len fits u32");
@@ -3030,7 +4089,14 @@ impl<'a> FnLowerer<'a> {
             }
             self.slots = saved_slots;
         }
-        if matches!(scrut.schema.as_str(), "Int" | "String")
+        if (self
+            .tables
+            .schemas
+            .is_primitive(&scrut.schema, Primitive::I64)
+            || self
+                .tables
+                .schemas
+                .is_primitive(&scrut.schema, Primitive::String))
             && !matches!(
                 m.arms.last().map(|a| &a.pattern),
                 Some(ast::Pattern::Wildcard(_) | ast::Pattern::Identifier(_))
@@ -3042,7 +4108,10 @@ impl<'a> FnLowerer<'a> {
                     .into(),
             );
         }
-        if scrut.schema == "Bool"
+        if self
+            .tables
+            .schemas
+            .is_primitive(&scrut.schema, Primitive::Bool)
             && !matches!(
                 m.arms.last().map(|a| &a.pattern),
                 Some(ast::Pattern::Wildcard(_) | ast::Pattern::Identifier(_))
@@ -3063,17 +4132,25 @@ impl<'a> FnLowerer<'a> {
         for at in jump_to_end {
             self.code[at] = Op::Jump { target: end };
         }
-        Ok(ValueSlot {
-            slot: result,
-            schema: result_schema.unwrap_or_else(|| "Int".into()),
-            realization: None,
-            pending: None,
-        })
+        if let Some(result) = result {
+            Ok(TailOutcome::Value(ValueSlot {
+                slot: result,
+                schema: result_schema.unwrap_or_else(|| "Int".into()),
+                realization: None,
+                pending: None,
+            }))
+        } else if tail {
+            Ok(TailOutcome::Jumped)
+        } else {
+            Err("non-tail match produced no value".into())
+        }
     }
 
     fn hoist_bindings_used_by_multiple_arms(&mut self, m: &ast::MatchExpr) -> Result<(), String> {
         let mut counts: HashMap<String, usize> = HashMap::new();
+        let mut consumed_receivers = BTreeSet::new();
         for arm in &m.arms {
+            collect_consuming_update_receivers_in_expr(&arm.value, &mut consumed_receivers);
             let mut names = BTreeSet::new();
             collect_expr_identifiers(&arm.value, &mut names);
             if let Some(guard) = &arm.guard {
@@ -3090,7 +4167,8 @@ impl<'a> FnLowerer<'a> {
         let hoist: Vec<String> = counts
             .into_iter()
             .filter_map(|(name, count)| {
-                (count > 1 && self.slots.contains_key(&name)).then_some(name)
+                (count > 1 && self.slots.contains_key(&name) && !consumed_receivers.contains(&name))
+                    .then_some(name)
             })
             .collect();
         for name in hoist {
@@ -3122,8 +4200,11 @@ impl<'a> FnLowerer<'a> {
             "toml" => return self.doc_parse_call(call, 0),
             "json" => return self.doc_parse_call(call, 1),
             "build_directives" => return self.doc_parse_call(call, 2),
+            "cfg" => return self.doc_parse_call(call, 3),
+            "rustc_cfg" => return self.doc_parse_call(call, 4),
             "crate_archive" => return self.crate_archive_call(call),
             "version" => return self.version_call(call),
+            "Some" => return self.option_some_call(call),
             "render" => return self.render_call(call),
             "elf" => return self.elf_call(call),
             "ast" => return self.ast_call(call),
@@ -3145,14 +4226,15 @@ impl<'a> FnLowerer<'a> {
                 .get(&resolved_name)
                 .ok_or_else(|| format!("missing param schemas for {resolved_name}"))?
                 .clone();
-            let bound = self.bind_call_args(
-                &resolved_name,
-                &param_names,
-                &param_schemas,
-                &call.args,
-                0,
-                true,
-            )?;
+            let bound = self.bind_call_args(BindCallSpec {
+                fn_name: &resolved_name,
+                param_names: &param_names,
+                param_schemas: &param_schemas,
+                args: &call.args,
+                start: 0,
+                allow_partial: true,
+                tail_identifier_uses: None,
+            })?;
             let return_schema = self.signatures.returns[&resolved_name].clone();
             if bound.partial {
                 return self.pending_alloc_for_fn(
@@ -3185,14 +4267,15 @@ impl<'a> FnLowerer<'a> {
             .get(&fn_name)
             .ok_or_else(|| format!("missing param schemas for {fn_name}"))?
             .clone();
-        let bound = self.bind_call_args(
-            &fn_name,
-            &param_names,
-            &param_schemas,
-            &call.args,
-            pending.given,
-            false,
-        )?;
+        let bound = self.bind_call_args(BindCallSpec {
+            fn_name: &fn_name,
+            param_names: &param_names,
+            param_schemas: &param_schemas,
+            args: &call.args,
+            start: pending.given,
+            allow_partial: false,
+            tail_identifier_uses: None,
+        })?;
         let value_schema = pending_value_schema(&callee.schema)
             .ok_or_else(|| format!("callee {name} is `{}`, not pending", callee.schema))?
             .to_string();
@@ -3244,6 +4327,99 @@ impl<'a> FnLowerer<'a> {
         })
     }
 
+    fn self_tail_call(&mut self, call: &ast::Call) -> Result<Option<TailOutcome>, String> {
+        if self.force_tail_invoke {
+            return Ok(None);
+        }
+        let name = match &call.callee {
+            ast::PathRef::Identifier(name) => name.value.as_str(),
+            _ => return Ok(None),
+        };
+        let Some(resolved_name) = self.resolve_function_name(name).map(str::to_string) else {
+            return Ok(None);
+        };
+        if resolved_name != self.current_fn_name {
+            return Ok(None);
+        }
+        let Some(&fn_ref) = self.fn_refs.get(&resolved_name) else {
+            return Ok(None);
+        };
+        if fn_ref != self.current_fn_ref {
+            return Ok(None);
+        }
+        let param_names = self
+            .signatures
+            .param_names
+            .get(&resolved_name)
+            .ok_or_else(|| format!("missing param names for {resolved_name}"))?
+            .clone();
+        let param_schemas = self
+            .signatures
+            .params
+            .get(&resolved_name)
+            .ok_or_else(|| format!("missing param schemas for {resolved_name}"))?
+            .clone();
+        if arg_list_has_partial(&call.args) {
+            return Ok(None);
+        }
+        let snapshot = self.snapshot();
+        let tail_identifier_uses = identifier_uses_in_arg_list(&call.args);
+        let bound = self.bind_call_args(BindCallSpec {
+            fn_name: &resolved_name,
+            param_names: &param_names,
+            param_schemas: &param_schemas,
+            args: &call.args,
+            start: 0,
+            allow_partial: false,
+            tail_identifier_uses: Some(&tail_identifier_uses),
+        })?;
+        match self.emit_self_tail_jump(bound.args, &param_schemas)? {
+            TailJump::Emitted => Ok(Some(TailOutcome::Jumped)),
+            TailJump::FellOff(reason) => {
+                self.restore(snapshot);
+                self.diagnostics.push(format!(
+                    "self-tail call to `{resolved_name}` lowers through INVOKE: {reason}"
+                ));
+                Ok(None)
+            }
+        }
+    }
+
+    fn emit_self_tail_jump(
+        &mut self,
+        args: Vec<ValueSlot>,
+        param_schemas: &[String],
+    ) -> Result<TailJump, String> {
+        if args.len() != self.param_slots.len() || args.len() != param_schemas.len() {
+            return Err(format!(
+                "self-tail-call argument count {} did not match parameter count {}",
+                args.len(),
+                self.param_slots.len()
+            ));
+        }
+        let mut temps = Vec::with_capacity(args.len());
+        for (index, (arg, schema)) in args.into_iter().zip(param_schemas).enumerate() {
+            let arg = self.coerce_to_schema(arg, schema)?;
+            if arg.schema != *schema {
+                return Ok(TailJump::FellOff(format!(
+                    "argument {index} lowered as {}, expected {schema}",
+                    arg.schema
+                )));
+            }
+            temps.push(self.copy_value(&arg));
+        }
+        for (param, temp) in self.param_slots.clone().into_iter().zip(&temps) {
+            self.code.push(Op::CopyI64 {
+                dst: param.slot,
+                src: temp.slot,
+            });
+        }
+        self.code.push(Op::Jump {
+            target: self.loop_header,
+        });
+        Ok(TailJump::Emitted)
+    }
+
     fn fn_name_for_ref(&self, fn_ref: usize) -> Result<&str, String> {
         self.fn_refs
             .iter()
@@ -3251,15 +4427,16 @@ impl<'a> FnLowerer<'a> {
             .ok_or_else(|| format!("unknown fn_ref {fn_ref}"))
     }
 
-    fn bind_call_args(
-        &mut self,
-        fn_name: &str,
-        param_names: &[String],
-        param_schemas: &[String],
-        args: &ast::ArgList,
-        start: usize,
-        allow_partial: bool,
-    ) -> Result<BoundCall, String> {
+    fn bind_call_args(&mut self, spec: BindCallSpec<'_>) -> Result<BoundCall, String> {
+        let BindCallSpec {
+            fn_name,
+            param_names,
+            param_schemas,
+            args,
+            start,
+            allow_partial,
+            tail_identifier_uses,
+        } = spec;
         if start > param_names.len() || param_names.len() != param_schemas.len() {
             return Err(format!("bad parameter table for `{fn_name}`"));
         }
@@ -3286,8 +4463,9 @@ impl<'a> FnLowerer<'a> {
                     let Some(expected) = param_schemas.get(start + positional) else {
                         return Err(format!("too many arguments for `{fn_name}`"));
                     };
-                    let value = self.expr_expected(expr, Some(expected))?;
-                    values[positional] = Some(self.coerce_scalar_arg(value, expected)?);
+                    let value =
+                        self.expr_expected_call_arg(expr, Some(expected), tail_identifier_uses)?;
+                    values[positional] = Some(self.coerce_to_schema(value, expected)?);
                     positional += 1;
                 }
                 ast::Arg::Kwarg(kwarg) => {
@@ -3301,8 +4479,12 @@ impl<'a> FnLowerer<'a> {
                         return Err(format!("duplicate argument `{}`", kwarg.name.value));
                     }
                     let expected = &param_schemas[start + offset];
-                    let value = self.expr_expected(&kwarg.value, Some(expected))?;
-                    values[offset] = Some(self.coerce_scalar_arg(value, expected)?);
+                    let value = self.expr_expected_call_arg(
+                        &kwarg.value,
+                        Some(expected),
+                        tail_identifier_uses,
+                    )?;
+                    values[offset] = Some(self.coerce_to_schema(value, expected)?);
                 }
             }
         }
@@ -3339,6 +4521,27 @@ impl<'a> FnLowerer<'a> {
             partial: false,
             given: param_names.len(),
         })
+    }
+
+    fn expr_expected_call_arg(
+        &mut self,
+        expr: &ast::Expr,
+        expected: Option<&str>,
+        tail_identifier_uses: Option<&HashMap<String, usize>>,
+    ) -> Result<ValueSlot, String> {
+        let Some(identifier_uses) = tail_identifier_uses else {
+            return self.expr_expected(expr, expected);
+        };
+        let Some(receiver) = consuming_update_receiver(expr) else {
+            return self.expr_expected(expr, expected);
+        };
+        if identifier_uses.get(receiver).copied() != Some(1) {
+            return self.expr_expected(expr, expected);
+        }
+        let saved_consume_receiver = self.consume_receiver.replace(receiver.to_string());
+        let result = self.expr_expected(expr, expected);
+        self.consume_receiver = saved_consume_receiver;
+        result
     }
 
     fn builtin_scoped_call(&mut self, call: &ast::Call) -> Result<Option<ValueSlot>, String> {
@@ -3436,13 +4639,13 @@ impl<'a> FnLowerer<'a> {
         call: &ast::MethodCall,
         expected: Option<&str>,
     ) -> Result<ValueSlot, String> {
-        let mut receiver = self.expr(&call.receiver)?;
-        if receiver.schema == "Realized<Doc>" {
+        let (mut receiver, consuming_receiver) = self.method_receiver(call)?;
+        if self.value_schema_is_realized_named(&receiver.schema, "Doc") {
             receiver = self.coerce_to_schema(receiver, "Doc")?;
         }
         match call.name.value.as_str() {
             "with_ext" => {
-                if receiver.schema != "Path" {
+                if !self.tables.schemas.is_external(&receiver.schema, "Path") {
                     return Err(format!("with_ext called on {}", receiver.schema));
                 }
                 let [arg] = call.args.args.as_slice() else {
@@ -3451,22 +4654,65 @@ impl<'a> FnLowerer<'a> {
                 let ext = self.method_arg(arg, Some("String"))?;
                 self.path_with_ext(&receiver, &ext)
             }
+            "to_string" => {
+                if !call.args.args.is_empty() {
+                    return Err("Path.to_string takes no arguments".into());
+                }
+                self.expect_schema(&receiver, "Path")?;
+                self.raw_string_convert(&receiver, "String", PATH_TO_STRING_HOST)
+            }
+            "is_map" => {
+                if !call.args.args.is_empty() {
+                    return Err("Doc.is_map takes no arguments".into());
+                }
+                self.expect_schema(&receiver, "Doc")?;
+                self.doc_is_map(&receiver)
+            }
+            "keys" => {
+                if !call.args.args.is_empty() {
+                    return Err("keys takes no arguments".into());
+                }
+                if !self.tables.schemas.is_named_schema(&receiver.schema, "Doc") {
+                    let Some((key_schema, _)) =
+                        self.tables.schemas.map_schema_names(&receiver.schema)
+                    else {
+                        return Err(format!("keys called on {}", receiver.schema));
+                    };
+                    if !self
+                        .tables
+                        .schemas
+                        .is_primitive(&key_schema, Primitive::String)
+                    {
+                        return Err(format!("keys requires String map keys, got {key_schema}"));
+                    }
+                }
+                self.doc_keys(&receiver)
+            }
             "len" => {
                 if !call.args.args.is_empty() {
                     return Err("len takes no arguments".into());
                 }
-                let receiver = match receiver.schema.as_str() {
-                    "Array" => receiver,
-                    "Doc" => self.coerce_doc_to_schema(receiver, "Array")?,
-                    "Realized<Doc>" => {
-                        let doc = self.coerce_to_schema(receiver, "Doc")?;
-                        self.coerce_doc_to_schema(doc, "Array")?
-                    }
-                    _ => return Err(format!("len called on {}", receiver.schema)),
+                let receiver = if self.tables.schemas.is_list(&receiver.schema) {
+                    receiver
+                } else if self.tables.schemas.is_named_schema(&receiver.schema, "Doc") {
+                    self.coerce_doc_to_schema(receiver, "Array<Doc>")?
+                } else if self.value_schema_is_realized_named(&receiver.schema, "Doc") {
+                    let doc = self.coerce_to_schema(receiver, "Doc")?;
+                    self.coerce_doc_to_schema(doc, "Array<Doc>")?
+                } else {
+                    return Err(format!("len called on {}", receiver.schema));
                 };
                 self.array_len(&receiver)
             }
             "glob" => self.tree_glob(&receiver, call),
+            "text" => {
+                self.expect_schema(&receiver, "Tree")?;
+                let [arg] = call.args.args.as_slice() else {
+                    return Err("Tree.text takes one Path".into());
+                };
+                let path = self.method_arg(arg, Some("Path"))?;
+                self.tree_text(&receiver, &path)
+            }
             "filter" => self.array_filter_exclude(&receiver, call),
             "map" => self.array_map_pending(&receiver, call),
             "collect" => {
@@ -3476,14 +4722,22 @@ impl<'a> FnLowerer<'a> {
                 self.array_collect(&receiver, expected)
             }
             "join" => {
-                let receiver = match receiver.schema.as_str() {
-                    "Array" => receiver,
-                    "Doc" => self.coerce_doc_to_schema(receiver, "Array")?,
-                    "Realized<Doc>" => {
-                        let doc = self.coerce_to_schema(receiver, "Doc")?;
-                        self.coerce_doc_to_schema(doc, "Array")?
-                    }
-                    _ => return Err(format!("join called on {}", receiver.schema)),
+                if self.tables.schemas.is_external(&receiver.schema, "Path") {
+                    let [arg] = call.args.args.as_slice() else {
+                        return Err("Path.join takes one segment".into());
+                    };
+                    let segment = self.method_arg(arg, Some("String"))?;
+                    return self.path_join(&receiver, &segment);
+                }
+                let receiver = if self.tables.schemas.is_list(&receiver.schema) {
+                    receiver
+                } else if self.tables.schemas.is_named_schema(&receiver.schema, "Doc") {
+                    self.coerce_doc_to_schema(receiver, "Array<Doc>")?
+                } else if self.value_schema_is_realized_named(&receiver.schema, "Doc") {
+                    let doc = self.coerce_to_schema(receiver, "Doc")?;
+                    self.coerce_doc_to_schema(doc, "Array<Doc>")?
+                } else {
+                    return Err(format!("join called on {}", receiver.schema));
                 };
                 let [arg] = call.args.args.as_slice() else {
                     return Err("Array.join takes one separator".into());
@@ -3492,17 +4746,20 @@ impl<'a> FnLowerer<'a> {
                 self.array_join(&receiver, &separator)
             }
             "push" => {
-                if receiver.schema != "Array" {
+                if !self.tables.schemas.is_list(&receiver.schema) {
                     return Err(format!("push called on {}", receiver.schema));
                 }
                 let [arg] = call.args.args.as_slice() else {
                     return Err("Array.push takes one value".into());
                 };
-                let value = self.method_arg(arg, None)?;
-                self.array_push(&receiver, &value)
+                let elem_schema = array_element_schema(&receiver.schema)
+                    .ok_or_else(|| format!("{} is not an Array<T>", receiver.schema))?
+                    .to_string();
+                let value = self.method_arg(arg, Some(&elem_schema))?;
+                self.array_push(&receiver, &value, consuming_receiver)
             }
             "pop" => {
-                if receiver.schema != "Array" {
+                if !self.tables.schemas.is_list(&receiver.schema) {
                     return Err(format!("pop called on {}", receiver.schema));
                 }
                 if !call.args.args.is_empty() {
@@ -3511,48 +4768,68 @@ impl<'a> FnLowerer<'a> {
                 self.array_pop(&receiver)
             }
             "set" => {
-                if receiver.schema != "Array" {
+                if !self.tables.schemas.is_list(&receiver.schema) {
                     return Err(format!("set called on {}", receiver.schema));
                 }
                 let [index_arg, value_arg] = call.args.args.as_slice() else {
                     return Err("Array.set takes index and value".into());
                 };
                 let index = self.method_arg(index_arg, Some("Int"))?;
-                let value = self.method_arg(value_arg, None)?;
+                let elem_schema = array_element_schema(&receiver.schema)
+                    .ok_or_else(|| format!("{} is not an Array<T>", receiver.schema))?
+                    .to_string();
+                let value = self.method_arg(value_arg, Some(&elem_schema))?;
                 self.array_set(&receiver, &index, &value)
             }
             "insert" => {
-                let Some((key_schema, value_schema)) = map_schemas(&receiver.schema) else {
+                let Some((key_schema, value_schema)) =
+                    self.tables.schemas.map_schema_names(&receiver.schema)
+                else {
                     return Err(format!("insert called on {}", receiver.schema));
                 };
                 let logical_value_schema =
-                    realized_value_schema(value_schema).unwrap_or(value_schema);
+                    realized_value_schema(&value_schema).unwrap_or(&value_schema);
                 if call.args.args.len() != 2 {
                     return Err("Map.insert takes key and value".into());
                 }
-                let key = self.method_arg(&call.args.args[0], Some(key_schema))?;
+                let key = self.method_arg(&call.args.args[0], Some(&key_schema))?;
                 let value = self.map_insert_value(&call.args.args[1], logical_value_schema)?;
-                self.map_insert(&receiver, key, value, key_schema, logical_value_schema)
+                self.map_insert(&receiver, key, value, &key_schema, logical_value_schema)
             }
             "get" => {
-                if receiver.schema == "Doc" {
+                if self.tables.schemas.is_list(&receiver.schema) {
+                    let [index_arg] = call.args.args.as_slice() else {
+                        return Err("Array.get takes one index".into());
+                    };
+                    let index = self.method_arg(index_arg, Some("Int"))?;
+                    let elem_schema = array_element_schema(&receiver.schema)
+                        .ok_or_else(|| format!("{} is not an Array<T>", receiver.schema))?
+                        .to_string();
+                    if schema_is_inline_word(&self.tables.schemas, &elem_schema) {
+                        return self.array_get_word(&receiver, &index, &elem_schema);
+                    }
+                    return self.array_get(&receiver, &index);
+                }
+                if self.tables.schemas.is_named_schema(&receiver.schema, "Doc") {
                     if call.args.args.len() != 1 {
                         return Err("Doc.get takes one key".into());
                     }
                     let key = self.method_arg(&call.args.args[0], Some("String"))?;
                     return self.doc_get(&receiver, &key);
                 }
-                let Some((key_schema, value_schema)) = map_schemas(&receiver.schema) else {
+                let Some((key_schema, value_schema)) =
+                    self.tables.schemas.map_schema_names(&receiver.schema)
+                else {
                     return Err(format!("get called on {}", receiver.schema));
                 };
                 let logical_value_schema =
-                    realized_value_schema(value_schema).unwrap_or(value_schema);
+                    realized_value_schema(&value_schema).unwrap_or(&value_schema);
                 let result_value_schema = realized_schema(logical_value_schema);
                 if call.args.args.len() != 1 {
                     return Err("Map.get takes one key".into());
                 }
-                let key = self.method_arg(&call.args.args[0], Some(key_schema))?;
-                self.map_get(&receiver, key, key_schema, &result_value_schema)
+                let key = self.method_arg(&call.args.args[0], Some(&key_schema))?;
+                self.map_get(&receiver, key, &key_schema, &result_value_schema)
             }
             "package" => {
                 if call.args.args.len() != 1 {
@@ -3571,7 +4848,11 @@ impl<'a> FnLowerer<'a> {
                 self.ast_fn(&receiver, &name)
             }
             "union" | "intersect" => {
-                if receiver.schema != "VersionSet" {
+                if !self
+                    .tables
+                    .schemas
+                    .is_external(&receiver.schema, "VersionSet")
+                {
                     return Err(format!("{} called on {}", call.name.value, receiver.schema));
                 }
                 let [arg] = call.args.args.as_slice() else {
@@ -3585,7 +4866,11 @@ impl<'a> FnLowerer<'a> {
                 self.version_set_op(op, &receiver, Some(&right), "VersionSet")
             }
             "complement" => {
-                if receiver.schema != "VersionSet" {
+                if !self
+                    .tables
+                    .schemas
+                    .is_external(&receiver.schema, "VersionSet")
+                {
                     return Err(format!("complement called on {}", receiver.schema));
                 }
                 if !call.args.args.is_empty() {
@@ -3594,7 +4879,11 @@ impl<'a> FnLowerer<'a> {
                 self.version_set_op(2, &receiver, None, "VersionSet")
             }
             "subset" => {
-                if receiver.schema != "VersionSet" {
+                if !self
+                    .tables
+                    .schemas
+                    .is_external(&receiver.schema, "VersionSet")
+                {
                     return Err(format!("subset called on {}", receiver.schema));
                 }
                 let [arg] = call.args.args.as_slice() else {
@@ -3603,8 +4892,24 @@ impl<'a> FnLowerer<'a> {
                 let right = self.method_arg(arg, Some("VersionSet"))?;
                 self.version_set_op(3, &receiver, Some(&right), "Bool")
             }
+            "contains"
+                if self
+                    .tables
+                    .schemas
+                    .is_primitive(&receiver.schema, Primitive::String) =>
+            {
+                let [arg] = call.args.args.as_slice() else {
+                    return Err("String.contains takes one needle".into());
+                };
+                let needle = self.method_arg(arg, Some("String"))?;
+                Ok(self.string_query(&receiver, Some(&needle), STRING_CONTAINS_HOST))
+            }
             "contains" => {
-                if receiver.schema != "VersionSet" {
+                if !self
+                    .tables
+                    .schemas
+                    .is_external(&receiver.schema, "VersionSet")
+                {
                     return Err(format!("contains called on {}", receiver.schema));
                 }
                 let [arg] = call.args.args.as_slice() else {
@@ -3617,10 +4922,59 @@ impl<'a> FnLowerer<'a> {
                 if !call.args.args.is_empty() {
                     return Err("Option.unwrap takes no arguments".into());
                 }
-                let Some(value_schema) = option_value_schema(&receiver.schema) else {
+                let Some(value_schema) = self
+                    .tables
+                    .schemas
+                    .option_value_schema_name(&receiver.schema)
+                else {
                     return Err(format!("unwrap called on {}", receiver.schema));
                 };
-                Ok(self.option_unwrap(&receiver, value_schema))
+                Ok(self.option_unwrap(&receiver, &value_schema))
+            }
+            "before" | "after" | "strip_prefix" => {
+                if !self
+                    .tables
+                    .schemas
+                    .is_primitive(&receiver.schema, Primitive::String)
+                {
+                    return Err(format!("{} called on {}", call.name.value, receiver.schema));
+                }
+                let [arg] = call.args.args.as_slice() else {
+                    return Err(format!("String.{} takes one argument", call.name.value));
+                };
+                let delim = self.method_arg(arg, Some("String"))?;
+                let selector = match call.name.value.as_str() {
+                    "before" => 0,
+                    "after" => 1,
+                    _ => 2,
+                };
+                Ok(self.string_split(&receiver, &delim, selector))
+            }
+            "parse_int" => {
+                if !self
+                    .tables
+                    .schemas
+                    .is_primitive(&receiver.schema, Primitive::String)
+                {
+                    return Err(format!("parse_int called on {}", receiver.schema));
+                }
+                if !call.args.args.is_empty() {
+                    return Err("String.parse_int takes no arguments".into());
+                }
+                Ok(self.string_parse_int(&receiver))
+            }
+            "is_numeric" => {
+                if !self
+                    .tables
+                    .schemas
+                    .is_primitive(&receiver.schema, Primitive::String)
+                {
+                    return Err(format!("is_numeric called on {}", receiver.schema));
+                }
+                if !call.args.args.is_empty() {
+                    return Err("String.is_numeric takes no arguments".into());
+                }
+                Ok(self.string_query(&receiver, None, STRING_IS_NUMERIC_HOST))
             }
             other => Err(format!(
                 "method {other} is outside the machine slice-3 subset"
@@ -3628,9 +4982,27 @@ impl<'a> FnLowerer<'a> {
         }
     }
 
+    fn method_receiver(&mut self, call: &ast::MethodCall) -> Result<(ValueSlot, bool), String> {
+        if aggregate_update_method(call.name.value.as_str())
+            && let Some(name) = plain_identifier_expr(&call.receiver)
+            && self.consume_receiver.as_deref() == Some(name)
+            && !self.pending_lazy_alias_reads(name)
+        {
+            return Ok((self.resolve_binding_consuming_move(name, None)?, true));
+        }
+        Ok((self.expr(&call.receiver)?, false))
+    }
+
     fn method_arg(&mut self, arg: &ast::Arg, expected: Option<&str>) -> Result<ValueSlot, String> {
         match arg {
-            ast::Arg::Expr(expr) => self.expr_expected(expr, expected),
+            ast::Arg::Expr(expr) => {
+                let value = self.expr_expected(expr, expected)?;
+                if let Some(expected) = expected {
+                    self.coerce_to_schema(value, expected)
+                } else {
+                    Ok(value)
+                }
+            }
             other => Err(format!(
                 "method argument {other:?} is outside the machine slice-3 subset"
             )),
@@ -3644,7 +5016,19 @@ impl<'a> FnLowerer<'a> {
     ) -> Result<ValueSlot, String> {
         match arg {
             ast::Arg::Expr(ast::Expr::Call(call)) => self.pending_call_value(call, value_schema),
-            _ => self.method_arg(arg, Some(value_schema)),
+            ast::Arg::Expr(expr) => {
+                let value = self.expr_expected(expr, Some(value_schema))?;
+                if value.schema == realized_schema(value_schema)
+                    || value.schema == pending_schema(value_schema)
+                {
+                    Ok(value)
+                } else {
+                    self.coerce_to_schema(value, value_schema)
+                }
+            }
+            other => Err(format!(
+                "method argument {other:?} is outside the machine slice-3 subset"
+            )),
         }
     }
 
@@ -3654,11 +5038,14 @@ impl<'a> FnLowerer<'a> {
         expected: Option<&str>,
     ) -> Result<ValueSlot, String> {
         let schema = expected
-            .filter(|schema| schema.starts_with("Map"))
+            .filter(|schema| self.tables.schemas.is_map(schema))
             .unwrap_or("Map");
         let mut value = self.map_empty(schema)?;
-        let (key_schema, value_schema) = map_schemas(schema)
-            .map(|(key, value)| (Some(key.to_string()), Some(value.to_string())))
+        let (key_schema, value_schema) = self
+            .tables
+            .schemas
+            .map_schema_names(schema)
+            .map(|(key, value)| (Some(key), Some(value)))
             .unwrap_or((None, None));
         for entry in &map.entries {
             let key = self.expr_expected(&entry.key, key_schema.as_deref())?;
@@ -3725,18 +5112,59 @@ impl<'a> FnLowerer<'a> {
                 Ok(self.store_read(&receiver, field_index, schema))
             }
             ast::Member::Identifier(name) => {
-                if receiver.schema == "Realized<Doc>" {
+                if self.value_schema_is_realized_named(&receiver.schema, "Doc") {
                     let receiver = self.coerce_to_schema(receiver, "Doc")?;
                     return self.doc_field_access(receiver, name.value.as_str(), expected);
                 }
-                if receiver.schema == "Doc" {
+                if self.tables.schemas.is_named_schema(&receiver.schema, "Doc") {
                     return self.doc_field_access(receiver, name.value.as_str(), expected);
                 }
-                if receiver.schema == "Target" && name.value == "os" {
+                if self
+                    .tables
+                    .schemas
+                    .is_named_schema(&receiver.schema, "Target")
+                    && name.value == "os"
+                {
                     return Ok(self.store_read(&receiver, 0, "Os".into()));
                 }
-                if receiver.schema == "Target" && name.value == "arch" {
+                if self
+                    .tables
+                    .schemas
+                    .is_named_schema(&receiver.schema, "Target")
+                    && name.value == "arch"
+                {
                     return Ok(self.store_read(&receiver, 1, "Arch".into()));
+                }
+                if self.tables.schemas.is_external(&receiver.schema, "Version") {
+                    let field = match name.value.as_str() {
+                        "major" => 0,
+                        "minor" => 1,
+                        "patch" => 2,
+                        _ => return Err(format!("unknown field {} on Version", name.value)),
+                    };
+                    let dst = self.alloc();
+                    let region = self.primitive_region;
+                    self.code.push(Op::ConstI64 {
+                        dst: region,
+                        value: dst.into(),
+                    });
+                    self.code.push(Op::CopyI64 {
+                        dst: region + 8,
+                        src: receiver.slot,
+                    });
+                    self.code.push(Op::ConstI64 {
+                        dst: region + 16,
+                        value: field,
+                    });
+                    self.code.push(Op::HostCall {
+                        host: VERSION_FIELD_HOST,
+                    });
+                    return Ok(ValueSlot {
+                        slot: dst,
+                        schema: "Int".into(),
+                        realization: None,
+                        pending: None,
+                    });
                 }
                 let info = self
                     .tables
@@ -3783,7 +5211,9 @@ impl<'a> FnLowerer<'a> {
         let Some(expected) = expected else {
             return Ok(value);
         };
-        if expected == "Realized<Doc>" {
+        if realized_value_schema(expected)
+            .is_some_and(|schema| self.tables.schemas.is_named_schema(schema, "Doc"))
+        {
             return Ok(value);
         }
         let doc = self.coerce_to_schema(value, "Doc")?;
@@ -3934,7 +5364,7 @@ impl<'a> FnLowerer<'a> {
             .descriptors
             .get(struct_name)
             .ok_or_else(|| format!("missing descriptor for {struct_name}"))?;
-        descriptor_field_schema(descriptor, field_index)
+        descriptor_field_schema(&self.tables.schemas, descriptor, field_index)
     }
 
     fn variant_constructor_call(&mut self, call: &ast::Call) -> Result<Option<ValueSlot>, String> {
@@ -4060,8 +5490,8 @@ impl<'a> FnLowerer<'a> {
             .and_then(|variant| variant.payload.fields.get(field_index))
             .ok_or_else(|| format!("missing payload field {field_index} for {enum_name}"))?;
         match &field.descriptor.access {
-            weavy::mem::Access::Handle { target } => Ok(target.clone()),
-            _ => Ok(field.descriptor.schema.clone()),
+            weavy::mem::Access::Handle { target } => Ok(self.tables.schemas.display_ref(target)),
+            _ => Ok(self.tables.schemas.display_ref(&field.descriptor.schema)),
         }
     }
 
@@ -4072,44 +5502,63 @@ impl<'a> FnLowerer<'a> {
         self.coerce_to_schema(value, &inner)
     }
 
-    fn coerce_scalar_arg(&mut self, value: ValueSlot, expected: &str) -> Result<ValueSlot, String> {
-        if matches!(expected, "Int" | "Float") {
-            self.coerce_to_schema(value, expected)
-        } else {
-            Ok(value)
-        }
-    }
-
     fn coerce_to_schema(&mut self, value: ValueSlot, expected: &str) -> Result<ValueSlot, String> {
         if value.schema == expected {
             return Ok(value);
         }
-        if value.schema == pending_schema(expected) {
+        if pending_value_schema(&value.schema) == Some(expected) {
             return self.coerce_pending_to_schema(value, expected);
         }
-        if value.schema == realized_schema(expected) {
+        if realized_value_schema(&value.schema) == Some(expected) {
             return self.coerce_realized_to_schema(value, expected);
         }
-        if value.schema == "Realized<Sealed>" && expected == "String" {
+        if self.value_schema_is_realized_named(&value.schema, "Sealed")
+            && self
+                .tables
+                .schemas
+                .is_primitive(expected, Primitive::String)
+        {
             let sealed = self.coerce_realized_to_schema(value, "Sealed")?;
             return self.sealed_to_string(&sealed);
         }
-        if value.schema == "Realized<Doc>" && expected != "Realized<Doc>" {
+        if self.value_schema_is_realized_named(&value.schema, "Doc")
+            && !realized_value_schema(expected)
+                .is_some_and(|schema| self.tables.schemas.is_named_schema(schema, "Doc"))
+        {
             let doc = self.coerce_realized_to_schema(value, "Doc")?;
             return self.coerce_to_schema(doc, expected);
         }
-        if value.schema == "Sealed" && expected == "String" {
+        if self.tables.schemas.is_external(&value.schema, "Sealed")
+            && self
+                .tables
+                .schemas
+                .is_primitive(expected, Primitive::String)
+        {
             return self.sealed_to_string(&value);
         }
-        if value.schema == "Doc"
-            && matches!(
-                expected,
-                "String" | "Int" | "Bool" | "Float" | "Blob" | "Array" | "Map<String,Doc>"
-            )
+        if self.tables.schemas.is_named_schema(&value.schema, "Doc")
+            && self.schema_accepts_doc_coercion(expected)
         {
             return self.coerce_doc_to_schema(value, expected);
         }
         Ok(value)
+    }
+
+    fn schema_accepts_doc_coercion(&self, schema: &str) -> bool {
+        self.tables.schemas.is_primitive(schema, Primitive::String)
+            || self.tables.schemas.is_primitive(schema, Primitive::I64)
+            || self.tables.schemas.is_primitive(schema, Primitive::Bool)
+            || self.tables.schemas.is_primitive(schema, Primitive::F64)
+            || self.tables.schemas.is_primitive(schema, Primitive::Bytes)
+            || self.tables.schemas.is_list(schema)
+            || self.tables.schemas.map_schema_names(schema).is_some_and(
+                |(key_schema, value_schema)| {
+                    self.tables
+                        .schemas
+                        .is_primitive(&key_schema, Primitive::String)
+                        && self.tables.schemas.is_named_schema(&value_schema, "Doc")
+                },
+            )
     }
 
     fn coerce_doc_to_schema(
@@ -4119,7 +5568,7 @@ impl<'a> FnLowerer<'a> {
     ) -> Result<ValueSlot, String> {
         self.expect_schema(&value, "Doc")?;
         let schema_ref = *self
-            .schema_refs
+            .schema_words
             .get(expected)
             .ok_or_else(|| format!("no schema ref for {expected}"))?;
         let dst = self.alloc();
@@ -4279,21 +5728,28 @@ impl<'a> FnLowerer<'a> {
     }
 
     fn template_binding(&mut self, bindings: &ValueSlot, name: &str) -> Result<ValueSlot, String> {
-        if bindings.schema == "Realized<Doc>" {
+        if self.value_schema_is_realized_named(&bindings.schema, "Doc") {
             let doc = self.coerce_to_schema(bindings.clone(), "Doc")?;
             return self.doc_field_access(doc, name, Some("String"));
         }
-        if bindings.schema == "Doc" {
+        if self.tables.schemas.is_named_schema(&bindings.schema, "Doc") {
             return self.doc_field_access(bindings.clone(), name, Some("String"));
         }
-        if let Some((key_schema, value_schema)) = map_schemas(&bindings.schema) {
-            if key_schema != "String" {
+        if let Some((key_schema, value_schema)) =
+            self.tables.schemas.map_schema_names(&bindings.schema)
+        {
+            if !self
+                .tables
+                .schemas
+                .is_primitive(&key_schema, Primitive::String)
+            {
                 return Err(format!(
                     "template bindings map keys must be String, got {key_schema}"
                 ));
             }
             let key = self.string_literal(name)?;
-            let logical_value_schema = realized_value_schema(value_schema).unwrap_or(value_schema);
+            let logical_value_schema =
+                realized_value_schema(&value_schema).unwrap_or(&value_schema);
             let result_value_schema = realized_schema(logical_value_schema);
             let option = self.map_get(bindings, key, "String", &result_value_schema)?;
             return Ok(self.option_unwrap(&option, &result_value_schema));
@@ -4400,7 +5856,9 @@ impl<'a> FnLowerer<'a> {
     }
 
     fn expect_schema(&self, value: &ValueSlot, expected: &str) -> Result<u32, String> {
-        if value.schema == expected {
+        if value.schema == expected
+            || (expected == "Array" && self.tables.schemas.is_list(&value.schema))
+        {
             Ok(value.slot)
         } else {
             Err(format!(
@@ -4419,7 +5877,7 @@ impl<'a> FnLowerer<'a> {
         let dst = self.alloc();
         let region = self.store_alloc_region;
         let type_ref = *self
-            .schema_refs
+            .schema_words
             .get(schema)
             .ok_or_else(|| format!("no schema ref for {schema}"))?;
         self.code.push(Op::ConstI64 {
@@ -4444,7 +5902,7 @@ impl<'a> FnLowerer<'a> {
                 src: field.slot,
             });
         }
-        self.code.push(Op::HostCall {
+        self.code.push(Op::HostCallYield {
             host: STORE_ALLOC_HOST,
         });
         Ok(ValueSlot {
@@ -4466,7 +5924,7 @@ impl<'a> FnLowerer<'a> {
         let dst = self.alloc();
         let region = self.store_alloc_region;
         let schema_ref = *self
-            .schema_refs
+            .schema_words
             .get(schema)
             .ok_or_else(|| format!("no schema ref for {schema}"))?;
         self.code.push(Op::ConstI64 {
@@ -4500,7 +5958,7 @@ impl<'a> FnLowerer<'a> {
                 src: value.slot,
             });
         }
-        self.code.push(Op::HostCall {
+        self.code.push(Op::HostCallYield {
             host: RECORD_UPDATE_HOST,
         });
         Ok(ValueSlot {
@@ -4559,7 +6017,7 @@ impl<'a> FnLowerer<'a> {
         }
     }
 
-    fn flesh_dup(&mut self, value: &ValueSlot) -> Result<ValueSlot, String> {
+    fn molten_dup(&mut self, value: &ValueSlot) -> Result<ValueSlot, String> {
         let dst = self.alloc();
         let region = self.primitive_region;
         self.code.push(Op::ConstI64 {
@@ -4570,8 +6028,8 @@ impl<'a> FnLowerer<'a> {
             dst: region + 8,
             src: value.slot,
         });
-        self.code.push(Op::HostCall {
-            host: FLESH_DUP_HOST,
+        self.code.push(Op::HostCallYield {
+            host: MOLTEN_DUP_HOST,
         });
         Ok(ValueSlot {
             slot: dst,
@@ -4585,7 +6043,7 @@ impl<'a> FnLowerer<'a> {
         let dst = self.alloc();
         let region = self.store_alloc_region;
         let schema_ref = *self
-            .schema_refs
+            .schema_words
             .get(schema)
             .ok_or_else(|| format!("no schema ref for {schema}"))?;
         self.code.push(Op::ConstI64 {
@@ -4638,15 +6096,15 @@ impl<'a> FnLowerer<'a> {
         let dst = self.alloc();
         let region = self.store_alloc_region;
         let map_schema_ref = *self
-            .schema_refs
+            .schema_words
             .get(&output_schema)
             .ok_or_else(|| format!("no schema ref for {output_schema}"))?;
         let key_schema_ref = *self
-            .schema_refs
+            .schema_words
             .get(key_schema)
             .ok_or_else(|| format!("no schema ref for {key_schema}"))?;
         let value_schema_ref = *self
-            .schema_refs
+            .schema_words
             .get(&stored_value.schema)
             .ok_or_else(|| format!("no schema ref for {}", stored_value.schema))?;
         self.code.push(Op::ConstI64 {
@@ -4741,11 +6199,11 @@ impl<'a> FnLowerer<'a> {
         let dst = self.alloc();
         let region = self.store_alloc_region;
         let key_schema_ref = *self
-            .schema_refs
+            .schema_words
             .get(key_schema)
             .ok_or_else(|| format!("no schema ref for {key_schema}"))?;
         let value_schema_ref = *self
-            .schema_refs
+            .schema_words
             .get(value_schema)
             .ok_or_else(|| format!("no schema ref for {value_schema}"))?;
         self.code.push(Op::ConstI64 {
@@ -4778,6 +6236,47 @@ impl<'a> FnLowerer<'a> {
     }
 
     fn option_unwrap(&mut self, option: &ValueSlot, value_schema: &str) -> ValueSlot {
+        if let Some(present) = option.realization
+            && option_value_schema(&option.schema).is_some()
+        {
+            let miss_jump = self.code.len();
+            self.code.push(Op::JumpIfZero {
+                value: present,
+                target: 0,
+            });
+            let dst = self.alloc();
+            self.code.push(Op::CopyI64 {
+                dst,
+                src: option.slot,
+            });
+            let done_jump = self.code.len();
+            self.code.push(Op::Jump { target: 0 });
+            let miss_target = u32::try_from(self.code.len()).expect("code index fits u32");
+            self.code[miss_jump] = Op::JumpIfZero {
+                value: present,
+                target: miss_target,
+            };
+            let error_input = self.next_input_slot;
+            self.next_input_slot += 1;
+            let error_dst = self.alloc();
+            self.code.push(Op::HostCall {
+                host: NATIVE_OPTION_UNWRAP_NONE_HOST,
+            });
+            self.code.push(Op::Await {
+                dst: error_dst,
+                input: u32::try_from(error_input).expect("input slot fits u32"),
+            });
+            let done_target = u32::try_from(self.code.len()).expect("code index fits u32");
+            self.code[done_jump] = Op::Jump {
+                target: done_target,
+            };
+            return ValueSlot {
+                slot: dst,
+                schema: value_schema.to_string(),
+                realization: None,
+                pending: None,
+            };
+        }
         let input_slot = self.next_input_slot;
         self.next_input_slot += 1;
         let realization_slot = realized_value_schema(value_schema).map(|_| {
@@ -4864,8 +6363,15 @@ impl<'a> FnLowerer<'a> {
             .get(name)
             .ok_or_else(|| format!("missing param schemas for {name}"))?
             .clone();
-        let bound =
-            self.bind_call_args(name, &param_names, &param_schemas, &call.args, 0, false)?;
+        let bound = self.bind_call_args(BindCallSpec {
+            fn_name: name,
+            param_names: &param_names,
+            param_schemas: &param_schemas,
+            args: &call.args,
+            start: 0,
+            allow_partial: false,
+            tail_identifier_uses: None,
+        })?;
         self.pending_alloc_for_fn(fn_ref, value_schema, bound.args, None)
     }
 
@@ -4879,7 +6385,7 @@ impl<'a> FnLowerer<'a> {
         let dst = self.alloc();
         let region = self.primitive_region;
         let value_schema_ref = *self
-            .schema_refs
+            .schema_words
             .get(value_schema)
             .ok_or_else(|| format!("no schema ref for {value_schema}"))?;
         self.code.push(Op::ConstI64 {
@@ -4963,7 +6469,7 @@ impl<'a> FnLowerer<'a> {
         let dst = self.alloc();
         let region = self.primitive_region;
         let kind_ref = *self
-            .schema_refs
+            .schema_words
             .get(kind)
             .ok_or_else(|| format!("no schema ref for {kind}"))?;
         self.code.push(Op::ConstI64 {
@@ -4978,7 +6484,7 @@ impl<'a> FnLowerer<'a> {
             dst: region + 16,
             src: target.slot,
         });
-        self.code.push(Op::HostCall { host: ACQUIRE_HOST });
+        self.code.push(Op::HostCallYield { host: ACQUIRE_HOST });
         Ok(ValueSlot {
             slot: dst,
             schema: kind.to_string(),
@@ -5102,7 +6608,11 @@ impl<'a> FnLowerer<'a> {
         })
     }
 
-    fn array_literal(&mut self, array: &ast::Array) -> Result<ValueSlot, String> {
+    fn array_literal(
+        &mut self,
+        array: &ast::Array,
+        expected: Option<&str>,
+    ) -> Result<ValueSlot, String> {
         let mut elems = Vec::new();
         for elem in &array.elems {
             match elem {
@@ -5126,24 +6636,38 @@ impl<'a> FnLowerer<'a> {
                 }
             };
         }
+        let elem_schema = if let Some(first) = elems.first() {
+            for elem in &elems[1..] {
+                if elem.schema != first.schema {
+                    return Err(format!(
+                        "array literal mixes {} and {} in the machine slice-2 subset",
+                        first.schema, elem.schema
+                    ));
+                }
+            }
+            first.schema.clone()
+        } else {
+            expected
+                .and_then(array_element_schema)
+                .map(str::to_string)
+                .ok_or_else(|| {
+                    "empty array literal needs an expected Array<T> schema".to_string()
+                })?
+        };
+        let schema = array_schema(&elem_schema);
         let dst = self.alloc();
         let region = self.primitive_region;
+        let elem_schema_ref = *self
+            .schema_words
+            .get(&elem_schema)
+            .ok_or_else(|| format!("no schema ref for {elem_schema}"))?;
         self.code.push(Op::ConstI64 {
             dst: region,
             value: dst.into(),
         });
         self.code.push(Op::ConstI64 {
             dst: region + 8,
-            value: elems
-                .first()
-                .map(|elem| {
-                    self.schema_refs
-                        .get(&elem.schema)
-                        .copied()
-                        .ok_or_else(|| format!("no schema ref for {}", elem.schema))
-                })
-                .transpose()?
-                .unwrap_or(0),
+            value: elem_schema_ref,
         });
         self.code.push(Op::ConstI64 {
             dst: region + 16,
@@ -5155,12 +6679,12 @@ impl<'a> FnLowerer<'a> {
                 src: elem.slot,
             });
         }
-        self.code.push(Op::HostCall {
+        self.code.push(Op::HostCallYield {
             host: ARRAY_ALLOC_HOST,
         });
         Ok(ValueSlot {
             slot: dst,
-            schema: "Array".into(),
+            schema,
             realization: None,
             pending: None,
         })
@@ -5193,7 +6717,7 @@ impl<'a> FnLowerer<'a> {
         self.code.push(Op::HostCall { host: GLOB_HOST });
         Ok(ValueSlot {
             slot: dst,
-            schema: "Array".into(),
+            schema: array_schema("Path"),
             realization: None,
             pending: None,
         })
@@ -5242,7 +6766,7 @@ impl<'a> FnLowerer<'a> {
         });
         Ok(ValueSlot {
             slot: dst,
-            schema: "Array".into(),
+            schema: receiver.schema.clone(),
             realization: None,
             pending: None,
         })
@@ -5262,6 +6786,7 @@ impl<'a> FnLowerer<'a> {
             .fn_refs
             .get(fn_name)
             .ok_or_else(|| format!("unknown function {fn_name}"))?;
+        let pending_elem_schema = self.signatures.returns[fn_name].clone();
         let mut lowered_args = Vec::new();
         for arg in &args {
             match arg {
@@ -5316,7 +6841,7 @@ impl<'a> FnLowerer<'a> {
         });
         Ok(ValueSlot {
             slot: dst,
-            schema: "Array".into(),
+            schema: array_schema(&pending_elem_schema),
             realization: None,
             pending: None,
         })
@@ -5344,7 +6869,7 @@ impl<'a> FnLowerer<'a> {
         Ok(ValueSlot {
             slot: dst,
             schema: expected
-                .filter(|schema| *schema == "Array")
+                .filter(|schema| self.tables.schemas.is_list(schema))
                 .unwrap_or("Tree")
                 .into(),
             realization: None,
@@ -5375,8 +6900,50 @@ impl<'a> FnLowerer<'a> {
         })
     }
 
-    fn array_push(&mut self, receiver: &ValueSlot, value: &ValueSlot) -> Result<ValueSlot, String> {
+    fn array_get_word(
+        &mut self,
+        receiver: &ValueSlot,
+        index: &ValueSlot,
+        elem_schema: &str,
+    ) -> Result<ValueSlot, String> {
         self.expect_schema(receiver, "Array")?;
+        self.expect_schema(index, "Int")?;
+        let elem_schema_ref = *self
+            .schema_words
+            .get(elem_schema)
+            .ok_or_else(|| format!("no schema ref for {elem_schema}"))?;
+        let dst = self.alloc();
+        let present = self.alloc();
+        self.code.push(Op::LoadArrayWord {
+            dst,
+            present,
+            array: receiver.slot,
+            index: index.slot,
+            elem_schema_ref,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: option_schema(elem_schema),
+            realization: Some(present),
+            pending: None,
+        })
+    }
+
+    fn array_push(
+        &mut self,
+        receiver: &ValueSlot,
+        value: &ValueSlot,
+        consuming_receiver: bool,
+    ) -> Result<ValueSlot, String> {
+        self.expect_schema(receiver, "Array")?;
+        let elem_schema = array_element_schema(&receiver.schema)
+            .ok_or_else(|| format!("{} is not an Array<T>", receiver.schema))?;
+        if value.schema != elem_schema {
+            return Err(format!(
+                "array push expected {elem_schema}, got {} in the machine slice-2 subset",
+                value.schema
+            ));
+        }
         let dst = self.alloc();
         let region = self.primitive_region;
         self.code.push(Op::ConstI64 {
@@ -5391,12 +6958,23 @@ impl<'a> FnLowerer<'a> {
             dst: region + 16,
             src: value.slot,
         });
-        self.code.push(Op::HostCall {
+        self.code.push(Op::ConstI64 {
+            dst: region + 24,
+            value: *self
+                .schema_words
+                .get(&value.schema)
+                .ok_or_else(|| format!("no schema ref for {}", value.schema))?,
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 32,
+            value: i64::from(consuming_receiver),
+        });
+        self.code.push(Op::HostCallYield {
             host: ARRAY_PUSH_HOST,
         });
         Ok(ValueSlot {
             slot: dst,
-            schema: "Array".into(),
+            schema: receiver.schema.clone(),
             realization: None,
             pending: None,
         })
@@ -5419,22 +6997,25 @@ impl<'a> FnLowerer<'a> {
             dst: region + 16,
             src: receiver.slot,
         });
-        self.code.push(Op::HostCall {
+        self.code.push(Op::HostCallYield {
             host: ARRAY_POP_HOST,
         });
+        let elem_schema = array_element_schema(&receiver.schema)
+            .ok_or_else(|| format!("{} is not an Array<T>", receiver.schema))?
+            .to_string();
         self.store_alloc(
-            "Tuple<Int,Array>",
+            &tuple_schema(&[elem_schema.clone(), receiver.schema.clone()]),
             0,
             &[
                 ValueSlot {
                     slot: value_dst,
-                    schema: "Int".into(),
+                    schema: elem_schema,
                     realization: None,
                     pending: None,
                 },
                 ValueSlot {
                     slot: array_dst,
-                    schema: "Array".into(),
+                    schema: receiver.schema.clone(),
                     realization: None,
                     pending: None,
                 },
@@ -5450,6 +7031,14 @@ impl<'a> FnLowerer<'a> {
     ) -> Result<ValueSlot, String> {
         self.expect_schema(receiver, "Array")?;
         self.expect_schema(index, "Int")?;
+        let elem_schema = array_element_schema(&receiver.schema)
+            .ok_or_else(|| format!("{} is not an Array<T>", receiver.schema))?;
+        if value.schema != elem_schema {
+            return Err(format!(
+                "array set expected {elem_schema}, got {} in the machine slice-2 subset",
+                value.schema
+            ));
+        }
         let dst = self.alloc();
         let region = self.primitive_region;
         self.code.push(Op::ConstI64 {
@@ -5468,12 +7057,43 @@ impl<'a> FnLowerer<'a> {
             dst: region + 24,
             src: value.slot,
         });
-        self.code.push(Op::HostCall {
+        self.code.push(Op::HostCallYield {
             host: ARRAY_SET_HOST,
         });
         Ok(ValueSlot {
             slot: dst,
-            schema: "Array".into(),
+            schema: receiver.schema.clone(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn array_get(&mut self, receiver: &ValueSlot, index: &ValueSlot) -> Result<ValueSlot, String> {
+        self.expect_schema(receiver, "Array")?;
+        self.expect_schema(index, "Int")?;
+        let elem_schema = array_element_schema(&receiver.schema)
+            .ok_or_else(|| format!("{} is not an Array<T>", receiver.schema))?
+            .to_string();
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: receiver.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: index.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: ARRAY_GET_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: elem_schema,
             realization: None,
             pending: None,
         })
@@ -5627,6 +7247,40 @@ impl<'a> FnLowerer<'a> {
         })
     }
 
+    fn tree_text(&mut self, tree: &ValueSlot, path: &ValueSlot) -> Result<ValueSlot, String> {
+        self.expect_schema(tree, "Tree")?;
+        self.expect_schema(path, "Path")?;
+        let input_slot = self.next_input_slot;
+        self.next_input_slot += 1;
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: input_slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: tree.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: path.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: TREE_TEXT_HOST,
+        });
+        let dst = self.alloc();
+        self.code.push(Op::Await {
+            dst,
+            input: u32::try_from(input_slot).expect("input slot fits u32"),
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "String".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
     fn command_block(&mut self, command: &ast::CommandBlock) -> Result<ValueSlot, String> {
         if !matches!(
             command.command.value.as_str(),
@@ -5691,7 +7345,7 @@ impl<'a> FnLowerer<'a> {
             value: command.span.end.into(),
         });
         for (index, part) in parts.iter().enumerate() {
-            let at = region + 48 + 16 * u32::try_from(index).expect("command part index");
+            let at = region + 48 + 24 * u32::try_from(index).expect("command part index");
             match part {
                 LoweredCommandPart::Token(handle) => {
                     self.code.push(Op::ConstI64 { dst: at, value: 0 });
@@ -5699,12 +7353,24 @@ impl<'a> FnLowerer<'a> {
                         dst: at + 8,
                         value: *handle,
                     });
+                    self.code.push(Op::ConstI64 {
+                        dst: at + 16,
+                        value: 0,
+                    });
                 }
                 LoweredCommandPart::Splice(value) => {
+                    let schema_ref = *self
+                        .schema_words
+                        .get(&value.schema)
+                        .ok_or_else(|| format!("no schema ref for {}", value.schema))?;
                     self.code.push(Op::ConstI64 { dst: at, value: 1 });
                     self.code.push(Op::CopyI64 {
                         dst: at + 8,
                         src: value.slot,
+                    });
+                    self.code.push(Op::ConstI64 {
+                        dst: at + 16,
+                        value: schema_ref,
                     });
                 }
             }
@@ -5773,6 +7439,27 @@ impl<'a> FnLowerer<'a> {
     }
 
     fn doc_parse_call(&mut self, call: &ast::Call, kind: i64) -> Result<ValueSlot, String> {
+        self.document_parser_call(call, kind, None)
+    }
+
+    fn typed_doc_parse_call(
+        &mut self,
+        call: &ast::Call,
+        kind: i64,
+        expected: Option<&str>,
+    ) -> Result<ValueSlot, String> {
+        let Some(expected) = expected else {
+            return Err("json_typed requires a contextual result type".into());
+        };
+        self.document_parser_call(call, kind, Some(expected))
+    }
+
+    fn document_parser_call(
+        &mut self,
+        call: &ast::Call,
+        kind: i64,
+        target_schema: Option<&str>,
+    ) -> Result<ValueSlot, String> {
         let [ast::Arg::Expr(arg)] = call.args.args.as_slice() else {
             return Err("document parser takes one argument".into());
         };
@@ -5795,6 +7482,17 @@ impl<'a> FnLowerer<'a> {
             dst: region + 16,
             src: input.slot,
         });
+        let target_schema_ref = match target_schema {
+            Some(schema) => *self
+                .schema_words
+                .get(schema)
+                .ok_or_else(|| format!("no schema ref for {schema}"))?,
+            None => 0,
+        };
+        self.code.push(Op::ConstI64 {
+            dst: region + 24,
+            value: target_schema_ref,
+        });
         self.code.push(Op::HostCall {
             host: DOC_PARSE_HOST,
         });
@@ -5805,7 +7503,7 @@ impl<'a> FnLowerer<'a> {
         });
         Ok(ValueSlot {
             slot: dst,
-            schema: "Doc".into(),
+            schema: target_schema.unwrap_or("Doc").into(),
             realization: None,
             pending: None,
         })
@@ -5816,7 +7514,16 @@ impl<'a> FnLowerer<'a> {
             return Err("crate_archive takes one Blob, String, or single-file Tree".into());
         };
         let input = self.expr(arg)?;
-        if !matches!(input.schema.as_str(), "Blob" | "String" | "Tree") {
+        if !(self
+            .tables
+            .schemas
+            .is_primitive(&input.schema, Primitive::Bytes)
+            || self
+                .tables
+                .schemas
+                .is_primitive(&input.schema, Primitive::String)
+            || self.tables.schemas.is_external(&input.schema, "Tree"))
+        {
             return Err(format!("crate_archive called on {}", input.schema));
         }
         let input_slot = self.next_input_slot;
@@ -5858,13 +7565,22 @@ impl<'a> FnLowerer<'a> {
             return Err("elf takes one Blob, String, or single-blob Tree".into());
         };
         let mut input = self.expr(arg)?;
-        if input.schema == "Realized<Doc>" {
+        if self.value_schema_is_realized_named(&input.schema, "Doc") {
             input = self.coerce_to_schema(input, "Doc")?;
         }
-        if input.schema == "Doc" {
+        if self.tables.schemas.is_named_schema(&input.schema, "Doc") {
             input = self.coerce_to_schema(input, "Blob")?;
         }
-        if !matches!(input.schema.as_str(), "Blob" | "String" | "Tree") {
+        if !(self
+            .tables
+            .schemas
+            .is_primitive(&input.schema, Primitive::Bytes)
+            || self
+                .tables
+                .schemas
+                .is_primitive(&input.schema, Primitive::String)
+            || self.tables.schemas.is_external(&input.schema, "Tree"))
+        {
             return Err(format!("elf called on {}", input.schema));
         }
         let dst = self.alloc();
@@ -6036,6 +7752,286 @@ impl<'a> FnLowerer<'a> {
         })
     }
 
+    fn string_split(
+        &mut self,
+        receiver: &ValueSlot,
+        delim: &ValueSlot,
+        selector: i64,
+    ) -> ValueSlot {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: receiver.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: delim.slot,
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 24,
+            value: selector,
+        });
+        self.code.push(Op::HostCall {
+            host: STRING_SPLIT_HOST,
+        });
+        ValueSlot {
+            slot: dst,
+            schema: "String".into(),
+            realization: None,
+            pending: None,
+        }
+    }
+
+    /// Derive a comparison operator's Bool from an `Ordering` value (variants
+    /// Less=0, Equal=1, Greater=2): `<` is Less, `>` is Greater, `<=` is
+    /// not-Greater, `>=` is not-Less.
+    fn ordering_to_bool(&mut self, ord: &ValueSlot, op: &str) -> ValueSlot {
+        let tag = self.store_tag(ord);
+        let (target, equal) = match op {
+            "<" => (0, true),
+            ">" => (2, true),
+            "<=" => (2, false),
+            _ => (0, false),
+        };
+        let lit = self.alloc();
+        self.code.push(Op::ConstI64 {
+            dst: lit,
+            value: target,
+        });
+        let dst = self.alloc();
+        self.code.push(if equal {
+            Op::EqI64 {
+                dst,
+                a: tag.slot,
+                b: lit,
+            }
+        } else {
+            Op::NeI64 {
+                dst,
+                a: tag.slot,
+                b: lit,
+            }
+        });
+        ValueSlot {
+            slot: dst,
+            schema: "Bool".into(),
+            realization: None,
+            pending: None,
+        }
+    }
+
+    /// A String -> Bool query (contains needs an argument, is_numeric does not).
+    fn string_query(
+        &mut self,
+        receiver: &ValueSlot,
+        arg: Option<&ValueSlot>,
+        host: u32,
+    ) -> ValueSlot {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: receiver.slot,
+        });
+        if let Some(arg) = arg {
+            self.code.push(Op::CopyI64 {
+                dst: region + 16,
+                src: arg.slot,
+            });
+        }
+        self.code.push(Op::HostCall { host });
+        ValueSlot {
+            slot: dst,
+            schema: "Bool".into(),
+            realization: None,
+            pending: None,
+        }
+    }
+
+    fn string_parse_int(&mut self, receiver: &ValueSlot) -> ValueSlot {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: receiver.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: STRING_PARSE_INT_HOST,
+        });
+        ValueSlot {
+            slot: dst,
+            schema: "Int".into(),
+            realization: None,
+            pending: None,
+        }
+    }
+
+    fn option_some_call(&mut self, call: &ast::Call) -> Result<ValueSlot, String> {
+        let [ast::Arg::Expr(arg)] = call.args.args.as_slice() else {
+            return Err("Some takes one value".into());
+        };
+        let value = self.expr(arg)?;
+        let value_schema = value.schema.clone();
+        self.option_construct(1, &value_schema, Some(&value))
+    }
+
+    fn option_none(&mut self, expected: Option<&str>) -> Result<ValueSlot, String> {
+        let Some(option_schema) = expected else {
+            return Err("None requires a known Option type from context".into());
+        };
+        let Some(value_schema) = option_value_schema(option_schema) else {
+            return Err(format!(
+                "None used where non-Option type {option_schema} is expected"
+            ));
+        };
+        let value_schema = value_schema.to_string();
+        self.option_construct(0, &value_schema, None)
+    }
+
+    fn option_construct(
+        &mut self,
+        tag: i64,
+        value_schema: &str,
+        value: Option<&ValueSlot>,
+    ) -> Result<ValueSlot, String> {
+        let value_ref = *self
+            .schema_words
+            .get(value_schema)
+            .ok_or_else(|| format!("no schema ref for {value_schema}"))?;
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 8,
+            value: tag,
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 16,
+            value: value_ref,
+        });
+        if let Some(value) = value {
+            self.code.push(Op::CopyI64 {
+                dst: region + 24,
+                src: value.slot,
+            });
+        } else {
+            self.code.push(Op::ConstI64 {
+                dst: region + 24,
+                value: 0,
+            });
+        }
+        self.code.push(Op::HostCall {
+            host: OPTION_CONSTRUCT_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: option_schema(value_schema),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn option_destruct(&mut self, scrut: &ValueSlot, selector: i64, schema: &str) -> ValueSlot {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: scrut.slot,
+        });
+        self.code.push(Op::ConstI64 {
+            dst: region + 16,
+            value: selector,
+        });
+        self.code.push(Op::HostCall {
+            host: OPTION_DESTRUCT_HOST,
+        });
+        let realization = realized_value_schema(schema).map(|_| {
+            let slot = self.alloc();
+            self.code.push(Op::ConstI64 {
+                dst: region,
+                value: slot.into(),
+            });
+            self.code.push(Op::CopyI64 {
+                dst: region + 8,
+                src: scrut.slot,
+            });
+            self.code.push(Op::ConstI64 {
+                dst: region + 16,
+                value: 2,
+            });
+            self.code.push(Op::HostCall {
+                host: OPTION_DESTRUCT_HOST,
+            });
+            slot
+        });
+        ValueSlot {
+            slot: dst,
+            schema: schema.into(),
+            realization,
+            pending: None,
+        }
+    }
+
+    /// Emit the tag test for an Option match arm: skip to the next arm unless
+    /// the scrutinee's tag equals `want_tag` (0 = None, 1 = Some).
+    fn option_tag_test(&mut self, scrut: &ValueSlot, want_tag: i64, skip_patches: &mut Vec<usize>) {
+        let tag = self.option_destruct(scrut, 0, "Int");
+        let lit = self.alloc();
+        self.code.push(Op::ConstI64 {
+            dst: lit,
+            value: want_tag,
+        });
+        let test = self.alloc();
+        self.code.push(Op::EqI64 {
+            dst: test,
+            a: tag.slot,
+            b: lit,
+        });
+        skip_patches.push(self.code.len());
+        self.code.push(Op::JumpIfZero {
+            value: test,
+            target: 0,
+        });
+    }
+
+    fn bind_option_payload(
+        &mut self,
+        pattern: &ast::Pattern,
+        payload: ValueSlot,
+    ) -> Result<(), String> {
+        match pattern {
+            ast::Pattern::Identifier(name) => {
+                self.slots
+                    .insert(name.value.clone(), BindingCell::value(payload));
+                Ok(())
+            }
+            ast::Pattern::Wildcard(_) => Ok(()),
+            other => Err(format!(
+                "Some pattern binding {other:?} is outside the machine slice-2 subset"
+            )),
+        }
+    }
+
     fn compare_value(
         &mut self,
         op: &str,
@@ -6045,7 +8041,7 @@ impl<'a> FnLowerer<'a> {
     ) -> Result<ValueSlot, String> {
         let dst = self.alloc();
         let schema_ref = *self
-            .schema_refs
+            .schema_words
             .get(schema)
             .ok_or_else(|| format!("no schema ref for {schema}"))?;
         let op_code = match op {
@@ -6141,6 +8137,101 @@ impl<'a> FnLowerer<'a> {
             pending: None,
         })
     }
+
+    fn path_join(&mut self, path: &ValueSlot, segment: &ValueSlot) -> Result<ValueSlot, String> {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: path.slot,
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 16,
+            src: segment.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: PATH_JOIN_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Path".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn raw_string_convert(
+        &mut self,
+        value: &ValueSlot,
+        schema: &str,
+        host: u32,
+    ) -> Result<ValueSlot, String> {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: value.slot,
+        });
+        self.code.push(Op::HostCall { host });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: schema.into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn doc_is_map(&mut self, doc: &ValueSlot) -> Result<ValueSlot, String> {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: doc.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: DOC_IS_MAP_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: "Bool".into(),
+            realization: None,
+            pending: None,
+        })
+    }
+
+    fn doc_keys(&mut self, doc: &ValueSlot) -> Result<ValueSlot, String> {
+        let dst = self.alloc();
+        let region = self.primitive_region;
+        self.code.push(Op::ConstI64 {
+            dst: region,
+            value: dst.into(),
+        });
+        self.code.push(Op::CopyI64 {
+            dst: region + 8,
+            src: doc.slot,
+        });
+        self.code.push(Op::HostCall {
+            host: DOC_KEYS_HOST,
+        });
+        Ok(ValueSlot {
+            slot: dst,
+            schema: array_schema("String"),
+            realization: None,
+            pending: None,
+        })
+    }
 }
 
 fn path_ref_segments(path: &ast::PathRef) -> Result<Vec<String>, String> {
@@ -6151,8 +8242,9 @@ fn path_ref_segments(path: &ast::PathRef) -> Result<Vec<String>, String> {
 }
 
 fn map_schemas(schema: &str) -> Option<(&str, &str)> {
-    let inner = schema.strip_prefix("Map<")?.strip_suffix('>')?;
-    let (key, value) = inner.split_once(',')?;
+    let (base, args) = legacy_generic_schema(schema)?;
+    (base == "Map").then_some(())?;
+    let [key, value]: [&str; 2] = args.try_into().ok()?;
     Some((key, value))
 }
 
@@ -6162,6 +8254,29 @@ fn map_schema(key_schema: &str, value_schema: &str) -> String {
 
 fn map_value_schema(schema: &str) -> Option<&str> {
     map_schemas(schema).map(|(_, value)| value)
+}
+
+fn array_schema(elem_schema: &str) -> String {
+    format!("Array<{elem_schema}>")
+}
+
+fn array_element_schema(schema: &str) -> Option<&str> {
+    let (base, args) = legacy_generic_schema(schema)?;
+    (base == "Array" || base == "List").then_some(())?;
+    let [elem]: [&str; 1] = args.try_into().ok()?;
+    Some(elem)
+}
+
+fn schema_is_inline_word(schemas: &SchemaTables, schema: &str) -> bool {
+    schemas.is_primitive(schema, Primitive::I64)
+        || schemas.is_primitive(schema, Primitive::Bool)
+        || schemas.is_primitive(schema, Primitive::F64)
+}
+
+fn legacy_generic_schema(schema: &str) -> Option<(&str, Vec<&str>)> {
+    let (base, rest) = schema.split_once('<')?;
+    let inner = rest.strip_suffix('>')?;
+    Some((base, split_top_level_schema_slices(inner)))
 }
 
 fn tuple_schema(fields: &[String]) -> String {
@@ -6177,6 +8292,13 @@ fn tuple_schema_fields(schema: &str) -> Option<Vec<String>> {
 }
 
 fn split_top_level_schemas(inner: &str) -> Vec<String> {
+    split_top_level_schema_slices(inner)
+        .into_iter()
+        .map(str::to_string)
+        .collect()
+}
+
+fn split_top_level_schema_slices(inner: &str) -> Vec<&str> {
     let mut out = Vec::new();
     let mut depth = 0usize;
     let mut start = 0usize;
@@ -6185,13 +8307,13 @@ fn split_top_level_schemas(inner: &str) -> Vec<String> {
             '<' => depth += 1,
             '>' => depth = depth.saturating_sub(1),
             ',' if depth == 0 => {
-                out.push(inner[start..index].to_string());
+                out.push(&inner[start..index]);
                 start = index + 1;
             }
             _ => {}
         }
     }
-    out.push(inner[start..].to_string());
+    out.push(&inner[start..]);
     out
 }
 
@@ -6219,19 +8341,41 @@ fn value_schema_inside_barrier(schema: &str) -> Option<&str> {
     pending_value_schema(schema).or_else(|| realized_value_schema(schema))
 }
 
-fn strict_binary_operand_schema<'a>(op: &str, left: &'a str, right: &'a str) -> Option<&'a str> {
+fn strict_binary_operand_schema<'a>(
+    schemas: &SchemaTables,
+    op: &str,
+    left: &'a str,
+    right: &'a str,
+) -> Option<&'a str> {
     let left = value_schema_inside_barrier(left).unwrap_or(left);
     let right = value_schema_inside_barrier(right).unwrap_or(right);
     if left != right {
         return None;
     }
-    match (op, left) {
-        ("+" | "-" | "*", "Int")
-        | ("+" | "*", "Float")
-        | ("+", "String")
-        | ("==" | "!=", "Int" | "Float" | "String" | "Path" | "Bool" | "Version" | "VersionSet")
-        | ("<" | "<=" | ">" | ">=", "Int" | "Version")
-        | ("&&", "Bool") => Some(left),
+    let is_int = schemas.is_primitive(left, Primitive::I64);
+    let is_float = schemas.is_primitive(left, Primitive::F64);
+    let is_string = schemas.is_primitive(left, Primitive::String);
+    let is_bool = schemas.is_primitive(left, Primitive::Bool);
+    let is_path = schemas.is_external(left, "Path");
+    let is_version = schemas.is_external(left, "Version");
+    let is_version_set = schemas.is_external(left, "VersionSet");
+    match op {
+        "+" | "-" | "*" if is_int => Some(left),
+        "+" | "*" if is_float => Some(left),
+        "+" if is_string => Some(left),
+        "==" | "!="
+            if is_int
+                || is_float
+                || is_string
+                || is_path
+                || is_bool
+                || is_version
+                || is_version_set =>
+        {
+            Some(left)
+        }
+        "<" | "<=" | ">" | ">=" if is_int || is_string || is_version => Some(left),
+        "&&" if is_bool => Some(left),
         _ => None,
     }
 }
@@ -6326,10 +8470,10 @@ fn resolve_variant_segments(
         return Err(format!("path {segments:?} is not a declared variant path"));
     };
     let Some(info) = tables.enums.get(enum_name) else {
-        let Some(index) = builtin_unit_variant_index(enum_name, variant_name) else {
+        let Some((index, shape)) = builtin_variant_shape(enum_name, variant_name) else {
             return Err(format!("unknown enum {enum_name}"));
         };
-        return Ok((enum_name.clone(), index, VariantShape::Unit));
+        return Ok((enum_name.clone(), index, shape));
     };
     let (index, (_, shape)) = info
         .variants
@@ -6341,16 +8485,27 @@ fn resolve_variant_segments(
 }
 
 fn builtin_unit_variant_index(enum_name: &str, variant_name: &str) -> Option<usize> {
+    builtin_variant_shape(enum_name, variant_name)
+        .and_then(|(index, shape)| matches!(shape, VariantShape::Unit).then_some(index))
+}
+
+fn builtin_variant_shape(enum_name: &str, variant_name: &str) -> Option<(usize, VariantShape)> {
     match (enum_name, variant_name) {
-        ("Os", "Linux") => Some(0),
-        ("Os", "Macos") => Some(1),
-        ("Os", "Windows") => Some(2),
-        ("Arch", "X86_64") => Some(0),
-        ("Arch", "Aarch64") => Some(1),
-        ("Arch", "Arm") => Some(2),
-        ("Arch", "Riscv64") => Some(3),
-        ("Arch", "Wasm32") => Some(4),
-        ("Arch", "Unknown") => Some(5),
+        ("Arg", "Str") => Some((0, VariantShape::Tuple(1))),
+        ("Arg", "Path") => Some((1, VariantShape::Tuple(1))),
+        ("Arg", "Interpolation") => Some((
+            2,
+            VariantShape::Record(vec!["tree".to_string(), "subpath".to_string()]),
+        )),
+        ("Os", "Linux") => Some((0, VariantShape::Unit)),
+        ("Os", "Macos") => Some((1, VariantShape::Unit)),
+        ("Os", "Windows") => Some((2, VariantShape::Unit)),
+        ("Arch", "X86_64") => Some((0, VariantShape::Unit)),
+        ("Arch", "Aarch64") => Some((1, VariantShape::Unit)),
+        ("Arch", "Arm") => Some((2, VariantShape::Unit)),
+        ("Arch", "Riscv64") => Some((3, VariantShape::Unit)),
+        ("Arch", "Wasm32") => Some((4, VariantShape::Unit)),
+        ("Arch", "Unknown") => Some((5, VariantShape::Unit)),
         _ => None,
     }
 }
@@ -6469,8 +8624,71 @@ fn max_store_field_count(block: &ast::Block) -> usize {
     max.max(4)
 }
 
+fn max_command_part_words(block: &ast::Block) -> usize {
+    fn in_expr(e: &ast::Expr, max: &mut usize) {
+        match e {
+            ast::Expr::Call(c) => {
+                for arg in &c.args.args {
+                    if let ast::Arg::Expr(e) = arg {
+                        in_expr(e, max);
+                    }
+                }
+            }
+            ast::Expr::MethodCall(c) => {
+                in_expr(&c.receiver, max);
+                for arg in &c.args.args {
+                    if let ast::Arg::Expr(e) = arg {
+                        in_expr(e, max);
+                    }
+                }
+            }
+            ast::Expr::Map(m) => {
+                for entry in &m.entries {
+                    in_expr(&entry.key, max);
+                    in_expr(&entry.value, max);
+                }
+            }
+            ast::Expr::StructLit(lit) => {
+                for field in &lit.fields {
+                    in_expr(&field.value, max);
+                }
+            }
+            ast::Expr::Binary(b) => {
+                in_expr(&b.left, max);
+                in_expr(&b.right, max);
+            }
+            ast::Expr::Paren(p) => in_expr(&p.inner, max),
+            ast::Expr::Match(m) => {
+                in_expr(&m.scrutinee, max);
+                for arm in &m.arms {
+                    in_expr(&arm.value, max);
+                }
+            }
+            ast::Expr::Command(command) => {
+                *max = (*max).max(6 + command.parts.len() * 3);
+                for part in &command.parts {
+                    if let ast::CommandPart::Splice(splice) = part {
+                        in_expr(&splice.expr, max);
+                    }
+                }
+            }
+            _ => {}
+        }
+    }
+    let mut max = 0;
+    for stmt in &block.stmts {
+        if let ast::Stmt::Let(l) = stmt {
+            in_expr(&l.value, &mut max);
+        }
+    }
+    if let Some(tail) = &block.tail {
+        in_expr(tail, &mut max);
+    }
+    max
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::super::driver::{
         MachineExecBackend, MachineExecRequest, MachinePathDemand, MachinePendingRun, StepCommand,
     };
@@ -6480,7 +8698,6 @@ mod tests {
     use sha2::{Digest, Sha256};
     use std::cell::RefCell;
     use std::collections::{BTreeMap, BTreeSet};
-    use std::hash::{DefaultHasher, Hash, Hasher};
     use std::rc::Rc;
     use std::sync::Arc;
 
@@ -6497,8 +8714,9 @@ pub fn poly(n: Int) -> Int {
 
     fn lanes() -> Vec<Lane> {
         let mut lanes = vec![Lane::Interp];
-        #[cfg(any(test, feature = "jit"))]
-        lanes.push(Lane::Jit);
+        if weavy::jit::task_lane::available() {
+            lanes.push(Lane::Jit);
+        }
         lanes
     }
 
@@ -6506,6 +8724,14 @@ pub fn poly(n: Int) -> Int {
         Machine::load_with_lane(source, lane).unwrap_or_else(|err| {
             panic!("loads on {lane:?}: {err}");
         })
+    }
+
+    fn crate_sample_source() -> String {
+        format!(
+            "{}\n\n{}",
+            include_str!("../../../rodin/rodin.vix"),
+            include_str!("../../../playgrounds/snark/src/bundled/vix/samples/crate.vix")
+        )
     }
 
     #[derive(Default)]
@@ -6540,6 +8766,7 @@ pub fn poly(n: Int) -> Int {
                     read_set: ReadSet {
                         entries: BTreeMap::new(),
                     },
+                    tree_events: Vec::new(),
                 },
                 ExecEvent::Ran,
             ))
@@ -6554,41 +8781,6 @@ pub fn poly(n: Int) -> Int {
         Machine::load_modules_with_lane(root, modules, lane).unwrap_or_else(|err| {
             panic!("module set loads on {lane:?}: {err}");
         })
-    }
-
-    #[test]
-    fn config_gen_template_renders_bytes_and_demands_only_used_holes() {
-        let src = r#"
-fn active() -> String { "enabled" }
-fn unused() -> String { "never" }
-
-pub fn config() -> String {
-    let bindings: Map<String, String> = {};
-    let bindings = bindings
-        .insert("server", "api.local")
-        .insert("env", "PROD")
-        .insert("active", active())
-        .insert("unused", unused())
-        .insert("empty", "");
-    render(tmpl"server {{ server | upper }}
-env={{ env | lower }}
-active={{ active }}
-fallback={{ empty | default(\"8080\") }}
-", bindings)
-}
-"#;
-        let expected = "server API.LOCAL\nenv=prod\nactive=enabled\nfallback=8080\n";
-        for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
-            let result = machine.demand_i64("config", vec![]).unwrap();
-            assert_eq!(
-                machine.driver.raw_string(result, "String").unwrap(),
-                expected,
-                "{lane:?}"
-            );
-            assert_eq!(spawned_count(&machine, "active"), 1, "{lane:?}");
-            assert_eq!(spawned_count(&machine, "unused"), 0, "{lane:?}");
-        }
     }
 
     #[test]
@@ -6934,55 +9126,25 @@ pub fn opened() -> String {
     }
 
     #[test]
-    fn shared_calls_spawn_once() {
-        for lane in lanes() {
-            let mut m = load_with_lane(CORPUS, lane);
-            m.demand_i64("poly", vec![3]).unwrap();
-            let spawns = m
-                .trace()
-                .iter()
-                .filter(|e| matches!(e, DriveEvent::Spawned { .. }))
-                .count();
-            // poly, twice_sq, square — square(4) is called twice with the
-            // same argument and spawns ONCE (memo + waiter joining).
-            assert_eq!(spawns, 3, "{lane:?}");
-        }
-    }
+    fn negative_int_words_are_not_molten_handles() {
+        let src = r#"
+fn id(n: Int) -> Int { n }
 
-    #[test]
-    fn warm_demand_is_two_events() {
+fn negative() -> Int { 0 - 1 }
+
+fn pass_negative() -> Int { id(negative()) }
+"#;
         for lane in lanes() {
-            let mut m = load_with_lane(CORPUS, lane);
-            m.demand_i64("poly", vec![3]).unwrap();
-            m.clear_trace();
-            assert_eq!(m.demand_i64("poly", vec![3]).unwrap(), 29, "{lane:?}");
+            let mut machine = load_with_lane(src, lane);
             assert_eq!(
-                m.trace().len(),
-                2,
-                "Demanded + MemoHit, nothing else on {lane:?}"
+                machine.demand_i64("negative", vec![]).unwrap(),
+                -1,
+                "{lane:?}"
             );
-        }
-    }
-
-    #[test]
-    fn undemanded_functions_never_trace() {
-        let source = format!("{CORPUS}\nfn never(z: Int) -> Int {{ z * 1000 }}\n");
-        for lane in lanes() {
-            let mut m = load_with_lane(&source, lane);
-            m.demand_i64("poly", vec![5]).unwrap();
-            // Mechanism 2 by absence: `never`'s closure hash appears
-            // nowhere in the trace.
-            let never_ref = m.fn_refs["never"];
-            let _ = never_ref;
-            let poly = m.demand_i64("poly", vec![5]).unwrap();
-            assert_eq!(poly, (6 * 6) * 2 - 5, "{lane:?}");
             assert_eq!(
-                m.trace()
-                    .iter()
-                    .filter(|e| matches!(e, DriveEvent::Spawned { .. }))
-                    .count(),
-                3,
-                "three spawns total; `never` never appears on {lane:?}"
+                machine.demand_i64("pass_negative", vec![]).unwrap(),
+                -1,
+                "{lane:?}"
             );
         }
     }
@@ -7015,36 +9177,6 @@ fn fib(n: Int) -> Int {
             // fib(0)..fib(20): 21 distinct invocations, 21 spawns — LINEAR.
             // Naive recursion runs 13,529 more bodies than this.
             assert_eq!(spawns, 21, "{lane:?}");
-            traces.push((lane, m.trace().to_vec()));
-        }
-        assert_lane_traces_equal(&traces);
-    }
-
-    #[test]
-    fn untaken_arms_never_spawn() {
-        let src = r#"
-fn cheap(x: Int) -> Int { x + 1 }
-fn expensive(x: Int) -> Int { x * 1000000 }
-fn pick(b: Int) -> Int {
-    match b {
-        0 => cheap(b),
-        _ => expensive(b),
-    }
-}
-"#;
-        let mut traces = Vec::new();
-        for lane in lanes() {
-            let mut m = load_with_lane(src, lane);
-            assert_eq!(m.demand_i64("pick", vec![0]).unwrap(), 1, "{lane:?}");
-            let spawns = m
-                .trace()
-                .iter()
-                .filter(|e| matches!(e, DriveEvent::Spawned { .. }))
-                .count();
-            // pick + cheap. `expensive` sits in an untaken arm: its INVOKE
-            // never executed, so it never spawned, never demanded, never
-            // anything — the laziness proof by trace absence.
-            assert_eq!(spawns, 2, "{lane:?}");
             traces.push((lane, m.trace().to_vec()));
         }
         assert_lane_traces_equal(&traces);
@@ -7147,7 +9279,7 @@ fn f(n: Int) -> Int {
     }
 
     #[test]
-    fn flesh_reuse_is_unobservable_for_aggregate_updates() {
+    fn molten_reuse_is_unobservable_for_aggregate_updates() {
         let cases = [
             (
                 "array",
@@ -7185,7 +9317,7 @@ pub fn main() -> Int {
         for lane in lanes() {
             for (name, src, expected) in cases {
                 let mut reuse = Machine::load_with_lane(src, lane).unwrap();
-                reuse.driver.set_force_flesh_copy(false);
+                reuse.driver.set_force_molten_copy(false);
                 let reuse_result = reuse.demand_i64("main", vec![]).unwrap();
                 let reuse_trace = reuse.driver.trace.clone();
                 let reuse_bundle = reuse
@@ -7194,7 +9326,7 @@ pub fn main() -> Int {
                     .unwrap();
 
                 let mut copy = Machine::load_with_lane(src, lane).unwrap();
-                copy.driver.set_force_flesh_copy(true);
+                copy.driver.set_force_molten_copy(true);
                 let copy_result = copy.demand_i64("main", vec![]).unwrap();
                 let copy_trace = copy.driver.trace.clone();
                 let copy_bundle = copy
@@ -7207,6 +9339,595 @@ pub fn main() -> Int {
                 assert_eq!(reuse_trace, copy_trace, "{lane:?} {name}");
                 assert_eq!(reuse_bundle.values, copy_bundle.values, "{lane:?} {name}");
             }
+        }
+    }
+
+    #[test]
+    fn map_get_cache_observes_insert_after_get_after_insert() {
+        let src = r#"
+pub fn main() -> Int {
+    let m: Map<String, Int> = {};
+    let m = m.insert("a", 1);
+    let first = m.get("a").unwrap();
+    let m = m.insert("b", 2);
+    let second = m.get("b").unwrap();
+    let still_first = m.get("a").unwrap();
+    first * 100 + second * 10 + still_first
+}
+"#;
+        for lane in lanes() {
+            let mut reuse = Machine::load_with_lane(src, lane).unwrap();
+            reuse.driver.set_force_molten_copy(false);
+            let reuse_result = reuse.demand_i64("main", vec![]).unwrap();
+            let reuse_map_stats = reuse.map_intern_stats();
+            let reuse_trace = reuse.driver.trace.clone();
+            let reuse_bundle = reuse
+                .driver
+                .export_value_bundle(reuse_result, Vec::new())
+                .unwrap();
+
+            let mut copy = Machine::load_with_lane(src, lane).unwrap();
+            copy.driver.set_force_molten_copy(true);
+            let copy_result = copy.demand_i64("main", vec![]).unwrap();
+            let copy_trace = copy.driver.trace.clone();
+            let copy_bundle = copy
+                .driver
+                .export_value_bundle(copy_result, Vec::new())
+                .unwrap();
+
+            assert_eq!(reuse_result, 121, "{lane:?}");
+            assert!(reuse_map_stats.rows_canonicalized > 0, "{lane:?}");
+            assert!(reuse_map_stats.child_identity_reads > 0, "{lane:?}");
+            assert!(reuse_map_stats.sort_comparisons > 0, "{lane:?}");
+            assert!(reuse_map_stats.hash_rows > 0, "{lane:?}");
+            assert_eq!(reuse_result, copy_result, "{lane:?}");
+            assert_eq!(reuse_trace, copy_trace, "{lane:?}");
+            assert_eq!(reuse_bundle.values, copy_bundle.values, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn narrow_bool_record_field_reads_use_declared_field_width() {
+        let src = r#"
+struct Flag { active: Bool }
+
+pub fn main() -> Int {
+    let flag = Flag { active: true };
+    match flag.active {
+        true => 1,
+        false => 0,
+    }
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 1, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn typed_array_pop_preserves_remaining_array_schema() {
+        let src = r#"
+pub fn main() -> Int {
+    let stack: Array<Int> = [0].push(1).push(2);
+    (stack.pop().1).len()
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 2, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn scalar_array_get_unwrap_lowers_to_native_word_load() {
+        let src = r#"
+pub fn main() -> Int {
+    let values: Array<Int> = [10, 20, 30];
+    values.get(1).unwrap()
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 20, "{lane:?}");
+            assert_eq!(
+                host_call_count(&machine, "main", OPTION_UNWRAP_HOST),
+                0,
+                "{lane:?}"
+            );
+            assert_eq!(
+                machine
+                    .fn_ops("main")
+                    .unwrap()
+                    .iter()
+                    .filter(|op| matches!(op, Op::LoadArrayWord { .. }))
+                    .count(),
+                1,
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn native_array_get_records_store_backed_array_receipt() {
+        let src = r#"
+pub fn values() -> Array<Int> {
+    [10, 20, 30]
+}
+
+pub fn read(values: Array<Int>) -> Int {
+    values.get(1).unwrap()
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let values = machine.demand_i64("values", vec![]).unwrap();
+            assert_eq!(
+                machine.demand_i64("read", vec![values]).unwrap(),
+                20,
+                "{lane:?}"
+            );
+            let read_fn = FnRef::new(*machine.fn_refs.get("read").expect("read fn ref"));
+            assert_eq!(
+                machine
+                    .driver
+                    .memo_whole_read_count(read_fn, &[values], 0, "Array<Int>"),
+                1,
+                "{lane:?}"
+            );
+            assert_eq!(
+                host_call_count(&machine, "read", OPTION_UNWRAP_HOST),
+                0,
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn native_array_get_blocks_false_projection_reuse_when_backing_array_changes() {
+        let src = r#"
+struct Bias {
+    amount: Int,
+}
+
+fn native_first(values: Array<Int>, bias: Bias) -> Int {
+    values.get(0).unwrap() + bias.amount
+}
+
+pub fn first() -> Int {
+    native_first([10, 20], Bias { amount: 1 })
+}
+
+pub fn second() -> Int {
+    native_first([30, 20], Bias { amount: 1 })
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            assert_eq!(machine.demand_i64("first", vec![]).unwrap(), 11, "{lane:?}");
+            let native_hash = machine.fn_hash("native_first").expect("native_first hash");
+            machine.clear_trace();
+            assert_eq!(
+                machine.demand_i64("second", vec![]).unwrap(),
+                31,
+                "{lane:?}"
+            );
+            assert!(
+                !machine.trace().iter().any(|event| matches!(
+                    event,
+                    DriveEvent::MemoProjectionHit { fn_hash, .. } if *fn_hash == native_hash
+                )),
+                "{lane:?}: {:?}",
+                machine.trace()
+            );
+            assert_eq!(
+                host_call_count(&machine, "native_first", OPTION_UNWRAP_HOST),
+                0,
+                "{lane:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn scalar_array_get_unwrap_out_of_bounds_errors() {
+        let src = r#"
+pub fn main() -> Int {
+    let values: Array<Int> = [10, 20, 30];
+    values.get(99).unwrap()
+}
+"#;
+        for lane in lanes() {
+            let err = Machine::load_with_lane(src, lane)
+                .and_then(|mut machine| machine.demand_i64("main", vec![]))
+                .unwrap_err();
+            assert!(err.contains("unwrap on None"), "{lane:?}: {err}");
+        }
+    }
+
+    #[test]
+    fn empty_arrays_keep_their_declared_element_identity() {
+        let src = r#"
+pub fn ints() -> [Int] { [] }
+pub fn strings() -> [String] { [] }
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let ints = machine.demand_i64("ints", vec![]).unwrap();
+            let strings = machine.demand_i64("strings", vec![]).unwrap();
+            assert_ne!(ints, strings, "{lane:?}");
+
+            let int_entry = machine.driver.store_entry(ints).expect("int array");
+            let string_entry = machine.driver.store_entry(strings).expect("string array");
+            assert_eq!(int_entry.schema, "Array<Int>", "{lane:?}");
+            assert_eq!(string_entry.schema, "Array<String>", "{lane:?}");
+            assert_ne!(
+                int_entry.content_hash, string_entry.content_hash,
+                "{lane:?}"
+            );
+
+            let (int_elem, int_words) = machine.driver.array_words(ints).unwrap();
+            let (string_elem, string_words) = machine.driver.array_words(strings).unwrap();
+            assert_eq!(int_elem, "Int", "{lane:?}");
+            assert_eq!(string_elem, "String", "{lane:?}");
+            assert!(int_words.is_empty(), "{lane:?}");
+            assert!(string_words.is_empty(), "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn derived_container_descriptors_are_keyed_by_full_schema_ref() {
+        let modules = BTreeMap::from([(
+            "root".to_string(),
+            r#"
+pub fn ints() -> [Int] { [] }
+pub fn strings() -> [String] { [] }
+"#
+            .to_string(),
+        )]);
+        let compiled = compile_module_set(
+            "root",
+            &modules,
+            RefSource::Fresh,
+            LowerOptions {
+                force_tail_invoke: false,
+            },
+        )
+        .unwrap();
+
+        let int_descriptor = compiled
+            .descriptors
+            .get("Array<Int>")
+            .expect("Array<Int> descriptor");
+        let string_descriptor = compiled
+            .descriptors
+            .get("Array<String>")
+            .expect("Array<String> descriptor");
+
+        assert_eq!(
+            compiled.schemas.display_ref(&int_descriptor.schema),
+            "Array<Int>"
+        );
+        assert_eq!(
+            compiled.schemas.display_ref(&string_descriptor.schema),
+            "Array<String>"
+        );
+        assert_ne!(int_descriptor.schema, string_descriptor.schema);
+    }
+
+    #[test]
+    fn molten_consuming_rebind_preserves_pending_aliases() {
+        let src = r#"
+pub fn main() -> Int {
+    let a = [1];
+    let b = a;
+    let a = a.push(2);
+    a.len() * 10 + b.len()
+}
+"#;
+        for lane in lanes() {
+            let mut reuse = Machine::load_with_lane(src, lane).unwrap();
+            reuse.driver.set_force_molten_copy(false);
+            let reuse_result = reuse.demand_i64("main", vec![]).unwrap();
+            let reuse_stats = reuse.driver.molten_stats();
+
+            let mut copy = Machine::load_with_lane(src, lane).unwrap();
+            copy.driver.set_force_molten_copy(true);
+            let copy_result = copy.demand_i64("main", vec![]).unwrap();
+
+            assert_eq!(reuse_result, 21, "{lane:?}");
+            assert_eq!(reuse_result, copy_result, "{lane:?}");
+            assert_eq!(reuse_stats.array_push_reused, 0, "{lane:?}");
+            assert_eq!(reuse_stats.array_push_copied, 1, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn molten_consuming_rebind_reuses_array_push_receiver() {
+        let src = r#"
+pub fn main() -> Int {
+    let x = [0];
+    let x = x.push(1);
+    let x = x.push(2);
+    let x = x.push(3);
+    x.len()
+}
+"#;
+        for lane in lanes() {
+            let mut reuse = Machine::load_with_lane(src, lane).unwrap();
+            reuse.driver.set_force_molten_copy(false);
+            let reuse_result = reuse.demand_i64("main", vec![]).unwrap();
+            let reuse_stats = reuse.driver.molten_stats();
+
+            let mut copy = Machine::load_with_lane(src, lane).unwrap();
+            copy.driver.set_force_molten_copy(true);
+            let copy_result = copy.demand_i64("main", vec![]).unwrap();
+            let copy_stats = copy.driver.molten_stats();
+
+            assert_eq!(reuse_result, 4, "{lane:?}");
+            assert_eq!(reuse_result, copy_result, "{lane:?}");
+            assert_eq!(reuse_stats.array_push_reused, 3, "{lane:?}");
+            assert_eq!(reuse_stats.array_push_copied, 0, "{lane:?}");
+            assert_eq!(copy_stats.array_push_reused, 0, "{lane:?}");
+            assert_eq!(copy_stats.array_push_copied, 3, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn molten_array_carried_hash_matches_from_scratch_after_many_updates() {
+        let mut expr = "[0, 1, 2, 3]".to_string();
+        let mut len = 4usize;
+        let mut seed = 0x1234_5678_u64;
+        for step in 0..32 {
+            seed = seed.wrapping_mul(6364136223846793005).wrapping_add(1);
+            match seed % 3 {
+                0 => {
+                    expr = format!("({expr}).push({})", step + 10);
+                    len += 1;
+                }
+                1 if len > 0 => {
+                    let index = (seed as usize >> 8) % len;
+                    expr = format!("({expr}).set({index}, {})", step + 20);
+                }
+                _ if len > 1 => {
+                    expr = format!("(({expr}).pop()).1");
+                    len -= 1;
+                }
+                _ => {
+                    expr = format!("({expr}).push({})", step + 30);
+                    len += 1;
+                }
+            }
+        }
+        let src = format!("pub fn main() -> [Int] {{\n    {expr}\n}}\n");
+        for lane in lanes() {
+            let mut reuse = Machine::load_with_lane(&src, lane).unwrap();
+            reuse.driver.set_force_molten_copy(false);
+            let reuse_result = reuse.demand_i64("main", vec![]).unwrap();
+            let reuse_bundle = reuse
+                .driver
+                .export_value_bundle(reuse_result, Vec::new())
+                .unwrap();
+
+            let mut copy = Machine::load_with_lane(&src, lane).unwrap();
+            copy.driver.set_force_molten_copy(true);
+            let copy_result = copy.demand_i64("main", vec![]).unwrap();
+            let copy_bundle = copy
+                .driver
+                .export_value_bundle(copy_result, Vec::new())
+                .unwrap();
+
+            assert_eq!(reuse_bundle.values, copy_bundle.values, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn aggregate_array_identity_matches_force_copy_after_child_interning() {
+        let src = r#"
+struct Pair { left: Int, right: Int }
+
+fn pair(n: Int) -> Pair {
+    Pair { left: n, right: n + 10 }
+}
+
+pub fn main() -> [Pair] {
+    let xs: [Pair] = [];
+    let xs = xs.push(pair(1));
+    xs.push(pair(2))
+}
+"#;
+        for lane in lanes() {
+            let mut reuse = Machine::load_with_lane(src, lane).unwrap();
+            reuse.driver.set_force_molten_copy(false);
+            let reuse_result = reuse.demand_i64("main", vec![]).unwrap();
+            let reuse_bundle = reuse
+                .driver
+                .export_value_bundle(reuse_result, Vec::new())
+                .unwrap();
+
+            let mut copy = Machine::load_with_lane(src, lane).unwrap();
+            copy.driver.set_force_molten_copy(true);
+            let copy_result = copy.demand_i64("main", vec![]).unwrap();
+            let copy_bundle = copy
+                .driver
+                .export_value_bundle(copy_result, Vec::new())
+                .unwrap();
+
+            assert_eq!(reuse_bundle.values, copy_bundle.values, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn molten_tail_loop_array_accumulator_reuses_push_receiver() {
+        let src = r#"
+pub fn seed() -> [Int] {
+    [0]
+}
+
+pub fn grow(n: Int, acc: [Int]) -> [Int] {
+    match n {
+        0 => acc,
+        _ => grow(n - 1, acc.push(n)),
+    }
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let grow = FnRef::new(*machine.fn_refs.get("grow").expect("grow fn ref"));
+            let ops = machine.driver.fn_ops(grow).to_vec();
+            let dup_hosts = ops
+                .iter()
+                .filter(|op| {
+                    matches!(
+                        op,
+                        Op::HostCallYield {
+                            host: MOLTEN_DUP_HOST
+                        }
+                    )
+                })
+                .count();
+            let push_hosts = ops
+                .iter()
+                .filter(|op| {
+                    matches!(
+                        op,
+                        Op::HostCallYield {
+                            host: ARRAY_PUSH_HOST
+                        }
+                    )
+                })
+                .count();
+            let seed = machine.demand_i64("seed", vec![]).unwrap();
+            let result = machine.demand_i64("grow", vec![256, seed]).unwrap();
+            let (_elem, words) = machine.driver.array_words(result).unwrap();
+            let stats = machine.driver.molten_stats();
+
+            assert_eq!(push_hosts, 1, "{lane:?}");
+            assert_eq!(dup_hosts, 1, "{lane:?}: {ops:#?}");
+            assert_eq!(words.len(), 257, "{lane:?}");
+            assert_eq!(stats.array_push_reused, 255, "{lane:?}");
+            assert_eq!(stats.array_push_copied, 1, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn self_tail_call_over_aggregate_local_with_match_field_control_loops() {
+        let src = r#"
+use vix::Map;
+
+struct Index {
+    packages: [Int],
+}
+
+struct Domain {
+    active: Bool,
+}
+
+struct State {
+    pkg_slots: Map<Int, Int>,
+    domains: [Domain],
+    feature_slots: Map<Int, Int>,
+    features: [Bool],
+    changed: Bool,
+    conflict: Bool,
+}
+
+fn domain_for(state: State, pkg: Int) -> Domain {
+    match state.pkg_slots.get(pkg) {
+        Some(slot) => state.domains.get(slot),
+        None => Domain { active: false },
+    }
+}
+
+fn put_domain(state: State, pkg: Int, domain: Domain) -> State {
+    match state.pkg_slots.get(pkg) {
+        Some(slot) => State { domains: state.domains.set(slot, domain), ..state },
+        None => State {
+            pkg_slots: state.pkg_slots.insert(pkg, state.domains.len()),
+            domains: state.domains.push(domain),
+            ..state
+        },
+    }
+}
+
+fn pass_nonempty(state: State) -> State {
+    let domain = domain_for(state, 0);
+    match domain.active {
+        true => State { changed: false, conflict: false, ..state },
+        false => State {
+            changed: true,
+            conflict: false,
+            ..put_domain(state, 0, Domain { active: true })
+        },
+    }
+}
+
+fn pass(index: Index, state: State, target: String) -> State {
+    match target == "" {
+        true => State { conflict: true, ..state },
+        false => match index.packages.len() {
+            0 => State { changed: false, conflict: false, ..state },
+            _ => pass_nonempty(state),
+        },
+    }
+}
+
+pub fn loop_state(index: Index, state: State, target: String) -> State {
+    let next = pass(index, state, target);
+    match next.conflict {
+        true => next,
+        false => match next.changed {
+            true => loop_state(index, next, target),
+            false => next,
+        },
+    }
+}
+
+pub fn main() -> Int {
+    let pkg_slots: Map<Int, Int> = {};
+    let feature_slots: Map<Int, Int> = {};
+    let index = Index { packages: [0] };
+    let state = State {
+        pkg_slots: pkg_slots,
+        domains: [],
+        feature_slots: feature_slots,
+        features: [],
+        changed: true,
+        conflict: false,
+    };
+    let final = loop_state(index, state, "linux");
+    match domain_for(final, 0).active {
+        true => 1,
+        false => 0,
+    }
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 1, "{lane:?}");
+            assert_eq!(spawned_count(&machine, "loop_state"), 1, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn self_tail_call_falloff_reports_invoke_reason() {
+        let src = r#"
+pub fn bad_tail(n: Int) -> Int {
+    match n {
+        0 => 0,
+        _ => bad_tail("not an int"),
+    }
+}
+"#;
+        for lane in lanes() {
+            let machine = load_with_lane(src, lane);
+            assert!(
+                machine.diagnostics().iter().any(|diagnostic| {
+                    diagnostic.contains("self-tail call to `bad_tail` lowers through INVOKE")
+                        && diagnostic.contains("argument 0 lowered as String, expected Int")
+                }),
+                "{lane:?}: {:?}",
+                machine.diagnostics()
+            );
         }
     }
 
@@ -7238,102 +9959,6 @@ fn main() -> Int {
     }
 
     #[test]
-    fn structural_equal_handles_share_store_and_memo() {
-        let src = r#"
-enum Expr {
-    Num(Int),
-    Add(Expr, Expr),
-}
-
-fn make_a() -> Expr {
-    Expr::Add(Expr::Num(1), Expr::Num(2))
-}
-
-fn make_b() -> Expr {
-    Expr::Add(Expr::Num(1), Expr::Num(2))
-}
-
-fn eval(e: Expr) -> Int {
-    match e {
-        Expr::Num(n) => n,
-        Expr::Add(a, b) => eval(a) + eval(b),
-    }
-}
-
-fn main() -> Int {
-    let a = make_a();
-    let b = make_b();
-    eval(a) + eval(b)
-}
-"#;
-        for lane in lanes() {
-            let mut m = load_with_lane(src, lane);
-            assert_eq!(m.demand_i64("main", vec![]).unwrap(), 6, "{lane:?}");
-            let eval_hash = m.fn_hash("eval").expect("eval hash");
-            let eval_spawns = m
-                .trace()
-                .iter()
-                .filter(|e| matches!(e, DriveEvent::Spawned { fn_hash } if *fn_hash == eval_hash))
-                .count();
-            let eval_hits = m
-                .trace()
-                .iter()
-                .filter(|e| matches!(e, DriveEvent::MemoHit { fn_hash } if *fn_hash == eval_hash))
-                .count();
-            assert_eq!(
-                eval_spawns, 3,
-                "Add, Num(1), Num(2) each spawn once on {lane:?}"
-            );
-            assert!(
-                eval_hits > 0,
-                "second structurally equal tree hits memo on {lane:?}"
-            );
-            assert!(
-                m.trace()
-                    .iter()
-                    .any(|e| matches!(e, DriveEvent::StoreAlloc { deduped: true, .. })),
-                "second constructor path dedupes in the value store on {lane:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn untaken_variant_arms_never_spawn() {
-        let src = r#"
-enum Choice { A, B }
-
-fn expensive() -> Int { 999999 }
-
-fn pick(c: Choice) -> Int {
-    match c {
-        Choice::A => 1,
-        Choice::B => expensive(),
-    }
-}
-
-fn main() -> Int {
-    pick(Choice::A)
-}
-"#;
-        let mut traces = Vec::new();
-        for lane in lanes() {
-            let mut m = load_with_lane(src, lane);
-            assert_eq!(m.demand_i64("main", vec![]).unwrap(), 1, "{lane:?}");
-            let expensive_hash = m.fn_hash("expensive").expect("expensive hash");
-            assert!(
-                !m.trace().iter().any(|e| matches!(
-                    e,
-                    DriveEvent::Demanded { fn_hash } | DriveEvent::Spawned { fn_hash }
-                        if *fn_hash == expensive_hash
-                )),
-                "untaken variant arm never demands or spawns expensive on {lane:?}"
-            );
-            traces.push((lane, m.trace().to_vec()));
-        }
-        assert_lane_traces_equal(&traces);
-    }
-
-    #[test]
     fn strings_are_interned_and_match_by_handle() {
         let src = r#"
 fn classify() -> Int {
@@ -7357,78 +9982,6 @@ fn classify() -> Int {
                 m.store_len(),
                 1,
                 "string matching does not allocate on {lane:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn eval_vix_demo_returns_42_on_the_machine() {
-        let src = include_str!("../../../playgrounds/snark/src/bundled/vix/samples/eval.vix");
-        let mut cold_traces = Vec::new();
-        for lane in lanes() {
-            let mut m = load_with_lane(src, lane);
-            let bits = m.demand_i64("demo", vec![]).unwrap() as u64;
-            assert_eq!(bits, 42.0f64.to_bits(), "{lane:?}");
-            let demo_hash = m.fn_hash("demo").expect("demo hash");
-            let spawns = m
-                .trace()
-                .iter()
-                .filter(|event| matches!(event, DriveEvent::Spawned { .. }))
-                .count();
-            assert_eq!(
-                spawns, 6,
-                "demo plus five distinct eval invocations on {lane:?}"
-            );
-            cold_traces.push((lane, m.trace().to_vec()));
-
-            m.clear_trace();
-            let warm_bits = m.demand_i64("demo", vec![]).unwrap() as u64;
-            assert_eq!(warm_bits, 42.0f64.to_bits(), "{lane:?}");
-            assert_eq!(
-                m.trace(),
-                &[
-                    DriveEvent::Demanded { fn_hash: demo_hash },
-                    DriveEvent::MemoHit { fn_hash: demo_hash },
-                ],
-                "warm demo is exactly demand + memo hit on {lane:?}"
-            );
-        }
-        assert_lane_traces_equal(&cold_traces);
-    }
-
-    #[test]
-    fn eval_vix_untaken_helper_never_appears() {
-        let src = format!(
-            "{}\n{}",
-            include_str!("../../../playgrounds/snark/src/bundled/vix/samples/eval.vix"),
-            r#"
-fn never_float() -> Float { 99.0 }
-
-pub fn lazy_probe() -> Float {
-    let e = Expr::Num(1.0);
-    match e {
-        Expr::Num(n) => n,
-        Expr::Var(_) => never_float(),
-        _ => 0.0,
-    }
-}
-"#
-        );
-        for lane in lanes() {
-            let mut m = load_with_lane(&src, lane);
-            assert_eq!(
-                (m.demand_i64("lazy_probe", vec![]).unwrap() as u64),
-                1.0f64.to_bits(),
-                "{lane:?}"
-            );
-            let never_hash = m.fn_hash("never_float").expect("never_float hash");
-            assert!(
-                !m.trace().iter().any(|event| matches!(
-                    event,
-                    DriveEvent::Demanded { fn_hash } | DriveEvent::Spawned { fn_hash }
-                        if *fn_hash == never_hash
-                )),
-                "helper in untaken variant arm never demanded or spawned on {lane:?}"
             );
         }
     }
@@ -7461,427 +10014,54 @@ fn ba() -> Map<String, Float> {
     }
 
     #[test]
-    fn insertion_order_equal_maps_memoize_as_equal_arguments() {
+    fn structural_identity_is_injective_on_distinct_value_corpus() {
         let src = r#"
-fn ab() -> Map<String, Float> {
-    let m: Map<String, Float> = {};
-    m.insert("a", 1.0).insert("b", 2.0)
+struct Pair { left: Int, right: Int }
+enum Choice { A, B(Int), C(Int) }
+
+fn rec_a() -> Pair { Pair { left: 1, right: 2 } }
+fn rec_b() -> Pair { Pair { left: 1, right: 3 } }
+
+fn arr_a() -> [Pair] { [rec_a(), rec_b()] }
+fn arr_b() -> [Pair] { [rec_b(), rec_a()] }
+
+fn map_a() -> Map<String, Pair> {
+    let m: Map<String, Pair> = {};
+    m.insert("x", rec_a()).insert("y", rec_b())
 }
 
-fn ba() -> Map<String, Float> {
-    let m: Map<String, Float> = {};
-    m.insert("b", 2.0).insert("a", 1.0)
+fn map_b() -> Map<String, Pair> {
+    let m: Map<String, Pair> = {};
+    m.insert("x", rec_b()).insert("y", rec_a())
 }
 
-fn consume(m: Map<String, Float>) -> Float {
-    m.get("a").unwrap() + m.get("b").unwrap()
-}
-
-fn main() -> Float {
-    consume(ab()) + consume(ba())
-}
+fn enum_a() -> Choice { Choice::A }
+fn enum_b() -> Choice { Choice::B(1) }
+fn enum_c() -> Choice { Choice::C(1) }
 "#;
-        for lane in lanes() {
-            let mut m = load_with_lane(src, lane);
-            assert_eq!(
-                (m.demand_i64("main", vec![]).unwrap() as u64),
-                6.0f64.to_bits(),
-                "{lane:?}"
-            );
-            let consume_hash = m.fn_hash("consume").expect("consume hash");
-            let consume_spawns = m
-                .trace()
-                .iter()
-                .filter(|event| matches!(event, DriveEvent::Spawned { fn_hash } if *fn_hash == consume_hash))
-                .count();
-            let consume_hits = m
-                .trace()
-                .iter()
-                .filter(|event| matches!(event, DriveEvent::MemoHit { fn_hash } if *fn_hash == consume_hash))
-                .count();
-            assert_eq!(consume_spawns, 1, "{lane:?}");
-            assert_eq!(consume_hits, 1, "{lane:?}");
-        }
-    }
-
-    #[test]
-    fn record_projection_hit_ignores_untouched_field_and_misses_touched_field() {
-        let src = r#"
-struct BigRecord {
-    wanted: Int,
-    untouched: String
-}
-
-pub fn make(wanted: Int, untouched: String) -> BigRecord {
-    BigRecord { wanted: wanted, untouched: untouched }
-}
-
-pub fn pick(record: BigRecord) -> Int {
-    record.wanted
-}
-"#;
+        let functions = [
+            "rec_a", "rec_b", "arr_a", "arr_b", "map_a", "map_b", "enum_a", "enum_b", "enum_c",
+        ];
         for lane in lanes() {
             let mut machine = load_with_lane(src, lane);
-            let first = machine
-                .call(
-                    "make",
-                    &[
-                        NamedArg {
-                            name: "wanted".to_string(),
-                            value: MachineArg::Int(7),
-                        },
-                        NamedArg {
-                            name: "untouched".to_string(),
-                            value: MachineArg::String("first".to_string()),
-                        },
-                    ],
-                )
-                .unwrap()
-                .0;
-            assert_eq!(
-                machine.demand_i64("pick", vec![first]).unwrap(),
-                7,
-                "{lane:?}"
-            );
-
-            let untouched_changed = machine
-                .call(
-                    "make",
-                    &[
-                        NamedArg {
-                            name: "wanted".to_string(),
-                            value: MachineArg::Int(7),
-                        },
-                        NamedArg {
-                            name: "untouched".to_string(),
-                            value: MachineArg::String("edited".to_string()),
-                        },
-                    ],
-                )
-                .unwrap()
-                .0;
-            machine.clear_trace();
-            assert_eq!(
-                machine.demand_i64("pick", vec![untouched_changed]).unwrap(),
-                7,
-                "{lane:?}"
-            );
-            assert_eq!(spawned_count(&machine, "pick"), 0, "{lane:?}");
-            assert_eq!(memo_projection_hit_count(&machine, "pick"), 1, "{lane:?}");
-            assert_eq!(
-                projection_verified_count(&machine, "pick"),
-                vec![1],
-                "{lane:?}"
-            );
-
-            let touched_changed = machine
-                .call(
-                    "make",
-                    &[
-                        NamedArg {
-                            name: "wanted".to_string(),
-                            value: MachineArg::Int(8),
-                        },
-                        NamedArg {
-                            name: "untouched".to_string(),
-                            value: MachineArg::String("edited".to_string()),
-                        },
-                    ],
-                )
-                .unwrap()
-                .0;
-            machine.clear_trace();
-            assert_eq!(
-                machine.demand_i64("pick", vec![touched_changed]).unwrap(),
-                8,
-                "{lane:?}"
-            );
-            assert_eq!(memo_projection_hit_count(&machine, "pick"), 0, "{lane:?}");
-            assert_eq!(spawned_count(&machine, "pick"), 1, "{lane:?}");
-        }
-    }
-
-    #[test]
-    fn map_projection_hit_ignores_untouched_entry_and_misses_touched_entry() {
-        let src = r#"
-pub fn make(wanted: String, untouched: String) -> Map<String, String> {
-    let m: Map<String, String> = {};
-    m.insert("wanted", wanted).insert("untouched", untouched)
-}
-
-pub fn pick(map: Map<String, String>) -> String {
-    map.get("wanted").unwrap()
-}
-"#;
-        for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
-            let first = machine
-                .call(
-                    "make",
-                    &[
-                        NamedArg {
-                            name: "wanted".to_string(),
-                            value: MachineArg::String("keep".to_string()),
-                        },
-                        NamedArg {
-                            name: "untouched".to_string(),
-                            value: MachineArg::String("first".to_string()),
-                        },
-                    ],
-                )
-                .unwrap()
-                .0;
-            let first_value = machine.demand_i64("pick", vec![first]).unwrap();
-            assert_eq!(
-                machine.driver.raw_string(first_value, "String").unwrap(),
-                "keep",
-                "{lane:?}"
-            );
-
-            let untouched_changed = machine
-                .call(
-                    "make",
-                    &[
-                        NamedArg {
-                            name: "wanted".to_string(),
-                            value: MachineArg::String("keep".to_string()),
-                        },
-                        NamedArg {
-                            name: "untouched".to_string(),
-                            value: MachineArg::String("edited".to_string()),
-                        },
-                    ],
-                )
-                .unwrap()
-                .0;
-            machine.clear_trace();
-            let second_value = machine.demand_i64("pick", vec![untouched_changed]).unwrap();
-            assert_eq!(
-                machine.driver.raw_string(second_value, "String").unwrap(),
-                "keep",
-                "{lane:?}"
-            );
-            assert_eq!(spawned_count(&machine, "pick"), 0, "{lane:?}");
-            assert_eq!(memo_projection_hit_count(&machine, "pick"), 1, "{lane:?}");
-            assert_eq!(
-                projection_verified_count(&machine, "pick"),
-                vec![1],
-                "{lane:?}"
-            );
-
-            let touched_changed = machine
-                .call(
-                    "make",
-                    &[
-                        NamedArg {
-                            name: "wanted".to_string(),
-                            value: MachineArg::String("changed".to_string()),
-                        },
-                        NamedArg {
-                            name: "untouched".to_string(),
-                            value: MachineArg::String("edited".to_string()),
-                        },
-                    ],
-                )
-                .unwrap()
-                .0;
-            machine.clear_trace();
-            let third_value = machine.demand_i64("pick", vec![touched_changed]).unwrap();
-            assert_eq!(
-                machine.driver.raw_string(third_value, "String").unwrap(),
-                "changed",
-                "{lane:?}"
-            );
-            assert_eq!(memo_projection_hit_count(&machine, "pick"), 0, "{lane:?}");
-            assert_eq!(spawned_count(&machine, "pick"), 1, "{lane:?}");
-        }
-    }
-
-    #[test]
-    fn is_patron_ruling_uses_only_is_patron_projection() {
-        let src = r#"
-struct Session {
-    is_patron: Bool,
-    profile_note: String
-}
-
-pub fn session(is_patron: Bool, profile_note: String) -> Session {
-    Session { is_patron: is_patron, profile_note: profile_note }
-}
-
-pub fn is_patron(session: Session) -> Bool {
-    session.is_patron
-}
-"#;
-        for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
-            let first = machine
-                .call(
-                    "session",
-                    &[
-                        NamedArg {
-                            name: "is_patron".to_string(),
-                            value: MachineArg::Bool(true),
-                        },
-                        NamedArg {
-                            name: "profile_note".to_string(),
-                            value: MachineArg::String("old profile".to_string()),
-                        },
-                    ],
-                )
-                .unwrap()
-                .0;
-            assert_eq!(
-                machine.demand_i64("is_patron", vec![first]).unwrap(),
-                1,
-                "{lane:?}"
-            );
-
-            let changed_profile = machine
-                .call(
-                    "session",
-                    &[
-                        NamedArg {
-                            name: "is_patron".to_string(),
-                            value: MachineArg::Bool(true),
-                        },
-                        NamedArg {
-                            name: "profile_note".to_string(),
-                            value: MachineArg::String("new profile".to_string()),
-                        },
-                    ],
-                )
-                .unwrap()
-                .0;
-            machine.clear_trace();
-            assert_eq!(
-                machine
-                    .demand_i64("is_patron", vec![changed_profile])
-                    .unwrap(),
-                1,
-                "{lane:?}"
-            );
-            assert_eq!(spawned_count(&machine, "is_patron"), 0, "{lane:?}");
-            assert_eq!(
-                memo_projection_hit_count(&machine, "is_patron"),
-                1,
-                "{lane:?}"
-            );
-            assert_eq!(
-                projection_verified_count(&machine, "is_patron"),
-                vec![1],
-                "{lane:?}"
-            );
-
-            let changed_patron = machine
-                .call(
-                    "session",
-                    &[
-                        NamedArg {
-                            name: "is_patron".to_string(),
-                            value: MachineArg::Bool(false),
-                        },
-                        NamedArg {
-                            name: "profile_note".to_string(),
-                            value: MachineArg::String("new profile".to_string()),
-                        },
-                    ],
-                )
-                .unwrap()
-                .0;
-            machine.clear_trace();
-            assert_eq!(
-                machine
-                    .demand_i64("is_patron", vec![changed_patron])
-                    .unwrap(),
-                0,
-                "{lane:?}"
-            );
-            assert_eq!(
-                memo_projection_hit_count(&machine, "is_patron"),
-                0,
-                "{lane:?}"
-            );
-            assert_eq!(spawned_count(&machine, "is_patron"), 1, "{lane:?}");
-        }
-    }
-
-    #[test]
-    fn projection_read_sets_survive_warm_reload() {
-        let src = r#"
-struct Session {
-    is_patron: Bool,
-    profile_note: String
-}
-
-pub fn session(is_patron: Bool, profile_note: String) -> Session {
-    Session { is_patron: is_patron, profile_note: profile_note }
-}
-
-pub fn is_patron(session: Session) -> Bool {
-    session.is_patron
-}
-"#;
-        for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
-            let first = machine
-                .call(
-                    "session",
-                    &[
-                        NamedArg {
-                            name: "is_patron".to_string(),
-                            value: MachineArg::Bool(true),
-                        },
-                        NamedArg {
-                            name: "profile_note".to_string(),
-                            value: MachineArg::String("old profile".to_string()),
-                        },
-                    ],
-                )
-                .unwrap()
-                .0;
-            assert_eq!(
-                machine.demand_i64("is_patron", vec![first]).unwrap(),
-                1,
-                "{lane:?}"
-            );
-            let reloaded = src.replace(
-                "pub fn is_patron(session: Session) -> Bool {",
-                "pub fn is_patron(session: Session) -> Bool {\n    // still only reads is_patron",
-            );
-            let diff = machine.reload(&reloaded).unwrap();
-            assert!(diff.changed.is_empty(), "{lane:?}: {diff:?}");
-
-            let changed_profile = machine
-                .call(
-                    "session",
-                    &[
-                        NamedArg {
-                            name: "is_patron".to_string(),
-                            value: MachineArg::Bool(true),
-                        },
-                        NamedArg {
-                            name: "profile_note".to_string(),
-                            value: MachineArg::String("after reload".to_string()),
-                        },
-                    ],
-                )
-                .unwrap()
-                .0;
-            machine.clear_trace();
-            assert_eq!(
-                machine
-                    .demand_i64("is_patron", vec![changed_profile])
-                    .unwrap(),
-                1,
-                "{lane:?}"
-            );
-            assert_eq!(spawned_count(&machine, "is_patron"), 0, "{lane:?}");
-            assert_eq!(
-                memo_projection_hit_count(&machine, "is_patron"),
-                1,
-                "{lane:?}"
-            );
+            let mut identities = BTreeSet::new();
+            for function in functions {
+                let handle = machine.demand_i64(function, vec![]).unwrap();
+                let bundle = machine
+                    .driver
+                    .export_value_bundle(handle, Vec::new())
+                    .expect("root bundle");
+                let entry = bundle
+                    .values
+                    .iter()
+                    .find(|entry| entry.handle == bundle.root)
+                    .expect("stored root");
+                let identity = (entry.schema.clone(), entry.content_hash.to_vec());
+                assert!(
+                    identities.insert(identity),
+                    "distinct value `{function}` reused a structural identity on {lane:?}"
+                );
+            }
         }
     }
 
@@ -8044,83 +10224,6 @@ pub fn main(target: Target) -> Int {
     }
 
     #[test]
-    fn unused_let_call_never_spawns() {
-        let src = r#"
-fn expensive() -> Int { 41 }
-
-pub fn main() -> Int {
-    let x = expensive();
-    7
-}
-"#;
-        for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 7, "{lane:?}");
-            assert_eq!(spawned_count(&machine, "expensive"), 0, "{lane:?}");
-        }
-    }
-
-    #[test]
-    fn let_binding_sinks_into_only_using_match_arm() {
-        let src = r#"
-fn expensive() -> Int { 41 }
-
-pub fn main(n: Int) -> Int {
-    let x = expensive();
-    match n {
-        0 => 7,
-        _ => x + 1,
-    }
-}
-"#;
-        for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
-            assert_eq!(machine.demand_i64("main", vec![0]).unwrap(), 7, "{lane:?}");
-            assert_eq!(spawned_count(&machine, "expensive"), 0, "{lane:?}");
-            machine.clear_trace();
-            assert_eq!(machine.demand_i64("main", vec![1]).unwrap(), 42, "{lane:?}");
-            assert_eq!(spawned_count(&machine, "expensive"), 1, "{lane:?}");
-        }
-    }
-
-    #[test]
-    fn shared_let_binding_computes_once() {
-        let src = r#"
-fn f(x: Int) -> Int { x + 1 }
-
-pub fn main() -> Int {
-    let x = f(20);
-    x + x
-}
-"#;
-        for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 42, "{lane:?}");
-            assert_eq!(spawned_count(&machine, "f"), 1, "{lane:?}");
-            assert_eq!(memo_hit_count(&machine, "f"), 0, "{lane:?}");
-        }
-    }
-
-    #[test]
-    fn memo_hits_across_distinct_calls_exact_counts() {
-        let src = r#"
-fn f(x: Int) -> Int { x + 1 }
-fn a() -> Int { f(20) }
-fn b() -> Int { f(20) }
-
-pub fn main() -> Int {
-    a() + b()
-}
-"#;
-        for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 42, "{lane:?}");
-            assert_eq!(spawned_count(&machine, "f"), 1, "{lane:?}");
-            assert_eq!(memo_hit_count(&machine, "f"), 1, "{lane:?}");
-        }
-    }
-
-    #[test]
     fn types_vix_partials_depths_and_classify_run_on_the_machine() {
         let src = format!(
             "{}\n{}",
@@ -8225,8 +10328,8 @@ pub fn main() -> String {
 
     #[test]
     fn types_vix_toolchain_acquires_capabilities_and_updates_records() {
-        const CC_PIN: &str = "acquire:Cc:a67daa6cb12f954f";
-        const AR_PIN: &str = "acquire:Ar:a67daa6cb12f954f";
+        const CC_PIN: &str = "acquire:Cc:7e66028935dab99";
+        const AR_PIN: &str = "acquire:Ar:7e66028935dab99";
 
         let src = include_str!("../../../playgrounds/snark/src/bundled/vix/samples/types.vix");
         let mut traces = Vec::new();
@@ -8387,6 +10490,60 @@ pub fn cross_rustc() -> Rustc {
             assert!(cross_x86_cc.starts_with("acquire:Cc:"), "{lane:?}");
             assert!(os_only_cc.starts_with("acquire:Cc:"), "{lane:?}");
             assert!(cross_rustc.starts_with("acquire:Rustc:"), "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn store_backed_array_reads_prevent_projection_reuse() {
+        let src = r#"
+fn append_join(values: [String], value: String) -> String {
+    values.push(value).join(",")
+}
+
+pub fn first() -> String {
+    append_join(["one"], "tail")
+}
+
+pub fn second() -> String {
+    append_join(["two"], "tail")
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let first = machine.demand_i64("first", vec![]).unwrap();
+            assert_eq!(
+                machine.driver.raw_string(first, "String").unwrap(),
+                "one,tail"
+            );
+            let second = machine.demand_i64("second", vec![]).unwrap();
+            assert_eq!(
+                machine.driver.raw_string(second, "String").unwrap(),
+                "two,tail"
+            );
+        }
+    }
+
+    #[test]
+    fn store_backed_array_get_prevents_projection_reuse() {
+        let src = r#"
+fn append_get(values: [String], value: String) -> String {
+    values.get(0)
+}
+
+pub fn first() -> String {
+    append_get(["one"], "tail")
+}
+
+pub fn second() -> String {
+    append_get(["two"], "tail")
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let first = machine.demand_i64("first", vec![]).unwrap();
+            assert_eq!(machine.driver.raw_string(first, "String").unwrap(), "one");
+            let second = machine.demand_i64("second", vec![]).unwrap();
+            assert_eq!(machine.driver.raw_string(second, "String").unwrap(), "two");
         }
     }
 
@@ -8760,101 +10917,6 @@ pub fn answer() -> Int {
     }
 
     #[test]
-    fn warm_reload_cross_module_leaf_edit_misses_transitive_users_only() {
-        let initial = modules(&[
-            (
-                "root",
-                r#"
-use a::bridge;
-
-fn independent() -> Int {
-    5
-}
-
-pub fn main() -> Int {
-    bridge() + independent()
-}
-"#,
-            ),
-            (
-                "a",
-                r#"
-fn leaf() -> Int {
-    1
-}
-
-pub fn bridge() -> Int {
-    leaf() + 10
-}
-
-fn unused() -> Int {
-    100
-}
-"#,
-            ),
-        ]);
-        let edited = modules(&[
-            (
-                "root",
-                r#"
-use a::bridge;
-
-fn independent() -> Int {
-    5
-}
-
-pub fn main() -> Int {
-    bridge() + independent()
-}
-"#,
-            ),
-            (
-                "a",
-                r#"
-fn leaf() -> Int {
-    2
-}
-
-pub fn bridge() -> Int {
-    leaf() + 10
-}
-
-fn unused() -> Int {
-    100
-}
-"#,
-            ),
-        ]);
-        for lane in lanes() {
-            let mut machine = load_modules_with_lane("root", initial.clone(), lane);
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 16, "{lane:?}");
-            let diff = machine.reload_modules("root", edited.clone()).unwrap();
-            assert_eq!(
-                diff.changed,
-                BTreeSet::from([
-                    "a::bridge".to_string(),
-                    "a::leaf".to_string(),
-                    "main".to_string(),
-                ]),
-                "{lane:?}"
-            );
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 17, "{lane:?}");
-            assert_eq!(
-                spawned_functions(&machine),
-                BTreeSet::from([
-                    "a::bridge".to_string(),
-                    "a::leaf".to_string(),
-                    "main".to_string(),
-                ]),
-                "{lane:?}"
-            );
-            let hits = memo_hit_functions(&machine);
-            assert!(hits.contains("independent"), "{lane:?}: {hits:?}");
-            assert!(!hits.contains("a::unused"), "{lane:?}: {hits:?}");
-        }
-    }
-
-    #[test]
     fn machine_fn_memo_and_exec_tiers_compose() {
         let src = r#"
 use vix::{Tree, Path, Target};
@@ -9017,244 +11079,6 @@ fn b(cc: Cc, src: Tree, unit: Path) -> Tree {
         }
     }
 
-    fn anti_nix_diamond() -> &'static str {
-        r#"
-fn leaf() -> Int {
-    1
-}
-
-fn left() -> Int {
-    leaf() + 10
-}
-
-fn right() -> Int {
-    leaf() + 20
-}
-
-fn independent() -> Int {
-    5
-}
-
-fn never_demanded() -> Int {
-    100
-}
-
-pub fn main() -> Int {
-    left() + right() + independent()
-}
-"#
-    }
-
-    fn type_closure_source() -> &'static str {
-        r#"
-enum Choice { A, B }
-
-fn typed(x: Choice) -> Int {
-    match x {
-        Choice::A => 1,
-        Choice::B => 2,
-    }
-}
-
-fn bridge() -> Int {
-    typed(Choice::A)
-}
-
-fn independent() -> Int {
-    7
-}
-
-pub fn main() -> Int {
-    bridge() + independent()
-}
-"#
-    }
-
-    #[test]
-    fn warm_reload_eval_identity_survives_trivia_and_semantic_edits() {
-        let src = include_str!("../../../playgrounds/snark/src/bundled/vix/samples/eval.vix");
-        for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
-            assert_eq!(
-                (machine.demand_i64("demo", vec![]).unwrap() as u64),
-                42.0f64.to_bits(),
-                "{lane:?}"
-            );
-            assert_eq!(memo_hit_functions(&machine), BTreeSet::new(), "{lane:?}");
-            assert!(!spawned_functions(&machine).is_empty(), "{lane:?}");
-
-            let demo_hash = machine.fn_hash("demo").expect("demo hash");
-            machine.clear_trace();
-            assert_eq!(
-                (machine.demand_i64("demo", vec![]).unwrap() as u64),
-                42.0f64.to_bits(),
-                "{lane:?}"
-            );
-            assert_eq!(
-                machine.trace(),
-                &[
-                    DriveEvent::Demanded { fn_hash: demo_hash },
-                    DriveEvent::MemoHit { fn_hash: demo_hash },
-                ],
-                "{lane:?}"
-            );
-
-            let reformatted = src
-                .replace("fn demo() -> Float {", "fn demo() -> Float {\n    // hi!\n")
-                .replace("use vix::Map;", "// preamble\n\nuse vix::Map;");
-            let reformatted = load_with_lane(&reformatted, lane);
-            assert_eq!(
-                machine.fn_hash("demo"),
-                reformatted.fn_hash("demo"),
-                "{lane:?}"
-            );
-            assert_eq!(
-                machine.fn_hash("eval"),
-                reformatted.fn_hash("eval"),
-                "{lane:?}"
-            );
-
-            let changed = src.replace("Expr::Num(6.0)", "Expr::Num(5.0)");
-            let changed = load_with_lane(&changed, lane);
-            assert_ne!(machine.fn_hash("demo"), changed.fn_hash("demo"), "{lane:?}");
-            assert_eq!(machine.fn_hash("eval"), changed.fn_hash("eval"), "{lane:?}");
-        }
-    }
-
-    #[test]
-    fn warm_reload_trivia_costs_only_root_hit() {
-        for lane in lanes() {
-            let mut machine = load_with_lane(anti_nix_diamond(), lane);
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 37, "{lane:?}");
-            let reformatted = anti_nix_diamond()
-                .replace(
-                    "fn leaf() -> Int {",
-                    "// top-level trivia\nfn leaf() -> Int {\n    // leaf",
-                )
-                .replace("fn left() -> Int {", "fn left() -> Int {\n\n    // left")
-                .replace("fn right() -> Int {", "fn right() -> Int {\n    // right")
-                .replace(
-                    "fn never_demanded() -> Int {",
-                    "fn never_demanded() -> Int {\n    // dead code trivia",
-                )
-                .replace("left() + right()", "left()   +   right()");
-            let diff = machine.reload(&reformatted).unwrap();
-            assert!(diff.changed.is_empty(), "{lane:?}: {diff:?}");
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 37, "{lane:?}");
-            assert_eq!(spawned_functions(&machine), BTreeSet::new(), "{lane:?}");
-            assert_eq!(
-                memo_hit_functions(&machine),
-                BTreeSet::from(["main".to_string()]),
-                "{lane:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn warm_reload_leaf_edit_misses_exact_blast_radius() {
-        for lane in lanes() {
-            let mut machine = load_with_lane(anti_nix_diamond(), lane);
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 37, "{lane:?}");
-            let edited = anti_nix_diamond()
-                .replace("fn leaf() -> Int {\n    1", "fn leaf() -> Int {\n    2");
-            let diff = machine.reload(&edited).unwrap();
-            assert_eq!(
-                diff.changed,
-                BTreeSet::from([
-                    "leaf".to_string(),
-                    "left".to_string(),
-                    "main".to_string(),
-                    "right".to_string(),
-                ]),
-                "{lane:?}"
-            );
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 39, "{lane:?}");
-            assert_eq!(
-                spawned_functions(&machine),
-                BTreeSet::from([
-                    "leaf".to_string(),
-                    "left".to_string(),
-                    "main".to_string(),
-                    "right".to_string(),
-                ]),
-                "{lane:?}"
-            );
-            let hits = memo_hit_functions(&machine);
-            assert!(hits.contains("independent"), "{lane:?}: {hits:?}");
-            assert!(!hits.contains("never_demanded"), "{lane:?}: {hits:?}");
-        }
-    }
-
-    #[test]
-    fn warm_reload_unused_edit_costs_zero_misses_and_hashes_only_itself() {
-        for lane in lanes() {
-            let mut machine = load_with_lane(anti_nix_diamond(), lane);
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 37, "{lane:?}");
-            let before = machine.fn_hashes();
-            let edited = anti_nix_diamond().replace(
-                "fn never_demanded() -> Int {\n    100",
-                "fn never_demanded() -> Int {\n    101",
-            );
-            let diff = machine.reload(&edited).unwrap();
-            assert_eq!(
-                diff.changed,
-                BTreeSet::from(["never_demanded".to_string()]),
-                "{lane:?}"
-            );
-            for name in ["leaf", "left", "right", "independent", "main"] {
-                assert_eq!(
-                    before.get(name),
-                    machine.fn_hashes().get(name),
-                    "{name} should not inherit an unreferenced function edit on {lane:?}"
-                );
-            }
-            assert_ne!(
-                before.get("never_demanded"),
-                machine.fn_hashes().get("never_demanded"),
-                "{lane:?}"
-            );
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 37, "{lane:?}");
-            assert_eq!(spawned_functions(&machine), BTreeSet::new(), "{lane:?}");
-            assert_eq!(
-                memo_hit_functions(&machine),
-                BTreeSet::from(["main".to_string()]),
-                "{lane:?}"
-            );
-        }
-    }
-
-    #[test]
-    fn warm_reload_type_decl_edit_misses_transitive_users() {
-        for lane in lanes() {
-            let mut machine = load_with_lane(type_closure_source(), lane);
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 8, "{lane:?}");
-            let edited =
-                type_closure_source().replace("enum Choice { A, B }", "enum Choice { B, A }");
-            let diff = machine.reload(&edited).unwrap();
-            assert_eq!(
-                diff.changed,
-                BTreeSet::from([
-                    "bridge".to_string(),
-                    "main".to_string(),
-                    "typed".to_string()
-                ]),
-                "{lane:?}"
-            );
-            assert_eq!(machine.demand_i64("main", vec![]).unwrap(), 8, "{lane:?}");
-            assert_eq!(
-                spawned_functions(&machine),
-                BTreeSet::from([
-                    "bridge".to_string(),
-                    "main".to_string(),
-                    "typed".to_string()
-                ]),
-                "{lane:?}"
-            );
-            let hits = memo_hit_functions(&machine);
-            assert!(hits.contains("independent"), "{lane:?}: {hits:?}");
-        }
-    }
-
     #[test]
     fn recursive_scc_hashes_survive_definition_order_on_machine() {
         let ab = r#"
@@ -9270,65 +11094,6 @@ fn a() -> Int { b() }
             let ba = load_with_lane(ba, lane);
             assert_eq!(ab.fn_hash("a"), ba.fn_hash("a"), "{lane:?}");
             assert_eq!(ab.fn_hash("b"), ba.fn_hash("b"), "{lane:?}");
-        }
-    }
-
-    #[test]
-    fn pending_entries_resolve_through_reloaded_hash_tables() {
-        let src = r#"
-fn producer() -> Float { 1.0 }
-
-pub fn make() -> Map<String, Float> {
-    let m: Map<String, Float> = {};
-    m.insert("x", producer())
-}
-
-pub fn touch(m: Map<String, Float>, nonce: Int) -> Float {
-    m.get("x").unwrap()
-}
-"#;
-        for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
-            let handle = machine.demand_i64("make", vec![]).unwrap();
-            assert_eq!(
-                (machine.demand_i64("touch", vec![handle, 0]).unwrap() as u64),
-                1.0f64.to_bits(),
-                "{lane:?}"
-            );
-
-            let trivia = src.replace(
-                "fn producer() -> Float {",
-                "fn producer() -> Float {\n    // hi\n",
-            );
-            let diff = machine.reload(&trivia).unwrap();
-            assert!(diff.changed.is_empty(), "{lane:?}: {diff:?}");
-            assert_eq!(
-                (machine.demand_i64("touch", vec![handle, 1]).unwrap() as u64),
-                1.0f64.to_bits(),
-                "{lane:?}"
-            );
-            assert_eq!(spawned_count(&machine, "producer"), 0, "{lane:?}");
-            assert_eq!(memo_hit_count(&machine, "producer"), 1, "{lane:?}");
-
-            let semantic = src.replace(
-                "fn producer() -> Float { 1.0 }",
-                "fn producer() -> Float { 2.0 }",
-            );
-            let diff = machine.reload(&semantic).unwrap();
-            assert_eq!(
-                diff.changed,
-                BTreeSet::from(["make".to_string(), "producer".to_string()]),
-                "{lane:?}"
-            );
-            let handle = machine.demand_i64("make", vec![]).unwrap();
-            machine.clear_trace();
-            assert_eq!(
-                (machine.demand_i64("touch", vec![handle, 2]).unwrap() as u64),
-                2.0f64.to_bits(),
-                "{lane:?}"
-            );
-            assert_eq!(spawned_count(&machine, "producer"), 1, "{lane:?}");
-            assert_eq!(memo_hit_count(&machine, "producer"), 0, "{lane:?}");
         }
     }
 
@@ -9586,9 +11351,9 @@ pub fn moved(n: Int) -> Map<String, Float> {
 
     #[test]
     fn crate_vix_fake_rustc_builds_lib_on_the_machine() {
-        let src = include_str!("../../../playgrounds/snark/src/bundled/vix/samples/crate.vix");
+        let src = crate_sample_source();
         for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
+            let mut machine = load_with_lane(&src, lane);
             let target = machine.linux_target_handle();
             let crate_tree =
                 machine.intern_tree_concrete(mini_vendored_tree("not read by slice-1 rustc\n"));
@@ -9688,9 +11453,9 @@ pub fn moved(n: Int) -> Map<String, Float> {
 
     #[test]
     fn crate_vix_fake_rustc_unread_crate_file_cuts_off_at_tier2() {
-        let src = include_str!("../../../playgrounds/snark/src/bundled/vix/samples/crate.vix");
+        let src = crate_sample_source();
         for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
+            let mut machine = load_with_lane(&src, lane);
             let target = machine.linux_target_handle();
             let crate_v1 = machine.intern_tree_concrete(mini_vendored_tree("not read by rustc\n"));
             let first = machine
@@ -9726,9 +11491,9 @@ pub fn moved(n: Int) -> Map<String, Float> {
 
     #[test]
     fn crate_vix_fake_rustc_builds_bin_with_dependency_metadata_and_rlib() {
-        let src = include_str!("../../../playgrounds/snark/src/bundled/vix/samples/crate.vix");
+        let src = crate_sample_source();
         for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
+            let mut machine = load_with_lane(&src, lane);
             let target = machine.linux_target_handle();
             let graph = machine.intern_tree_concrete(two_crate_graph_tree());
 
@@ -9831,9 +11596,9 @@ pub fn moved(n: Int) -> Map<String, Float> {
 
     #[test]
     fn crate_vix_fake_rustc_builds_proc_macro_as_host_unit() {
-        let src = include_str!("../../../playgrounds/snark/src/bundled/vix/samples/crate.vix");
+        let src = crate_sample_source();
         for lane in lanes() {
-            let mut machine = load_with_lane(src, lane);
+            let mut machine = load_with_lane(&src, lane);
             let target = cross_target_handle(&machine);
             let graph = machine.intern_tree_concrete(proc_macro_graph_tree());
 
@@ -9930,6 +11695,31 @@ pub fn parse(input: String) -> (String, Int, Bool) {
             );
             assert_eq!(version, 3, "{lane:?}");
             assert_eq!(publish, 0, "{lane:?}");
+        }
+    }
+
+    #[test]
+    fn doc_array_coercion_allocates_the_declared_element_schema() {
+        let src = r#"
+pub fn strings(input: String) -> [String] {
+    json(input)
+}
+"#;
+        for lane in lanes() {
+            let mut machine = load_with_lane(src, lane);
+            let (input, _) = machine
+                .driver
+                .intern_raw_value("String", br#"["a","b"]"#.to_vec());
+            let strings = machine.demand_i64("strings", vec![input]).unwrap();
+            let entry = machine.driver.store_entry(strings).expect("string array");
+            assert_eq!(entry.schema, "Array<String>", "{lane:?}");
+            let (elem_schema, words) = machine.driver.array_words(strings).unwrap();
+            assert_eq!(elem_schema, "String", "{lane:?}");
+            let rendered = words
+                .into_iter()
+                .map(|word| machine.driver.raw_string(word, "String").unwrap())
+                .collect::<Vec<_>>();
+            assert_eq!(rendered, ["a", "b"], "{lane:?}");
         }
     }
 
@@ -10665,35 +12455,6 @@ fn {comparator_name}(old: VersionSet, new: VersionSet) -> Bool {{
     }
 
     #[test]
-    fn semantic_cutoff_soundness_differential_matches_without_comparator() {
-        let enabled_src = semantic_cutoff_demo_source("derived__memo_verify_req");
-        let disabled_src = semantic_cutoff_demo_source("derived__not_a_memo_verify_req");
-        for lane in lanes() {
-            let mut enabled = load_with_lane(&enabled_src, lane);
-            let mut disabled = load_with_lane(&disabled_src, lane);
-            let mut enabled_values = Vec::new();
-            let mut disabled_values = Vec::new();
-            let mut enabled_observable = Vec::new();
-            let mut disabled_observable = Vec::new();
-            for req in ["^1.0.0", "^1.2.0", "^1.0.0"] {
-                enabled.clear_trace();
-                disabled.clear_trace();
-                enabled_values.push(call_derived(&mut enabled, req));
-                disabled_values.push(call_derived(&mut disabled, req));
-                enabled_observable.push(semantic_observable_trace(&enabled));
-                disabled_observable.push(semantic_observable_trace(&disabled));
-            }
-            assert_eq!(enabled_values, disabled_values, "{lane:?}");
-            assert_eq!(enabled_observable, disabled_observable, "{lane:?}");
-            assert_eq!(
-                memo_semantic_hit_count(&enabled, "derived"),
-                0,
-                "last widened run recomputes on {lane:?}"
-            );
-        }
-    }
-
-    #[test]
     fn live_event_sink_streams_the_accumulated_trace() {
         for lane in lanes() {
             for mode in [StepMode::Run, StepMode::Step] {
@@ -11001,43 +12762,18 @@ pub fn lazy(n: Int) -> Map<String, Float> {
     }
 
     fn trace_hash(value: &str) -> u64 {
-        let mut h = DefaultHasher::new();
-        value.hash(&mut h);
-        h.finish()
-    }
-
-    fn spawned_functions(machine: &Machine) -> BTreeSet<String> {
-        event_functions(machine, |event| match event {
-            DriveEvent::Spawned { fn_hash } => Some(*fn_hash),
-            _ => None,
-        })
-    }
-
-    fn memo_hit_functions(machine: &Machine) -> BTreeSet<String> {
-        event_functions(machine, |event| match event {
-            DriveEvent::MemoHit { fn_hash } => Some(*fn_hash),
-            _ => None,
-        })
-    }
-
-    fn event_functions(
-        machine: &Machine,
-        pick: impl Fn(&DriveEvent) -> Option<u64>,
-    ) -> BTreeSet<String> {
-        let by_hash: HashMap<u64, String> = machine
-            .fn_hashes()
-            .into_iter()
-            .map(|(name, hash)| (hash, name))
-            .collect();
-        machine
-            .trace()
-            .iter()
-            .filter_map(|event| pick(event).and_then(|hash| by_hash.get(&hash).cloned()))
-            .collect()
+        let mut h = blake3::Hasher::new();
+        h.update(b"vix-debug-u64");
+        h.update(format!("{value:?}").as_bytes());
+        let hash = h.finalize();
+        u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("blake3 prefix"))
     }
 
     fn expected_object() -> BTreeMap<String, String> {
-        BTreeMap::from([("wanted.o".to_string(), "obj(9259fea8a69f1945)".to_string())])
+        BTreeMap::from([(
+            "wanted.o".to_string(),
+            "obj(b1fc5679f1748a8f259a9d9ea09d1c81ef43028c7f65aba0ed7a947d04da7251)".to_string(),
+        )])
     }
 
     fn spawned_count(machine: &Machine, name: &str) -> usize {
@@ -11046,26 +12782,6 @@ pub fn lazy(n: Int) -> Map<String, Float> {
             .trace()
             .iter()
             .filter(|event| matches!(event, DriveEvent::Spawned { fn_hash } if *fn_hash == hash))
-            .count()
-    }
-
-    fn memo_hit_count(machine: &Machine, name: &str) -> usize {
-        let hash = machine.fn_hash(name).expect("function hash");
-        machine
-            .trace()
-            .iter()
-            .filter(|event| matches!(event, DriveEvent::MemoHit { fn_hash } if *fn_hash == hash))
-            .count()
-    }
-
-    fn memo_projection_hit_count(machine: &Machine, name: &str) -> usize {
-        let hash = machine.fn_hash(name).expect("function hash");
-        machine
-            .trace()
-            .iter()
-            .filter(|event| {
-                matches!(event, DriveEvent::MemoProjectionHit { fn_hash, .. } if *fn_hash == hash)
-            })
             .count()
     }
 
@@ -11078,20 +12794,6 @@ pub fn lazy(n: Int) -> Map<String, Float> {
                 matches!(event, DriveEvent::MemoSemanticHit { fn_hash, .. } if *fn_hash == hash)
             })
             .count()
-    }
-
-    fn projection_verified_count(machine: &Machine, name: &str) -> Vec<usize> {
-        let hash = machine.fn_hash(name).expect("function hash");
-        machine
-            .trace()
-            .iter()
-            .filter_map(|event| match event {
-                DriveEvent::MemoProjectionHit { fn_hash, verified } if *fn_hash == hash => {
-                    Some(*verified)
-                }
-                _ => None,
-            })
-            .collect()
     }
 
     fn semantic_verified_count(machine: &Machine, name: &str) -> Vec<usize> {
@@ -11108,41 +12810,14 @@ pub fn lazy(n: Int) -> Map<String, Float> {
             .collect()
     }
 
-    fn semantic_observable_trace(machine: &Machine) -> Vec<DriveEvent> {
-        let recompute_hashes = [
-            machine.fn_hash("derived").expect("derived hash"),
-            machine.fn_hash("expensive").expect("expensive hash"),
-            machine
-                .fn_hash("derived__memo_verify_req")
-                .or_else(|| machine.fn_hash("derived__not_a_memo_verify_req"))
-                .expect("comparator hash"),
-        ];
-        machine
-            .trace()
-            .iter()
-            .filter(|event| match event {
-                DriveEvent::Demanded { fn_hash }
-                | DriveEvent::MemoHit { fn_hash }
-                | DriveEvent::MemoProjectionHit { fn_hash, .. }
-                | DriveEvent::MemoSemanticHit { fn_hash, .. }
-                | DriveEvent::Spawned { fn_hash }
-                | DriveEvent::ParkedOn { fn_hash }
-                | DriveEvent::Completed { fn_hash }
-                | DriveEvent::SpawnedInvocation { fn_hash, .. } => {
-                    !recompute_hashes.contains(fn_hash)
-                }
-                _ => true,
-            })
-            .cloned()
-            .collect()
-    }
-
     fn host_call_count(machine: &Machine, name: &str, host: u32) -> usize {
         machine
             .fn_ops(name)
             .expect("function ops")
             .iter()
-            .filter(|op| matches!(op, Op::HostCall { host: op_host } if *op_host == host))
+            .filter(|op| {
+                matches!(op, Op::HostCall { host: op_host } | Op::HostCallYield { host: op_host } if *op_host == host)
+            })
             .count()
     }
 

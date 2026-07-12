@@ -27,7 +27,7 @@ fn ok_shape(return_shape: &'static Shape) -> &'static Shape {
 fn root_id(shape: &'static Shape) -> u64 {
     vox_phon::schema_id_for_shape(shape)
         .expect("phon schema id")
-        .0
+        .as_u64()
 }
 
 /// A shape's schema closure bytes as a Swift expression yielding `[UInt8]`.

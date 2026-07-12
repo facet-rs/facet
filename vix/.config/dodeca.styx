@@ -1,0 +1,35 @@
+@schema {id crate:dodeca-config@1, cli ddc}
+
+source {
+    content docs/content
+    repo "https://github.com/facet-rs/facet/tree/main/vix"
+
+    impls (
+        {
+            name rust
+            include ("src/**/*.rs")
+            test_include ("tests/**/*.rs")
+        }
+        {
+            name vix
+            include ("std/**/*.vix" "corpus-next/**/*.vix" "tests/ratchet/**/*.vix")
+        }
+        {
+            name weavy
+            root ../weavy
+            include (
+                "build/**/*.rs"
+                "src/exec.rs"
+                "src/jit/**/*.rs"
+                "src/task.rs"
+                "src/verified.rs"
+                "stencils/task_ops.rs"
+            )
+            test_include ("tests/**/*.rs")
+        }
+    )
+}
+
+site {
+    output docs/public
+}

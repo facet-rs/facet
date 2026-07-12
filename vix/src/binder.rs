@@ -350,7 +350,7 @@ fn builtin_module_item(module: &str, name: &str) -> Option<ModuleItem> {
         (
             "vix",
             "Int" | "Float" | "String" | "Bool" | "Blob" | "Doc" | "Tree" | "Path" | "Target"
-            | "Map" | "Array" | "Flag" | "Run" | "Os" | "Arch" | "Version" | "VersionSet"
+            | "Map" | "Array" | "Arg" | "Flag" | "Run" | "Os" | "Arch" | "Version" | "VersionSet"
             | "Sealed",
         ) => ImportKind::Type,
         ("caps", "Cc" | "Ar" | "Rustc") => ImportKind::Type,

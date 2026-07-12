@@ -1524,12 +1524,18 @@ impl FableTaskPlan {
         declared_types: FableDeclaredTypes,
     ) -> Result<FableQueryOutput, FableError> {
         let mut task = weavy::task::Task::spawn(&self.program, TaskFnId(0));
+        let mut ready = [];
         if self.hosts.ops.is_empty() {
-            match task.run(&self.program, &[], &[]) {
+            match task.run(&self.program, &mut ready, &[]) {
                 weavy::task::TaskStep::Done => {}
                 weavy::task::TaskStep::Parked { .. } => {
                     return Err(FableError::MalformedProgram {
                         reason: "synchronous fable task parked",
+                    });
+                }
+                weavy::task::TaskStep::Yielded => {
+                    return Err(FableError::MalformedProgram {
+                        reason: "synchronous fable task yielded",
                     });
                 }
             }
@@ -1565,11 +1571,16 @@ impl FableTaskPlan {
             .iter_mut()
             .map(|host| host.as_mut() as HostFn<'_>)
             .collect();
-        match task.run_hosted(&self.program, &[], &[], &mut hosts) {
+        match task.run_hosted(&self.program, &mut ready, &[], &mut hosts) {
             weavy::task::TaskStep::Done => {}
             weavy::task::TaskStep::Parked { .. } => {
                 return Err(FableError::MalformedProgram {
                     reason: "synchronous fable task parked",
+                });
+            }
+            weavy::task::TaskStep::Yielded => {
+                return Err(FableError::MalformedProgram {
+                    reason: "synchronous fable task yielded",
                 });
             }
         }

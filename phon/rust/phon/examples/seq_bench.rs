@@ -68,7 +68,7 @@ fn main() {
 
     println!("decode:");
     let _di = bench("interpreter", || decode_interp(&program, &wire));
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     let dj = {
         use phon_jit::native::NativeDecode;
         let jit = NativeDecode::compile(&program.program);
@@ -82,7 +82,7 @@ fn main() {
 
     println!("\nencode:");
     let _ei = bench("interpreter", || encode_interp(&program, base));
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     let ej = {
         use phon_jit::native::NativeEncode;
         let jit = NativeEncode::compile(&program.program);
@@ -92,7 +92,7 @@ fn main() {
         })
     };
 
-    #[cfg(all(feature = "jit", target_os = "macos", target_arch = "aarch64"))]
+    #[cfg(all(target_os = "macos", target_arch = "aarch64"))]
     {
         println!(
             "\nspeedup (jit vs interpreter):  decode {:.2}x   encode {:.2}x",

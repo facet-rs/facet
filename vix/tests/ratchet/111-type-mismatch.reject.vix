@@ -1,0 +1,9 @@
+//! reject: expected Int, found String
+//! at: 5
+
+// Rung 111 — type mismatch names both types and points at the argument.
+fn double(n: Int) -> Int { n * 2 }
+#[test]
+fn t() -> Stream<Check> {
+    yield expect_eq(double("two"), 4);
+}

@@ -1,0 +1,7 @@
+//! reject: guard must be Bool
+//! at: 5
+
+// Rung 120 — match guards are Bool, not truthy.
+fn f(n: Int) -> Int {
+    match n { x if x => 1, _ => 0 }
+}

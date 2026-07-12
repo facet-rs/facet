@@ -1,0 +1,7 @@
+// Rung 043 — map keys observe in canonical order (content order,
+// never hash order).
+#[test]
+fn map_keys_canonical() -> Stream<Check> {
+    let m = %{"pear" => 1} ++ %{"apple" => 2, "quince" => 3};
+    yield expect_eq(m.keys(), ["apple", "pear", "quince"]);
+}

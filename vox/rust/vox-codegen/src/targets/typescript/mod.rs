@@ -401,13 +401,13 @@ mod tests {
         expected_root: u64,
     ) -> vox_phon::SchemaBundle {
         let bundle = vox_phon::parse_schema_bytes(bytes).expect("schema closure parses");
-        assert_eq!(bundle.root.0, expected_root);
+        assert_eq!(bundle.root.as_u64(), expected_root);
         let mut seen = BTreeSet::new();
         for schema in &bundle.schemas {
             assert!(
-                seen.insert(schema.id.0),
+                seen.insert(schema.id.as_u64()),
                 "schema closure must not repeat type ID {:#x}",
-                schema.id.0
+                schema.id.as_u64()
             );
         }
         bundle
@@ -746,9 +746,9 @@ mod tests {
             vox_phon::schema_bytes_for_shape(recurse.args_shape).expect("args schema closure");
         let response_closure = vox_phon::schema_bytes_for_shape(recurse.response_wire_shape)
             .expect("response schema closure");
-        let args_bundle = parse_self_describing_unique_bundle(&args_closure, args_root.0);
+        let args_bundle = parse_self_describing_unique_bundle(&args_closure, args_root.as_u64());
         let _response_bundle =
-            parse_self_describing_unique_bundle(&response_closure, response_root.0);
+            parse_self_describing_unique_bundle(&response_closure, response_root.as_u64());
         let nested_inner_id =
             vox_phon::schema_id_for_shape(<NestedInner as Facet>::SHAPE).expect("inner schema id");
 
@@ -778,11 +778,14 @@ mod tests {
             "generated TypeScript method table must use the canonical Vox method ID:\n{generated}"
         );
         assert!(
-            generated.contains(&format!("argsRoot: {}n", hex_u64(args_root.0))),
+            generated.contains(&format!("argsRoot: {}n", hex_u64(args_root.as_u64()))),
             "generated TypeScript must use the phon args schema ID:\n{generated}"
         );
         assert!(
-            generated.contains(&format!("responseRoot: {}n", hex_u64(response_root.0))),
+            generated.contains(&format!(
+                "responseRoot: {}n",
+                hex_u64(response_root.as_u64())
+            )),
             "generated TypeScript must use the phon response schema ID:\n{generated}"
         );
         assert!(

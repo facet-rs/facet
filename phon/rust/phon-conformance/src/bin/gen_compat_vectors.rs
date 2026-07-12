@@ -113,11 +113,11 @@ impl Batch {
         let key = self.next_key;
         self.next_key += 1;
         self.schemas.push(Schema {
-            id: SchemaId(key),
+            id: SchemaId::from_raw(key),
             type_params: type_params.iter().map(|s| (*s).to_string()).collect(),
             kind,
         });
-        SchemaRef::concrete(SchemaId(key))
+        SchemaRef::concrete(SchemaId::from_raw(key))
     }
 }
 
@@ -961,10 +961,10 @@ fn build_cases(b: &mut Batch) -> Vec<PlannedCase> {
         let writer_node_key = b.next_key;
         let writer_children_key = b.next_key + 1;
         b.next_key += 2;
-        let writer_node = SchemaRef::concrete(SchemaId(writer_node_key));
-        let writer_children = SchemaRef::concrete(SchemaId(writer_children_key));
+        let writer_node = SchemaRef::concrete(SchemaId::from_raw(writer_node_key));
+        let writer_children = SchemaRef::concrete(SchemaId::from_raw(writer_children_key));
         b.schemas.push(Schema {
-            id: SchemaId(writer_node_key),
+            id: SchemaId::from_raw(writer_node_key),
             type_params: Vec::new(),
             kind: SchemaKind::Struct {
                 name: "CompatTree".to_string(),
@@ -976,7 +976,7 @@ fn build_cases(b: &mut Batch) -> Vec<PlannedCase> {
             },
         });
         b.schemas.push(Schema {
-            id: SchemaId(writer_children_key),
+            id: SchemaId::from_raw(writer_children_key),
             type_params: Vec::new(),
             kind: SchemaKind::List {
                 element: writer_node.clone(),
@@ -989,10 +989,10 @@ fn build_cases(b: &mut Batch) -> Vec<PlannedCase> {
         let reader_node_key = b.next_key;
         let reader_children_key = b.next_key + 1;
         b.next_key += 2;
-        let reader_node = SchemaRef::concrete(SchemaId(reader_node_key));
-        let reader_children = SchemaRef::concrete(SchemaId(reader_children_key));
+        let reader_node = SchemaRef::concrete(SchemaId::from_raw(reader_node_key));
+        let reader_children = SchemaRef::concrete(SchemaId::from_raw(reader_children_key));
         b.schemas.push(Schema {
-            id: SchemaId(reader_node_key),
+            id: SchemaId::from_raw(reader_node_key),
             type_params: Vec::new(),
             kind: SchemaKind::Struct {
                 name: "CompatTree".to_string(),
@@ -1004,7 +1004,7 @@ fn build_cases(b: &mut Batch) -> Vec<PlannedCase> {
             },
         });
         b.schemas.push(Schema {
-            id: SchemaId(reader_children_key),
+            id: SchemaId::from_raw(reader_children_key),
             type_params: Vec::new(),
             kind: SchemaKind::List {
                 element: reader_node.clone(),
@@ -1111,7 +1111,7 @@ fn build_cases(b: &mut Batch) -> Vec<PlannedCase> {
 /// map. Primitive roots carry a real id already and pass through.
 fn resolve_root(r: &SchemaRef, key_to_real: &BTreeMap<u64, SchemaId>) -> SchemaId {
     match r {
-        SchemaRef::Concrete { id, .. } => key_to_real.get(&id.0).copied().unwrap_or(*id),
+        SchemaRef::Concrete { id, .. } => key_to_real.get(&id.as_u64()).copied().unwrap_or(*id),
         SchemaRef::Var { .. } => panic!("a case root cannot be a type variable"),
     }
 }
@@ -1125,7 +1125,7 @@ fn hex(bytes: &[u8]) -> String {
 }
 
 fn id_hex(id: SchemaId) -> String {
-    format!("{:016x}", id.0)
+    format!("{:016x}", id.as_u64())
 }
 
 // ============================================================================
@@ -1151,7 +1151,7 @@ fn main() -> Result<(), Box<dyn Error>> {
     // Resolve every composite schema together so ids are content-derived and
     // shared. We capture the provisional-key -> real-id map by zipping the input
     // and resolved batches (resolve_ids preserves order).
-    let provisional_keys: Vec<u64> = batch.schemas.iter().map(|s| s.id.0).collect();
+    let provisional_keys: Vec<u64> = batch.schemas.iter().map(|s| s.id.as_u64()).collect();
     let resolved = resolve_ids(batch.schemas);
     let mut key_to_real: BTreeMap<u64, SchemaId> = BTreeMap::new();
     for (key, schema) in provisional_keys.iter().zip(&resolved) {

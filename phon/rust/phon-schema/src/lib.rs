@@ -26,7 +26,7 @@ pub mod value {
 }
 
 pub use bytes::{DecodeError, Reader};
-pub use identity::{primitive_id, resolve_ids};
+pub use identity::{primitive_id, recursive_schema_ids, resolve_ids};
 pub use schema::{
     ChannelDirection, Field, Primitive, Schema, SchemaId, SchemaKind, SchemaRef, Variant,
     VariantPayload,

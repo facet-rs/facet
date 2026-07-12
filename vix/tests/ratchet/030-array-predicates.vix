@@ -1,0 +1,9 @@
+// Rung 030 — any, all, contains.
+#[test]
+fn array_predicates() -> Stream<Check> {
+    let xs = [2, 4, 6];
+    yield expect(xs.all(|n| n.rem(2) == 0));
+    yield expect(xs.any(|n| n > 5));
+    yield expect(xs.contains(4));
+    yield expect(!xs.contains(5));
+}

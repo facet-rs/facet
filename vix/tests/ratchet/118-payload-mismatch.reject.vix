@@ -1,0 +1,8 @@
+//! reject: pattern payload
+//! at: 6
+
+// Rung 118 — a pattern whose payload shape doesn't match the variant.
+enum Shape { Circle(Int) }
+fn f(s: Shape) -> Int {
+    match s { Shape::Circle(r, extra) => r }
+}

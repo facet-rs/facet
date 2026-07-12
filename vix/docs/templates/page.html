@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+
+{% block title %}{{ page.title }} - {{ config.title }}{% endblock %}
+
+{% block breadcrumb %}
+{% if section is defined and section %}<a href="{{ section.permalink }}">{{ section.title }}</a><span>›</span>{% endif %}<span>{{ page.title }}</span>
+{% endblock %}
+
+{% block content %}
+<article class="doc">
+    <header class="doc-header">
+        <h1>{{ page.title }}</h1>
+        {% set reading_minutes = (page.word_count + 219) // 220 %}
+        {% if reading_minutes < 1 %}{% set reading_minutes = 1 %}{% endif %}
+        <p class="doc-meta">{{ reading_minutes }} min read{% if page.last_updated %} · Updated <time data-timestamp="{{ page.last_updated }}">{{ page.last_updated }}</time>{% endif %}</p>
+    </header>
+    <div class="doc-body">
+        {{ page.content | safe }}
+    </div>
+    {% if page.previous or page.next %}
+    <nav class="doc-pagination" aria-label="Chapter navigation">
+        {% if page.previous %}
+        <a class="doc-page-link doc-page-link-prev" href="{{ page.previous.permalink }}" aria-label="Previous: {{ page.previous.title }}"><span>Previous</span><strong>{{ page.previous.title }}</strong></a>
+        {% else %}
+        <span></span>
+        {% endif %}
+        {% if page.next %}
+        <a class="doc-page-link doc-page-link-next" href="{{ page.next.permalink }}" aria-label="Next: {{ page.next.title }}"><span>Next</span><strong>{{ page.next.title }}</strong></a>
+        {% else %}
+        <span></span>
+        {% endif %}
+    </nav>
+    {% endif %}
+    {% if page.last_updated or (source is defined and source.edit_base and page.source_path) %}
+    <footer class="doc-footer">
+        {% if page.last_updated %}
+        <span>Updated <time data-timestamp="{{ page.last_updated }}">{{ page.last_updated }}</time></span>
+        {% endif %}
+        {% if source is defined and source.edit_base and page.source_path %}
+        <a class="doc-edit-link" href="{{ source.edit_base }}/{{ page.source_path }}">Edit on GitHub</a>
+        {% endif %}
+    </footer>
+    {% endif %}
+</article>
+{% endblock %}

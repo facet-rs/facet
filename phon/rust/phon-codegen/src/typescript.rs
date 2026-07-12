@@ -72,7 +72,12 @@ pub fn render_registry(module: &Module, name: &str) -> String {
 
     let _ = writeln!(out, "const {name}_PRIMITIVES: [string, Primitive][] = [");
     for &p in &PRIMITIVES {
-        let _ = writeln!(out, "  [\"{:016x}\", \"{}\"],", primitive_id(p).0, p.tag());
+        let _ = writeln!(
+            out,
+            "  [\"{:016x}\", \"{}\"],",
+            primitive_id(p).as_u64(),
+            p.tag()
+        );
     }
     out.push_str("];\n\n");
 
@@ -90,7 +95,10 @@ struct Renderer<'m> {
 
 impl<'m> Renderer<'m> {
     fn new(module: &'m Module) -> Self {
-        let prims = PRIMITIVES.iter().map(|&p| (primitive_id(p).0, p)).collect();
+        let prims = PRIMITIVES
+            .iter()
+            .map(|&p| (primitive_id(p).as_u64(), p))
+            .collect();
         Renderer { module, prims }
     }
 
@@ -123,7 +131,12 @@ impl<'m> Renderer<'m> {
 
         out.push_str("const PRIMITIVES: [string, Primitive][] = [\n");
         for &p in &PRIMITIVES {
-            let _ = writeln!(out, "  [\"{:016x}\", \"{}\"],", primitive_id(p).0, p.tag());
+            let _ = writeln!(
+                out,
+                "  [\"{:016x}\", \"{}\"],",
+                primitive_id(p).as_u64(),
+                p.tag()
+            );
         }
         out.push_str("];\n\n");
 
@@ -136,7 +149,12 @@ PRIMITIVES.map(([id, tag]) => ({ id: BigInt(`0x${id}`), tag })),\n);\n\n",
         // Per-root SchemaId constants (u64 as a bigint literal).
         out.push_str("export const schemaId = {\n");
         for root in &self.module.roots {
-            let _ = writeln!(out, "  {}: 0x{:016x}n,", ident(&root.name), root.id.0);
+            let _ = writeln!(
+                out,
+                "  {}: 0x{:016x}n,",
+                ident(&root.name),
+                root.id.as_u64()
+            );
         }
         out.push_str("} as const;\n");
 
@@ -207,7 +225,7 @@ PRIMITIVES.map(([id, tag]) => ({ id: BigInt(`0x${id}`), tag })),\n);\n\n",
             SchemaRef::Concrete { id, .. } => *id,
             SchemaRef::Var { name } => return format!("/* type var {name} */ unknown"),
         };
-        if let Some(p) = self.prims.get(&id.0) {
+        if let Some(p) = self.prims.get(&id.as_u64()) {
             return primitive_ts(*p).to_string();
         }
         let Some(schema) = self.module.schema(id) else {

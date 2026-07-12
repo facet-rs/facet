@@ -1,33 +1,46 @@
 #[cfg(feature = "jit")]
 use copypatch::extract::{Stencil, StencilN, compile_object, extract_stencil, extract_stencil_n};
-#[cfg(feature = "jit")]
 use std::{
     env, fs,
     path::{Path, PathBuf},
 };
 
+#[path = "build/jit_config.rs"]
+mod jit_config;
+
 #[cfg(feature = "jit")]
 const SYMBOLS: &[&str] = &["weavy_stencil_hostcall", "weavy_stencil_done"];
 
 fn main() {
-    #[cfg(feature = "jit")]
-    {
-        let out = PathBuf::from(env::var("OUT_DIR").unwrap());
-        let generated = out.join("weavy_stencils.rs");
-        let async_generated = out.join("weavy_async_stencils.rs");
-        let task_generated = out.join("weavy_task_stencils.rs");
-        let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
-        let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    println!("cargo::rustc-check-cfg=cfg(weavy_jit_active)");
+    println!("cargo::rerun-if-changed=build.rs");
+    println!("cargo::rerun-if-changed=build/jit_config.rs");
+    println!("cargo::rerun-if-env-changed=WEAVY_JIT");
 
-        if native_copy_patch_target(&target_os, &target_arch) {
-            emit_native(&out, &generated);
-            emit_async_native(&out, &async_generated);
-            emit_task_native(&out, &task_generated);
-        } else {
-            emit_empty(&generated);
-            emit_async_empty(&async_generated);
-            emit_task_empty(&task_generated);
-        }
+    let out = PathBuf::from(env::var("OUT_DIR").unwrap());
+    let generated = out.join("weavy_stencils.rs");
+    let async_generated = out.join("weavy_async_stencils.rs");
+    let task_generated = out.join("weavy_task_stencils.rs");
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    let target_arch = env::var("CARGO_CFG_TARGET_ARCH").unwrap_or_default();
+    let feature_jit = env::var_os("CARGO_FEATURE_JIT").is_some();
+    let policy_value = env::var("WEAVY_JIT").ok();
+    let policy = jit_config::parse_policy(policy_value.as_deref()).unwrap_or_else(|err| {
+        println!("cargo::error={err}");
+        panic!("{err}");
+    });
+
+    if jit_config::jit_active(feature_jit, policy, &target_os, &target_arch) {
+        println!("cargo::rustc-cfg=weavy_jit_active");
+        println!("cargo::metadata=jit=1");
+        emit_native(&out, &generated);
+        emit_async_native(&out, &async_generated);
+        emit_task_native(&out, &task_generated);
+    } else {
+        println!("cargo::metadata=jit=0");
+        emit_empty(&generated);
+        emit_async_empty(&async_generated);
+        emit_task_empty(&task_generated);
     }
 }
 
@@ -44,7 +57,6 @@ const ASYNC_SYMBOLS: &[&str] = &[
     "weavy_async_done",
 ];
 
-#[cfg(feature = "jit")]
 fn emit_async_empty(generated: &Path) {
     let mut s = String::new();
     for n in ["PUSH", "AWAIT", "ADD", "MUL", "DONE"] {
@@ -96,7 +108,11 @@ fn emit_async_native(out: &Path, generated: &Path) {
     fs::write(generated, s).unwrap();
 }
 
-#[cfg(feature = "jit")]
+#[cfg(not(feature = "jit"))]
+fn emit_async_native(_: &Path, _: &Path) {
+    unreachable!("Weavy native stencil extraction requires the jit feature")
+}
+
 fn emit_empty(generated: &Path) {
     fs::write(
         generated,
@@ -105,14 +121,6 @@ fn emit_empty(generated: &Path) {
          pub const DONE: &[u8] = &[];\n",
     )
     .unwrap();
-}
-
-#[cfg(feature = "jit")]
-fn native_copy_patch_target(target_os: &str, target_arch: &str) -> bool {
-    matches!(
-        (target_os, target_arch),
-        ("macos", "aarch64") | ("linux", "x86_64")
-    )
 }
 
 #[cfg(feature = "jit")]
@@ -147,6 +155,11 @@ fn emit_native(out: &Path, generated: &Path) {
     fs::write(generated, s).unwrap();
 }
 
+#[cfg(not(feature = "jit"))]
+fn emit_native(_: &Path, _: &Path) {
+    unreachable!("Weavy native stencil extraction requires the jit feature")
+}
+
 #[cfg(feature = "jit")]
 fn emit(out: &mut String, name: &str, doc: &str, stencil: &Stencil) {
     out.push_str(&format!(
@@ -169,10 +182,16 @@ fn emit_cont(out: &mut String, name: &str, of: &str, stencil: &Stencil) {
 /// guaranteed-tail-call discipline as the async lane.
 #[cfg(feature = "jit")]
 const TASK_SYMBOLS: &[&str] = &[
+    "weavy_task_copy_value",
+    "weavy_task_product_construct",
+    "weavy_task_enum_construct",
+    "weavy_task_enum_is_variant",
+    "weavy_task_enum_project_checked",
     "weavy_task_const",
     "weavy_task_add",
     "weavy_task_mul",
     "weavy_task_sub",
+    "weavy_task_div",
     "weavy_task_copy",
     "weavy_task_eq",
     "weavy_task_ne",
@@ -184,22 +203,57 @@ const TASK_SYMBOLS: &[&str] = &[
     "weavy_task_jump_if_zero",
     "weavy_task_load_ix",
     "weavy_task_store_ix",
+    "weavy_task_array_new",
+    "weavy_task_ordered_empty",
+    "weavy_task_ordered_begin_probe",
+    "weavy_task_ordered_probe_key",
+    "weavy_task_ordered_probe_value",
+    "weavy_task_ordered_begin_insert",
+    "weavy_task_ordered_insert_inspect",
+    "weavy_task_ordered_insert_advance",
+    "weavy_task_ordered_insert_commit",
+    "weavy_task_ordered_begin_iterate",
+    "weavy_task_ordered_iterate_row",
+    "weavy_task_ordered_len",
+    "weavy_task_ordered_status_is",
+    "weavy_task_array_store_word",
+    "weavy_task_load_array_word",
+    "weavy_task_load_array",
+    "weavy_task_load_array_len",
+    "weavy_task_array_status_is",
+    "weavy_task_compare_value_bytes",
+    "weavy_task_int_to_string",
+    "weavy_task_string_concat",
+    "weavy_task_string_contains",
+    "weavy_task_string_is_numeric",
+    "weavy_task_string_split_once",
+    "weavy_task_string_parse_int",
+    "weavy_task_string_status_is",
+    "weavy_task_publish",
     "weavy_task_await",
     "weavy_task_call",
     "weavy_task_ret",
     "weavy_task_add_f64",
     "weavy_task_mul_f64",
     "weavy_task_hostcall",
+    "weavy_task_hostcall_yield",
+    "weavy_task_env_box",
+    "weavy_task_env_load",
     "weavy_task_trace",
     "weavy_task_done",
 ];
 
-#[cfg(feature = "jit")]
 const TASK_NAMES: &[(&str, &str)] = &[
+    ("COPY_VALUE", "weavy_task_copy_value"),
+    ("PRODUCT_CONSTRUCT", "weavy_task_product_construct"),
+    ("ENUM_CONSTRUCT", "weavy_task_enum_construct"),
+    ("ENUM_IS_VARIANT", "weavy_task_enum_is_variant"),
+    ("ENUM_PROJECT_CHECKED", "weavy_task_enum_project_checked"),
     ("CONST", "weavy_task_const"),
     ("ADD", "weavy_task_add"),
     ("MUL", "weavy_task_mul"),
     ("SUB", "weavy_task_sub"),
+    ("DIV", "weavy_task_div"),
     ("COPY", "weavy_task_copy"),
     ("EQ", "weavy_task_eq"),
     ("NE", "weavy_task_ne"),
@@ -211,17 +265,54 @@ const TASK_NAMES: &[(&str, &str)] = &[
     ("JUMP_IF_ZERO", "weavy_task_jump_if_zero"),
     ("LOAD_IX", "weavy_task_load_ix"),
     ("STORE_IX", "weavy_task_store_ix"),
+    ("ARRAY_NEW", "weavy_task_array_new"),
+    ("ORDERED_EMPTY", "weavy_task_ordered_empty"),
+    ("ORDERED_BEGIN_PROBE", "weavy_task_ordered_begin_probe"),
+    ("ORDERED_PROBE_KEY", "weavy_task_ordered_probe_key"),
+    ("ORDERED_PROBE_VALUE", "weavy_task_ordered_probe_value"),
+    ("ORDERED_BEGIN_INSERT", "weavy_task_ordered_begin_insert"),
+    (
+        "ORDERED_INSERT_INSPECT",
+        "weavy_task_ordered_insert_inspect",
+    ),
+    (
+        "ORDERED_INSERT_ADVANCE",
+        "weavy_task_ordered_insert_advance",
+    ),
+    ("ORDERED_INSERT_COMMIT", "weavy_task_ordered_insert_commit"),
+    ("ORDERED_BEGIN_ITERATE", "weavy_task_ordered_begin_iterate"),
+    ("ORDERED_ITERATE_ROW", "weavy_task_ordered_iterate_row"),
+    ("ORDERED_LEN", "weavy_task_ordered_len"),
+    ("ORDERED_STATUS_IS", "weavy_task_ordered_status_is"),
+    ("ARRAY_STORE_WORD", "weavy_task_array_store_word"),
+    ("LOAD_ARRAY_WORD", "weavy_task_load_array_word"),
+    ("LOAD_ARRAY", "weavy_task_load_array"),
+    ("LOAD_ARRAY_LEN", "weavy_task_load_array_len"),
+    ("ARRAY_STATUS_IS", "weavy_task_array_status_is"),
+    ("INT_TO_STRING", "weavy_task_int_to_string"),
+    ("COMPARE_VALUE_BYTES", "weavy_task_compare_value_bytes"),
+    ("STRING_CONCAT", "weavy_task_string_concat"),
+    ("STRING_CONTAINS", "weavy_task_string_contains"),
+    ("STRING_IS_NUMERIC", "weavy_task_string_is_numeric"),
+    ("STRING_SPLIT_ONCE", "weavy_task_string_split_once"),
+    ("STRING_PARSE_INT", "weavy_task_string_parse_int"),
+    ("STRING_STATUS_IS", "weavy_task_string_status_is"),
+    ("BYTE_PROJECT", "weavy_task_byte_project"),
+    ("PATH_JOIN", "weavy_task_path_join"),
+    ("PUBLISH", "weavy_task_publish"),
     ("AWAIT", "weavy_task_await"),
     ("CALL", "weavy_task_call"),
     ("RET", "weavy_task_ret"),
     ("ADD_F64", "weavy_task_add_f64"),
     ("MUL_F64", "weavy_task_mul_f64"),
     ("HOSTCALL", "weavy_task_hostcall"),
+    ("HOSTCALL_YIELD", "weavy_task_hostcall_yield"),
+    ("ENV_BOX", "weavy_task_env_box"),
+    ("ENV_LOAD", "weavy_task_env_load"),
     ("TRACE", "weavy_task_trace"),
     ("DONE", "weavy_task_done"),
 ];
 
-#[cfg(feature = "jit")]
 fn emit_task_empty(generated: &Path) {
     let mut s = String::new();
     for (n, _) in TASK_NAMES {
@@ -275,6 +366,11 @@ fn emit_task_native(out: &Path, generated: &Path) {
         }
     }
     fs::write(generated, s).unwrap();
+}
+
+#[cfg(not(feature = "jit"))]
+fn emit_task_native(_: &Path, _: &Path) {
+    unreachable!("Weavy native stencil extraction requires the jit feature")
 }
 
 #[cfg(feature = "jit")]

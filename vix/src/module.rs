@@ -1,6 +1,10 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::hash::{DefaultHasher, Hash, Hasher};
+use std::hash::{BuildHasher, Hasher};
 
+use taxon::{
+    Field as TaxonField, Kind, Primitive, Schema, SchemaId, SchemaRef, Variant as TaxonVariant,
+    VariantPayload,
+};
 use weavy::mem::declared as declared_mem;
 use weavy::mem::{Access, Descriptor, Layout};
 
@@ -27,17 +31,93 @@ pub(crate) struct StructInfo {
     pub(crate) is_unit: bool,
 }
 
+pub(crate) type VixDescriptor = Descriptor<SchemaRef>;
+
+#[derive(Clone, Default)]
+pub(crate) struct DescriptorMap {
+    by_ref: HashMap<SchemaRef, VixDescriptor>,
+    legacy_names: HashMap<String, SchemaRef>,
+}
+
+impl DescriptorMap {
+    pub(crate) fn new() -> Self {
+        Self::default()
+    }
+
+    pub(crate) fn insert_with_key(
+        &mut self,
+        name: impl Into<String>,
+        key: SchemaRef,
+        descriptor: VixDescriptor,
+    ) -> Option<VixDescriptor> {
+        self.legacy_names.insert(name.into(), key.clone());
+        self.by_ref.insert(key, descriptor)
+    }
+
+    pub(crate) fn insert_named(
+        &mut self,
+        schemas: &SchemaTables,
+        name: &str,
+        descriptor: VixDescriptor,
+    ) -> Option<VixDescriptor> {
+        self.insert_with_key(
+            name.to_string(),
+            schemas.descriptor_key_for_name(name),
+            descriptor,
+        )
+    }
+
+    pub(crate) fn insert_named_if_absent(
+        &mut self,
+        schemas: &SchemaTables,
+        name: &str,
+        descriptor: impl FnOnce() -> VixDescriptor,
+    ) {
+        if !self.contains_key(name) {
+            self.insert_named(schemas, name, descriptor());
+        }
+    }
+
+    pub(crate) fn get(&self, name: &str) -> Option<&VixDescriptor> {
+        self.legacy_names
+            .get(name)
+            .and_then(|key| self.by_ref.get(key))
+    }
+
+    pub(crate) fn contains_key(&self, name: &str) -> bool {
+        self.legacy_names
+            .get(name)
+            .is_some_and(|key| self.by_ref.contains_key(key))
+    }
+
+    pub(crate) fn keys(&self) -> impl Iterator<Item = &String> {
+        self.legacy_names.keys()
+    }
+
+    pub(crate) fn values(&self) -> impl Iterator<Item = &VixDescriptor> {
+        self.by_ref.values()
+    }
+}
+
 pub(crate) struct ModuleTables {
     pub(crate) fns: HashMap<String, ast::FnItem>,
     pub(crate) fn_modules: HashMap<String, String>,
     pub(crate) fn_hashes: HashMap<String, u64>,
     pub(crate) enums: HashMap<String, EnumInfo>,
     pub(crate) structs: HashMap<String, StructInfo>,
-    pub(crate) descriptors: HashMap<String, Descriptor<String>>,
+    pub(crate) descriptors: DescriptorMap,
+    pub(crate) schemas: SchemaTables,
     modules: BTreeMap<String, ModuleInfo>,
 }
 
 impl ModuleTables {
+    pub(crate) fn has_schema(&self, name: &str) -> bool {
+        let Some(SchemaRef::Concrete { id, .. }) = self.schemas.ref_for_name(name) else {
+            return false;
+        };
+        self.schemas.schema(*id).is_some() && self.schemas.display_name(*id).is_some()
+    }
+
     pub(crate) fn resolve_fn(&self, module: &str, name: &str) -> Option<&str> {
         let info = self.modules.get(module)?;
         if let Some(local) = info.fns.get(name) {
@@ -54,6 +134,446 @@ impl ModuleTables {
         }
         let imported = info.imports.get(name)?;
         (imported.kind == ImportKind::Type).then_some(imported.module.as_str())
+    }
+}
+
+#[derive(Clone)]
+pub(crate) struct SchemaTables {
+    by_name: HashMap<String, SchemaRef>,
+    by_id: SchemaIdMap<Schema>,
+    display_names: SchemaIdMap<String>,
+    frame_names: SchemaIdMap<String>,
+}
+
+type SchemaIdMap<T> = HashMap<SchemaId, T, SchemaIdBuildHasher>;
+
+#[derive(Clone, Default)]
+struct SchemaIdBuildHasher;
+
+#[derive(Default)]
+struct SchemaIdHasher {
+    value: u64,
+}
+
+impl BuildHasher for SchemaIdBuildHasher {
+    type Hasher = SchemaIdHasher;
+
+    fn build_hasher(&self) -> Self::Hasher {
+        SchemaIdHasher::default()
+    }
+}
+
+impl Hasher for SchemaIdHasher {
+    fn finish(&self) -> u64 {
+        self.value
+    }
+
+    fn write(&mut self, bytes: &[u8]) {
+        for chunk in bytes.chunks(8) {
+            let mut word = [0u8; 8];
+            word[..chunk.len()].copy_from_slice(chunk);
+            self.value ^= u64::from_le_bytes(word);
+        }
+    }
+
+    fn write_u64(&mut self, value: u64) {
+        self.value = value;
+    }
+}
+
+impl SchemaTables {
+    pub(crate) fn empty() -> Self {
+        Self {
+            by_name: HashMap::new(),
+            by_id: SchemaIdMap::default(),
+            display_names: SchemaIdMap::default(),
+            frame_names: SchemaIdMap::default(),
+        }
+    }
+
+    pub(crate) fn ref_for_name(&self, name: &str) -> Option<&SchemaRef> {
+        self.by_name.get(name)
+    }
+
+    pub(crate) fn schema(&self, id: SchemaId) -> Option<&Schema> {
+        self.by_id.get(&id)
+    }
+
+    pub(crate) fn display_name(&self, id: SchemaId) -> Option<&str> {
+        self.display_names.get(&id).map(String::as_str)
+    }
+
+    pub(crate) fn frame_id_for_name(&self, name: &str) -> SchemaId {
+        if self.by_name.contains_key(name)
+            && let SchemaRef::Concrete { id, .. } = self.legacy_ref(name)
+        {
+            return id;
+        }
+        legacy_marker_schema_id(name)
+    }
+
+    pub(crate) fn frame_word_for_name(&self, name: &str) -> i64 {
+        i64::from_le_bytes(self.frame_id_for_name(name).as_u64().to_le_bytes())
+    }
+
+    pub(crate) fn name_for_frame_word(&self, word: i64) -> Option<&str> {
+        let id = SchemaId::from_raw(u64::from_le_bytes(word.to_le_bytes()));
+        self.frame_names
+            .get(&id)
+            .or_else(|| self.display_names.get(&id))
+            .map(String::as_str)
+    }
+
+    pub(crate) fn register_frame_names(&mut self, names: impl IntoIterator<Item = String>) {
+        for name in names {
+            self.frame_names
+                .entry(self.frame_id_for_name(&name))
+                .or_insert(name);
+        }
+        for (id, name) in &self.display_names {
+            self.frame_names.entry(*id).or_insert_with(|| name.clone());
+        }
+    }
+
+    pub(crate) fn legacy_ref(&self, name: &str) -> SchemaRef {
+        if let Some(schema_ref) = self.by_name.get(name) {
+            return schema_ref.clone();
+        }
+        if let Some((base, args)) = legacy_generic_schema(name) {
+            let args = args.iter().map(|arg| self.legacy_ref(arg)).collect();
+            if base == "Tuple" {
+                return self
+                    .by_id
+                    .values()
+                    .find_map(|schema| match &schema.kind {
+                        Kind::Tuple { elements } if *elements == args => {
+                            Some(SchemaRef::concrete(schema.id))
+                        }
+                        _ => None,
+                    })
+                    .unwrap_or_else(|| SchemaRef::var(name));
+            }
+            if matches!(base, "Array" | "List" | "Map" | "Option")
+                && let Some(SchemaRef::Concrete { id, .. }) = self.by_name.get(base)
+            {
+                return SchemaRef::generic(*id, args);
+            }
+        }
+        SchemaRef::var(name)
+    }
+
+    pub(crate) fn descriptor_key_for_name(&self, name: &str) -> SchemaRef {
+        match self.legacy_ref(name) {
+            SchemaRef::Concrete { id, args } => SchemaRef::Concrete { id, args },
+            SchemaRef::Var { .. } => SchemaRef::concrete(legacy_marker_schema_id(name)),
+        }
+    }
+
+    pub(crate) fn display_ref(&self, schema_ref: &SchemaRef) -> String {
+        match schema_ref {
+            SchemaRef::Var { name } => name.clone(),
+            SchemaRef::Concrete { id, args } => {
+                let base = self
+                    .display_name(*id)
+                    .map(str::to_string)
+                    .unwrap_or_else(|| id.to_string());
+                if args.is_empty() {
+                    base
+                } else {
+                    let args = args
+                        .iter()
+                        .map(|arg| self.display_ref(arg))
+                        .collect::<Vec<_>>();
+                    format!("{base}<{}>", args.join(","))
+                }
+            }
+        }
+    }
+
+    pub(crate) fn kind_for_ref(&self, schema_ref: &SchemaRef) -> Option<&Kind> {
+        let SchemaRef::Concrete { id, .. } = schema_ref else {
+            return None;
+        };
+        self.schema(*id).map(|schema| &schema.kind)
+    }
+
+    pub(crate) fn kind_for_name(&self, name: &str) -> Option<&Kind> {
+        self.kind_for_ref(&self.legacy_ref(name))
+    }
+
+    pub(crate) fn is_primitive(&self, name: &str, primitive: Primitive) -> bool {
+        matches!(
+            self.kind_for_name(name),
+            Some(Kind::Primitive(candidate)) if *candidate == primitive
+        )
+    }
+
+    pub(crate) fn is_list(&self, name: &str) -> bool {
+        matches!(self.kind_for_name(name), Some(Kind::List { .. }))
+    }
+
+    pub(crate) fn is_map(&self, name: &str) -> bool {
+        matches!(self.kind_for_name(name), Some(Kind::Map { .. }))
+    }
+
+    pub(crate) fn is_option(&self, name: &str) -> bool {
+        matches!(self.kind_for_name(name), Some(Kind::Option { .. }))
+    }
+
+    pub(crate) fn is_struct_or_enum(&self, name: &str) -> bool {
+        matches!(
+            self.kind_for_name(name),
+            Some(Kind::Struct { .. } | Kind::Enum { .. })
+        )
+    }
+
+    pub(crate) fn is_external(&self, name: &str, external_kind: &str) -> bool {
+        let namespaced = format!("vix.{external_kind}");
+        matches!(
+            self.kind_for_name(name),
+            Some(Kind::External { kind, .. }) if kind == external_kind || kind == &namespaced
+        )
+    }
+
+    pub(crate) fn is_named_schema(&self, name: &str, expected: &str) -> bool {
+        match self.kind_for_name(name) {
+            Some(Kind::Struct { name, .. } | Kind::Enum { name, .. }) => name == expected,
+            Some(Kind::External { kind, .. }) => {
+                let namespaced = format!("vix.{expected}");
+                kind == expected || kind == &namespaced
+            }
+            _ => self
+                .ref_for_name(expected)
+                .is_some_and(|expected_ref| *expected_ref == self.legacy_ref(name)),
+        }
+    }
+
+    pub(crate) fn generic_arg_names(&self, name: &str) -> Option<Vec<String>> {
+        match self.legacy_ref(name) {
+            SchemaRef::Concrete { args, .. } => Some(
+                args.iter()
+                    .map(|arg| self.display_ref(arg))
+                    .collect::<Vec<_>>(),
+            ),
+            SchemaRef::Var { .. } => None,
+        }
+    }
+
+    pub(crate) fn map_schema_names(&self, name: &str) -> Option<(String, String)> {
+        if !self.is_map(name) {
+            return None;
+        }
+        let args = self.generic_arg_names(name)?;
+        let [key, value]: [String; 2] = args.try_into().ok()?;
+        Some((key, value))
+    }
+
+    pub(crate) fn option_value_schema_name(&self, name: &str) -> Option<String> {
+        if !self.is_option(name) {
+            return None;
+        }
+        let args = self.generic_arg_names(name)?;
+        let [value]: [String; 1] = args.try_into().ok()?;
+        Some(value)
+    }
+}
+
+struct PendingSchema {
+    name: Option<String>,
+    schema: Schema,
+}
+
+struct SchemaBuilder {
+    next_key: u64,
+    keys: HashMap<String, SchemaId>,
+    defined: BTreeSet<String>,
+    batch: Vec<PendingSchema>,
+}
+
+impl SchemaBuilder {
+    fn new() -> Self {
+        Self {
+            next_key: 1,
+            keys: HashMap::new(),
+            defined: BTreeSet::new(),
+            batch: Vec::new(),
+        }
+    }
+
+    fn reserve_named(&mut self, name: &str) -> SchemaId {
+        if let Some(id) = self.keys.get(name) {
+            return *id;
+        }
+        let id = SchemaId::from_raw(self.next_key);
+        self.next_key += 1;
+        self.keys.insert(name.to_string(), id);
+        id
+    }
+
+    fn named_ref(&self, name: &str) -> Result<SchemaRef, String> {
+        self.keys
+            .get(name)
+            .copied()
+            .map(SchemaRef::concrete)
+            .ok_or_else(|| format!("unknown type `{name}`"))
+    }
+
+    fn generic_ref(&self, name: &str, args: Vec<SchemaRef>) -> Result<SchemaRef, String> {
+        let id = self
+            .keys
+            .get(name)
+            .copied()
+            .ok_or_else(|| format!("unknown generic type `{name}`"))?;
+        Ok(SchemaRef::generic(id, args))
+    }
+
+    fn add_named(
+        &mut self,
+        name: &str,
+        type_params: Vec<String>,
+        kind: Kind,
+    ) -> Result<(), String> {
+        let id = self.reserve_named(name);
+        if !self.defined.insert(name.to_string()) {
+            return Err(format!("duplicate schema model entry `{name}`"));
+        }
+        self.batch.push(PendingSchema {
+            name: Some(name.to_string()),
+            schema: Schema {
+                id,
+                type_params,
+                kind,
+            },
+        });
+        Ok(())
+    }
+
+    fn add_builtin_if_absent(
+        &mut self,
+        name: &str,
+        type_params: Vec<String>,
+        kind: impl FnOnce(&mut Self) -> Result<Kind, String>,
+    ) -> Result<(), String> {
+        if self.keys.contains_key(name) {
+            return Ok(());
+        }
+        self.reserve_named(name);
+        let kind = kind(self)?;
+        self.add_named(name, type_params, kind)
+    }
+
+    fn add_tuple(&mut self, elements: Vec<SchemaRef>) -> SchemaRef {
+        let id = SchemaId::from_raw(self.next_key);
+        self.next_key += 1;
+        self.batch.push(PendingSchema {
+            name: None,
+            schema: Schema {
+                id,
+                type_params: Vec::new(),
+                kind: Kind::Tuple { elements },
+            },
+        });
+        SchemaRef::concrete(id)
+    }
+
+    fn type_ref(
+        &mut self,
+        ty: &ast::Type,
+        type_params: &BTreeSet<String>,
+    ) -> Result<SchemaRef, String> {
+        match ty {
+            ast::Type::Path(path) => {
+                let name = type_path_schema_name(path)?;
+                if type_params.contains(&name) {
+                    return Ok(SchemaRef::var(name));
+                }
+                self.named_ref(&name)
+            }
+            ast::Type::Generic(generic) => {
+                let base = type_path_schema_name(&generic.base)?;
+                if type_params.contains(&base) {
+                    return Err(format!(
+                        "generic type parameter `{base}` cannot take arguments"
+                    ));
+                }
+                let args = generic
+                    .args
+                    .iter()
+                    .map(|arg| self.type_ref(arg, type_params))
+                    .collect::<Result<Vec<_>, _>>()?;
+                match base.as_str() {
+                    "Map" => {
+                        if args.len() != 2 {
+                            return Err("Map expects two type arguments".into());
+                        }
+                        self.generic_ref("Map", args)
+                    }
+                    "Option" => {
+                        if args.len() != 1 {
+                            return Err("Option expects one type argument".into());
+                        }
+                        self.generic_ref("Option", args)
+                    }
+                    "Array" | "List" => {
+                        if args.len() != 1 {
+                            return Err(format!("{base} expects one type argument"));
+                        }
+                        self.generic_ref("Array", args)
+                    }
+                    "Tuple" => Ok(self.add_tuple(args)),
+                    "Pending" | "Realized" => {
+                        let [inner]: [SchemaRef; 1] = args
+                            .try_into()
+                            .map_err(|_| format!("{base} expects one type argument"))?;
+                        Ok(inner)
+                    }
+                    _ => self.generic_ref(&base, args),
+                }
+            }
+            ast::Type::Array(array) => {
+                let element = self.type_ref(&array.elem, type_params)?;
+                self.generic_ref("Array", vec![element])
+            }
+            ast::Type::Tuple(tuple) => {
+                let elements = tuple
+                    .elems
+                    .iter()
+                    .map(|elem| self.type_ref(elem, type_params))
+                    .collect::<Result<Vec<_>, _>>()?;
+                Ok(self.add_tuple(elements))
+            }
+            ast::Type::Fn(_) => self.named_ref("Fn"),
+        }
+    }
+
+    fn finish(self) -> SchemaTables {
+        let pending = self.batch;
+        let names = pending
+            .iter()
+            .map(|schema| schema.name.clone())
+            .collect::<Vec<_>>();
+        let resolved = taxon::resolve_ids(
+            pending
+                .into_iter()
+                .map(|pending| pending.schema)
+                .collect::<Vec<_>>(),
+        );
+        let mut by_name = HashMap::new();
+        let mut by_id = SchemaIdMap::default();
+        let mut display_names = SchemaIdMap::default();
+        for (name, schema) in names.into_iter().zip(resolved) {
+            if let Some(name) = name {
+                by_name.insert(name.clone(), SchemaRef::concrete(schema.id));
+                display_names.entry(schema.id).or_insert(name);
+            }
+            by_id.insert(schema.id, schema);
+        }
+        SchemaTables {
+            by_name,
+            by_id,
+            display_names,
+            frame_names: SchemaIdMap::default(),
+        }
     }
 }
 
@@ -205,7 +725,8 @@ pub(crate) fn load_module_tables_from_modules(
             .insert(imported_name.clone(), resolved);
     }
 
-    let descriptors = declared_descriptors(&files)?;
+    let schemas = schema_tables(&files)?;
+    let descriptors = declared_descriptors(&files, &schemas)?;
     let fn_hashes = closure_fn_hashes(
         &bindings,
         &bare_fn_hashes,
@@ -223,8 +744,346 @@ pub(crate) fn load_module_tables_from_modules(
         enums,
         structs,
         descriptors,
+        schemas,
         modules: module_infos,
     })
+}
+
+fn schema_tables(files: &BTreeMap<String, SourceFile>) -> Result<SchemaTables, String> {
+    let mut builder = SchemaBuilder::new();
+    for file in files.values() {
+        for item in &file.items {
+            match item {
+                Item::Struct(s) => {
+                    builder.reserve_named(&s.name.value);
+                }
+                Item::Enum(e) => {
+                    builder.reserve_named(&e.name.value);
+                }
+                Item::Fn(_) | Item::Use(_) => {}
+            }
+        }
+    }
+
+    add_builtin_schemas(&mut builder)?;
+    for file in files.values() {
+        for item in &file.items {
+            match item {
+                Item::Struct(s) => add_struct_schema(&mut builder, s)?,
+                Item::Enum(e) => add_enum_schema(&mut builder, e)?,
+                Item::Fn(_) | Item::Use(_) => {}
+            }
+        }
+    }
+    Ok(builder.finish())
+}
+
+fn add_builtin_schemas(builder: &mut SchemaBuilder) -> Result<(), String> {
+    builder.add_builtin_if_absent("Int", Vec::new(), |_| Ok(Kind::Primitive(Primitive::I64)))?;
+    builder.add_builtin_if_absent("Float", Vec::new(), |_| Ok(Kind::Primitive(Primitive::F64)))?;
+    builder.add_builtin_if_absent("Bool", Vec::new(), |_| Ok(Kind::Primitive(Primitive::Bool)))?;
+    builder.add_builtin_if_absent("String", Vec::new(), |_| {
+        Ok(Kind::Primitive(Primitive::String))
+    })?;
+    builder.add_builtin_if_absent("Blob", Vec::new(), |_| {
+        Ok(Kind::Primitive(Primitive::Bytes))
+    })?;
+    for name in ["Path", "Flag", "Template", "Sealed", "Tree", "Fn"] {
+        builder.add_builtin_if_absent(name, Vec::new(), |builder| {
+            Ok(external_schema_kind(builder, name))
+        })?;
+    }
+
+    builder.add_builtin_if_absent("Array", vec!["T".into()], |_| {
+        Ok(Kind::List {
+            element: SchemaRef::var("T"),
+        })
+    })?;
+    builder.add_builtin_if_absent("Map", vec!["K".into(), "V".into()], |_| {
+        Ok(Kind::Map {
+            key: SchemaRef::var("K"),
+            value: SchemaRef::var("V"),
+        })
+    })?;
+    builder.add_builtin_if_absent("Option", vec!["T".into()], |_| {
+        Ok(Kind::Option {
+            element: SchemaRef::var("T"),
+        })
+    })?;
+
+    builder.add_builtin_if_absent("Os", Vec::new(), |_| {
+        Ok(Kind::Enum {
+            name: "Os".into(),
+            variants: unit_variants(["Linux", "Macos", "Windows"]),
+        })
+    })?;
+    builder.add_builtin_if_absent("Arch", Vec::new(), |_| {
+        Ok(Kind::Enum {
+            name: "Arch".into(),
+            variants: unit_variants(["X86_64", "Aarch64", "Arm", "Riscv64", "Wasm32", "Unknown"]),
+        })
+    })?;
+    builder.add_builtin_if_absent("Target", Vec::new(), |builder| {
+        Ok(Kind::Struct {
+            name: "Target".into(),
+            fields: vec![
+                taxon_field("os", builder.named_ref("Os")?, true),
+                taxon_field("arch", builder.named_ref("Arch")?, true),
+            ],
+        })
+    })?;
+    builder.add_builtin_if_absent("Run", Vec::new(), |builder| {
+        Ok(Kind::Struct {
+            name: "Run".into(),
+            fields: vec![
+                taxon_field("ok", builder.named_ref("Int")?, true),
+                taxon_field("out", builder.named_ref("Tree")?, true),
+            ],
+        })
+    })?;
+    builder.add_builtin_if_absent("Arg", Vec::new(), |builder| {
+        Ok(Kind::Enum {
+            name: "Arg".into(),
+            variants: vec![
+                taxon_variant(
+                    "Str",
+                    0,
+                    VariantPayload::Newtype(builder.named_ref("String")?),
+                ),
+                taxon_variant(
+                    "Path",
+                    1,
+                    VariantPayload::Newtype(builder.named_ref("Path")?),
+                ),
+                taxon_variant(
+                    "Interpolation",
+                    2,
+                    VariantPayload::Struct(vec![
+                        taxon_field("tree", builder.named_ref("Tree")?, true),
+                        taxon_field("subpath", builder.named_ref("Path")?, true),
+                    ]),
+                ),
+            ],
+        })
+    })?;
+    builder.add_builtin_if_absent("Doc", Vec::new(), |builder| {
+        let doc = builder.named_ref("Doc")?;
+        let string = builder.named_ref("String")?;
+        let array_doc = builder.generic_ref("Array", vec![doc.clone()])?;
+        let map_string_doc = builder.generic_ref("Map", vec![string.clone(), doc.clone()])?;
+        Ok(Kind::Enum {
+            name: "Doc".into(),
+            variants: vec![
+                taxon_variant("Null", 0, VariantPayload::Unit),
+                taxon_variant(
+                    "Bool",
+                    1,
+                    VariantPayload::Newtype(builder.named_ref("Bool")?),
+                ),
+                taxon_variant("Int", 2, VariantPayload::Newtype(builder.named_ref("Int")?)),
+                taxon_variant(
+                    "Float",
+                    3,
+                    VariantPayload::Newtype(builder.named_ref("Float")?),
+                ),
+                taxon_variant("String", 4, VariantPayload::Newtype(string.clone())),
+                taxon_variant("Array", 5, VariantPayload::Newtype(array_doc)),
+                taxon_variant("Map", 6, VariantPayload::Newtype(map_string_doc)),
+                taxon_variant("Virtual", 7, VariantPayload::Newtype(string)),
+                taxon_variant(
+                    "Blob",
+                    8,
+                    VariantPayload::Newtype(builder.named_ref("Blob")?),
+                ),
+            ],
+        })
+    })?;
+    for name in ["Cc", "Ar", "Rustc", "Version", "VersionSet", "Ordering"] {
+        builder.add_builtin_if_absent(name, Vec::new(), |builder| {
+            Ok(external_schema_kind(builder, name))
+        })?;
+    }
+    Ok(())
+}
+
+fn add_struct_schema(builder: &mut SchemaBuilder, item: &StructItem) -> Result<(), String> {
+    let type_params = generic_param_names(&item.generics);
+    let type_param_scope = type_params.iter().cloned().collect::<BTreeSet<_>>();
+    let fields = if let Some(fields) = &item.fields {
+        fields
+            .fields
+            .iter()
+            .map(|field| {
+                Ok(taxon_field(
+                    &field.name.value,
+                    builder.type_ref(&field.ty, &type_param_scope)?,
+                    field.default.is_none(),
+                ))
+            })
+            .collect::<Result<Vec<_>, String>>()?
+    } else if let Some(tuple) = &item.tuple {
+        tuple
+            .types
+            .iter()
+            .enumerate()
+            .map(|(index, ty)| {
+                Ok(taxon_field(
+                    index.to_string(),
+                    builder.type_ref(ty, &type_param_scope)?,
+                    true,
+                ))
+            })
+            .collect::<Result<Vec<_>, String>>()?
+    } else {
+        Vec::new()
+    };
+    builder.add_named(
+        &item.name.value,
+        type_params,
+        Kind::Struct {
+            name: item.name.value.clone(),
+            fields,
+        },
+    )
+}
+
+fn add_enum_schema(builder: &mut SchemaBuilder, item: &EnumItem) -> Result<(), String> {
+    let type_params = generic_param_names(&item.generics);
+    let type_param_scope = type_params.iter().cloned().collect::<BTreeSet<_>>();
+    let variants = item
+        .variants
+        .iter()
+        .enumerate()
+        .map(|(index, variant)| {
+            let payload = if let Some(tuple) = &variant.tuple {
+                VariantPayload::Tuple(
+                    tuple
+                        .types
+                        .iter()
+                        .map(|ty| builder.type_ref(ty, &type_param_scope))
+                        .collect::<Result<Vec<_>, _>>()?,
+                )
+            } else if let Some(fields) = &variant.fields {
+                VariantPayload::Struct(
+                    fields
+                        .fields
+                        .iter()
+                        .map(|field| {
+                            Ok(taxon_field(
+                                &field.name.value,
+                                builder.type_ref(&field.ty, &type_param_scope)?,
+                                field.default.is_none(),
+                            ))
+                        })
+                        .collect::<Result<Vec<_>, String>>()?,
+                )
+            } else {
+                VariantPayload::Unit
+            };
+            Ok(taxon_variant(
+                &variant.name.value,
+                u32::try_from(index).expect("variant count fits u32"),
+                payload,
+            ))
+        })
+        .collect::<Result<Vec<_>, String>>()?;
+    builder.add_named(
+        &item.name.value,
+        type_params,
+        Kind::Enum {
+            name: item.name.value.clone(),
+            variants,
+        },
+    )
+}
+
+fn external_schema_kind(_builder: &SchemaBuilder, name: &str) -> Kind {
+    Kind::External {
+        kind: format!("vix.{name}"),
+        metadata: None,
+    }
+}
+
+fn taxon_field(name: impl Into<String>, schema: SchemaRef, required: bool) -> TaxonField {
+    TaxonField {
+        name: name.into(),
+        schema,
+        required,
+    }
+}
+
+fn taxon_variant(name: impl Into<String>, index: u32, payload: VariantPayload) -> TaxonVariant {
+    TaxonVariant {
+        name: name.into(),
+        index,
+        payload,
+    }
+}
+
+fn unit_variants<const N: usize>(names: [&str; N]) -> Vec<TaxonVariant> {
+    names
+        .into_iter()
+        .enumerate()
+        .map(|(index, name)| {
+            taxon_variant(
+                name,
+                u32::try_from(index).expect("variant count fits u32"),
+                VariantPayload::Unit,
+            )
+        })
+        .collect()
+}
+
+fn generic_param_names(generics: &Option<ast::GenericParams>) -> Vec<String> {
+    generics
+        .as_ref()
+        .map(|generics| {
+            generics
+                .params
+                .iter()
+                .map(|param| param.value.clone())
+                .collect()
+        })
+        .unwrap_or_default()
+}
+
+fn legacy_generic_schema(schema: &str) -> Option<(&str, Vec<String>)> {
+    let (base, rest) = schema.split_once('<')?;
+    let args = rest.strip_suffix('>')?;
+    let mut parts = Vec::new();
+    let mut start = 0;
+    let mut depth = 0usize;
+    for (index, byte) in args.bytes().enumerate() {
+        match byte {
+            b'<' => depth += 1,
+            b'>' => depth = depth.saturating_sub(1),
+            b',' if depth == 0 => {
+                parts.push(args[start..index].to_string());
+                start = index + 1;
+            }
+            _ => {}
+        }
+    }
+    parts.push(args[start..].to_string());
+    Some((base, parts))
+}
+
+pub(crate) fn legacy_marker_schema_id(name: &str) -> SchemaId {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"vix-legacy-schema-marker");
+    hasher.update(
+        &i64::try_from(name.len())
+            .expect("schema marker name length fits i64")
+            .to_le_bytes(),
+    );
+    hasher.update(name.as_bytes());
+    let digest = hasher.finalize();
+    let mut first8 = [0u8; 8];
+    first8.copy_from_slice(&digest.as_bytes()[..8]);
+    // This is only the stable marker for legacy generic/wrapper frame names
+    // that are not concrete taxon schemas; it is not taxon's canonical
+    // structural schema encoding.
+    SchemaId::from_raw(u64::from_le_bytes(first8))
 }
 
 pub(crate) fn type_schema_name(ty: &ast::Type) -> Result<String, String> {
@@ -239,7 +1098,7 @@ pub(crate) fn type_schema_name(ty: &ast::Type) -> Result<String, String> {
                 .collect::<Result<Vec<_>, _>>()?;
             Ok(format!("{base}<{}>", args.join(",")))
         }
-        ast::Type::Array(_) => Ok("Array".into()),
+        ast::Type::Array(array) => Ok(format!("Array<{}>", type_schema_name(&array.elem)?)),
         ast::Type::Tuple(tuple) => {
             let elems = tuple
                 .elems
@@ -307,11 +1166,27 @@ fn insert_unique_span(
 
 fn declared_descriptors(
     files: &BTreeMap<String, SourceFile>,
-) -> Result<HashMap<String, Descriptor<String>>, String> {
-    let mut descriptors = HashMap::new();
-    descriptors.insert("Int".into(), declared_mem::i64_("Int".into()));
-    descriptors.insert("Float".into(), declared_mem::f64_("Float".into()));
-    descriptors.insert("Bool".into(), declared_mem::i64_("Bool".into()));
+    schemas: &SchemaTables,
+) -> Result<DescriptorMap, String> {
+    let mut descriptors = DescriptorMap::new();
+    insert_descriptor(
+        schemas,
+        &mut descriptors,
+        "Int",
+        declared_mem::i64_(schemas.legacy_ref("Int")),
+    );
+    insert_descriptor(
+        schemas,
+        &mut descriptors,
+        "Float",
+        declared_mem::f64_(schemas.legacy_ref("Float")),
+    );
+    insert_descriptor(
+        schemas,
+        &mut descriptors,
+        "Bool",
+        declared_mem::i64_(schemas.legacy_ref("Bool")),
+    );
 
     for file in files.values() {
         for item in &file.items {
@@ -321,20 +1196,22 @@ fn declared_descriptors(
                         fields
                             .fields
                             .iter()
-                            .map(|field| descriptor_for_type(&field.ty))
+                            .map(|field| descriptor_for_type(schemas, &field.ty))
                             .collect::<Result<Vec<_>, _>>()?
                     } else if let Some(tuple) = &s.tuple {
                         tuple
                             .types
                             .iter()
-                            .map(descriptor_for_type)
+                            .map(|ty| descriptor_for_type(schemas, ty))
                             .collect::<Result<Vec<_>, _>>()?
                     } else {
                         Vec::new()
                     };
-                    descriptors.insert(
-                        s.name.value.clone(),
-                        declared_mem::declared_struct(s.name.value.clone(), fields),
+                    insert_descriptor(
+                        schemas,
+                        &mut descriptors,
+                        &s.name.value,
+                        declared_mem::declared_struct(schemas.legacy_ref(&s.name.value), fields),
                     );
                 }
                 Item::Enum(e) => {
@@ -346,22 +1223,24 @@ fn declared_descriptors(
                                 tuple
                                     .types
                                     .iter()
-                                    .map(descriptor_for_type)
+                                    .map(|ty| descriptor_for_type(schemas, ty))
                                     .collect::<Result<Vec<_>, _>>()
                             } else if let Some(fields) = &variant.fields {
                                 fields
                                     .fields
                                     .iter()
-                                    .map(|field| descriptor_for_type(&field.ty))
+                                    .map(|field| descriptor_for_type(schemas, &field.ty))
                                     .collect::<Result<Vec<_>, _>>()
                             } else {
                                 Ok(Vec::new())
                             }
                         })
                         .collect::<Result<Vec<_>, _>>()?;
-                    descriptors.insert(
-                        e.name.value.clone(),
-                        declared_mem::declared_enum(e.name.value.clone(), variants),
+                    insert_descriptor(
+                        schemas,
+                        &mut descriptors,
+                        &e.name.value,
+                        declared_mem::declared_enum(schemas.legacy_ref(&e.name.value), variants),
                     );
                 }
                 Item::Fn(_) | Item::Use(_) => {}
@@ -371,23 +1250,37 @@ fn declared_descriptors(
     Ok(descriptors)
 }
 
-fn descriptor_for_type(ty: &ast::Type) -> Result<Descriptor<String>, String> {
+fn insert_descriptor(
+    schemas: &SchemaTables,
+    descriptors: &mut DescriptorMap,
+    name: &str,
+    descriptor: VixDescriptor,
+) {
+    let key = schemas.descriptor_key_for_name(name);
+    descriptors.insert_with_key(name.to_string(), key, descriptor);
+}
+
+fn descriptor_for_type(schemas: &SchemaTables, ty: &ast::Type) -> Result<VixDescriptor, String> {
     let schema = type_schema_name(ty)?;
     Ok(match schema.as_str() {
-        "Int" => declared_mem::i64_("Int".into()),
-        "Float" => declared_mem::f64_("Float".into()),
-        "Bool" => declared_mem::i64_("Bool".into()),
-        "String" => handle_i64("StringRef", "String"),
-        other => handle_i64(format!("{other}Ref"), other.to_string()),
+        "Int" => declared_mem::i64_(schemas.legacy_ref("Int")),
+        "Float" => declared_mem::f64_(schemas.legacy_ref("Float")),
+        "Bool" => declared_mem::i64_(schemas.legacy_ref("Bool")),
+        "String" => handle_i64(schemas, "StringRef", "String"),
+        other => handle_i64(schemas, format!("{other}Ref"), other),
     })
 }
 
-fn handle_i64(schema: impl Into<String>, target: impl Into<String>) -> Descriptor<String> {
+fn handle_i64(
+    schemas: &SchemaTables,
+    schema: impl AsRef<str>,
+    target: impl AsRef<str>,
+) -> VixDescriptor {
     Descriptor {
-        schema: schema.into(),
+        schema: schemas.legacy_ref(schema.as_ref()),
         layout: Layout { size: 8, align: 8 },
         access: Access::Handle {
-            target: target.into(),
+            target: schemas.legacy_ref(target.as_ref()),
         },
     }
 }
@@ -574,19 +1467,27 @@ fn graph_node_closure_hash(
         }
     }
 
-    let mut h = DefaultHasher::new();
-    "closure".hash(&mut h);
-    own_hashes[name].hash(&mut h);
-    scc_hash.hash(&mut h);
-    out_hashes.len().hash(&mut h);
+    let mut h = blake3::Hasher::new();
+    h.update(b"closure");
+    h.update(&own_hashes[name].to_le_bytes());
+    h.update(&scc_hash.to_le_bytes());
+    h.update(
+        &u64::try_from(out_hashes.len())
+            .expect("out hash count fits u64")
+            .to_le_bytes(),
+    );
     for hash in out_hashes {
-        hash.hash(&mut h);
+        h.update(&hash.to_le_bytes());
     }
-    extra_hashes.len().hash(&mut h);
+    h.update(
+        &u64::try_from(extra_hashes.len())
+            .expect("extra hash count fits u64")
+            .to_le_bytes(),
+    );
     for hash in extra_hashes {
-        hash.hash(&mut h);
+        h.update(&hash.to_le_bytes());
     }
-    h.finish()
+    first_u64(h)
 }
 
 fn strongly_connected_components(
@@ -656,38 +1557,48 @@ fn strongly_connected_components(
 }
 
 fn hash_list(domain: &str, hashes: &[u64]) -> u64 {
-    let mut h = DefaultHasher::new();
-    domain.hash(&mut h);
-    hashes.len().hash(&mut h);
+    let mut h = blake3::Hasher::new();
+    h.update(domain.as_bytes());
+    h.update(
+        &u64::try_from(hashes.len())
+            .expect("hash list length fits u64")
+            .to_le_bytes(),
+    );
     for hash in hashes {
-        hash.hash(&mut h);
+        h.update(&hash.to_le_bytes());
     }
-    h.finish()
+    first_u64(h)
 }
 
 fn canon_fn_hash(item: &ast::FnItem) -> u64 {
     let mut canonical = item.clone();
     canonical.strip_spans();
     let bytes = phon::api::encode(&canonical).expect("AST serializes");
-    let mut h = DefaultHasher::new();
-    bytes.hash(&mut h);
-    h.finish()
+    hash_bytes_u64(b"vix-fn", &bytes)
 }
 
 fn canon_enum_hash(item: &EnumItem) -> u64 {
     let mut canonical = item.clone();
     canonical.strip_spans();
     let bytes = phon::api::encode(&canonical).expect("AST serializes");
-    let mut h = DefaultHasher::new();
-    bytes.hash(&mut h);
-    h.finish()
+    hash_bytes_u64(b"vix-enum", &bytes)
 }
 
 fn canon_struct_hash(item: &StructItem) -> u64 {
     let mut canonical = item.clone();
     canonical.strip_spans();
     let bytes = phon::api::encode(&canonical).expect("AST serializes");
-    let mut h = DefaultHasher::new();
-    bytes.hash(&mut h);
-    h.finish()
+    hash_bytes_u64(b"vix-struct", &bytes)
+}
+
+fn hash_bytes_u64(domain: &[u8], bytes: &[u8]) -> u64 {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(domain);
+    hasher.update(bytes);
+    first_u64(hasher)
+}
+
+fn first_u64(hasher: blake3::Hasher) -> u64 {
+    let hash = hasher.finalize();
+    u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("blake3 prefix"))
 }

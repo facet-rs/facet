@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use vix::exec::{ExecEvent, Tree};
 use vix::fetch::FakeFetchBackend;
-use vix::machine::{DriveEvent, Machine, MachineArg};
+use vix::machine::{DriveEvent, Machine, MachineArg, RenderedValue};
 use vix::real_process::RealProcessBackend;
 
 const LUA_SOURCE: &str = include_str!("../../playgrounds/snark/src/bundled/vix/samples/lua.vix");
@@ -31,6 +31,32 @@ fn build_b(cc: Cc, src: Tree, unit: Path) -> Tree {
 
 pub fn object_kind(cc: Cc, src: Tree, unit: Path) -> String {
     elf(build_a(cc, src, unit)).kind
+}
+"#;
+
+const BUILD_SCRIPT_SOURCE: &str = r#"
+use vix::Tree;
+
+pub fn undeclared_cc(script: Tree) -> String {
+    let build_script = "build-script-runner";
+    let run = build_script! {
+        --executable {script / p"run.sh"}
+        --stdout {p"build.stdout"}
+        --out-dir {p"out"}
+        --env CARGO_MANIFEST_DIR={script}
+    };
+    run.text(p"build.stdout")
+}
+
+pub fn recursive_mount_alias_survives(src: Tree) -> String {
+    let build_script = "build-script-runner";
+    let run = build_script! {
+        --executable {src / p"mutate-and-read.sh"}
+        --stdout {p"build.stdout"}
+        --out-dir {p"out"}
+        --env CARGO_MANIFEST_DIR={src}
+    };
+    run.text(p"build.stdout")
 }
 "#;
 
@@ -67,7 +93,7 @@ fn real_process_cc_runs_through_machine_exec_cache() -> Result<(), String> {
     let cutoff = machine.demand_i64("build_a", vec![cc, tree_v2, unit])?;
     assert_eq!(tree_bytes(&mut machine, cutoff, "hello.o")?, first_object);
     assert_run_serving(&machine, |event| {
-        matches!(event, ExecEvent::Tier2Cutoff { verified: 2 })
+        matches!(event, ExecEvent::Tier2Cutoff { verified: 3 })
     });
 
     #[cfg(target_os = "linux")]
@@ -95,6 +121,62 @@ fn real_process_cc_runs_through_machine_exec_cache() -> Result<(), String> {
             vix::machine::RenderedValue::String { value } if value == "rel"
         ));
     }
+
+    Ok(())
+}
+
+#[test]
+fn build_script_without_cc_capability_traps_c_toolchain_use() -> Result<(), String> {
+    let backend = Arc::new(RealProcessBackend::new());
+    let mut machine = Machine::load(BUILD_SCRIPT_SOURCE)?.with_exec_backend(backend);
+    let script = Tree::of(&[("run.sh", "#!/bin/sh\ncc --version\n")]);
+    let script = machine.intern_arg("Tree", MachineArg::Tree(script))?.0;
+
+    let err = machine
+        .demand_i64("undeclared_cc", vec![script])
+        .expect_err("undeclared build script C-toolchain use must fail");
+    assert!(
+        err.contains("undeclared C-toolchain capability"),
+        "unexpected undeclared C-toolchain error: {err}"
+    );
+
+    let requested = machine.trace().iter().any(|event| {
+        matches!(
+            event,
+            DriveEvent::RunRequested {
+                command_name,
+                argv,
+                ..
+            } if command_name == "build_script"
+                && !argv.iter().any(|arg| arg == "--requires-toolchain=cc")
+        )
+    });
+    assert!(
+        requested,
+        "missing build_script run without cc capability declaration: {:?}",
+        machine.trace()
+    );
+
+    Ok(())
+}
+
+#[test]
+fn recursive_mount_staging_preserves_equal_cas_inputs_after_mutation() -> Result<(), String> {
+    let backend = Arc::new(RealProcessBackend::new());
+    let mut machine = Machine::load(BUILD_SCRIPT_SOURCE)?.with_exec_backend(backend);
+    let source = Tree::of(&[
+        (
+            "mutate-and-read.sh",
+            "#!/bin/sh\n: > \"$CARGO_MANIFEST_DIR/a.txt\"\ncat \"$CARGO_MANIFEST_DIR/dir/b.txt\"\n",
+        ),
+        ("a.txt", "survive\n"),
+        ("dir/b.txt", "survive\n"),
+    ]);
+    let source = machine.intern_arg("Tree", MachineArg::Tree(source))?.0;
+
+    let handle = machine.demand_i64("recursive_mount_alias_survives", vec![source])?;
+    let stdout = rendered_result_string(&machine, "recursive_mount_alias_survives", handle)?;
+    assert_eq!(stdout, "survive\n");
 
     Ok(())
 }
@@ -207,6 +289,13 @@ fn tree_bytes(machine: &mut Machine, handle: i64, path: &str) -> Result<Vec<u8>,
         .ok_or_else(|| format!("missing `{path}` in real-process output tree"))
 }
 
+fn rendered_result_string(machine: &Machine, name: &str, handle: i64) -> Result<String, String> {
+    match machine.render_result(name, handle)? {
+        RenderedValue::String { value } => Ok(value),
+        other => Err(format!("result {name} rendered as {other:?}, not String")),
+    }
+}
+
 fn assert_object_magic(bytes: &[u8]) -> Result<(), String> {
     if bytes.len() < 4 {
         return Err(format!("object file too short: {} bytes", bytes.len()));
@@ -239,6 +328,8 @@ fn assert_object_magic(bytes: &[u8]) -> Result<(), String> {
 //   modeled strings while real cc/ar emit host object/archive/executable bytes;
 // - compare serving as a class, so tier variants remain semantic while payload
 //   counters can differ across substrate read-set granularity;
+// - drop ParkedOn events, because they are scheduler wake/parking plumbing and
+//   can differ between synchronous fake execution and async real-process waits;
 // - trim a trailing completion for runs whose output is later consumed as an
 //   explicit single-file mounted input: the fake backend has computed that file
 //   but does not log completion for file projection, while real-process must
@@ -270,9 +361,7 @@ fn normalize_exec_substrate_trace(trace: &[DriveEvent]) -> NormalizedTrace {
             DriveEvent::Spawned { fn_hash } => {
                 events.push(NormalizedEvent::Spawned { fn_hash: *fn_hash });
             }
-            DriveEvent::ParkedOn { fn_hash } => {
-                events.push(NormalizedEvent::ParkedOn { fn_hash: *fn_hash });
-            }
+            DriveEvent::ParkedOn { .. } => {}
             DriveEvent::Completed { fn_hash } => {
                 events.push(NormalizedEvent::Completed { fn_hash: *fn_hash });
             }
@@ -491,9 +580,6 @@ enum NormalizedEvent {
         verified: usize,
     },
     Spawned {
-        fn_hash: u64,
-    },
-    ParkedOn {
         fn_hash: u64,
     },
     Completed {

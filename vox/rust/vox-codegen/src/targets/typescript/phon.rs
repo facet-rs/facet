@@ -26,7 +26,7 @@ fn root_id(shape: &'static Shape) -> u64 {
         .expect("derive phon schema")
         .roots[0]
         .id
-        .0
+        .as_u64()
 }
 
 fn schema_closure_hex(

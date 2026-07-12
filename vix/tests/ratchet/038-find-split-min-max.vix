@@ -1,0 +1,16 @@
+// Rung 038 — find_min/find_max and split_min/split_max are deterministic
+// selection and decomposition.
+#[test]
+fn find_split_min_max() -> Stream<Check> {
+    let ms = [5, 3, 9, 3].stream();
+    yield expect_eq(ms.find_min(|n| n > 3), Some(5));
+    yield expect_eq(ms.find_max(|_| true), Some(9));
+    yield match ms.split_min() {
+        Some((least, rest)) => {
+            yield expect_eq(least, 3);
+            yield expect_eq(rest.len(), 3);
+            yield expect(rest.contains(3));
+        },
+        None => expect(false),
+    };
+}

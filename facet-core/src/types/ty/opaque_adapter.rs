@@ -4,12 +4,9 @@
 //! opaque values through a typed adapter contract.
 
 use crate::{PtrConst, PtrMut, PtrUninit, Shape};
-
-#[cfg(feature = "alloc")]
 use alloc::{string::String, vec::Vec};
 
 /// Erased serialization inputs returned by an opaque adapter.
-#[cfg(feature = "alloc")]
 #[derive(Clone, Copy, Debug)]
 pub struct OpaqueSerialize {
     /// Pointer to the value to serialize.
@@ -18,7 +15,6 @@ pub struct OpaqueSerialize {
     pub shape: &'static Shape,
 }
 
-#[cfg(feature = "alloc")]
 impl OpaqueSerialize {
     /// Constructs a mapped opaque serialization input from a typed pointer + shape.
     pub const fn mapped(ptr: PtrConst, shape: &'static Shape) -> Self {
@@ -27,7 +23,6 @@ impl OpaqueSerialize {
 }
 
 /// Input bytes provided to an opaque adapter during deserialization.
-#[cfg(feature = "alloc")]
 #[derive(Clone, Debug)]
 pub enum OpaqueDeserialize<'de> {
     /// Borrowed input bytes from the parser buffer.
@@ -37,7 +32,6 @@ pub enum OpaqueDeserialize<'de> {
 }
 
 /// Typed contract for `#[facet(opaque = AdapterType)]`.
-#[cfg(feature = "alloc")]
 pub trait FacetOpaqueAdapter {
     /// Adapter-specific deserialize error type.
     type Error: core::fmt::Display;
@@ -58,18 +52,15 @@ pub trait FacetOpaqueAdapter {
 }
 
 /// Erased serialize trampoline for opaque adapters.
-#[cfg(feature = "alloc")]
 pub type OpaqueAdapterSerializeFn = unsafe fn(target_ptr: PtrConst) -> OpaqueSerialize;
 
 /// Erased deserialize trampoline for opaque adapters.
-#[cfg(feature = "alloc")]
 pub type OpaqueAdapterDeserializeFn = for<'de> unsafe fn(
     input: OpaqueDeserialize<'de>,
     target_ptr: PtrUninit,
 ) -> Result<PtrMut, String>;
 
 /// Erased runtime definition used by `Shape` for adapter dispatch.
-#[cfg(feature = "alloc")]
 #[derive(Clone, Copy)]
 pub struct OpaqueAdapterDef {
     /// Serialize trampoline.
@@ -78,7 +69,6 @@ pub struct OpaqueAdapterDef {
     pub deserialize: OpaqueAdapterDeserializeFn,
 }
 
-#[cfg(feature = "alloc")]
 impl core::fmt::Debug for OpaqueAdapterDef {
     fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
         f.debug_struct("OpaqueAdapterDef")

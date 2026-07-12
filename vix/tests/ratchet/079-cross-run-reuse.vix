@@ -1,0 +1,11 @@
+//! rerun
+
+// Rung 079 — warm across runs: the second run of this test recomputes
+// nothing (the harness runs `rerun` tests twice against one store).
+fn costly(n: Int) -> Int { n * n }
+
+#[test]
+fn cross_run_reuse() -> Stream<Check> {
+    yield expect_eq(costly(111), 12321);
+    yield never_demanded(costly(111));
+}

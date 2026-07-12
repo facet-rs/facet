@@ -15,7 +15,7 @@ use std::{
 };
 
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -1987,7 +1987,7 @@ struct HostCallChainLayoutFacts {
 }
 
 fn hostcall_chain_layout_for_sites(hostcall_sites: usize) -> HostCallChainLayoutFacts {
-    #[cfg(feature = "jit")]
+    #[cfg(snark_jit_active)]
     {
         let layout = weavy::jit::HostCallChainLayout::for_hostcall_sites(hostcall_sites);
         HostCallChainLayoutFacts {
@@ -1995,7 +1995,7 @@ fn hostcall_chain_layout_for_sites(hostcall_sites: usize) -> HostCallChainLayout
             copied_stencils: layout.copied_stencils,
         }
     }
-    #[cfg(not(feature = "jit"))]
+    #[cfg(not(snark_jit_active))]
     {
         HostCallChainLayoutFacts {
             hostcall_sites,
@@ -2025,7 +2025,7 @@ fn hostcall_block_barrier(block: &[DenseSnarkWeavyOp]) -> Option<WeavyHostCallBl
 }
 
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -2037,7 +2037,7 @@ struct RuntimeWeavyHostCallBlockCache {
 }
 
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -2052,7 +2052,7 @@ impl fmt::Debug for RuntimeWeavyHostCallBlockCache {
 }
 
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -2110,7 +2110,9 @@ impl RuntimeWeavyHostCallBlockCache {
         };
         let hostcall_sites = chain.hostcall_site_count();
         let hostcall_stencils = chain.stencil_count();
-        chain.run(&mut state);
+        chain
+            .run(&mut state)
+            .map_err(|_| RuntimeWeavyStepError::UnsupportedCanonicalOp)?;
         if let Some(error) = state.error {
             stats.errored_blocks += 1;
             return Err(error);
@@ -2123,7 +2125,7 @@ impl RuntimeWeavyHostCallBlockCache {
 }
 
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -2134,7 +2136,7 @@ struct RuntimeWeavyHostCallInfo {
 }
 
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -2146,7 +2148,7 @@ struct RuntimeWeavyHostCallBlockState<'a, 'stepper> {
 }
 
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -2195,7 +2197,7 @@ pub struct WeavyParsePlan {
     resolved_cst_names: parser_ir::ResolvedCstNames,
     auto_close_index: RuntimeWeavyAutoCloseIndex,
     #[cfg(all(
-        feature = "jit",
+        snark_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -2217,7 +2219,7 @@ impl WeavyParsePlan {
         let resolved_cst_names = parser_ir::ResolvedCstNames::from_parser(parser);
         let auto_close_index = RuntimeWeavyAutoCloseIndex::new(parser, &lexer_program);
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -2230,7 +2232,7 @@ impl WeavyParsePlan {
             resolved_cst_names,
             auto_close_index,
             #[cfg(all(
-                feature = "jit",
+                snark_jit_active,
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")
@@ -2921,11 +2923,11 @@ impl WeavyParsePlanReadiness {
 
 #[must_use]
 const fn copy_patch_jit_available() -> bool {
-    #[cfg(feature = "jit")]
+    #[cfg(snark_jit_active)]
     {
         weavy::jit::NATIVE_COPY_PATCH_AVAILABLE
     }
-    #[cfg(not(feature = "jit"))]
+    #[cfg(not(snark_jit_active))]
     {
         false
     }
@@ -6998,7 +7000,7 @@ pub fn parse_prepared_weavy_metered_with_report_and_scanner(
 
 /// Execute a prepared Weavy plan through host-call blocks.
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -7015,7 +7017,7 @@ pub fn parse_prepared_weavy_hostcalls_with_report(
 
 /// Execute a prepared Weavy plan through host-call blocks with a scanner host.
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -7054,7 +7056,7 @@ pub fn parse_prepared_weavy_hostcalls_with_report_and_scanner(
 
 /// Execute a prepared Weavy plan through host-call blocks and return only the tree.
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -7072,7 +7074,7 @@ pub fn parse_prepared_weavy_hostcalls_tree(
 /// Execute a prepared Weavy plan through host-call blocks with a scanner host and return
 /// only the tree.
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -7112,7 +7114,7 @@ pub fn parse_prepared_weavy_hostcalls_tree_and_scanner(
 
 /// Execute a prepared Weavy plan through host-call blocks and return the ranged CST.
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -7130,7 +7132,7 @@ pub fn parse_prepared_weavy_hostcalls_resolved_tree(
 /// Execute a prepared Weavy plan through host-call blocks with a scanner host and return
 /// the ranged CST.
 #[cfg(all(
-    feature = "jit",
+    snark_jit_active,
     any(
         all(target_os = "macos", target_arch = "aarch64"),
         all(target_os = "linux", target_arch = "x86_64")
@@ -7170,6 +7172,113 @@ pub fn parse_prepared_weavy_hostcalls_resolved_tree_and_scanner(
             .accepted_resolved_tree(parser, input)
             .ok_or(WeavyParseError::MissingResolvedTree)
     })
+}
+
+#[cfg(not(all(
+    snark_jit_active,
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+)))]
+/// Execute a prepared Weavy plan through host-call blocks.
+pub fn parse_prepared_weavy_hostcalls_with_report(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+) -> Result<WeavyParseReport, WeavyParseError> {
+    parse_prepared_weavy_hostcalls_with_report_and_scanner(plan, parser, table, input, None)
+}
+
+#[cfg(not(all(
+    snark_jit_active,
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+)))]
+/// Execute a prepared Weavy plan through host-call blocks with a scanner host.
+pub fn parse_prepared_weavy_hostcalls_with_report_and_scanner(
+    _plan: &WeavyParsePlan,
+    _parser: &parser_ir::ParserGrammar,
+    _table: &parser_ir::ParseTable,
+    _input: &str,
+    _external_scanner: Option<&dyn ExternalScannerHost>,
+) -> Result<WeavyParseReport, WeavyParseError> {
+    Err(WeavyParseError::UnsupportedCanonicalOp)
+}
+
+#[cfg(not(all(
+    snark_jit_active,
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+)))]
+/// Execute a prepared Weavy plan through host-call blocks and return only the tree.
+pub fn parse_prepared_weavy_hostcalls_tree(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+) -> Result<SexpNode, WeavyParseError> {
+    parse_prepared_weavy_hostcalls_tree_and_scanner(plan, parser, table, input, None)
+}
+
+#[cfg(not(all(
+    snark_jit_active,
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+)))]
+/// Execute a prepared Weavy plan through host-call blocks with a scanner host and return
+/// only the tree.
+pub fn parse_prepared_weavy_hostcalls_tree_and_scanner(
+    _plan: &WeavyParsePlan,
+    _parser: &parser_ir::ParserGrammar,
+    _table: &parser_ir::ParseTable,
+    _input: &str,
+    _external_scanner: Option<&dyn ExternalScannerHost>,
+) -> Result<SexpNode, WeavyParseError> {
+    Err(WeavyParseError::UnsupportedCanonicalOp)
+}
+
+#[cfg(not(all(
+    snark_jit_active,
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+)))]
+/// Execute a prepared Weavy plan through host-call blocks and return the ranged CST.
+pub fn parse_prepared_weavy_hostcalls_resolved_tree(
+    plan: &WeavyParsePlan,
+    parser: &parser_ir::ParserGrammar,
+    table: &parser_ir::ParseTable,
+    input: &str,
+) -> Result<parser_ir::ResolvedCstNode, WeavyParseError> {
+    parse_prepared_weavy_hostcalls_resolved_tree_and_scanner(plan, parser, table, input, None)
+}
+
+#[cfg(not(all(
+    snark_jit_active,
+    any(
+        all(target_os = "macos", target_arch = "aarch64"),
+        all(target_os = "linux", target_arch = "x86_64")
+    )
+)))]
+/// Execute a prepared Weavy plan through host-call blocks with a scanner host and return
+/// the ranged CST.
+pub fn parse_prepared_weavy_hostcalls_resolved_tree_and_scanner(
+    _plan: &WeavyParsePlan,
+    _parser: &parser_ir::ParserGrammar,
+    _table: &parser_ir::ParseTable,
+    _input: &str,
+    _external_scanner: Option<&dyn ExternalScannerHost>,
+) -> Result<parser_ir::ResolvedCstNode, WeavyParseError> {
+    Err(WeavyParseError::UnsupportedCanonicalOp)
 }
 
 /// Execute a prepared Weavy plan and collect reusable-node metadata.
@@ -7916,7 +8025,7 @@ fn runtime_weavy_action_block_for_execution(
             .runtime_action_block(_state, _entry_index, _action_index, _action)
             .map(Some),
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -7944,7 +8053,7 @@ fn runtime_weavy_state_block_for_execution(
             .runtime_state_block(_state)
             .map(Some),
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -9037,7 +9146,7 @@ pub enum WeavyParseExecutionLane {
     Metered,
     /// Copy-and-patch host-call block runner.
     #[cfg(all(
-        feature = "jit",
+        snark_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -9271,7 +9380,7 @@ enum RuntimeWeavyBlockExecution {
     #[cfg(test)]
     Metered,
     #[cfg(all(
-        feature = "jit",
+        snark_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -9295,7 +9404,7 @@ impl RuntimeWeavyBlockExecution {
             #[cfg(test)]
             Self::Metered => WeavyParseExecutionLane::Metered,
             #[cfg(all(
-                feature = "jit",
+                snark_jit_active,
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")
@@ -10095,7 +10204,7 @@ fn run_runtime_weavy_block(
     hostcall_stats: &mut WeavyHostCallExecutionStats,
 ) -> Result<RunStats, RuntimeWeavyStepError> {
     #[cfg(not(all(
-        feature = "jit",
+        snark_jit_active,
         any(
             all(target_os = "macos", target_arch = "aarch64"),
             all(target_os = "linux", target_arch = "x86_64")
@@ -10115,7 +10224,7 @@ fn run_runtime_weavy_block(
                 .map(|()| RunStats::default())
         }
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -13349,6 +13458,44 @@ mod tests {
     }
 
     #[test]
+    fn line_comment_extra_beats_division_in_an_expression_state() {
+        let grammar_json = snark_dsl::emit_source_with_boa(
+            r#"
+            module.exports = grammar({
+              name: "comment_division",
+              extras: ($) => [/\s+/, $.line_comment],
+              rules: {
+                source_file: ($) => seq(field("left", $._expr), field("right", $._expr)),
+                _expr: ($) => choice($.binary, $.identifier),
+                binary: ($) => prec.left(1, seq(
+                  field("left", $._expr),
+                  "/",
+                  field("right", $._expr),
+                )),
+                identifier: () => /[a-z]+/,
+                line_comment: () => token(prec(1, seq("//", /[^\n]*/))),
+              },
+            });
+            "#,
+            "comment-division.js",
+        )
+        .expect("emit comment/division grammar");
+        let raw = crate::grammar::RawGrammarJson::from_tree_sitter_json_str(&grammar_json)
+            .expect("import comment/division grammar");
+        let validated = ValidatedGrammar::from_raw(&raw).expect("validate grammar");
+        let lexical = crate::lexical::LexicalFacts::from_grammar(&validated);
+        let parser = parser_ir::ParserGrammar::normalize_from_validated(&validated, &lexical)
+            .expect("normalize grammar")
+            .prepare_productions_for_items()
+            .expect("prepare grammar");
+        let table = parser_ir::ParseTable::from_grammar(&parser).expect("build parse table");
+        let plan = WeavyParsePlan::new(&validated, &parser, &table).expect("build Weavy plan");
+
+        parse_prepared_weavy_with_report(&plan, &parser, &table, "a\n// comment\nb")
+            .expect("line comment remains an extra where division is valid");
+    }
+
+    #[test]
     fn intrinsic_descriptors_use_snark_tree_sitter_dialect() {
         let descriptor = SnarkIntrinsic::Shift {
             version: StackVersionId(0),
@@ -14967,7 +15114,7 @@ mod tests {
             resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
-                feature = "jit",
+                snark_jit_active,
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")
@@ -15257,13 +15404,13 @@ mod tests {
     }
 
     #[test]
-    fn copy_patch_jit_availability_follows_snark_feature_gate() {
-        #[cfg(feature = "jit")]
+    fn copy_patch_jit_availability_follows_weavy_build_gate() {
+        #[cfg(snark_jit_active)]
         assert_eq!(
             copy_patch_jit_available(),
             weavy::jit::NATIVE_COPY_PATCH_AVAILABLE
         );
-        #[cfg(not(feature = "jit"))]
+        #[cfg(not(snark_jit_active))]
         assert!(!copy_patch_jit_available());
     }
 
@@ -15292,7 +15439,7 @@ mod tests {
             resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
-                feature = "jit",
+                snark_jit_active,
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")
@@ -15356,7 +15503,7 @@ mod tests {
             resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
-                feature = "jit",
+                snark_jit_active,
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")
@@ -15490,7 +15637,7 @@ mod tests {
             resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
-                feature = "jit",
+                snark_jit_active,
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")
@@ -15635,7 +15782,7 @@ mod tests {
             resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
-                feature = "jit",
+                snark_jit_active,
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")
@@ -15794,7 +15941,7 @@ mod tests {
         )
         .unwrap();
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -15815,7 +15962,7 @@ mod tests {
         .unwrap()
         .expect("tiny grammar is deterministic through host-call report blocks");
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -15824,7 +15971,7 @@ mod tests {
         let hostcalls =
             parse_prepared_weavy_hostcalls_with_report(&plan, &parser, &table, "ab").unwrap();
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -15833,7 +15980,7 @@ mod tests {
         let hostcalls_tree =
             parse_prepared_weavy_hostcalls_tree(&plan, &parser, &table, "ab").unwrap();
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -15866,7 +16013,7 @@ mod tests {
         assert_eq!(deterministic_resolved, report_resolved);
         assert_eq!(resolved_tree, report_resolved);
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -15899,7 +16046,7 @@ mod tests {
         assert_eq!(recovering_direct.accepted_count(), 1);
         assert_eq!(recovering_direct.failure_count(), 0);
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -15918,7 +16065,7 @@ mod tests {
             );
         }
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -15926,7 +16073,7 @@ mod tests {
         ))]
         assert_eq!(&hostcalls_tree, default_direct.tree());
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -16033,7 +16180,7 @@ mod tests {
             == SnarkStencilExecution::LexerGraph
             && summary.lexer_count > 0));
         #[cfg(all(
-            feature = "jit",
+            snark_jit_active,
             any(
                 all(target_os = "macos", target_arch = "aarch64"),
                 all(target_os = "linux", target_arch = "x86_64")
@@ -16166,7 +16313,7 @@ mod tests {
             resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
-                feature = "jit",
+                snark_jit_active,
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")
@@ -16598,7 +16745,7 @@ mod tests {
             resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
-                feature = "jit",
+                snark_jit_active,
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")
@@ -16668,7 +16815,7 @@ mod tests {
             resolved_cst_names: empty_resolved_cst_names(),
             auto_close_index: RuntimeWeavyAutoCloseIndex::default(),
             #[cfg(all(
-                feature = "jit",
+                snark_jit_active,
                 any(
                     all(target_os = "macos", target_arch = "aarch64"),
                     all(target_os = "linux", target_arch = "x86_64")

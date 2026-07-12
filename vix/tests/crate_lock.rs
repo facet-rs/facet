@@ -4,6 +4,7 @@ use vix::exec::Tree;
 use vix::machine::{DriveEvent, Machine, MachineArg, RenderedValue};
 
 const SOURCE: &str = include_str!("../../playgrounds/snark/src/bundled/vix/samples/crate.vix");
+const RODIN_SOURCE: &str = include_str!("../../rodin/rodin.vix");
 const LOCK: &str =
     include_str!("../../playgrounds/snark/src/bundled/vix/samples/fixtures/lock_graph/Cargo.lock");
 const APP_LOCK: &str = include_str!(
@@ -54,7 +55,8 @@ const BUILD_SCRIPT_MAIN: &str = include_str!(
 
 #[test]
 fn crate_vix_consumes_lockfile_and_builds_transitive_graph_with_fake_rustc() -> Result<(), String> {
-    let mut machine = Machine::load(SOURCE)?;
+    let source = crate_source();
+    let mut machine = Machine::load(&source)?;
     let target = machine.linux_target_handle();
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(lock_graph_tree()))?
@@ -103,7 +105,8 @@ fn crate_vix_consumes_lockfile_and_builds_transitive_graph_with_fake_rustc() -> 
 
 #[test]
 fn crate_vix_models_build_script_directives_and_out_dir_with_fake_runner() -> Result<(), String> {
-    let mut machine = Machine::load(SOURCE)?;
+    let source = crate_source();
+    let mut machine = Machine::load(&source)?;
     let target = machine.linux_target_handle();
     let graph = machine
         .intern_arg("Tree", MachineArg::Tree(build_script_tree()))?
@@ -156,6 +159,138 @@ fn crate_vix_models_build_script_directives_and_out_dir_with_fake_runner() -> Re
         return Err("parent rustc did not receive OUT_DIR env".into());
     }
     Ok(())
+}
+
+#[test]
+fn crate_vix_parses_build_script_stdout_directives_as_pure_vix() -> Result<(), String> {
+    let source = crate_source();
+    let mut machine = Machine::load(&source)?;
+    let stdout = machine
+        .intern_arg(
+            "String",
+            MachineArg::String(
+                "cargo:rustc-cfg=has_native\n\
+                 cargo::rustc-env=LIB_FOO=bar\n\
+                 cargo:rustc-link-lib=static=foo\n\
+                 cargo:rustc-link-search=native=/opt/foo\n\
+                 cargo:rerun-if-changed=wrapper.h\n\
+                 cargo:rerun-if-env-changed=FOO_SYS_ROOT\n\
+                 cargo:warning=using bundled foo\n"
+                    .to_string(),
+            ),
+        )?
+        .0;
+
+    let cfg = machine.demand_i64("crate_build_script_directive_cfg_from_stdout", vec![stdout])?;
+    if rendered_string(
+        &machine,
+        "crate_build_script_directive_cfg_from_stdout",
+        cfg,
+    )? != "has_native"
+    {
+        return Err("rustc-cfg directive was not parsed".into());
+    }
+
+    let env = machine.demand_i64("crate_build_script_directive_env_from_stdout", vec![stdout])?;
+    if rendered_string(
+        &machine,
+        "crate_build_script_directive_env_from_stdout",
+        env,
+    )? != "LIB_FOO=bar"
+    {
+        return Err("rustc-env directive was not parsed".into());
+    }
+
+    let links = machine.demand_i64(
+        "crate_build_script_directive_links_from_stdout",
+        vec![stdout],
+    )?;
+    if rendered_string(
+        &machine,
+        "crate_build_script_directive_links_from_stdout",
+        links,
+    )? != "static=foo|native=/opt/foo"
+    {
+        return Err("link directives were not recorded as unit data".into());
+    }
+
+    let rerun = machine.demand_i64(
+        "crate_build_script_directive_rerun_from_stdout",
+        vec![stdout],
+    )?;
+    if rendered_string(
+        &machine,
+        "crate_build_script_directive_rerun_from_stdout",
+        rerun,
+    )? != "wrapper.h|FOO_SYS_ROOT"
+    {
+        return Err("rerun-if directives were not recorded as declared-world receipts".into());
+    }
+
+    Ok(())
+}
+
+#[test]
+fn crate_vix_propagates_build_script_metadata_to_dep_env_values() -> Result<(), String> {
+    let source = crate_source();
+    let mut machine = Machine::load(&source)?;
+    let stdout = machine
+        .intern_arg(
+            "String",
+            MachineArg::String(
+                "cargo:include=/opt/foo/include\n\
+                 cargo::metadata=libdir=/opt/foo/lib\n"
+                    .to_string(),
+            ),
+        )?
+        .0;
+    let links = machine
+        .intern_arg("String", MachineArg::String("FOO".to_string()))?
+        .0;
+
+    let env = machine.demand_i64(
+        "crate_build_script_dep_metadata_env_from_stdout",
+        vec![stdout, links],
+    )?;
+    if rendered_string(
+        &machine,
+        "crate_build_script_dep_metadata_env_from_stdout",
+        env,
+    )? != "DEP_FOO_include=/opt/foo/include,DEP_FOO_libdir=/opt/foo/lib"
+    {
+        return Err("metadata directives did not propagate as DEP_<links>_<key>".into());
+    }
+
+    Ok(())
+}
+
+#[test]
+fn crate_vix_rejects_malformed_build_script_directive_lines() -> Result<(), String> {
+    let source = crate_source();
+    let mut machine = Machine::load(&source)?;
+    let stdout = machine
+        .intern_arg(
+            "String",
+            MachineArg::String("cargo:rustc-cfg\n".to_string()),
+        )?
+        .0;
+
+    match machine.demand_i64("crate_build_script_directive_cfg_from_stdout", vec![stdout]) {
+        Ok(_) => Err("malformed directive line was silently accepted".into()),
+        Err(err) => {
+            if err.contains("cargo:rustc-cfg") || err.contains("unwrap") {
+                Ok(())
+            } else {
+                Err(format!(
+                    "malformed directive failed with unexpected error: {err}"
+                ))
+            }
+        }
+    }
+}
+
+fn crate_source() -> String {
+    format!("{RODIN_SOURCE}\n\n{SOURCE}")
 }
 
 fn rendered_string(machine: &Machine, name: &str, word: i64) -> Result<String, String> {

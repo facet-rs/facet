@@ -1,5 +1,4 @@
 use std::collections::BTreeMap;
-use std::hash::{DefaultHasher, Hash, Hasher};
 
 use crate::ast::Expr;
 
@@ -114,11 +113,12 @@ impl Value {
             Value::Closure { .. } => "closure".to_string(),
             Value::Partial { func, .. } => format!("partial {func}"),
             Value::Tree(t) => {
-                let mut h = DefaultHasher::new();
+                let mut h = blake3::Hasher::new();
                 self.hash_into(&mut h);
+                let hash = h.finalize();
                 format!(
                     "tree({:08x}, {} paths)",
-                    h.finish() as u32,
+                    u32::from_le_bytes(hash.as_bytes()[..4].try_into().expect("blake3 prefix")),
                     t.entries.len() + t.blobs.len()
                 )
             }
@@ -134,31 +134,38 @@ impl Value {
         }
     }
 
-    pub fn hash_into(&self, h: &mut DefaultHasher) {
-        self.rank().hash(h);
+    pub fn hash_into(&self, h: &mut blake3::Hasher) {
+        h.update(&[self.rank()]);
         match self {
-            Value::Int(v) => v.hash(h),
-            Value::Float(v) => normalize_float(*v).to_bits().hash(h),
-            Value::Bool(v) => v.hash(h),
-            Value::Blob(v) => v.hash(h),
-            Value::Str(v) | Value::Path(v) | Value::Flag(v) => v.hash(h),
+            Value::Int(v) => {
+                h.update(&v.to_le_bytes());
+            }
+            Value::Float(v) => {
+                h.update(&normalize_float(*v).to_bits().to_le_bytes());
+            }
+            Value::Bool(v) => {
+                h.update(&[*v as u8]);
+            }
+            Value::Blob(v) => update_bytes(h, v),
+            Value::Str(v) | Value::Path(v) | Value::Flag(v) => update_str(h, v),
             Value::Tuple(vs) | Value::Array(vs) => {
-                vs.len().hash(h);
+                update_len(h, vs.len());
                 for v in vs {
                     v.hash_into(h);
                 }
             }
             Value::Map(m) => {
-                m.len().hash(h);
+                update_len(h, m.len());
                 for (k, v) in m {
                     k.hash_into(h);
                     v.hash_into(h);
                 }
             }
             Value::Struct { name, fields } => {
-                name.hash(h);
+                update_str(h, name);
+                update_len(h, fields.len());
                 for (fname, v) in fields {
-                    fname.hash(h);
+                    update_str(h, fname);
                     v.hash_into(h);
                 }
             }
@@ -168,39 +175,56 @@ impl Value {
                 payload,
                 ..
             } => {
-                enum_name.hash(h);
-                index.hash(h);
+                update_str(h, enum_name);
+                update_len(h, *index);
                 match payload {
-                    Payload::Unit => {}
+                    Payload::Unit => {
+                        h.update(&[0]);
+                    }
                     Payload::Tuple(vs) => {
+                        h.update(&[1]);
+                        update_len(h, vs.len());
                         for v in vs {
                             v.hash_into(h);
                         }
                     }
                     Payload::Record(fs) => {
+                        h.update(&[2]);
+                        update_len(h, fs.len());
                         for (n, v) in fs {
-                            n.hash(h);
+                            update_str(h, n);
                             v.hash_into(h);
                         }
                     }
                 }
             }
-            Value::Fn { hash, .. } => hash.hash(h),
+            Value::Fn { hash, .. } => {
+                h.update(&hash.to_le_bytes());
+            }
             Value::Closure { hash, env, .. } => {
-                hash.hash(h);
+                h.update(&hash.to_le_bytes());
+                update_len(h, env.len());
                 for (n, v) in env {
-                    n.hash(h);
+                    update_str(h, n);
                     v.hash_into(h);
                 }
             }
             Value::Partial { func, given } => {
-                func.hash(h);
+                update_str(h, func);
+                update_len(h, given.len());
                 for (n, v) in given {
-                    n.hash(h);
+                    update_str(h, n);
                     v.hash_into(h);
                 }
             }
-            Value::Tree(_) => self.forced_tree().expect("tree rank").fingerprint().hash(h),
+            Value::Tree(_) => {
+                h.update(
+                    self.forced_tree()
+                        .expect("tree rank")
+                        .fingerprint()
+                        .as_ref(),
+                );
+            }
             Value::Sealed {
                 ciphertext,
                 taint,
@@ -208,20 +232,46 @@ impl Value {
                 identity_hash,
                 content_tag,
             } => {
-                ciphertext.hash(h);
-                taint.hash(h);
-                recipient.hash(h);
-                identity_hash.hash(h);
-                content_tag.hash(h);
+                update_bytes(h, ciphertext);
+                update_str(h, taint);
+                update_str(h, recipient);
+                update_bytes(h, identity_hash);
+                match content_tag {
+                    Some(tag) => {
+                        h.update(&[1]);
+                        update_str(h, tag);
+                    }
+                    None => {
+                        h.update(&[0]);
+                    }
+                }
             }
         }
     }
 
     pub fn canon_hash(&self) -> u64 {
-        let mut h = DefaultHasher::new();
+        let mut h = blake3::Hasher::new();
         self.hash_into(&mut h);
-        h.finish()
+        let hash = h.finalize();
+        u64::from_le_bytes(hash.as_bytes()[..8].try_into().expect("blake3 prefix"))
     }
+}
+
+fn update_len(h: &mut blake3::Hasher, len: usize) {
+    h.update(
+        &u64::try_from(len)
+            .expect("value hash length fits u64")
+            .to_le_bytes(),
+    );
+}
+
+fn update_bytes(h: &mut blake3::Hasher, bytes: &[u8]) {
+    update_len(h, bytes.len());
+    h.update(bytes);
+}
+
+fn update_str(h: &mut blake3::Hasher, value: &str) {
+    update_bytes(h, value.as_bytes());
 }
 
 fn normalize_float(v: f64) -> f64 {

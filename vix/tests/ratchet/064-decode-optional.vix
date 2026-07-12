@@ -1,0 +1,9 @@
+// Rung 064 — absent fields decode to Option::None; present ones to Some.
+struct DepDecl { version: Option<String>, path: Option<String> }
+
+#[test]
+fn decode_optional() -> Stream<Check> {
+    let d: DepDecl = json_decode("{\"version\":\"^1.0\"}");
+    yield expect_eq(d.version, Some("^1.0"));
+    yield expect_none(d.path);
+}

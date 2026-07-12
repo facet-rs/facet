@@ -32,7 +32,39 @@
 //! stands in for the real snark command grammars.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap};
-use std::hash::{DefaultHasher, Hash, Hasher};
+
+#[derive(facet::Facet, Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub struct Blake3Hash([u8; 32]);
+
+impl Blake3Hash {
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+}
+
+impl AsRef<[u8]> for Blake3Hash {
+    fn as_ref(&self) -> &[u8] {
+        &self.0
+    }
+}
+
+impl From<[u8; 32]> for Blake3Hash {
+    fn from(bytes: [u8; 32]) -> Self {
+        Self(bytes)
+    }
+}
+
+fn finish_blake3(hasher: blake3::Hasher) -> Blake3Hash {
+    Blake3Hash(*hasher.finalize().as_bytes())
+}
+
+fn update_len(hasher: &mut blake3::Hasher, len: usize) {
+    hasher.update(
+        &i64::try_from(len)
+            .expect("hash input length fits i64")
+            .to_le_bytes(),
+    );
+}
 
 // ---------------------------------------------------------------------------
 // Data that crosses the seam (all facet, all open).
@@ -81,10 +113,11 @@ impl Tree {
     }
 
     pub fn bytes(&self, path: &str) -> Option<Vec<u8>> {
-        self.entries
-            .get(path)
-            .map(|contents| contents.as_bytes().to_vec())
-            .or_else(|| self.blobs.get(path).cloned())
+        self.blobs.get(path).cloned().or_else(|| {
+            self.entries
+                .get(path)
+                .map(|contents| contents.as_bytes().to_vec())
+        })
     }
 
     pub fn display_entries(&self) -> Vec<(String, String)> {
@@ -105,19 +138,24 @@ impl Tree {
     /// The TIER-1 fingerprint: everything, coarsely. Any change anywhere in
     /// the tree changes it — that's the point (and the imprecision tier 2
     /// exists to refine).
-    pub fn fingerprint(&self) -> u64 {
-        let mut h = DefaultHasher::new();
+    pub fn fingerprint(&self) -> Blake3Hash {
+        let mut h = blake3::Hasher::new();
+        h.update(b"vix-tree-fingerprint");
         for (path, contents) in &self.entries {
-            0u8.hash(&mut h);
-            path.hash(&mut h);
-            contents.hash(&mut h);
+            h.update(&[0]);
+            update_len(&mut h, path.len());
+            h.update(path.as_bytes());
+            update_len(&mut h, contents.len());
+            h.update(contents.as_bytes());
         }
         for (path, contents) in &self.blobs {
-            1u8.hash(&mut h);
-            path.hash(&mut h);
-            contents.hash(&mut h);
+            h.update(&[1]);
+            update_len(&mut h, path.len());
+            h.update(path.as_bytes());
+            update_len(&mut h, contents.len());
+            h.update(contents);
         }
-        h.finish()
+        finish_blake3(h)
     }
 }
 
@@ -244,13 +282,15 @@ pub struct ExecPlan {
 }
 
 impl ExecPlan {
-    pub fn hash(&self) -> u64 {
-        let mut h = DefaultHasher::new();
+    pub fn hash(&self) -> Blake3Hash {
+        let mut h = blake3::Hasher::new();
+        h.update(b"vix-exec-plan");
         for (arg, role) in &self.argv {
-            arg.hash(&mut h);
-            (*role as u8).hash(&mut h);
+            update_len(&mut h, arg.len());
+            h.update(arg.as_bytes());
+            h.update(&[*role as u8]);
         }
-        h.finish()
+        finish_blake3(h)
     }
 
     /// The NORMALIZED plan: canonical argv ordering, so equivalent
@@ -293,7 +333,7 @@ impl ExecPlan {
 
     /// Identity hash: the normalized plan's hash. Cache keys are
     /// semantics-shaped, not byte-shaped.
-    pub fn identity_hash(&self) -> u64 {
+    pub fn identity_hash(&self) -> Blake3Hash {
         self.normalized().hash()
     }
 }
@@ -393,14 +433,14 @@ pub fn describe(command: &str, plan: &ExecPlan) -> Vec<String> {
 #[repr(u8)]
 pub enum ReadObservation {
     /// The path existed with this content hash.
-    Content(u64),
+    Content(Blake3Hash),
     /// The path did NOT exist (a probe missed). The entry every mtime/depfile
     /// system forgets — and the reason `make` misses a new header shadowing
     /// an old one earlier in the search path.
     Absent,
     /// A directory was enumerated; the hash covers the sorted name list, so
     /// additions AND deletions diverge it.
-    Listing(u64),
+    Listing(Blake3Hash),
 }
 
 /// Exactly what a run touched. BTreeMap: canonical order, hashable, diffable.
@@ -414,6 +454,21 @@ pub struct ReadSet {
 pub struct Outcome {
     pub outputs: Tree,
     pub read_set: ReadSet,
+    pub tree_events: Vec<TreeEvent>,
+}
+
+#[derive(facet::Facet, Debug, Clone, PartialEq, Eq)]
+pub struct TreeFileCompletion {
+    pub path: String,
+    pub content_hash: Blake3Hash,
+    pub size: u64,
+}
+
+#[derive(facet::Facet, Debug, Clone, PartialEq, Eq)]
+#[repr(u8)]
+pub enum TreeEvent {
+    SubfileCompleted(TreeFileCompletion),
+    TreeFinalized { files: Vec<TreeFileCompletion> },
 }
 
 // ---------------------------------------------------------------------------
@@ -438,22 +493,27 @@ pub trait Tool {
     fn run(&self, plan: &ExecPlan, world: &mut ObservedWorld<'_>) -> Result<Tree, String>;
 }
 
-fn content_hash(s: &str) -> u64 {
+fn content_hash(s: &str) -> Blake3Hash {
     content_hash_bytes(s.as_bytes())
 }
 
-fn content_hash_bytes(bytes: &[u8]) -> u64 {
-    let mut h = DefaultHasher::new();
-    bytes.hash(&mut h);
-    h.finish()
+fn content_hash_bytes(bytes: &[u8]) -> Blake3Hash {
+    let mut h = blake3::Hasher::new();
+    h.update(b"vix-read-content");
+    update_len(&mut h, bytes.len());
+    h.update(bytes);
+    finish_blake3(h)
 }
 
-fn listing_hash(names: &[String]) -> u64 {
-    let mut h = DefaultHasher::new();
+fn listing_hash(names: &[String]) -> Blake3Hash {
+    let mut h = blake3::Hasher::new();
+    h.update(b"vix-read-listing");
+    update_len(&mut h, names.len());
     for n in names {
-        n.hash(&mut h);
+        update_len(&mut h, n.len());
+        h.update(n.as_bytes());
     }
-    h.finish()
+    finish_blake3(h)
 }
 
 /// The mounted world: point queries answered from the mount set, nothing
@@ -485,11 +545,11 @@ impl Snapshot for MountedWorld<'_> {
         for m in self.mounts {
             if let Some(rest) = path.strip_prefix(&m.at) {
                 let key = rest.trim_start_matches('/');
-                if let Some(contents) = m.tree.entries.get(key) {
-                    return Some(contents.as_bytes().to_vec());
-                }
                 if let Some(contents) = m.tree.blobs.get(key) {
                     return Some(contents.clone());
+                }
+                if let Some(contents) = m.tree.entries.get(key) {
+                    return Some(contents.as_bytes().to_vec());
                 }
             }
         }
@@ -624,11 +684,11 @@ pub enum ExecEvent {
 
 pub struct ExecCache {
     /// tier-1: (closure × plan × capability × coarse mounts) -> outcome.
-    tier1: HashMap<u64, Outcome>,
+    tier1: HashMap<Blake3Hash, Outcome>,
     /// tier-2 candidates: (closure × plan × capability) -> prior outcomes.
     /// Mount fingerprints are EXCLUDED here — the world is what tier 2
     /// relaxes; the computation identity is what it must not.
-    candidates: HashMap<u64, Vec<Outcome>>,
+    candidates: HashMap<Blake3Hash, Vec<Outcome>>,
     pub events: Vec<ExecEvent>,
 }
 
@@ -647,21 +707,24 @@ impl ExecCache {
         }
     }
 
-    fn keys(&self, plan: &ExecPlan, capability: u64, mounts: &[Mount]) -> (u64, u64) {
-        let mut h = DefaultHasher::new();
+    fn keys(&self, plan: &ExecPlan, capability: u64, mounts: &[Mount]) -> (Blake3Hash, Blake3Hash) {
+        let mut h = blake3::Hasher::new();
+        h.update(b"vix-exec-identity");
         // NORMALIZED plan identity: equivalent invocations share both tiers
         // (`cc -c x.c -O2` == `cc -O2 -c x.c`). See ExecPlan::normalized.
-        plan.identity_hash().hash(&mut h);
-        capability.hash(&mut h);
-        let identity = h.finish();
+        h.update(plan.identity_hash().as_ref());
+        h.update(&capability.to_le_bytes());
+        let identity = finish_blake3(h);
 
-        let mut h = DefaultHasher::new();
-        identity.hash(&mut h);
+        let mut h = blake3::Hasher::new();
+        h.update(b"vix-exec-coarse");
+        h.update(identity.as_ref());
         for m in mounts {
-            m.at.hash(&mut h);
-            m.tree.fingerprint().hash(&mut h);
+            update_len(&mut h, m.at.len());
+            h.update(m.at.as_bytes());
+            h.update(m.tree.fingerprint().as_ref());
         }
-        (identity, h.finish())
+        (identity, finish_blake3(h))
     }
 
     /// Run (or reuse) a plan against mounted trees under a capability.
@@ -682,6 +745,7 @@ impl ExecCache {
         let outcome = Outcome {
             outputs,
             read_set: observed.into_read_set(),
+            tree_events: Vec::new(),
         };
         self.record_ran(plan, capability, mounts, outcome.clone());
         Ok(outcome)
@@ -751,10 +815,12 @@ impl Tool for FakeCc {
             .find_map(|(a, r)| role_output_paths(a, *r).into_iter().next())
             .ok_or("cc: no output")?;
 
-        let mut digest = DefaultHasher::new();
+        let mut digest = blake3::Hasher::new();
+        digest.update(b"vix-fake-cc-output");
         for (arg, role) in &plan.argv {
             if *role == Role::Flag {
-                arg.hash(&mut digest);
+                update_len(&mut digest, arg.len());
+                digest.update(arg.as_bytes());
             }
         }
         for input in plan
@@ -765,7 +831,8 @@ impl Tool for FakeCc {
             let source = world
                 .read(&input)
                 .ok_or_else(|| format!("cc: cannot read `{input}` (outside the mounts?)"))?;
-            source.hash(&mut digest);
+            update_len(&mut digest, source.len());
+            digest.update(source.as_bytes());
             // Quoted includes probe the including file's own directory FIRST
             // (C semantics), then the -I dirs, in order. Misses pin Absent.
             let own_dir = input.rsplit_once('/').map(|(d, _)| d).unwrap_or("");
@@ -783,7 +850,8 @@ impl Tool for FakeCc {
                     let mut found = false;
                     for probe in &probes {
                         if let Some(contents) = world.read(probe) {
-                            contents.hash(&mut digest);
+                            update_len(&mut digest, contents.len());
+                            digest.update(contents.as_bytes());
                             found = true;
                             break;
                         }
@@ -797,7 +865,7 @@ impl Tool for FakeCc {
 
         Ok(Tree::of(&[(
             output.as_str(),
-            &format!("obj({:016x})", digest.finish()),
+            &format!("obj({})", hex::encode(finish_blake3(digest).as_ref())),
         )]))
     }
 }
@@ -813,32 +881,42 @@ impl Tool for FakeRustc {
             .iter()
             .flat_map(|(arg, role)| role_output_paths(arg, *role))
             .collect();
-        if outputs.is_empty() {
+        let stdout_paths: Vec<String> = plan
+            .argv
+            .iter()
+            .flat_map(|(arg, role)| role_stdout_paths(arg, *role))
+            .collect();
+        if outputs.is_empty() && stdout_paths.is_empty() {
             return Err("rustc: no output".into());
         }
-        let mut digest = DefaultHasher::new();
+        let mut digest = blake3::Hasher::new();
+        digest.update(b"vix-fake-rustc-output");
         let mut crate_type = "lib";
         for (index, (arg, role)) in plan.argv.iter().enumerate() {
             match role {
                 Role::Flag => {
-                    arg.hash(&mut digest);
+                    update_len(&mut digest, arg.len());
+                    digest.update(arg.as_bytes());
                     if index > 0 && plan.argv[index - 1].0 == "--crate-type" {
                         crate_type = arg;
                     }
                 }
                 Role::SearchDir | Role::SearchDirFlag => {
-                    arg.hash(&mut digest);
+                    update_len(&mut digest, arg.len());
+                    digest.update(arg.as_bytes());
                 }
                 Role::Output | Role::OutputFlag | Role::OutputDir | Role::Stdout => {}
                 Role::Env => {
-                    arg.hash(&mut digest);
+                    update_len(&mut digest, arg.len());
+                    digest.update(arg.as_bytes());
                 }
                 Role::Input | Role::InputFlag => {
                     for input in role_input_paths(arg, *role) {
                         let source = world.read(&input).ok_or_else(|| {
                             format!("rustc: cannot read `{input}` (outside the mounts?)")
                         })?;
-                        source.hash(&mut digest);
+                        update_len(&mut digest, source.len());
+                        digest.update(source.as_bytes());
                     }
                 }
                 Role::Executable => {
@@ -846,13 +924,14 @@ impl Tool for FakeRustc {
                         let source = world.read_bytes(&input).ok_or_else(|| {
                             format!("rustc: cannot read executable `{input}` (outside the mounts?)")
                         })?;
-                        source.hash(&mut digest);
+                        update_len(&mut digest, source.len());
+                        digest.update(&source);
                     }
                 }
             }
         }
 
-        let digest = digest.finish();
+        let digest = hex::encode(finish_blake3(digest).as_ref());
         let mut tree = Tree::default();
         for output in outputs {
             let kind = if output.ends_with(".rmeta") {
@@ -868,8 +947,25 @@ impl Tool for FakeRustc {
             } else {
                 "rlib"
             };
-            tree.entries
-                .insert(output, format!("{kind}({digest:016x})"));
+            tree.entries.insert(output, format!("{kind}({digest})"));
+        }
+        for stdout in stdout_paths {
+            let target = plan
+                .argv
+                .windows(2)
+                .find(|pair| pair[0].0 == "--target")
+                .map(|pair| pair[1].0.as_str())
+                .unwrap_or("x86_64-unknown-linux-gnu");
+            let cfg = if target.contains("windows") {
+                "target_arch=\"x86_64\"\ntarget_family=\"windows\"\ntarget_os=\"windows\"\nwindows\n"
+            } else if target.contains("wasm32") {
+                "target_arch=\"wasm32\"\ntarget_family=\"wasm\"\ntarget_os=\"unknown\"\n"
+            } else if target.contains("darwin") || target.contains("apple") {
+                "target_arch=\"aarch64\"\ntarget_family=\"unix\"\ntarget_os=\"macos\"\nunix\n"
+            } else {
+                "target_arch=\"x86_64\"\ntarget_family=\"unix\"\ntarget_os=\"linux\"\nunix\n"
+            };
+            tree.entries.insert(stdout, cfg.to_string());
         }
         Ok(tree)
     }
@@ -929,10 +1025,12 @@ impl Tool for FakeAr {
             .iter()
             .find_map(|(a, r)| role_output_paths(a, *r).into_iter().next())
             .ok_or("ar: no output")?;
-        let mut digest = DefaultHasher::new();
+        let mut digest = blake3::Hasher::new();
+        digest.update(b"vix-fake-ar-output");
         for (arg, role) in &plan.argv {
             if *role == Role::Flag {
-                arg.hash(&mut digest);
+                update_len(&mut digest, arg.len());
+                digest.update(arg.as_bytes());
             }
         }
         for input in plan
@@ -941,7 +1039,8 @@ impl Tool for FakeAr {
             .flat_map(|(arg, role)| role_input_paths(arg, *role))
         {
             if let Some(contents) = world.read(&input) {
-                contents.hash(&mut digest);
+                update_len(&mut digest, contents.len());
+                digest.update(contents.as_bytes());
                 continue;
             }
             // A directory input: enumerate it (a LISTING observation — new
@@ -953,12 +1052,13 @@ impl Tool for FakeAr {
                 let contents = world
                     .read(&format!("{input}/{name}"))
                     .ok_or_else(|| format!("ar: `{input}/{name}` vanished mid-run"))?;
-                contents.hash(&mut digest);
+                update_len(&mut digest, contents.len());
+                digest.update(contents.as_bytes());
             }
         }
         Ok(Tree::of(&[(
             output.as_str(),
-            &format!("archive({:016x})", digest.finish()),
+            &format!("archive({})", hex::encode(finish_blake3(digest).as_ref())),
         )]))
     }
 }

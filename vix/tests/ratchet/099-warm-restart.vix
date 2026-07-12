@@ -1,0 +1,11 @@
+
+// Rung 099 — warm restart: one requirement changed between runs; the
+// untouched subtree's rows are not re-read, its work not re-done.
+#[test { rerun_with: "one-req-bumped" }]
+fn warm_restart() -> Stream<Check> {
+    let ws = fixture_workspace("kitchen-sink");
+    let solution = mini_solve(fixture_index()) where { requirements: ws.requirements() };
+    yield expect_some(solution);
+    yield never_read(p"index/liba");
+    yield demanded(solution);
+}

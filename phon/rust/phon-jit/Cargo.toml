@@ -15,7 +15,7 @@ rustdoc-args = ["--html-in-header", "arborium-header.html"]
 [dependencies]
 phon-ir.workspace = true
 phon-schema.workspace = true
-weavy = { workspace = true, features = ["jit"] }
+weavy.workspace = true
 
 [build-dependencies]
 # Build-time stencil extraction (compile_object, extract_stencil).

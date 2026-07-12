@@ -18,12 +18,11 @@
 //! hash exists?), and seatbelt confinement (runtime side).
 
 use std::collections::HashMap;
-use std::hash::{DefaultHasher, Hash, Hasher};
 use std::sync::Arc;
 
 use facet::Facet;
 use tokio::sync::Mutex;
-use vix::exec::{ExecPlan, MountedWorld, ObservedWorld, Outcome, ReadSet, Role, Tree};
+use vix::exec::{Blake3Hash, ExecPlan, MountedWorld, ObservedWorld, Outcome, ReadSet, Role, Tree};
 use vix::machine::{
     Machine, MachineExecBackend, MachineExecRequest, MachinePathDemand, MachinePendingRun,
     ValueBundle,
@@ -38,7 +37,7 @@ use vox::Tx;
 pub struct WireMount {
     pub at: String,
     /// Tree hash — the bytes must already live in the executor's CAS.
-    pub tree: u64,
+    pub tree: Blake3Hash,
 }
 
 #[derive(Facet, Debug, Clone)]
@@ -78,7 +77,7 @@ pub enum WireExecEvent {
     /// An output path landed — fetchable NOW via fetch_path, before Finished.
     PathReady {
         path: String,
-        content_hash: u64,
+        content_hash: Blake3Hash,
     },
     /// The observer's result as machine store values.
     ObserverResult {
@@ -86,7 +85,7 @@ pub enum WireExecEvent {
     },
     Finished {
         ok: bool,
-        tree: u64,
+        tree: Blake3Hash,
         read_set: ReadSet,
     },
     Failed {
@@ -104,16 +103,16 @@ vox_schema::impl_reborrow_owned!(WireExecEvent, CacheSource);
 #[vox::service]
 pub trait Executor {
     /// Ingest a tree (postcard bytes) into the local CAS; returns its hash.
-    async fn put_tree(&self, bytes: Vec<u8>) -> u64;
+    async fn put_tree(&self, bytes: Vec<u8>) -> Blake3Hash;
     /// Which of these trees are already local?
-    async fn have(&self, hashes: Vec<u64>) -> Vec<bool>;
+    async fn have(&self, hashes: Vec<Blake3Hash>) -> Vec<bool>;
     /// Whole tree out of the CAS (postcard bytes). Chunking comes later.
-    async fn fetch_tree(&self, hash: u64) -> Option<Vec<u8>>;
+    async fn fetch_tree(&self, hash: Blake3Hash) -> Option<Vec<u8>>;
     /// One path out of a (possibly still PRODUCING) run's output space.
     async fn fetch_path(&self, run: u64, path: String) -> Option<String>;
     /// Pull a tree from a peer executor into the local CAS — the
     /// executor→executor data path; the orchestrator never carries bytes.
-    async fn pull_from(&self, peer: String, hash: u64) -> bool;
+    async fn pull_from(&self, peer: String, hash: Blake3Hash) -> bool;
     /// Run a plan; events stream as they happen.
     async fn exec(&self, request: WireExecRequest, run: u64, events: Tx<WireExecEvent>);
 }
@@ -150,13 +149,13 @@ impl<T: vix::exec::Tool + Send + Sync> WireTool for Atomic<T> {
 
 #[derive(Default)]
 struct Cas {
-    trees: HashMap<u64, Tree>,
+    trees: HashMap<Blake3Hash, Tree>,
     /// Output spaces of runs (keyed by run IDENTITY), filled progressively
     /// while the tool executes.
-    runs: HashMap<u64, Tree>,
+    runs: HashMap<Blake3Hash, Tree>,
     /// Caller-chosen run ids alias onto run identities (joiners and the
     /// spawner share one output space — one process, one producing tree).
-    run_aliases: HashMap<u64, u64>,
+    run_aliases: HashMap<u64, Blake3Hash>,
 }
 
 /// A finished run — what a cache entry points at AFTER the flush. Mid-flight
@@ -164,8 +163,8 @@ struct Cas {
 /// answer: serve-before-cache; the journal records only completed runs).
 #[derive(Clone)]
 struct CompletedRun {
-    paths: Vec<(String, u64)>,
-    tree: u64,
+    paths: Vec<(String, Blake3Hash)>,
+    tree: Blake3Hash,
     read_set: ReadSet,
 }
 
@@ -185,13 +184,13 @@ enum RunState {
 #[derive(Default)]
 struct RunTable {
     /// By FULL identity: plan × capability × coarse mounts.
-    states: HashMap<u64, RunState>,
+    states: HashMap<Blake3Hash, RunState>,
     /// Tier-2 candidates by computation identity (plan × capability only —
     /// the mounts are what verification relaxes).
-    candidates: HashMap<u64, Vec<CompletedRun>>,
+    candidates: HashMap<Blake3Hash, Vec<CompletedRun>>,
     /// Observer results by (full run identity × observer canonical hash):
     /// one run, many observers, each a distinct memoized VALUE.
-    observers: HashMap<(u64, u64), ValueBundle>,
+    observers: HashMap<(Blake3Hash, Blake3Hash), ValueBundle>,
 }
 
 #[derive(Clone)]
@@ -226,59 +225,96 @@ impl ExecutorService {
     }
 }
 
-fn tree_hash(tree: &Tree) -> u64 {
+fn finish_hash(hasher: blake3::Hasher) -> Blake3Hash {
+    Blake3Hash::from(*hasher.finalize().as_bytes())
+}
+
+fn update_len(hasher: &mut blake3::Hasher, len: usize) {
+    hasher.update(&u64::try_from(len).expect("length fits u64").to_le_bytes());
+}
+
+fn tree_hash(tree: &Tree) -> Blake3Hash {
     tree.fingerprint()
 }
 
-fn content_hash(s: &str) -> u64 {
-    let mut h = DefaultHasher::new();
-    s.hash(&mut h);
-    h.finish()
+fn content_hash(s: &str) -> Blake3Hash {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"vix-wire-path-content");
+    update_len(&mut hasher, s.len());
+    hasher.update(s.as_bytes());
+    finish_hash(hasher)
 }
 
-fn bundle_hash(bundle: &ValueBundle) -> u64 {
-    let mut h = DefaultHasher::new();
-    bundle.root.hash(&mut h);
+fn bundle_hash(bundle: &ValueBundle) -> Blake3Hash {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"vix-wire-observer-bundle");
+    hasher.update(&bundle.root.to_le_bytes());
+    update_len(&mut hasher, bundle.values.len());
     for value in &bundle.values {
-        value.handle.hash(&mut h);
-        value.schema.hash(&mut h);
-        value.bytes.hash(&mut h);
-        value.content_hash.hash(&mut h);
+        hasher.update(&value.handle.to_le_bytes());
+        update_len(&mut hasher, value.bytes.len());
+        hasher.update(&value.bytes);
+        update_len(&mut hasher, value.content_hash.len());
+        hasher.update(&value.content_hash);
     }
+    update_len(&mut hasher, bundle.code.len());
     for code in &bundle.code {
-        code.module_hash.hash(&mut h);
-        code.bytes.hash(&mut h);
+        update_len(&mut hasher, code.module_hash.len());
+        hasher.update(&code.module_hash);
+        update_len(&mut hasher, code.bytes.len());
+        hasher.update(&code.bytes);
     }
-    h.finish()
+    finish_hash(hasher)
+}
+
+fn computation_identity(plan: &ExecPlan, capability: u64) -> Blake3Hash {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"vix-wire-computation-identity");
+    hasher.update(plan.identity_hash().as_ref());
+    hasher.update(&capability.to_le_bytes());
+    finish_hash(hasher)
+}
+
+fn run_identity(comp_identity: Blake3Hash, mounts: &[vix::exec::Mount]) -> Blake3Hash {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"vix-wire-run-identity");
+    hasher.update(comp_identity.as_ref());
+    update_len(&mut hasher, mounts.len());
+    for m in mounts {
+        update_len(&mut hasher, m.at.len());
+        hasher.update(m.at.as_bytes());
+        hasher.update(m.tree.fingerprint().as_ref());
+    }
+    finish_hash(hasher)
 }
 
 impl Executor for ExecutorService {
-    async fn put_tree(&self, bytes: Vec<u8>) -> u64 {
+    async fn put_tree(&self, bytes: Vec<u8>) -> Blake3Hash {
         let tree = tree_from_bytes(&bytes).expect("tree deserializes");
         let hash = tree_hash(&tree);
         self.cas.lock().await.trees.insert(hash, tree);
         hash
     }
 
-    async fn have(&self, hashes: Vec<u64>) -> Vec<bool> {
+    async fn have(&self, hashes: Vec<Blake3Hash>) -> Vec<bool> {
         let cas = self.cas.lock().await;
         hashes.iter().map(|h| cas.trees.contains_key(h)).collect()
     }
 
-    async fn fetch_tree(&self, hash: u64) -> Option<Vec<u8>> {
+    async fn fetch_tree(&self, hash: Blake3Hash) -> Option<Vec<u8>> {
         let cas = self.cas.lock().await;
         cas.trees.get(&hash).map(tree_to_bytes)
     }
 
     async fn fetch_path(&self, run: u64, path: String) -> Option<String> {
         let cas = self.cas.lock().await;
-        let identity = cas.run_aliases.get(&run).copied().unwrap_or(run);
+        let identity = cas.run_aliases.get(&run)?;
         cas.runs
-            .get(&identity)
+            .get(identity)
             .and_then(|t| t.entries.get(&path).cloned())
     }
 
-    async fn pull_from(&self, peer: String, hash: u64) -> bool {
+    async fn pull_from(&self, peer: String, hash: Blake3Hash) -> bool {
         let Ok(client) = vox::connect_lane::<ExecutorClient>(&peer).await else {
             return false;
         };
@@ -299,7 +335,7 @@ impl Executor for ExecutorService {
                 let Some(tree) = cas.trees.get(&m.tree) else {
                     let _ = events
                         .send(WireExecEvent::Failed {
-                            error: format!("tree {:x} not in local CAS (pull it first)", m.tree),
+                            error: format!("tree {:?} not in local CAS (pull it first)", m.tree),
                         })
                         .await;
                     return;
@@ -313,21 +349,8 @@ impl Executor for ExecutorService {
 
         // Run identity: plan × capability × coarse mounts. Computation
         // identity (for tier-2 candidates): plan × capability only.
-        let comp_identity = {
-            let mut h = DefaultHasher::new();
-            request.plan.hash().hash(&mut h);
-            request.capability.hash(&mut h);
-            h.finish()
-        };
-        let identity = {
-            let mut h = DefaultHasher::new();
-            comp_identity.hash(&mut h);
-            for m in &mounts {
-                m.at.hash(&mut h);
-                m.tree.fingerprint().hash(&mut h);
-            }
-            h.finish()
-        };
+        let comp_identity = computation_identity(&request.plan, request.capability);
+        let identity = run_identity(comp_identity, &mounts);
         self.cas.lock().await.run_aliases.insert(run, identity);
 
         // Decide this demand's role under ONE lock: replay a completed run,
@@ -482,7 +505,7 @@ impl ExecutorService {
     /// duplicated across the log/feed boundary.
     async fn broadcast(
         &self,
-        identity: u64,
+        identity: Blake3Hash,
         feed: &tokio::sync::broadcast::Sender<WireExecEvent>,
         event: WireExecEvent,
     ) {
@@ -500,7 +523,7 @@ impl ExecutorService {
     async fn finish_with_observer(
         &self,
         request: &WireExecRequest,
-        identity: u64,
+        identity: Blake3Hash,
         done: &CompletedRun,
         events: &Tx<WireExecEvent>,
     ) {
@@ -564,17 +587,12 @@ impl ExecutorService {
     async fn drive(
         &self,
         request: &WireExecRequest,
-        identity: u64,
+        identity: Blake3Hash,
         mounts: Vec<vix::exec::Mount>,
         feed: tokio::sync::broadcast::Sender<WireExecEvent>,
         events: &Tx<WireExecEvent>,
     ) {
-        let comp_identity = {
-            let mut h = DefaultHasher::new();
-            request.plan.hash().hash(&mut h);
-            request.capability.hash(&mut h);
-            h.finish()
-        };
+        let comp_identity = computation_identity(&request.plan, request.capability);
 
         let fail = |error: String| async {
             self.runs_table
@@ -678,9 +696,13 @@ impl ExecutorService {
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Transfer {
     /// Orchestrator → executor (a tree born at the orchestrator).
-    Upload { to: usize, tree: u64 },
+    Upload { to: usize, tree: Blake3Hash },
     /// Executor → executor (gravity: bytes never touch the orchestrator).
-    GravityPull { from: usize, to: usize, tree: u64 },
+    GravityPull {
+        from: usize,
+        to: usize,
+        tree: Blake3Hash,
+    },
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -701,7 +723,7 @@ pub struct FleetBackend {
 #[derive(Default)]
 struct FleetState {
     /// Which executors hold which trees (learned from puts/pulls/outputs).
-    locations: HashMap<u64, Vec<usize>>,
+    locations: HashMap<Blake3Hash, Vec<usize>>,
     /// Every byte movement — the scheduler's future food.
     pub transfers: Vec<Transfer>,
     placements: u64,
@@ -729,7 +751,7 @@ impl FleetBackend {
         self.state.lock().unwrap().transfers.clone()
     }
 
-    fn choose(&self, mount_hashes: &[u64]) -> usize {
+    fn choose(&self, mount_hashes: &[Blake3Hash]) -> usize {
         let mut state = self.state.lock().unwrap();
         let chosen = match self.placement {
             Placement::RoundRobin => (state.placements as usize) % self.executors.len(),
@@ -751,7 +773,7 @@ impl FleetBackend {
         chosen
     }
 
-    async fn ensure_mount(&self, target: usize, tree: &Tree) -> Result<u64, String> {
+    async fn ensure_mount(&self, target: usize, tree: &Tree) -> Result<Blake3Hash, String> {
         let hash = tree.fingerprint();
         let holders: Vec<usize> = {
             let state = self.state.lock().unwrap();
@@ -811,7 +833,7 @@ struct FleetRun {
 struct FleetRunState {
     ready_paths: std::collections::HashSet<String>,
     source: Option<vix::exec::ExecEvent>,
-    finished: Option<Result<(u64, ReadSet), String>>,
+    finished: Option<Result<(Blake3Hash, ReadSet), String>>,
     flushed: Option<Outcome>,
 }
 
@@ -929,6 +951,7 @@ impl MachinePendingRun for FleetRun {
         let outcome = Outcome {
             outputs: tree,
             read_set,
+            tree_events: Vec::new(),
         };
         self.state.lock().unwrap().flushed = Some(outcome.clone());
         Ok((outcome, source))
@@ -940,7 +963,7 @@ impl MachineExecBackend for FleetBackend {
         // The machine is sync; bridge onto the runtime this fleet was born on.
         tokio::task::block_in_place(|| {
             self.handle.clone().block_on(async {
-                let mount_hashes: Vec<u64> = request
+                let mount_hashes: Vec<Blake3Hash> = request
                     .mounts
                     .iter()
                     .map(|m| m.tree.fingerprint())
@@ -1061,13 +1084,20 @@ impl WireTool for FakeRustc {
         world: &mut ObservedWorld<'_>,
         emit: &mut dyn FnMut(&str, &str),
     ) -> Result<(), String> {
-        let mut digest: u64 = 0;
+        let mut hasher = blake3::Hasher::new();
+        hasher.update(b"vix-wire-fake-rustc");
         for (input, _) in plan.argv.iter().filter(|(_, r)| *r == Role::Input) {
             let src = world
                 .read(input)
                 .ok_or_else(|| format!("rustc: cannot read `{input}`"))?;
-            digest = digest.wrapping_mul(31).wrapping_add(content_hash(&src));
+            update_len(&mut hasher, input.len());
+            hasher.update(input.as_bytes());
+            hasher.update(content_hash(&src).as_ref());
         }
+        let digest = finish_hash(hasher);
+        let mut prefix = [0u8; 8];
+        prefix.copy_from_slice(&digest.as_ref()[..8]);
+        let digest = u64::from_le_bytes(prefix);
         // Metadata is done at end-of-typecheck: emit it NOW.
         emit("lib.rmeta", &format!("rmeta({digest:016x})"));
         // Codegen "runs" until the test opens the gate.

@@ -4,7 +4,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use vix::exec::{ExecPlan, Role, Tree};
+use vix::exec::{Blake3Hash, ExecPlan, Role, Tree};
 use vix::machine::{Machine, RenderedValue, ValueBundle};
 use vix_wire::{
     ExecutorClient, ExecutorDispatcher, ExecutorService, FakeRustc, WireExecEvent, WireExecRequest,
@@ -239,7 +239,7 @@ async fn drain(rx: &mut vox::Rx<WireExecEvent>) -> (Vec<WireExecEvent>, Option<C
     (events, source)
 }
 
-fn cc_request(src_hash: u64) -> WireExecRequest {
+fn cc_request(src_hash: Blake3Hash) -> WireExecRequest {
     WireExecRequest {
         plan: ExecPlan {
             argv: vec![

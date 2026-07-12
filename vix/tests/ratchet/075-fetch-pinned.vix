@@ -1,0 +1,7 @@
+// Rung 075 — fetch against the fixture registry, pinned by content hash.
+#[test]
+fn fetch_pinned() -> Stream<Check> {
+    let bytes = fetch(fixture_registry().url("tokio-1.52.3.crate"));
+    yield expect_eq(bytes.len(), 4096);
+    yield fetched(1);
+}

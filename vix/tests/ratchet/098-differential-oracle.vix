@@ -1,0 +1,25 @@
+
+// Rung 098 — the differential oracle: our solve matches cargo's locked
+// selection for the standard fixture workspace, package by package. cargo is
+// the only oracle (rodin/docs/00-oracle.md); there is no recorded reference
+// resolver — the Rust one was deleted, and its `expected_selection()` was never
+// an authority.
+//
+// `cargo_selection()` is an oracle value the *test harness* supplies — the
+// fixture runs cargo (generate-lockfile) over the materialized workspace,
+// outside the machine. The solver `mini_solve` is pure Vix and host-free: it
+// reads only `fixture_index()` and `requirements` and never calls cargo. The
+// differential comparison below is the test's, not the solver's.
+#[test { budget_wall: 30s, budget_rss: 2GB }]
+fn differential_oracle() -> Stream<Check> {
+    let ws = fixture_workspace("kitchen-sink");   // 12 packages, diamonds, features
+    let solution = mini_solve(fixture_index()) where { requirements: ws.requirements() };
+    yield match solution {
+        Some(sel) => {
+            let expected = ws.cargo_selection();  // harness-supplied cargo oracle value
+            yield expect_eq(sel.len(), expected.len());
+            yield expect(expected.keys().all(|pkg| sel.has(pkg) && sel.get(pkg) == expected.get(pkg)));
+        },
+        None => expect(false),
+    };
+}

@@ -7,12 +7,35 @@
 //! backends can use the same program/block shape.
 
 pub mod r#async;
+pub mod exec;
 pub mod ir;
 pub mod mem;
+pub mod ordered;
 pub mod task;
+pub mod verified;
 
-#[cfg(feature = "jit")]
+pub use exec::{
+    CompareSide, DriveTable, EntryWriteKind, ExecTask, ExecTaskState, Executable, FallbackReason,
+    FaultSite, LaneFacts, LaneKind, LaneRequest, PublishedDescriptor, StoreHandle,
+    StructuralResult, TaskFault,
+};
+pub use task::StructuralFieldSource;
+pub use verified::{
+    AccessDefect, AccessRole, AllowedKinds, CallContract, CallContractId, CallSiteFacts,
+    DriveRequirements, FrameContract, FrameRegion, FunctionContract, FunctionFacts,
+    IndirectCallObligation, KindRequirement, OrderedCollectionContract, OrderedCollectionKind,
+    PayloadKind, PcFacts, ProgramContract, ProgramDefect, ProgramError, ProgramFacts, ProgramTable,
+    ReferenceSite, RegionId, RegionReference, RegionShape, SchemaContract, SchemaRef, ShapeOwner,
+    StructuralKind, UnsupportedOp, ValueFieldSite, ValueFieldUse, ValueSelector,
+    ValueShapeContract, ValueShapeKind, ValueShapeRef, ValueShapeReferenceSite, ValueVariant,
+    VerifiedProgram, WordKind,
+};
+
 pub mod jit;
+
+#[cfg(test)]
+#[path = "../build/jit_config.rs"]
+mod jit_config;
 
 use std::collections::BTreeMap;
 use std::mem::MaybeUninit;

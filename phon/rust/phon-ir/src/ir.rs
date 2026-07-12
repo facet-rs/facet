@@ -637,10 +637,10 @@ mod tests {
                     }],
                 },
                 Op::CallBlock {
-                    schema: SchemaId(9),
+                    schema: SchemaId::from_raw(9),
                 },
             ],
-            blocks: BTreeMap::from([(SchemaId(9), vec![Op::Null])]),
+            blocks: BTreeMap::from([(SchemaId::from_raw(9), vec![Op::Null])]),
         };
 
         let projected = value_lowered_from_canonical(canonical_value_program(&legacy)).unwrap();
@@ -656,7 +656,7 @@ mod tests {
             ] => {
                 assert!(*set);
                 assert_eq!(*min_wire, 1);
-                assert_eq!(*schema, SchemaId(9));
+                assert_eq!(*schema, SchemaId::from_raw(9));
                 match body.as_slice() {
                     [Op::Option { some }] => match some.as_slice() {
                         [Op::Scalar(Primitive::U8)] => {}
@@ -667,7 +667,11 @@ mod tests {
             }
             other => panic!("unexpected projected program: {other:?}"),
         }
-        match projected.blocks.get(&SchemaId(9)).map(Vec::as_slice) {
+        match projected
+            .blocks
+            .get(&SchemaId::from_raw(9))
+            .map(Vec::as_slice)
+        {
             Some([Op::Null]) => {}
             other => panic!("unexpected projected block: {other:?}"),
         }
@@ -680,7 +684,7 @@ mod tests {
         assert_eq!(err, CanonicalValueError::Return);
 
         let err = value_program_from_canonical(vec![WeavyOp::Control(ControlOp::CallBlock {
-            block: SchemaId(1),
+            block: SchemaId::from_raw(1),
             base_offset: 4,
         })])
         .expect_err("offset block call should not project to legacy value IR");
@@ -747,10 +751,10 @@ mod tests {
 
         let lowered = CanonicalValueProgram {
             program: vec![WeavyOp::Control(ControlOp::CallBlock {
-                block: SchemaId(99),
+                block: SchemaId::from_raw(99),
                 base_offset: 0,
             })],
-            blocks: BTreeMap::from([(SchemaId(99), program)]),
+            blocks: BTreeMap::from([(SchemaId::from_raw(99), program)]),
         };
         let lowered_stats = canonical_value_lowered_stats(&lowered);
         assert_eq!(lowered_stats.root.op_count, 1);

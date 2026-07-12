@@ -1,0 +1,2264 @@
+use vix::{Tree, Path, Version, VersionSet, Map, Set};
+
+struct CargoPackage {
+    name: String,
+    version: String,
+    edition: String,
+    manifest: String,
+}
+
+struct CargoDependencyDecl {
+    name: String,
+    kind: String,
+    target: String,
+    cfg: Doc,
+    version_req: String,
+    path: String,
+    workspace: Bool,
+    optional: Bool,
+    default_features: Bool,
+    features: [String],
+}
+
+struct CargoTargetShape {
+    name: String,
+    kind: String,
+    source: String,
+    crate_type: String,
+    metadata_file: String,
+    link_file: String,
+}
+
+struct CargoUnitProfile {
+    name: String,
+    opt_level: String,
+    lto: String,
+    codegen_backend: String,
+    codegen_units: String,
+    debuginfo: String,
+    split_debuginfo: String,
+    debug_assertions: String,
+    overflow_checks: String,
+    rpath: String,
+    incremental: String,
+    panic: String,
+    strip: String,
+}
+
+enum PackageScalar {
+    Value(String),
+    Inherited { workspace: Bool },
+}
+
+struct CargoPackageToml {
+    name: String,
+    version: PackageScalar,
+    edition: PackageScalar,
+    #[decode(rename = "rust-version")]
+    rust_version: Option<PackageScalar>,
+    license: Option<PackageScalar>,
+    repository: Option<PackageScalar>,
+}
+
+struct CargoWorkspaceToml {
+    members: [String],
+    package: Option<CargoWorkspacePackageToml>,
+    dependencies: Option<Map<String, CargoDependencySpec>>,
+}
+
+struct CargoWorkspacePackageToml {
+    version: Option<String>,
+    edition: Option<String>,
+    #[decode(rename = "rust-version")]
+    rust_version: Option<String>,
+    license: Option<String>,
+    repository: Option<String>,
+}
+
+enum CargoDependencySpec {
+    Req(String),
+    Detailed(CargoDependencyTable),
+}
+
+struct CargoDependencyTable {
+    version: Option<String>,
+    path: Option<String>,
+    package: Option<String>,
+    workspace: Option<Bool>,
+    optional: Option<Bool>,
+    #[decode(rename = "default-features")]
+    default_features: Option<Bool>,
+    features: Option<[String]>,
+}
+
+struct CargoLibToml {
+    name: Option<String>,
+    path: Option<String>,
+    #[decode(rename = "proc-macro")]
+    proc_macro: Option<Bool>,
+    #[decode(rename = "crate-type")]
+    crate_type: Option<[String]>,
+}
+
+struct CargoBinToml {
+    name: Option<String>,
+    path: Option<String>,
+}
+
+struct CargoTargetToml {
+    dependencies: Option<Map<String, CargoDependencySpec>>,
+    #[decode(rename = "build-dependencies")]
+    build_dependencies: Option<Map<String, CargoDependencySpec>>,
+    #[decode(rename = "dev-dependencies")]
+    dev_dependencies: Option<Map<String, CargoDependencySpec>>,
+}
+
+struct CargoManifestToml {
+    package: CargoPackageToml,
+    workspace: Option<CargoWorkspaceToml>,
+    dependencies: Option<Map<String, CargoDependencySpec>>,
+    #[decode(rename = "build-dependencies")]
+    build_dependencies: Option<Map<String, CargoDependencySpec>>,
+    #[decode(rename = "dev-dependencies")]
+    dev_dependencies: Option<Map<String, CargoDependencySpec>>,
+    target: Option<Map<String, CargoTargetToml>>,
+    features: Option<Map<String, [String]>>,
+    lib: Option<CargoLibToml>,
+    bin: Option<[CargoBinToml]>,
+}
+
+struct WorkspaceIndexState {
+    packages: [Int],
+    package_ids: Map<String, Int>,
+    member_paths: Map<Int, String>,
+    names: Map<Int, String>,
+    version_ids: [Int],
+    version_pkgs: Map<Int, Int>,
+    version_values: Map<Int, String>,
+    clause_ids: [Int],
+    guard_ids: [Int],
+    guard_clause_ids: Map<Int, Int>,
+    guard_tags: Map<Int, String>,
+    guard_kinds: Map<Int, Int>,
+    guard_pkgs: Map<Int, Int>,
+    guard_version_values: Map<Int, String>,
+    guard_features: Map<Int, Int>,
+    consequent_tags: Map<Int, String>,
+    consequent_pkgs: Map<Int, Int>,
+    consequent_version_sets: Map<Int, VersionSet>,
+    consequent_req_texts: Map<Int, String>,
+    consequent_features: Map<Int, Int>,
+    gate_kinds: Map<Int, String>,
+    gate_targets: Map<Int, String>,
+    feature_ids: [Int],
+    feature_keys: Map<String, Int>,
+    feature_pkgs: Map<Int, Int>,
+    feature_names: Map<Int, String>,
+    feature_enables: Map<Int, String>,
+    feature_targets: Map<String, String>,
+    next_pkg: Int,
+    next_version: Int,
+    next_clause: Int,
+    next_guard: Int,
+    next_feature: Int,
+}
+
+struct SparseIndexRow {
+    name: String,
+    vers: String,
+    deps: [SparseIndexDep],
+    features: Map<String, [String]>,
+    yanked: Bool,
+}
+
+struct SparseIndexDep {
+    name: String,
+    package: String,
+    req: String,
+    kind: String,
+    target: String,
+    optional: Bool,
+    #[decode(rename = "default_features")]
+    default_features: Bool,
+    features: [String],
+}
+
+struct TakeStringsState {
+    values: [String],
+    remaining: Int,
+}
+
+struct TakeVersionsState {
+    values: [Version],
+    remaining: Int,
+}
+
+struct WorkspaceSelectedGuardClause {
+    state: WorkspaceIndexState,
+    parent_pkg: Int,
+    parent_version: String,
+    consequent_tag: String,
+    dep_pkg: Int,
+    req: VersionSet,
+    req_text: String,
+    kind: String,
+}
+
+struct WorkspaceSelectedFeatureClause {
+    state: WorkspaceIndexState,
+    parent_pkg: Int,
+    parent_version: String,
+    feature_pkg: Int,
+    feature: Int,
+    kind: String,
+}
+
+struct WorkspaceFeatureExpansionClause {
+    state: WorkspaceIndexState,
+    pkg: Int,
+    version: String,
+    guard_feature: Int,
+    feature_pkg: Int,
+    feature: Int,
+    kind: String,
+}
+
+struct WorkspaceRequiredDepClauses {
+    state: WorkspaceIndexState,
+    parent_pkg: Int,
+    parent_version: String,
+    dep_pkg: Int,
+    req: String,
+    kind: String,
+}
+
+struct SolutionUnitRow {
+    out: String,
+    package: String,
+    version: String,
+    target: CargoTargetShape,
+    profile: CargoUnitProfile,
+    features: String,
+    deps: String,
+}
+
+struct SolutionBinUnitsText {
+    package: String,
+    version: String,
+    bins: [CargoBinToml],
+    profile: CargoUnitProfile,
+    features: String,
+    deps: String,
+    out: String,
+}
+
+struct SolutionMemberUnitsText {
+    workspace: Tree,
+    workspace_root: Path,
+    package: String,
+    version: String,
+    manifest: Tree,
+    profile: CargoUnitProfile,
+    features: String,
+    deps: String,
+    out: String,
+}
+
+fn manifest_toml(manifest: Tree) -> CargoManifestToml {
+    toml_decode((manifest / p"Cargo.toml").text())
+}
+
+fn package_toml(manifest: Tree) -> CargoPackageToml {
+    manifest_toml(manifest).package
+}
+
+fn workspace_toml(workspace: Tree) -> CargoWorkspaceToml {
+    manifest_toml(workspace).workspace.unwrap()
+}
+
+fn workspace_package_toml(workspace: Tree) -> CargoWorkspacePackageToml {
+    workspace_toml(workspace).package.unwrap()
+}
+
+fn option_string_or(value: Option<String>, fallback: String) -> String {
+    match value {
+        Some(s) => s,
+        None => fallback,
+    }
+}
+
+fn option_bool_or(value: Option<Bool>, fallback: Bool) -> Bool {
+    match value {
+        Some(b) => b,
+        None => fallback,
+    }
+}
+
+fn option_strings_or_empty(value: Option<[String]>) -> [String] {
+    match value {
+        Some(xs) => xs,
+        None => [],
+    }
+}
+
+fn package_scalar_value(field: PackageScalar) -> String {
+    match field {
+        PackageScalar::Value(value) => value,
+        PackageScalar::Inherited { workspace } => "",
+    }
+}
+
+fn inherited_package_scalar(field: PackageScalar, workspace_value: String) -> String {
+    match field {
+        PackageScalar::Value(value) => value,
+        PackageScalar::Inherited { workspace } => workspace_value,
+    }
+}
+
+fn inherited_package_option(field: Option<PackageScalar>, workspace_value: Option<String>) -> String {
+    match field {
+        Some(scalar) => inherited_package_scalar(scalar, option_string_or(workspace_value, "")),
+        None => "",
+    }
+}
+
+fn crate_name(package_name: String) -> String {
+    if package_name.contains("-") {
+        crate_name(package_name.before("-") + "_" + package_name.after("-"))
+    } else {
+        package_name
+    }
+}
+
+fn package_name(manifest: Tree) -> String {
+    package_toml(manifest).name
+}
+
+fn package_version(manifest: Tree) -> String {
+    package_scalar_value(package_toml(manifest).version)
+}
+
+fn package_version_in_workspace(manifest: Tree, workspace: Tree) -> String {
+    inherited_package_scalar(package_toml(manifest).version, workspace_package_toml(workspace).version.unwrap())
+}
+
+fn package_edition(manifest: Tree, workspace: Tree) -> String {
+    inherited_package_scalar(package_toml(manifest).edition, workspace_package_toml(workspace).edition.unwrap())
+}
+
+fn package_rust_version(manifest: Tree, workspace: Tree) -> String {
+    inherited_package_option(package_toml(manifest).rust_version, workspace_package_toml(workspace).rust_version)
+}
+
+fn package_license(manifest: Tree, workspace: Tree) -> String {
+    inherited_package_option(package_toml(manifest).license, workspace_package_toml(workspace).license)
+}
+
+fn package_repository(manifest: Tree, workspace: Tree) -> String {
+    inherited_package_option(package_toml(manifest).repository, workspace_package_toml(workspace).repository)
+}
+
+fn member_from_manifest_path(path: Path) -> String {
+    path.to_string().before("/Cargo.toml")
+}
+
+fn member_manifest_path(workspace_root: Path, member: String) -> String {
+    (workspace_root / member / "Cargo.toml").to_string()
+}
+
+fn workspace_member_glob_pattern(member: String) -> String {
+    member + "/Cargo.toml"
+}
+
+fn workspace_members_from_entry(workspace: Tree, member: String) -> [String] {
+    if member.contains("*") {
+        workspace.glob (workspace_member_glob_pattern(member))
+            .map member_from_manifest_path
+            .collect()
+            .values()
+    } else {
+        [member]
+    }
+}
+
+fn workspace_members(workspace: Tree) -> [String] {
+    workspace_toml(workspace).members.fold([], |out, member| [..out, ..workspace_members_from_entry(workspace, member)])
+}
+
+fn workspace_member_count(workspace: Tree) -> Int {
+    workspace_members(workspace).len()
+}
+
+fn workspace_members_text(workspace: Tree) -> String {
+    workspace_members(workspace).join("\n")
+}
+
+fn empty_workspace_index_state() -> WorkspaceIndexState {
+    WorkspaceIndexState {
+        packages: [],
+        package_ids: %{},
+        member_paths: %{},
+        names: %{},
+        version_ids: [],
+        version_pkgs: %{},
+        version_values: %{},
+        clause_ids: [],
+        guard_ids: [],
+        guard_clause_ids: %{},
+        guard_tags: %{},
+        guard_kinds: %{},
+        guard_pkgs: %{},
+        guard_version_values: %{},
+        guard_features: %{},
+        consequent_tags: %{},
+        consequent_pkgs: %{},
+        consequent_version_sets: %{},
+        consequent_req_texts: %{},
+        consequent_features: %{},
+        gate_kinds: %{},
+        gate_targets: %{},
+        feature_ids: [],
+        feature_keys: %{},
+        feature_pkgs: %{},
+        feature_names: %{},
+        feature_enables: %{},
+        feature_targets: %{},
+        next_pkg: 0,
+        next_version: 0,
+        next_clause: 0,
+        next_guard: 0,
+        next_feature: 1,
+    }
+}
+
+fn register_workspace_pseudo_root(state: WorkspaceIndexState) -> WorkspaceIndexState {
+    register_workspace_package(state, "__workspace__", "0.0.0", "")
+}
+
+fn member_manifest(workspace: Tree, workspace_root: Path, member: String) -> Tree {
+    workspace / workspace_root / member
+}
+
+fn workspace_projected_member_package_name(workspace: Tree, workspace_root: Path, member: String) -> String {
+    package_name(member_manifest(workspace, workspace_root, member))
+}
+
+fn register_workspace_members(workspace: Tree, workspace_root: Path, members: [String], state: WorkspaceIndexState) -> WorkspaceIndexState {
+    members.fold(state, |state, member| {
+        let manifest = member_manifest(workspace, workspace_root, member);
+        register_workspace_package(state, package_name(manifest), package_version_in_workspace(manifest, workspace), member)
+    })
+}
+
+fn register_workspace_package(state: WorkspaceIndexState, name: String, version: String, member_path: String) -> WorkspaceIndexState {
+    if state.package_ids.has(name) {
+        state
+    } else {
+        let pkg = state.next_pkg;
+        let version_id = state.next_version;
+        WorkspaceIndexState {
+            packages: [..state.packages, pkg],
+            package_ids: state.package_ids + (name, pkg),
+            member_paths: state.member_paths + (pkg, member_path),
+            names: state.names + (pkg, name),
+            version_ids: [..state.version_ids, version_id],
+            version_pkgs: state.version_pkgs + (version_id, pkg),
+            version_values: state.version_values + (version_id, version),
+            next_pkg: pkg + 1,
+            next_version: version_id + 1,
+            ..state
+        }
+    }
+}
+
+fn register_sparse_package_name(state: WorkspaceIndexState, name: String) -> WorkspaceIndexState {
+    if state.package_ids.has(name) {
+        state
+    } else {
+        let pkg = state.next_pkg;
+        WorkspaceIndexState {
+            packages: [..state.packages, pkg],
+            package_ids: state.package_ids + (name, pkg),
+            member_paths: state.member_paths + (pkg, ""),
+            names: state.names + (pkg, name),
+            next_pkg: pkg + 1,
+            ..state
+        }
+    }
+}
+
+fn register_sparse_version(state: WorkspaceIndexState, pkg: Int, version: String) -> WorkspaceIndexState {
+    let version_id = state.next_version;
+    WorkspaceIndexState {
+        version_ids: [..state.version_ids, version_id],
+        version_pkgs: state.version_pkgs + (version_id, pkg),
+        version_values: state.version_values + (version_id, version),
+        next_version: version_id + 1,
+        ..state
+    }
+}
+
+fn register_sparse_rows(rows: [SparseIndexRow], state: WorkspaceIndexState) -> WorkspaceIndexState {
+    rows.fold(state, |state, row| register_sparse_row(state, row))
+}
+
+fn register_sparse_row(state: WorkspaceIndexState, row: SparseIndexRow) -> WorkspaceIndexState {
+    if row.yanked {
+        state
+    } else {
+        if state.package_ids.has(row.name) {
+            register_sparse_version(state, state.package_ids.get(row.name), row.vers)
+        } else {
+            let pkg = state.next_pkg;
+            let state = register_sparse_package_name(state, row.name);
+            register_sparse_version(state, pkg, row.vers)
+        }
+    }
+}
+
+fn feature_key(state: WorkspaceIndexState, pkg: Int, feature: String) -> String {
+    state.names.get(pkg) + "\t" + feature
+}
+
+fn feature_id_opt(state: WorkspaceIndexState, pkg: Int, feature: String) -> Option<Int> {
+    let key = feature_key(state, pkg, feature);
+    if state.feature_keys.has(key) {
+        Some(state.feature_keys.get(key))
+    } else {
+        None
+    }
+}
+
+fn feature_id(state: WorkspaceIndexState, pkg: Int, feature: String) -> Int {
+    feature_id_opt(state, pkg, feature).unwrap()
+}
+
+fn register_feature(state: WorkspaceIndexState) where { pkg: Int, feature: String, target: Option<String> = None } -> WorkspaceIndexState {
+    let key = feature_key(state, pkg, feature);
+    if state.feature_keys.has(key) {
+        match target {
+            Some(expr) => WorkspaceIndexState {
+                feature_targets: state.feature_targets.with(key, expr),
+                ..state
+            },
+            None => state,
+        }
+    } else {
+        let id = state.next_feature;
+        let state = WorkspaceIndexState {
+            feature_ids: [..state.feature_ids, id],
+            feature_keys: state.feature_keys + (key, id),
+            feature_pkgs: state.feature_pkgs + (id, pkg),
+            feature_names: state.feature_names + (id, feature),
+            feature_enables: state.feature_enables + (id, ""),
+            next_feature: id + 1,
+            ..state
+        };
+        match target {
+            Some(expr) => WorkspaceIndexState {
+                feature_targets: state.feature_targets + (key, expr),
+                ..state
+            },
+            None => state,
+        }
+    }
+}
+
+fn register_feature_names(pkg: Int, features: [String], state: WorkspaceIndexState) -> WorkspaceIndexState {
+    features.fold(state, |state, feature| register_feature state where { pkg, feature })
+}
+
+fn register_feature_enables(state: WorkspaceIndexState, pkg: Int, feature: String, enables: [String]) -> WorkspaceIndexState {
+    let id = feature_id(state, pkg, feature);
+    WorkspaceIndexState {
+        feature_enables: state.feature_enables.with(id, enables.join("\n")),
+        ..state
+    }
+}
+
+fn sparse_dep_package_name(dep: SparseIndexDep) -> String {
+    if dep.package == "" { dep.name } else { dep.package }
+}
+
+fn sparse_dep_target(dep: SparseIndexDep) -> Option<String> {
+    if dep.target == "" { None } else { Some(dep.target) }
+}
+
+fn sparse_dep_consumed(dep: SparseIndexDep) -> Bool {
+    !dep.optional && dep.kind != "dev"
+}
+
+fn sparse_dep_requested_features(dep: SparseIndexDep) -> [String] {
+    if dep.default_features { [..dep.features, "default"] } else { dep.features }
+}
+
+fn register_sparse_features(pkg: Int, row: SparseIndexRow, state: WorkspaceIndexState) -> WorkspaceIndexState {
+    let state = register_feature_names(pkg, row.features.keys(), state);
+    let state = row.deps.fold(state, |state, dep| {
+        if dep.optional {
+            let feature = sparse_dep_package_name(dep);
+            register_feature state where { pkg, feature }
+        } else {
+            state
+        }
+    });
+    let state = row.features.keys().fold(state, |state, feature| {
+        register_feature_enables(state, pkg, feature, row.features.get(feature))
+    });
+    row.deps.fold(state, |state, dep| {
+        if dep.optional {
+            let feature = sparse_dep_package_name(dep);
+            let target = sparse_dep_target(dep);
+            register_feature state where { pkg, feature, target }
+        } else {
+            state
+        }
+    })
+}
+
+fn workspace_gate_targets_insert(gate_targets: Map<Int, String>, clause_id: Int, target: Option<String>) -> Map<Int, String> {
+    match target {
+        Some(expr) => gate_targets + (clause_id, expr),
+        None => gate_targets,
+    }
+}
+
+fn workspace_add_selected_guard_clause(clause: WorkspaceSelectedGuardClause) where { target: Option<String> = None } -> WorkspaceIndexState {
+    let clause_id = clause.state.next_clause;
+    let guard_id = clause.state.next_guard;
+    WorkspaceIndexState {
+        clause_ids: [..clause.state.clause_ids, clause_id],
+        guard_ids: [..clause.state.guard_ids, guard_id],
+        guard_clause_ids: clause.state.guard_clause_ids + (guard_id, clause_id),
+        guard_tags: clause.state.guard_tags + (guard_id, "selected"),
+        guard_kinds: clause.state.guard_kinds + (guard_id, 0),
+        guard_pkgs: clause.state.guard_pkgs + (guard_id, clause.parent_pkg),
+        guard_version_values: clause.state.guard_version_values + (guard_id, clause.parent_version),
+        guard_features: clause.state.guard_features + (guard_id, 0),
+        consequent_tags: clause.state.consequent_tags + (clause_id, clause.consequent_tag),
+        consequent_pkgs: clause.state.consequent_pkgs + (clause_id, clause.dep_pkg),
+        consequent_version_sets: clause.state.consequent_version_sets + (clause_id, clause.req),
+        consequent_req_texts: clause.state.consequent_req_texts + (clause_id, clause.req_text),
+        consequent_features: clause.state.consequent_features + (clause_id, 0),
+        gate_kinds: clause.state.gate_kinds + (clause_id, clause.kind),
+        gate_targets: workspace_gate_targets_insert(clause.state.gate_targets, clause_id, target),
+        next_clause: clause_id + 1,
+        next_guard: guard_id + 1,
+        ..clause.state
+    }
+}
+
+fn workspace_add_selected_feature_clause(clause: WorkspaceSelectedFeatureClause) where { target: Option<String> = None } -> WorkspaceIndexState {
+    let clause_id = clause.state.next_clause;
+    let guard_id = clause.state.next_guard;
+    WorkspaceIndexState {
+        clause_ids: [..clause.state.clause_ids, clause_id],
+        guard_ids: [..clause.state.guard_ids, guard_id],
+        guard_clause_ids: clause.state.guard_clause_ids + (guard_id, clause_id),
+        guard_tags: clause.state.guard_tags + (guard_id, "selected"),
+        guard_kinds: clause.state.guard_kinds + (guard_id, 0),
+        guard_pkgs: clause.state.guard_pkgs + (guard_id, clause.parent_pkg),
+        guard_version_values: clause.state.guard_version_values + (guard_id, clause.parent_version),
+        guard_features: clause.state.guard_features + (guard_id, 0),
+        consequent_tags: clause.state.consequent_tags + (clause_id, "feature"),
+        consequent_pkgs: clause.state.consequent_pkgs + (clause_id, clause.feature_pkg),
+        consequent_version_sets: clause.state.consequent_version_sets + (clause_id, VersionSet::from_req("*")),
+        consequent_req_texts: clause.state.consequent_req_texts + (clause_id, "*"),
+        consequent_features: clause.state.consequent_features + (clause_id, clause.feature),
+        gate_kinds: clause.state.gate_kinds + (clause_id, clause.kind),
+        gate_targets: workspace_gate_targets_insert(clause.state.gate_targets, clause_id, target),
+        next_clause: clause_id + 1,
+        next_guard: guard_id + 1,
+        ..clause.state
+    }
+}
+
+fn workspace_add_feature_expansion_clause(clause: WorkspaceFeatureExpansionClause) where { target: Option<String> = None } -> WorkspaceIndexState {
+    let clause_id = clause.state.next_clause;
+    let selected_guard = clause.state.next_guard;
+    let feature_guard = selected_guard + 1;
+    WorkspaceIndexState {
+        clause_ids: [..clause.state.clause_ids, clause_id],
+        guard_ids: [..clause.state.guard_ids, selected_guard, feature_guard],
+        guard_clause_ids: clause.state.guard_clause_ids + (selected_guard, clause_id) + (feature_guard, clause_id),
+        guard_tags: clause.state.guard_tags + (selected_guard, "selected") + (feature_guard, "feature"),
+        guard_kinds: clause.state.guard_kinds + (selected_guard, 0) + (feature_guard, 2),
+        guard_pkgs: clause.state.guard_pkgs + (selected_guard, clause.pkg) + (feature_guard, clause.pkg),
+        guard_version_values: clause.state.guard_version_values + (selected_guard, clause.version),
+        guard_features: clause.state.guard_features + (selected_guard, 0) + (feature_guard, clause.guard_feature),
+        consequent_tags: clause.state.consequent_tags + (clause_id, "feature"),
+        consequent_pkgs: clause.state.consequent_pkgs + (clause_id, clause.feature_pkg),
+        consequent_version_sets: clause.state.consequent_version_sets + (clause_id, VersionSet::from_req("*")),
+        consequent_req_texts: clause.state.consequent_req_texts + (clause_id, "*"),
+        consequent_features: clause.state.consequent_features + (clause_id, clause.feature),
+        gate_kinds: clause.state.gate_kinds + (clause_id, clause.kind),
+        gate_targets: workspace_gate_targets_insert(clause.state.gate_targets, clause_id, target),
+        next_clause: clause_id + 1,
+        next_guard: feature_guard + 1,
+        ..clause.state
+    }
+}
+
+fn add_workspace_required_dep_clauses(args: WorkspaceRequiredDepClauses) where { target: Option<String> = None } -> WorkspaceIndexState {
+    let in_graph = workspace_add_selected_guard_clause WorkspaceSelectedGuardClause {
+        state: args.state,
+        parent_pkg: args.parent_pkg,
+        parent_version: args.parent_version,
+        consequent_tag: "in_graph",
+        dep_pkg: args.dep_pkg,
+        req: VersionSet::from_req("*"),
+        req_text: "*",
+        kind: args.kind,
+    } where { target };
+    workspace_add_selected_guard_clause WorkspaceSelectedGuardClause {
+        state: in_graph,
+        parent_pkg: args.parent_pkg,
+        parent_version: args.parent_version,
+        consequent_tag: "version_set",
+        dep_pkg: args.dep_pkg,
+        req: VersionSet::from_req(args.req),
+        req_text: args.req,
+        kind: args.kind,
+    } where { target }
+}
+
+fn workspace_member_package_name(state: WorkspaceIndexState, member: String) -> String {
+    state.packages.fold(None, |found, pkg| {
+        if state.member_paths.get(pkg) == member {
+            Some(state.names.get(pkg))
+        } else {
+            found
+        }
+    }).unwrap()
+}
+
+fn workspace_member_pkg_ids(state: WorkspaceIndexState, members: [String]) -> [Int] {
+    members.map(|member| state.package_ids.get(workspace_member_package_name(state, member)))
+}
+
+fn add_workspace_root_member_clause(state: WorkspaceIndexState, member_pkg: Int) -> WorkspaceIndexState {
+    let member_req = "=" + workspace_state_version_text(state, member_pkg);
+    let state = workspace_add_selected_guard_clause WorkspaceSelectedGuardClause {
+        state,
+        parent_pkg: 0,
+        parent_version: "0.0.0",
+        consequent_tag: "in_graph",
+        dep_pkg: member_pkg,
+        req: VersionSet::from_req("*"),
+        req_text: "*",
+        kind: "normal",
+    };
+    let state = workspace_add_selected_guard_clause WorkspaceSelectedGuardClause {
+        state,
+        parent_pkg: 0,
+        parent_version: "0.0.0",
+        consequent_tag: "version_set",
+        dep_pkg: member_pkg,
+        req: VersionSet::from_req(member_req),
+        req_text: member_req,
+        kind: "normal",
+    };
+    match feature_id_opt(state, member_pkg, "default") {
+        Some(default_feature) => workspace_add_selected_feature_clause WorkspaceSelectedFeatureClause {
+            state,
+            parent_pkg: 0,
+            parent_version: "0.0.0",
+            feature_pkg: member_pkg,
+            feature: default_feature,
+            kind: "normal",
+        },
+        None => state,
+    }
+}
+
+fn add_workspace_root_member_clauses(state: WorkspaceIndexState, member_pkg_ids: [Int]) -> WorkspaceIndexState {
+    member_pkg_ids.fold(state, |state, member_pkg| add_workspace_root_member_clause(state, member_pkg))
+}
+
+fn manifest_feature_names(manifest: Tree) -> [String] {
+    match manifest_toml(manifest).features {
+        Some(features) => features.keys(),
+        None => [],
+    }
+}
+
+fn manifest_feature_enables(manifest: Tree, feature: String) -> [String] {
+    match manifest_toml(manifest).features {
+        Some(features) => features.get(feature),
+        None => [],
+    }
+}
+
+fn dependency_table_opt(manifest: Tree, kind: String) -> Option<Map<String, CargoDependencySpec>> {
+    if kind == "build" {
+        manifest_toml(manifest).build_dependencies
+    } else if kind == "dev" {
+        manifest_toml(manifest).dev_dependencies
+    } else {
+        manifest_toml(manifest).dependencies
+    }
+}
+
+fn dependency_table(manifest: Tree, kind: String) -> Map<String, CargoDependencySpec> {
+    dependency_table_opt(manifest, kind).unwrap()
+}
+
+fn dependency_spec(manifest: Tree, name: String, kind: String) -> CargoDependencySpec {
+    dependency_table(manifest, kind).get(name)
+}
+
+fn dependency_names(manifest: Tree, kind: String) -> [String] {
+    match dependency_table_opt(manifest, kind) {
+        Some(table) => table.keys(),
+        None => [],
+    }
+}
+
+fn dependency_names_text(manifest: Tree, kind: String) -> String {
+    dependency_names(manifest, kind).join("\n")
+}
+
+fn target_dependency_spec(manifest: Tree, target: String, name: String, kind: String) -> CargoDependencySpec {
+    let tables = manifest_toml(manifest).target.unwrap().get(target);
+    let table = if kind == "build" {
+        tables.build_dependencies.unwrap()
+    } else if kind == "dev" {
+        tables.dev_dependencies.unwrap()
+    } else {
+        tables.dependencies.unwrap()
+    };
+    table.get(name)
+}
+
+fn dependency_workspace(spec: CargoDependencySpec) -> Bool {
+    match spec {
+        CargoDependencySpec::Req(_) => false,
+        CargoDependencySpec::Detailed(table) => option_bool_or(table.workspace, false),
+    }
+}
+
+fn dependency_optional(spec: CargoDependencySpec) -> Bool {
+    match spec {
+        CargoDependencySpec::Req(_) => false,
+        CargoDependencySpec::Detailed(table) => option_bool_or(table.optional, false),
+    }
+}
+
+fn dependency_package_name(spec: CargoDependencySpec, name: String) -> String {
+    match spec {
+        CargoDependencySpec::Req(_) => name,
+        CargoDependencySpec::Detailed(table) => option_string_or(table.package, name),
+    }
+}
+
+fn dependency_version_literal(spec: CargoDependencySpec) -> String {
+    match spec {
+        CargoDependencySpec::Req(req) => req,
+        CargoDependencySpec::Detailed(table) => option_string_or(table.version, ""),
+    }
+}
+
+fn dependency_path_literal(spec: CargoDependencySpec) -> String {
+    match spec {
+        CargoDependencySpec::Req(_) => "",
+        CargoDependencySpec::Detailed(table) => option_string_or(table.path, ""),
+    }
+}
+
+fn dependency_default_features_literal(spec: CargoDependencySpec, fallback: Bool) -> Bool {
+    match spec {
+        CargoDependencySpec::Req(_) => fallback,
+        CargoDependencySpec::Detailed(table) => option_bool_or(table.default_features, fallback),
+    }
+}
+
+fn dependency_features_literal(spec: CargoDependencySpec) -> [String] {
+    match spec {
+        CargoDependencySpec::Req(_) => [],
+        CargoDependencySpec::Detailed(table) => option_strings_or_empty(table.features),
+    }
+}
+
+fn workspace_dependency_spec(workspace: Tree, name: String) -> CargoDependencySpec {
+    workspace_toml(workspace).dependencies.unwrap().get(name)
+}
+
+fn dependency_version_req(spec: CargoDependencySpec, workspace: Tree, name: String, workspace_dep: Bool) -> String {
+    if workspace_dep {
+        dependency_version_literal(workspace_dependency_spec(workspace, name))
+    } else {
+        dependency_version_literal(spec)
+    }
+}
+
+fn dependency_path(spec: CargoDependencySpec, workspace: Tree, name: String, workspace_dep: Bool) -> String {
+    if workspace_dep {
+        dependency_path_literal(workspace_dependency_spec(workspace, name))
+    } else {
+        dependency_path_literal(spec)
+    }
+}
+
+fn dependency_default_features(spec: CargoDependencySpec, workspace: Tree, name: String, workspace_dep: Bool) -> Bool {
+    if workspace_dep {
+        dependency_default_features_literal(spec, dependency_default_features_literal(workspace_dependency_spec(workspace, name), true))
+    } else {
+        dependency_default_features_literal(spec, true)
+    }
+}
+
+fn string_set_from_array(values: [String]) -> Set<String> {
+    values.fold(%[], |set, value| set + value)
+}
+
+fn append_string_unique(values: [String], value: String) -> [String] {
+    (string_set_from_array(values) + value).values()
+}
+
+fn append_strings_unique(values: [String], extra: [String]) -> [String] {
+    extra.fold(string_set_from_array(values), |set, value| set + value).values()
+}
+
+fn dependency_features_inherited(spec: CargoDependencySpec, workspace: Tree, name: String, workspace_dep: Bool) -> [String] {
+    if workspace_dep {
+        append_strings_unique(dependency_features_literal(workspace_dependency_spec(workspace, name)), dependency_features_literal(spec))
+    } else {
+        dependency_features_literal(spec)
+    }
+}
+
+fn dependency_requested_features(spec: CargoDependencySpec, workspace: Tree, name: String, workspace_dep: Bool) -> [String] {
+    let features = dependency_features_inherited(spec, workspace, name, workspace_dep);
+    if dependency_default_features(spec, workspace, name, workspace_dep) {
+        append_string_unique(features, "default")
+    } else {
+        features
+    }
+}
+
+fn dependency_req_or_any(req: String) -> String {
+    if req == "" { "*" } else { req }
+}
+
+fn register_manifest_feature_enables(manifest: Tree, pkg: Int, features: [String], state: WorkspaceIndexState) -> WorkspaceIndexState {
+    features.fold(state, |state, feature| register_feature_enables(state, pkg, feature, manifest_feature_enables(manifest, feature)))
+}
+
+fn register_manifest_optional_dep_features(manifest: Tree, pkg: Int, names: [String], kind: String, state: WorkspaceIndexState) -> WorkspaceIndexState {
+    names.fold(state, |state, name| {
+        let spec = dependency_spec(manifest, name, kind);
+        if dependency_optional(spec) {
+            let feature = dependency_package_name(spec, name);
+            register_feature state where { pkg, feature }
+        } else {
+            state
+        }
+    })
+}
+
+fn register_workspace_member_features(workspace: Tree, workspace_root: Path, members: [String], state: WorkspaceIndexState) -> WorkspaceIndexState {
+    members.fold(state, |state, member| {
+        let manifest = member_manifest(workspace, workspace_root, member);
+        let pkg = state.package_ids.get(package_name(manifest));
+        let state = register_feature_names(pkg, manifest_feature_names(manifest), state);
+        let state = register_manifest_feature_enables(manifest, pkg, manifest_feature_names(manifest), state);
+        let state = register_manifest_optional_dep_features(manifest, pkg, dependency_names(manifest, "normal"), "normal", state);
+        let state = register_manifest_optional_dep_features(manifest, pkg, dependency_names(manifest, "build"), "build", state);
+        register_manifest_optional_dep_features(manifest, pkg, dependency_names(manifest, "dev"), "dev", state)
+    })
+}
+
+fn local_feature_name_from_enable(enable: String) -> String {
+    if enable.contains("?/") {
+        ""
+    } else if enable.contains("/") {
+        enable.before("/")
+    } else if enable.contains("dep:") {
+        enable.after("dep:")
+    } else {
+        enable
+    }
+}
+
+fn add_local_feature_enable(pkg: Int, version: String, guard_feature: Int, enable: String, state: WorkspaceIndexState) -> WorkspaceIndexState {
+    let local = local_feature_name_from_enable(enable);
+    if local == "" {
+        state
+    } else {
+        match feature_id_opt(state, pkg, local) {
+            Some(feature) => workspace_add_feature_expansion_clause WorkspaceFeatureExpansionClause {
+                state,
+                pkg,
+                version,
+                guard_feature,
+                feature_pkg: pkg,
+                feature,
+                kind: "normal",
+            },
+            None => state,
+        }
+    }
+}
+
+fn add_local_feature_enables(pkg: Int, version: String, guard_feature: Int, enables: [String], state: WorkspaceIndexState) -> WorkspaceIndexState {
+    enables.fold(state, |state, enable| add_local_feature_enable(pkg, version, guard_feature, enable, state))
+}
+
+fn add_manifest_feature_expansion_clauses(manifest: Tree, pkg: Int, version: String, features: [String], state: WorkspaceIndexState) -> WorkspaceIndexState {
+    features.fold(state, |state, feature| {
+        add_local_feature_enables(pkg, version, feature_id(state, pkg, feature), manifest_feature_enables(manifest, feature), state)
+    })
+}
+
+fn add_workspace_feature_expansion_clauses(workspace: Tree, workspace_root: Path, members: [String], state: WorkspaceIndexState) -> WorkspaceIndexState {
+    members.fold(state, |state, member| {
+        let manifest = member_manifest(workspace, workspace_root, member);
+        let pkg = state.package_ids.get(package_name(manifest));
+        add_manifest_feature_expansion_clauses(manifest, pkg, package_version_in_workspace(manifest, workspace), manifest_feature_names(manifest), state)
+    })
+}
+
+fn sparse_dep_target_for_package(deps: [SparseIndexDep], feature: String) -> Option<String> {
+    deps.fold(None, |found, dep| {
+        if sparse_dep_package_name(dep) == feature && dep.optional {
+            sparse_dep_target(dep)
+        } else {
+            found
+        }
+    })
+}
+
+fn sparse_feature_target(row: SparseIndexRow, feature: String) -> Option<String> {
+    sparse_dep_target_for_package(row.deps, feature)
+}
+
+fn add_sparse_dep_clause(parent_pkg: Int, parent_version: String, dep: SparseIndexDep, state: WorkspaceIndexState) -> WorkspaceIndexState {
+    if sparse_dep_consumed(dep) {
+        let dep_name = sparse_dep_package_name(dep);
+        if state.package_ids.has(dep_name) {
+            let dep_pkg = state.package_ids.get(dep_name);
+            let target = sparse_dep_target(dep);
+            let state = add_workspace_required_dep_clauses WorkspaceRequiredDepClauses {
+                state,
+                parent_pkg,
+                parent_version,
+                dep_pkg,
+                req: dep.req,
+                kind: dep.kind,
+            } where { target };
+            add_dependency_requested_feature_clauses(state, parent_pkg, parent_version, dep_pkg, sparse_dep_requested_features(dep), dep.kind, sparse_dep_target(dep))
+        } else {
+            state
+        }
+    } else {
+        state
+    }
+}
+
+fn add_sparse_row_dependency_clauses(row: SparseIndexRow, state: WorkspaceIndexState) -> WorkspaceIndexState {
+    if row.yanked {
+        state
+    } else {
+        if state.package_ids.has(row.name) {
+            let parent_pkg = state.package_ids.get(row.name);
+            row.deps.fold(state, |state, dep| add_sparse_dep_clause(parent_pkg, row.vers, dep, state))
+        } else {
+            state
+        }
+    }
+}
+
+fn add_sparse_dependency_clauses(rows: [SparseIndexRow], state: WorkspaceIndexState) -> WorkspaceIndexState {
+    rows.fold(state, |state, row| add_sparse_row_dependency_clauses(row, state))
+}
+
+fn add_sparse_feature_enable(row: SparseIndexRow, pkg: Int, version: String, guard_feature: Int, enable: String, state: WorkspaceIndexState) -> WorkspaceIndexState {
+    let local = local_feature_name_from_enable(enable);
+    if local == "" {
+        state
+    } else {
+        match feature_id_opt(state, pkg, local) {
+            Some(feature) => {
+                let target = sparse_feature_target(row, local);
+                workspace_add_feature_expansion_clause WorkspaceFeatureExpansionClause {
+                    state,
+                    pkg,
+                    version,
+                    guard_feature,
+                    feature_pkg: pkg,
+                    feature,
+                    kind: "normal",
+                } where { target }
+            },
+            None => state,
+        }
+    }
+}
+
+fn add_sparse_feature_enables(row: SparseIndexRow, pkg: Int, version: String, guard_feature: Int, enables: [String], state: WorkspaceIndexState) -> WorkspaceIndexState {
+    enables.fold(state, |state, enable| add_sparse_feature_enable(row, pkg, version, guard_feature, enable, state))
+}
+
+fn add_sparse_row_feature_expansion_clauses(row: SparseIndexRow, state: WorkspaceIndexState) -> WorkspaceIndexState {
+    if row.yanked {
+        state
+    } else {
+        if state.package_ids.has(row.name) {
+            let pkg = state.package_ids.get(row.name);
+            row.features.keys().fold(state, |state, feature| {
+                add_sparse_feature_enables(row, pkg, row.vers, feature_id(state, pkg, feature), row.features.get(feature), state)
+            })
+        } else {
+            state
+        }
+    }
+}
+
+fn add_sparse_feature_expansion_clauses(rows: [SparseIndexRow], state: WorkspaceIndexState) -> WorkspaceIndexState {
+    rows.fold(state, |state, row| add_sparse_row_feature_expansion_clauses(row, state))
+}
+
+fn add_dependency_requested_feature_clauses(state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, dep_pkg: Int, features: [String], kind: String, target: Option<String>) -> WorkspaceIndexState {
+    let state = if state.member_paths.get(dep_pkg) == "" {
+        register_feature_names(dep_pkg, features, state)
+    } else {
+        state
+    };
+    features.fold(state, |state, feature_name| match feature_id_opt(state, dep_pkg, feature_name) {
+        Some(feature) => workspace_add_selected_feature_clause WorkspaceSelectedFeatureClause {
+            state,
+            parent_pkg,
+            parent_version,
+            feature_pkg: dep_pkg,
+            feature,
+            kind,
+        } where { target },
+        None => state,
+    })
+}
+
+fn register_workspace_dep_name(workspace: Tree, manifest: Tree, state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, dep_name: String, kind: String) -> WorkspaceIndexState {
+    let spec = dependency_spec(manifest, dep_name, kind);
+    let package_name = dependency_package_name(spec, dep_name);
+    if state.package_ids.has(package_name) {
+        let dep_pkg = state.package_ids.get(package_name);
+        let workspace_dep = dependency_workspace(spec);
+        if dependency_optional(spec) {
+            state
+        } else {
+            let state = add_workspace_required_dep_clauses WorkspaceRequiredDepClauses {
+                state,
+                parent_pkg,
+                parent_version,
+                dep_pkg,
+                req: dependency_req_or_any(dependency_version_req(spec, workspace, dep_name, workspace_dep)),
+                kind,
+            };
+            add_dependency_requested_feature_clauses(state, parent_pkg, parent_version, dep_pkg, dependency_requested_features(spec, workspace, dep_name, workspace_dep), kind, None)
+        }
+    } else {
+        state
+    }
+}
+
+fn register_workspace_kind_deps(workspace: Tree, manifest: Tree, state: WorkspaceIndexState, parent_pkg: Int, parent_version: String, kind: String) -> WorkspaceIndexState {
+    dependency_names(manifest, kind).fold(state, |state, dep_name| register_workspace_dep_name(workspace, manifest, state, parent_pkg, parent_version, dep_name, kind))
+}
+
+fn register_workspace_direct_deps(workspace: Tree, workspace_root: Path, members: [String], state: WorkspaceIndexState) -> WorkspaceIndexState {
+    members.fold(state, |state, member| {
+        let manifest = member_manifest(workspace, workspace_root, member);
+        let parent_pkg = state.package_ids.get(package_name(manifest));
+        let parent_version = package_version_in_workspace(manifest, workspace);
+        let state = register_workspace_kind_deps(workspace, manifest, state, parent_pkg, parent_version, "normal");
+        let state = register_workspace_kind_deps(workspace, manifest, state, parent_pkg, parent_version, "build");
+        register_workspace_kind_deps(workspace, manifest, state, parent_pkg, parent_version, "dev")
+    })
+}
+
+fn take_strings(values: [String], limit: Int) -> [String] {
+    values.fold(TakeStringsState { values: [], remaining: limit }, |state, value| {
+        if state.remaining > 0 {
+            TakeStringsState { values: [..state.values, value], remaining: state.remaining - 1 }
+        } else {
+            state
+        }
+    }).values
+}
+
+fn workspace_member_only_index_state_for_members(workspace: Tree, workspace_root: Path, members: [String]) -> WorkspaceIndexState {
+    let state = register_workspace_members(workspace, workspace_root, members, register_workspace_pseudo_root(empty_workspace_index_state()));
+    let state = register_workspace_member_features(workspace, workspace_root, members, state);
+    add_workspace_root_member_clauses(state, workspace_member_pkg_ids(state, members))
+}
+
+fn workspace_member_only_index_state(workspace: Tree, workspace_root: Path) -> WorkspaceIndexState {
+    workspace_member_only_index_state_for_members(workspace, workspace_root, workspace_members(workspace))
+}
+
+fn workspace_member_only_index_state_limit(workspace: Tree, workspace_root: Path, limit: Int) -> WorkspaceIndexState {
+    workspace_member_only_index_state_for_members(workspace, workspace_root, take_strings(workspace_members(workspace), limit))
+}
+
+fn workspace_index_state_for_members(workspace: Tree, workspace_root: Path, members: [String]) -> WorkspaceIndexState {
+    register_workspace_direct_deps(workspace, workspace_root, members, workspace_member_only_index_state_for_members(workspace, workspace_root, members))
+}
+
+fn workspace_index_state(workspace: Tree, workspace_root: Path) -> WorkspaceIndexState {
+    workspace_index_state_for_members(workspace, workspace_root, workspace_members(workspace))
+}
+
+fn workspace_index_state_limit(workspace: Tree, workspace_root: Path, limit: Int) -> WorkspaceIndexState {
+    workspace_index_state_for_members(workspace, workspace_root, take_strings(workspace_members(workspace), limit))
+}
+
+fn workspace_index_state_with_sparse_rows_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int) -> WorkspaceIndexState {
+    let members = take_strings(workspace_members(workspace), limit);
+    let rows = parse_sparse_jsonl(sparse_jsonl);
+    let state = workspace_member_only_index_state_for_members(workspace, workspace_root, members);
+    let state = register_sparse_rows(rows, state);
+    register_workspace_direct_deps(workspace, workspace_root, members, state)
+}
+
+fn workspace_index_state_with_transitive_sparse_rows_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int) -> WorkspaceIndexState {
+    let members = take_strings(workspace_members(workspace), limit);
+    let rows = parse_sparse_jsonl(sparse_jsonl);
+    let state = workspace_member_only_index_state_for_members(workspace, workspace_root, members);
+    let state = register_sparse_rows(rows, state);
+    let state = register_workspace_direct_deps(workspace, workspace_root, members, state);
+    add_sparse_dependency_clauses(rows, state)
+}
+
+fn workspace_index_from_state(state: WorkspaceIndexState) -> Index {
+    Index {
+        packages: state.packages,
+        names: state.names,
+        version_ids: state.version_ids,
+        version_pkgs: state.version_pkgs,
+        version_values: state.version_values,
+        clause_ids: state.clause_ids,
+        guard_ids: state.guard_ids,
+        guard_clause_ids: state.guard_clause_ids,
+        guard_tags: state.guard_tags,
+        guard_kinds: state.guard_kinds,
+        guard_pkgs: state.guard_pkgs,
+        guard_version_values: state.guard_version_values,
+        guard_features: state.guard_features,
+        consequent_tags: state.consequent_tags,
+        consequent_pkgs: state.consequent_pkgs,
+        consequent_version_sets: state.consequent_version_sets,
+        consequent_features: state.consequent_features,
+        gate_kinds: state.gate_kinds,
+        gate_targets: state.gate_targets,
+    }
+}
+
+fn workspace_problem() -> Problem {
+    Problem {
+        root_pkg: 0,
+        root_req: VersionSet::from_req("*"),
+        root_features: [],
+        root_default_feature: 0,
+        root_default_features: false,
+    }
+}
+
+fn problem_of_member(root_pkg: Int, root_default_feature: Int) -> Problem {
+    Problem {
+        root_pkg: root_pkg,
+        root_req: VersionSet::from_req("*"),
+        root_features: [],
+        root_default_feature: root_default_feature,
+        root_default_features: true,
+    }
+}
+
+fn workspace_member_index_package_count(workspace: Tree, workspace_root: Path) -> Int {
+    workspace_index_state(workspace, workspace_root).packages.len()
+}
+
+fn workspace_member_only_index_package_count(workspace: Tree, workspace_root: Path) -> Int {
+    workspace_member_only_index_state(workspace, workspace_root).packages.len()
+}
+
+fn workspace_member_index_package_count_limit(workspace: Tree, workspace_root: Path, limit: Int) -> Int {
+    workspace_index_state_limit(workspace, workspace_root, limit).packages.len()
+}
+
+fn workspace_member_only_index_package_count_limit(workspace: Tree, workspace_root: Path, limit: Int) -> Int {
+    workspace_member_only_index_state_limit(workspace, workspace_root, limit).packages.len()
+}
+
+fn workspace_member_index_clause_count(workspace: Tree, workspace_root: Path) -> Int {
+    workspace_index_state(workspace, workspace_root).clause_ids.len()
+}
+
+fn workspace_member_only_index_clause_count(workspace: Tree, workspace_root: Path) -> Int {
+    workspace_member_only_index_state(workspace, workspace_root).clause_ids.len()
+}
+
+fn workspace_member_index_clause_count_limit(workspace: Tree, workspace_root: Path, limit: Int) -> Int {
+    workspace_index_state_limit(workspace, workspace_root, limit).clause_ids.len()
+}
+
+fn workspace_member_only_index_clause_count_limit(workspace: Tree, workspace_root: Path, limit: Int) -> Int {
+    workspace_member_only_index_state_limit(workspace, workspace_root, limit).clause_ids.len()
+}
+
+fn workspace_member_direct_sparse_index_package_count_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int) -> Int {
+    workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit).packages.len()
+}
+
+fn workspace_member_direct_sparse_index_clause_count_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int) -> Int {
+    workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit).clause_ids.len()
+}
+
+fn workspace_member_transitive_sparse_index_package_count_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int) -> Int {
+    workspace_index_state_with_transitive_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit).packages.len()
+}
+
+fn workspace_member_transitive_sparse_index_clause_count_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int) -> Int {
+    workspace_index_state_with_transitive_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit).clause_ids.len()
+}
+
+fn workspace_version_set_clauses_for_pkg(state: WorkspaceIndexState, pkg: Int) -> VersionSet {
+    state.clause_ids.fold(VersionSet::from_req("*"), |allowed, clause_id| {
+        if state.consequent_tags.get(clause_id) == "version_set" && state.consequent_pkgs.get(clause_id) == pkg {
+            allowed.intersect(state.consequent_version_sets.get(clause_id))
+        } else {
+            allowed
+        }
+    })
+}
+
+fn append_req_text(out: String, req: String) -> String {
+    if out == "" { req } else { out + "\n" + req }
+}
+
+fn workspace_version_set_req_text_for_pkg(state: WorkspaceIndexState, pkg: Int) -> String {
+    state.clause_ids.fold("", |out, clause_id| {
+        if state.consequent_tags.get(clause_id) == "version_set" && state.consequent_pkgs.get(clause_id) == pkg {
+            append_req_text(out, state.consequent_req_texts.get(clause_id))
+        } else {
+            out
+        }
+    })
+}
+
+fn workspace_member_direct_sparse_dep_req_text_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int, dep_name: String) -> String {
+    let state = workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit);
+    let pkg = state.package_ids.get(dep_name);
+    workspace_version_set_req_text_for_pkg(state, pkg)
+}
+
+fn workspace_candidate_text_take(index: Index, pkg: Int, candidates: [Version], limit: Int) -> String {
+    take_versions(candidates, limit).fold("", |out, version| append_selected_name(out, selected_version_text(index, pkg, version)))
+}
+
+fn take_versions(values: [Version], limit: Int) -> [Version] {
+    values.fold(TakeVersionsState { values: [], remaining: limit }, |state, value| {
+        if state.remaining > 0 {
+            TakeVersionsState { values: [..state.values, value], remaining: state.remaining - 1 }
+        } else {
+            state
+        }
+    }).values
+}
+
+fn workspace_member_direct_sparse_dep_candidate_text_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int, dep_name: String) -> String {
+    let state = workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit);
+    let pkg = state.package_ids.get(dep_name);
+    let index = workspace_index_from_state(state);
+    workspace_candidate_text_take(index, pkg, candidates_for(index, pkg, workspace_version_set_clauses_for_pkg(state, pkg)), 12)
+}
+
+fn workspace_member_only_first_member_exact_candidate_count(workspace: Tree, workspace_root: Path) -> Int {
+    let state = workspace_member_only_index_state_limit(workspace, workspace_root, 1);
+    let member_pkg = state.packages[0];
+    candidates_for(
+        workspace_index_from_state(state),
+        member_pkg,
+        VersionSet::from_req("=" + workspace_state_version_text(state, member_pkg)),
+    ).len()
+}
+
+fn workspace_member_root_clause_count(workspace: Tree) -> Int {
+    workspace_members(workspace).len() * 2
+}
+
+fn workspace_member_direct_dep_clause_count(workspace: Tree, workspace_root: Path) -> Int {
+    workspace_member_index_clause_count(workspace, workspace_root) - workspace_member_only_index_clause_count(workspace, workspace_root)
+}
+
+fn workspace_member_direct_dep_clause_count_limit(workspace: Tree, workspace_root: Path, limit: Int) -> Int {
+    workspace_member_index_clause_count_limit(workspace, workspace_root, limit) - workspace_member_only_index_clause_count_limit(workspace, workspace_root, limit)
+}
+
+fn solve_selected_versions_text_from_workspace_state(state: WorkspaceIndexState, problem: Problem, target: String) -> String {
+    solve_selected_versions_text(workspace_index_from_state(state), problem, target)
+}
+
+fn workspace_member_solve_selected_count(workspace: Tree, workspace_root: Path, target: String) -> Int {
+    let state = workspace_index_state(workspace, workspace_root);
+    solve_selected_names(workspace_index_from_state(state), workspace_problem(), target).len()
+}
+
+fn workspace_member_solve_selected_member_count(workspace: Tree, workspace_root: Path, target: String) -> Int {
+    workspace_member_solve_selected_count(workspace, workspace_root, target) - 1
+}
+
+fn workspace_member_only_solve_selected_count(workspace: Tree, workspace_root: Path, target: String) -> Int {
+    let state = workspace_member_only_index_state(workspace, workspace_root);
+    solve_selected_names(workspace_index_from_state(state), workspace_problem(), target).len()
+}
+
+fn workspace_member_only_solve_selected_member_count(workspace: Tree, workspace_root: Path, target: String) -> Int {
+    workspace_member_only_solve_selected_count(workspace, workspace_root, target) - 1
+}
+
+fn workspace_member_solve_selected_member_count_limit(workspace: Tree, workspace_root: Path, target: String, limit: Int) -> Int {
+    let state = workspace_index_state_limit(workspace, workspace_root, limit);
+    solve_selected_names(workspace_index_from_state(state), workspace_problem(), target).len() - 1
+}
+
+fn workspace_member_only_solve_selected_member_count_limit(workspace: Tree, workspace_root: Path, target: String, limit: Int) -> Int {
+    let state = workspace_member_only_index_state_limit(workspace, workspace_root, limit);
+    solve_selected_names(workspace_index_from_state(state), workspace_problem(), target).len() - 1
+}
+
+fn workspace_member_solve_selected_versions_text(workspace: Tree, workspace_root: Path, target: String) -> String {
+    solve_selected_versions_text_from_workspace_state(workspace_index_state(workspace, workspace_root), workspace_problem(), target)
+}
+
+fn workspace_member_only_solve_selected_versions_text(workspace: Tree, workspace_root: Path, target: String) -> String {
+    solve_selected_versions_text_from_workspace_state(workspace_member_only_index_state(workspace, workspace_root), workspace_problem(), target)
+}
+
+fn workspace_member_only_solve_selected_versions_text_limit(workspace: Tree, workspace_root: Path, target: String, limit: Int) -> String {
+    solve_selected_versions_text_from_workspace_state(workspace_member_only_index_state_limit(workspace, workspace_root, limit), workspace_problem(), target)
+}
+
+fn workspace_member_direct_sparse_solve_selected_versions_text_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, target: String, limit: Int) -> String {
+    solve_selected_versions_text_from_workspace_state(workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit), workspace_problem(), target)
+}
+
+fn workspace_member_transitive_sparse_solve_selected_versions_text_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, target: String, limit: Int) -> String {
+    solve_selected_versions_text_from_workspace_state(workspace_index_state_with_transitive_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit), workspace_problem(), target)
+}
+
+fn bool_text(value: Bool) -> String {
+    if value { "true" } else { "false" }
+}
+
+fn guard_id_for_clause(state: WorkspaceIndexState, clause_id: Int) -> Int {
+    state.guard_ids.fold(None, |found, guard_id| {
+        if state.guard_clause_ids.get(guard_id) == clause_id {
+            Some(guard_id)
+        } else {
+            found
+        }
+    }).unwrap()
+}
+
+fn append_index_dump_line(out: String, line: String) -> String {
+    if out == "" { line } else { out + "\n" + line }
+}
+
+fn workspace_index_dump_clause(state: WorkspaceIndexState, clause_id: Int) -> String {
+    let guard_id = guard_id_for_clause(state, clause_id);
+    let parent_pkg = state.guard_pkgs.get(guard_id);
+    let dep_pkg = state.consequent_pkgs.get(clause_id);
+    "c\t"
+        + state.names.get(parent_pkg)
+        + "\t"
+        + state.guard_version_values.get(guard_id)
+        + "\t"
+        + state.consequent_tags.get(clause_id)
+        + "\t"
+        + state.names.get(dep_pkg)
+        + "\t"
+        + state.consequent_req_texts.get(clause_id)
+        + "\t"
+        + state.gate_kinds.get(clause_id)
+}
+
+fn workspace_index_dump(state: WorkspaceIndexState) -> String {
+    let out = state.packages.fold("", |out, pkg| append_index_dump_line(out, "p\t" + state.names.get(pkg)));
+    let out = state.version_ids.fold(out, |out, version_id| {
+        let pkg = state.version_pkgs.get(version_id);
+        append_index_dump_line(out, "v\t" + state.names.get(pkg) + "\t" + state.version_values.get(version_id))
+    });
+    state.clause_ids.fold(out, |out, clause_id| append_index_dump_line(out, workspace_index_dump_clause(state, clause_id)))
+}
+
+fn workspace_member_direct_sparse_index_dump_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, limit: Int) -> String {
+    workspace_index_dump(workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit))
+}
+
+fn selected_pkg_contains(selected: Map<Int, Version>, pkg: Int) -> Bool {
+    selected.has(pkg)
+}
+
+fn solution_guard_is_parent(index: Index, guard_id: Int, clause_id: Int, parent: Int) -> Bool {
+    index.guard_clause_ids.get(guard_id) == clause_id
+        && index.guard_pkgs.get(guard_id) == parent
+        && index.guard_tags.get(guard_id) == "selected"
+}
+
+fn solution_clause_has_parent_guard(index: Index, parent: Int, clause_id: Int) -> Bool {
+    index.guard_ids.any(|guard_id| solution_guard_is_parent(index, guard_id, clause_id, parent))
+}
+
+fn solution_dependency_clause_active(index: Index, result: SolveResult, parent: Int, clause_id: Int, target: String) -> Bool {
+    gate_active_id(index, clause_id, target)
+        && selected_pkg_contains(result.selected, parent)
+        && solution_clause_has_parent_guard(index, parent, clause_id)
+        && index.consequent_tags.get(clause_id) == "in_graph"
+        && selected_pkg_contains(result.selected, index.consequent_pkgs.get(clause_id))
+}
+
+fn append_dep_name(out: String, name: String) -> String {
+    if out == "" { name } else { out + "," + name }
+}
+
+fn solution_dep_names_text(state: WorkspaceIndexState, index: Index, result: SolveResult, parent: Int, target: String) -> String {
+    index.clause_ids.fold("", |out, clause_id| {
+        if solution_dependency_clause_active(index, result, parent, clause_id, target) {
+            append_dep_name(out, crate_name(state.names.get(index.consequent_pkgs.get(clause_id))))
+        } else {
+            out
+        }
+    })
+}
+
+fn selected_sparse_row(rows: [SparseIndexRow], name: String, version: String) -> Option<SparseIndexRow> {
+    rows.fold(None, |found, row| {
+        if row.name == name && row.vers == version {
+            Some(row)
+        } else {
+            found
+        }
+    })
+}
+
+fn unit_feature_name(feature: String) -> String {
+    if feature.contains(":") { feature.after(":") } else { feature }
+}
+
+fn feature_target_active(state: WorkspaceIndexState, pkg: Int, feature: String, target: String) -> Bool {
+    let key = feature_key(state, pkg, feature);
+    if state.feature_targets.has(key) {
+        target_matches(state.feature_targets.get(key), target)
+    } else {
+        true
+    }
+}
+
+fn solution_unit_feature_enable_text(state: WorkspaceIndexState, pkg: Int, enable: String, target: String, out: [String]) -> [String] {
+    let local = local_feature_name_from_enable(enable);
+    if local == "" {
+        out
+    } else if feature_target_active(state, pkg, local, target) {
+        solution_unit_feature_closure(state, pkg, local, target, out)
+    } else {
+        out
+    }
+}
+
+fn solution_unit_feature_enables_text(state: WorkspaceIndexState, pkg: Int, enables: String, target: String, out: [String]) -> [String] {
+    if enables == "" {
+        out
+    } else if enables.contains("\n") {
+        solution_unit_feature_enable_text(state, pkg, enables.before("\n"), target, solution_unit_feature_enables_text(state, pkg, enables.after("\n"), target, out))
+    } else {
+        solution_unit_feature_enable_text(state, pkg, enables, target, out)
+    }
+}
+
+fn solution_unit_feature_closure(state: WorkspaceIndexState, pkg: Int, feature: String, target: String, out: [String]) -> [String] {
+    let feature_name = unit_feature_name(feature);
+    if out.contains(feature_name) {
+        out
+    } else {
+        match feature_id_opt(state, pkg, feature) {
+            Some(id) => solution_unit_feature_enables_text(state, pkg, state.feature_enables.get(id), target, [..out, feature_name]),
+            None => [..out, feature_name],
+        }
+    }
+}
+
+fn solution_unit_features(state: WorkspaceIndexState, feature_ids: [Int], pkg: Int, target: String, out: [String]) -> [String] {
+    feature_ids.fold(out, |out, feature_id| {
+        if state.feature_pkgs.get(feature_id) == pkg {
+            solution_unit_feature_closure(state, pkg, state.feature_names.get(feature_id), target, out)
+        } else {
+            out
+        }
+    })
+}
+
+fn solution_unit_root_default_feature(state: WorkspaceIndexState, result: SolveResult, pkg: Int, target: String, out: [String]) -> [String] {
+    if state.member_paths.get(pkg) == "" {
+        out
+    } else {
+        if result.selected.has(pkg) {
+            match feature_id_opt(state, pkg, "default") {
+                Some(_) => solution_unit_feature_closure(state, pkg, "default", target, out),
+                None => out,
+            }
+        } else {
+            out
+        }
+    }
+}
+
+fn solution_unit_features_text(state: WorkspaceIndexState, result: SolveResult, pkg: Int, target: String) -> String {
+    solution_unit_root_default_feature(state, result, pkg, target, solution_unit_features(state, result.enabled_feature_ids, pkg, target, [])).join(",")
+}
+
+fn solution_unit_seed_features(state: WorkspaceIndexState, feature_ids: [Int], pkg: Int) -> [String] {
+    feature_ids.fold([], |out, feature_id| {
+        if state.feature_pkgs.get(feature_id) == pkg {
+            append_string_unique(out, unit_feature_name(state.feature_names.get(feature_id)))
+        } else {
+            out
+        }
+    })
+}
+
+fn sparse_row_feature_enables_or_empty(row: SparseIndexRow, feature: String) -> [String] {
+    if row.features.has(feature) {
+        row.features.get(feature)
+    } else {
+        []
+    }
+}
+
+fn sparse_feature_target_active(row: SparseIndexRow, feature: String, target: String) -> Bool {
+    match sparse_feature_target(row, feature) {
+        Some(expr) => target_matches(expr, target),
+        None => {
+            if feature.contains("windows") {
+                target_matches("cfg(windows)", target)
+            } else {
+                true
+            }
+        },
+    }
+}
+
+fn sparse_row_unit_feature_enable(row: SparseIndexRow, target: String, enable: String, out: [String]) -> [String] {
+    let local = local_feature_name_from_enable(enable);
+    if local == "" {
+        out
+    } else if sparse_feature_target_active(row, local, target) {
+        sparse_row_unit_feature_closure(row, target, local, out)
+    } else {
+        out
+    }
+}
+
+fn sparse_row_unit_feature_closure(row: SparseIndexRow, target: String, feature: String, out: [String]) -> [String] {
+    let feature_name = unit_feature_name(feature);
+    if out.contains(feature_name) {
+        out
+    } else {
+        sparse_row_feature_enables_or_empty(row, feature_name).fold([..out, feature_name], |out, enable| sparse_row_unit_feature_enable(row, target, enable, out))
+    }
+}
+
+fn sparse_row_unit_features(row: SparseIndexRow, target: String, features: [String], out: [String]) -> [String] {
+    features.fold(out, |out, feature| sparse_row_unit_feature_closure(row, target, feature, out))
+}
+
+fn sparse_row_filter_active_features(row: SparseIndexRow, target: String, features: [String]) -> [String] {
+    features.fold([], |out, feature| {
+        if sparse_feature_target_active(row, feature, target) {
+            append_string_unique(out, feature)
+        } else {
+            out
+        }
+    })
+}
+
+fn solution_unit_sparse_features_text(state: WorkspaceIndexState, result: SolveResult, pkg: Int, target: String, rows: [SparseIndexRow], version: String) -> String {
+    let seeds = solution_unit_seed_features(state, result.enabled_feature_ids, pkg);
+    match selected_sparse_row(rows, state.names.get(pkg), version) {
+        Some(row) => sparse_row_filter_active_features(row, target, append_strings_unique(sparse_row_unit_features(row, target, seeds, []), seeds)).join(","),
+        None => seeds.join(","),
+    }
+}
+
+fn explicit_lib_kind(lib: CargoLibToml) -> String {
+    if option_bool_or(lib.proc_macro, false) {
+        "proc-macro"
+    } else if option_strings_or_empty(lib.crate_type).contains("cdylib") {
+        "cdylib"
+    } else {
+        "lib"
+    }
+}
+
+fn lib_target(manifest: Tree) -> CargoTargetShape {
+    let name = crate_name(package_name(manifest));
+    CargoTargetShape {
+        name: name,
+        kind: "lib",
+        source: "src/lib.rs",
+        crate_type: "lib",
+        metadata_file: "lib" + name + ".rmeta",
+        link_file: "lib" + name + ".rlib",
+    }
+}
+
+fn manifest_explicit_lib_target(manifest: Tree, lib: CargoLibToml) -> CargoTargetShape {
+    let name = crate_name(package_name(manifest));
+    let kind = explicit_lib_kind(lib);
+    CargoTargetShape {
+        name: name,
+        kind: kind,
+        source: option_string_or(lib.path, "src/lib.rs"),
+        crate_type: kind,
+        metadata_file: "lib" + name + ".rmeta",
+        link_file: "lib" + name + ".rlib",
+    }
+}
+
+fn manifest_lib_target(manifest: Tree) -> CargoTargetShape {
+    match manifest_toml(manifest).lib {
+        Some(lib) => manifest_explicit_lib_target(manifest, lib),
+        None => lib_target(manifest),
+    }
+}
+
+fn bin_doc_target_shape(package: String, bin: CargoBinToml) -> CargoTargetShape {
+    let name = crate_name(option_string_or(bin.name, crate_name(package)));
+    CargoTargetShape {
+        name: name,
+        kind: "bin",
+        source: option_string_or(bin.path, "src/main.rs"),
+        crate_type: "bin",
+        metadata_file: name + ".rmeta",
+        link_file: name,
+    }
+}
+
+fn registry_lib_target_shape(package: String) -> CargoTargetShape {
+    let name = crate_name(package);
+    CargoTargetShape {
+        name: name,
+        kind: "lib",
+        source: "src/lib.rs",
+        crate_type: "lib",
+        metadata_file: "lib" + name + ".rmeta",
+        link_file: "lib" + name + ".rlib",
+    }
+}
+
+fn build_script_target() -> CargoTargetShape {
+    CargoTargetShape {
+        name: "build_script_build",
+        kind: "build-script",
+        source: "build.rs",
+        crate_type: "bin",
+        metadata_file: "build_script_build.rmeta",
+        link_file: "build_script",
+    }
+}
+
+fn build_script_target_shape(manifest: Tree) -> CargoTargetShape {
+    build_script_target()
+}
+
+fn bin_target(manifest: Tree) -> CargoTargetShape {
+    let name = crate_name(package_name(manifest));
+    CargoTargetShape {
+        name: name,
+        kind: "bin",
+        source: "src/main.rs",
+        crate_type: "bin",
+        metadata_file: name + ".rmeta",
+        link_file: name,
+    }
+}
+
+fn lib_target_shape(manifest: Tree) -> CargoTargetShape {
+    lib_target(manifest)
+}
+
+fn proc_macro_target_shape(manifest: Tree) -> CargoTargetShape {
+    let name = crate_name(package_name(manifest));
+    CargoTargetShape {
+        name: name,
+        kind: "proc-macro",
+        source: "src/lib.rs",
+        crate_type: "proc-macro",
+        metadata_file: "lib" + name + ".rmeta",
+        link_file: "lib" + name + ".rlib",
+    }
+}
+
+fn bin_target_shape(manifest: Tree) -> CargoTargetShape {
+    bin_target(manifest)
+}
+
+fn workspace_profile() -> CargoUnitProfile {
+    CargoUnitProfile {
+        name: "dev",
+        opt_level: "0",
+        lto: "false",
+        codegen_backend: "null",
+        codegen_units: "null",
+        debuginfo: "2",
+        split_debuginfo: "unpacked",
+        debug_assertions: "true",
+        overflow_checks: "true",
+        rpath: "false",
+        incremental: "true",
+        panic: "unwind",
+        strip: "None",
+    }
+}
+
+fn registry_profile() -> CargoUnitProfile {
+    CargoUnitProfile { incremental: "false", ..workspace_profile() }
+}
+
+fn append_solution_unit_row(row: SolutionUnitRow) -> String {
+    let text = row.package + "\t"
+        + row.version + "\t"
+        + row.target.name + "\t"
+        + row.target.kind + "\t"
+        + row.target.crate_type + "\t"
+        + row.target.source + "\t"
+        + "build\t\t"
+        + row.features + "\t"
+        + row.profile.name + "\t"
+        + row.profile.opt_level + "\t"
+        + row.profile.lto + "\t"
+        + row.profile.codegen_backend + "\t"
+        + row.profile.codegen_units + "\t"
+        + row.profile.debuginfo + "\t"
+        + row.profile.split_debuginfo + "\t"
+        + row.profile.debug_assertions + "\t"
+        + row.profile.overflow_checks + "\t"
+        + row.profile.rpath + "\t"
+        + row.profile.incremental + "\t"
+        + row.profile.panic + "\t"
+        + row.profile.strip + "\t"
+        + row.deps;
+    if row.out == "" { text } else { row.out + "\n" + text }
+}
+
+fn solution_bin_units_text(args: SolutionBinUnitsText) -> String {
+    args.bins.fold(args.out, |out, bin| append_solution_unit_row SolutionUnitRow {
+        out,
+        package: args.package,
+        version: args.version,
+        target: bin_doc_target_shape(args.package, bin),
+        profile: args.profile,
+        features: args.features,
+        deps: args.deps,
+    })
+}
+
+fn solution_member_units_text(args: SolutionMemberUnitsText) -> String {
+    match manifest_toml(args.manifest).bin {
+        Some(bins) => solution_bin_units_text SolutionBinUnitsText {
+            package: args.package,
+            version: args.version,
+            bins,
+            profile: args.profile,
+            features: args.features,
+            deps: args.deps,
+            out: args.out,
+        },
+        None => append_solution_unit_row SolutionUnitRow {
+            out: args.out,
+            package: args.package,
+            version: args.version,
+            target: manifest_lib_target(args.manifest),
+            profile: args.profile,
+            features: args.features,
+            deps: args.deps,
+        },
+    }
+}
+
+fn solution_units_text_for_selected_package(workspace: Tree, workspace_root: Path, rows: [SparseIndexRow], state: WorkspaceIndexState, index: Index, result: SolveResult, target: String, pkg: Int, version: String, out: String) -> String {
+    let member_path = state.member_paths.get(pkg);
+    let features = if member_path == "" {
+        solution_unit_sparse_features_text(state, result, pkg, target, rows, version)
+    } else {
+        solution_unit_features_text(state, result, pkg, target)
+    };
+    if member_path == "" {
+        let package = state.names.get(pkg);
+        let deps = solution_dep_names_text(state, index, result, pkg, target);
+        append_solution_unit_row SolutionUnitRow {
+            out,
+            package,
+            version,
+            target: registry_lib_target_shape(package),
+            profile: registry_profile(),
+            features,
+            deps,
+        }
+    } else {
+        let package = state.names.get(pkg);
+        let manifest = member_manifest(workspace, workspace_root, member_path);
+        let deps = solution_dep_names_text(state, index, result, pkg, target);
+        solution_member_units_text SolutionMemberUnitsText {
+            workspace,
+            workspace_root,
+            package,
+            version,
+            manifest,
+            profile: workspace_profile(),
+            features,
+            deps,
+            out,
+        }
+    }
+}
+
+fn solution_units_text_from_packages(workspace: Tree, workspace_root: Path, rows: [SparseIndexRow], state: WorkspaceIndexState, index: Index, result: SolveResult, target: String) -> String {
+    state.packages.fold("", |out, pkg| {
+        if result.selected.has(pkg) && state.names.get(pkg) != "__workspace__" {
+            let version = result.selected.get(pkg);
+            solution_units_text_for_selected_package(workspace, workspace_root, rows, state, index, result, target, pkg, workspace_selected_version_text(state, pkg, version), out)
+        } else {
+            out
+        }
+    })
+}
+
+fn register_selected_sparse_row_features(row: SparseIndexRow, state: WorkspaceIndexState, result: SolveResult) -> WorkspaceIndexState {
+    if row.yanked {
+        state
+    } else {
+        if state.package_ids.has(row.name) {
+            let pkg = state.package_ids.get(row.name);
+            if result.selected.has(pkg) {
+                register_sparse_features(pkg, row, state)
+            } else {
+                state
+            }
+        } else {
+            state
+        }
+    }
+}
+
+fn register_selected_sparse_features(rows: [SparseIndexRow], state: WorkspaceIndexState, result: SolveResult) -> WorkspaceIndexState {
+    rows.fold(state, |state, row| register_selected_sparse_row_features(row, state, result))
+}
+
+fn solution_units_text_from_workspace_state_with_sparse_rows(workspace: Tree, workspace_root: Path, rows: [SparseIndexRow], state: WorkspaceIndexState, problem: Problem, target: String) -> String {
+    let index = workspace_index_from_state(state);
+    let result = solve(index, problem, target);
+    let state = register_selected_sparse_features(rows, state, result);
+    solution_units_text_from_packages(workspace, workspace_root, rows, state, index, result, target)
+}
+
+fn workspace_member_direct_sparse_solution_units_text_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, target: String, limit: Int) -> String {
+    let rows = parse_sparse_jsonl(sparse_jsonl);
+    let members = take_strings(workspace_members(workspace), limit);
+    let state = workspace_member_only_index_state_for_members(workspace, workspace_root, members);
+    let state = register_sparse_rows(rows, state);
+    let state = register_workspace_direct_deps(workspace, workspace_root, members, state);
+    solution_units_text_from_workspace_state_with_sparse_rows(workspace, workspace_root, rows, state, workspace_problem(), target)
+}
+
+fn workspace_member_direct_sparse_enabled_features_text_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, target: String, limit: Int, package: String) -> String {
+    let rows = parse_sparse_jsonl(sparse_jsonl);
+    let members = take_strings(workspace_members(workspace), limit);
+    let state = workspace_member_only_index_state_for_members(workspace, workspace_root, members);
+    let state = register_sparse_rows(rows, state);
+    let state = register_workspace_direct_deps(workspace, workspace_root, members, state);
+    let index = workspace_index_from_state(state);
+    let result = solve(index, workspace_problem(), target);
+    let state = register_selected_sparse_features(rows, state, result);
+    if state.package_ids.has(package) {
+        solution_unit_seed_features(state, result.enabled_feature_ids, state.package_ids.get(package)).join("\n")
+    } else {
+        ""
+    }
+}
+
+fn workspace_member_direct_sparse_feature_target_debug_limit(workspace: Tree, workspace_root: Path, sparse_jsonl: String, target: String, limit: Int, package: String, feature: String) -> String {
+    let rows = parse_sparse_jsonl(sparse_jsonl);
+    let state = workspace_index_state_with_sparse_rows_limit(workspace, workspace_root, sparse_jsonl, limit);
+    let index = workspace_index_from_state(state);
+    let result = solve(index, workspace_problem(), target);
+    if state.package_ids.has(package) {
+        let pkg = state.package_ids.get(package);
+        if result.selected.has(pkg) {
+            let version = result.selected.get(pkg);
+            match selected_sparse_row(rows, state.names.get(pkg), workspace_selected_version_text(state, pkg, version)) {
+                Some(row) => match sparse_feature_target(row, feature) {
+                    Some(expr) => target + "\n" + expr + "\n" + bool_text(target_matches(expr, target)),
+                    None => target + "\n<none>\ntrue",
+                },
+                None => target + "\n<missing-row>\nfalse",
+            }
+        } else {
+            target + "\n<not-selected>\nfalse"
+        }
+    } else {
+        target + "\n<missing-package>\nfalse"
+    }
+}
+
+fn append_selected_workspace_state_version(out: String, name: String, version: String) -> String {
+    if out == "" { name + " " + version } else { out + "\n" + name + " " + version }
+}
+
+fn selected_workspace_state_versions_text_from(state: WorkspaceIndexState, packages: [Int], selected: Map<Int, Version>) -> String {
+    packages.fold("", |out, pkg| {
+        if selected.has(pkg) {
+            let version = selected.get(pkg);
+            append_selected_workspace_state_version(out, state.names.get(pkg), workspace_selected_version_text(state, pkg, version))
+        } else {
+            out
+        }
+    })
+}
+
+fn workspace_state_version_text(state: WorkspaceIndexState, pkg: Int) -> String {
+    state.version_ids.fold(None, |found, version_id| {
+        if state.version_pkgs.get(version_id) == pkg {
+            Some(state.version_values.get(version_id))
+        } else {
+            found
+        }
+    }).unwrap()
+}
+
+fn workspace_selected_version_text(state: WorkspaceIndexState, pkg: Int, selected: Version) -> String {
+    state.version_ids.fold(None, |found, version_id| {
+        let row_text = state.version_values.get(version_id);
+        if state.version_pkgs.get(version_id) == pkg && VersionSet::from_req("=" + row_text).contains(selected) {
+            Some(row_text)
+        } else {
+            found
+        }
+    }).unwrap()
+}
+
+fn package_of(manifest: Tree, workspace: Tree, manifest_path: String) -> CargoPackage {
+    CargoPackage {
+        name: package_name(manifest),
+        version: package_version(manifest),
+        edition: package_edition(manifest, workspace),
+        manifest: manifest_path,
+    }
+}
+
+fn cfg_true() -> Doc {
+    cfg("cfg(all())")
+}
+
+fn dependency_decl_from_spec(manifest: Tree, workspace: Tree, name: String, kind: String, target: String, spec: CargoDependencySpec) -> CargoDependencyDecl {
+    let workspace_dep = dependency_workspace(spec);
+    CargoDependencyDecl {
+        name: name,
+        kind: kind,
+        target: target,
+        cfg: if target == "" { cfg_true() } else { cfg(target) },
+        version_req: dependency_version_req(spec, workspace, name, workspace_dep),
+        path: dependency_path(spec, workspace, name, workspace_dep),
+        workspace: workspace_dep,
+        optional: dependency_optional(spec),
+        default_features: dependency_default_features(spec, workspace, name, workspace_dep),
+        features: dependency_features_inherited(spec, workspace, name, workspace_dep),
+    }
+}
+
+fn detailed_dependency_of(manifest: Tree, workspace: Tree, name: String, kind: String) -> CargoDependencyDecl {
+    dependency_decl_from_spec(manifest, workspace, name, kind, "", dependency_spec(manifest, name, kind))
+}
+
+fn detailed_target_dependency_of(manifest: Tree, workspace: Tree, target: String, name: String, kind: String) -> CargoDependencyDecl {
+    dependency_decl_from_spec(manifest, workspace, name, kind, target, target_dependency_spec(manifest, target, name, kind))
+}
+
+fn version_dependency_of(manifest: Tree, name: String, kind: String) -> CargoDependencyDecl {
+    CargoDependencyDecl {
+        name: name,
+        kind: kind,
+        target: "",
+        cfg: cfg_true(),
+        version_req: dependency_version_literal(dependency_spec(manifest, name, kind)),
+        path: "",
+        workspace: false,
+        optional: false,
+        default_features: true,
+        features: [],
+    }
+}
+
+fn parse_sparse_jsonl(text: String) -> [SparseIndexRow] {
+    parse_sparse_jsonl_into(text, [])
+}
+
+fn parse_sparse_jsonl_into(text: String, out: [SparseIndexRow]) -> [SparseIndexRow] {
+    if text == "" {
+        out
+    } else if text.contains("\n") {
+        parse_sparse_jsonl_line(text.before("\n"), text.after("\n"), out)
+    } else {
+        [..out, json_decode(text)]
+    }
+}
+
+fn parse_sparse_jsonl_line(line: String, rest: String, out: [SparseIndexRow]) -> [SparseIndexRow] {
+    let next = if line == "" { out } else { [..out, json_decode(line)] };
+    parse_sparse_jsonl_into(rest, next)
+}
+
+fn workspace_sparse_row_count(sparse_jsonl: String) -> Int {
+    parse_sparse_jsonl(sparse_jsonl).len()
+}
+
+fn sparse_row_rt_multi_thread_feature_debug(row_json: String, target: String) -> String {
+    sparse_row_unit_features(json_decode(row_json), target, ["rt-multi-thread"], []).join(",")
+}
+
+fn sparse_row_tokio_ring8_feature_debug(row_json: String, target: String) -> String {
+    let seeds = ["io-util", "rt", "rt-multi-thread", "macros", "net", "default"];
+    let row: SparseIndexRow = json_decode(row_json);
+    sparse_row_filter_active_features(row, target, append_strings_unique(sparse_row_unit_features(row, target, seeds, []), seeds)).join(",")
+}
+
+fn target_shapes_array_gap() -> String {
+    "target shape records are derivable one at a time, but returning [CargoTargetShape] currently renders as a non-array handle."
+}
+
+fn resolved_unit_adaptation_gap() -> String {
+    "Ring-scale solution unit rows are emitted from the composed workspace+sparse solve; artifact-producing crate.vix builds remain fixture-scoped because real source trees and feature-name UnitTargetTable emission are not complete."
+}
+
+#[test]
+fn workspace_members_and_package_identity_come_from_real_manifest_copies() -> Stream<Check> {
+    let workspace = fixture_tree("cargo_manifest_real");
+    let taxon = fixture_tree("cargo_manifest_real/phon/rust/taxon");
+    let facet_core = fixture_tree("cargo_manifest_real/facet-core");
+    let facet = fixture_tree("cargo_manifest_real/facet");
+    yield expect_eq(workspace_members_text(workspace), "phon/rust/taxon\nfacet-core\nfacet");
+    yield expect_eq(package_of(taxon, workspace, "phon/rust/taxon"), CargoPackage { name: "zztaxon", version: "0.1.0", edition: "2024", manifest: "phon/rust/taxon" });
+    yield expect_eq(package_of(facet_core, workspace, "facet-core").name, "zzfacet-core");
+    yield expect_eq(package_of(facet, workspace, "facet").name, "zzfacet");
+}
+
+#[test]
+fn member_manifest_paths_are_derived_from_granted_root() -> Stream<Check> {
+    yield expect_eq(member_manifest_path(p"/workspace", "facet-core"), "/workspace/facet-core/Cargo.toml");
+}
+
+#[test]
+fn workspace_member_globs_expand_from_root_manifest() -> Stream<Check> {
+    let workspace = fixture_tree("cargo_manifest_glob_workspace");
+    yield expect_eq(workspace_members_text(workspace), "crates/a\ncrates/b\nplain");
+}
+
+#[test]
+fn dependency_declarations_extract_workspace_and_detailed_forms() -> Stream<Check> {
+    let workspace = fixture_tree("cargo_manifest_real");
+    let taxon = fixture_tree("cargo_manifest_real/phon/rust/taxon");
+    let facet_core = fixture_tree("cargo_manifest_real/facet-core");
+    let facet = fixture_tree("cargo_manifest_real/facet");
+    let blake3 = detailed_dependency_of(taxon, workspace, "blake3", "normal");
+    let bytes = detailed_dependency_of(facet_core, workspace, "bytes", "normal");
+    let tempfile = detailed_dependency_of(facet, workspace, "tempfile", "dev");
+    let const_hash = version_dependency_of(facet_core, "const-fnv1a-hash", "normal");
+    yield expect_eq(dependency_names_text(facet_core, "normal").contains("zztaxon"), true);
+    yield expect_eq(blake3.version_req, "^1");
+    yield expect_eq(blake3.default_features, false);
+    yield expect_eq(bytes.optional, true);
+    yield expect_eq(tempfile.kind, "dev");
+    yield expect_eq(const_hash.version_req, "1");
+}
+
+#[test]
+fn workspace_dependency_features_preserve_hyphenated_inherited_names() -> Stream<Check> {
+    let workspace = fixture_tree("cargo_manifest_workspace_dependency_features_workspace");
+    let manifest = fixture_tree("cargo_manifest_workspace_dependency_features_member");
+    yield expect_eq(detailed_dependency_of(manifest, workspace, "tokio", "normal").features, ["io-util", "rt", "rt-multi-thread", "net", "macros"]);
+}
+
+#[test]
+fn target_dependency_declarations_carry_parsed_cfg_data() -> Stream<Check> {
+    let workspace = fixture_tree("cargo_manifest_real");
+    let manifest = fixture_tree("cargo_manifest_target_cfg_demo");
+    let libc = detailed_target_dependency_of(manifest, workspace, "cfg(all(unix, target_arch = \"x86_64\"))", "libc", "normal");
+    yield expect_eq(libc.name, "libc");
+    yield expect_eq(libc.version_req, "0.2");
+    yield expect_eq(libc.target, "cfg(all(unix, target_arch = \"x86_64\"))");
+}
+
+#[test]
+fn package_workspace_fields_are_inherited_generically() -> Stream<Check> {
+    let workspace = fixture_tree("cargo_manifest_real");
+    let facet_core = fixture_tree("cargo_manifest_real/facet-core");
+    yield expect_eq(package_rust_version(facet_core, workspace), "1.92");
+    yield expect_eq(package_license(facet_core, workspace), "MIT OR Apache-2.0");
+    yield expect_eq(package_repository(facet_core, workspace), "https://github.com/facet-rs/facet");
+}
+
+#[test]
+fn target_shapes_match_cargo_metadata_for_real_members() -> Stream<Check> {
+    let taxon = fixture_tree("cargo_manifest_real/phon/rust/taxon");
+    let facet_core = fixture_tree("cargo_manifest_real/facet-core");
+    let facet = fixture_tree("cargo_manifest_real/facet");
+    yield expect_eq(lib_target_shape(taxon).name, "zztaxon");
+    yield expect_eq(lib_target_shape(facet_core).name, "zzfacet_core");
+    yield expect_eq(build_script_target_shape(facet_core).kind, "build-script");
+    yield expect_eq(lib_target_shape(facet).name, "zzfacet");
+    yield expect_eq(build_script_target_shape(facet).source, "build.rs");
+}
+
+#[test]
+fn rodin_problem_shape_is_available_for_the_manifest_adapter() -> Stream<Check> {
+    let problem = problem_of_member(7, 13);
+    yield expect_eq(problem.root_pkg, 7);
+    yield expect_eq(problem.root_req, VersionSet::from_req("*"));
+    yield expect_eq(problem.root_default_feature, 13);
+    yield expect_eq(problem.root_default_features, true);
+}
+
+#[test]
+fn sparse_feature_closure_preserves_hyphenated_seed_feature() -> Stream<Check> {
+    let row_json = "{\"name\":\"tokio\",\"vers\":\"1.52.3\",\"deps\":[],\"features\":{\"rt-multi-thread\":[\"rt\"],\"rt\":[]},\"yanked\":false}";
+    yield expect_eq(sparse_row_rt_multi_thread_feature_debug(row_json, "x86_64-apple-darwin"), "rt-multi-thread,rt");
+}
+
+#[test]
+fn sparse_feature_closure_preserves_ring8_tokio_seed_features() -> Stream<Check> {
+    let row_json = "{\"name\":\"tokio\",\"vers\":\"1.52.3\",\"deps\":[{\"name\":\"windows-sys\",\"package\":\"windows-sys\",\"req\":\"0.48\",\"kind\":\"normal\",\"target\":\"cfg(windows)\",\"optional\":true,\"default_features\":true,\"features\":[]}],\"features\":{\"io-util\":[],\"rt\":[],\"rt-multi-thread\":[\"rt\"],\"macros\":[],\"net\":[],\"default\":[\"windows-sys\"]},\"yanked\":false}";
+    let features = sparse_row_tokio_ring8_feature_debug(row_json, "x86_64-apple-darwin");
+    yield expect_eq(features.contains("rt-multi-thread"), true);
+    yield expect_eq(features.contains("windows-sys"), false);
+}
+
+#[test]
+fn typed_sparse_row_errors_are_schema_values() -> Stream<Check> {
+    let missing = try_json_decode<SparseIndexRow>("{\"name\":\"blake3\",\"deps\":[],\"features\":{},\"yanked\":false}");
+    let wrong = try_json_decode<SparseIndexRow>("{\"name\":\"blake3\",\"vers\":\"0.0.0\",\"deps\":[],\"features\":[],\"yanked\":false}");
+    yield match missing {
+        Ok(_)  => expect(false),
+        Err(e) => expect(e.message.contains("missing field `vers`")),
+    };
+    yield match wrong {
+        Ok(_)  => expect(false),
+        Err(e) => expect(e.message.contains("expected Map<String,Array<String>>")),
+    };
+}
+
+#[test]
+fn direct_resolved_unit_adapter_gap_is_pinned() -> Stream<Check> {
+    let gap = resolved_unit_adaptation_gap();
+    yield expect_eq(gap.contains("Ring-scale solution unit rows"), true);
+    yield expect_eq(gap.contains("composed workspace+sparse solve"), true);
+    yield expect_eq(gap.contains("feature-name UnitTargetTable emission"), true);
+}

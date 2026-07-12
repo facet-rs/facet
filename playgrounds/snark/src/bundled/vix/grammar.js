@@ -32,6 +32,16 @@ module.exports = grammar({
 
   word: ($) => $.identifier,
 
+  // The scrutinee/struct-literal split below is resolved BY CONSTRUCTION
+  // (`_scrutinee` is `_expr` minus `struct_literal` — Rust's rule), but
+  // tree-sitter's LR generator still needs the shared-prefix states declared
+  // so it can GLR-split them; without this, `tree-sitter generate` refuses.
+  // Snark's own executor is unaffected (it already handles the facts).
+  conflicts: ($) => [
+    [$._scrutinee, $.struct_literal],
+    [$._expr, $.struct_literal],
+  ],
+
   rules: {
     // Every AST-relevant child carries a field(): the typed AST (and its lowering) is
     // DERIVED from fields + cardinality (bare -> T, optional -> Option<T>, repeat -> Vec<T>)
@@ -53,7 +63,7 @@ module.exports = grammar({
       seq(
         optional(field("vis", "pub")),
         "fn",
-        field("name", $.identifier),
+        field("name", $.fn_name),
         optional(field("generics", $.generic_params)),
         field("params", $.param_list),
         optional(seq("->", field("return_type", $._type))),
@@ -348,6 +358,30 @@ module.exports = grammar({
     // ---- leaves ------------------------------------------------------------
     identifier: () => /[A-Za-z_][A-Za-z0-9_]*/,
 
+    // A function may be named by an operator symbol — the spaceship
+    // `fn <=>(self: Version, other) -> Ordering` overloads comparison for the
+    // receiver's type (and `< <= > >=` derive from it); `fn +` / `fn /` etc.
+    // overload arithmetic. A single leaf token (identifier OR operator) so `name`
+    // stays a uniform leaf with a text value, not a mixed-alternative field.
+    fn_name: () =>
+      token(
+        choice(
+          /[A-Za-z_][A-Za-z0-9_]*/,
+          "<=>",
+          "==",
+          "!=",
+          "<=",
+          ">=",
+          "<",
+          ">",
+          "+",
+          "-",
+          "*",
+          "/",
+          "%",
+        ),
+      ),
+
     // Loop-free config-generation templates. Holes are lowered into demand edges.
     template_string: () => /tmpl"([^"\\]|\\.)*"/,
 
@@ -365,7 +399,7 @@ module.exports = grammar({
     tuple_index: () => /[0-9]+/,
     boolean: () => choice("true", "false"),
 
-    line_comment: () => token(seq("//", /[^/\n][^\n]*|/)),
-    doc_comment: () => token(seq("///", /[^\n]*/)),
+    line_comment: () => token(prec(1, seq("//", /[^\n]*/))),
+    doc_comment: () => token(prec(2, seq("///", /[^\n]*/))),
   },
 });

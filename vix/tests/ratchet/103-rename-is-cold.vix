@@ -1,0 +1,11 @@
+
+// Rung 103 — a RENAME churns locations below it: accepted one-time cold
+// rebuild, correctness intact. (three-planes.md: physical limits)
+fn compute(n: Int) -> Int { n * 3 }
+fn render(n: Int) -> String { "v" + n.to_string() }
+
+#[test { rerun_with: "source-v2" }]
+fn rename_is_cold() -> Stream<Check> {
+    yield expect_eq(render(compute(4)), "v12");
+    yield demanded(render(compute(4)));
+}

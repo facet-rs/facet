@@ -54,6 +54,8 @@ chrome_profiler.json*
 
 # Dodeca code execution output
 .cache
+vix/docs/public/
+rodin/docs/public/
 bench-reports/
 scripts/.venv/
 *.egg-info/
@@ -64,9 +66,16 @@ scripts/pnpm-lock.yaml
 scripts/app.js
 .tracey/
 .playwright-mcp/
+.playwright-cli/
+.pnpm-store/
 *.callgrind
 callgrind.*
 heaptrack.*.zst
 citm_catalog.json
 twitter.json
 callgrind.out.*
+
+# Local-only docs: sensitive analysis lives in the private repo (vixenware vix-docs-archive).
+# Deliberately untracked here so agents cannot accidentally publish them.
+/RESURRECTION.md
+/vix/docs-internal/

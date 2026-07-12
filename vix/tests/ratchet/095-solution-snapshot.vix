@@ -1,0 +1,7 @@
+// Rung 095 — the whole solution renders canonically: one stable snapshot.
+#[test]
+fn solution_snapshot() -> Stream<Check> {
+    let reqs = %{"liba" => parse_req("^1.0"), "libb" => parse_req("^2.0")};
+    let solution = mini_solve(fixture_index()) where { requirements: reqs };
+    yield expect_snapshot(solution, "solution-ab");
+}

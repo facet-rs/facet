@@ -1,0 +1,8 @@
+// Rung 003 — let bindings and string literals.
+#[test]
+fn bindings() -> Stream<Check> {
+    let greeting = "hello";
+    let count = 3;
+    yield expect_eq(greeting, "hello");
+    yield expect_eq(count + 1, 4);
+}

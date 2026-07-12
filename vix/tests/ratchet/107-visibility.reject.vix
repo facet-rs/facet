@@ -1,0 +1,11 @@
+//! reject: private
+//! at: 5
+//! uses: lib/geometry.vix
+
+// Rung 107 — non-pub items are not importable.
+import geometry::private_helper;
+
+#[test]
+fn visibility() -> Stream<Check> {
+    yield expect_eq(private_helper(1), 1);
+}

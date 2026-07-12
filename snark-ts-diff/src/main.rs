@@ -24,8 +24,8 @@
 //!   # strict parse with the same execution counters as hostcalls mode
 //!   `cargo run --release -p snark-ts-diff -- report <grammar.js|grammar.json> <input-file> [iters]`
 //!
-//!   # strict parse through Weavy host-call blocks; requires --features jit
-//!   `cargo run --release -p snark-ts-diff --features jit -- hostcalls <grammar.js|grammar.json> <input-file> [iters]`
+//!   # strict parse through Weavy host-call blocks; requires Weavy JIT on this target
+//!   `cargo run --release -p snark-ts-diff hostcalls <grammar.js|grammar.json> <input-file> [iters]`
 //!
 //!   # lowering/JIT readiness for one grammar
 //!   cargo run --release -p snark-ts-diff -- readiness <grammar.js|grammar.json>
@@ -60,13 +60,6 @@ use snark::{
     validated::ValidatedGrammar,
 };
 
-#[cfg(all(
-    feature = "jit",
-    any(
-        all(target_os = "macos", target_arch = "aarch64"),
-        all(target_os = "linux", target_arch = "x86_64")
-    )
-))]
 use snark::lower::weavy::{
     parse_prepared_weavy_hostcalls_tree, parse_prepared_weavy_hostcalls_with_report,
 };
@@ -384,24 +377,10 @@ fn report_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyParse
     parse_prepared_weavy_with_report(&p.plan, &p.parser, &p.table, input)
 }
 
-#[cfg(all(
-    feature = "jit",
-    any(
-        all(target_os = "macos", target_arch = "aarch64"),
-        all(target_os = "linux", target_arch = "x86_64")
-    )
-))]
 fn hostcalls_once(p: &Prepared, input: &str) -> Result<(), WeavyParseError> {
     parse_prepared_weavy_hostcalls_tree(&p.plan, &p.parser, &p.table, input).map(|_| ())
 }
 
-#[cfg(all(
-    feature = "jit",
-    any(
-        all(target_os = "macos", target_arch = "aarch64"),
-        all(target_os = "linux", target_arch = "x86_64")
-    )
-))]
 fn hostcalls_report_once(p: &Prepared, input: &str) -> Result<WeavyParseReport, WeavyParseError> {
     parse_prepared_weavy_hostcalls_with_report(&p.plan, &p.parser, &p.table, input)
 }
@@ -441,13 +420,6 @@ fn best_report_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, WeavyP
     Ok(best_ms)
 }
 
-#[cfg(all(
-    feature = "jit",
-    any(
-        all(target_os = "macos", target_arch = "aarch64"),
-        all(target_os = "linux", target_arch = "x86_64")
-    )
-))]
 fn best_hostcalls_ms(p: &Prepared, input: &str, iters: usize) -> Result<f64, WeavyParseError> {
     hostcalls_once(p, input)?;
     let mut best_ms = f64::INFINITY;
@@ -1158,62 +1130,40 @@ fn main() {
     }
 
     if args.get(1).map(|s| s == "hostcalls").unwrap_or(false) {
-        #[cfg(all(
-            feature = "jit",
-            any(
-                all(target_os = "macos", target_arch = "aarch64"),
-                all(target_os = "linux", target_arch = "x86_64")
-            )
-        ))]
-        {
-            let grammar_path = args
-                .get(2)
-                .expect("usage: hostcalls <grammar.js|grammar.json> <input> [iters]");
-            let input = fs::read_to_string(args.get(3).expect("input file")).expect("read input");
-            let iters: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(30);
-            let p = prepare(grammar_path);
-            let report = match hostcalls_report_once(&p, &input) {
-                Ok(report) => report,
-                Err(error) => {
-                    eprintln!("Weavy hostcall parse failed: {error:?}");
-                    std::process::exit(1);
-                }
-            };
-            let best_ms = match best_hostcalls_ms(&p, &input, iters) {
-                Ok(best_ms) => best_ms,
-                Err(error) => {
-                    eprintln!("Weavy hostcall parse failed during timing: {error:?}");
-                    std::process::exit(1);
-                }
-            };
-            let bytes = input.len();
-            println!(
-                "snark weavy hostcall parse: min {best_ms:.2} ms over {iters} iters, {bytes} bytes, {:.0} bytes/ms",
-                bytes as f64 / best_ms
-            );
-            println!(
-                "accepted={} failed={} max_live={}",
-                report.accepted_count(),
-                report.failure_count(),
-                report.max_live_versions()
-            );
-            print_snark_execution_stats(&report);
-            print_lexer_execution_stats(&report);
-            return;
-        }
-        #[cfg(not(all(
-            feature = "jit",
-            any(
-                all(target_os = "macos", target_arch = "aarch64"),
-                all(target_os = "linux", target_arch = "x86_64")
-            )
-        )))]
-        {
-            eprintln!(
-                "Weavy hostcall parse requires `--features jit` on a supported copy-patch target"
-            );
-            std::process::exit(1);
-        }
+        let grammar_path = args
+            .get(2)
+            .expect("usage: hostcalls <grammar.js|grammar.json> <input> [iters]");
+        let input = fs::read_to_string(args.get(3).expect("input file")).expect("read input");
+        let iters: usize = args.get(4).and_then(|s| s.parse().ok()).unwrap_or(30);
+        let p = prepare(grammar_path);
+        let report = match hostcalls_report_once(&p, &input) {
+            Ok(report) => report,
+            Err(error) => {
+                eprintln!("Weavy hostcall parse failed: {error:?}");
+                std::process::exit(1);
+            }
+        };
+        let best_ms = match best_hostcalls_ms(&p, &input, iters) {
+            Ok(best_ms) => best_ms,
+            Err(error) => {
+                eprintln!("Weavy hostcall parse failed during timing: {error:?}");
+                std::process::exit(1);
+            }
+        };
+        let bytes = input.len();
+        println!(
+            "snark weavy hostcall parse: min {best_ms:.2} ms over {iters} iters, {bytes} bytes, {:.0} bytes/ms",
+            bytes as f64 / best_ms
+        );
+        println!(
+            "accepted={} failed={} max_live={}",
+            report.accepted_count(),
+            report.failure_count(),
+            report.max_live_versions()
+        );
+        print_snark_execution_stats(&report);
+        print_lexer_execution_stats(&report);
+        return;
     }
 
     if args.get(1).map(|s| s == "readiness").unwrap_or(false) {

@@ -1,0 +1,10 @@
+// Rung 093 — two demands of the same solve are one computation, one answer.
+#[test]
+fn solve_is_deterministic() -> Stream<Check> {
+    let reqs = %{"liba" => parse_req("^1.0")};
+    let solve = mini_solve(fixture_index()) where { requirements: reqs };
+    let a = solve;
+    let b = solve;
+    yield expect_eq(a, b);
+    yield demanded_once(solve);
+}

@@ -1,0 +1,7 @@
+// Rung 039 — stream keys carry positions through filtering.
+#[test]
+fn indexed_roundtrip() -> Stream<Check> {
+    let xs = [50, 10, 40, 20];
+    let kept = xs.stream().filter(|n| n >= 20).collect();
+    yield expect_eq(kept, %{0 => 50, 2 => 40, 3 => 20});
+}

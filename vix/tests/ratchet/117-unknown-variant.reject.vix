@@ -1,0 +1,9 @@
+//! reject: unknown variant Blue
+//! at: 5
+
+// Rung 117 — unknown enum variant.
+enum Light { Red, Green }
+#[test]
+fn t() -> Stream<Check> {
+    yield expect_eq(Light::Blue, Light::Red);
+}

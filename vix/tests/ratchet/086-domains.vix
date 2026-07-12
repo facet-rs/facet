@@ -1,0 +1,14 @@
+// Rung 086 — solver state: domains initialized from requirements.
+struct State { domains: Map<String, VersionSet>, selected: Map<String, Version> }
+
+fn init_state(reqs: Map<String, VersionSet>) -> State {
+    State { domains: reqs, selected: %{} }
+}
+
+#[test]
+fn domains() -> Stream<Check> {
+    let reqs = %{"liba" => parse_req("^1.0"), "libb" => parse_req("^2.0")};
+    let s = init_state(reqs);
+    yield expect_eq(s.domains.len(), 2);
+    yield expect(s.domains.get("liba").contains(parse_version("1.3.0")));
+}
