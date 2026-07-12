@@ -66,6 +66,7 @@ const RUNG_047: &str = include_str!("ratchet/047-string-to-path.reject.vix");
 const RUNG_048: &str = include_str!("ratchet/048-closures-capture.vix");
 const RUNG_049: &str = include_str!("ratchet/049-recursion.vix");
 const RUNG_050: &str = include_str!("ratchet/050-deep-tail-recursion.vix");
+const RUNG_138: &str = include_str!("ratchet/138-map-accumulator.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
 const RUNG_145: &str = include_str!("ratchet/145-push.reject.vix");
 const RUNG_146: &str = include_str!("ratchet/146-insert.reject.vix");
@@ -655,15 +656,16 @@ fn accepted_rungs_verify_and_execute_through_one_executable() {
     }
 }
 
-fn assert_ordered_freeze_red(source: &str, aggregate: &str) {
-    let RunError::Diagnostics(diagnostics) = run_source(source)
-        .expect_err("a qualifying shared ordered aggregate must not silently recompute")
-    else {
-        panic!("shared {aggregate} publication must be a typed diagnostic")
-    };
-    let message = diagnostics.entries[0].message();
-    assert!(message.contains(aggregate), "{message}");
-    assert!(message.contains("rung-138"), "{message}");
+fn assert_ordered_freeze_published(source: &str) {
+    let report = run_source(source).expect("shared ordered aggregate freezes in production");
+    assert!(report.passed(), "all checks pass: {report:?}");
+    assert!(report.agrees(), "plain and chaos agree: {report:?}");
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.counters.value_island_spawns >= 1);
+        assert_eq!(lane.counters.successful_aggregate_freezes, 1);
+        assert_eq!(lane.values.len(), 1);
+        assert!(lane.values[0].failure.is_none());
+    }
 }
 
 #[test]
@@ -691,7 +693,7 @@ fn rung_028_array_stream_collects_position_keyed_rows() {
     assert_eq!(collect.ty, VirType::map(VirType::Int, VirType::String));
     assert!(collect.effect.fallible);
 
-    assert_ordered_freeze_red(RUNG_028, "Map");
+    assert_ordered_freeze_published(RUNG_028);
 }
 
 #[test]
@@ -831,7 +833,7 @@ fn rung_033_array_stream_preserves_position_keys() {
         .expect("collect materializes the position-keyed map");
     assert_eq!(collect.ty, VirType::map(VirType::Int, VirType::Int));
 
-    assert_ordered_freeze_red(RUNG_033, "Map");
+    assert_ordered_freeze_published(RUNG_033);
 }
 
 #[test]
@@ -852,7 +854,7 @@ fn rung_034_stream_filter_preserves_survivor_keys() {
     assert_eq!(filter.ty, VirType::stream(VirType::Int, VirType::Int));
     assert_eq!(filter.effect.kind, EffectKind::Codata);
 
-    assert_ordered_freeze_red(RUNG_034, "Map");
+    assert_ordered_freeze_published(RUNG_034);
 }
 
 // Rung 038 — deterministic selection (`find_min`/`find_max`) and decomposition
@@ -1328,11 +1330,11 @@ fn taken_none() -> Stream<Check> {
     assert_eq!(report.plain.checks, report.chaos.checks);
 }
 
-// A scrutinee that itself embeds control flow is beyond the zero-dynamic-key
-// checkpoint. Valid source must never panic the builder: it yields a typed
-// diagnostic boundary and the runner surfaces a typed RunError.
+// Direct construction without publication retains the typed control boundary.
+// Production partitioning publishes the shared array selected by that control
+// and feeds its ordinary value identity into generator control and both checks.
 #[test]
-fn rung_031_generator_control_flow_scrutinee_is_a_typed_boundary() {
+fn rung_031_generator_control_flow_scrutinee_uses_shared_publication() {
     const SOURCE: &str = r#"
 #[test]
 fn control_scrutinee() -> Stream<Check> {
@@ -1354,9 +1356,13 @@ fn control_scrutinee() -> Stream<Check> {
     module
         .generator_task_island(&module.tests[0])
         .expect_err("a control-flow scrutinee is a typed boundary, not a panic");
-    match run_source(SOURCE) {
-        Err(RunError::Diagnostics(_)) => {}
-        other => panic!("expected a typed diagnostic boundary, got {other:?}"),
+    let report = run_source(SOURCE).expect("production partition publishes the shared selection");
+    assert!(report.passed(), "taken checks pass: {report:?}");
+    assert!(report.agrees(), "plain and chaos agree: {report:?}");
+    for lane in [&report.plain, &report.chaos] {
+        assert!(lane.counters.value_island_spawns >= 1);
+        assert_eq!(lane.counters.successful_aggregate_freezes, 1);
+        assert_eq!(lane.values.len(), 1);
     }
 }
 
@@ -4058,6 +4064,19 @@ fn rung_050_ratchet_execution_strips_per_iteration_marks() {
 }
 
 #[test]
+fn rung_138_preserves_empty_map_fold_seed_type_boundary() {
+    let RunError::Diagnostics(diagnostics) = run_source(RUNG_138).expect_err("typed red boundary")
+    else {
+        panic!("rung 138 is blocked before ordered publication")
+    };
+    assert_eq!(diagnostics.entries.len(), 1);
+    assert_eq!(
+        diagnostics.entries[0].message(),
+        "an empty map literal needs an expected key and value type"
+    );
+}
+
+#[test]
 // r[verify lang.collection.array-map]
 fn array_map_vir_wiring_infers_both_sides_of_the_callable_signature() {
     const SOURCE: &str = r#"
@@ -4860,15 +4879,11 @@ fn map_and_set_surface_has_distinct_typed_vir_grains() {
             && !node.effect.fallible
     }));
 
-    assert_ordered_freeze_red(RUNG_041, "Map");
-    assert_ordered_freeze_red(RUNG_042, "Map");
-    assert_ordered_freeze_red(RUNG_044, "Set");
-
-    let report =
-        run_source(RUNG_043).expect("single-consumer map executes through ordered substrate");
-    assert!(report.passed());
-    assert!(report.agrees());
-    assert_eq!(report.plain.checks.len(), 1);
+    for source in [RUNG_041, RUNG_042, RUNG_043, RUNG_044] {
+        let report = run_source(source).expect("ordered collection publishes through production");
+        assert!(report.passed());
+        assert!(report.agrees());
+    }
 }
 
 #[test]

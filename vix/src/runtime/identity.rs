@@ -344,6 +344,8 @@ pub(crate) fn hash_framed(domain: &[u8], fields: &[&[u8]]) -> Digest {
 /// r[impl machine.identity.hash-at-construction]
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum FramedNode {
+    /// An already-resolved child identity used while framing a larger value.
+    Reference(ValueId),
     /// A scalar/opaque leaf: canonical bytes under one stable schema.
     Leaf { schema: SchemaId, bytes: Vec<u8> },
     /// A tagged variant: discriminant then role-tagged payload fields.
@@ -367,6 +369,17 @@ pub enum FramedNode {
         schema: SchemaId,
         element_schema: SchemaId,
         children: Vec<ValueId>,
+    },
+    /// Canonical key-ordered map rows. Both key and value contribute only their
+    /// semantic referent identities; ordered arena topology and handles do not.
+    OrderedMap {
+        schema: SchemaId,
+        rows: Vec<(ValueId, ValueId)>,
+    },
+    /// Canonical element-ordered set members by semantic identity.
+    OrderedSet {
+        schema: SchemaId,
+        elements: Vec<ValueId>,
     },
 }
 
@@ -398,10 +411,13 @@ impl FramedNode {
     #[must_use]
     pub fn schema(&self) -> SchemaId {
         match self {
+            Self::Reference(identity) => identity.schema,
             Self::Leaf { schema, .. }
             | Self::Variant { schema, .. }
             | Self::SeqInline { schema, .. }
-            | Self::SeqChildren { schema, .. } => *schema,
+            | Self::SeqChildren { schema, .. }
+            | Self::OrderedMap { schema, .. }
+            | Self::OrderedSet { schema, .. } => *schema,
         }
     }
 
@@ -413,6 +429,9 @@ impl FramedNode {
     /// r[impl machine.identity.value-identity-pair]
     #[must_use]
     pub fn identity(&self) -> ValueId {
+        if let Self::Reference(identity) = self {
+            return *identity;
+        }
         let mut writer = FramedHasher::new();
         self.hash_into(&mut writer);
         ValueId {
@@ -423,6 +442,9 @@ impl FramedNode {
 
     fn hash_into(&self, writer: &mut FramedHasher) {
         match self {
+            Self::Reference(identity) => {
+                writer.child(*identity);
+            }
             Self::Leaf { schema, bytes } => {
                 writer.start(*schema, 1).bytes(bytes);
             }
@@ -476,6 +498,24 @@ impl FramedNode {
                     writer
                         .seq_element(index as u64, *element_schema)
                         .child(*child);
+                }
+            }
+            Self::OrderedMap { schema, rows } => {
+                writer
+                    .start(*schema, rows.len() as u64)
+                    .seq_len(rows.len() as u64);
+                for (index, (key, value)) in rows.iter().enumerate() {
+                    writer.map_pair(index as u64).child(*key).child(*value);
+                }
+            }
+            Self::OrderedSet { schema, elements } => {
+                writer
+                    .start(*schema, elements.len() as u64)
+                    .seq_len(elements.len() as u64);
+                for (index, element) in elements.iter().enumerate() {
+                    writer
+                        .seq_element(index as u64, element.schema)
+                        .child(*element);
                 }
             }
         }
