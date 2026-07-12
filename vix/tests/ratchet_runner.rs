@@ -3,7 +3,7 @@ use std::path::Path;
 
 use vix::budget::{BudgetOutcome, ChildReport, run_source_under_declared_budget};
 use vix::compiler::Compiler;
-use vix::diagnostic::{DiagnosticCode, DiagnosticSeverity};
+use vix::diagnostic::{DiagnosticCode, DiagnosticPayload, DiagnosticSeverity};
 use vix::lowering::{LoweringCache, attribution_for, source_map_for};
 use vix::ratchet::{RunError, run_source, run_source_innards};
 use vix::runtime::{DemandState, EventKind, FailureValue, MemoVerdict, SchemaId, TaskState};
@@ -5375,16 +5375,20 @@ fn assert_contiguous_sequences(events: &[vix::runtime::Event]) {
     }));
 }
 
-/// The typed-decode gate (FOUNDATION.md, "To score past 066"): decode targets
-/// the compiler-known Vix type directly through the doc-parse primitive — one
-/// host call per document, typed store values out, no Doc-walking on hot paths.
+/// Certifies the **constant-fold subset** of the typed-decode gate
+/// (FOUNDATION.md, "To score past 066"). These rungs decode compile-time-
+/// constant document literals against the `let`/call-site target type in a
+/// single `FormatParser` pass inside `Compiler::compile`, and lower the result
+/// to the exact typed-construction VIR a hand-written literal produces. This is
+/// a legitimate as-if fold of the doctrine primitive's constant-input case — it
+/// is *not* the runtime `r[machine.primitive.typed-deserialization]` doc-parse
+/// primitive, which serves dynamic documents and returns a runtime `Outcome`.
 ///
-/// This lane realizes that by decoding the literal document in a single
-/// `FormatParser` pass against the `let`/call-site target type and lowering the
-/// result to the exact typed-construction VIR a hand-written literal produces.
-/// The proof that "no Doc-walking on hot paths" holds is structural: every
-/// lowered frame is free of `HostCall`/`HostCallYield`, so the verified machine
-/// only ever runs typed construction — the parse never enters it.
+/// The zero-`HostCall`/`HostCallYield` assertion below is therefore an **as-if
+/// optimization certificate** — proof the fold keeps the parse out of the
+/// verified machine — not proof the runtime primitive exists. The runtime seam
+/// for dynamic/unknown-target decodes is named explicitly elsewhere
+/// (`DiagnosticCode::RuntimeDecodeUnavailable`), never satisfied here.
 fn assert_typed_decode_rung(source: &str, checks: usize) {
     let module = Compiler::new()
         .compile(source)
@@ -5397,10 +5401,9 @@ fn assert_typed_decode_rung(source: &str, checks: usize) {
             .expect("typed-decode rung lowers through verified Weavy execution");
         assert!(
             lowered.program().fns.iter().all(|function| {
-                function
-                    .code
-                    .iter()
-                    .all(|op| !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. }))
+                function.code.iter().all(|op| {
+                    !matches!(op, WeavyOp::HostCall { .. } | WeavyOp::HostCallYield { .. })
+                })
             }),
             "decode lowers to typed construction, never a machine host call",
         );
@@ -5464,6 +5467,178 @@ fn rung_064_absent_fields_decode_to_option_none() {
 #[test]
 fn rung_065_decodes_string_or_table_enum_forms() {
     assert_typed_decode_rung(RUNG_065, 3);
+}
+
+/// Adversarial identity oracle for the constant fold: a successfully folded
+/// decoded value must be *the same value* as the equivalent authored typed
+/// construction — proven through the production canonical-recipe and Store
+/// framed-identity paths, not merely by both `expect_eq`s passing.
+///
+/// Two programs identical except decode-vs-literal fold to identical canonical
+/// VIR, so they share a `RecipeId` and `DemandKey`; run through `run_source`
+/// they intern the *same* framed value identities and produce identical check
+/// identities. A negative control (a different authored value) must diverge, so
+/// the oracle is discriminating rather than trivially true.
+#[test]
+fn decoded_value_is_identity_equivalent_to_authored_construction() {
+    const AUTHORED: &str = "\
+struct PkgRow { name: String, vers: String, yanked: Bool }
+#[test]
+fn t() -> Stream<Check> {
+    let row = PkgRow { name: \"mio\", vers: \"0.8.11\", yanked: false };
+    yield expect_eq(row.name, \"mio\");
+    yield expect_eq(row.vers, \"0.8.11\");
+}
+";
+    const DECODED: &str = "\
+struct PkgRow { name: String, vers: String, yanked: Bool }
+#[test]
+fn t() -> Stream<Check> {
+    let row: PkgRow = json_decode(\"{\\\"name\\\":\\\"mio\\\",\\\"vers\\\":\\\"0.8.11\\\",\\\"yanked\\\":false}\");
+    yield expect_eq(row.name, \"mio\");
+    yield expect_eq(row.vers, \"0.8.11\");
+}
+";
+    // A different authored value: same shape, different `vers`. The fold must be
+    // discriminating — this must NOT collide with the decoded recipe/identity.
+    const OTHER: &str = "\
+struct PkgRow { name: String, vers: String, yanked: Bool }
+#[test]
+fn t() -> Stream<Check> {
+    let row = PkgRow { name: \"mio\", vers: \"9.9.9\", yanked: false };
+    yield expect_eq(row.name, \"mio\");
+    yield expect_eq(row.vers, \"0.8.11\");
+}
+";
+
+    // 1. Canonical-recipe / framed-identity path: the folded decode is
+    //    byte-identical VIR to the authored construction, hence one recipe and
+    //    one demand key; the negative control diverges.
+    let lower = |source: &str| {
+        let module = Compiler::new().compile(source).expect("compiles");
+        let partitioned = module.partition_test(&module.tests[0]);
+        let canonical = partitioned.islands[0].canonical_recipe_bytes();
+        let mut cache = LoweringCache::default();
+        let lowered = cache.get_or_lower(&partitioned.islands[0]).expect("lowers");
+        (canonical, lowered.recipe, lowered.demand_key)
+    };
+    let (authored_vir, authored_recipe, authored_key) = lower(AUTHORED);
+    let (decoded_vir, decoded_recipe, decoded_key) = lower(DECODED);
+    let (other_vir, other_recipe, _other_key) = lower(OTHER);
+    assert_eq!(
+        authored_vir, decoded_vir,
+        "the fold emits byte-identical canonical VIR to the authored construction"
+    );
+    assert_eq!(authored_recipe, decoded_recipe, "one canonical recipe");
+    assert_eq!(authored_key, decoded_key, "one demand key");
+    assert_ne!(
+        authored_vir, other_vir,
+        "a different authored value must produce a different recipe"
+    );
+    assert_ne!(authored_recipe, other_recipe);
+
+    // 2. Production Store path: running both interns the same framed value
+    //    identities and yields identical check identities.
+    let store_identities = |run: &vix::ratchet::SuiteRun| {
+        run.events
+            .iter()
+            .filter_map(|event| match event.kind {
+                EventKind::StoreAlloc { identity, .. } => Some(identity),
+                _ => None,
+            })
+            .collect::<Vec<_>>()
+    };
+    let authored_run = run_source(AUTHORED).expect("authored runs");
+    let decoded_run = run_source(DECODED).expect("decoded runs");
+    assert!(authored_run.passed() && decoded_run.passed());
+    let authored_ids = store_identities(&authored_run.plain);
+    let decoded_ids = store_identities(&decoded_run.plain);
+    assert!(
+        !authored_ids.is_empty(),
+        "the construction interns at least one framed value"
+    );
+    assert_eq!(
+        authored_ids, decoded_ids,
+        "decode and authored construction intern the same framed store identities"
+    );
+    assert_eq!(
+        authored_run.plain.checks, decoded_run.plain.checks,
+        "identical check identities (ValueId) through the production path"
+    );
+}
+
+/// A decode whose document is not a compile-time-constant literal cannot be
+/// folded; rather than silently accept or host-evaluate the dynamic string, the
+/// compiler names the unavailable runtime doc-parse seam with the format and
+/// target type. (A no-target decode is the same seam with `target: None`.)
+#[test]
+fn nonliteral_decode_names_the_runtime_seam() {
+    const SOURCE: &str = "\
+struct PkgRow { name: String }
+#[test]
+fn t() -> Stream<Check> {
+    let src = \"{}\";
+    let row: PkgRow = json_decode(src);
+    yield expect_eq(row.name, \"x\");
+}
+";
+    let diagnostics = Compiler::new()
+        .compile(SOURCE)
+        .expect_err("a nonliteral decode document is the runtime seam, not a fold");
+    assert_eq!(diagnostics.entries.len(), 1);
+    assert_eq!(
+        diagnostics.entries[0].code,
+        DiagnosticCode::RuntimeDecodeUnavailable
+    );
+    assert_eq!(
+        diagnostics.entries[0].payload,
+        DiagnosticPayload::RuntimeDecode {
+            format: "JSON".to_owned(),
+            target: Some("PkgRow".to_owned()),
+        }
+    );
+}
+
+/// A malformed constant document fails as a *structured typed* diagnostic — a
+/// stable kind label, a structured field path, and the offending document byte
+/// span — never a stringly `UnsupportedExpression`. No identity depends on the
+/// rendered prose.
+#[test]
+fn malformed_literal_decode_is_a_structured_typed_failure() {
+    const SOURCE: &str = "\
+struct PkgRow { name: String, vers: String }
+#[test]
+fn t() -> Stream<Check> {
+    let row: PkgRow = json_decode(\"{\\\"name\\\": 42, \\\"vers\\\": \\\"x\\\"}\");
+    yield expect_eq(row.vers, \"x\");
+}
+";
+    let diagnostics = Compiler::new()
+        .compile(SOURCE)
+        .expect_err("an integer where a String is expected fails the fold");
+    assert_eq!(diagnostics.entries.len(), 1);
+    assert_eq!(diagnostics.entries[0].code, DiagnosticCode::DecodeFailed);
+    let DiagnosticPayload::Decode {
+        format,
+        target,
+        kind,
+        path,
+        doc_offset,
+        doc_len,
+        ..
+    } = &diagnostics.entries[0].payload
+    else {
+        panic!("expected a structured Decode payload");
+    };
+    assert_eq!(format, "JSON");
+    assert_eq!(target, "PkgRow");
+    assert_eq!(kind, "expected-scalar");
+    assert_eq!(path, &["name".to_owned()]);
+    // The document span points at the offending `42` inside the decoded literal.
+    let document = "{\"name\": 42, \"vers\": \"x\"}";
+    let offset = doc_offset.expect("document offset preserved") as usize;
+    let len = doc_len.expect("document length preserved") as usize;
+    assert_eq!(&document[offset..offset + len], "42");
 }
 
 /// Rung 066's exact code-grounded red boundary on the merged production tree: it
