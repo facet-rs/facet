@@ -580,6 +580,17 @@ pub fn run_source_with_snapshots(
         .execute_with_snapshots(expectations)
 }
 
+/// Run every declared test twice against a snapshot oracle through an explicitly
+/// selected execution lane. This composes the typed per-executable lane seam with
+/// snapshot verdicts without mutating the process environment.
+pub fn run_source_with_snapshots_and_lane(
+    source: &str,
+    expectations: &SnapshotExpectations,
+    lane: weavy::exec::LaneRequest,
+) -> Result<RatchetReport, RunError> {
+    prepare_source_with_lane(source, lane)?.execute_with_snapshots(expectations)
+}
+
 /// Run through the production scheduler while retaining every interior Weavy
 /// source mark. This is an explicit diagnostic lane: ordinary [`run_source`]
 /// uses bounded Production tracing and preserves only structural task events.

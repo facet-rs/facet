@@ -1,7 +1,7 @@
 //! Cross-lane differential certificate (audit finding F1).
 //!
 //! A production-shaped, in-process differential over the accepted canonical rung
-//! corpus (through rung 059). On a native-capable host each accepted rung is
+//! corpus (through rung 061). On a native-capable host each accepted rung is
 //! compiled and lowered once, then executed through an explicitly selected
 //! *native* [`weavy::exec::Executable`] and an explicitly selected *interpreter*
 //! [`weavy::exec::Executable`] — the same compiled/lowered semantics driven
@@ -49,7 +49,9 @@
 //! [`weavy::jit::task_lane::available`] capability rule the other in-tree
 //! cross-lane tests use (e.g. `tail_loop_interpreter_and_jit_agree`).
 
-use vix::ratchet::{RatchetReport, RunError, SuiteRun, run_source_with_lane};
+use vix::ratchet::{
+    RatchetReport, RunError, SnapshotExpectations, SuiteRun, run_source_with_snapshots_and_lane,
+};
 use weavy::exec::LaneRequest;
 
 struct Rung {
@@ -58,7 +60,11 @@ struct Rung {
     reject: bool,
 }
 
-/// The accepted canonical corpus through rung 059, with reject fixtures marked.
+const DEP_MIO_GOLDEN: &str =
+    "Dep {\n    name: \"mio\",\n    req: \"^0.8\",\n    optional: false,\n}";
+const GREEK_LETTERS_GOLDEN: &str = "[\n    \"alpha\",\n    \"beta\",\n    \"gamma\",\n]";
+
+/// The accepted canonical corpus through rung 061, with reject fixtures marked.
 /// Reject rungs are rejected at compile time (before any lane is selected), so
 /// they certify only that both lanes report the identical rejection; accepted
 /// rungs drive the full cross-lane semantic differential.
@@ -358,7 +364,31 @@ const CORPUS: &[Rung] = &[
         source: include_str!("ratchet/059-distinct-args-distinct-demands.vix"),
         reject: false,
     },
+    Rung {
+        name: "060-snapshots",
+        source: include_str!("ratchet/060-snapshots.vix"),
+        reject: false,
+    },
+    Rung {
+        name: "061-snapshot-canonical",
+        source: include_str!("ratchet/061-snapshot-canonical.vix"),
+        reject: false,
+    },
 ];
+
+fn snapshot_expectations(rung: &Rung) -> SnapshotExpectations {
+    match rung.name {
+        "060-snapshots" => {
+            SnapshotExpectations::new().with("snapshot_record", "dep-mio", DEP_MIO_GOLDEN)
+        }
+        "061-snapshot-canonical" => SnapshotExpectations::new().with(
+            "snapshot_canonical",
+            "greek-letters",
+            GREEK_LETTERS_GOLDEN,
+        ),
+        _ => SnapshotExpectations::new(),
+    }
+}
 
 /// Assert the two suites publish an identical semantic family. This is the
 /// [`RatchetReport::agrees`] shape (`check_family` + `value_family`), applied
@@ -455,8 +485,14 @@ fn accepted_corpus_agrees_across_native_and_interpreter_lanes() {
     let mut rejected = 0usize;
 
     for rung in CORPUS {
-        let native = run_source_with_lane(rung.source, LaneRequest::Native);
-        let interp = run_source_with_lane(rung.source, LaneRequest::Interpreter);
+        let expectations = snapshot_expectations(rung);
+        let native =
+            run_source_with_snapshots_and_lane(rung.source, &expectations, LaneRequest::Native);
+        let interp = run_source_with_snapshots_and_lane(
+            rung.source,
+            &expectations,
+            LaneRequest::Interpreter,
+        );
 
         if rung.reject {
             // Rejection is a compile-time verdict, decided before any lane is

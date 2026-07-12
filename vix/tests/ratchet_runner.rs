@@ -7,6 +7,7 @@ use vix::diagnostic::{DiagnosticCode, DiagnosticSeverity};
 use vix::lowering::{LoweringCache, attribution_for, source_map_for};
 use vix::ratchet::{
     RunError, SnapshotExpectations, run_source, run_source_innards, run_source_with_snapshots,
+    run_source_with_snapshots_and_lane,
 };
 use vix::runtime::{
     DemandState, EventKind, FailureValue, MemoVerdict, SchemaId, SnapshotOutcome, TaskState,
@@ -18,7 +19,7 @@ use vix::vir::{
     VariantPayload, canonical_recipe,
 };
 use weavy::task::Op as WeavyOp;
-use weavy::{PayloadKind, RegionShape, ValueShapeKind, WordKind};
+use weavy::{LaneRequest, PayloadKind, RegionShape, ValueShapeKind, WordKind};
 
 const RUNG_001: &str = include_str!("ratchet/001-harness.vix");
 const RUNG_002: &str = include_str!("ratchet/002-arithmetic.vix");
@@ -5977,16 +5978,18 @@ fn m() -> Stream<Check> {
 
 #[test]
 fn snapshot_rendering_agrees_across_native_and_interpreter_lanes() {
-    // In-tree native/interpreter differential: force the interpreter lane, then
-    // the (default) native lane, and assert byte-identical renderings. On a
-    // non-native target both are the interpreter and agreement is trivially true.
+    if !weavy::jit::task_lane::available() {
+        return;
+    }
+
+    // Select both authorities per executable, without mutating process-global
+    // environment state, and assert byte-identical oracle-backed renderings.
     let oracle = SnapshotExpectations::new().with("snapshot_record", "dep-mio", DEP_MIO_GOLDEN);
-    let interpreter = with_weavy_jit(Some("0"), || {
-        run_source_with_snapshots(RUNG_060, &oracle).expect("interpreter lane runs")
-    });
-    let native = with_weavy_jit(None, || {
-        run_source_with_snapshots(RUNG_060, &oracle).expect("native lane runs")
-    });
+    let interpreter =
+        run_source_with_snapshots_and_lane(RUNG_060, &oracle, LaneRequest::Interpreter)
+            .expect("interpreter lane runs");
+    let native = run_source_with_snapshots_and_lane(RUNG_060, &oracle, LaneRequest::Native)
+        .expect("native lane runs");
     let interp_rendered = &interpreter.plain.checks[0]
         .snapshot
         .as_ref()
@@ -5999,28 +6002,6 @@ fn snapshot_rendering_agrees_across_native_and_interpreter_lanes() {
     );
     assert_eq!(interp_rendered, DEP_MIO_GOLDEN);
     assert!(interpreter.passed() && native.passed());
-}
-
-/// Run `f` with `WEAVY_JIT` set to `value` (or unset), restoring it after. Sound
-/// because nextest isolates each test in its own single-threaded process, the
-/// same discipline weavy's own lane-differential tests use.
-fn with_weavy_jit<T>(value: Option<&str>, f: impl FnOnce() -> T) -> T {
-    let previous = std::env::var_os("WEAVY_JIT");
-    // SAFETY: one test process, no other thread reads the environment here.
-    unsafe {
-        match value {
-            Some(v) => std::env::set_var("WEAVY_JIT", v),
-            None => std::env::remove_var("WEAVY_JIT"),
-        }
-    }
-    let out = f();
-    unsafe {
-        match previous {
-            Some(v) => std::env::set_var("WEAVY_JIT", v),
-            None => std::env::remove_var("WEAVY_JIT"),
-        }
-    }
-    out
 }
 
 #[test]
