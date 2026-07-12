@@ -2087,12 +2087,15 @@ fn lower_check(
     })
 }
 
-/// `expect_snapshot(v) where { name: "..." }` — snapshot any value structurally.
+/// `expect_snapshot (value, "name")` — snapshot any value structurally.
 ///
-/// The value is lowered without a type constraint (every value renders) and
-/// becomes the recipe root of a value-publishing island. The name is a
-/// compile-time string literal: a stable harness artifact, never a runtime
-/// value, so it is knowable without demanding anything.
+/// Per the Calling chapter, application is juxtaposition and the comma builds a
+/// tuple, so this is `expect_snapshot` applied to one pair `(T, String)` — the
+/// subject value and its stable name — exactly parallel to `expect_eq (a, b)`.
+/// The pair's first component is lowered without a type constraint (every value
+/// renders) and becomes the recipe root of a value-publishing island. The second
+/// component is a compile-time string literal: a stable harness artifact, never a
+/// runtime value, so it is knowable without demanding anything.
 fn lower_snapshot_check(
     nodes: &mut Vec<Node>,
     bindings: &BTreeMap<String, LoweredValue>,

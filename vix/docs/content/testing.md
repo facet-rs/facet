@@ -67,22 +67,25 @@ one.
 ## Checks are values
 
 ```vix
-expect(cond: Bool) -> Check
-expect_eq(pair: (T, T)) -> Check         // any T: everything is comparable
-expect_ne(pair: (T, T)) -> Check
-expect_some(o: Option<T>) -> Check
-expect_none(o: Option<T>) -> Check
-expect_snapshot(v: T) where { name: String } -> Check
+expect (cond: Bool) -> Check
+expect_eq (pair: (T, T)) -> Check         // any T: everything is comparable
+expect_ne (pair: (T, T)) -> Check
+expect_some (o: Option<T>) -> Check
+expect_none (o: Option<T>) -> Check
+expect_snapshot (pair: (T, String)) -> Check
 ```
 
-`expect_eq(a, b)` passes **one** argument — the tuple `(a, b)` — so at-most-one
-holds without ceremony. The two sides of an equality are the same kind of thing, and
-a tuple is what "the same kind of thing, in order" means.
+Each of these takes **one** subject argument (see [Calling](/vix/calling)):
+`expect_eq (a, b)` juxtaposes `expect_eq` with the group `(a, b)`, and the comma
+makes that group the pair `(a, b)` — so at-most-one-positional holds without
+ceremony. `expect_snapshot (value, "name")` is the same shape: one pair of the
+value and its stable snapshot name.
 
 A failing `expect_eq` renders both sides — structurally, for any type, because
 every value is serializable; you never write a `Debug` impl to earn diagnostics.
 A failure carries the check's stable source site and reports the current source
-span.
+span. `expect_snapshot` renders its value the same way — structurally, never via
+a `Debug` impl — under the pair's `String` name.
 
 `Check` is `must_use`. Constructing one and forgetting to yield it produces a
 compiler warning rather than a test that silently passes. The ratchet harness
