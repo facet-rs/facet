@@ -92,6 +92,11 @@ pub struct WireDemand<'a> {
     pub arguments: &'a [Evaluation],
     pub wires: &'a [WireDemand<'a>],
     pub function: FunctionId,
+    /// The canonical scalar argument identities of this invocation, recorded in
+    /// the realized-demand log when the wire actually computes (a memo miss).
+    /// Empty for a zero-argument callee. A memoized re-force adds no entry, so
+    /// the log counts one realization per distinct demand identity.
+    pub demand_arguments: &'a [ValueId],
 }
 
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
@@ -605,6 +610,13 @@ impl<S: EventSink> Runtime<S> {
                             },
                             ChaosPolicy::default(),
                         )?;
+                        // A wire that actually computed (a memo miss that ran)
+                        // records one realized demand for its described invocation;
+                        // a memoized re-force is a hit and records nothing, so
+                        // structurally equal forces observe a single realization.
+                        if resolved.memo == MemoVerdict::Miss {
+                            self.record_wire_demand(wire.function, wire.demand_arguments.to_vec());
+                        }
                         if let Some(failure) = resolved.failure {
                             // A demanded argument failed on the language plane;
                             // propagate the typed failure with its authored source

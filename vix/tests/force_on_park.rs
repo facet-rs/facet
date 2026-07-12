@@ -93,6 +93,7 @@ fn wire<'a>(
         arguments: &[],
         wires: &[],
         function: arg.function,
+        demand_arguments: &[],
     }
 }
 
@@ -298,6 +299,7 @@ fn reentrant_wire_demand_is_a_typed_fault() {
         arguments: &[],
         wires: &[],
         function: consumer.function,
+        demand_arguments: &[],
     }];
     let error = runtime
         .evaluate(

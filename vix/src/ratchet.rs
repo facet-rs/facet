@@ -4,15 +4,103 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use crate::compiler::{Compiler, CompilerConfig};
 use crate::diagnostic::Diagnostics;
-use crate::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
+use crate::lowering::{
+    LoweringArtifact, LoweringAttribution, LoweringCache, LoweringCacheCounters, LoweringError,
+    attribution_for,
+};
 use crate::runtime::{
     ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog, FailureContext,
     FailureValue, FramedNode, GeneratorOutcome, IslandInputs, Location, MachineError, MemoVerdict,
-    Runtime, SchemaId, TaskState, ValueId,
+    Runtime, SchemaId, TaskState, ValueId, WireDemand,
 };
 use crate::vir::{
-    DescribedWire, FunctionId, PartitionedRecipe, TraceCheck, ValueIslandId, WireArg,
+    DescribedWire, FunctionId, IslandId, PartitionedRecipe, PartitionedValue, TraceCheck,
+    ValueIslandId, WireArg,
 };
+
+/// Owned backing for one island's flat wire-demand tree: everything a
+/// [`WireDemand`] borrows, kept alive alongside the island evaluation it feeds.
+/// A leaf argument island has no realized value inputs and no nested wires, so
+/// each wire's `arguments`/`wires` are empty; deeper argument graphs are built
+/// by the same lazy seam once their rungs are reached.
+struct FlatWires<'a> {
+    islands: Vec<IslandId>,
+    locations: Vec<Location>,
+    attributions: Vec<LoweringAttribution>,
+    functions: Vec<FunctionId>,
+    demand_args: Vec<Vec<ValueId>>,
+    artifacts: Vec<&'a LoweringArtifact>,
+}
+
+impl<'a> FlatWires<'a> {
+    fn demands(&'a self) -> Vec<WireDemand<'a>> {
+        self.islands
+            .iter()
+            .enumerate()
+            .map(|(index, &island)| WireDemand {
+                island,
+                location: &self.locations[index],
+                lowered: self.artifacts[index],
+                attribution: &self.attributions[index],
+                arguments: &[],
+                wires: &[],
+                function: self.functions[index],
+                demand_arguments: &self.demand_args[index],
+            })
+            .collect()
+    }
+}
+
+/// Build the flat wire-demand backing for an island's `wire_inputs`. Every named
+/// argument island was lowered up front, so this only looks it up and pins its
+/// cost-model location — one location per representative wire island, so
+/// structurally equal awaits share one memo cell and realize once.
+fn flat_wires<'a>(
+    cache: &'a LoweringCache,
+    wire_lookup: &BTreeMap<ValueIslandId, &PartitionedValue>,
+    wire_inputs: &[ValueIslandId],
+    test_name: &str,
+) -> FlatWires<'a> {
+    let mut backing = FlatWires {
+        islands: Vec::with_capacity(wire_inputs.len()),
+        locations: Vec::with_capacity(wire_inputs.len()),
+        attributions: Vec::with_capacity(wire_inputs.len()),
+        functions: Vec::with_capacity(wire_inputs.len()),
+        demand_args: Vec::with_capacity(wire_inputs.len()),
+        artifacts: Vec::with_capacity(wire_inputs.len()),
+    };
+    for value in wire_inputs {
+        let wire = wire_lookup
+            .get(value)
+            .expect("a wire input names a partitioned argument island");
+        assert!(
+            wire.island.value_inputs.is_empty() && wire.island.wire_inputs.is_empty(),
+            "argument island with nested inputs awaits the general wire seam",
+        );
+        let artifact = cache
+            .lowered(&wire.island)
+            .expect("argument island was lowered before execution");
+        backing.islands.push(wire.island.id);
+        backing.locations.push(Location::for_test_value(
+            test_name,
+            &format!("wire-{}", value.stable_segment()),
+        ));
+        backing.attributions.push(attribution_for(&wire.island));
+        let provenance = wire.wire.as_ref();
+        backing.functions.push(
+            provenance
+                .map(|provenance| provenance.function)
+                .unwrap_or(wire.island.function),
+        );
+        backing.demand_args.push(
+            provenance
+                .map(|provenance| provenance.arguments.iter().map(wire_arg_identity).collect())
+                .unwrap_or_default(),
+        );
+        backing.artifacts.push(artifact);
+    }
+    backing
+}
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum RunError {
@@ -407,6 +495,11 @@ fn prepare_source_with_cache(
         for value in &partitioned.values {
             cache.get_or_lower(&value.island)?;
         }
+        // Argument islands demanded lazily through force-on-park are compiled now
+        // so a park resolves through a warm cache hit, never a compilation.
+        for wire in &partitioned.wire_islands {
+            cache.get_or_lower(&wire.island)?;
+        }
         if let Some(generator) = &partitioned.generator {
             cache.get_or_lower(generator)?;
         }
@@ -465,6 +558,15 @@ impl PreparedRun {
     }
 }
 
+/// The per-test context an evaluated value-check site reads: the test name for
+/// its cost-model location, the argument-island lookup backing its wires, and the
+/// shared publications available as value inputs.
+struct SiteContext<'a> {
+    test_name: &'a str,
+    wire_lookup: &'a BTreeMap<ValueIslandId, &'a PartitionedValue>,
+    published_values: &'a BTreeMap<ValueIslandId, Evaluation>,
+}
+
 /// Evaluate one value-check island as an ordinary pure demand and record its
 /// provenance-keyed outcome. Provenance is the site's stable `YieldSiteId`, and
 /// with no dynamic keys the demand location is byte-identical to the historical
@@ -472,28 +574,40 @@ impl PreparedRun {
 fn evaluate_value_site(
     runtime: &mut Runtime<EventLog>,
     cache: &mut LoweringCache,
-    test_name: &str,
+    context: &SiteContext<'_>,
     island: &crate::vir::Island,
-    published_values: &BTreeMap<ValueIslandId, Evaluation>,
     site: u32,
     chaos: ChaosPolicy,
 ) -> Result<CheckRun, RunError> {
-    let lowered = cache.get_or_lower(island)?;
+    // The island was lowered up front; re-lower to guarantee the cache entry,
+    // then hold every borrow immutably so the wire-demand tree can be built.
+    cache.get_or_lower(island)?;
+    let lowered = cache
+        .lowered(island)
+        .expect("value-check island is lowered");
     let attribution = attribution_for(island);
     let provenance = ProvenanceKey::site(site);
-    let location = Location::for_test_provenance(test_name, site, &provenance.dynamic_keys);
+    let location = Location::for_test_provenance(context.test_name, site, &provenance.dynamic_keys);
     let arguments = island
         .value_inputs
         .iter()
         .map(|value| {
-            published_values
+            context
+                .published_values
                 .get(value)
                 .cloned()
                 .expect("partitioned value input was published")
         })
         .collect::<Vec<_>>();
-    // The partition does not yet emit demand wires for check islands, so this
-    // island forces none; the lazy-parameter partition slice populates them.
+    // Each `AwaitWire` in this island forces its argument island lazily through
+    // the memo path; an untaken control region never parks, so it never demands.
+    let wires_backing = flat_wires(
+        cache,
+        context.wire_lookup,
+        &island.wire_inputs,
+        context.test_name,
+    );
+    let wires = wires_backing.demands();
     let evaluation: Evaluation = runtime.evaluate(
         island.id,
         &location,
@@ -501,7 +615,7 @@ fn evaluate_value_site(
         &attribution,
         IslandInputs {
             arguments: &arguments,
-            wires: &[],
+            wires: &wires,
         },
         chaos,
     )?;
@@ -536,6 +650,11 @@ fn run_lane(
 
     for test in &module.tests {
         let partitioned = module.try_partition_test(test)?;
+        let wire_lookup: BTreeMap<ValueIslandId, &PartitionedValue> = partitioned
+            .wire_islands
+            .iter()
+            .map(|wire| (wire.id, wire))
+            .collect();
         let mut published_values = BTreeMap::new();
         for value in &partitioned.values {
             let lowered = cache.get_or_lower(&value.island)?;
@@ -664,9 +783,12 @@ fn run_lane(
                             checks.push(evaluate_value_site(
                                 &mut runtime,
                                 cache,
-                                &partitioned.name,
+                                &SiteContext {
+                                    test_name: &partitioned.name,
+                                    wire_lookup: &wire_lookup,
+                                    published_values: &published_values,
+                                },
                                 &partitioned.islands[*island],
-                                &published_values,
                                 site,
                                 ChaosPolicy::default(),
                             )?);
@@ -688,9 +810,12 @@ fn run_lane(
                             checks.push(evaluate_value_site(
                                 &mut runtime,
                                 cache,
-                                &partitioned.name,
+                                &SiteContext {
+                                    test_name: &partitioned.name,
+                                    wire_lookup: &wire_lookup,
+                                    published_values: &published_values,
+                                },
                                 &partitioned.islands[*island],
-                                &published_values,
                                 site,
                                 ChaosPolicy {
                                     kill_first_running_task: kill_available,

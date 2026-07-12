@@ -146,16 +146,46 @@ fn described_wire_checks_do_not_change_execution() {
     }
 }
 
-/// Rungs 053/054/057/058/059 are held red pending the descriptor-independent
-/// lazy-demand substrate. `demanded`/`demanded_once` observe zero because the
-/// consumed invocation is not yet a shared memoized demand (053/057/058/059);
-/// and 054's `never_demanded(expensive())` currently reports success only
-/// because `expensive` executes inline yet is absent from the demand log —
-/// exactly the invalid observer/execution disagreement the substrate must
-/// close. Frame evidence: `expensive` runs.
+/// Rung 058 is certified green through the lazy-demand substrate: a shared
+/// scalar user invocation (`costly(7)` bound twice) is partitioned into one
+/// argument island, demanded through `AwaitWire`/force-on-park, and memoized to a
+/// single realization. `demanded_once(costly())` therefore observes exactly one
+/// realized demand — a real shared memoized demand, not an observer's omission.
+/// The observer never fabricates it: removing the trace checks leaves the value
+/// results and the executed frame trace byte-identical.
+#[test]
+fn rung_058_shares_one_memoized_demand_through_the_substrate() {
+    let report = run_source(RUNG_058).expect("rung 058 runs");
+    assert!(
+        report.passed() && report.agrees(),
+        "shared scalar invocation memoizes to one demand: {report:?}",
+    );
+
+    let with = run_source(RUNG_058).expect("rung 058 with trace checks runs");
+    let without = run_source(&without_trace_checks(RUNG_058)).expect("rung 058 without runs");
+    assert_eq!(
+        value_check_identities(&with),
+        value_check_identities(&without),
+        "value results must not depend on the described-wire checks",
+    );
+    assert_eq!(
+        call_events(&with),
+        call_events(&without),
+        "the executed call/frame trace must not depend on the described-wire checks",
+    );
+}
+
+/// Rungs 053/057/059 remain the standing red boundary above the certified
+/// substrate. 053 needs lazy where-parameter arguments demanded inside the
+/// callee's taken control region; 057 needs keyed `Array.map` element demands;
+/// 059 needs single-consumer pure invocations to become distinct demands without
+/// unbundling ordinary direct calls (rung 004's `WeavyOp::Call`). Their positive
+/// demand observers stay zero until each capability lands. 054 still executes the
+/// undemanded field initializer inline: its `never_demanded` observer and the
+/// frame trace disagree until independently demandable aggregate fields land.
 #[test]
 fn described_wire_rungs_await_the_lazy_demand_substrate() {
-    for source in [RUNG_053, RUNG_057, RUNG_058, RUNG_059] {
+    for source in [RUNG_053, RUNG_057, RUNG_059] {
         assert!(
             !run_source(source)
                 .expect("rung runs its value checks")

@@ -349,6 +349,16 @@ impl LoweringCache {
         Ok(self.entries.get(&recipe).expect("entry was just inserted"))
     }
 
+    /// The already-lowered artifact for `island`, without lowering it or counting
+    /// a hit. Returns `None` if the island was never lowered. This lets a caller
+    /// hold several immutable artifacts at once — needed to build a wire-demand
+    /// tree — after every island has been lowered up front.
+    #[must_use]
+    pub fn lowered(&self, island: &Island) -> Option<&LoweringArtifact> {
+        let recipe = RecipeId::from_canonical_vir(&island.canonical_recipe_bytes());
+        self.entries.get(&recipe)
+    }
+
     #[must_use]
     pub fn counters(&self) -> LoweringCacheCounters {
         self.counters

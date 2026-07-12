@@ -1176,6 +1176,13 @@ pub struct ArrayMapPartition {
 pub struct PartitionedTest {
     pub name: String,
     pub values: Vec<PartitionedValue>,
+    /// Argument islands demanded lazily through force-on-park, keyed by their
+    /// [`ValueIslandId`]. A consuming island's [`Island::wire_inputs`] names one
+    /// of these; the runner builds a `WireDemand` from it and drives it through
+    /// the memo path only when a task actually parks on the wire. Structurally
+    /// equal invocations collapse to one entry, so an awaited wire memoizes to a
+    /// single realization.
+    pub wire_islands: Vec<PartitionedValue>,
     pub generator: Option<Island>,
     /// Value-check islands, in site order. A [`PartitionedRecipe::Value`]
     /// indexes into this vector. Trace sites contribute no island.
@@ -1367,14 +1374,43 @@ impl Module {
             function: function.id,
             node: node.id,
         });
+        // A shared scalar user-invocation is a demanded WIRE, not an eagerly
+        // published aggregate: it is consumed through `AwaitWire`/force-on-park so
+        // its typed scalar result flows through the same memo path an ordinary
+        // argument demand uses. Structurally equal invocations collapse to one wire
+        // identity — two `costly(7)` calls share a single memoized realization (rung
+        // 058) — while distinct arguments keep distinct wire identities (rung 059).
+        // Aggregate publications remain eager shared value islands.
+        let mut wire_nodes = Vec::new();
+        shared.retain(|node| {
+            if is_scalar_call_candidate(node) {
+                wire_nodes.push(*node);
+                false
+            } else {
+                true
+            }
+        });
         let shared_ids = shared
             .iter()
             .map(|node| (node.id, self.value_island_id(function.id, node.id)))
             .collect::<BTreeMap<_, _>>();
-        // Wire inputs are the lazy-demand seam; the corrective substrate rebuilds
-        // them from program structure, independent of any trace descriptor. Until
-        // then no consumer awaits a wire.
-        let wire_ids = BTreeMap::<NodeId, ValueIslandId>::new();
+        // Collapse structurally equal wire invocations to one representative demand
+        // identity. `wire_ids` maps every wire consumer node — including a collapsed
+        // duplicate — to its representative wire island so both consumers await the
+        // same memoized realization; `wire_islands` are the argument islands built
+        // once per representative and driven lazily through force-on-park.
+        let mut fingerprints = BTreeMap::new();
+        let mut representative_of = BTreeMap::<String, NodeId>::new();
+        let mut wire_ids = BTreeMap::<NodeId, ValueIslandId>::new();
+        let mut wire_representatives = Vec::new();
+        for node in &wire_nodes {
+            let fingerprint = structural_fingerprint(function, node.id, &mut fingerprints);
+            let representative = *representative_of.entry(fingerprint).or_insert(node.id);
+            if representative == node.id {
+                wire_representatives.push(node.id);
+            }
+            wire_ids.insert(node.id, self.value_island_id(function.id, representative));
+        }
         let values = shared
             .iter()
             .enumerate()
@@ -1397,6 +1433,35 @@ impl Module {
                         &BTreeMap::new(),
                     ),
                     wire: None,
+                }
+            })
+            .collect::<Vec<_>>();
+        // The argument islands demanded through force-on-park. Each computes its
+        // invocation from ordinary shared inputs; a nested wire consumes another
+        // wire island. The island's own representative node is not one of its
+        // inputs, so it is excluded from both the shared and wire input maps.
+        let wire_islands = wire_representatives
+            .iter()
+            .enumerate()
+            .map(|(ordinal, &node_id)| {
+                let representative_id = self.value_island_id(function.id, node_id);
+                let wires_here = wire_ids
+                    .iter()
+                    .filter(|(_, value)| **value != representative_id)
+                    .map(|(candidate, value)| (*candidate, *value))
+                    .collect();
+                let node = &function.nodes[node_id.0 as usize];
+                PartitionedValue {
+                    id: representative_id,
+                    island: self.partition_function_output_with_shared(
+                        function,
+                        node_id,
+                        IslandId(u32::try_from(ordinal).expect("wire island index fits u32")),
+                        IslandPurpose::Value,
+                        &shared_ids,
+                        &wires_here,
+                    ),
+                    wire: scalar_call_provenance(function, node),
                 }
             })
             .collect::<Vec<_>>();
@@ -1431,6 +1496,7 @@ impl Module {
         Ok(PartitionedTest {
             name: test.name.clone(),
             values,
+            wire_islands,
             generator,
             islands,
             sites,
@@ -1909,7 +1975,69 @@ enum PublicationConsumer {
     ValueCheck(YieldSiteId),
 }
 
+/// A scalar user-function invocation whose result is a shared, memoizable
+/// demand: a word-typed `Op::Call`. Two structurally equal such calls collapse
+/// to one demand identity (rung 058); distinct ones stay distinct (rung 059).
+/// Single-consumer scalar calls stay bundled inside their island (rung 004's
+/// direct `WeavyOp::Call`); the shared cut only applies at two or more consumers.
+fn is_scalar_call_candidate(node: &Node) -> bool {
+    // Only genuine inline scalars (never a handle-backed aggregate, string, or
+    // path) flow through the `AwaitWire`/`scalar_word` resume path.
+    matches!(node.op, Op::Call(_)) && matches!(node.ty, Type::Int | Type::Bool)
+}
+
+/// The described invocation a shared scalar call realizes, when every argument is
+/// a closed scalar literal. A call with a non-literal argument shares its
+/// computation but carries no described-wire provenance (nothing selects it).
+fn scalar_call_provenance(function: &Function, node: &Node) -> Option<WireProvenance> {
+    let Op::Call(callee) = node.op else {
+        return None;
+    };
+    let mut arguments = Vec::with_capacity(node.inputs.len());
+    for &input in &node.inputs {
+        match function.nodes[input.0 as usize].op {
+            Op::Int(value) => arguments.push(WireArg::Int(value)),
+            Op::Bool(value) => arguments.push(WireArg::Bool(value)),
+            _ => return None,
+        }
+    }
+    Some(WireProvenance {
+        function: callee,
+        arguments,
+    })
+}
+
+/// A canonical, node-id-independent fingerprint of the pure subtree rooted at
+/// `node`: its operation and the fingerprints of its inputs. Two subtrees with
+/// the same fingerprint compute the same value, so they may share one demand
+/// identity. This never inspects a runtime handle, arrival ordinal, or trace
+/// descriptor — only the authored graph.
+fn structural_fingerprint(
+    function: &Function,
+    node: NodeId,
+    cache: &mut BTreeMap<NodeId, String>,
+) -> String {
+    if let Some(cached) = cache.get(&node) {
+        return cached.clone();
+    }
+    // Guard against a malformed cycle; a well-formed VIR body is acyclic.
+    cache.insert(node, format!("cycle:{}", node.0));
+    let this = &function.nodes[node.0 as usize];
+    let inputs = this
+        .inputs
+        .iter()
+        .map(|&input| structural_fingerprint(function, input, cache))
+        .collect::<Vec<_>>()
+        .join(",");
+    let fingerprint = format!("{:?}[{}]:{}", this.op, inputs, this.ty.name());
+    cache.insert(node, fingerprint.clone());
+    fingerprint
+}
+
 fn is_shared_publication_candidate(node: &Node) -> bool {
+    if is_scalar_call_candidate(node) {
+        return true;
+    }
     match &node.ty {
         Type::Array(_) => true,
         Type::Map { .. } => matches!(
