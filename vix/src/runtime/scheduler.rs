@@ -135,6 +135,25 @@ impl<S: EventSink> Runtime<S> {
         &self.wire_demands
     }
 
+    /// Record one realized wire demand — a callee invocation the memo path
+    /// actually computed. The runner calls this only on a memo miss, so a
+    /// memoized re-demand of the same recipe+argument adds no entry.
+    pub fn record_wire_demand(&mut self, function: FunctionId, arguments: Vec<ValueId>) {
+        self.wire_demands.push((function, arguments));
+    }
+
+    /// The scalar result word of a resolved wire demand, read from its interned
+    /// store handle. Used to supply an awaiting task's ready wire input; a
+    /// wire's callee always publishes a scalar.
+    #[must_use]
+    pub fn scalar_word(&self, handle: Handle) -> Option<i64> {
+        let bytes = self.store.entry(handle)?.resident_bytes()?;
+        let mut word = [0u8; 8];
+        let width = bytes.len().min(8);
+        word[..width].copy_from_slice(&bytes[..width]);
+        Some(i64::from_le_bytes(word))
+    }
+
     pub fn evaluate(
         &mut self,
         island: IslandId,
@@ -142,6 +161,7 @@ impl<S: EventSink> Runtime<S> {
         lowered: &LoweringArtifact,
         attribution: &LoweringAttribution,
         arguments: &[Evaluation],
+        awaited: &[i64],
         chaos: ChaosPolicy,
     ) -> Result<Evaluation, Box<MachineError>> {
         let invocation = DemandExecution::new(
@@ -423,11 +443,21 @@ impl<S: EventSink> Runtime<S> {
                 schema_bytes.copy_from_slice(&i64::from(element_schema.0).to_le_bytes());
                 value_memory_overrides.push((argument.handle, abi_view));
             }
+            // Wire inputs the island demands are pre-resolved by the runner and
+            // supplied as ready awaited words: an unconditional wire await reads
+            // its value and never parks. A wire under an untaken branch is never
+            // reached, so its slot is never consumed.
+            let mut ready = vec![true; awaited.len()];
             let step = match self.store.with_value_memory_overrides(
                 &value_memory_overrides,
                 |value_memories| {
-                    task.drive_hosted_with_value_memories(&mut [], &[], &mut [], value_memories)
-                        .map_err(Box::new)
+                    task.drive_hosted_with_value_memories(
+                        &mut ready,
+                        awaited,
+                        &mut [],
+                        value_memories,
+                    )
+                    .map_err(Box::new)
                 },
             ) {
                 Ok(step) => step,
@@ -488,6 +518,49 @@ impl<S: EventSink> Runtime<S> {
             }
             let passed = match decode_result(&task, lowered) {
                 Ok(DecodedResult::OkScalar(passed)) => passed,
+                Ok(DecodedResult::OkScalarValue(word)) => {
+                    // A hoisted wire invocation published its demanded scalar. It
+                    // interns under its semantic schema exactly as an evaluated
+                    // scalar would, so equal recipe+argument demands share one
+                    // identity and memoize once.
+                    let width = lowered
+                        .output_type
+                        .word_width()
+                        .and_then(|words| words.checked_mul(8))
+                        .unwrap_or(8);
+                    let bytes = &word.to_le_bytes()[..width.min(8)];
+                    let interned = self
+                        .store
+                        .intern_realized(semantic_schema_id(&lowered.output_type), bytes);
+                    self.observe_interned(interned);
+                    self.memo.insert(
+                        location.id,
+                        MemoEntry {
+                            location: location.clone(),
+                            key: lowered.demand_key,
+                            preimage: lowered.demand_preimage.clone(),
+                            result: interned.handle,
+                            receipt: None,
+                        },
+                    );
+                    if let Some(demand) = self.demands.get_mut(&lowered.demand_key) {
+                        demand.result = Some(interned.handle);
+                    }
+                    self.transition_task(task_id, TaskState::Completed)?;
+                    self.transition_demand(lowered.demand_key, DemandState::Ready)?;
+                    self.emit(EventKind::Completed {
+                        key: lowered.demand_key,
+                        identity: interned.identity,
+                    });
+                    return Ok(Evaluation {
+                        handle: interned.handle,
+                        identity: interned.identity,
+                        passed: true,
+                        memo: MemoVerdict::Miss,
+                        failure: None,
+                        failure_context: None,
+                    });
+                }
                 Ok(DecodedResult::OkValue) => {
                     let realized = match realize_value(&task, lowered.artifact, &self.store) {
                         Ok(realized) => realized,
@@ -915,7 +988,9 @@ impl<S: EventSink> Runtime<S> {
             // failure while constructing control stays on the language plane; a
             // machine-invariant status is a machine fault.
             match decode_result(&task, lowered) {
-                Ok(DecodedResult::OkScalar(_)) => {
+                // The generator's placeholder result word is unused whether it
+                // decodes as a `Check` verdict or a scalar value.
+                Ok(DecodedResult::OkScalar(_) | DecodedResult::OkScalarValue(_)) => {
                     let count = match task.publication_count() {
                         Ok(count) => count,
                         Err(fault) => {
@@ -1799,6 +1874,11 @@ fn failure_context(
 
 enum DecodedResult {
     OkScalar(bool),
+    /// A scalar `Int`/`Bool` value island published its exact result word — the
+    /// demanded pure value, interned under its semantic schema. This is the
+    /// wire-demand publication path: a hoisted invocation returns its scalar
+    /// result to be memoized and observed, never a `Check` verdict.
+    OkScalarValue(i64),
     OkValue,
     IndexOutOfBounds {
         site: u32,
@@ -1835,7 +1915,12 @@ fn decode_result(
     lowered: &LoweringArtifact,
 ) -> Result<DecodedResult, Box<TaskFault>> {
     let Some(abi) = &lowered.array_outcome else {
-        return Ok(DecodedResult::OkScalar(task.result_i64()? != 0));
+        // A `Check` island's word is its pass/fail verdict; a scalar `Int`/`Bool`
+        // value island's word is the demanded value itself.
+        return Ok(match lowered.output_type {
+            Type::Int | Type::Bool => DecodedResult::OkScalarValue(task.result_i64()?),
+            _ => DecodedResult::OkScalar(task.result_i64()? != 0),
+        });
     };
     let result = task.result_structural()?;
     let selector = result.enum_selector()?;
@@ -2364,7 +2449,7 @@ fn duplicate_key() -> Stream<Check> {
                     artifact,
                     &first_attribution,
                     &[],
-                    ChaosPolicy::default(),
+                    &[],                    ChaosPolicy::default(),
                 )
                 .expect("first demand becomes a typed language failure");
             (evaluation, demand_key)
@@ -2403,7 +2488,7 @@ fn duplicate_key() -> Stream<Check> {
                     artifact,
                     &shifted_attribution,
                     &[],
-                    ChaosPolicy::default(),
+                    &[],                    ChaosPolicy::default(),
                 )
                 .expect("second demand is an exact memo hit")
         };
@@ -2474,7 +2559,7 @@ fn duplicate_key() -> Stream<Check> {
                     &artifact,
                     attribution,
                     &[],
-                    ChaosPolicy::default(),
+                    &[],                    ChaosPolicy::default(),
                 )
                 .expect_err("non-OutOfRange status is a machine error");
 
@@ -2544,7 +2629,7 @@ fn passing() -> Stream<Check> {
                 artifact,
                 &attribution,
                 &[],
-                ChaosPolicy::default(),
+                &[],                ChaosPolicy::default(),
             )
             .expect("passing check evaluates to a realized value");
 

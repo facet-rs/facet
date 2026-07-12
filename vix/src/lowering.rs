@@ -408,7 +408,9 @@ fn lower_island(
         }
     } else if island.purpose == IslandPurpose::Check && output.ty != Type::Check {
         return Err(lowering_diagnostic(output.span, "island output is not a Check").into());
-    } else if island.purpose == IslandPurpose::Value && !matches!(output.ty, Type::Array(_)) {
+    } else if island.purpose == IslandPurpose::Value
+        && !matches!(output.ty, Type::Array(_) | Type::Int | Type::Bool)
+    {
         return Err(lowering_diagnostic(
             output.span,
             "value-island output lacks a registered publication capability",
@@ -5567,6 +5569,15 @@ fn lower_node(
             require_node_type(node, Type::Int)?;
             (
                 vec![WeavyOp::ConstI64 { dst, value: *value }],
+                ValueRepresentation::Word,
+            )
+        }
+        Op::AwaitWire { input } => {
+            // Demand a wire: park until the scheduler resolves this wire input
+            // through the memo path, then resume with the scalar result word.
+            require_input_count(node, 0)?;
+            (
+                vec![WeavyOp::Await { dst, input: *input }],
                 ValueRepresentation::Word,
             )
         }

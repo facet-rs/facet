@@ -7,8 +7,8 @@ use crate::diagnostic::Diagnostics;
 use crate::lowering::{LoweringCache, LoweringCacheCounters, LoweringError, attribution_for};
 use crate::runtime::{
     ChaosPolicy, Counters, DemandState, Evaluation, Event, EventKind, EventLog, FailureContext,
-    FailureValue, FramedNode, GeneratorOutcome, Location, MachineError, Runtime, SchemaId,
-    TaskState, ValueId,
+    FailureValue, FramedNode, GeneratorOutcome, Location, MachineError, MemoVerdict, Runtime,
+    SchemaId, TaskState, ValueId,
 };
 use crate::vir::{DescribedWire, FunctionId, PartitionedRecipe, TraceCheck, ValueIslandId, WireArg};
 
@@ -484,12 +484,28 @@ fn evaluate_value_site(
                 .expect("partitioned value input was published")
         })
         .collect::<Vec<_>>();
+    // Wire inputs are demanded pure values this check consumes; each is already
+    // published by its callee island. Supply their scalar results as ready
+    // awaited words so an unconditional wire await resumes without parking.
+    let awaited = island
+        .wire_inputs
+        .iter()
+        .map(|value| {
+            let evaluation = published_values
+                .get(value)
+                .expect("wire input was published before its consumer");
+            runtime
+                .scalar_word(evaluation.handle)
+                .expect("a wire callee publishes a scalar result word")
+        })
+        .collect::<Vec<_>>();
     let evaluation: Evaluation = runtime.evaluate(
         island.id,
         &location,
         lowered,
         &attribution,
         &arguments,
+        &awaited,
         chaos,
     )?;
     let argument_identities = arguments.iter().map(|argument| argument.identity).collect();
@@ -592,11 +608,22 @@ fn run_lane(
                 lowered,
                 &attribution,
                 &arguments,
+                &[],
                 ChaosPolicy {
                     kill_first_running_task: kill_available,
                 },
             )?;
             kill_available = false;
+            // A hoisted wire island that actually computed (a memo miss) records
+            // one realized demand for its described invocation. A memoized
+            // re-demand of the same recipe+argument is a hit and adds nothing, so
+            // repeated identical wires memoize to a single realization.
+            if let Some(wire) = &value.wire
+                && evaluation.memo == MemoVerdict::Miss
+            {
+                let arguments = wire.arguments.iter().map(wire_arg_identity).collect();
+                runtime.record_wire_demand(wire.function, arguments);
+            }
             values.push(ValuePublicationRun {
                 provenance: value.id,
                 identity: evaluation.identity,
