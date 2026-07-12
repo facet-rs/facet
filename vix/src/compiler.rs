@@ -4159,7 +4159,7 @@ fn build_pair_second_closure(
 }
 
 /// Lower a fold's initial accumulator. An empty collection literal (`[]`,
-/// `%{}`, `#{}`) cannot infer its element type in isolation; the fold's
+/// `%{}`, `%[]`) cannot infer its element type in isolation; the fold's
 /// accumulator type `A` must come from either an external expected type or
 /// the closure body's `+` dispatch. A non-empty seed keeps ordinary inference
 /// (scalar and string folds, prefilled maps).
@@ -4180,7 +4180,7 @@ fn lower_fold_accumulator(
     // An empty collection literal with no external expected type needs its
     // accumulator type inferred from the closure body's `+` dispatch.
     if let Some(accumulator_ty) =
-        infer_empty_seed_accumulator_type(context, initial, folder, element)?
+        infer_empty_seed_accumulator_type(bindings, context, initial, folder, element)?
     {
         return lower_value_expected(nodes, bindings, context, initial, Some(&accumulator_ty));
     }
@@ -4188,18 +4188,18 @@ fn lower_fold_accumulator(
 }
 
 /// Infer the accumulator type `A` for a fold whose seed is an empty collection
-/// literal (`[]`, `%{}`, `#{}`) with no external expected type. The closure
-/// body must be `acc + EXPR` where `acc` is the accumulator binding and `EXPR`
-/// captures only the element parameter; the `+` dispatch table then fixes `A`
-/// from the seed's collection kind and `EXPR`'s type:
+/// literal (`[]`, `%{}`, `%[]`) with no external expected type. The closure
+/// body must be `acc + EXPR` where `acc` is the accumulator binding; the `+`
+/// dispatch table then fixes `A` from the seed's collection kind and `EXPR`'s
+/// type:
 ///
 ///   * `%{}` seed, `EXPR : (K, V)`        ⇒ `A = Map<K, V>`
-///   * `#{}` seed, `EXPR : T`             ⇒ `A = Set<T>`
-///   * `[]`  seed, `EXPR : T`             ⇒ `A = [T]`  (the array-append grain)
+///   * `%[]` seed, `EXPR : T`             ⇒ `A = Set<T>`
 ///
 /// Returns `None` when the shape does not hold, leaving the copy path to own
 /// the proper diagnostic.
 fn infer_empty_seed_accumulator_type(
+    bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     initial: &ast::Expr,
     folder: &ast::Expr,
@@ -4240,8 +4240,7 @@ fn infer_empty_seed_accumulator_type(
     }
     // Probe `EXPR`'s type by lowering it in a throwaway closure frame with
     // only the element parameter bound. The probe allocates a closure id and
-    // discards it; its VIR nodes never reach the enclosing function.
-    let probe_ty = probe_element_expression_type(context, appended, element, elem_name, closure.span)?;
+    let probe_ty = probe_element_expression_type(bindings, context, appended, element, elem_name, closure.span)?;
     let accumulator_ty = match initial {
         ast::Expr::Array(array) if array.elems.is_empty() => Type::array(probe_ty),
         ast::Expr::Map(map) if map.rows.is_empty() => {
@@ -4273,17 +4272,20 @@ fn infer_empty_seed_accumulator_type(
 /// The frame binds `elem_name` to `element` and lowers `body` with no expected
 /// type. Used only by [`infer_empty_seed_accumulator_type`] as a type probe.
 fn probe_element_expression_type(
+    bindings: &BTreeMap<String, LoweredValue>,
     context: &ModuleContext<'_>,
     body: &ast::Expr,
     element: &Type,
     elem_name: &str,
     span: Span,
 ) -> Result<Type, Diagnostics> {
-    // Lower `body` in a throwaway node buffer with only the element parameter
-    // bound, purely to discover its result type. No closure id is allocated and
-    // no function is inserted, so the enclosing module's FunctionId ordering is
-    // undisturbed. The body of a fold's appended expression is a simple value
-    // expression over the element parameter; it does not allocate closures.
+    // Lower `body` in a throwaway node buffer with the element parameter bound
+    // alongside the enclosing scope's bindings, purely to discover its result
+    // type. No closure id is allocated and no function is inserted, so the
+    // enclosing module's FunctionId ordering is undisturbed. The probe's VIR
+    // nodes are discarded; only the inferred type survives. `EXPR` may capture
+    // the element parameter and any enclosing binding, so the probe inherits
+    // the outer bindings (their VIR nodes stay referenced by the real fold).
     let mut probe_nodes = Vec::new();
     let parameter_id = ParameterId(0);
     let parameter_node = push_node(
@@ -4294,7 +4296,7 @@ fn probe_element_expression_type(
         Vec::new(),
         Op::Parameter(parameter_id),
     );
-    let mut probe_bindings = BTreeMap::new();
+    let mut probe_bindings = bindings.clone();
     probe_bindings.insert(
         elem_name.to_owned(),
         LoweredValue {

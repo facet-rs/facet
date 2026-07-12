@@ -4063,11 +4063,146 @@ fn rung_050_ratchet_execution_strips_per_iteration_marks() {
     }
 }
 
+/// Rung 138 — the map twin of rung 051: a 200k-element fold that seeds an
+/// empty `%{}` map and appends `(i.to_string(), i)` per element. This is the
+/// canonical bidirectional-typing rung: the accumulator type `Map<String, Int>`
+/// is inferred from the closure body's `+` dispatch over an empty map seed,
+/// with no external annotation. The fold runs through the production verified
+/// interpreter and native JIT lanes, and the `store_interns_at_most(10)`
+/// trace check (the fixture's own counter) proves the persistent ordered map
+/// does not intern per update — each `+` is one in-frame AVL insert, not a
+/// store allocation.
 #[test]
-fn rung_138_preserves_empty_map_fold_seed_type_boundary() {
-    let RunError::Diagnostics(diagnostics) = run_source(RUNG_138).expect_err("typed red boundary")
+fn rung_138_map_accumulator_runs_through_production_path() {
+    let report = run_source(RUNG_138).expect("rung 138 runs through the production ratchet");
+    assert!(report.agrees(), "plain and chaos agree: {report:?}");
+    assert!(
+        report.passed(),
+        "every rung 138 check passes: {report:?}"
+    );
+    assert_eq!(
+        report.plain.checks.len(),
+        3,
+        "rung 138 publishes exactly three checks: {report:?}"
+    );
+    // The fixture's own `store_interns_at_most(10)` trace check enforces the
+    // no-per-update-interning invariant in-run; the counter is also observable
+    // directly and stays well below the 200k element count.
+    assert!(
+        report.plain.counters.store_interns <= 10,
+        "map fold interns at most once on publication: {}",
+        report.plain.counters.store_interns
+    );
+}
+
+// ---------------------------------------------------------------------------
+// Rung 138 — adversarial bidirectional-typing certificates.
+//
+// The canonical rung above proves the 200k-element map fold. These
+// certificates exercise the general accumulator inference over nested and
+// generic collection seeds, empty-set folds, and the copy path for a fold
+// whose body is not the strict append grain (which must keep its diagnostic).
+// ---------------------------------------------------------------------------
+
+/// An empty set seed `#{}` infers `Set<T>` from the closure body's `+`
+/// dispatch: `acc + i` with `i : Int` fixes `A = Set<Int>`.
+#[test]
+fn rung_138_empty_set_seed_infers_accumulator_from_body() {
+    const SOURCE: &str = r#"
+#[test]
+fn set_accumulator() -> Stream<Check> {
+    let n = 1000;
+    let s = (range where { from: 0, to: n }).fold(%[], |acc, i| acc + i);
+    yield expect_eq(s.len(), n);
+    yield expect_eq(s.has(500), true);
+    yield expect_eq(s.has(1000), false);
+}
+"#;
+    let report = run_source(SOURCE).expect("set-seed fold runs");
+    assert!(report.agrees(), "plain and chaos agree: {report:?}");
+    assert!(report.passed(), "set-seed fold checks pass: {report:?}");
+    assert_eq!(report.plain.checks.len(), 3);
+}
+
+/// A nested map fold: `%{}` seed whose appended value is itself a map built by
+/// an inner fold over a literal array. The accumulator type
+/// `Map<String, Map<String, Int>>` is inferred from the `(k, inner_map)` tuple
+/// the body appends, where `inner_map` is itself an empty-seed fold resolved by
+/// the same inference. The inner fold's appended expression captures only its
+/// own element parameter (no enclosing binding), so both inferences are
+/// self-contained.
+#[test]
+fn rung_138_nested_map_fold_infers_nested_accumulator() {
+    const SOURCE: &str = r#"
+#[test]
+fn nested_map_accumulator() -> Stream<Check> {
+    let outer = [10, 20, 30];
+    let m = outer.fold(%{}, |acc, k| acc + (k.to_string(), [1, 2, 3].fold(%{}, |inner, v| inner + (v.to_string(), v))));
+    yield expect_eq(m.len(), 3);
+    yield expect_eq(m.get("20").get("3"), 3);
+    yield expect_eq(m.get("30").len(), 3);
+}
+"#;
+    let report = run_source(SOURCE).expect("nested map fold runs");
+    assert!(report.agrees(), "plain and chaos agree: {report:?}");
+    assert!(report.passed(), "nested map fold checks pass: {report:?}");
+    assert_eq!(report.plain.checks.len(), 3);
+}
+/// A generic-typed map fold: the value type is a tuple `(Int, String)`,
+/// exercising inference where `EXPR : (K, (V1, V2))` fixes
+/// `A = Map<String, (Int, String)>`.
+#[test]
+fn rung_138_map_fold_with_tuple_value_type() {
+    const SOURCE: &str = r#"
+#[test]
+fn tuple_value_map() -> Stream<Check> {
+    let xs = [1, 2, 3];
+    let m = xs.fold(%{}, |acc, i| acc + (i.to_string(), (i, i.to_string())));
+    yield expect_eq(m.len(), 3);
+    yield expect_eq(m.get("2"), (2, "2"));
+}
+"#;
+    let report = run_source(SOURCE).expect("tuple-value map fold runs");
+    assert!(report.agrees(), "plain and chaos agree: {report:?}");
+    assert!(report.passed(), "tuple-value map fold checks pass: {report:?}");
+    assert_eq!(report.plain.checks.len(), 2);
+}
+
+/// An external expected type flows through the fold: `let m: Map<String, Int>`
+/// annotates the accumulator, so the empty seed is typed directly without
+/// body inference. This is the other arm of bidirectional typing.
+#[test]
+fn rung_138_external_expected_type_flows_into_empty_seed() {
+    const SOURCE: &str = r#"
+#[test]
+fn annotated_map_fold() -> Stream<Check> {
+    let m: Map<String, Int> = [1, 2, 3].fold(%{}, |acc, i| acc + (i.to_string(), i));
+    yield expect_eq(m.len(), 3);
+    yield expect_eq(m.get("2"), 2);
+}
+"#;
+    let report = run_source(SOURCE).expect("annotated map fold runs");
+    assert!(report.agrees(), "plain and chaos agree: {report:?}");
+    assert!(report.passed(), "annotated map fold checks pass: {report:?}");
+    assert_eq!(report.plain.checks.len(), 2);
+}
+
+/// A genuinely ambiguous empty literal — an empty map seed whose closure body
+/// is NOT the `acc + EXPR` append grain — keeps the existing diagnostic rather
+/// than silently guessing. The inference returns `None` and the copy path owns
+/// the empty-map-literal error.
+#[test]
+fn rung_138_ambiguous_empty_seed_without_append_grain_stays_red() {
+    const SOURCE: &str = r#"
+#[test]
+fn ambiguous_seed() -> Stream<Check> {
+    let m = [1, 2, 3].fold(%{}, |acc, i| i);
+    yield expect_eq(m.len(), 0);
+}
+"#;
+    let RunError::Diagnostics(diagnostics) = run_source(SOURCE).expect_err("ambiguous seed is red")
     else {
-        panic!("rung 138 is blocked before ordered publication")
+        panic!("an empty map seed without the append grain stays a typed red boundary");
     };
     assert_eq!(diagnostics.entries.len(), 1);
     assert_eq!(
