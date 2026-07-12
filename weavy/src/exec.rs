@@ -2885,6 +2885,98 @@ mod tests {
     }
 
     #[test]
+    fn boxed_environment_threads_and_faults_identically_across_lanes() {
+        let scalar = || RegionShape::word(WordKind::Scalar);
+        let env_program = |code: Vec<Op>| {
+            let program = Program {
+                fns: vec![function(4, code)],
+            };
+            let mut contract = function_contract(
+                4,
+                vec![
+                    word_region(0, WordKind::Scalar),  // dst / projected capture
+                    word_region(8, WordKind::Scalar),  // environment handle
+                    word_region(16, WordKind::Scalar), // captured source value
+                    word_region(24, WordKind::Scalar), // argument entry
+                ],
+                &[3],
+                0,
+                None,
+            );
+            contract.environment = vec![FrameRegion::new(0, scalar())];
+            (
+                program,
+                ProgramContract {
+                    functions: vec![contract],
+                    calls: vec![],
+                    schemas: vec![],
+                    value_shapes: vec![],
+                },
+            )
+        };
+
+        // EnvBox -> EnvLoad round trip: box a captured value, project it back,
+        // and return it. Both lanes reach the same env arena and agree.
+        let success = env_program(vec![
+            Op::ConstI64 { dst: 16, value: 42 },
+            Op::EnvBox {
+                dst: RegionId(1),
+                callee: FnId(0),
+                fields: vec![RegionId(2)],
+            },
+            Op::EnvLoad {
+                dst: RegionId(0),
+                env: RegionId(1),
+                callee: FnId(0),
+                field: 0,
+            },
+            Op::Ret { src: 0, size: 8 },
+        ]);
+        let verified = Arc::new(verify(success));
+        let interp = run_interpreter(&verified, |_| {}, ValueMemories::empty())
+            .expect("interpreter runs the boxed round trip");
+        assert_eq!(interp.0, TaskStep::Done);
+        assert_eq!(i64::from_le_bytes(interp.1[..8].try_into().unwrap()), 42);
+        if let Some(native) = run_native(Arc::clone(&verified), |_| {}, ValueMemories::empty()) {
+            assert_eq!(
+                native.expect("native runs the boxed round trip"),
+                interp,
+                "boxed environment round trip differs across lanes",
+            );
+        }
+
+        // A fabricated environment handle fails closed with the same typed fault
+        // and site in both lanes.
+        let stale = env_program(vec![
+            Op::ConstI64 { dst: 8, value: 0 },
+            Op::EnvLoad {
+                dst: RegionId(0),
+                env: RegionId(1),
+                callee: FnId(0),
+                field: 0,
+            },
+            Op::Ret { src: 0, size: 8 },
+        ]);
+        let verified = Arc::new(verify(stale));
+        let interp_fault = run_interpreter(&verified, |_| {}, ValueMemories::empty())
+            .expect_err("a fabricated environment handle faults");
+        assert!(matches!(
+            interp_fault,
+            TaskFault::Environment {
+                kind: EnvironmentFaultKind::Stale,
+                ..
+            }
+        ));
+        if let Some(native) = run_native(Arc::clone(&verified), |_| {}, ValueMemories::empty()) {
+            assert_eq!(
+                native.expect_err("native fabricated handle faults"),
+                interp_fault,
+                "boxed environment fault differs across lanes",
+            );
+        }
+    }
+
+    #[test]
     fn public_executable_runs_verified_program_and_caches_native_compile() {
         task_lane::reset_jit_program_compile_count();
         let executable = Executable::new(verify(scalar_add_program()));
