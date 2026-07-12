@@ -4095,6 +4095,46 @@ fn lower_decoded_value(
             ),
             ty: ty.clone(),
         }),
+        (DecodedValue::Variant { index, fields }, Type::Enum(enumeration)) => {
+            let variant = enumeration.variants.get(*index as usize).ok_or_else(|| {
+                Diagnostics::one(Diagnostic::unsupported(
+                    span,
+                    format!("a decoded variant index out of range for {}", enumeration.name),
+                ))
+            })?;
+            let field_types: Vec<Type> = match &variant.payload {
+                VariantPayload::Tuple(types) => types.clone(),
+                VariantPayload::Record(record_fields) => {
+                    record_fields.iter().map(|field| field.ty.clone()).collect()
+                }
+                VariantPayload::Unit => Vec::new(),
+            };
+            if field_types.len() != fields.len() {
+                return Err(Diagnostics::one(Diagnostic::unsupported(
+                    span,
+                    format!(
+                        "a decoded {}::{} payload with the wrong field count",
+                        enumeration.name, variant.name
+                    ),
+                )));
+            }
+            let mut inputs = Vec::with_capacity(fields.len());
+            for (value, field_ty) in fields.iter().zip(&field_types) {
+                inputs.push(lower_decoded_value(nodes, value, field_ty, span)?.node);
+            }
+            let ty = ty.clone();
+            Ok(LoweredValue {
+                node: push_node(
+                    nodes,
+                    span,
+                    ty.clone(),
+                    EffectFacts::PURE,
+                    inputs,
+                    Op::Variant { variant: *index },
+                ),
+                ty,
+            })
+        }
         _ => Err(Diagnostics::one(Diagnostic::unsupported(
             span,
             format!("a decoded value that does not align with {}", ty.name()),

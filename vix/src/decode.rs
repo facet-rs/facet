@@ -18,7 +18,7 @@ use facet_format::{FieldKey, FormatParser, ParseEventKind, ScalarValue};
 use facet_json::JsonParser;
 use facet_toml::TomlParser;
 
-use crate::vir::{RecordType, Type};
+use crate::vir::{EnumType, RecordField, Type, VariantPayload};
 
 /// Which document grammar a decode targets.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -64,6 +64,11 @@ pub enum DecodedValue {
     Record(Vec<DecodedValue>),
     OptionSome(Box<DecodedValue>),
     OptionNone,
+    /// A selected enum variant with its payload in declaration order.
+    Variant {
+        index: u32,
+        fields: Vec<DecodedValue>,
+    },
 }
 
 /// Decode `source` against `target`, driving one parser to completion.
@@ -121,7 +126,12 @@ fn decode_value<'de>(
             ScalarValue::Str(value) => Ok(DecodedValue::Str(value.into_owned())),
             other => Err(scalar_mismatch("String", &other)),
         },
-        Type::Record(record) => decode_record(parser, record),
+        Type::Record(record) => Ok(DecodedValue::Record(decode_fields(
+            parser,
+            &record.name,
+            &record.fields,
+        )?)),
+        Type::Enum(enumeration) => decode_enum(parser, enumeration),
         other => Err(DecodeError::new(format!(
             "cannot decode into {}",
             other.name()
@@ -129,22 +139,101 @@ fn decode_value<'de>(
     }
 }
 
-fn decode_record<'de>(
+/// The string-or-table enum form (the Cargo dependency shape). A scalar string
+/// selects the short single-`String` tuple variant; an object selects the
+/// detailed record variant and decodes directly into its fields. Both compose
+/// through the same decoder as any other value.
+fn decode_enum<'de>(
     parser: &mut dyn FormatParser<'de>,
-    record: &RecordType,
+    enumeration: &EnumType,
 ) -> Result<DecodedValue, DecodeError> {
+    match peek_kind(parser)? {
+        Some(ParseEventKind::Scalar(_)) => {
+            let (index, inner) = string_form_variant(enumeration).ok_or_else(|| {
+                DecodeError::new(format!(
+                    "{} has no short (single-string) form for a scalar document",
+                    enumeration.name
+                ))
+            })?;
+            let field = decode_value(parser, inner)?;
+            Ok(DecodedValue::Variant {
+                index,
+                fields: vec![field],
+            })
+        }
+        Some(ParseEventKind::StructStart(_)) => {
+            let (index, fields) = table_form_variant(enumeration).ok_or_else(|| {
+                DecodeError::new(format!(
+                    "{} has no detailed (table) form for an object document",
+                    enumeration.name
+                ))
+            })?;
+            let values = decode_fields(parser, &enumeration.name, fields)?;
+            Ok(DecodedValue::Variant {
+                index,
+                fields: values,
+            })
+        }
+        Some(other) => Err(DecodeError::new(format!(
+            "expected a string or object for {}, found {}",
+            enumeration.name,
+            event_label(&other)
+        ))),
+        None => Err(DecodeError::new(format!(
+            "expected a value for {}, found end of document",
+            enumeration.name
+        ))),
+    }
+}
+
+/// The variant that carries the short form: a single-`String` tuple payload.
+fn string_form_variant(enumeration: &EnumType) -> Option<(u32, &Type)> {
+    enumeration
+        .variants
+        .iter()
+        .enumerate()
+        .find_map(|(index, variant)| match &variant.payload {
+            VariantPayload::Tuple(types) => match types.as_slice() {
+                [inner @ Type::String] => Some((index as u32, inner)),
+                _ => None,
+            },
+            _ => None,
+        })
+}
+
+/// The variant that carries the detailed form: a record payload.
+fn table_form_variant(enumeration: &EnumType) -> Option<(u32, &[RecordField])> {
+    enumeration
+        .variants
+        .iter()
+        .enumerate()
+        .find_map(|(index, variant)| match &variant.payload {
+            VariantPayload::Record(fields) => Some((index as u32, fields.as_slice())),
+            _ => None,
+        })
+}
+
+/// Decode one object's fields against a declared field list, in declaration
+/// order. Shared by struct records and record-variant table forms: fields are
+/// matched by name, absent `Option` fields resolve to `None`, and any other
+/// absence or unknown/duplicate field is a typed failure. `container` names the
+/// struct or enum for error attribution.
+fn decode_fields<'de>(
+    parser: &mut dyn FormatParser<'de>,
+    container: &str,
+    fields: &[RecordField],
+) -> Result<Vec<DecodedValue>, DecodeError> {
     match consume(parser)?.kind {
         ParseEventKind::StructStart(_) => {}
         other => {
             return Err(DecodeError::new(format!(
-                "expected an object for {}, found {}",
-                record.name,
+                "expected an object for {container}, found {}",
                 event_label(&other)
             )));
         }
     }
 
-    let mut slots: Vec<Option<DecodedValue>> = record.fields.iter().map(|_| None).collect();
+    let mut slots: Vec<Option<DecodedValue>> = fields.iter().map(|_| None).collect();
     loop {
         match peek_kind(parser)? {
             None => break,
@@ -157,54 +246,47 @@ fn decode_record<'de>(
                     unreachable!("peeked a field key");
                 };
                 let name = field_name(&key);
-                match record
-                    .fields
-                    .iter()
-                    .position(|field| field.name == name)
-                {
+                match fields.iter().position(|field| field.name == name) {
                     Some(index) => {
                         if slots[index].is_some() {
                             return Err(DecodeError::new(format!(
-                                "duplicate field \"{name}\" in {}",
-                                record.name
+                                "duplicate field \"{name}\" in {container}"
                             )));
                         }
-                        let value = decode_value(parser, &record.fields[index].ty)
+                        let value = decode_value(parser, &fields[index].ty)
                             .map_err(|err| field_context(&name, err))?;
                         slots[index] = Some(value);
                     }
                     None => {
                         return Err(DecodeError::new(format!(
-                            "unknown field \"{name}\" in {}",
-                            record.name
+                            "unknown field \"{name}\" in {container}"
                         )));
                     }
                 }
             }
             Some(other) => {
                 return Err(DecodeError::new(format!(
-                    "expected a field of {}, found {}",
-                    record.name,
+                    "expected a field of {container}, found {}",
                     event_label(&other)
                 )));
             }
         }
     }
 
-    let mut out = Vec::with_capacity(record.fields.len());
-    for (index, field) in record.fields.iter().enumerate() {
+    let mut out = Vec::with_capacity(fields.len());
+    for (index, field) in fields.iter().enumerate() {
         match slots[index].take() {
             Some(value) => out.push(value),
             None if field.ty.option_inner().is_some() => out.push(DecodedValue::OptionNone),
             None => {
                 return Err(DecodeError::new(format!(
-                    "missing field \"{}\" in {}",
-                    field.name, record.name
+                    "missing field \"{}\" in {container}",
+                    field.name
                 )));
             }
         }
     }
-    Ok(DecodedValue::Record(out))
+    Ok(out)
 }
 
 fn scalar<'de>(
@@ -317,7 +399,65 @@ fn event_label(kind: &ParseEventKind<'_>) -> &'static str {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::vir::{RecordField, RecordType, Type};
+    use crate::vir::{EnumType, EnumVariant, RecordField, RecordType, Type, VariantPayload};
+
+    fn dep_spec() -> Type {
+        Type::Enum(EnumType {
+            name: "DepSpec".to_owned(),
+            variants: vec![
+                EnumVariant {
+                    name: "Req".to_owned(),
+                    payload: VariantPayload::Tuple(vec![Type::String]),
+                },
+                EnumVariant {
+                    name: "Detailed".to_owned(),
+                    payload: VariantPayload::Record(vec![
+                        RecordField {
+                            name: "version".to_owned(),
+                            ty: Type::option(Type::String),
+                        },
+                        RecordField {
+                            name: "optional".to_owned(),
+                            ty: Type::Bool,
+                        },
+                    ]),
+                },
+            ],
+        })
+    }
+
+    #[test]
+    fn decode_enum_string_form() {
+        let value = decode(DecodeFormat::Json, "\"^1.2\"", &dep_spec())
+            .expect("a scalar string selects the short tuple variant");
+        assert_eq!(
+            value,
+            DecodedValue::Variant {
+                index: 0,
+                fields: vec![DecodedValue::Str("^1.2".to_owned())],
+            }
+        );
+    }
+
+    #[test]
+    fn decode_enum_table_form() {
+        let value = decode(
+            DecodeFormat::Json,
+            "{\"version\":\"^2.0\",\"optional\":true}",
+            &dep_spec(),
+        )
+        .expect("an object selects the detailed record variant");
+        assert_eq!(
+            value,
+            DecodedValue::Variant {
+                index: 1,
+                fields: vec![
+                    DecodedValue::OptionSome(Box::new(DecodedValue::Str("^2.0".to_owned()))),
+                    DecodedValue::Bool(true),
+                ],
+            }
+        );
+    }
 
     fn pkg_row() -> Type {
         Type::Record(RecordType {

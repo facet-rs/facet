@@ -5457,26 +5457,20 @@ fn rung_064_absent_fields_decode_to_option_none() {
     assert_typed_decode_rung(RUNG_064, 2);
 }
 
-/// Rungs 065 and 066: their exact code-grounded red boundaries on the merged
-/// production tree. 065 now parses and resolves `json_decode` — it stops in the
-/// decoder, which does not yet realize the string-or-table enum form. 066 stops
-/// earlier still, in the surface grammar: the `try_json_decode<T>` turbofish the
-/// `call` production does not admit.
+/// Rung 065 — the string-or-table enum form (the Cargo dependency shape): a
+/// scalar string decodes to the short single-`String` tuple variant, an object
+/// to the detailed record variant, both through the same decoder and lowered to
+/// ordinary `Op::Variant` construction.
 #[test]
-fn typed_decode_065_066_red_boundaries() {
-    let enum_forms = Compiler::new()
-        .compile(RUNG_065)
-        .expect_err("the string-or-table enum form is not decoded yet");
-    assert_eq!(enum_forms.entries.len(), 1);
-    assert_eq!(
-        enum_forms.entries[0].code,
-        DiagnosticCode::UnsupportedExpression
-    );
-    assert_eq!(
-        enum_forms.entries[0].message(),
-        "JSON decode failed: cannot decode into DepSpec"
-    );
+fn rung_065_decodes_string_or_table_enum_forms() {
+    assert_typed_decode_rung(RUNG_065, 3);
+}
 
+/// Rung 066's exact code-grounded red boundary on the merged production tree: it
+/// stops in the surface grammar, before any decode — the `call` production does
+/// not admit the `try_json_decode<T>` turbofish that names the target type.
+#[test]
+fn typed_decode_066_red_boundary() {
     let failure = Compiler::new()
         .compile(RUNG_066)
         .expect_err("the try_json_decode<T> turbofish does not parse yet");
