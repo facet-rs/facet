@@ -7606,16 +7606,15 @@ impl Driver {
             }
         } else {
             let outcome = self.schedule_run(run_id)?;
-            // The in-process backend has no producing-path protocol:
-            // `schedule_run` completed the whole command before returning.
-            // Record that completion even when the caller asked for only one
-            // path. `complete_on_file` matters only for a remote run that can
-            // genuinely serve a file before its final flush.
-            let _ = self.finish_run(run_id)?;
             match subtree(&outcome.outputs, path) {
-                Ok(projected) => Ok(Some(
-                    self.store.borrow_mut().alloc_tree_concrete(projected).0,
-                )),
+                Ok(projected) => {
+                    if complete_on_file {
+                        let _ = self.finish_run(run_id)?;
+                    }
+                    Ok(Some(
+                        self.store.borrow_mut().alloc_tree_concrete(projected).0,
+                    ))
+                }
                 Err(_) => {
                     let _ = self.finish_run(run_id)?;
                     Ok(None)
@@ -7819,15 +7818,41 @@ impl Driver {
                     tree,
                     projected_path,
                 } => {
-                    let forced = if let Some(path) = projected_path {
-                        self.project_tree_path(*tree, path)?
+                    let (forced, was_projected) = if let Some(path) = projected_path {
+                        let tree_entry = self.store.borrow().tree_entry(*tree)?;
+                        let supports_producing_paths = match tree_entry {
+                            TreeEntry::Exec(run_id) => {
+                                self.ensure_run_started(run_id)?;
+                                let remote = self
+                                    .runs
+                                    .get(&run_id)
+                                    .and_then(|run| run.remote.as_ref())
+                                    .cloned();
+                                match remote {
+                                    Some(remote) => {
+                                        remote.path_status(path)? != MachinePathStatus::Unsupported
+                                    }
+                                    None => false,
+                                }
+                            }
+                            TreeEntry::Concrete(_) => true,
+                            TreeEntry::Merge(_) => false,
+                        };
+                        if supports_producing_paths {
+                            (self.project_tree_path(*tree, path)?, true)
+                        } else {
+                            (self.force_tree_handle(*tree)?, false)
+                        }
                     } else {
-                        self.force_tree_handle(*tree)?
+                        (self.force_tree_handle(*tree)?, false)
                     };
                     let TreeEntry::Concrete(tree) = self.store.borrow().tree_entry(forced)? else {
                         return Err("forced command tree stayed pending".into());
                     };
-                    let tree = if let Some(path) = projected_path {
+                    let tree = if was_projected {
+                        let path = projected_path
+                            .as_ref()
+                            .expect("projected command mount has a path");
                         anchor_projected_tree(tree, path)?
                     } else {
                         tree
