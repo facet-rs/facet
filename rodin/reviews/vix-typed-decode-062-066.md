@@ -219,6 +219,46 @@ store handle equals the authored literal's for at least one rung (e.g. 062).
 | Trailing content | rejected | `decode.rs:333`–`345` |
 | Runtime failure (`try_json_decode<T>`) | red at grammar (`ParseRejected`) | `ratchet_runner.rs:5478` |
 
+## Resolution audit — implementation `00f3ca354`
+
+The corrective implementation satisfies this review's integration conditions.
+The disposition is now **ACCEPT 062–065** as the literal-document constant-fold
+lane; rung 066 remains red at its exact grammar/Outcome boundary.
+
+- **F1 closed.** The decoder module, compiler seam, and production certificate
+  consistently call this the constant-folded subset of the designed runtime
+  primitive. Zero `HostCall` is an as-if optimization certificate, not a claim
+  that runtime typed deserialization exists.
+- **F2 closed as a typed boundary.** A nonliteral document or unknown target now
+  produces `DiagnosticCode::RuntimeDecodeUnavailable` with structured format and
+  target fields. It is neither host-evaluated nor collapsed into a generic
+  unsupported-expression diagnostic. The runtime primitive itself remains
+  deliberately unbuilt.
+- **F3 closed for the accepted fold lane.** Constant-document failures carry a
+  closed `DecodeErrorKind`, structured field path, and structured span payload;
+  rendered prose is convenience only. Runtime `Outcome`/`Failure` semantics stay
+  on rung 066's red side and were not invented here.
+- **F4 partially closed, with the residual explicit.** Parser document-byte spans
+  and field paths are retained. Translating a decoded-document span back through
+  Vix string-literal escapes into a source span is still unavailable; the code
+  names the coordinate system and leaves the mapping absent rather than
+  fabricating it. This was not a condition of the ACCEPT disposition.
+- **F5 closed.** Multiple string-form or table-form variants produce typed
+  ambiguity failures; declaration order is never used as a hidden first-match
+  authority.
+- **F6 closed.** A discriminating certificate compares canonical VIR,
+  `RecipeId`, `DemandKey`, framed Store identities, and completed check
+  identities against an authored construction, with a different-value negative
+  control.
+
+Independent re-audit selection:
+
+```text
+cargo nextest run -p vix -E 'test(decode::) | (binary(ratchet_runner) & (test(/decode/) | test(=typed_decode_066_red_boundary)))'
+```
+
+Run `a265d07b-57e6-47cf-a614-714db00cb56c`: 15/15 passed.
+
 ## Verification performed
 
 - `git rev-parse HEAD` == base; `git status --porcelain` empty before acting.
