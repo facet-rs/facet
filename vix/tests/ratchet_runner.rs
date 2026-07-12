@@ -4141,12 +4141,15 @@ fn rung_050_deep_tail_recursion_runs_under_its_declared_budget() {
         Path::new(env!("CARGO_BIN_EXE_vix-budget-child")),
         RUNG_050,
     );
-    assert!(matches!(
-        outcome,
-        BudgetOutcome::Within {
-            report: ChildReport::RanSource { passed: true, .. },
-        }
-    ));
+    assert!(
+        matches!(
+            &outcome,
+            BudgetOutcome::Within {
+                report: ChildReport::RanSource { passed: true, .. },
+            }
+        ),
+        "unexpected budget outcome: {outcome:?}"
+    );
 }
 
 /// The ordinary ratchet path is production execution, not an innards
