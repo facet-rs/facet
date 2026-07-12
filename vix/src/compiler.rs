@@ -4412,6 +4412,21 @@ fn lower_fold_accumulator(
     {
         return lower_value_expected(nodes, bindings, context, initial, Some(&accumulator_ty));
     }
+    // An empty array literal that did not match the strict append grain still
+    // builds an array over the fold's element type: flow it directly, as the
+    // copy path owns the fold's own typing. Empty map/set literals without the
+    // append grain have no element type to flow and keep their diagnostic.
+    if let ast::Expr::Array(array) = initial
+        && array.elems.is_empty()
+    {
+        return lower_value_expected(
+            nodes,
+            bindings,
+            context,
+            initial,
+            Some(&Type::array(element.clone())),
+        );
+    }
     lower_value(nodes, bindings, context, initial)
 }
 
