@@ -2349,11 +2349,13 @@ fn native_backtracking() -> Stream<Check> {
 
 fn is_shared_exhaustion(conflict: Conflict) -> Bool {
     match conflict.cause {
-        ConflictCause::EmptyDomain(_) => false,
+        ConflictCause::EmptyDomain(package) => package == shared_package()
+            && conflict.region.versions.has(app_package()),
         ConflictCause::NoCandidates(package) => package == shared_package()
             && conflict.region.versions.has(app_package()),
         ConflictCause::FeatureExclusion { package: _, left: _, right: _ } => false,
         ConflictCause::LinksCollision { links: _, left: _, right: _ } => false,
+        ConflictCause::LearnedNoGood => false,
     }
 }
 
@@ -2416,6 +2418,7 @@ fn is_feature_conflict(conflict: Conflict) -> Bool {
                 && conflict.region.required_features.get(package).has("right")
         },
         ConflictCause::LinksCollision { links: _, left: _, right: _ } => false,
+        ConflictCause::LearnedNoGood => false,
     }
 }
 
@@ -2486,7 +2489,9 @@ fn is_links_conflict(conflict: Conflict) -> Bool {
             && conflict.region.versions.len() == 2
             && conflict.region.versions.has(left)
             && conflict.region.versions.has(right)
-            && conflict.region.required_features.len() == 0,
+            && conflict.region.required_features.len() == 0
+            && conflict.region.forbidden_features.len() == 0,
+        ConflictCause::LearnedNoGood => false,
     }
 }
 
@@ -2525,6 +2530,7 @@ fn exact_app_region() -> DeadRegion {
     DeadRegion {
         versions: %{app_package() => parse_req("=1.1.0")},
         required_features: %{},
+        forbidden_features: %{},
     }
 }
 
@@ -2532,6 +2538,27 @@ fn broad_app_region() -> DeadRegion {
     DeadRegion {
         versions: %{app_package() => parse_req(">=1.0.0,<2.0.0")},
         required_features: %{},
+        forbidden_features: %{},
+    }
+}
+
+fn unconstrained_region() -> DeadRegion {
+    DeadRegion { versions: %{}, required_features: %{}, forbidden_features: %{} }
+}
+
+fn required_left_region() -> DeadRegion {
+    DeadRegion {
+        versions: %{},
+        required_features: %{feature_conflict_package() => %["left"]},
+        forbidden_features: %{},
+    }
+}
+
+fn forbidden_left_region() -> DeadRegion {
+    DeadRegion {
+        versions: %{},
+        required_features: %{},
+        forbidden_features: %{feature_conflict_package() => %["left"]},
     }
 }
 
@@ -2551,6 +2578,235 @@ fn region_subsumption_holds() -> Bool {
 #[test]
 fn native_region_subsumption() -> Stream<Check> {
     yield expect(region_subsumption_holds());
+}
+
+fn region_algebra_holds() -> Bool {
+    let point = exact_app_region();
+    let broad = broad_app_region();
+    let intersection_ok = match region_intersect(broad) where { right: point } {
+        None => false,
+        Some(intersection) => region_contains(intersection) where { inner: point }
+            && region_contains(point) where { inner: intersection },
+    };
+    let version_difference_ok = match (region_subtract(search_input(true)) where { left: broad, right: point }).split_last() {
+        None => false,
+        Some((remaining, rest)) => rest.len() == 0
+            && remaining.versions.get(app_package()).contains(parse_version("1.0.0"))
+            && !remaining.versions.get(app_package()).contains(parse_version("1.1.0")),
+    };
+    let polarity_disjoint = match region_intersect(required_left_region()) where { right: forbidden_left_region() } {
+        None => true,
+        Some(_) => false,
+    };
+    let polarity_difference = match (region_subtract(feature_conflict_input()) where {
+        left: unconstrained_region(),
+        right: required_left_region(),
+    }).split_last() {
+        None => false,
+        Some((remaining, rest)) => rest.len() == 0
+            && remaining.forbidden_features.get(feature_conflict_package()).has("left"),
+    };
+    intersection_ok && version_difference_ok && polarity_disjoint && polarity_difference
+}
+
+#[test]
+fn native_region_algebra() -> Stream<Check> {
+    yield expect(region_algebra_holds());
+}
+
+fn unit_row(version: String) -> PackageRow {
+    PackageRow {
+        package: shared_package(),
+        version: parse_version(version),
+        dependencies: [],
+        features: [],
+        yanked: false,
+        links: None,
+        provenance: "fixture/unit/shared/Cargo.toml",
+    }
+}
+
+fn unit_input() -> SolveInput {
+    SolveInput {
+        unsupported: None,
+        universe: PackageUniverse {
+            rows: %{
+                app_package() => [app_row("1.1.0") where { requirement: "=1.0.0" }],
+                shared_package() => [unit_row("1.0.0"), unit_row("2.0.0")],
+            },
+        },
+        roots: [],
+        target: native_target(),
+        policy: empty_policy(),
+    }
+}
+
+fn version_unit_propagation_holds() -> Bool {
+    let region = DeadRegion {
+        versions: %{
+            app_package() => parse_req("=1.1.0"),
+            shared_package() => parse_req("=1.0.0"),
+        },
+        required_features: %{},
+        forbidden_features: %{},
+    };
+    let state = SolverState {
+        active: %[app_package(), shared_package()],
+        undecided: [shared_package()],
+        domains: %{
+            app_package() => parse_req("=1.1.0"),
+            shared_package() => universe(),
+        },
+        decisions: %{app_package() => parse_version("1.1.0")},
+        learned: [region],
+        ..empty_state()
+    };
+    match apply_learned_regions(unit_input()) where { state, regions: state.learned } {
+        LearnedStep::Stable => false,
+        LearnedStep::Conflict(_) => false,
+        LearnedStep::Changed(next) => next.domains.get(shared_package()).contains(parse_version("2.0.0"))
+            && !next.domains.get(shared_package()).contains(parse_version("1.0.0")),
+    }
+}
+
+fn feature_unit_propagation_holds() -> Bool {
+    let package = feature_conflict_package();
+    let region = DeadRegion {
+        versions: %{},
+        required_features: %{package => %["left", "right"]},
+        forbidden_features: %{},
+    };
+    let state = SolverState {
+        active: %[package],
+        features: %{package => %["left"]},
+        learned: [region],
+        ..empty_state()
+    };
+    match apply_learned_regions(feature_conflict_input()) where { state, regions: state.learned } {
+        LearnedStep::Stable => false,
+        LearnedStep::Conflict(_) => false,
+        LearnedStep::Changed(next) => next.forbidden_features.get(package).has("right"),
+    }
+}
+
+#[test]
+fn native_region_unit_propagation() -> Stream<Check> {
+    yield expect(version_unit_propagation_holds());
+    yield expect(feature_unit_propagation_holds());
+}
+
+fn search_order_holds() -> Bool {
+    let input = search_input(true);
+    let state = SolverState {
+        active: %[app_package(), shared_package()],
+        undecided: [app_package(), shared_package()],
+        domains: %{
+            app_package() => universe(),
+            shared_package() => universe(),
+        },
+        ..empty_state()
+    };
+    let fewest_ok = match choose_undecided(input) where { state } {
+        None => false,
+        Some(choice) => choice.package == shared_package() && choice.candidates == 1,
+    };
+    let tied = SolverState {
+        domains: %{
+            app_package() => parse_req("=1.0.0"),
+            shared_package() => parse_req("=1.0.0"),
+        },
+        ..state
+    };
+    let expected = if (app_package() <=> shared_package()) == Ordering::Less {
+        app_package()
+    } else {
+        shared_package()
+    };
+    let tie_ok = match choose_undecided(input) where { state: tied } {
+        None => false,
+        Some(choice) => choice.package == expected && choice.candidates == 1,
+    };
+    fewest_ok && tie_ok
+}
+
+#[test]
+fn native_search_order() -> Stream<Check> {
+    yield expect(search_order_holds());
+}
+
+fn prerelease_package() -> PackageId {
+    PackageId {
+        source: PackageSource::Path("fixture/prerelease"),
+        name: "prerelease",
+        compat: CompatClass::Major(1),
+    }
+}
+
+fn prerelease_row(version: String) -> PackageRow {
+    PackageRow {
+        package: prerelease_package(),
+        version: parse_version(version),
+        dependencies: [],
+        features: [],
+        yanked: false,
+        links: None,
+        provenance: "fixture/prerelease/Cargo.toml",
+    }
+}
+
+fn prerelease_input(requirement: String) -> SolveInput {
+    SolveInput {
+        unsupported: None,
+        universe: PackageUniverse {
+            rows: %{prerelease_package() => [
+                prerelease_row("1.2.3-alpha.1"),
+                prerelease_row("1.2.3-beta.1"),
+                prerelease_row("1.2.3"),
+            ]},
+        },
+        roots: [RootRequest {
+            package: prerelease_package(),
+            requirement: parse_req(requirement),
+            features: %[],
+            default_features: false,
+            graph: true,
+        }],
+        target: native_target(),
+        policy: empty_policy(),
+    }
+}
+
+fn selected_prerelease_is_beta(outcome: RodinOutcome) -> Bool {
+    match outcome {
+        RodinOutcome::Solved(result) => result.selected.get(prerelease_package()).version
+            == parse_version("1.2.3-beta.1"),
+        RodinOutcome::Failed(_) => false,
+        RodinOutcome::Unsupported(_) => false,
+    }
+}
+
+fn ordinary_requirement_rejects_prerelease(outcome: RodinOutcome) -> Bool {
+    match outcome {
+        RodinOutcome::Solved(_) => false,
+        RodinOutcome::Unsupported(_) => false,
+        RodinOutcome::Failed(conflict) => match conflict.cause {
+            ConflictCause::NoCandidates(package) => package == prerelease_package(),
+            ConflictCause::EmptyDomain(package) => package == prerelease_package(),
+            ConflictCause::FeatureExclusion { package: _, left: _, right: _ } => false,
+            ConflictCause::LinksCollision { links: _, left: _, right: _ } => false,
+            ConflictCause::LearnedNoGood => false,
+        },
+    }
+}
+
+#[test]
+fn native_prerelease_admission() -> Stream<Check> {
+    yield expect(selected_prerelease_is_beta(
+        rodin_solve(prerelease_input(">=1.2.3-alpha.1,<1.2.3"))
+    ));
+    yield expect(ordinary_requirement_rejects_prerelease(
+        rodin_solve(prerelease_input(">=1.2.2,<1.2.3"))
+    ));
 }
 "#;
 
@@ -2583,7 +2839,7 @@ fn native_rodin_kernel_backtracks_and_returns_typed_conflicts() {
         "search/conflict certificates pass: {report:?}"
     );
     assert!(report.agrees(), "plain and chaos agree");
-    assert_eq!(report.plain.checks.len(), 8);
+    assert_eq!(report.plain.checks.len(), 14);
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.pure_host_calls, 0);
         assert_eq!(lane.receipt_count, 0);

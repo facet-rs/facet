@@ -124,11 +124,14 @@ enum ConflictCause {
     NoCandidates(PackageId),
     FeatureExclusion { package: PackageId, left: String, right: String },
     LinksCollision { links: String, left: PackageId, right: PackageId },
+    LearnedNoGood,
 }
 
+// r[impl solver.learning.region]
 struct DeadRegion {
     versions: Map<PackageId, VersionSet>,
     required_features: Map<PackageId, Set<String>>,
+    forbidden_features: Map<PackageId, Set<String>>,
 }
 
 struct Conflict {
@@ -157,6 +160,7 @@ struct SolverState {
     domains: Map<PackageId, VersionSet>,
     selected: Map<PackageId, SelectedPackage>,
     features: Map<PackageId, Set<String>>,
+    forbidden_features: Map<PackageId, Set<String>>,
     claimed_links: Map<String, PackageId>,
     edges: Set<ResolvedEdge>,
     decisions: Map<PackageId, Version>,
@@ -178,6 +182,26 @@ enum StateStep {
     Conflict(Conflict),
 }
 
+enum RegionRelation {
+    Irrelevant,
+    Inside,
+    Multiple,
+    Version(PackageId, VersionSet),
+    RequireFeature(PackageId, String),
+    ForbidFeature(PackageId, String),
+}
+
+enum LearnedStep {
+    Stable,
+    Changed(SolverState),
+    Conflict(Conflict),
+}
+
+struct RegionCover {
+    prefix: DeadRegion,
+    slices: [DeadRegion],
+}
+
 enum SearchOutcome {
     Found(SolveResult),
     Dead(SearchDead),
@@ -195,6 +219,7 @@ fn empty_state() -> SolverState {
         domains: %{},
         selected: %{},
         features: %{},
+        forbidden_features: %{},
         claimed_links: %{},
         edges: %[],
         decisions: %{},
@@ -214,6 +239,18 @@ fn exact_set(version: Version) -> VersionSet {
 
 fn feature_set(state: SolverState) where { package: PackageId } -> Set<String> {
     if state.features.has(package) { state.features.get(package) } else { empty_string_set() }
+}
+
+fn forbidden_feature_set(state: SolverState) where { package: PackageId } -> Set<String> {
+    if state.forbidden_features.has(package) { state.forbidden_features.get(package) } else { empty_string_set() }
+}
+
+fn region_required_features(region: DeadRegion) where { package: PackageId } -> Set<String> {
+    if region.required_features.has(package) { region.required_features.get(package) } else { empty_string_set() }
+}
+
+fn region_forbidden_features(region: DeadRegion) where { package: PackageId } -> Set<String> {
+    if region.forbidden_features.has(package) { region.forbidden_features.get(package) } else { empty_string_set() }
 }
 
 fn mark_dirty(state: SolverState) where { package: PackageId } -> SolverState {
@@ -280,18 +317,23 @@ fn point_region(packages: [PackageId]) where { state: SolverState, out: Map<Pack
     }
 }
 
+// r[impl solver.learning.widen.sound]
+// r[impl solver.learning.widen.read-set] - declared-structure fallback
 fn widen_region(point: DeadRegion) where { state: SolverState, cause: ConflictCause } -> DeadRegion {
     match cause {
         ConflictCause::FeatureExclusion { package, left, right } => DeadRegion {
             versions: %{},
             required_features: %{package => empty_string_set() + left + right},
+            forbidden_features: %{},
         },
         ConflictCause::LinksCollision { links: _, left, right } => DeadRegion {
             versions: point_region([left, right]) where { state, out: %{} },
             required_features: %{},
+            forbidden_features: %{},
         },
         ConflictCause::EmptyDomain(_) => point,
         ConflictCause::NoCandidates(_) => point,
+        ConflictCause::LearnedNoGood => point,
     }
 }
 
@@ -302,7 +344,11 @@ fn narrow(input: SolveInput) where { state: SolverState, package: PackageId, req
             provenance: [provenance],
         })
     } else {
-        let prior = if state.domains.has(package) { state.domains.get(package) } else { universe() };
+        let prior = if state.domains.has(package) {
+            state.domains.get(package)
+        } else {
+            candidate_version_set(input) where { package }
+        };
         let allowed = prior.intersect(requirement);
         if allowed.is_empty() {
             StateStep::Conflict(make_conflict(state) where {
@@ -664,17 +710,30 @@ fn check_invariants(input: SolveInput) where { state: SolverState } -> StateStep
     }
 }
 
+// r[impl solver.learning.propagate]
 fn propagate(input: SolveInput) where { state: SolverState } -> StateStep {
     match apply_dirty(input) where { state } {
         StateStep::Conflict(conflict) => StateStep::Conflict(conflict),
-        StateStep::Pass(next) => check_invariants(input) where { state: next },
+        StateStep::Pass(next) => match check_invariants(input) where { state: next } {
+            StateStep::Conflict(conflict) => StateStep::Conflict(conflict),
+            StateStep::Pass(checked) => match apply_learned_regions(input) where {
+                state: checked,
+                regions: checked.learned,
+            } {
+                LearnedStep::Stable => StateStep::Pass(checked),
+                LearnedStep::Changed(changed) => propagate(input) where { state: changed },
+                LearnedStep::Conflict(conflict) => StateStep::Conflict(conflict),
+            },
+        },
     }
 }
 
+// r[impl solver.learning.point]
 fn point_dead_region(state: SolverState) -> DeadRegion {
     DeadRegion {
         versions: point_region(state.decisions.keys()) where { state, out: %{} },
         required_features: state.features,
+        forbidden_features: state.forbidden_features,
     }
 }
 
@@ -683,6 +742,8 @@ fn state_is_in_region(state: SolverState) where { region: DeadRegion } -> Bool {
         && region.versions.get(package).contains(state.decisions.get(package)))
         && region.required_features.keys().all(|package| state.features.has(package)
             && region.required_features.get(package).values().all(|feature| state.features.get(package).has(feature)))
+        && region.forbidden_features.keys().all(|package| !state.features.has(package)
+            || region.forbidden_features.get(package).values().all(|feature| !state.features.get(package).has(feature)))
 }
 
 fn state_is_learned(state: SolverState) -> Bool {
@@ -693,11 +754,310 @@ fn version_set_contains(outer: VersionSet) where { inner: VersionSet } -> Bool {
     outer.intersect(inner) == inner
 }
 
+fn feature_map_contains(outer: Map<PackageId, Set<String>>) where { inner: Map<PackageId, Set<String>> } -> Bool {
+    outer.keys().all(|package| inner.has(package)
+        && outer.get(package).values().all(|feature| inner.get(package).has(feature)))
+}
+
 fn region_contains(outer: DeadRegion) where { inner: DeadRegion } -> Bool {
     outer.versions.keys().all(|package| inner.versions.has(package)
         && version_set_contains(outer.versions.get(package)) where { inner: inner.versions.get(package) })
-        && outer.required_features.keys().all(|package| inner.required_features.has(package)
-            && outer.required_features.get(package).values().all(|feature| inner.required_features.get(package).has(feature)))
+        && feature_map_contains(outer.required_features) where { inner: inner.required_features }
+        && feature_map_contains(outer.forbidden_features) where { inner: inner.forbidden_features }
+}
+
+fn intersect_region_versions(packages: [PackageId]) where {
+    left: Map<PackageId, VersionSet>,
+    right: Map<PackageId, VersionSet>,
+    out: Map<PackageId, VersionSet>,
+} -> Option<Map<PackageId, VersionSet>> {
+    match packages.split_last() {
+        None => Some(out),
+        Some((package, rest)) => {
+            if out.has(package) {
+                intersect_region_versions(rest) where { left, right, out }
+            } else {
+                let value = if left.has(package) {
+                    if right.has(package) {
+                        left.get(package).intersect(right.get(package))
+                    } else {
+                        left.get(package)
+                    }
+                } else {
+                    right.get(package)
+                };
+                if value.is_empty() {
+                    None
+                } else {
+                    intersect_region_versions(rest) where { left, right, out: out.with (package, value) }
+                }
+            }
+        },
+    }
+}
+
+fn merge_feature_maps(packages: [PackageId]) where {
+    left: Map<PackageId, Set<String>>,
+    right: Map<PackageId, Set<String>>,
+    out: Map<PackageId, Set<String>>,
+} -> Map<PackageId, Set<String>> {
+    match packages.split_last() {
+        None => out,
+        Some((package, rest)) => {
+            if out.has(package) {
+                merge_feature_maps(rest) where { left, right, out }
+            } else {
+                let value = (if left.has(package) { left.get(package) } else { empty_string_set() })
+                    ++ (if right.has(package) { right.get(package) } else { empty_string_set() });
+                merge_feature_maps(rest) where { left, right, out: out.with (package, value) }
+            }
+        },
+    }
+}
+
+fn feature_polarities_conflict(packages: [PackageId]) where {
+    required: Map<PackageId, Set<String>>,
+    forbidden: Map<PackageId, Set<String>>,
+} -> Bool {
+    match packages.split_last() {
+        None => false,
+        Some((package, rest)) => {
+            (required.has(package) && forbidden.has(package)
+                && required.get(package).values().any(|feature| forbidden.get(package).has(feature)))
+                || feature_polarities_conflict(rest) where { required, forbidden }
+        },
+    }
+}
+
+fn region_intersect(left: DeadRegion) where { right: DeadRegion } -> Option<DeadRegion> {
+    match intersect_region_versions((left.versions.keys() ++ right.versions.keys()).sorted()) where {
+        left: left.versions,
+        right: right.versions,
+        out: %{},
+    } {
+        None => None,
+        Some(versions) => {
+            let required_features = merge_feature_maps((left.required_features.keys() ++ right.required_features.keys()).sorted()) where {
+                left: left.required_features,
+                right: right.required_features,
+                out: %{},
+            };
+            let forbidden_features = merge_feature_maps((left.forbidden_features.keys() ++ right.forbidden_features.keys()).sorted()) where {
+                left: left.forbidden_features,
+                right: right.forbidden_features,
+                out: %{},
+            };
+            if feature_polarities_conflict((required_features.keys() ++ forbidden_features.keys()).sorted()) where {
+                required: required_features,
+                forbidden: forbidden_features,
+            } {
+                None
+            } else {
+                Some(DeadRegion { versions, required_features, forbidden_features })
+            }
+        },
+    }
+}
+
+fn remaining_versions(rows: [PackageRow]) where {
+    allowed: VersionSet,
+    excluded: VersionSet,
+    out: [Version],
+} -> [Version] {
+    match rows.split_last() {
+        None => out.sorted(),
+        Some((row, rest)) => remaining_versions(rest) where {
+            allowed,
+            excluded,
+            out: if allowed.contains(row.version) && !excluded.contains(row.version) && !out.contains(row.version) {
+                out + row.version
+            } else {
+                out
+            },
+        },
+    }
+}
+
+fn exact_intervals(versions: [Version]) where { out: [Interval] } -> [Interval] {
+    match versions.split_last() {
+        None => out,
+        Some((version, rest)) => {
+            let prefix = exact_intervals(rest) where { out };
+            prefix + Interval {
+                lower: LowerBound::Inclusive(version),
+                upper: UpperBound::Inclusive(version),
+                prerelease_lines: admission_for(version),
+            }
+        },
+    }
+}
+
+fn row_versions(rows: [PackageRow]) where { out: [Version] } -> [Version] {
+    match rows.split_last() {
+        None => out.sorted(),
+        Some((row, rest)) => row_versions(rest) where {
+            out: if out.contains(row.version) { out } else { out + row.version },
+        },
+    }
+}
+
+fn candidate_version_set(input: SolveInput) where { package: PackageId } -> VersionSet {
+    VersionSet {
+        intervals: exact_intervals(row_versions(input.universe.rows.get(package)) where { out: [] }) where { out: [] },
+    }
+}
+
+fn subtract_version_set(input: SolveInput) where {
+    package: PackageId,
+    left: VersionSet,
+    right: VersionSet,
+} -> VersionSet {
+    VersionSet {
+        intervals: exact_intervals(remaining_versions(input.universe.rows.get(package)) where {
+            allowed: left,
+            excluded: right,
+            out: [],
+        }) where { out: [] },
+    }
+}
+
+fn region_with_version(region: DeadRegion) where { package: PackageId, versions: VersionSet } -> DeadRegion {
+    DeadRegion { versions: region.versions.with (package, versions), ..region }
+}
+
+fn region_with_required_feature(region: DeadRegion) where { package: PackageId, feature: String } -> DeadRegion {
+    DeadRegion {
+        required_features: region.required_features.with (
+            package,
+            (region_required_features(region) where { package }) + feature,
+        ),
+        ..region
+    }
+}
+
+fn region_with_forbidden_feature(region: DeadRegion) where { package: PackageId, feature: String } -> DeadRegion {
+    DeadRegion {
+        forbidden_features: region.forbidden_features.with (
+            package,
+            (region_forbidden_features(region) where { package }) + feature,
+        ),
+        ..region
+    }
+}
+
+fn subtract_version_dimensions(input: SolveInput) where {
+    right: DeadRegion,
+    packages: [PackageId],
+    cover: RegionCover,
+} -> RegionCover {
+    match packages.split_last() {
+        None => cover,
+        Some((package, rest)) => {
+            let allowed = if cover.prefix.versions.has(package) {
+                cover.prefix.versions.get(package)
+            } else {
+                universe()
+            };
+            let excluded = right.versions.get(package);
+            let difference = subtract_version_set(input) where { package, left: allowed, right: excluded };
+            let overlap = allowed.intersect(excluded);
+            subtract_version_dimensions(input) where {
+                right,
+                packages: rest,
+                cover: RegionCover {
+                    prefix: region_with_version(cover.prefix) where { package, versions: overlap },
+                    slices: if difference.is_empty() {
+                        cover.slices
+                    } else {
+                        cover.slices + (region_with_version(cover.prefix) where { package, versions: difference })
+                    },
+                },
+            }
+        },
+    }
+}
+
+fn subtract_required_features(features: [String]) where {
+    package: PackageId,
+    cover: RegionCover,
+} -> RegionCover {
+    match features.split_last() {
+        None => cover,
+        Some((feature, rest)) => {
+            if (region_required_features(cover.prefix) where { package }).has(feature) {
+                subtract_required_features(rest) where { package, cover }
+            } else {
+                subtract_required_features(rest) where {
+                    package,
+                    cover: RegionCover {
+                        prefix: region_with_required_feature(cover.prefix) where { package, feature },
+                        slices: cover.slices + (region_with_forbidden_feature(cover.prefix) where { package, feature }),
+                    },
+                }
+            }
+        },
+    }
+}
+
+fn subtract_required_packages(packages: [PackageId]) where { right: DeadRegion, cover: RegionCover } -> RegionCover {
+    match packages.split_last() {
+        None => cover,
+        Some((package, rest)) => subtract_required_packages(rest) where {
+            right,
+            cover: subtract_required_features(right.required_features.get(package).values()) where { package, cover },
+        },
+    }
+}
+
+fn subtract_forbidden_features(features: [String]) where {
+    package: PackageId,
+    cover: RegionCover,
+} -> RegionCover {
+    match features.split_last() {
+        None => cover,
+        Some((feature, rest)) => {
+            if (region_forbidden_features(cover.prefix) where { package }).has(feature) {
+                subtract_forbidden_features(rest) where { package, cover }
+            } else {
+                subtract_forbidden_features(rest) where {
+                    package,
+                    cover: RegionCover {
+                        prefix: region_with_forbidden_feature(cover.prefix) where { package, feature },
+                        slices: cover.slices + (region_with_required_feature(cover.prefix) where { package, feature }),
+                    },
+                }
+            }
+        },
+    }
+}
+
+fn subtract_forbidden_packages(packages: [PackageId]) where { right: DeadRegion, cover: RegionCover } -> RegionCover {
+    match packages.split_last() {
+        None => cover,
+        Some((package, rest)) => subtract_forbidden_packages(rest) where {
+            right,
+            cover: subtract_forbidden_features(right.forbidden_features.get(package).values()) where { package, cover },
+        },
+    }
+}
+
+fn region_subtract(input: SolveInput) where { left: DeadRegion, right: DeadRegion } -> [DeadRegion] {
+    match region_intersect(left) where { right } {
+        None => [left],
+        Some(_overlap) => {
+            if region_contains(right) where { inner: left } {
+                []
+            } else {
+                let versions = subtract_version_dimensions(input) where {
+                    right,
+                    packages: right.versions.keys(),
+                    cover: RegionCover { prefix: left, slices: [] },
+                };
+                let required = subtract_required_packages(right.required_features.keys()) where { right, cover: versions };
+                (subtract_forbidden_packages(right.forbidden_features.keys()) where { right, cover: required }).slices
+            }
+        },
+    }
 }
 
 fn retain_unsubsumed(regions: [DeadRegion]) where { broader: DeadRegion, out: [DeadRegion] } -> [DeadRegion] {
@@ -710,11 +1070,217 @@ fn retain_unsubsumed(regions: [DeadRegion]) where { broader: DeadRegion, out: [D
     }
 }
 
+// r[impl solver.learning.frontier]
+// r[impl solver.learning.no-good]
 fn install_region(learned: [DeadRegion]) where { region: DeadRegion } -> [DeadRegion] {
     if learned.any(|existing| region_contains(existing) where { inner: region }) {
         learned
     } else {
         retain_unsubsumed(learned) where { broader: region, out: [] } + region
+    }
+}
+
+fn add_region_open(current: RegionRelation) where { next: RegionRelation } -> RegionRelation {
+    match current {
+        RegionRelation::Irrelevant => RegionRelation::Irrelevant,
+        RegionRelation::Inside => next,
+        RegionRelation::Multiple => RegionRelation::Multiple,
+        RegionRelation::Version(_, _) => RegionRelation::Multiple,
+        RegionRelation::RequireFeature(_, _) => RegionRelation::Multiple,
+        RegionRelation::ForbidFeature(_, _) => RegionRelation::Multiple,
+    }
+}
+
+fn scan_region_versions(packages: [PackageId]) where {
+    state: SolverState,
+    region: DeadRegion,
+    relation: RegionRelation,
+} -> RegionRelation {
+    match packages.split_last() {
+        None => relation,
+        Some((package, rest)) => {
+            let constraint = region.versions.get(package);
+            let next = if !state.active.has(package) || !state.domains.has(package) {
+                add_region_open(relation) where { next: RegionRelation::Multiple }
+            } else if state.decisions.has(package) {
+                if constraint.contains(state.decisions.get(package)) {
+                    relation
+                } else {
+                    RegionRelation::Irrelevant
+                }
+            } else {
+                let domain = state.domains.get(package);
+                if domain.intersect(constraint).is_empty() {
+                    RegionRelation::Irrelevant
+                } else if version_set_contains(constraint) where { inner: domain } {
+                    relation
+                } else {
+                    add_region_open(relation) where { next: RegionRelation::Version(package, constraint) }
+                }
+            };
+            scan_region_versions(rest) where { state, region, relation: next }
+        },
+    }
+}
+
+fn scan_required_features(features: [String]) where {
+    state: SolverState,
+    package: PackageId,
+    relation: RegionRelation,
+} -> RegionRelation {
+    match features.split_last() {
+        None => relation,
+        Some((feature, rest)) => {
+            let next = if !state.active.has(package) {
+                add_region_open(relation) where { next: RegionRelation::Multiple }
+            } else if (feature_set(state) where { package }).has(feature) {
+                relation
+            } else if (forbidden_feature_set(state) where { package }).has(feature) {
+                RegionRelation::Irrelevant
+            } else {
+                add_region_open(relation) where { next: RegionRelation::RequireFeature(package, feature) }
+            };
+            scan_required_features(rest) where { state, package, relation: next }
+        },
+    }
+}
+
+fn scan_required_packages(packages: [PackageId]) where {
+    state: SolverState,
+    region: DeadRegion,
+    relation: RegionRelation,
+} -> RegionRelation {
+    match packages.split_last() {
+        None => relation,
+        Some((package, rest)) => scan_required_packages(rest) where {
+            state,
+            region,
+            relation: scan_required_features(region.required_features.get(package).values()) where {
+                state,
+                package,
+                relation,
+            },
+        },
+    }
+}
+
+fn scan_forbidden_features(features: [String]) where {
+    state: SolverState,
+    package: PackageId,
+    relation: RegionRelation,
+} -> RegionRelation {
+    match features.split_last() {
+        None => relation,
+        Some((feature, rest)) => {
+            let next = if !state.active.has(package) {
+                add_region_open(relation) where { next: RegionRelation::Multiple }
+            } else if (feature_set(state) where { package }).has(feature) {
+                RegionRelation::Irrelevant
+            } else if (forbidden_feature_set(state) where { package }).has(feature) {
+                relation
+            } else {
+                add_region_open(relation) where { next: RegionRelation::ForbidFeature(package, feature) }
+            };
+            scan_forbidden_features(rest) where { state, package, relation: next }
+        },
+    }
+}
+
+fn scan_forbidden_packages(packages: [PackageId]) where {
+    state: SolverState,
+    region: DeadRegion,
+    relation: RegionRelation,
+} -> RegionRelation {
+    match packages.split_last() {
+        None => relation,
+        Some((package, rest)) => scan_forbidden_packages(rest) where {
+            state,
+            region,
+            relation: scan_forbidden_features(region.forbidden_features.get(package).values()) where {
+                state,
+                package,
+                relation,
+            },
+        },
+    }
+}
+
+fn region_relation(state: SolverState) where { region: DeadRegion } -> RegionRelation {
+    let versions = scan_region_versions(region.versions.keys()) where {
+        state,
+        region,
+        relation: RegionRelation::Inside,
+    };
+    let required = scan_required_packages(region.required_features.keys()) where {
+        state,
+        region,
+        relation: versions,
+    };
+    scan_forbidden_packages(region.forbidden_features.keys()) where { state, region, relation: required }
+}
+
+fn learned_conflict(state: SolverState) where { region: DeadRegion } -> Conflict {
+    Conflict {
+        cause: ConflictCause::LearnedNoGood,
+        decisions: state.decisions,
+        region,
+        provenance: ["learned region propagation"],
+    }
+}
+
+fn forbid_feature(state: SolverState) where { package: PackageId, feature: String } -> SolverState {
+    SolverState {
+        forbidden_features: state.forbidden_features.with (
+            package,
+            (forbidden_feature_set(state) where { package }) + feature,
+        ),
+        ..state
+    }
+}
+
+fn apply_learned_region(input: SolveInput) where { state: SolverState, region: DeadRegion } -> LearnedStep {
+    match region_relation(state) where { region } {
+        RegionRelation::Irrelevant => LearnedStep::Stable,
+        RegionRelation::Multiple => LearnedStep::Stable,
+        RegionRelation::Inside => LearnedStep::Conflict(learned_conflict(state) where { region }),
+        RegionRelation::Version(package, excluded) => {
+            let remaining = subtract_version_set(input) where {
+                package,
+                left: state.domains.get(package),
+                right: excluded,
+            };
+            if remaining.is_empty() {
+                LearnedStep::Conflict(learned_conflict(state) where { region })
+            } else {
+                LearnedStep::Changed(mark_dirty(SolverState {
+                    domains: state.domains.with (package, remaining),
+                    ..state
+                }) where { package })
+            }
+        },
+        RegionRelation::RequireFeature(package, feature) => {
+            LearnedStep::Changed(forbid_feature(state) where { package, feature })
+        },
+        RegionRelation::ForbidFeature(package, feature) => {
+            LearnedStep::Changed(with_features(state) where {
+                package,
+                features: (feature_set(state) where { package }) + feature,
+            })
+        },
+    }
+}
+
+fn apply_learned_regions(input: SolveInput) where {
+    state: SolverState,
+    regions: [DeadRegion],
+} -> LearnedStep {
+    match regions.split_last() {
+        None => LearnedStep::Stable,
+        Some((region, rest)) => match apply_learned_region(input) where { state, region } {
+            LearnedStep::Stable => apply_learned_regions(input) where { state, regions: rest },
+            LearnedStep::Changed(changed) => LearnedStep::Changed(changed),
+            LearnedStep::Conflict(conflict) => LearnedStep::Conflict(conflict),
+        },
     }
 }
 
