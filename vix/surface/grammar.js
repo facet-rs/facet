@@ -137,6 +137,7 @@ module.exports = grammar({
         $.binary,
         $.unary,
         $.call,
+        $.where_call,
         $.method_call,
         $.index_expr,
         $.array_expr,
@@ -148,7 +149,9 @@ module.exports = grammar({
         $.tuple_expr,
         $.paren,
         $.identifier,
+        $.path_expr,
         $.string,
+        $.quantity,
         $.number,
         $.boolean,
       ),
@@ -158,6 +161,7 @@ module.exports = grammar({
       seq(
         "|",
         field("pattern", $._pattern),
+        repeat(seq(",", field("pattern", $._pattern))),
         optional(seq(":", field("type", $._type))),
         "|",
         field("body", $._closure_body),
@@ -202,6 +206,15 @@ module.exports = grammar({
           optional(field("named_args", $.where_args)),
         ),
       ),
+    // A subject-less named call: the callee names both its bounds through
+    // `where`, with no positional subject and no parentheses. `range where
+    // { from, to }` is the canonical instance (calling.md: "range acts on
+    // nothing, so it names both its bounds").
+    where_call: ($) =>
+      prec(
+        PREC.postfix,
+        seq(field("callee", $.identifier), field("named_args", $.where_args)),
+      ),
     field_access: ($) =>
       prec(
         PREC.postfix,
@@ -214,8 +227,13 @@ module.exports = grammar({
           field("receiver", $._expr),
           ".",
           field("name", $.identifier),
-          field("args", $.arg_list),
-          optional(field("named_args", $.where_args)),
+          choice(
+            seq(
+              field("args", $.arg_list),
+              optional(field("named_args", $.where_args)),
+            ),
+            field("named_args", $.where_args),
+          ),
         ),
       ),
     index_expr: ($) =>
@@ -269,16 +287,18 @@ module.exports = grammar({
     tuple_expr: ($) =>
       seq("(", field("elem", $._expr), ",", sepBy(",", field("elem", $._expr)), ")"),
     paren: ($) => seq("(", field("inner", $._expr), ")"),
+    path_expr: () => /p"([^"\\]|\\.)*"/,
 
     match_expr: ($) =>
       seq("match", field("scrutinee", $._expr), field("arms", $.match_arm_list)),
     match_arm_list: ($) => seq("{", sepBy(",", field("arm", $.match_arm)), "}"),
+    _match_arm_body: ($) => choice($.block, $._expr),
     match_arm: ($) =>
       seq(
         field("pattern", $._pattern),
         optional(seq("if", field("guard", $._expr))),
         "=>",
-        field("body", $._expr),
+        field("body", $._match_arm_body),
       ),
     _pattern: ($) =>
       choice(
@@ -334,6 +354,13 @@ module.exports = grammar({
 
     identifier: () => /[A-Za-z_][A-Za-z0-9_]*/,
     string: () => /"([^"\\]|\\.)*"/,
+    // A unit-bearing literal: decimal magnitude immediately followed by a unit
+    // suffix (`5s`, `256MB`). Lexed as one token so it outranks a bare `number`
+    // by longest match. It is only meaningful inside attribute argument values
+    // (e.g. `#[test { budget_wall: 5s }]`); the compiler rejects it with a typed
+    // diagnostic anywhere else. No other Vix token places digits immediately
+    // adjacent to letters, so introducing this token is lexically non-invasive.
+    quantity: () => token(seq(/[0-9]+/, /[A-Za-z]+/)),
     number: () => /[0-9]+/,
     tuple_index: () => /[0-9]+/,
     boolean: () => choice("true", "false"),

@@ -22,6 +22,13 @@ pub struct Counters {
     pub task_discards: u64,
     pub native_task_spawns: u64,
     pub interpreter_task_spawns: u64,
+    pub value_island_spawns: u64,
+    pub successful_aggregate_freezes: u64,
+    pub active_molten_selections: u64,
+    pub forced_copy_selections: u64,
+    pub framed_bytes: u64,
+    pub peak_molten_bytes: u64,
+    pub peak_molten_nodes: u64,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]

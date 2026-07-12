@@ -43,6 +43,12 @@ pub enum MachineOperation {
 pub enum RuntimeFault {
     MissingMemoStoreHandle,
     MissingConstantStoreHandle,
+    MissingValueInputStoreHandle,
+    ValueInputCardinality {
+        expected: usize,
+        actual: usize,
+    },
+    ValueInputSchemaMismatch,
     MissingDemandRecord {
         key: DemandKey,
     },
@@ -50,6 +56,12 @@ pub enum RuntimeFault {
     PureIslandYielded,
     PureIslandParked {
         input: u32,
+    },
+    /// A wire forced a demand that is already being evaluated on the demand
+    /// stack: a cyclic/re-entrant demand. The demand state machine detects it as
+    /// a typed fault rather than recursing forever.
+    ReentrantDemand {
+        key: DemandKey,
     },
     MissingFrameAttribution {
         function: FnId,
@@ -61,13 +73,14 @@ pub enum RuntimeFault {
         site: u32,
         status: weavy::task::ArrayOpStatus,
     },
+    OrderedMachineStatus {
+        site: u32,
+        status: weavy::task::OrderedOpStatus,
+    },
     LanguageFailurePending {
         site: u32,
         index: i64,
         length: i64,
-    },
-    SnapshotRender {
-        detail: String,
     },
 }
 

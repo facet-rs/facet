@@ -3,6 +3,11 @@
 Reimplement Rodin (the cargo-shaped version resolver) **entirely in vix**, as the
 only production Rodin. This file is the entry point; read it, then `docs/`.
 
+The active implementation order, Rodin-priority ratchet, gates, and copyable
+agent objective live in [`EXECUTION-PLAN.md`](EXECUTION-PLAN.md). This file and
+the numbered `docs/` define the durable doctrine; the execution plan organizes
+how the implementation reaches it without porting the superseded solver.
+
 ## Why the first plan failed (root cause)
 
 Rodin was first implemented **directly in Rust** (`rodin-core`, `rodin-facts`).
@@ -32,8 +37,8 @@ inside the machine.
 ## Doctrine (durable)
 
 - **cargo is THE and ONLY oracle.** Ground truth = `cargo tree --target`,
-  `cargo generate-lockfile` on small workspace fixtures. `rodin-core` is being
-  turned into docs, then deleted; it is not a differential target.
+  `cargo generate-lockfile` on small workspace fixtures. `rodin-core` was
+  distilled into docs and deleted; it is not a differential target.
 - **No god `Value` enum.** Values are schema-laid-out bytes (records-at-offsets,
   enums-as-tag+variants). A field is an offset read, never a parse.
 - **Content-addressing / memo / incremental are FREE.** Never hand-roll
@@ -69,12 +74,14 @@ inside the machine.
   (`solve`/`seed_problem`/`search`/`propagate`/`learn`/`install_learned_fact`/
   `widen`), the feature + cfg compilation, and the cargo-evidence harness are all
   read and distilled.
+- **The Rust reference implementation has been deleted.** Cargo is the live
+  oracle; the historical 95.6% agreement is context, not executable evidence.
 - Two invariants still flagged in-text for confirmation when implementing: the
   role of the *unclassed* identity form (10), and the exact inputs of the
   *consumption gate* (20/70). Both are answerable against cargo during the build.
-- **Next: review the distillation, then delete `rodin-core` (in vixenware), then
-  implement native from `docs/` + cargo (build order = doc numbering).** The
-  deletion is a reviewed plan step, gated on your read of `docs/`.
+- **Next: execute [`EXECUTION-PLAN.md`](EXECUTION-PLAN.md).** Advance the named
+  Rodin-priority ratchet without changing canonical score, then implement native
+  from `docs/` + Cargo once its readiness gates are green.
 - Superseded by this plan: the `VERSION_FIELD` intrinsic + string-blob `Version`,
   and the current gap-driven `rodin.vix`. Version becomes a vix value (parse a
   memoized demand); `rodin.vix` gets rewritten native. Not deleted to hide —

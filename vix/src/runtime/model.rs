@@ -62,6 +62,22 @@ pub enum FailureValue {
         recipe: RecipeId,
         site: u32,
     },
+    MissingDelimiter {
+        recipe: RecipeId,
+        site: u32,
+    },
+    InvalidInteger {
+        recipe: RecipeId,
+        site: u32,
+    },
+    IntegerOverflow {
+        recipe: RecipeId,
+        site: u32,
+    },
+    DivisionByZero {
+        recipe: RecipeId,
+        site: u32,
+    },
 }
 
 /// Context rebuilt while reporting a language failure. It is deliberately not
@@ -73,17 +89,6 @@ pub struct FailureContext {
     pub node: NodeId,
     pub span: Span,
     pub demand_chain: Vec<DemandKey>,
-}
-
-/// A structural snapshot captured by `expect_snapshot(v) where { name }`.
-///
-/// The rendering is produced by a type-directed walk of the value's structural
-/// shape — never a `Debug` impl — so it is a stable harness artifact keyed by
-/// `name`. The golden text lives with the harness that demanded the check.
-#[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
-pub struct SnapshotCapture {
-    pub name: String,
-    pub rendered: String,
 }
 
 #[derive(facet::Facet, Clone, Copy, Debug, PartialEq, Eq)]
