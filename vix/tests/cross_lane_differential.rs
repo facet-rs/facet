@@ -366,7 +366,7 @@ const CORPUS: &[Rung] = &[
     },
     Rung {
         name: "060-snapshots",
-        source: include_str!("ratchet/060-snapshots.vix"),
+        source: include_str!("ratchet/060-snapshot-record.vix"),
         reject: false,
     },
     Rung {
