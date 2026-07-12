@@ -957,6 +957,88 @@ pub struct Function {
     pub yielded_checks: Vec<NodeId>,
 }
 
+impl Function {
+    /// The parameters that are demand wires: those NOT proven to be consumed on
+    /// every reachable path from the function's output. A parameter absent from
+    /// this set is strict — its consumption is proven on every path — and the
+    /// compiler may evaluate its argument eagerly as a strictness optimization of
+    /// call-by-need semantics. This is a pure, conservative property of the
+    /// function body, independent of any trace descriptor: a parameter is a wire
+    /// unless every reachable return path consumes it.
+    ///
+    /// `pick(flag) where { a, b } -> if flag { a } else { b }` classifies `a` and
+    /// `b` as wires (each consumed on only one branch) and `flag` as strict;
+    /// `add(a) where { b } -> a + b` classifies both as strict.
+    #[must_use]
+    pub fn wire_parameters(&self) -> BTreeSet<ParameterId> {
+        let Some(output) = self.output else {
+            return BTreeSet::new();
+        };
+        let mut cache = BTreeMap::new();
+        let always = self.always_consumed(output, &mut cache);
+        self.parameters
+            .iter()
+            .filter(|parameter| !always.contains(&parameter.node))
+            .map(|parameter| parameter.id)
+            .collect()
+    }
+
+    /// The parameter nodes consumed on every path when evaluating `node`. A
+    /// node's own inputs are always evaluated before it; a branch contributes
+    /// only what all of its arms share, because only one arm is taken.
+    fn always_consumed(
+        &self,
+        node: NodeId,
+        cache: &mut BTreeMap<NodeId, BTreeSet<NodeId>>,
+    ) -> BTreeSet<NodeId> {
+        if let Some(cached) = cache.get(&node) {
+            return cached.clone();
+        }
+        // A VIR function body is acyclic; the placeholder only guards against a
+        // malformed cycle and is overwritten with the real set below.
+        cache.insert(node, BTreeSet::new());
+        let this = &self.nodes[node.0 as usize];
+        let mut consumed = BTreeSet::new();
+        if matches!(this.op, Op::Parameter(_)) {
+            consumed.insert(node);
+        }
+        for &input in &this.inputs {
+            consumed.extend(self.always_consumed(input, cache));
+        }
+        match &this.op {
+            Op::If {
+                consequent,
+                alternative,
+            } => {
+                let taken = self.always_consumed(consequent.output, cache);
+                let untaken = self.always_consumed(alternative.output, cache);
+                consumed.extend(taken.intersection(&untaken).copied());
+            }
+            Op::Match { arms } => {
+                if let Some((first, rest)) = arms.split_first() {
+                    let mut shared = self.always_consumed(first.output, cache);
+                    for arm in rest {
+                        let arm_consumed = self.always_consumed(arm.output, cache);
+                        shared = shared.intersection(&arm_consumed).copied().collect();
+                    }
+                    consumed.extend(shared);
+                }
+            }
+            Op::OrderedMatch { arms, fallback } => {
+                let mut shared = self.always_consumed(fallback.output, cache);
+                for arm in arms {
+                    let body = self.always_consumed(arm.body.output, cache);
+                    shared = shared.intersection(&body).copied().collect();
+                }
+                consumed.extend(shared);
+            }
+            _ => {}
+        }
+        cache.insert(node, consumed.clone());
+        consumed
+    }
+}
+
 #[derive(facet::Facet, Clone, Debug, PartialEq, Eq)]
 pub struct Test {
     pub name: String,
