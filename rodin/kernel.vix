@@ -90,7 +90,7 @@ struct TargetFacts {
 struct SolvePolicy {
     consume_build: Bool,
     consume_dev: Bool,
-    mutually_exclusive_features: Map<PackageId, Set<Set<String>>>,
+    mutually_exclusive_features: Map<PackageId, [Set<String>]>,
 }
 
 struct SolveInput {
