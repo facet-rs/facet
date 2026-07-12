@@ -39,6 +39,11 @@ const RUNG_041: &str = include_str!("ratchet/041-maps.vix");
 const RUNG_042: &str = include_str!("ratchet/042-map-overwrite.vix");
 const RUNG_043: &str = include_str!("ratchet/043-map-keys-canonical.vix");
 const RUNG_044: &str = include_str!("ratchet/044-sets.vix");
+const RUNG_062: &str = include_str!("ratchet/062-json-decode.vix");
+const RUNG_063: &str = include_str!("ratchet/063-toml-decode.vix");
+const RUNG_064: &str = include_str!("ratchet/064-decode-optional.vix");
+const RUNG_065: &str = include_str!("ratchet/065-decode-enum-forms.vix");
+const RUNG_066: &str = include_str!("ratchet/066-decode-failure.vix");
 const RUNG_144: &str = include_str!("ratchet/144-unused-collection-result.warn.vix");
 const RUNG_145: &str = include_str!("ratchet/145-push.reject.vix");
 const RUNG_146: &str = include_str!("ratchet/146-insert.reject.vix");
@@ -3012,4 +3017,63 @@ fn assert_contiguous_sequences(events: &[vix::runtime::Event]) {
     assert!(events.iter().enumerate().all(|(index, event)| {
         event.sequence == u64::try_from(index).expect("event count fits u64")
     }));
+}
+
+/// Rung 062 is the first typed-decode rung: `let row: PkgRow = json_decode(...)`.
+///
+/// Its foundation gate (FOUNDATION.md, "To score past 066") is typed decode
+/// through the doc-parse primitive — one host call per document, typed store
+/// values out, no Doc-walking on hot paths. The production path has no decode
+/// intrinsic yet, so the checker resolves the `json_decode(...)` call to the
+/// rung's own `#[test] fn json_decode` and rejects it: the exact typed red
+/// boundary this lane advances from. When the decode intrinsic lands, decode
+/// is recognized structurally (type-directed by the `let`-annotated target)
+/// and shadows the same-named test function, so this certificate is promoted
+/// to a `run_source` green assertion.
+#[test]
+fn rung_062_typed_decode_is_red_pending_the_doc_parse_primitive() {
+    let diagnostics = Compiler::new()
+        .compile(RUNG_062)
+        .expect_err("json_decode is not yet a recognized type-directed decode intrinsic");
+    assert_eq!(diagnostics.entries.len(), 1);
+    assert_eq!(
+        diagnostics.entries[0].code,
+        DiagnosticCode::UnsupportedExpression
+    );
+    assert_eq!(diagnostics.entries[0].message(), "calling a test function");
+}
+
+/// The remaining typed-decode rungs and their exact code-grounded seams, kept
+/// red until the shared decode substrate reaches each one. 063 shares 062's
+/// name-collision boundary (`toml_decode`); 064 stops at the unresolved
+/// `json_decode` name (no same-named test function); 065 and 066 stop earlier,
+/// in the surface grammar (string-or-table match arms; the `try_json_decode<T>`
+/// turbofish the `call` production does not admit).
+#[test]
+fn typed_decode_063_to_066_red_boundaries() {
+    let toml = Compiler::new()
+        .compile(RUNG_063)
+        .expect_err("toml_decode is not yet a recognized decode intrinsic");
+    assert_eq!(toml.entries.len(), 1);
+    assert_eq!(toml.entries[0].code, DiagnosticCode::UnsupportedExpression);
+    assert_eq!(toml.entries[0].message(), "calling a test function");
+
+    let optional = Compiler::new()
+        .compile(RUNG_064)
+        .expect_err("json_decode is not yet a recognized decode intrinsic");
+    assert_eq!(optional.entries.len(), 1);
+    assert_eq!(optional.entries[0].code, DiagnosticCode::UnknownName);
+    assert_eq!(optional.entries[0].message(), "json_decode");
+
+    let enum_forms = Compiler::new()
+        .compile(RUNG_065)
+        .expect_err("string-or-table match arms do not parse yet");
+    assert_eq!(enum_forms.entries.len(), 1);
+    assert_eq!(enum_forms.entries[0].code, DiagnosticCode::ParseRejected);
+
+    let failure = Compiler::new()
+        .compile(RUNG_066)
+        .expect_err("the try_json_decode<T> turbofish does not parse yet");
+    assert_eq!(failure.entries.len(), 1);
+    assert_eq!(failure.entries[0].code, DiagnosticCode::ParseRejected);
 }
