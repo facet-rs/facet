@@ -22,6 +22,9 @@ facet-value = { path = "../facet-value", default-features = false, features = ["
 exec-protocol = { path = "../exec-protocol", optional = true }
 hex.workspace = true
 blake3.workspace = true
+# Cross-process resident-set observation for the outer budget runner. Only the
+# unix RSS readers use it, behind typed cfg boundaries.
+libc.workspace = true
 miniz_oxide = { version = "0.8.9", default-features = false, features = ["with-alloc"] }
 object.workspace = true
 phon = { path = "../phon/rust/phon" }
@@ -50,5 +53,9 @@ tempfile = { workspace = true, optional = true }
 # The graph demand engine's driver uses only core::future (vix stays
 # wasm-clean); tokio is DEV-only, an executor + timers for the demand tests.
 [dev-dependencies]
+# The live-Cargo oracle harness (tests/rodin_fixtures.rs) reads `cargo metadata`
+# and parses it with facet-json — no serde. facet/facet-json/semver are already
+# normal deps and are nameable from integration tests, so no extra dev-dep is
+# needed for it.
 tokio = { version = "1", features = ["rt-multi-thread", "macros", "net", "time"] }
 weavy = { path = "../weavy" }
