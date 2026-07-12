@@ -92,7 +92,7 @@ pub struct ValueConstant {
 pub struct ValueInputBinding {
     pub value: ValueIslandId,
     pub entry: usize,
-    pub schema: WeavySchemaRef,
+    pub schema: Option<WeavySchemaRef>,
     pub store_schema: SchemaId,
     pub payload_element_schema: Option<WeavySchemaRef>,
     pub ty: Type,
@@ -626,20 +626,10 @@ fn bind_value_inputs(
             let region = &contract.functions[0].frame.regions[region.0 as usize];
             let schema = match region.shape.words.as_slice() {
                 [kinds] => match kinds.as_slice() {
-                    [WeavyWordKind::Handle(schema)] => *schema,
-                    _ => {
-                        return Err(lowering_diagnostic(
-                            span,
-                            "shared value parameter is not a typed handle entry",
-                        ));
-                    }
+                    [WeavyWordKind::Handle(schema)] => Some(*schema),
+                    _ => None,
                 },
-                _ => {
-                    return Err(lowering_diagnostic(
-                        span,
-                        "shared value parameter is not a one-word handle entry",
-                    ));
-                }
+                _ => None,
             };
             Ok(ValueInputBinding {
                 value: *value,

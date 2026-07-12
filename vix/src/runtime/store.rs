@@ -211,15 +211,6 @@ impl Store {
         StoreHandle::new(handle.0 as usize)
     }
 
-    /// Lend Weavy a non-owning memory table for the duration of one drive.
-    /// Resident bodies stay borrowed from the store and are never cloned.
-    pub(crate) fn with_value_memories<R>(
-        &self,
-        use_memories: impl FnOnce(ValueMemories<'_>) -> R,
-    ) -> R {
-        self.with_value_memory_overrides(&[], use_memories)
-    }
-
     /// Lend store memory with invocation-local ABI views for published values.
     /// Overrides alter only the verified consumer's schema witness bytes; the
     /// store's canonical resident body and semantic identity remain unchanged.

@@ -381,7 +381,18 @@ impl<S: EventSink> Runtime<S> {
                             error,
                         )));
                     };
-                    task.write_entry_store_handle(binding.entry, binding.schema, handle)
+                    task.write_entry_store_handle(
+                        binding.entry,
+                        binding.schema.ok_or_else(|| {
+                            Box::new(MachineError::runtime(
+                                MachineOperation::EntryBinding,
+                                RuntimeFault::ValueInputSchemaMismatch,
+                                None,
+                                Some(lowered.demand_key),
+                            ))
+                        })?,
+                        handle,
+                    )
                 };
                 if let Err(fault) = result {
                     let error = self.task_fault(
@@ -758,9 +769,13 @@ impl<S: EventSink> Runtime<S> {
         island: IslandId,
         lowered: &LoweringArtifact,
         attribution: &LoweringAttribution,
+        arguments: &[Evaluation],
         chaos: ChaosPolicy,
     ) -> Result<GeneratorOutcome, Box<MachineError>> {
-        let invocation = DemandExecution::new(lowered, Vec::new());
+        let invocation = DemandExecution::new(
+            lowered,
+            arguments.iter().map(|argument| argument.identity).collect(),
+        );
         let lowered = &invocation;
         self.emit(EventKind::Demanded {
             key: lowered.demand_key,
@@ -778,6 +793,30 @@ impl<S: EventSink> Runtime<S> {
             from: DemandState::Absent,
             to: DemandState::Queued,
         });
+        if lowered.value_inputs.len() != arguments.len() {
+            return Err(Box::new(MachineError::runtime(
+                MachineOperation::EntryBinding,
+                RuntimeFault::ValueInputCardinality {
+                    expected: lowered.value_inputs.len(),
+                    actual: arguments.len(),
+                },
+                None,
+                Some(lowered.demand_key),
+            )));
+        }
+        if let Some(argument) = arguments.iter().find(|argument| argument.failure.is_some()) {
+            return Ok(GeneratorOutcome::LanguageFailure {
+                failure: Box::new(argument.failure.clone().expect("failed argument")),
+                context: self
+                    .output_attribution(lowered.artifact, attribution)
+                    .map(|source| FailureContext {
+                        function: source.function,
+                        node: source.node,
+                        span: source.span,
+                        demand_chain: vec![lowered.demand_key],
+                    }),
+            });
+        }
         let constants = self.materialize_constants(lowered.artifact);
         let mut kill_armed = chaos.kill_first_running_task;
         loop {
@@ -857,10 +896,104 @@ impl<S: EventSink> Runtime<S> {
                     )));
                 }
             }
-            let step = match self.store.with_value_memories(|value_memories| {
-                task.drive_hosted_with_value_memories(&mut [], &[], &mut [], value_memories)
-                    .map_err(Box::new)
-            }) {
+            for (binding, argument) in lowered.value_inputs.iter().zip(arguments) {
+                if binding.store_schema != argument.identity.schema {
+                    return Err(Box::new(MachineError::runtime(
+                        MachineOperation::EntryBinding,
+                        RuntimeFault::ValueInputSchemaMismatch,
+                        None,
+                        Some(lowered.demand_key),
+                    )));
+                }
+                let frozen = self
+                    .store
+                    .entry(argument.handle)
+                    .and_then(StoreEntry::frozen)
+                    .map(|frozen| frozen_to_weavy(frozen, &binding.ty, binding, &self.store))
+                    .transpose()
+                    .map_err(|()| {
+                        Box::new(MachineError::runtime(
+                            MachineOperation::EntryBinding,
+                            RuntimeFault::ValueInputSchemaMismatch,
+                            None,
+                            Some(lowered.demand_key),
+                        ))
+                    })?;
+                let result = if let Some(frozen) = &frozen {
+                    task.write_entry_frozen(binding.entry, frozen)
+                } else {
+                    let handle = self.store.weavy_handle(argument.handle).ok_or_else(|| {
+                        Box::new(MachineError::runtime(
+                            MachineOperation::EntryBinding,
+                            RuntimeFault::MissingValueInputStoreHandle,
+                            None,
+                            Some(lowered.demand_key),
+                        ))
+                    })?;
+                    task.write_entry_store_handle(
+                        binding.entry,
+                        binding.schema.ok_or_else(|| {
+                            Box::new(MachineError::runtime(
+                                MachineOperation::EntryBinding,
+                                RuntimeFault::ValueInputSchemaMismatch,
+                                None,
+                                Some(lowered.demand_key),
+                            ))
+                        })?,
+                        handle,
+                    )
+                };
+                if let Err(fault) = result {
+                    let error = self.task_fault(
+                        MachineOperation::EntryBinding,
+                        fault,
+                        lowered,
+                        attribution,
+                        None,
+                    );
+                    return Err(Box::new(self.terminate_machine_fault(
+                        task_id,
+                        lowered.demand_key,
+                        error,
+                    )));
+                }
+            }
+            let mut value_memory_overrides = Vec::new();
+            for (binding, argument) in lowered.value_inputs.iter().zip(arguments) {
+                let Some(element_schema) = binding.payload_element_schema else {
+                    continue;
+                };
+                let resident = self
+                    .store
+                    .entry(argument.handle)
+                    .and_then(StoreEntry::resident_bytes)
+                    .ok_or_else(|| {
+                        Box::new(MachineError::runtime(
+                            MachineOperation::EntryBinding,
+                            RuntimeFault::MissingValueInputStoreHandle,
+                            None,
+                            Some(lowered.demand_key),
+                        ))
+                    })?;
+                let mut abi_view = resident.to_vec();
+                let schema_bytes = abi_view.get_mut(8..16).ok_or_else(|| {
+                    Box::new(MachineError::runtime(
+                        MachineOperation::EntryBinding,
+                        RuntimeFault::ValueInputSchemaMismatch,
+                        None,
+                        Some(lowered.demand_key),
+                    ))
+                })?;
+                schema_bytes.copy_from_slice(&i64::from(element_schema.0).to_le_bytes());
+                value_memory_overrides.push((argument.handle, abi_view));
+            }
+            let step = match self.store.with_value_memory_overrides(
+                &value_memory_overrides,
+                |value_memories| {
+                    task.drive_hosted_with_value_memories(&mut [], &[], &mut [], value_memories)
+                        .map_err(Box::new)
+                },
+            ) {
                 Ok(step) => step,
                 Err(fault) => {
                     let error = self.task_fault(

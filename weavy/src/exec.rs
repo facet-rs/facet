@@ -888,7 +888,7 @@ impl Executable {
         let function = self.function(entry)?;
         for (index, region) in function.entries.iter().copied().enumerate() {
             let region_contract = &function.frame.regions[region.0 as usize];
-            if region_contract.value_shape.is_some() || entry_word_kind(region_contract).is_none() {
+            if region_contract.value_shape.is_none() && entry_word_kind(region_contract).is_none() {
                 return Err(TaskFault::InvalidEntryShape {
                     entry,
                     index,
