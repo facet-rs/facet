@@ -798,6 +798,18 @@ impl<S: EventSink> Runtime<S> {
                         },
                     );
                 }
+                Ok(DecodedResult::IntDivisionByZero { site }) => {
+                    return self.complete_language_failure(
+                        task_id,
+                        location,
+                        lowered,
+                        attribution,
+                        FailureValue::DivisionByZero {
+                            recipe: lowered.recipe,
+                            site,
+                        },
+                    );
+                }
                 Err(fault) => {
                     let fallback = result_shape_attribution(
                         &fault,
@@ -1267,6 +1279,18 @@ impl<S: EventSink> Runtime<S> {
                 }
                 Ok(DecodedResult::IntegerOverflow { site }) => {
                     let failure = FailureValue::IntegerOverflow {
+                        recipe: lowered.recipe,
+                        site,
+                    };
+                    return self.complete_generator_language_failure(
+                        task_id,
+                        lowered,
+                        attribution,
+                        failure,
+                    );
+                }
+                Ok(DecodedResult::IntDivisionByZero { site }) => {
+                    let failure = FailureValue::DivisionByZero {
                         recipe: lowered.recipe,
                         site,
                     };
@@ -2356,6 +2380,7 @@ fn failure_context(
         | FailureValue::MissingDelimiter { recipe, site }
         | FailureValue::InvalidInteger { recipe, site }
         | FailureValue::IntegerOverflow { recipe, site }
+        | FailureValue::DivisionByZero { recipe, site }
             if *recipe == lowered.recipe =>
         {
             let source = attribution.source_for_trace(*site)?;
@@ -2371,7 +2396,8 @@ fn failure_context(
         | FailureValue::DuplicateKey { .. }
         | FailureValue::MissingDelimiter { .. }
         | FailureValue::InvalidInteger { .. }
-        | FailureValue::IntegerOverflow { .. } => None,
+        | FailureValue::IntegerOverflow { .. }
+        | FailureValue::DivisionByZero { .. } => None,
     }
 }
 
@@ -2401,6 +2427,9 @@ enum DecodedResult {
         site: u32,
     },
     IntegerOverflow {
+        site: u32,
+    },
+    IntDivisionByZero {
         site: u32,
     },
     ArrayMachine {
@@ -2524,6 +2553,16 @@ fn decode_result(
         } else {
             DecodedResult::IntegerOverflow { site }
         });
+    }
+    if selector == abi.int_division_by_zero_variant {
+        let site = u32::try_from(result.enum_scalar_field(selector, 0)?).map_err(|_| {
+            Box::new(TaskFault::InvalidResultShape {
+                entry: FnId(0),
+                region: lowered.executable().program().contract().functions[0].result,
+                size: 0,
+            })
+        })?;
+        return Ok(DecodedResult::IntDivisionByZero { site });
     }
     Err(Box::new(TaskFault::InvalidResultShape {
         entry: FnId(0),

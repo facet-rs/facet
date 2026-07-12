@@ -296,13 +296,15 @@ fn failure_node(failure: &FailureValue) -> FramedNode {
         | FailureValue::DuplicateKey { recipe, site }
         | FailureValue::MissingDelimiter { recipe, site }
         | FailureValue::InvalidInteger { recipe, site }
-        | FailureValue::IntegerOverflow { recipe, site } => {
+        | FailureValue::IntegerOverflow { recipe, site }
+        | FailureValue::DivisionByZero { recipe, site } => {
             let tag = match failure {
                 FailureValue::MissingKey { .. } => 2,
                 FailureValue::DuplicateKey { .. } => 3,
                 FailureValue::MissingDelimiter { .. } => 4,
                 FailureValue::InvalidInteger { .. } => 5,
                 FailureValue::IntegerOverflow { .. } => 6,
+                FailureValue::DivisionByZero { .. } => 7,
                 FailureValue::IndexOutOfBounds { .. } => unreachable!("matched above"),
             };
             FramedNode::Variant {
