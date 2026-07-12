@@ -581,6 +581,12 @@ pub(crate) struct OrderedIterateStep {
     pub row: Vec<u8>,
 }
 
+#[derive(Clone, Copy)]
+pub(crate) struct OrderedRowRef<'a> {
+    pub key: &'a [u8],
+    pub value: Option<&'a [u8]>,
+}
+
 /// Map a cursor consumption error onto the closed [`OrderedOpStatus`] ABI.
 fn ordered_consume_status(err: OrderedCursorError) -> OrderedOpStatus {
     match err {
@@ -591,9 +597,13 @@ fn ordered_consume_status(err: OrderedCursorError) -> OrderedOpStatus {
     }
 }
 
-/// The canonical empty ordered-collection root handle: it names no arena node.
-/// Any `n >= 1` names arena node `n - 1`.
-pub(crate) const ORDERED_EMPTY_HANDLE: i64 = 0;
+/// The canonical empty ordered-collection root lives in its own task-private
+/// negative namespace. Frozen store handles remain nonnegative, dense molten
+/// buffers occupy the low negative quarter, and externally lent values occupy
+/// the high negative quarter.
+pub(crate) const ORDERED_EMPTY_HANDLE: i64 = i64::MIN / 2;
+const ORDERED_FIRST_HANDLE: i64 = ORDERED_EMPTY_HANDLE + 1;
+const ORDERED_HANDLE_LIMIT: i64 = i64::MIN / 4;
 
 /// Poison written to a cursor's index word when a begin operation fails, so a
 /// failed cursor never aliases a live arena cursor index.
@@ -660,10 +670,48 @@ struct MoltenBuffer {
 }
 
 impl MoltenArena {
+    pub(crate) fn import_opaque(&mut self, bytes: &[u8]) -> Result<i64, ArrayOpStatus> {
+        let handle = task_molten_handle(self.buffers.len()).ok_or(ArrayOpStatus::Overflow)?;
+        self.buffers
+            .try_reserve_exact(1)
+            .map_err(|_| ArrayOpStatus::AllocationFailed)?;
+        self.buffers.push(MoltenBuffer {
+            bytes: bytes.to_vec(),
+            initialized: Vec::new(),
+        });
+        Ok(handle)
+    }
+
+    pub(crate) fn import_ordered(
+        &mut self,
+        schema: i64,
+        rows: &[(Vec<u8>, Option<Vec<u8>>)],
+    ) -> Result<i64, OrderedOpStatus> {
+        fn build(
+            arena: &mut MoltenArena,
+            schema: i64,
+            rows: &[(Vec<u8>, Option<Vec<u8>>)],
+        ) -> Result<Option<usize>, OrderedOpStatus> {
+            let Some((middle, row)) = rows.split_at(rows.len() / 2).1.split_first() else {
+                return Ok(None);
+            };
+            let left = build(arena, schema, &rows[..rows.len() / 2])?;
+            let right = build(arena, schema, row)?;
+            arena
+                .alloc_ordered_node(schema, middle.0.clone(), middle.1.clone(), left, right)
+                .map(Some)
+                .map_err(|_| OrderedOpStatus::AllocationFailed)
+        }
+
+        let root = build(self, schema, rows)?;
+        Ok(Self::ordered_child_handle(root))
+    }
+
     pub(crate) fn resolve_handle(&self, handle: i64) -> Option<ResolvedHandle<'_>> {
         match classify_handle(handle)? {
             HandleKind::Store(index) => Some(ResolvedHandle::Store(index)),
             HandleKind::TaskMolten(_) => Some(ResolvedHandle::TaskMolten(self.bytes(handle)?)),
+            HandleKind::OrderedRoot => None,
             HandleKind::LentMolten(index) => Some(ResolvedHandle::LentMolten(index)),
         }
     }
@@ -837,13 +885,17 @@ impl MoltenArena {
     }
 
     /// Decode an ordered-collection root handle into an arena node index.
-    /// [`ORDERED_EMPTY_HANDLE`] is the canonical empty root (no node); any
-    /// `n >= 1` names node `n - 1`, bounds-checked against the node arena.
+    /// [`ORDERED_EMPTY_HANDLE`] is the canonical empty root (no node); every
+    /// other valid root is decoded only inside the ordered task namespace.
     fn ordered_root(&self, collection: i64) -> Result<Option<usize>, OrderedOpStatus> {
         if collection == ORDERED_EMPTY_HANDLE {
             return Ok(None);
         }
-        let index = usize::try_from(collection - 1).map_err(|_| OrderedOpStatus::InvalidHandle)?;
+        if !(ORDERED_FIRST_HANDLE..ORDERED_HANDLE_LIMIT).contains(&collection) {
+            return Err(OrderedOpStatus::InvalidHandle);
+        }
+        let index = usize::try_from(collection - ORDERED_FIRST_HANDLE)
+            .map_err(|_| OrderedOpStatus::InvalidHandle)?;
         if index >= self.ordered_nodes.len() {
             return Err(OrderedOpStatus::InvalidHandle);
         }
@@ -910,10 +962,46 @@ impl MoltenArena {
         i64::try_from(self.ordered_len_at(root)).map_err(|_| OrderedOpStatus::AllocationFailed)
     }
 
+    pub(crate) fn ordered_rows(
+        &self,
+        collection: i64,
+        schema: i64,
+    ) -> Result<Vec<OrderedRowRef<'_>>, OrderedOpStatus> {
+        let root = self.ordered_root(collection)?;
+        let mut rows = Vec::with_capacity(self.ordered_len_at(root));
+        let mut stack = Vec::new();
+        let mut current = root;
+        loop {
+            while let Some(index) = current {
+                let node = self
+                    .ordered_nodes
+                    .get(index)
+                    .ok_or(OrderedOpStatus::InvalidHandle)?;
+                if node.schema != schema {
+                    return Err(OrderedOpStatus::SchemaMismatch);
+                }
+                stack.push(index);
+                current = node.left;
+            }
+            let Some(index) = stack.pop() else {
+                break;
+            };
+            let node = &self.ordered_nodes[index];
+            rows.push(OrderedRowRef {
+                key: &node.key,
+                value: node.value.as_deref(),
+            });
+            current = node.right;
+        }
+        Ok(rows)
+    }
+
     /// Encode an arena node child into the collection handle the bytecode
     /// descends into: absent children are the canonical empty collection.
     fn ordered_child_handle(child: Option<usize>) -> i64 {
-        child.map_or(ORDERED_EMPTY_HANDLE, |index| index as i64 + 1)
+        child.map_or(ORDERED_EMPTY_HANDLE, |index| {
+            ORDERED_FIRST_HANDLE + index as i64
+        })
     }
 
     /// Consume a single-use Probe cursor and resolve one probe step: whether it
@@ -1490,13 +1578,15 @@ impl MoltenArena {
 enum HandleKind {
     Store(usize),
     TaskMolten(usize),
+    OrderedRoot,
     LentMolten(usize),
 }
 
 const TASK_MOLTEN_BASE: i64 = i64::MIN;
 pub const ARRAY_POISON_HANDLE: i64 = TASK_MOLTEN_BASE;
 const TASK_MOLTEN_FIRST: i64 = TASK_MOLTEN_BASE + 1;
-const LENT_MOLTEN_MIN: i64 = i64::MIN / 2;
+const TASK_MOLTEN_LIMIT: i64 = ORDERED_EMPTY_HANDLE;
+const LENT_MOLTEN_MIN: i64 = ORDERED_HANDLE_LIMIT;
 
 const ARRAY_WORDS_TAG: i64 = 0;
 const ARRAY_ELEMENTS_TAG: i64 = 1;
@@ -1506,14 +1596,14 @@ const ARRAY_ELEMENTS_HEADER_SIZE: usize = 32;
 fn task_molten_handle(index: usize) -> Option<i64> {
     let index = i64::try_from(index).ok()?;
     let handle = TASK_MOLTEN_FIRST.checked_add(index)?;
-    if handle >= LENT_MOLTEN_MIN {
+    if handle >= TASK_MOLTEN_LIMIT {
         return None;
     }
     Some(handle)
 }
 
 fn task_molten_index(handle: i64) -> Option<usize> {
-    if (TASK_MOLTEN_FIRST..LENT_MOLTEN_MIN).contains(&handle) {
+    if (TASK_MOLTEN_FIRST..TASK_MOLTEN_LIMIT).contains(&handle) {
         usize::try_from(handle.checked_sub(TASK_MOLTEN_FIRST)?).ok()
     } else {
         None
@@ -1534,6 +1624,9 @@ fn classify_handle(handle: i64) -> Option<HandleKind> {
     }
     if let Some(index) = task_molten_index(handle) {
         return Some(HandleKind::TaskMolten(index));
+    }
+    if (ORDERED_EMPTY_HANDLE..ORDERED_HANDLE_LIMIT).contains(&handle) {
+        return Some(HandleKind::OrderedRoot);
     }
     if let Some(index) = lent_molten_index(handle) {
         return Some(HandleKind::LentMolten(index));
@@ -3067,6 +3160,12 @@ impl Task {
         write_i64_at(&mut self.arena, base + offset as usize, value);
     }
 
+    pub(crate) fn write_bytes(&mut self, offset: u32, bytes: &[u8]) {
+        let base = self.frames.last().expect("live frame").base;
+        let at = base + offset as usize;
+        self.arena[at..at + bytes.len()].copy_from_slice(bytes);
+    }
+
     /// Read an i64 from the task result (root return bytes).
     #[must_use]
     pub fn result_i64(&self) -> i64 {
@@ -3081,6 +3180,10 @@ impl Task {
 
     pub(crate) fn molten(&self) -> &MoltenArena {
         &self.molten
+    }
+
+    pub(crate) fn molten_mut(&mut self) -> &mut MoltenArena {
+        &mut self.molten
     }
 
     fn alloc_frame(&mut self, layout: Layout) -> usize {
@@ -4483,6 +4586,7 @@ fn handle_bytes<'a>(
 ) -> Result<&'a [u8], ArrayOpStatus> {
     match classify_handle(handle).ok_or(ArrayOpStatus::InvalidHandle)? {
         HandleKind::TaskMolten(_) => molten.bytes(handle).ok_or(ArrayOpStatus::InvalidHandle),
+        HandleKind::OrderedRoot => Err(ArrayOpStatus::InvalidHandle),
         HandleKind::LentMolten(index) => value_memories.molten(index),
         HandleKind::Store(index) => value_memories.store(index),
     }
@@ -4506,6 +4610,7 @@ fn handle_payload<'a>(
                 initialized: Some(&buffer.initialized),
             })
         }
+        HandleKind::OrderedRoot => Err(ArrayOpStatus::InvalidHandle),
         HandleKind::LentMolten(index) => Ok(ResidentPayload {
             bytes: value_memories.molten(index)?,
             initialized: None,

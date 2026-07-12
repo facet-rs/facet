@@ -95,6 +95,8 @@ pub struct ValueInputBinding {
     pub schema: WeavySchemaRef,
     pub store_schema: SchemaId,
     pub payload_element_schema: Option<WeavySchemaRef>,
+    pub ty: Type,
+    pub publication_schemas: Vec<(Type, WeavySchemaRef)>,
 }
 
 /// The internal result ABI carried by every function in an array-bearing
@@ -194,6 +196,7 @@ pub struct LoweringArtifact {
     pub output_type: Type,
     pub output_schema: SchemaId,
     pub forced_copy_value: bool,
+    pub publishes_value: bool,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -244,6 +247,7 @@ impl LoweringArtifact {
             output_type: self.output_type.clone(),
             output_schema: self.output_schema,
             forced_copy_value: self.forced_copy_value,
+            publishes_value: self.publishes_value,
         }
     }
 
@@ -408,7 +412,9 @@ fn lower_island(
         }
     } else if island.purpose == IslandPurpose::Check && output.ty != Type::Check {
         return Err(lowering_diagnostic(output.span, "island output is not a Check").into());
-    } else if island.purpose == IslandPurpose::Value && !matches!(output.ty, Type::Array(_)) {
+    } else if island.purpose == IslandPurpose::Value
+        && !publication_capability_registered(&output.ty)
+    {
         return Err(lowering_diagnostic(
             output.span,
             "value-island output lacks a registered publication capability",
@@ -557,7 +563,38 @@ fn lower_island(
         output_type: output.ty.clone(),
         output_schema: semantic_schema_id(&output.ty),
         forced_copy_value: island.forced_copy_value,
+        publishes_value: island.purpose == IslandPurpose::Value,
     })
+}
+
+fn publication_capability_registered(ty: &Type) -> bool {
+    match ty {
+        Type::Bool | Type::Int | Type::Check | Type::String | Type::Path => true,
+        Type::Array(element) | Type::Set(element) => publication_capability_registered(element),
+        Type::Map { key, value } => {
+            publication_capability_registered(key) && publication_capability_registered(value)
+        }
+        Type::Tuple(elements) => elements.iter().all(publication_capability_registered),
+        Type::Record(record) => record
+            .fields
+            .iter()
+            .all(|field| publication_capability_registered(&field.ty)),
+        Type::Enum(enumeration) => {
+            enumeration
+                .variants
+                .iter()
+                .all(|variant| match &variant.payload {
+                    VariantPayload::Unit => true,
+                    VariantPayload::Tuple(elements) => {
+                        elements.iter().all(publication_capability_registered)
+                    }
+                    VariantPayload::Record(fields) => fields
+                        .iter()
+                        .all(|field| publication_capability_registered(&field.ty)),
+                })
+        }
+        Type::Function { .. } | Type::StreamCheck | Type::Stream { .. } | Type::Order(_) => false,
+    }
 }
 
 fn semantic_schema_id(ty: &Type) -> SchemaId {
@@ -613,8 +650,75 @@ fn bind_value_inputs(
                     Type::Array(element) => Some(schemas.schema_for(element, span)?),
                     _ => None,
                 },
+                ty: parameter.ty.clone(),
+                publication_schemas: publication_schemas(&parameter.ty, schemas, span)?,
             })
         })
+        .collect()
+}
+
+fn publication_schemas(
+    ty: &Type,
+    schemas: &SchemaAssignments,
+    span: Span,
+) -> Result<Vec<(Type, WeavySchemaRef)>, Diagnostics> {
+    fn collect<'a>(ty: &'a Type, out: &mut Vec<&'a Type>) {
+        if matches!(
+            ty,
+            Type::String | Type::Path | Type::Array(_) | Type::Map { .. } | Type::Set(_)
+        ) {
+            out.push(ty);
+        }
+        match ty {
+            Type::Array(element) | Type::Set(element) => collect(element, out),
+            Type::Map { key, value } => {
+                collect(key, out);
+                collect(value, out);
+            }
+            Type::Tuple(elements) => {
+                for element in elements {
+                    collect(element, out);
+                }
+            }
+            Type::Record(record) => {
+                for field in &record.fields {
+                    collect(&field.ty, out);
+                }
+            }
+            Type::Enum(enumeration) => {
+                for variant in &enumeration.variants {
+                    match &variant.payload {
+                        VariantPayload::Unit => {}
+                        VariantPayload::Tuple(elements) => {
+                            for element in elements {
+                                collect(element, out);
+                            }
+                        }
+                        VariantPayload::Record(fields) => {
+                            for field in fields {
+                                collect(&field.ty, out);
+                            }
+                        }
+                    }
+                }
+            }
+            Type::Bool
+            | Type::Int
+            | Type::Check
+            | Type::String
+            | Type::Path
+            | Type::Function { .. }
+            | Type::StreamCheck
+            | Type::Stream { .. }
+            | Type::Order(_) => {}
+        }
+    }
+
+    let mut types = Vec::new();
+    collect(ty, &mut types);
+    types
+        .into_iter()
+        .map(|ty| Ok((ty.clone(), schemas.schema_for(ty, span)?)))
         .collect()
 }
 

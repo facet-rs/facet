@@ -1191,18 +1191,6 @@ impl Module {
             function: function.id,
             node: node.id,
         });
-        if let Some(node) = shared
-            .iter()
-            .find(|node| matches!(node.ty, Type::Map { .. } | Type::Set(_)))
-        {
-            return Err(Diagnostics::one(Diagnostic::unsupported(
-                node.span,
-                format!(
-                    "shared {} publication requires the ordered rung-138 freeze capability",
-                    node.ty.name()
-                ),
-            )));
-        }
         let shared_ids = shared
             .iter()
             .map(|node| {
