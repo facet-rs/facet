@@ -44,6 +44,20 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v6
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.10.0
+
+      - name: Setup Node
+        uses: actions/setup-node@v6
+        with:
+          node-version: 26
+          cache: pnpm
+
+      - name: Install website dependencies
+        run: pnpm install --frozen-lockfile
+
       - name: Setup Rust toolchain
         uses: dtolnay/rust-toolchain@stable
 
