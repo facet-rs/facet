@@ -2565,12 +2565,20 @@ fn forbidden_left_region() -> DeadRegion {
 fn region_subsumption_holds() -> Bool {
     let point = exact_app_region();
     let broad = broad_app_region();
-    match (install_region([point]) where { region: broad }).split_last() {
+    let forward = install_region([point]) where { region: broad };
+    let reverse = install_region([broad]) where { region: point };
+    match forward.split_last() {
         None => false,
-        Some((installed, rest)) => {
-            rest.len() == 0
-                && region_contains(installed) where { inner: point }
-                && !(region_contains(point) where { inner: installed })
+        Some((forward_region, forward_rest)) => match reverse.split_last() {
+            None => false,
+            Some((reverse_region, reverse_rest)) => {
+                forward_rest.len() == 0
+                    && reverse_rest.len() == 0
+                    && region_contains(forward_region) where { inner: point }
+                    && !(region_contains(point) where { inner: forward_region })
+                    && region_contains(forward_region) where { inner: reverse_region }
+                    && region_contains(reverse_region) where { inner: forward_region }
+            },
         },
     }
 }
@@ -2734,6 +2742,37 @@ fn native_search_order() -> Stream<Check> {
     yield expect(search_order_holds());
 }
 
+fn reordered_search_input() -> SolveInput {
+    SolveInput {
+        universe: PackageUniverse {
+            rows: %{
+                shared_package() => [shared_row()],
+                app_package() => [
+                    app_row("1.1.0") where { requirement: "=2.0.0" },
+                    app_row("1.0.0") where { requirement: "=1.0.0" },
+                ],
+            },
+        },
+        ..search_input(true)
+    }
+}
+
+fn selected_app_version(outcome: RodinOutcome) -> Option<Version> {
+    match outcome {
+        RodinOutcome::Solved(result) => Some(result.selected.get(app_package()).version),
+        RodinOutcome::Failed(_) => None,
+        RodinOutcome::Unsupported(_) => None,
+    }
+}
+
+#[test]
+fn native_determinism() -> Stream<Check> {
+    yield expect_eq(
+        selected_app_version(rodin_solve(search_input(true))),
+        selected_app_version(rodin_solve(reordered_search_input())),
+    );
+}
+
 fn prerelease_package() -> PackageId {
     PackageId {
         source: PackageSource::Path("fixture/prerelease"),
@@ -2823,6 +2862,17 @@ fn native_rodin_kernel_executes_typed_line_input() {
     assert_eq!(report.chaos.receipt_count, 0);
 }
 
+// r[verify solver.learning.no-good]
+// r[verify solver.learning.region]
+// r[verify solver.learning.point]
+// r[verify solver.learning.widen.sound]
+// r[verify solver.learning.widen.read-set]
+// r[verify solver.learning.frontier]
+// r[verify solver.learning.propagate]
+// r[verify solver.result.deterministic]
+// r[verify solver.version.prerelease]
+// r[verify solver.search.package-order]
+// r[verify solver.search.restart]
 #[test]
 fn native_rodin_kernel_backtracks_and_returns_typed_conflicts() {
     let source = format!("{STD_VERSION}\n{NATIVE_RODIN_KERNEL}\n{NATIVE_KERNEL_CONFLICT_FIXTURE}");
@@ -2839,7 +2889,7 @@ fn native_rodin_kernel_backtracks_and_returns_typed_conflicts() {
         "search/conflict certificates pass: {report:?}"
     );
     assert!(report.agrees(), "plain and chaos agree");
-    assert_eq!(report.plain.checks.len(), 14);
+    assert_eq!(report.plain.checks.len(), 15);
     for lane in [&report.plain, &report.chaos] {
         assert_eq!(lane.counters.pure_host_calls, 0);
         assert_eq!(lane.receipt_count, 0);
@@ -3159,7 +3209,7 @@ fn native_rodin_kernel_scale_keeps_one_demand_shape() {
             "verified function entries must remain linear: {profile:?}"
         );
         assert!(
-            profile.event_count <= profile.packages * 340,
+            profile.event_count <= profile.packages * 320 + 128,
             "bounded Production events must remain linear: {profile:?}"
         );
     }
@@ -3839,6 +3889,7 @@ fn native_cargo_oracles() -> Stream<Check> {
     }
 }
 
+// r[impl solver.oracle.cargo]
 fn assert_native_kernel_matches_cargo(fixture: &Fixture, workspace: &Path, triple: &str) {
     let adapter = fixture
         .native_kernel_oracle_source(workspace, triple)
@@ -3883,6 +3934,7 @@ fn assert_native_kernel_matches_cargo(fixture: &Fixture, workspace: &Path, tripl
     }
 }
 
+// r[verify solver.oracle.cargo]
 #[test]
 fn native_rodin_kernel_matches_live_cargo_line_oracles() {
     let fixture = line_fixture("native-live-cargo-line");

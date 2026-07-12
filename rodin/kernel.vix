@@ -451,6 +451,8 @@ fn without_version(rows: [PackageRow]) where { version: Version, out: [PackageRo
     }
 }
 
+// r[impl solver.result.deterministic]
+// r[impl solver.search.package-order]
 fn better_choice(candidate: Choice) where { best: Choice } -> Bool {
     candidate.candidates < best.candidates
         || (candidate.candidates == best.candidates && (candidate.package <=> best.package) == Ordering::Less)
@@ -892,18 +894,26 @@ fn exact_intervals(versions: [Version]) where { out: [Interval] } -> [Interval] 
     }
 }
 
-fn row_versions(rows: [PackageRow]) where { out: [Version] } -> [Version] {
+// r[impl solver.version.prerelease]
+fn candidate_intervals(rows: [PackageRow]) where { out: [Interval] } -> [Interval] {
     match rows.split_last() {
         None => out.sorted(),
-        Some((row, rest)) => row_versions(rest) where {
-            out: if out.contains(row.version) { out } else { out + row.version },
+        Some((row, rest)) => {
+            let interval = Interval {
+                lower: LowerBound::Inclusive(row.version),
+                upper: UpperBound::Inclusive(row.version),
+                prerelease_lines: admission_for(row.version),
+            };
+            candidate_intervals(rest) where {
+                out: if out.contains(interval) { out } else { out + interval },
+            }
         },
     }
 }
 
 fn candidate_version_set(input: SolveInput) where { package: PackageId } -> VersionSet {
     VersionSet {
-        intervals: exact_intervals(row_versions(input.universe.rows.get(package)) where { out: [] }) where { out: [] },
+        intervals: candidate_intervals(input.universe.rows.get(package)) where { out: [] },
     }
 }
 
@@ -1330,6 +1340,7 @@ fn solved_result(state: SolverState) -> SolveResult {
     SolveResult { selected: state.selected, edges: state.edges }
 }
 
+// r[impl solver.search.restart]
 fn search(input: SolveInput) where { state: SolverState } -> SearchOutcome {
     match choose_undecided(input) where { state } {
         None => SearchOutcome::Found(solved_result(state)),
@@ -1393,6 +1404,7 @@ fn try_rows(input: SolveInput) where {
     }
 }
 
+// r[depends solver.learning.reuse]
 pub fn rodin_solve(input: SolveInput) -> RodinOutcome {
     match input.unsupported {
         Some(unsupported) => RodinOutcome::Unsupported(unsupported),
