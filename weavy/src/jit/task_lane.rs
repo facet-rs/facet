@@ -1510,6 +1510,10 @@ impl JitTask {
         &self.molten
     }
 
+    pub(crate) fn molten_mut(&mut self) -> &mut crate::task::MoltenArena {
+        &mut self.molten
+    }
+
     /// Write an i64 into the CURRENT frame at `offset` — used for
     /// entry arguments before the first [`JitTask::run`], matching
     /// [`Task::write_i64`](crate::task::Task::write_i64).
@@ -1517,6 +1521,12 @@ impl JitTask {
         let base = self.frames.last().expect("live frame").base;
         let at = base + offset as usize;
         self.arena[at..at + 8].copy_from_slice(&value.to_le_bytes());
+    }
+
+    pub(crate) fn write_bytes(&mut self, offset: u32, bytes: &[u8]) {
+        let base = self.frames.last().expect("live frame").base;
+        let at = base + offset as usize;
+        self.arena[at..at + bytes.len()].copy_from_slice(bytes);
     }
 
     fn alloc_frame(&mut self, f: &CompiledFn) -> usize {

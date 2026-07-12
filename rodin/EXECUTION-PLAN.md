@@ -35,15 +35,14 @@ Cargo fixtures.
 ## Current checkpoint
 
 At the time of the latest authoritative integration checkpoint
-(`43470cd47`):
+(`3aa85ee069`):
 
 - the canonical rung prefix is green through rung 051. The merged root has the
-  same source tree as the publication branch whose full Vix run
-  `3ff216cd-bd05-4e10-96e7-f72db701f361` passed 418/418 tests. This includes the
-  unchanged budgeted rung 050, the million-element shared-publication rung 051,
-  live Cargo oracles, and the solver-readiness band through rung 091. The
-  integrated full Weavy release run
-  `8fce57b6-18d8-41e2-a206-2f1ef4f36a34` passed 228/228. Workspace all-target
+  same source tree as the ordered-publication branch whose combined Vix+Weavy
+  run `f1342822-0c91-4354-8d41-8f366af3e360` passed 647/647 tests. This includes
+  the unchanged budgeted rung 050, the million-element shared-publication rung
+  051, live Cargo oracles, and the solver-readiness band through rung 092.
+  Workspace all-target
   check, strict all-feature/all-target Clippy, formatting, and diff checks are
   green at that full-suite checkpoint; exact-root rung-050 runs are recorded
   below;
@@ -112,9 +111,11 @@ At the time of the latest authoritative integration checkpoint
   identity, duplicates, and order. Exact-root default run
   `08d025ec-8e5e-44a8-819f-46e574538413` passed all 20 range, molten, identity,
   failure, and publication checks; integrated interpreter run
-  `b11c9dbf-b56c-4a09-8241-f457a0755f37` passed the same 20. Shared Map/Set
-  publication remains a typed diagnostic until canonical ordered freeze lands
-  with rung 138; single-consumer ordered execution remains available;
+  `b11c9dbf-b56c-4a09-8241-f457a0755f37` passed the same 20. Scheduler-owned
+  realization now also freezes canonical Map/Set rows and recursively handles
+  enum, record, tuple, dense, ordered, and nested combinations. Store,
+  task-molten, ordered-root, and lent-molten namespaces remain disjoint; frozen
+  references persist semantic `ValueId`s rather than raw handles;
 - the Rodin-readiness track is continuously green through rungs 083-088.
   Ordinary Vix `std/version.vix`, prepended by the readiness harness while the
   compiler lacks an ambient prelude, defines full SemVer values and normalized
@@ -133,11 +134,13 @@ At the time of the latest authoritative integration checkpoint
   the highest viable version, retries from immutable old state, and returns
   `None` on exhaustion without a host solver or legacy evaluator. Exact-root
   default run `0fa6e1bd-4a2e-44e2-8503-f1a1a76f34f5` and interpreter run
-  `8552be41-a7cd-4cec-97d2-cd5d23898764` each passed 089-091. Rung 092 remains
-  red at the generator/check sharing boundary (required one name-level
-  `conflict_analysis` demand, observed two); rung 093 remains red pending the
-  value-level described-wire trace contract. This readiness progress does not
-  renumber the canonical prefix;
+  `8552be41-a7cd-4cec-97d2-cd5d23898764` each passed 089-091. Rung 092 is now
+  green: shared-consumer discovery includes generator control, generator islands
+  receive ordinary `value_inputs`, and generator/check demands consume the same
+  published `Option<Map<String, Version>>` identity. Exact-root run
+  `696488bf-ced4-4e2e-979d-f21f0fd7866b` proves `conflict_analysis` executes
+  once total. Rung 093 remains red pending the value-level described-wire trace
+  contract. This readiness progress does not renumber the canonical prefix;
 - the live Cargo oracle is folded at `a1be1fa6e`. One shared materialized
   workspace is queried through `cargo metadata --offline`, preserving exact
   source/name/version package identities, target-projected normal/build graph
@@ -430,7 +433,7 @@ Rung 051 lands through these forward checkpoints:
    wall/RSS watchdog and TraceCheck substrate then assert those facts in the
    unchanged canonical rung.
 
-All eight rung-051 checkpoints are folded at `43470cd47`. The molten fast path
+All eight rung-051 checkpoints are folded at `3aa85ee069`. The molten fast path
 recognizes only a single-consumption append fold and leaves every other fold on
 the semantic path. Shared value-island extraction, borrow-scoped result
 resolution, scheduler-owned framed publication, consumer arguments, failure
@@ -458,6 +461,12 @@ measured together:
 - production counters expose ordered arena growth and reuse, so the proof does
   not infer cost from a small core benchmark;
 - live molten roots and frozen store handles occupy disjoint encodings.
+
+Ordered semantic freeze and publication now satisfy the final item and the
+publication half of the second item. The unchanged rung currently stops earlier
+at one compiler prerequisite: contextual typing must carry the fold accumulator
+contract into its empty `%{}` seed. That is the exact standing rung-138 red
+boundary; the ordered runtime no longer blocks it.
 
 Forbidden implementations:
 

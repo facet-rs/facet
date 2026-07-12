@@ -35,6 +35,21 @@ pub struct StoreEntry {
     pub tier: HandleTier,
     residence: Residence,
     failure: Option<FailureValue>,
+    frozen: Option<FrozenValue>,
+}
+
+/// Scheduler-owned semantic execution representation for a published value.
+/// References are retained by `ValueId`, never by task-local or store handle.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) enum FrozenValue {
+    Inline(Vec<u8>),
+    Opaque(Vec<u8>),
+    Reference(ValueId),
+    Product(Vec<FrozenValue>),
+    Variant { tag: u32, fields: Vec<FrozenValue> },
+    DenseArray(Vec<FrozenValue>),
+    OrderedMap(Vec<(FrozenValue, FrozenValue)>),
+    OrderedSet(Vec<FrozenValue>),
 }
 
 impl StoreEntry {
@@ -49,6 +64,10 @@ impl StoreEntry {
     #[must_use]
     pub fn failure(&self) -> Option<&FailureValue> {
         self.failure.as_ref()
+    }
+
+    pub(crate) fn frozen(&self) -> Option<&FrozenValue> {
+        self.frozen.as_ref()
     }
 }
 
@@ -104,6 +123,24 @@ impl Store {
         )
     }
 
+    pub(crate) fn attach_frozen(&mut self, handle: Handle, frozen: FrozenValue) {
+        if let Some(entry) = self.entries.get_mut(handle.0 as usize)
+            && entry.frozen.is_none()
+        {
+            entry.frozen = Some(frozen);
+        }
+    }
+
+    pub(crate) fn handle_for_identity(&self, identity: ValueId) -> Option<Handle> {
+        self.by_identity
+            .get(&StoreKey {
+                schema: identity.schema,
+                tier: HandleTier::Realized,
+                content: identity.content,
+            })
+            .copied()
+    }
+
     /// Failure identities are constructed solely from typed semantic fields via
     /// start/variant/field/child roles; resident report bytes are a separate,
     /// non-identity-bearing storage concern.
@@ -149,6 +186,7 @@ impl Store {
             tier: HandleTier::Realized,
             residence,
             failure,
+            frozen: None,
         });
         self.by_identity.insert(key, handle);
         Interned {
@@ -172,15 +210,6 @@ impl Store {
     pub(crate) fn weavy_handle(&self, handle: Handle) -> Option<StoreHandle> {
         self.entry(handle)?;
         StoreHandle::new(handle.0 as usize)
-    }
-
-    /// Lend Weavy a non-owning memory table for the duration of one drive.
-    /// Resident bodies stay borrowed from the store and are never cloned.
-    pub(crate) fn with_value_memories<R>(
-        &self,
-        use_memories: impl FnOnce(ValueMemories<'_>) -> R,
-    ) -> R {
-        self.with_value_memory_overrides(&[], use_memories)
     }
 
     /// Lend store memory with invocation-local ABI views for published values.

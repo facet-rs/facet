@@ -1094,6 +1094,7 @@ pub struct ArrayMapPartition {
 pub struct PartitionedTest {
     pub name: String,
     pub values: Vec<PartitionedValue>,
+    pub generator: Option<Island>,
     /// Value-check islands, in site order. A [`PartitionedRecipe::Value`]
     /// indexes into this vector. Trace sites contribute no island.
     pub islands: Vec<Island>,
@@ -1230,7 +1231,7 @@ impl Module {
             .map(|owned| owned.site)
             .collect();
         ordered.sort_by_key(|site| site.id.0);
-        let mut consumer_sets = BTreeMap::<NodeId, BTreeSet<YieldSiteId>>::new();
+        let mut consumer_sets = BTreeMap::<NodeId, BTreeSet<PublicationConsumer>>::new();
         for site in &ordered {
             let Some(check) = site.value_check() else {
                 continue;
@@ -1239,7 +1240,23 @@ impl Module {
             let mut materializers = BTreeSet::new();
             collect_publication_materializers(function, check, &mut visited, &mut materializers);
             for dependency in materializers {
-                consumer_sets.entry(dependency).or_default().insert(site.id);
+                consumer_sets
+                    .entry(dependency)
+                    .or_default()
+                    .insert(PublicationConsumer::ValueCheck(site.id));
+            }
+        }
+        let mut generator_controls = Vec::new();
+        collect_generator_control_nodes(&test.generator, &mut generator_controls);
+        for control in generator_controls {
+            let mut visited = BTreeSet::new();
+            let mut materializers = BTreeSet::new();
+            collect_publication_materializers(function, control, &mut visited, &mut materializers);
+            for dependency in materializers {
+                consumer_sets
+                    .entry(dependency)
+                    .or_default()
+                    .insert(PublicationConsumer::GeneratorControl);
             }
         }
         let mut shared = function
@@ -1250,7 +1267,7 @@ impl Module {
                     .get(&node.id)
                     .is_some_and(|sites| sites.len() >= 2)
             })
-            .filter(|node| is_shared_publication_materializer(node))
+            .filter(|node| is_shared_publication_candidate(node))
             .collect::<Vec<_>>();
         let candidate_ids = shared.iter().map(|node| node.id).collect::<BTreeSet<_>>();
         shared.retain(|candidate| {
@@ -1268,108 +1285,20 @@ impl Module {
             function: function.id,
             node: node.id,
         });
-        if let Some(node) = shared
+        let shared_ids = shared
             .iter()
-            .find(|node| matches!(node.ty, Type::Map { .. } | Type::Set(_)))
-        {
-            return Err(Diagnostics::one(Diagnostic::unsupported(
-                node.span,
-                format!(
-                    "shared {} publication requires the ordered rung-138 freeze capability",
-                    node.ty.name()
-                ),
-            )));
-        }
-        // Hoist each consumed user-function invocation a described-wire trace
-        // check demands into its own value island. The scheduler evaluates it
-        // through the DemandPreimage + Location memo path — so repeated identical
-        // recipe+argument demands memoize to one computation — and the runner
-        // records one realized demand per computed evaluation. Only invocations
-        // reachable from a value check are hoisted; an undemanded (unreachable)
-        // one is never turned into a demand.
-        let mut hoist_functions = BTreeSet::new();
-        for site in &ordered {
-            if let CheckRecipe::Trace(
-                TraceCheck::Demanded { wire } | TraceCheck::DemandedOnce { wire },
-            ) = &site.recipe
-            {
-                hoist_functions.insert(wire.function);
-            }
-        }
-        let mut reachable = BTreeSet::new();
-        for site in &ordered {
-            if let Some(check) = site.value_check() {
-                collect_dependencies(function, check, &mut reachable);
-            }
-        }
-        let already_shared = shared.iter().map(|node| node.id).collect::<BTreeSet<_>>();
-        // Group structurally-identical hoisted invocations (same callee, same
-        // exact scalar arguments) onto one value island. Two `costly(7)` wires
-        // then resolve to the same island — one location, one memoized
-        // computation — exactly what "same recipe+argument memoizes once"
-        // demands, while `costly(1)` and `costly(2)` stay distinct islands.
-        let mut wire_islands: Vec<(&Node, WireProvenance)> = Vec::new();
-        let mut wire_group: BTreeMap<(FunctionId, Vec<WireArg>), NodeId> = BTreeMap::new();
-        // Every hoisted node (group members included) maps to its island's
-        // representative node id; aggregate shared nodes map to themselves.
-        let mut node_to_representative: BTreeMap<NodeId, NodeId> = BTreeMap::new();
-        for node in &function.nodes {
-            let Op::Call(callee) = node.op else { continue };
-            if !hoist_functions.contains(&callee)
-                || !reachable.contains(&node.id)
-                || already_shared.contains(&node.id)
-            {
-                continue;
-            }
-            let Some(arguments) = constant_wire_arguments(function, node) else {
-                continue;
-            };
-            let key = (callee, arguments.clone());
-            let representative = *wire_group.entry(key).or_insert_with(|| {
-                wire_islands.push((
-                    node,
-                    WireProvenance {
-                        function: callee,
-                        arguments,
-                    },
-                ));
-                node.id
-            });
-            node_to_representative.insert(node.id, representative);
-        }
-        // Island roots, in stable order: aggregate shared publications, then one
-        // callee island per distinct wire group.
-        let mut roots: Vec<(&Node, Option<WireProvenance>)> = shared
-            .into_iter()
-            .map(|node| (node, None))
-            .chain(
-                wire_islands
-                    .into_iter()
-                    .map(|(node, wire)| (node, Some(wire))),
-            )
-            .collect();
-        roots.sort_by_key(|(node, _)| ValueIslandId {
-            function: function.id,
-            node: node.id,
-        });
-        // Aggregate shared nodes flow to consumers as pre-published value inputs;
-        // wire nodes flow as demanded await points. Both maps resolve every group
-        // member to its representative island id so consumers share one demand.
-        let shared_ids = roots
-            .iter()
-            .filter(|(_, wire)| wire.is_none())
-            .map(|(node, _)| (node.id, self.value_island_id(function.id, node.id)))
+            .map(|node| (node.id, self.value_island_id(function.id, node.id)))
             .collect::<BTreeMap<_, _>>();
-        let mut wire_ids = BTreeMap::new();
-        for (member, representative) in &node_to_representative {
-            wire_ids.insert(*member, self.value_island_id(function.id, *representative));
-        }
-        let values = roots
+        // Wire inputs are the lazy-demand seam; the corrective substrate rebuilds
+        // them from program structure, independent of any trace descriptor. Until
+        // then no consumer awaits a wire.
+        let wire_ids = BTreeMap::<NodeId, ValueIslandId>::new();
+        let values = shared
             .iter()
             .enumerate()
-            .map(|(ordinal, (node, wire))| {
+            .map(|(ordinal, node)| {
                 // A value island computes itself; only OTHER shared aggregates are
-                // pre-published inputs, and a wire callee awaits nothing.
+                // pre-published inputs.
                 let shared_here = shared_ids
                     .iter()
                     .filter(|(candidate, _)| **candidate != node.id)
@@ -1385,10 +1314,15 @@ impl Module {
                         &shared_here,
                         &BTreeMap::new(),
                     ),
-                    wire: wire.clone(),
+                    wire: None,
                 }
             })
             .collect::<Vec<_>>();
+        let generator = test
+            .generator
+            .has_conditional_sites()
+            .then(|| self.generator_task_island_with_shared(test, &shared_ids))
+            .transpose()?;
         let mut islands = Vec::new();
         let mut sites = Vec::with_capacity(ordered.len());
         for site in ordered {
@@ -1415,6 +1349,7 @@ impl Module {
         Ok(PartitionedTest {
             name: test.name.clone(),
             values,
+            generator,
             islands,
             sites,
         })
@@ -1516,13 +1451,30 @@ impl Module {
     /// synthetic transitive callees and array-map partitions are collected exactly
     /// as [`Module::partition_test`] collects a check island's.
     pub fn generator_task_island(&self, test: &Test) -> Result<Island, Diagnostics> {
+        self.generator_task_island_with_shared(test, &BTreeMap::new())
+    }
+
+    fn generator_task_island_with_shared(
+        &self,
+        test: &Test,
+        shared: &BTreeMap<NodeId, ValueIslandId>,
+    ) -> Result<Island, Diagnostics> {
         let source = &self.functions[test.function.0 as usize];
         let mut builder = GeneratorTaskBuilder {
             source,
             nodes: Vec::new(),
+            shared,
+            shared_parameters: BTreeMap::new(),
+            parameters: Vec::new(),
+            value_inputs: Vec::new(),
         };
         let output = builder.lower_body(&test.generator, source.span)?;
-        let nodes = builder.nodes;
+        let GeneratorTaskBuilder {
+            nodes,
+            parameters,
+            value_inputs,
+            ..
+        } = builder;
         let mut seen = BTreeSet::from([test.function]);
         let mut callees = Vec::new();
         collect_callees(self, &nodes, &mut seen, &mut callees);
@@ -1541,8 +1493,8 @@ impl Module {
             purpose: IslandPurpose::Generator,
             function: test.function,
             function_name: format!("{}$generator", test.name),
-            parameters: Vec::new(),
-            value_inputs: Vec::new(),
+            parameters,
+            value_inputs,
             wire_inputs: Vec::new(),
             forced_copy_value: false,
             nodes,
@@ -1561,6 +1513,10 @@ impl Module {
 struct GeneratorTaskBuilder<'a> {
     source: &'a Function,
     nodes: Vec<Node>,
+    shared: &'a BTreeMap<NodeId, ValueIslandId>,
+    shared_parameters: BTreeMap<NodeId, NodeId>,
+    parameters: Vec<Parameter>,
+    value_inputs: Vec<ValueIslandId>,
 }
 
 impl GeneratorTaskBuilder<'_> {
@@ -1604,7 +1560,33 @@ impl GeneratorTaskBuilder<'_> {
     /// yields a typed diagnostic rather than a panic, so no valid source can
     /// crash the builder.
     fn copy_value(&mut self, id: NodeId) -> Result<NodeId, Diagnostics> {
+        if let Some(&parameter) = self.shared_parameters.get(&id) {
+            return Ok(parameter);
+        }
         let node = &self.source.nodes[id.0 as usize];
+        if let Some(&value) = self.shared.get(&id) {
+            let parameter = ParameterId(
+                u32::try_from(self.parameters.len())
+                    .expect("generator shared parameter count fits u32"),
+            );
+            let remapped = self.push(
+                node.span,
+                node.ty.clone(),
+                EffectFacts::PURE,
+                Vec::new(),
+                Op::Parameter(parameter),
+            );
+            self.parameters.push(Parameter {
+                id: parameter,
+                node: remapped,
+                name: format!("$value_{}", value.stable_segment()),
+                ty: node.ty.clone(),
+                kind: ParameterKind::Positional,
+            });
+            self.value_inputs.push(value);
+            self.shared_parameters.insert(id, remapped);
+            return Ok(remapped);
+        }
         if matches!(
             node.op,
             Op::If { .. } | Op::Match { .. } | Op::OrderedMatch { .. }
@@ -1839,7 +1821,13 @@ fn prune_control_regions(nodes: &mut [Node], needed: &BTreeSet<NodeId>) {
 /// owning the producer's ordered freeze. Dense arrays have a complete freeze
 /// capability; ordered Map/Set materializers remain nominated so the explicit
 /// rung-138 diagnostic fires instead of silently recomputing them.
-fn is_shared_publication_materializer(node: &Node) -> bool {
+#[derive(Clone, Copy, Debug, PartialEq, Eq, PartialOrd, Ord)]
+enum PublicationConsumer {
+    GeneratorControl,
+    ValueCheck(YieldSiteId),
+}
+
+fn is_shared_publication_candidate(node: &Node) -> bool {
     match &node.ty {
         Type::Array(_) => true,
         Type::Map { .. } => matches!(
@@ -1847,7 +1835,64 @@ fn is_shared_publication_materializer(node: &Node) -> bool {
             Op::Map | Op::MapAdd | Op::MapConcat | Op::MapWith | Op::StreamCollect
         ),
         Type::Set(_) => matches!(node.op, Op::Set | Op::SetAdd | Op::SetConcat),
+        Type::Tuple(_) | Type::Record(_) | Type::Enum(_)
+            if type_contains_publication_aggregate(&node.ty) =>
+        {
+            matches!(
+                node.op,
+                Op::Call(_) | Op::CallValue | Op::If { .. } | Op::Match { .. }
+            )
+        }
         _ => false,
+    }
+}
+
+fn type_contains_publication_aggregate(ty: &Type) -> bool {
+    match ty {
+        Type::Array(_) | Type::Map { .. } | Type::Set(_) => true,
+        Type::Tuple(elements) => elements.iter().any(type_contains_publication_aggregate),
+        Type::Record(record) => record
+            .fields
+            .iter()
+            .any(|field| type_contains_publication_aggregate(&field.ty)),
+        Type::Enum(enumeration) => {
+            enumeration
+                .variants
+                .iter()
+                .any(|variant| match &variant.payload {
+                    VariantPayload::Unit => false,
+                    VariantPayload::Tuple(elements) => {
+                        elements.iter().any(type_contains_publication_aggregate)
+                    }
+                    VariantPayload::Record(fields) => fields
+                        .iter()
+                        .any(|field| type_contains_publication_aggregate(&field.ty)),
+                })
+        }
+        _ => false,
+    }
+}
+
+fn collect_generator_control_nodes(body: &GeneratorBody, out: &mut Vec<NodeId>) {
+    for step in &body.steps {
+        match step {
+            GeneratorStep::Yield(_) => {}
+            GeneratorStep::Match { scrutinee, arms } => {
+                out.push(*scrutinee);
+                for arm in arms {
+                    collect_generator_control_nodes(&arm.body, out);
+                }
+            }
+            GeneratorStep::If {
+                condition,
+                consequent,
+                alternative,
+            } => {
+                out.push(*condition);
+                collect_generator_control_nodes(consequent, out);
+                collect_generator_control_nodes(alternative, out);
+            }
+        }
     }
 }
 
@@ -1862,11 +1907,12 @@ fn collect_publication_materializers(
     }
     let node = &function.nodes[node.0 as usize];
     let aggregate_view = matches!(node.ty, Type::Map { .. } | Type::Set(_))
-        && !is_shared_publication_materializer(node);
+        && !is_shared_publication_candidate(node)
+        && !matches!(node.op, Op::Project { .. } | Op::VariantProject { .. });
     if aggregate_view {
         return;
     }
-    if is_shared_publication_materializer(node) {
+    if is_shared_publication_candidate(node) {
         materializers.insert(node.id);
     }
     for &input in &node.inputs {
@@ -1904,22 +1950,6 @@ fn collect_publication_materializers(
         }
         _ => {}
     }
-}
-
-/// The scalar argument literals of a direct invocation, when every argument is
-/// a closed scalar constant. Returns `None` if any argument is computed, so only
-/// a call whose exact argument identities are statically known is hoisted as a
-/// described wire.
-fn constant_wire_arguments(function: &Function, call: &Node) -> Option<Vec<WireArg>> {
-    let mut arguments = Vec::with_capacity(call.inputs.len());
-    for &input in &call.inputs {
-        match function.nodes[input.0 as usize].op {
-            Op::Int(value) => arguments.push(WireArg::Int(value)),
-            Op::Bool(value) => arguments.push(WireArg::Bool(value)),
-            _ => return None,
-        }
-    }
-    Some(arguments)
 }
 
 fn collect_dependencies(function: &Function, node: NodeId, needed: &mut BTreeSet<NodeId>) {

@@ -712,7 +712,8 @@ pub unsafe extern "C" fn weavy_task_ordered_empty(cx: *mut Ctx) {
     let c = &mut *cx;
     let dst = *c.prog;
     c.prog = c.prog.add(2);
-    write_i64(c.frame, dst, 0);
+    // Must match the task substrate's disjoint ordered-root namespace.
+    write_i64(c.frame, dst, i64::MIN / 2);
     cont!(cx);
 }
 

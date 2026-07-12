@@ -401,16 +401,14 @@ fn prepare_source_with_cache(
     // and cached now, before execution. `get_or_lower` keys on canonical recipe
     // content, so these exact entries are reused as cache hits during execution.
     for test in &compilation.module.tests {
-        // A conditional generator runs as its own verified task island.
-        if test.generator.has_conditional_sites() {
-            let generator = compilation.module.generator_task_island(test)?;
-            cache.get_or_lower(&generator)?;
-        }
         // Every value-check island. A trace site reads the frozen counter
         // snapshot and lowers nothing, so it is skipped here.
         let partitioned = compilation.module.try_partition_test(test)?;
         for value in &partitioned.values {
             cache.get_or_lower(&value.island)?;
+        }
+        if let Some(generator) = &partitioned.generator {
+            cache.get_or_lower(generator)?;
         }
         for site in &partitioned.sites {
             if let PartitionedRecipe::Value { island } = &site.recipe {
@@ -550,53 +548,6 @@ fn run_lane(
     let mut kill_available = chaos.kill_first_running_task;
 
     for test in &module.tests {
-        // A branch-dependent generator runs its real Match/If control through one
-        // verified generator task that publishes only the taken sites; each taken
-        // descriptor then becomes an ordinary pure check demand. A flat generator
-        // keeps the historical unconditional path with byte-identical behaviour.
-        let taken = if test.generator.has_conditional_sites() {
-            let generator = module.generator_task_island(test)?;
-            let lowered = cache.get_or_lower(&generator)?;
-            let attribution = attribution_for(&generator);
-            let outcome = runtime.drive_generator(
-                generator.id,
-                lowered,
-                &attribution,
-                ChaosPolicy {
-                    kill_first_running_task: kill_available,
-                },
-            )?;
-            kill_available = false;
-            let published = match outcome {
-                GeneratorOutcome::Sites(published) => published,
-                GeneratorOutcome::LanguageFailure { failure, context } => {
-                    return Err(RunError::GeneratorLanguageFailure {
-                        test: test.name.clone(),
-                        failure,
-                        context,
-                    });
-                }
-            };
-            let mut seen = BTreeSet::new();
-            let mut sites = Vec::with_capacity(published.len());
-            for raw in published {
-                let site = u32::try_from(raw).map_err(|_| RunError::MalformedSiteKey {
-                    test: test.name.clone(),
-                    site: raw,
-                })?;
-                if !seen.insert(site) {
-                    return Err(RunError::DuplicateSiteKey {
-                        test: test.name.clone(),
-                        site,
-                    });
-                }
-                sites.push((site, raw));
-            }
-            Some(sites)
-        } else {
-            None
-        };
-
         let partitioned = module.try_partition_test(test)?;
         let mut published_values = BTreeMap::new();
         for value in &partitioned.values {
@@ -645,6 +596,67 @@ fn run_lane(
             });
             published_values.insert(value.id, evaluation);
         }
+        // A branch-dependent generator runs its real Match/If control through one
+        // verified generator task that publishes only the taken sites; each taken
+        // descriptor then becomes an ordinary pure check demand. A flat generator
+        // keeps the historical unconditional path with byte-identical behaviour.
+        let taken = if test.generator.has_conditional_sites() {
+            let generator = partitioned
+                .generator
+                .as_ref()
+                .expect("conditional test has a partitioned generator");
+            let lowered = cache.get_or_lower(generator)?;
+            let attribution = attribution_for(generator);
+            let arguments = generator
+                .value_inputs
+                .iter()
+                .map(|value| {
+                    published_values
+                        .get(value)
+                        .cloned()
+                        .expect("generator shared value was published")
+                })
+                .collect::<Vec<_>>();
+            let outcome = runtime.drive_generator(
+                generator.id,
+                lowered,
+                &attribution,
+                &arguments,
+                ChaosPolicy {
+                    kill_first_running_task: kill_available,
+                },
+            )?;
+            kill_available = false;
+            let published = match outcome {
+                GeneratorOutcome::Sites(published) => published,
+                GeneratorOutcome::LanguageFailure { failure, context } => {
+                    return Err(RunError::GeneratorLanguageFailure {
+                        test: test.name.clone(),
+                        failure,
+                        context,
+                    });
+                }
+            };
+            let mut seen = BTreeSet::new();
+            let mut sites = Vec::with_capacity(published.len());
+            for raw in published {
+                let site = u32::try_from(raw).map_err(|_| RunError::MalformedSiteKey {
+                    test: test.name.clone(),
+                    site: raw,
+                })?;
+                if !seen.insert(site) {
+                    return Err(RunError::DuplicateSiteKey {
+                        test: test.name.clone(),
+                        site,
+                    });
+                }
+                sites.push((site, raw));
+            }
+            Some(sites)
+        } else {
+            None
+        };
+
         match taken {
             // Taken generator sites, in publication order. Each resolves to its
             // recipe by stable YieldSiteId — never by island-vector ordinal —

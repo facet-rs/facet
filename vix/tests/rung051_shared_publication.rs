@@ -9,7 +9,7 @@
 //! `ValueId`.
 
 use vix::compiler::{Compiler, CompilerConfig};
-use vix::ratchet::{RunError, run_source, run_source_with_config};
+use vix::ratchet::{run_source, run_source_with_config};
 use vix::runtime::EventKind;
 use vix::vir::{Op as VirOp, PartitionedRecipe};
 
@@ -141,10 +141,9 @@ fn nested() -> Stream<Check> {
 }
 
 #[test]
-fn shared_map_and_set_require_the_ordered_freeze_capability() {
-    for (source, kind) in [
-        (
-            r#"
+fn shared_map_and_set_publish_once_through_ordered_freeze() {
+    for source in [
+        r#"
 #[test]
 fn map_shared() -> Stream<Check> {
     let value: Map<String, Int> = %{"k" => 1};
@@ -152,10 +151,7 @@ fn map_shared() -> Stream<Check> {
     yield expect(value.has("k"));
 }
 "#,
-            "Map",
-        ),
-        (
-            r#"
+        r#"
 #[test]
 fn set_shared() -> Stream<Check> {
     let value: Set<Int> = %[1, 2];
@@ -163,15 +159,12 @@ fn set_shared() -> Stream<Check> {
     yield expect(value.has(1));
 }
 "#,
-            "Set",
-        ),
     ] {
-        let RunError::Diagnostics(diagnostics) = run_source(source).expect_err("must be typed red")
-        else {
-            unreachable!()
-        };
-        assert!(diagnostics.entries[0].message().contains(kind));
-        assert!(diagnostics.entries[0].message().contains("rung-138"));
+        let report = run_source(source).expect("ordered aggregate publication runs");
+        assert!(report.passed() && report.agrees(), "{report:?}");
+        assert_eq!(report.plain.values.len(), 1);
+        assert_eq!(report.plain.counters.value_island_spawns, 1);
+        assert_eq!(report.plain.counters.successful_aggregate_freezes, 1);
     }
 }
 

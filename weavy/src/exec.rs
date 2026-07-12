@@ -80,6 +80,54 @@ pub struct StoreHandle {
     index: usize,
 }
 
+/// One inline ABI value with every nested reference represented as a typed
+/// frozen value rather than an integer handle.
+#[derive(Clone, Debug)]
+pub struct FrozenInlineValue {
+    bytes: Vec<u8>,
+    references: Vec<(u32, FrozenValue)>,
+}
+
+impl FrozenInlineValue {
+    #[must_use]
+    pub fn new(bytes: Vec<u8>) -> Self {
+        Self {
+            bytes,
+            references: Vec::new(),
+        }
+    }
+
+    #[must_use]
+    pub fn with_reference(mut self, offset: u32, value: FrozenValue) -> Self {
+        self.references.push((offset, value));
+        self
+    }
+}
+
+/// Handle-free execution representation accepted only while initializing a
+/// verified task entry. Store references are typed `StoreHandle`s; molten and
+/// ordered values are imported into that task's private namespaces.
+#[derive(Clone, Debug)]
+pub enum FrozenValue {
+    Store {
+        schema: SchemaRef,
+        handle: StoreHandle,
+    },
+    Opaque {
+        schema: SchemaRef,
+        bytes: Vec<u8>,
+    },
+    Dense {
+        schema: SchemaRef,
+        elements: Vec<FrozenInlineValue>,
+    },
+    Ordered {
+        schema: SchemaRef,
+        rows: Vec<(FrozenInlineValue, Option<FrozenInlineValue>)>,
+    },
+    Inline(FrozenInlineValue),
+}
+
 impl StoreHandle {
     #[must_use]
     pub fn new(index: usize) -> Option<Self> {
@@ -113,9 +161,143 @@ pub struct StructuralResult<'a> {
     region: RegionId,
     value_shape: ValueShapeRef,
     shape: &'a crate::ValueShapeContract,
+    value_shapes: &'a [crate::ValueShapeContract],
+}
+
+/// One verifier-described structural value borrowed from a completed task.
+/// Its representation bytes and offsets remain private; callers can only walk
+/// the verified scalar, handle, product, and active-enum views.
+#[derive(Clone, Copy)]
+pub struct TaskStructuralValue<'task> {
+    bytes: &'task [u8],
+    entry: FnId,
+    region: RegionId,
+    shape: &'task crate::RegionShape,
+    value_shape: Option<&'task crate::ValueShapeContract>,
+    value_shapes: &'task [crate::ValueShapeContract],
+}
+
+impl<'task> TaskStructuralValue<'task> {
+    pub fn scalar_word(self) -> Result<i64, TaskFault> {
+        let [word] = self.shape.words.as_slice() else {
+            return Err(self.invalid());
+        };
+        if !word.is_exactly(WordKind::Scalar) {
+            return Err(self.invalid());
+        }
+        self.word(0)
+    }
+
+    pub fn value_ref(self) -> Result<TaskValueRef<'task>, TaskFault> {
+        let [word] = self.shape.words.as_slice() else {
+            return Err(self.invalid());
+        };
+        let [WordKind::Handle(schema)] = word.as_slice() else {
+            return Err(self.invalid());
+        };
+        Ok(TaskValueRef {
+            word: self.word(0)?,
+            schema: *schema,
+            lifetime: core::marker::PhantomData,
+        })
+    }
+
+    pub fn product_field(self, field: u32) -> Result<Self, TaskFault> {
+        let Some(shape) = self.value_shape else {
+            return Err(self.invalid());
+        };
+        let ValueShapeKind::Product { fields } = &shape.kind else {
+            return Err(self.invalid());
+        };
+        self.field(fields.get(field as usize).ok_or_else(|| self.invalid())?)
+    }
+
+    pub fn enum_selector(self) -> Result<u32, TaskFault> {
+        let Some(shape) = self.value_shape else {
+            return Err(self.invalid());
+        };
+        let ValueShapeKind::Enum { selector, variants } = &shape.kind else {
+            return Err(self.invalid());
+        };
+        let actual = self.word(selector.offset)?;
+        let actual = usize::try_from(actual).map_err(|_| self.invalid())?;
+        if actual >= variants.len() {
+            return Err(self.invalid());
+        }
+        u32::try_from(actual).map_err(|_| self.invalid())
+    }
+
+    pub fn enum_field(self, variant: u32, field: u32) -> Result<Self, TaskFault> {
+        let Some(shape) = self.value_shape else {
+            return Err(self.invalid());
+        };
+        let ValueShapeKind::Enum { variants, .. } = &shape.kind else {
+            return Err(self.invalid());
+        };
+        let field = variants
+            .get(variant as usize)
+            .and_then(|variant| variant.fields.get(field as usize))
+            .ok_or_else(|| self.invalid())?;
+        self.field(field)
+    }
+
+    fn field(self, field: &'task crate::ValueFieldUse) -> Result<Self, TaskFault> {
+        let start = field.offset as usize;
+        let len = field
+            .shape
+            .checked_byte_len()
+            .ok_or_else(|| self.invalid())?;
+        let end = start.checked_add(len).ok_or_else(|| self.invalid())?;
+        let bytes = self.bytes.get(start..end).ok_or_else(|| self.invalid())?;
+        let value_shape = field
+            .value_shape
+            .map(|shape| self.contract_shape(shape).ok_or_else(|| self.invalid()))
+            .transpose()?;
+        Ok(Self {
+            bytes,
+            entry: self.entry,
+            region: self.region,
+            shape: &field.shape,
+            value_shape,
+            value_shapes: self.value_shapes,
+        })
+    }
+
+    fn contract_shape(self, shape: ValueShapeRef) -> Option<&'task crate::ValueShapeContract> {
+        self.value_shapes.get(shape.0 as usize)
+    }
+
+    fn word(self, offset: u32) -> Result<i64, TaskFault> {
+        let start = offset as usize;
+        let end = start
+            .checked_add(size_of::<i64>())
+            .ok_or_else(|| self.invalid())?;
+        let bytes = self.bytes.get(start..end).ok_or_else(|| self.invalid())?;
+        Ok(i64::from_le_bytes(bytes.try_into().expect("checked word")))
+    }
+
+    fn invalid(self) -> TaskFault {
+        TaskFault::InvalidResultShape {
+            entry: self.entry,
+            region: self.region,
+            size: self.bytes.len(),
+        }
+    }
 }
 
 impl StructuralResult<'_> {
+    #[must_use]
+    pub fn as_value(&self) -> TaskStructuralValue<'_> {
+        TaskStructuralValue {
+            bytes: self.bytes,
+            entry: self.entry,
+            region: self.region,
+            shape: &self.shape.shape,
+            value_shape: Some(self.shape),
+            value_shapes: self.value_shapes,
+        }
+    }
+
     pub fn enum_selector(&self) -> Result<i64, TaskFault> {
         let ValueShapeKind::Enum { selector, variants } = &self.shape.kind else {
             return Err(TaskFault::InvalidResultShape {
@@ -201,6 +383,10 @@ impl StructuralResult<'_> {
         }
         Ok(TaskValueRef {
             word: self.word(field.offset)?,
+            schema: match word.as_slice() {
+                [WordKind::Handle(schema)] => *schema,
+                _ => unreachable!("checked handle field"),
+            },
             lifetime: core::marker::PhantomData,
         })
     }
@@ -230,8 +416,10 @@ impl StructuralResult<'_> {
 
 /// Opaque task-result reference. Its machine word is private and its lifetime
 /// is minted only inside [`ExecTask::with_result_resolver`].
+#[derive(Clone, Copy)]
 pub struct TaskValueRef<'task> {
     word: i64,
+    schema: SchemaRef,
     lifetime: core::marker::PhantomData<&'task mut &'task ()>,
 }
 
@@ -244,10 +432,50 @@ pub enum ResolvedTaskValue<'task> {
     LentMolten { index: usize },
 }
 
+pub struct ResolvedOrderedRow<'task> {
+    key: TaskStructuralValue<'task>,
+    value: Option<TaskStructuralValue<'task>>,
+}
+
+impl<'task> ResolvedOrderedRow<'task> {
+    #[must_use]
+    pub fn key(&self) -> TaskStructuralValue<'task> {
+        self.key
+    }
+
+    #[must_use]
+    pub fn value(&self) -> Option<TaskStructuralValue<'task>> {
+        self.value
+    }
+}
+
+pub struct ResolvedOrderedCollection<'task> {
+    rows: Vec<ResolvedOrderedRow<'task>>,
+}
+
+pub struct ResolvedDenseArray<'task> {
+    elements: Vec<TaskStructuralValue<'task>>,
+}
+
+impl<'task> ResolvedDenseArray<'task> {
+    #[must_use]
+    pub fn elements(&self) -> &[TaskStructuralValue<'task>] {
+        &self.elements
+    }
+}
+
+impl<'task> ResolvedOrderedCollection<'task> {
+    #[must_use]
+    pub fn rows(&self) -> &[ResolvedOrderedRow<'task>] {
+        &self.rows
+    }
+}
+
 /// Borrow-scoped resolver for opaque result references. It has no constructor
 /// and cannot outlive the closure passed to `with_result_resolver`.
 pub struct TaskValueResolver<'task> {
     molten: &'task crate::task::MoltenArena,
+    contract: &'task crate::ProgramContract,
 }
 
 impl<'task> TaskValueResolver<'task> {
@@ -276,8 +504,130 @@ impl<'task> TaskValueResolver<'task> {
         let word = i64::from_le_bytes(bytes.get(offset..offset.checked_add(8)?)?.try_into().ok()?);
         self.resolve(TaskValueRef {
             word,
+            schema: SchemaRef(u32::MAX),
             lifetime: core::marker::PhantomData,
         })
+    }
+
+    pub fn resolve_ordered(
+        &self,
+        value: TaskValueRef<'task>,
+    ) -> Result<ResolvedOrderedCollection<'task>, TaskFault> {
+        let collection = self
+            .contract
+            .schemas
+            .get(value.schema.0 as usize)
+            .ok_or_else(|| self.invalid_ordered())?;
+        let crate::PayloadKind::OrderedCollection(ordered) = &collection.payload else {
+            return Err(self.invalid_ordered());
+        };
+        let key = self
+            .contract
+            .schemas
+            .get(ordered.key.0 as usize)
+            .ok_or_else(|| self.invalid_ordered())?;
+        let value_contract = ordered
+            .value
+            .map(|schema| {
+                self.contract
+                    .schemas
+                    .get(schema.0 as usize)
+                    .ok_or_else(|| self.invalid_ordered())
+            })
+            .transpose()?;
+        let rows = self
+            .molten
+            .ordered_rows(value.word, i64::from(value.schema.0))
+            .map_err(|_| self.invalid_ordered())?;
+        rows.into_iter()
+            .map(|row| {
+                let key_value = self.structural(row.key, &key.inline, key.value_shape)?;
+                let value = match (row.value, value_contract) {
+                    (Some(bytes), Some(contract)) => {
+                        Some(self.structural(bytes, &contract.inline, contract.value_shape)?)
+                    }
+                    (None, None) => None,
+                    _ => return Err(self.invalid_ordered()),
+                };
+                Ok(ResolvedOrderedRow {
+                    key: key_value,
+                    value,
+                })
+            })
+            .collect::<Result<Vec<_>, _>>()
+            .map(|rows| ResolvedOrderedCollection { rows })
+    }
+
+    pub fn resolve_dense(
+        &self,
+        value: TaskValueRef<'task>,
+    ) -> Result<ResolvedDenseArray<'task>, TaskFault> {
+        let collection = self
+            .contract
+            .schemas
+            .get(value.schema.0 as usize)
+            .ok_or_else(|| self.invalid_ordered())?;
+        let crate::PayloadKind::DenseArray { element } = collection.payload else {
+            return Err(self.invalid_ordered());
+        };
+        let element_contract = self
+            .contract
+            .schemas
+            .get(element.0 as usize)
+            .ok_or_else(|| self.invalid_ordered())?;
+        let width = element_contract
+            .inline
+            .checked_byte_len()
+            .ok_or_else(|| self.invalid_ordered())?;
+        let elements = self
+            .molten
+            .dense_elements(value.word, i64::from(element.0), width)
+            .map_err(|_| self.invalid_ordered())?
+            .into_iter()
+            .map(|bytes| {
+                self.structural(
+                    bytes,
+                    &element_contract.inline,
+                    element_contract.value_shape,
+                )
+            })
+            .collect::<Result<Vec<_>, _>>()?;
+        Ok(ResolvedDenseArray { elements })
+    }
+
+    fn structural(
+        &self,
+        bytes: &'task [u8],
+        shape: &'task crate::RegionShape,
+        value_shape: Option<ValueShapeRef>,
+    ) -> Result<TaskStructuralValue<'task>, TaskFault> {
+        if shape.checked_byte_len() != Some(bytes.len()) {
+            return Err(self.invalid_ordered());
+        }
+        let value_shape = value_shape
+            .map(|shape| {
+                self.contract
+                    .value_shapes
+                    .get(shape.0 as usize)
+                    .ok_or_else(|| self.invalid_ordered())
+            })
+            .transpose()?;
+        Ok(TaskStructuralValue {
+            bytes,
+            entry: FnId(0),
+            region: RegionId(0),
+            shape,
+            value_shape,
+            value_shapes: &self.contract.value_shapes,
+        })
+    }
+
+    fn invalid_ordered(&self) -> TaskFault {
+        TaskFault::InvalidResultShape {
+            entry: FnId(0),
+            region: RegionId(0),
+            size: 0,
+        }
     }
 
     #[must_use]
@@ -591,7 +941,7 @@ impl Executable {
         let function = self.function(entry)?;
         for (index, region) in function.entries.iter().copied().enumerate() {
             let region_contract = &function.frame.regions[region.0 as usize];
-            if region_contract.value_shape.is_some() || entry_word_kind(region_contract).is_none() {
+            if region_contract.value_shape.is_none() && entry_word_kind(region_contract).is_none() {
                 return Err(TaskFault::InvalidEntryShape {
                     entry,
                     index,
@@ -661,6 +1011,57 @@ impl ExecTask<'_> {
         handle: StoreHandle,
     ) -> Result<(), TaskFault> {
         self.write_entry_word(index, handle.as_i64(), EntryWriteKind::StoreHandle(schema))
+    }
+
+    pub fn write_entry_frozen(
+        &mut self,
+        index: usize,
+        value: &FrozenValue,
+    ) -> Result<(), TaskFault> {
+        self.check_not_poisoned()?;
+        let function = self.executable.function(self.entry)?;
+        let Some(region) = function.entries.get(index).copied() else {
+            return Err(TaskFault::InvalidEntryIndex {
+                entry: self.entry,
+                index,
+                entry_count: function.entries.len(),
+            });
+        };
+        let declared = function.frame.regions[region.0 as usize].clone();
+        if self.entries_closed {
+            return Err(TaskFault::EntryWriteAfterDrive {
+                entry: self.entry,
+                index,
+                region,
+            });
+        }
+        if self.entries_initialized[index] {
+            return Err(TaskFault::EntryAlreadyInitialized {
+                entry: self.entry,
+                index,
+                region,
+            });
+        }
+        let contract = self.executable.verified.contract().clone();
+        let bytes = match &mut self.lane {
+            Lane::Interpreter(task) => {
+                materialize_frozen(value, &declared.shape, &contract, task.molten_mut())
+            }
+            Lane::Native(task) => {
+                materialize_frozen(value, &declared.shape, &contract, task.molten_mut())
+            }
+        }
+        .map_err(|()| TaskFault::InvalidEntryShape {
+            entry: self.entry,
+            index,
+            region,
+        })?;
+        match &mut self.lane {
+            Lane::Interpreter(task) => task.write_bytes(declared.offset, &bytes),
+            Lane::Native(task) => task.write_bytes(declared.offset, &bytes),
+        }
+        self.entries_initialized[index] = true;
+        Ok(())
     }
 
     fn write_entry_word(
@@ -852,6 +1253,7 @@ impl ExecTask<'_> {
             region,
             value_shape,
             shape,
+            value_shapes: &self.executable.verified.contract().value_shapes,
         })
     }
 
@@ -871,7 +1273,13 @@ impl ExecTask<'_> {
             Lane::Interpreter(task) => task.molten(),
             Lane::Native(task) => task.molten(),
         };
-        use_result(result, TaskValueResolver { molten })
+        use_result(
+            result,
+            TaskValueResolver {
+                molten,
+                contract: self.executable.verified.contract(),
+            },
+        )
     }
 
     /// Number of descriptors the task published, available once the task is
@@ -991,6 +1399,128 @@ impl ExecTask<'_> {
     fn poison(&mut self, fault: TaskFault) -> TaskFault {
         self.poisoned = Some(fault.clone());
         fault
+    }
+}
+
+fn materialize_frozen(
+    value: &FrozenValue,
+    expected: &crate::RegionShape,
+    contract: &crate::ProgramContract,
+    molten: &mut crate::task::MoltenArena,
+) -> Result<Vec<u8>, ()> {
+    match value {
+        FrozenValue::Store { schema, handle } => {
+            require_handle_schema(expected, *schema)?;
+            Ok(handle.as_i64().to_le_bytes().to_vec())
+        }
+        FrozenValue::Opaque { schema, bytes } => {
+            require_handle_schema(expected, *schema)?;
+            let handle = molten.import_opaque(bytes).map_err(|_| ())?;
+            Ok(handle.to_le_bytes().to_vec())
+        }
+        FrozenValue::Dense { schema, elements } => {
+            require_handle_schema(expected, *schema)?;
+            let collection = contract.schemas.get(schema.0 as usize).ok_or(())?;
+            let crate::PayloadKind::DenseArray { element } = &collection.payload else {
+                return Err(());
+            };
+            let element_contract = contract.schemas.get(element.0 as usize).ok_or(())?;
+            let elements = elements
+                .iter()
+                .map(|value| materialize_inline(value, &element_contract.inline, contract, molten))
+                .collect::<Result<Vec<_>, ()>>()?;
+            let handle = molten
+                .import_dense(
+                    i64::from(element.0),
+                    element_contract.inline.checked_byte_len().ok_or(())?,
+                    &elements,
+                )
+                .map_err(|_| ())?;
+            Ok(handle.to_le_bytes().to_vec())
+        }
+        FrozenValue::Ordered { schema, rows } => {
+            require_handle_schema(expected, *schema)?;
+            let collection = contract.schemas.get(schema.0 as usize).ok_or(())?;
+            let crate::PayloadKind::OrderedCollection(ordered) = &collection.payload else {
+                return Err(());
+            };
+            let key = contract.schemas.get(ordered.key.0 as usize).ok_or(())?;
+            let value_contract = ordered
+                .value
+                .map(|schema| contract.schemas.get(schema.0 as usize).ok_or(()))
+                .transpose()?;
+            let rows = rows
+                .iter()
+                .map(|(row_key, row_value)| {
+                    let key_bytes = materialize_inline(row_key, &key.inline, contract, molten)?;
+                    let value_bytes = match (row_value, value_contract) {
+                        (Some(row_value), Some(value_contract)) => Some(materialize_inline(
+                            row_value,
+                            &value_contract.inline,
+                            contract,
+                            molten,
+                        )?),
+                        (None, None) => None,
+                        _ => return Err(()),
+                    };
+                    Ok((key_bytes, value_bytes))
+                })
+                .collect::<Result<Vec<_>, ()>>()?;
+            let handle = molten
+                .import_ordered(i64::from(schema.0), &rows)
+                .map_err(|_| ())?;
+            Ok(handle.to_le_bytes().to_vec())
+        }
+        FrozenValue::Inline(value) => materialize_inline(value, expected, contract, molten),
+    }
+}
+
+fn materialize_inline(
+    value: &FrozenInlineValue,
+    expected: &crate::RegionShape,
+    contract: &crate::ProgramContract,
+    molten: &mut crate::task::MoltenArena,
+) -> Result<Vec<u8>, ()> {
+    if expected.checked_byte_len() != Some(value.bytes.len()) {
+        return Err(());
+    }
+    let mut bytes = value.bytes.clone();
+    for (offset, reference) in &value.references {
+        let word = usize::try_from(*offset).map_err(|_| ())? / size_of::<i64>();
+        if usize::try_from(*offset).map_err(|_| ())? % size_of::<i64>() != 0 {
+            return Err(());
+        }
+        let expected_word = expected.words.get(word).ok_or(())?;
+        let schema = match reference {
+            FrozenValue::Store { schema, .. }
+            | FrozenValue::Opaque { schema, .. }
+            | FrozenValue::Dense { schema, .. }
+            | FrozenValue::Ordered { schema, .. } => *schema,
+            FrozenValue::Inline(_) => return Err(()),
+        };
+        if !expected_word.as_slice().contains(&WordKind::Handle(schema)) {
+            return Err(());
+        }
+        let reference = materialize_frozen(
+            reference,
+            &crate::RegionShape::word(WordKind::Handle(schema)),
+            contract,
+            molten,
+        )?;
+        let start = usize::try_from(*offset).map_err(|_| ())?;
+        bytes[start..start + size_of::<i64>()].copy_from_slice(&reference);
+    }
+    Ok(bytes)
+}
+
+fn require_handle_schema(expected: &crate::RegionShape, schema: SchemaRef) -> Result<(), ()> {
+    let [word] = expected.words.as_slice() else {
+        return Err(());
+    };
+    if word.is_exactly(WordKind::Handle(schema)) {
+        Ok(())
+    } else {
+        Err(())
     }
 }
 
@@ -2428,7 +2958,7 @@ mod tests {
             let interp = run_interpreter(
                 &verified,
                 |task| {
-                    task.write_i64(0, 0);
+                    task.write_i64(0, crate::task::ORDERED_EMPTY_HANDLE);
                     task.write_i64(8, cursor_seed);
                     task.write_i64(16, 0);
                 },
@@ -2444,7 +2974,7 @@ mod tests {
             if let Some(native) = run_native(
                 Arc::clone(&verified),
                 |task| {
-                    task.write_i64(0, 0);
+                    task.write_i64(0, crate::task::ORDERED_EMPTY_HANDLE);
                     task.write_i64(8, cursor_seed);
                     task.write_i64(16, 0);
                 },
@@ -2532,7 +3062,7 @@ mod tests {
             let interp = run_interpreter(
                 &verified,
                 |task| {
-                    task.write_i64(0, 0);
+                    task.write_i64(0, crate::task::ORDERED_EMPTY_HANDLE);
                     task.write_i64(8, cursor_seed);
                     task.write_i64(16, 0);
                 },
@@ -2547,7 +3077,7 @@ mod tests {
             if let Some(native) = run_native(
                 Arc::clone(&verified),
                 |task| {
-                    task.write_i64(0, 0);
+                    task.write_i64(0, crate::task::ORDERED_EMPTY_HANDLE);
                     task.write_i64(8, cursor_seed);
                     task.write_i64(16, 0);
                 },
@@ -2562,11 +3092,11 @@ mod tests {
     fn ordered_begin_probe_matches_across_public_executable_lanes() {
         use crate::task::OrderedOpStatus;
 
-        // The empty collection (canonical handle 0) begins a cursor: status Ok.
+        // The disjoint empty ordered root begins a cursor: status Ok.
         // A handle naming no resident node is InvalidHandle. Both outcomes must
         // agree between the interpreter and the native lane.
         for (handle, expected) in [
-            (0i64, OrderedOpStatus::Ok),
+            (crate::task::ORDERED_EMPTY_HANDLE, OrderedOpStatus::Ok),
             (5i64, OrderedOpStatus::InvalidHandle),
         ] {
             let verified = Arc::new(verify(ordered_begin_probe_program()));
@@ -2954,20 +3484,24 @@ mod tests {
     }
 
     #[test]
-    fn public_spawn_rejects_structural_entry_until_typed_writer_exists() {
+    fn public_spawn_accepts_structural_entry_for_typed_writer() {
         let executable = Executable::new(verify(structural_entry_program(Op::EnumIsVariant {
             dst: RegionId(1),
             value: RegionId(0),
             variant: 0,
         })));
-        assert!(matches!(
-            executable.spawn(FnId(0)),
-            Err(TaskFault::InvalidEntryShape {
-                entry: FnId(0),
-                index: 0,
-                region: RegionId(0),
-            })
-        ));
+        let mut task = executable
+            .spawn(FnId(0))
+            .expect("structural entry is admitted");
+        task.write_entry_frozen(
+            0,
+            &FrozenValue::Inline(FrozenInlineValue::new(
+                [0_i64.to_le_bytes(), 7_i64.to_le_bytes()].concat(),
+            )),
+        )
+        .expect("typed writer materializes the verified enum shape");
+        assert_eq!(task.drive(&mut [], &[]), Ok(TaskStep::Done));
+        assert_eq!(task.result_i64(), Ok(1));
     }
 
     #[test]
