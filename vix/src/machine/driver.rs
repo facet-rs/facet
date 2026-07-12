@@ -112,7 +112,18 @@ pub enum MachinePathDemand {
     Missing { path: String },
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MachinePathStatus {
+    Unsupported,
+    Pending,
+    Ready,
+}
+
 pub trait MachinePendingRun: Send + Sync {
+    fn path_status(&self, _path: &str) -> Result<MachinePathStatus, String> {
+        Ok(MachinePathStatus::Unsupported)
+    }
+
     fn demand_path(&self, path: &str) -> Result<MachinePathDemand, String>;
     fn flush(&self) -> Result<(crate::exec::Outcome, crate::exec::ExecEvent), String>;
 }
@@ -3233,7 +3244,9 @@ impl Driver {
                         }
                     }
                     for req in project_requests {
-                        if let Some(run_id) = self.project_request_pending_run(req.tree)? {
+                        if let Some(run_id) =
+                            self.project_request_pending_run(req.tree, req.path)?
+                        {
                             pending_work
                                 .run_waiters
                                 .entry(run_id)
@@ -3255,7 +3268,9 @@ impl Driver {
                         }
                     }
                     for req in text_project_requests {
-                        if let Some(run_id) = self.project_request_pending_run(req.tree)? {
+                        if let Some(run_id) =
+                            self.project_request_pending_run(req.tree, req.path)?
+                        {
                             pending_work
                                 .run_waiters
                                 .entry(run_id)
@@ -3440,11 +3455,31 @@ impl Driver {
         runnable: &mut RunnableExecutions,
         pending_work: &mut PendingWork,
     ) -> Result<(), String> {
-        let (ready_runs, ready_fetches) = loop {
+        let (ready_runs, ready_paths, ready_fetches) = loop {
             let mut ready_runs = Vec::new();
+            let mut ready_paths = Vec::new();
             for &run_id in pending_work.run_waiters.keys() {
                 if self.poll_run_completion(run_id)? {
                     ready_runs.push(run_id);
+                    continue;
+                }
+                let Some(remote) = self
+                    .runs
+                    .get(&run_id)
+                    .and_then(|run| run.remote.as_ref())
+                    .cloned()
+                else {
+                    continue;
+                };
+                let waiters = pending_work
+                    .run_waiters
+                    .get(&run_id)
+                    .expect("run waiter key exists");
+                for (index, (_, request)) in waiters.iter().enumerate() {
+                    let path = self.tree_project_request_path(request)?;
+                    if remote.path_status(&path)? == MachinePathStatus::Ready {
+                        ready_paths.push((run_id, index));
+                    }
                 }
             }
 
@@ -3461,13 +3496,18 @@ impl Driver {
                 }
             }
 
-            if !block || !ready_runs.is_empty() || !ready_fetches.is_empty() {
-                break (ready_runs, ready_fetches);
+            if !block
+                || !ready_runs.is_empty()
+                || !ready_paths.is_empty()
+                || !ready_fetches.is_empty()
+            {
+                break (ready_runs, ready_paths, ready_fetches);
             }
             std::thread::sleep(Duration::from_millis(1));
         };
 
         let mut woken = BTreeSet::new();
+        let completed_runs = ready_runs.iter().copied().collect::<BTreeSet<_>>();
         for run_id in ready_runs {
             let Some(waiters) = pending_work.run_waiters.remove(&run_id) else {
                 continue;
@@ -3478,6 +3518,31 @@ impl Driver {
                     .expect("parked run waiter exists");
                 self.fill_tree_project_waiter(exec, request)?;
                 woken.insert(waiter_ix);
+            }
+        }
+
+        let mut ready_paths_by_run = BTreeMap::<u64, Vec<usize>>::new();
+        for (run_id, index) in ready_paths {
+            if !completed_runs.contains(&run_id) {
+                ready_paths_by_run.entry(run_id).or_default().push(index);
+            }
+        }
+        for (run_id, mut indices) in ready_paths_by_run {
+            let waiters = pending_work
+                .run_waiters
+                .get_mut(&run_id)
+                .expect("ready path waiter run exists");
+            indices.sort_unstable();
+            for index in indices.into_iter().rev() {
+                let (waiter_ix, request) = waiters.remove(index);
+                let exec = executions[waiter_ix]
+                    .as_mut()
+                    .expect("parked path waiter exists");
+                self.fill_tree_project_waiter(exec, request)?;
+                woken.insert(waiter_ix);
+            }
+            if waiters.is_empty() {
+                pending_work.run_waiters.remove(&run_id);
             }
         }
 
@@ -3520,7 +3585,19 @@ impl Driver {
         Ok(())
     }
 
-    fn project_request_pending_run(&mut self, tree: i64) -> Result<Option<u64>, String> {
+    fn tree_project_request_path(&self, request: &TreeProjectRequest) -> Result<String, String> {
+        let path_handle = match request {
+            TreeProjectRequest::Tree(request) => request.path,
+            TreeProjectRequest::Text(request) => request.path,
+        };
+        self.store.borrow().string_value(path_handle, "Path")
+    }
+
+    fn project_request_pending_run(
+        &mut self,
+        tree: i64,
+        path_handle: i64,
+    ) -> Result<Option<u64>, String> {
         let TreeEntry::Exec(run_id) = self.store.borrow().tree_entry(tree)? else {
             return Ok(None);
         };
@@ -3542,18 +3619,13 @@ impl Driver {
             return Ok(None);
         }
         self.ensure_run_started(run_id)?;
-        if self
-            .runs
-            .get(&run_id)
-            .and_then(|run| run.remote.as_ref())
-            .is_some()
-        {
-            // A remote run can resolve an individual producing path before
-            // the command flushes its complete output tree. Let
-            // `project_request` enter `MachinePendingRun::demand_path`
-            // immediately; registering a whole-run waiter here would wake
-            // only after `flush`, destroying language-level pipelining.
-            return Ok(None);
+        if let Some(remote) = self.runs.get(&run_id).and_then(|run| run.remote.as_ref()) {
+            let path = self.store.borrow().string_value(path_handle, "Path")?;
+            match remote.path_status(&path)? {
+                MachinePathStatus::Ready => return Ok(None),
+                MachinePathStatus::Pending => return Ok(Some(run_id)),
+                MachinePathStatus::Unsupported => {}
+            }
         }
         if self.poll_run_completion(run_id)? {
             Ok(None)
@@ -7534,15 +7606,16 @@ impl Driver {
             }
         } else {
             let outcome = self.schedule_run(run_id)?;
+            // The in-process backend has no producing-path protocol:
+            // `schedule_run` completed the whole command before returning.
+            // Record that completion even when the caller asked for only one
+            // path. `complete_on_file` matters only for a remote run that can
+            // genuinely serve a file before its final flush.
+            let _ = self.finish_run(run_id)?;
             match subtree(&outcome.outputs, path) {
-                Ok(projected) => {
-                    if complete_on_file {
-                        let _ = self.finish_run(run_id)?;
-                    }
-                    Ok(Some(
-                        self.store.borrow_mut().alloc_tree_concrete(projected).0,
-                    ))
-                }
+                Ok(projected) => Ok(Some(
+                    self.store.borrow_mut().alloc_tree_concrete(projected).0,
+                )),
                 Err(_) => {
                     let _ = self.finish_run(run_id)?;
                     Ok(None)
