@@ -36,7 +36,7 @@ use core::pin::Pin;
 use core::task::{Context, Poll};
 use std::sync::atomic::{AtomicU64, Ordering as AtomicOrdering};
 
-use crate::exec::{CompareSide, FaultSite, TaskFault, fault_site};
+use crate::exec::{CompareSide, EnvironmentFaultKind, FaultSite, TaskFault, fault_site};
 use crate::mem::Layout;
 use crate::{CallSiteFacts, RegionId, VerifiedProgram};
 
@@ -463,6 +463,11 @@ pub(crate) struct MoltenArena {
     buffers: Vec<MoltenBuffer>,
     ordered_nodes: Vec<OrderedNode>,
     ordered_cursors: Vec<OrderedCursor>,
+    /// Task-lifetime boxed capture environments. Addressed by an opaque handle
+    /// that packs `(task_generation, index)`, so a fabricated, stale, or
+    /// cross-task handle is rejected without ever entering the store or molten
+    /// collection namespaces.
+    env_boxes: Vec<Vec<u8>>,
     task_generation: u64,
 }
 
@@ -678,6 +683,7 @@ impl Default for MoltenArena {
             buffers: Vec::new(),
             ordered_nodes: Vec::new(),
             ordered_cursors: Vec::new(),
+            env_boxes: Vec::new(),
             task_generation: NEXT_MOLTEN_TASK_GENERATION.fetch_add(1, AtomicOrdering::Relaxed),
         }
     }
@@ -1484,6 +1490,32 @@ impl MoltenArena {
         self.buffers.get(index)
     }
 
+    /// Allocate a task-lifetime boxed capture environment holding `bytes`,
+    /// returning an opaque handle in this task's environment namespace. The
+    /// bytes survive callee frame return for the task lifetime.
+    fn alloc_env(&mut self, bytes: Vec<u8>) -> Result<i64, EnvBoxFault> {
+        let handle = env_handle(self.task_generation, self.env_boxes.len())
+            .ok_or(EnvBoxFault::AllocationFailed)?;
+        self.env_boxes
+            .try_reserve(1)
+            .map_err(|_| EnvBoxFault::AllocationFailed)?;
+        self.env_boxes.push(bytes);
+        Ok(handle)
+    }
+
+    /// Resolve a boxed-environment handle to its bytes, faulting on a
+    /// cross-task/stale generation or an unresident index.
+    fn env_bytes(&self, handle: i64) -> Result<&[u8], EnvBoxFault> {
+        let (generation, index) = env_handle_parts(handle);
+        if generation != self.task_generation as u32 {
+            return Err(EnvBoxFault::Stale);
+        }
+        self.env_boxes
+            .get(index as usize)
+            .map(Vec::as_slice)
+            .ok_or(EnvBoxFault::Unresident)
+    }
+
     /// Join two resident value-memory byte runs into one fresh task-local value.
     ///
     /// Both operands are resolved through the shared [`handle_bytes`] contract:
@@ -1676,6 +1708,62 @@ const TASK_MOLTEN_FIRST: i64 = TASK_MOLTEN_BASE + 1;
 const TASK_MOLTEN_LIMIT: i64 = ORDERED_EMPTY_HANDLE;
 const LENT_MOLTEN_MIN: i64 = ORDERED_HANDLE_LIMIT;
 
+/// A boxed-environment access fault, mapped by the interpreter/JIT onto a
+/// task fault at the [`Op::EnvBox`]/[`Op::EnvLoad`] site.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub(crate) enum EnvBoxFault {
+    /// The handle names no resident environment box in this task.
+    Unresident,
+    /// The handle was minted under a different task generation.
+    Stale,
+    /// The requested capture index or width exceeds the box.
+    OutOfRange,
+    /// The task-local environment arena could not grow.
+    AllocationFailed,
+}
+
+/// Pack a boxed-environment handle from `(task_generation, index)`. The high
+/// 32 bits carry the low word of the task generation and the low 32 bits the
+/// box index, so the value is an opaque token that is never a valid store
+/// (`>= 0` by index) or molten collection handle.
+fn env_handle(generation: u64, index: usize) -> Option<i64> {
+    let index = u32::try_from(index).ok()?;
+    Some(((generation as u32 as u64) << 32 | u64::from(index)) as i64)
+}
+
+fn env_handle_parts(handle: i64) -> (u32, u32) {
+    let bits = handle as u64;
+    ((bits >> 32) as u32, bits as u32)
+}
+
+/// The boxed environment layout of a closure callee. The verifier has already
+/// proven the callee is boxed (its `environment` is non-empty), so this is the
+/// exact capture box layout for a verified program.
+fn env_environment_of(verified: &VerifiedProgram, callee: FnId) -> &[crate::FrameRegion] {
+    &verified.contract().functions[callee.0 as usize].environment
+}
+
+/// Build the task fault for a boxed-environment access failure at the given
+/// instruction, resolving its fault site.
+fn environment_fault(
+    verified: &VerifiedProgram,
+    function: FnId,
+    pc: usize,
+    fault: EnvBoxFault,
+    handle: i64,
+) -> TaskFault {
+    let kind = match fault {
+        EnvBoxFault::Unresident => EnvironmentFaultKind::Unresident,
+        EnvBoxFault::Stale => EnvironmentFaultKind::Stale,
+        EnvBoxFault::OutOfRange => EnvironmentFaultKind::OutOfRange,
+        EnvBoxFault::AllocationFailed => EnvironmentFaultKind::AllocationFailed,
+    };
+    match fault_site(verified, function, pc) {
+        Ok(site) => TaskFault::Environment { site, kind, handle },
+        Err(fault) => fault,
+    }
+}
+
 const ARRAY_WORDS_TAG: i64 = 0;
 const ARRAY_ELEMENTS_TAG: i64 = 1;
 const ARRAY_WORDS_HEADER_SIZE: usize = 24;
@@ -1782,6 +1870,163 @@ pub(crate) unsafe extern "C" fn array_new_abi(
         }
         Err(status) => status as i64,
     }
+}
+
+/// Assemble a task-lifetime boxed capture environment from `count`
+/// `(src_off, box_off, field_len)` triples at `fields`, copying frame bytes into
+/// a fresh `total_len` box, then allocate it and write the opaque handle to
+/// `out_handle`. Returns `0` on success and `1` on allocation failure or a
+/// malformed field. Both lanes reach the same env arena through this.
+///
+/// # Safety
+/// `arena` must point to a live [`MoltenArena`]; `out_handle` must be non-null,
+/// writable, and not alias the arena; `frame` must be readable at each triple's
+/// `src_off..src_off+field_len`; `fields` must be readable for `count * 3` words.
+pub(crate) unsafe extern "C" fn env_alloc_abi(
+    arena: *mut core::ffi::c_void,
+    frame: *const u8,
+    fields: *const u64,
+    count: usize,
+    total_len: usize,
+    out_handle: *mut i64,
+) -> i64 {
+    if out_handle.is_null() {
+        return 1;
+    }
+    unsafe { *out_handle = 0 };
+    if arena.is_null() {
+        return 1;
+    }
+    let arena = unsafe { &mut *arena.cast::<MoltenArena>() };
+    let mut bytes = vec![0u8; total_len];
+    for index in 0..count {
+        let triple = unsafe { fields.add(index * 3) };
+        let src = unsafe { *triple } as usize;
+        let box_off = unsafe { *triple.add(1) } as usize;
+        let len = unsafe { *triple.add(2) } as usize;
+        if box_off.saturating_add(len) > total_len {
+            return 1;
+        }
+        unsafe {
+            core::ptr::copy_nonoverlapping(frame.add(src), bytes.as_mut_ptr().add(box_off), len);
+        }
+    }
+    match arena.alloc_env(bytes) {
+        Ok(handle) => {
+            unsafe { *out_handle = handle };
+            0
+        }
+        Err(_) => 1,
+    }
+}
+
+/// Resolve a boxed-environment handle to its bytes. Writes the byte length to
+/// `out_len` and a status to `out_status` (`0` ok, `1` stale/cross-task, `2`
+/// unresident) and returns the payload pointer (null on fault). Shared by both
+/// lanes so a fabricated handle fails closed identically.
+///
+/// # Safety
+/// `arena` must point to a live [`MoltenArena`]; `out_len`/`out_status` must be
+/// non-null, writable, and must not alias the arena.
+pub(crate) unsafe extern "C" fn env_bytes_abi(
+    arena: *const core::ffi::c_void,
+    handle: i64,
+    out_len: *mut usize,
+    out_status: *mut i64,
+) -> *const u8 {
+    if out_status.is_null() {
+        return core::ptr::null();
+    }
+    if arena.is_null() || out_len.is_null() {
+        unsafe { *out_status = 2 };
+        return core::ptr::null();
+    }
+    let arena = unsafe { &*arena.cast::<MoltenArena>() };
+    match arena.env_bytes(handle) {
+        Ok(bytes) => {
+            unsafe {
+                *out_len = bytes.len();
+                *out_status = 0;
+            }
+            bytes.as_ptr()
+        }
+        Err(EnvBoxFault::Stale) => {
+            unsafe {
+                *out_len = 0;
+                *out_status = 1;
+            }
+            core::ptr::null()
+        }
+        Err(_) => {
+            unsafe {
+                *out_len = 0;
+                *out_status = 2;
+            }
+            core::ptr::null()
+        }
+    }
+}
+
+/// One indirect call's frame geometry for [`unbox_call_environment`]: the
+/// caller frame's environment-handle word, the fresh callee frame base, the
+/// number of arguments the verified call already copied, and the caller site
+/// (function id and pc) that names any environment fault.
+pub(crate) struct CallEnvironmentSite {
+    pub env_word: usize,
+    pub callee_base: usize,
+    pub arg_count: usize,
+    pub caller: FnId,
+    pub pc: usize,
+}
+
+/// Materialize a boxed closure's trailing capture entries into a freshly
+/// allocated callee frame, shared by the interpreter and native call drivers so
+/// both lanes use one env-arena and contract semantics. The captures beyond
+/// `site.arg_count` come from the environment box named by the closure value's
+/// environment word; a fabricated, stale, or short box fails closed with the
+/// same [`TaskFault::Environment`] and site.
+pub(crate) fn unbox_call_environment(
+    arena: &mut [u8],
+    molten: &MoltenArena,
+    verified: &VerifiedProgram,
+    callee: FnId,
+    site: &CallEnvironmentSite,
+) -> Result<(), TaskFault> {
+    let callee_contract = &verified.contract().functions[callee.0 as usize];
+    if callee_contract.environment.is_empty() || site.arg_count >= callee_contract.entries.len() {
+        return Ok(());
+    }
+    let handle = read_i64_at(arena, site.env_word);
+    let mut writes: Vec<(usize, Vec<u8>)> = Vec::new();
+    {
+        let bytes = molten
+            .env_bytes(handle)
+            .map_err(|fault| environment_fault(verified, site.caller, site.pc, fault, handle))?;
+        for (index, field) in callee_contract.environment.iter().enumerate() {
+            let entry = site.arg_count + index;
+            let region_id = callee_contract.entries[entry];
+            let region = &callee_contract.frame.regions[region_id.0 as usize];
+            let off = field.offset as usize;
+            let len = field.shape.words.len() * 8;
+            if off + len > bytes.len() {
+                return Err(environment_fault(
+                    verified,
+                    site.caller,
+                    site.pc,
+                    EnvBoxFault::OutOfRange,
+                    handle,
+                ));
+            }
+            writes.push((
+                site.callee_base + region.offset as usize,
+                bytes[off..off + len].to_vec(),
+            ));
+        }
+    }
+    for (dst, data) in writes {
+        arena[dst..dst + data.len()].copy_from_slice(&data);
+    }
+    Ok(())
 }
 
 /// # Safety
@@ -2740,6 +2985,27 @@ pub enum Op {
         product: RegionId,
         field: u32,
     },
+    /// Construct a task-lifetime boxed capture environment from its declared
+    /// capture regions, writing an opaque environment handle into `dst`. The
+    /// environment's field layout is the boxed callable's environment contract,
+    /// named by the closure `callee`'s call contract. The handle lives in a
+    /// task-local namespace, is stale/cross-task detectable, and is only
+    /// interpretable by [`Op::EnvLoad`].
+    EnvBox {
+        dst: RegionId,
+        callee: FnId,
+        fields: Vec<RegionId>,
+    },
+    /// Project one declared capture out of a boxed environment handle into its
+    /// exact typed capture region, per the closure `callee`'s environment
+    /// contract. Faults on an unresident, stale, or cross-task handle, or an
+    /// out-of-range capture index.
+    EnvLoad {
+        dst: RegionId,
+        env: RegionId,
+        callee: FnId,
+        field: u32,
+    },
     /// Copy one complete structural value between exact equal value shapes.
     CopyValue { dst: RegionId, src: RegionId },
     /// Construct one complete compact enum from one statically selected variant.
@@ -3389,7 +3655,9 @@ impl Task {
                 | Op::CopyValue { .. }
                 | Op::EnumConstruct { .. }
                 | Op::EnumIsVariant { .. }
-                | Op::EnumProjectChecked { .. }) => {
+                | Op::EnumProjectChecked { .. }
+                | Op::EnvBox { .. }
+                | Op::EnvLoad { .. }) => {
                     let Some(verified) = verified else {
                         panic!("typed structural operation requires VerifiedProgram");
                     };
@@ -3500,6 +3768,10 @@ impl Task {
                     self.trace.push(TaskEvent::FrameEntered(callee));
                 }
                 Op::CallIndirect { callee, args, ret } => {
+                    // The closure value's environment word sits one word after
+                    // its callable word; preserve its offset before `callee` is
+                    // rebound to the resolved function id.
+                    let environment_word = base + callee as usize + 8;
                     let raw = read_i64_at(&self.arena, base + callee as usize);
                     let callee = if raw < 0 {
                         let Some(verified) = verified else {
@@ -3543,6 +3815,27 @@ impl Task {
                         let src = base + copy.src as usize;
                         let dst = callee_frame + copy.dst as usize;
                         self.arena.copy_within(src..src + copy.size as usize, dst);
+                    }
+                    // A closure value typed by its semantic signature carries
+                    // captures in a boxed environment: when the verified call
+                    // arguments did not fill every callee entry, the remaining
+                    // capture entries are materialized from the environment box
+                    // named by the closure value's environment word. Shared with
+                    // the native call driver so both lanes agree.
+                    if let Some(verified) = verified {
+                        unbox_call_environment(
+                            &mut self.arena,
+                            &self.molten,
+                            verified,
+                            callee,
+                            &CallEnvironmentSite {
+                                env_word: environment_word,
+                                callee_base: callee_frame,
+                                arg_count: args.len(),
+                                caller: fn_id,
+                                pc,
+                            },
+                        )?;
                     }
                     self.frames.push(FrameRecord {
                         fn_id: callee,
@@ -4529,6 +4822,61 @@ impl Task {
                         ..base + region(*value).offset as usize + field.offset as usize + len,
                     base + region(*dst).offset as usize,
                 );
+            }
+            Op::EnvBox {
+                dst,
+                callee,
+                fields,
+            } => {
+                let environment = env_environment_of(verified, *callee);
+                let box_len = environment
+                    .iter()
+                    .map(|field| field.offset as usize + field.shape.words.len() * 8)
+                    .max()
+                    .unwrap_or(0);
+                let mut bytes = vec![0u8; box_len];
+                for (index, source) in fields.iter().enumerate() {
+                    let field = &environment[index];
+                    let source_region = region(*source);
+                    let len = field.shape.words.len() * 8;
+                    let off = field.offset as usize;
+                    let src = base + source_region.offset as usize;
+                    bytes[off..off + len].copy_from_slice(&self.arena[src..src + len]);
+                }
+                let handle = self
+                    .molten
+                    .alloc_env(bytes)
+                    .map_err(|fault| environment_fault(verified, function, pc, fault, 0))?;
+                write_i64_at(&mut self.arena, base + region(*dst).offset as usize, handle);
+            }
+            Op::EnvLoad {
+                dst,
+                env,
+                callee,
+                field,
+            } => {
+                let environment = env_environment_of(verified, *callee);
+                let field_desc = &environment[*field as usize];
+                let len = field_desc.shape.words.len() * 8;
+                let off = field_desc.offset as usize;
+                let handle = read_i64_at(&self.arena, base + region(*env).offset as usize);
+                let value = {
+                    let bytes = self.molten.env_bytes(handle).map_err(|fault| {
+                        environment_fault(verified, function, pc, fault, handle)
+                    })?;
+                    if off + len > bytes.len() {
+                        return Err(environment_fault(
+                            verified,
+                            function,
+                            pc,
+                            EnvBoxFault::OutOfRange,
+                            handle,
+                        ));
+                    }
+                    bytes[off..off + len].to_vec()
+                };
+                let dst_off = base + region(*dst).offset as usize;
+                self.arena[dst_off..dst_off + len].copy_from_slice(&value);
             }
             _ => unreachable!(),
         }

@@ -21,7 +21,7 @@ use std::sync::Arc;
 #[cfg(test)]
 use std::sync::atomic::{AtomicUsize, Ordering};
 
-use crate::exec::{CompareSide, TaskFault, fault_site};
+use crate::exec::{CompareSide, EnvironmentFaultKind, TaskFault, fault_site};
 use crate::jit::{NativeProgram, StencilLayout, task_stencils};
 use crate::task::{
     Advance, ArgCopy, FnId, HostFn, Op, Program, TaskEvent, TaskStep, TraceMode, ValueMemories,
@@ -204,6 +204,16 @@ struct Ctx {
     ) -> i64,
     publications: *mut core::ffi::c_void,
     publish: unsafe extern "C" fn(*mut core::ffi::c_void, u64, i64, *const u8, usize) -> i64,
+    env_alloc: unsafe extern "C" fn(
+        *mut core::ffi::c_void,
+        *const u8,
+        *const u64,
+        usize,
+        usize,
+        *mut i64,
+    ) -> i64,
+    env_bytes:
+        unsafe extern "C" fn(*const core::ffi::c_void, i64, *mut usize, *mut i64) -> *const u8,
 }
 
 const EXIT_AWAIT_PARKED: i64 = 1;
@@ -229,6 +239,10 @@ const EXIT_PATH_JOIN_BASE_UNRESIDENT: i64 = 20;
 const EXIT_PATH_JOIN_SEGMENT_UNRESIDENT: i64 = 21;
 const EXIT_PATH_JOIN_ALLOCATION: i64 = 22;
 const EXIT_INT_TO_STRING_ALLOCATION: i64 = 23;
+const EXIT_ENV_UNRESIDENT: i64 = 24;
+const EXIT_ENV_STALE: i64 = 25;
+const EXIT_ENV_OUT_OF_RANGE: i64 = 26;
+const EXIT_ENV_ALLOCATION: i64 = 27;
 
 /// Whether the task JIT lane is usable on this target.
 pub fn available() -> bool {
@@ -405,6 +419,14 @@ fn compile_fn(
             Op::ProductProject { .. } | Op::CopyValue { .. } => (
                 task_stencils::COPY_VALUE,
                 Continuations::Fallthrough(task_stencils::COPY_VALUE_CONT),
+            ),
+            Op::EnvBox { .. } => (
+                task_stencils::ENV_BOX,
+                Continuations::Fallthrough(task_stencils::ENV_BOX_CONT),
+            ),
+            Op::EnvLoad { .. } => (
+                task_stencils::ENV_LOAD,
+                Continuations::Fallthrough(task_stencils::ENV_LOAD_CONT),
             ),
             Op::EnumConstruct { .. } => (
                 task_stencils::ENUM_CONSTRUCT,
@@ -695,6 +717,8 @@ fn compile_fn(
         prog_len += match op {
             Op::ProductConstruct { fields, .. } => 1 + fields.len() * 3,
             Op::ProductProject { .. } | Op::CopyValue { .. } => 3,
+            Op::EnvBox { fields, .. } => 4 + fields.len() * 3,
+            Op::EnvLoad { .. } => 5,
             Op::EnumConstruct { fields, .. } => 5 + fields.len() * 3,
             Op::EnumIsVariant { .. } => 6,
             Op::EnumProjectChecked { .. } => 8,
@@ -752,6 +776,58 @@ fn compile_fn(
     let mut calls = HashMap::new();
     for (i, op) in f.code.iter().enumerate() {
         match op {
+            Op::EnvBox {
+                dst,
+                callee,
+                fields,
+            } => {
+                let (function_contract, program_contract) =
+                    verified_compile_contracts(function_contract, program_contract);
+                let environment = &program_contract.functions[callee.0 as usize].environment;
+                let total_len = environment
+                    .iter()
+                    .map(|field| field.offset as usize + field.shape.words.len() * 8)
+                    .max()
+                    .unwrap_or(0);
+                let destination = &function_contract.frame.regions[dst.0 as usize];
+                layout.push_prog_word(root.prog_index, u64::from(destination.offset));
+                layout.push_prog_word(root.prog_index, i as u64);
+                layout.push_prog_word(root.prog_index, total_len as u64);
+                layout.push_prog_word(root.prog_index, fields.len() as u64);
+                for (index, source) in fields.iter().enumerate() {
+                    let source_region = &function_contract.frame.regions[source.0 as usize];
+                    let field = &environment[index];
+                    for value in [
+                        u64::from(source_region.offset),
+                        u64::from(field.offset),
+                        (field.shape.words.len() * 8) as u64,
+                    ] {
+                        layout.push_prog_word(root.prog_index, value);
+                    }
+                }
+            }
+            Op::EnvLoad {
+                dst,
+                env,
+                callee,
+                field,
+            } => {
+                let (function_contract, program_contract) =
+                    verified_compile_contracts(function_contract, program_contract);
+                let environment = &program_contract.functions[callee.0 as usize].environment;
+                let field_desc = &environment[*field as usize];
+                let destination = &function_contract.frame.regions[dst.0 as usize];
+                let env_region = &function_contract.frame.regions[env.0 as usize];
+                for value in [
+                    u64::from(destination.offset),
+                    u64::from(env_region.offset),
+                    u64::from(field_desc.offset),
+                    (field_desc.shape.words.len() * 8) as u64,
+                    i as u64,
+                ] {
+                    layout.push_prog_word(root.prog_index, value);
+                }
+            }
             Op::ProductConstruct { dst, fields } => {
                 let (function_contract, program_contract) =
                     verified_compile_contracts(function_contract, program_contract);
@@ -1683,6 +1759,8 @@ impl JitTask {
                 path_join: crate::task::path_join_abi,
                 publications: (&raw mut self.publications).cast::<core::ffi::c_void>(),
                 publish: crate::task::publish_abi,
+                env_alloc: crate::task::env_alloc_abi,
+                env_bytes: crate::task::env_bytes_abi,
             };
             // SAFETY: `frame.resume` is a chain offset of this compiled
             // function; the copied code uses the extern "C" fn(*mut Ctx)
@@ -1719,6 +1797,12 @@ impl JitTask {
                         top.resume = usize::try_from(continuation).expect("offset");
                     }
                     let target_is_frame = matches!(desc.target, CallTarget::Frame(_));
+                    // The closure value's callable word offset, when the call is
+                    // indirect; its environment word is one word further on.
+                    let callable_offset = match &desc.target {
+                        CallTarget::Frame(offset) => Some(*offset),
+                        CallTarget::Static(_) => None,
+                    };
                     let callee_id = match desc.target {
                         CallTarget::Static(callee) => callee,
                         CallTarget::Frame(offset) => {
@@ -1771,6 +1855,25 @@ impl JitTask {
                         let src = frame.base + copy.src as usize;
                         let dst = callee_base + copy.dst as usize;
                         self.arena.copy_within(src..src + copy.size as usize, dst);
+                    }
+                    // Boxed-closure capture threading, shared with the
+                    // interpreter: a semantic-typed callable materializes its
+                    // trailing capture entries from the environment box named by
+                    // its environment word (one word past the callable word).
+                    if let (Some(offset), Some(verified)) = (callable_offset, verified) {
+                        crate::task::unbox_call_environment(
+                            &mut self.arena,
+                            &self.molten,
+                            verified,
+                            callee_id,
+                            &crate::task::CallEnvironmentSite {
+                                env_word: frame.base + offset as usize + 8,
+                                callee_base,
+                                arg_count: desc.args.len(),
+                                caller: frame.fn_id,
+                                pc: desc.pc,
+                            },
+                        )?;
                     }
                     self.frames.push(JitFrame {
                         fn_id: callee_id,
@@ -1926,6 +2029,26 @@ impl JitTask {
                     let pc = usize::try_from(index_scratch).expect("pc");
                     return Err(TaskFault::PublicationAllocationFailed {
                         site: fault_site(verified, frame.fn_id, pc)?,
+                    });
+                }
+                EXIT_ENV_UNRESIDENT
+                | EXIT_ENV_STALE
+                | EXIT_ENV_OUT_OF_RANGE
+                | EXIT_ENV_ALLOCATION => {
+                    let Some(verified) = verified else {
+                        panic!("boxed environment access requires VerifiedProgram");
+                    };
+                    let pc = usize::try_from(index_scratch).expect("pc");
+                    let kind = match exit_scratch {
+                        EXIT_ENV_STALE => EnvironmentFaultKind::Stale,
+                        EXIT_ENV_OUT_OF_RANGE => EnvironmentFaultKind::OutOfRange,
+                        EXIT_ENV_ALLOCATION => EnvironmentFaultKind::AllocationFailed,
+                        _ => EnvironmentFaultKind::Unresident,
+                    };
+                    return Err(TaskFault::Environment {
+                        site: fault_site(verified, frame.fn_id, pc)?,
+                        kind,
+                        handle: resume_scratch as i64,
                     });
                 }
                 EXIT_INVALID_ENUM_SELECTOR | EXIT_ENUM_PROJECTION_MISMATCH => {

@@ -10381,6 +10381,8 @@ fn op_name(op: &Op) -> &'static str {
     match op {
         Op::ProductConstruct { .. } => "ProductConstruct",
         Op::ProductProject { .. } => "ProductProject",
+        Op::EnvBox { .. } => "EnvBox",
+        Op::EnvLoad { .. } => "EnvLoad",
         Op::CopyValue { .. } => "CopyValue",
         Op::EnumConstruct { .. } => "EnumConstruct",
         Op::EnumIsVariant { .. } => "EnumIsVariant",
