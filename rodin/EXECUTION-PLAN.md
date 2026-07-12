@@ -35,20 +35,23 @@ Cargo fixtures.
 ## Current checkpoint
 
 At the time of the latest authoritative integration checkpoint
-(`ee6d32b3f`):
+(`732af5915`):
 
-- the canonical rung prefix is green through rung 061. The merged root is
+- the canonical rung prefix is green through rung 065. The merged root is
   byte-identical to the isolated integration tree whose combined Vix+Weavy run
-  `01926b49-22ec-4282-8872-c8676f8c9e36` passed 694/694 tests. This includes the
+  `4e7cd165…` passed 709/709 tests. This includes the
   unchanged budgeted rung 050, the million-element shared-publication rung 051,
   native higher-order closures in rung 052, the lazy-demand and described-wire
   band through rung 059, oracle-backed structural snapshot checks through rung
-  061, live Cargo oracles, and the solver-readiness band through rung 092. The
-  canonical corpus through 061 additionally runs as an in-process native versus
-  interpreter semantic differential, and CI pins a native-target
-  `WEAVY_JIT=0` interpreter leg. Workspace all-target/all-feature check, strict
-  all-feature/all-target Clippy, formatting, and diff checks are green at that
-  full-suite checkpoint; exact-root rung-050 runs are recorded below;
+  061, type-directed literal JSON/TOML decode through rung 065, live Cargo
+  oracles, and the solver-readiness band through rung 092. The canonical corpus
+  through 065 additionally runs as an in-process native versus interpreter
+  semantic differential, and CI pins a native-target `WEAVY_JIT=0` interpreter
+  leg. That exact CI-shaped selection passed 116/116 in run
+  `ba042201-32f0-4055-a7b3-217f42949339`. Workspace
+  all-target/all-feature check, strict all-feature/all-target Clippy, formatting,
+  and diff checks are green at that full-suite checkpoint; exact-root rung-050
+  runs are recorded below;
 - rung 031 executes unchanged through the completed two-stage generator path.
   One verified generator task runs real `Match`/`If` control and publishes only
   taken `YieldSiteId`s; the runner then evaluates those provenance-keyed Value
@@ -470,7 +473,14 @@ and keyed-element demand, memoized shared invocations, and observer-independent
 described-wire checks. Rungs 060-061 add structural snapshot checks that consume
 an external test/name-keyed oracle, render scalar and aggregate values
 canonically, fail on missing or drifted goldens, and agree across typed
-native/interpreter lane selection. The canonical next boundary is rung 062.
+native/interpreter lane selection. Rungs 062-065 add the accepted
+literal-document constant-fold subset of typed JSON/TOML decode: the expected
+Vix type drives one `facet-format` parser pass into ordinary construction VIR,
+with typed field-path/document-span failures, ambiguity rejection, and identity
+equivalence to authored construction. Dynamic documents remain a structured
+`RuntimeDecodeUnavailable` boundary rather than a hidden host path. The
+canonical next boundary is rung 066, whose unchanged fixture remains red at the
+call-turbofish and runtime `Result`/`DecodeError` surface.
 
 Before any composite dynamic key or completed aggregate crosses that boundary,
 the runtime Store must intern it through the canonical framed value walk:
